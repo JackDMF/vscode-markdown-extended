@@ -4,6 +4,7 @@ import { MarkdownItAnchorLink } from './markdownItAnchorLink';
 import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { config } from '../services/common/config';
+import { MarkdownItSidenote } from './markdownItSidenote';
 
 interface markdowItPlugin {
     plugin: Function,
@@ -16,6 +17,7 @@ let myPlugins = {
     'markdown-it-admonition': MarkdownItAdmonition,
     'markdown-it-anchor': MarkdownItAnchorLink,
     'markdown-it-helper': MarkdownItExportHelper,
+    'markdown-it-sidenote': MarkdownItSidenote,
 }
 
 export var plugins: markdowItPlugin[] = [
@@ -26,17 +28,18 @@ export var plugins: markdowItPlugin[] = [
     $('markdown-it-admonition'),
     $('markdown-it-footnote'),
     $('markdown-it-abbr'),
-    $('markdown-it-sup'),
-    $('markdown-it-sub'),
+    $('markdown-it-sup-alt'),
+    $('markdown-it-sub-alt'),
     $('markdown-it-checkbox'),
     $('markdown-it-attrs'),
     $('markdown-it-kbd'),
-    $('markdown-it-underline'),
+    $('markdown-it-ib'),
     $('markdown-it-mark'),
     $('markdown-it-deflist'),
     $('markdown-it-emoji'),
     $('markdown-it-multimd-table', { multiline: true, rowspan: true, headerless: true }),
     $('markdown-it-html5-embed', { html5embed: { useImageSyntax: true, useLinkSyntax: true } }),
+    $('markdown-it-sidenote'),
     $('markdown-it-helper')
 ].filter(p => !!p);
 
