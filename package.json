@@ -350,12 +350,12 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
-    "@types/node": "18.x",
+    "@types/node": "^22.13.9",
     "@types/vscode": "^1.54.0",
     "typescript": "^5.4.3"
   },
   "dependencies": {
-    "clipboardy": "^2.3.0",
+    "clipboardy": "^4.0.0",
     "highlight.js": "^11.9.0",
     "js-yaml": "^4.1.0",
     "markdown-it-abbr": "^2.0.0",
@@ -364,17 +364,17 @@
     "markdown-it-checkbox": "^1.1.0",
     "markdown-it-container": "^4.0.0",
     "markdown-it-deflist": "^3.0.0",
-    "markdown-it-emoji": "^2.0.2",
+    "markdown-it-emoji": "^3.0.0",
     "markdown-it-footnote": "^4.0.0",
     "markdown-it-html5-embed": "^0.3.3",
-    "markdown-it-ib": "^1.0.2",
+    "markdown-it-ib": "^2.0.0",
     "markdown-it-kbd": "^2.2.2",
     "markdown-it-mark": "^4.0.0",
     "markdown-it-multimd-table": "^4.2.3",
     "markdown-it-sub-alt": "^1.0.0",
     "markdown-it-sup-alt": "^1.0.2",
-    "markdown-it-table-of-contents": "^0.6.0",
+    "markdown-it-table-of-contents": "^0.9.0",
     "papaparse": "^5.4.1",
-    "puppeteer": "^19.4.1"
+    "puppeteer": "^24.3.1"
   }
 }
