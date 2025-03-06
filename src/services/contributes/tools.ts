@@ -27,7 +27,7 @@ export function createContributeItem(content: string | Buffer, isStyle: boolean,
     if (!content) return "";
     let b64 = content instanceof Buffer ?
         content.toString("base64") :
-        Buffer.from(content).toString("base64");
+        Buffer.from(content as string).toString("base64");
     let cmt = comment ? `<!-- ${comment} -->\n` : "";
     if (isStyle) {
         return cmt + `<link rel="stylesheet" type="text/css" href="data:text/css;base64,${b64}"/>`

@@ -98,7 +98,7 @@ class PuppeteerExporter implements MarkdownExporter {
     private async fetchBinary(progress: Progress) {
         let pt = require('puppeteer');
         let fetcher = pt.createBrowserFetcher();
-        const revisionInfo = fetcher.revisionInfo(PUPPETEER_REVISIONS.chromium);
+        const revisionInfo = fetcher.revisionInfo(PUPPETEER_REVISIONS.chrome);
         let lastPg = 0;
         progress.report({
             message: "Downloading Chromium...",
