@@ -1,6 +1,6 @@
 import { MarkdownIt } from 'markdown-it';
 
-// Constants
+// Constants for existing notes
 const SN_TOKEN = '+';
 const SN_TOKEN_CODE = SN_TOKEN.charCodeAt(0);
 
@@ -8,6 +8,13 @@ const MN_TOKEN = '!';
 const MN_TOKEN_CODE = MN_TOKEN.charCodeAt(0);
 
 const TOKEN_PIPE = '|';
+
+// Constants for new sidebar tokens
+const LEFT_SIDEBAR_TOKEN = '$';
+const LEFT_SIDEBAR_TOKEN_CODE = LEFT_SIDEBAR_TOKEN.charCodeAt(0);
+
+const RIGHT_SIDEBAR_TOKEN = '@';
+const RIGHT_SIDEBAR_TOKEN_CODE = RIGHT_SIDEBAR_TOKEN.charCodeAt(0);
 
 // Types for better readability
 interface NoteConfig {
@@ -19,6 +26,15 @@ interface NoteConfig {
   refClass: string;
 }
 
+// Configuration for sidebar tokens
+interface SidebarConfig {
+  type: 'left_sidebar' | 'right_sidebar';
+  openMarker: string;
+  openMarkerCode: number;
+  closeMarker: string;
+  cssClass: string;
+}
+
 interface MarkdownItState {
     src: string;
     pos: number;
@@ -27,6 +43,7 @@ interface MarkdownItState {
     push: (type: string, tag: string, nesting: number) => any;
 }
 
+// Note configurations
 const MarginNoteConfig: NoteConfig = {
     type: 'marginal_note',
     openMarker: MN_TOKEN + MN_TOKEN,
@@ -45,12 +62,33 @@ const SideNoteConfig: NoteConfig = {
     refClass: 'sn-ref'
 };
 
-export default function (md: MarkdownIt) {
-    md.inline.ruler.before('link', 'notes', notesTokenizer as any);
+// Sidebar configurations
+const LeftSidebarConfig: SidebarConfig = {
+    type: 'left_sidebar',
+    openMarker: LEFT_SIDEBAR_TOKEN,
+    openMarkerCode: LEFT_SIDEBAR_TOKEN_CODE,
+    closeMarker: LEFT_SIDEBAR_TOKEN,
+    cssClass: 'left-sidebar'
+};
 
-    // Renderer rules for sidenotes
+const RightSidebarConfig: SidebarConfig = {
+    type: 'right_sidebar',
+    openMarker: RIGHT_SIDEBAR_TOKEN,
+    openMarkerCode: RIGHT_SIDEBAR_TOKEN_CODE,
+    closeMarker: RIGHT_SIDEBAR_TOKEN,
+    cssClass: 'right-sidebar'
+};
+
+export default function (md: MarkdownIt) {
+    // Register notes tokenizer
+    md.inline.ruler.before('link', 'notes', notesTokenizer as any);
     registerRendererRules(md, SideNoteConfig);
     registerRendererRules(md, MarginNoteConfig);
+    
+    // Register sidebar tokenizers
+    md.inline.ruler.before('link', 'sidebars', sidebarTokenizer as any);
+    registerSidebarRendererRules(md, LeftSidebarConfig);
+    registerSidebarRendererRules(md, RightSidebarConfig);
 }
 
 function registerRendererRules(md: MarkdownIt, config: NoteConfig) {
@@ -63,6 +101,85 @@ function registerRendererRules(md: MarkdownIt, config: NoteConfig) {
     md.renderer.rules[`${type}_content_open`] = () => `<span class="${config.cssClass}">`;
     md.renderer.rules[`${type}_content_close`] = () => '</span>';
     md.renderer.rules[`${type}_close`] = () => '</span>';
+}
+
+function registerSidebarRendererRules(md: MarkdownIt, config: SidebarConfig) {
+    const type = config.type;
+    
+    // Simple renderer rules for sidebar tokens
+    md.renderer.rules[`${type}_open`] = () => `<span class="${config.cssClass}">`;
+    md.renderer.rules[`${type}_close`] = () => '</span>';
+}
+
+/**
+ * Tokenizer for sidebars ($...$ and §...§)
+ */
+function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
+    const start = state.pos;
+    const char = state.src.charCodeAt(start);
+    
+    // Early exit if not a potential sidebar marker
+    if (char !== LEFT_SIDEBAR_TOKEN_CODE && char !== RIGHT_SIDEBAR_TOKEN_CODE) {
+        return false;
+    }
+
+    // Detect sidebar type based on opening marker
+    let config: SidebarConfig;
+    if (char === LEFT_SIDEBAR_TOKEN_CODE) {
+        config = LeftSidebarConfig;
+    } else if (char === RIGHT_SIDEBAR_TOKEN_CODE) {
+        config = RightSidebarConfig;
+    } else {
+        return false;
+    }
+
+    // Check if we have enough characters
+    if (start + 1 >= state.posMax) {
+        return false;
+    }
+
+    // Find closing marker
+    let endPos = state.src.indexOf(config.closeMarker, start + 1);
+    if (endPos === -1) return false;
+
+    // Skip in silent mode
+    if (silent) {
+        return true;
+    }
+
+    // Extract content
+    const content = state.src.slice(start + 1, endPos);
+
+    // Create token structure
+    createSidebarTokens(state, content, config);
+
+    // Update position
+    state.pos = endPos + 1;
+    return true;
+}
+
+/**
+ * Create tokens for sidebar elements
+ */
+function createSidebarTokens(state: MarkdownItState, content: string, config: SidebarConfig): void {
+    const type = config.type;
+    
+    // Opening token
+    const tokenOpen = state.push(`${type}_open`, 'span', 1);
+    tokenOpen.markup = config.openMarker;
+    
+    try {
+        // Process content with markdown support
+        processTextWithMarkdown(state, content);
+    } catch (e) {
+        console.error(`Error processing ${type}:`, e);
+        // Fallback to plain text
+        const fallbackText = state.push('text', '', 0);
+        fallbackText.content = content;
+    }
+    
+    // Closing token
+    state.push(`${type}_close`, 'span', -1);
 }
 
 /**
@@ -180,8 +297,7 @@ function processTextWithMarkdown(state: MarkdownItState, content: string): void 
         return;
     }
     
-    // DON'T modify the existing state - use parseInline instead
-    // This is the key fix - use the proper API for parsing fragments
+    // Use parseInline for proper fragment parsing
     const tempEnv = {};
     const tokens = state.md.parseInline(content, tempEnv);
     
