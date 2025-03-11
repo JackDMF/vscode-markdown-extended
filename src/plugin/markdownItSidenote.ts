@@ -1,13 +1,11 @@
 import { MarkdownIt } from 'markdown-it';
 
 // Constants
-const SN_TOKEN_OPEN = '+';
-const SN_TOKEN_OPEN_CODE = SN_TOKEN_OPEN.charCodeAt(0);
-const SN_TOKEN_CLOSE = '+';
+const SN_TOKEN = '+';
+const SN_TOKEN_CODE = SN_TOKEN.charCodeAt(0);
 
-const MN_TOKEN_OPEN = '!';
-const MN_TOKEN_OPEN_CODE = MN_TOKEN_OPEN.charCodeAt(0);
-const MN_TOKEN_CLOSE = '!';
+const MN_TOKEN = '!';
+const MN_TOKEN_CODE = MN_TOKEN.charCodeAt(0);
 
 const TOKEN_PIPE = '|';
 
@@ -18,64 +16,72 @@ interface NoteConfig {
   openMarkerCode: number;
   closeMarker: string;
   cssClass: string;
+  refClass: string;
 }
+
+interface MarkdownItState {
+    src: string;
+    pos: number;
+    posMax: number;
+    tokens: any[];
+    md: any;
+    env: any;
+    push: (type: string, tag: string, nesting: number) => any;
+  }
+
+const MarginNoteConfig: NoteConfig = {
+    type: 'marginal_note',
+    openMarker: MN_TOKEN + MN_TOKEN,
+    openMarkerCode: MN_TOKEN_CODE,
+    closeMarker: MN_TOKEN + MN_TOKEN,
+    cssClass: 'mnote',
+    refClass: 'mn-ref'
+};
+
+const SideNoteConfig: NoteConfig = {
+    type: 'sidenote',
+    openMarker: SN_TOKEN + SN_TOKEN,
+    openMarkerCode: SN_TOKEN_CODE,
+    closeMarker: SN_TOKEN + SN_TOKEN,
+    cssClass: 'sidenote',
+    refClass: 'sn-ref'
+};
 
 export default function (md: MarkdownIt) {
     md.inline.ruler.before('link', 'notes', notesTokenizer as any);
 
     // Renderer rules for sidenotes
-    md.renderer.rules.sidenote_open = (tokens, idx) => {
-        return '<span class="sn-ref">';
-    };
-    md.renderer.rules.sidenote_text = (tokens, idx) => {
-        return tokens[idx].content || '';
-    };
-    md.renderer.rules.sidenote_content_open = () => '<span class="sidenote">';
-    md.renderer.rules.sidenote_content_close = () => '</span>';
-    md.renderer.rules.sidenote_close = () => '</span>';
-
-    // Renderer rules for marginal notes
-    md.renderer.rules.marginal_note_open = (tokens, idx) => {
-        return '<span class="mn-ref">';
-    };
-    md.renderer.rules.marginal_note_text = (tokens, idx) => {
-        return tokens[idx].content || '';
-    };
-    md.renderer.rules.marginal_note_content_open = () => '<span class="mnote">';
-    md.renderer.rules.marginal_note_content_close = () => '</span>';
-    md.renderer.rules.marginal_note_close = () => '</span>';
+    registerRendererRules(md, SideNoteConfig);
+    registerRendererRules(md, MarginNoteConfig);
 }
+
+function registerRendererRules(md: MarkdownIt, config: NoteConfig) {
+    const type = config.type;
+    md.renderer.rules[`${type}_open`] = (tokens, idx) => `<span class="${config.refClass}">`;
+    md.renderer.rules[`${type}_text`] = (tokens, idx) => tokens[idx].content || '';
+    md.renderer.rules[`${type}_content_open`] = () => `<span class="${config.cssClass}">`;
+    md.renderer.rules[`${type}_content_close`] = () => '</span>';
+    md.renderer.rules[`${type}_close`] = () => '</span>';
+  }
 
 /**
  * Process both sidenotes and marginal notes
  */
-function notesTokenizer(state: any, silent: boolean): boolean {
+function notesTokenizer(state: MarkdownItState, silent: boolean): boolean {
     const start = state.pos;
     const char = state.src.charCodeAt(start);
     
     // Early exit if not a potential note marker
-    if (char !== SN_TOKEN_OPEN_CODE && char !== MN_TOKEN_OPEN_CODE) {
+    if (char !== SideNoteConfig.openMarkerCode && char !== MarginNoteConfig.openMarkerCode) {
         return false;
     }
 
     // Detect note type based on opening marker
     let noteConfig: NoteConfig;
-    if (char === SN_TOKEN_OPEN_CODE && state.src.charCodeAt(start + 1) === SN_TOKEN_OPEN_CODE) {
-        noteConfig = {
-            type: 'sidenote',
-            openMarker: SN_TOKEN_OPEN + SN_TOKEN_OPEN,
-            openMarkerCode: SN_TOKEN_OPEN_CODE,
-            closeMarker: SN_TOKEN_CLOSE + SN_TOKEN_CLOSE,
-            cssClass: 'sidenote'
-        };
-    } else if (char === MN_TOKEN_OPEN_CODE && state.src.charCodeAt(start + 1) === MN_TOKEN_OPEN_CODE) {
-        noteConfig = {
-            type: 'marginal_note',
-            openMarker: MN_TOKEN_OPEN + MN_TOKEN_OPEN,
-            openMarkerCode: MN_TOKEN_OPEN_CODE,
-            closeMarker: MN_TOKEN_CLOSE + MN_TOKEN_CLOSE,
-            cssClass: 'mnote'
-        };
+    if (char === SideNoteConfig.openMarkerCode && state.src.charCodeAt(start + 1) === SideNoteConfig.openMarkerCode) {
+        noteConfig = SideNoteConfig;
+    } else if (char === MarginNoteConfig.openMarkerCode && state.src.charCodeAt(start + 1) === MarginNoteConfig.openMarkerCode) {
+        noteConfig = MarginNoteConfig;
     } else {
         return false;
     }
@@ -86,7 +92,7 @@ function notesTokenizer(state: any, silent: boolean): boolean {
 /**
  * Process a note (either sidenote or marginal note)
  */
-function processNote(state: any, silent: boolean, start: number, config: NoteConfig): boolean {
+function processNote(state: MarkdownItState, silent: boolean, start: number, config: NoteConfig): boolean {
     const max = state.posMax;
     
     // Check if we have enough characters
@@ -122,7 +128,7 @@ function processNote(state: any, silent: boolean, start: number, config: NoteCon
 /**
  * Create the token structure for a note
  */
-function createNoteTokens(state: any, text: string, note: string, config: NoteConfig): void {
+function createNoteTokens(state: MarkdownItState, text: string, note: string, config: NoteConfig): void {
     const type = config.type;
     
     // Opening token
@@ -153,7 +159,7 @@ function createNoteTokens(state: any, text: string, note: string, config: NoteCo
 /**
  * Process the content of a note with inline markdown support
  */
-function processNoteContent(state: any, note: string): void {
+function processNoteContent(state: MarkdownItState, note: string): void {
     if (!note || note.length === 0) {
         // Empty note content
         const emptyText = state.push('text', '', 0);
