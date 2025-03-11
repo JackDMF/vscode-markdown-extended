@@ -21,7 +21,7 @@ export var outputPanel = vscode.window.createOutputChannel("MDExtended");
 // your extension is activated the very first time the command is executed
 export function activate(ctx: vscode.ExtensionContext) {
     context = ctx;
-    ctx.subscriptions.push(
+    const subscriptions = [
         outputPanel,
         config,
         mdConfig,
@@ -33,16 +33,20 @@ export function activate(ctx: vscode.ExtensionContext) {
         new CommandCopyWithStyles(),
         new CommandPasteTable(),
         new CommandFormateTable(),
-    );
+    ].filter(Boolean);
+    
+    ctx.subscriptions.push(...subscriptions);
     return {
         extendMarkdownIt(md: markdowIt.MarkdownIt) {
-            plugins.map(p => {
-                md.use(p.plugin, ...p.args);
+            plugins.forEach(({plugin, args}) => {
+                if (typeof plugin === 'function') {
+                    md.use(plugin, ...args);
+                }
             });
             markdown = md;
             return md;
         }
-    }
+    };
 }
 
 // this method is called when your extension is deactivated

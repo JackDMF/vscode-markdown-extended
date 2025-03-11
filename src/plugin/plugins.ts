@@ -4,23 +4,24 @@ import { MarkdownItAnchorLink } from './markdownItAnchorLink';
 import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { config } from '../services/common/config';
-import { MarkdownItSidenote } from './markdownItSidenote';
+import * as MarkdownItSidenote from './markdownItSidenote';
+import { MarkdownIt } from '../@types/markdown-it';
 
-interface markdowItPlugin {
-    plugin: Function,
-    args: object[],
+interface markdownItPlugin {
+    plugin: (md: MarkdownIt, ...args: any[]) => void;
+    args: any[];
 }
 
-let myPlugins = {
+const myPlugins: Record<string, any> = {
     'markdown-it-toc': MarkdownItTOC,
     'markdown-it-container': MarkdownItContainer,
     'markdown-it-admonition': MarkdownItAdmonition,
     'markdown-it-anchor': MarkdownItAnchorLink,
     'markdown-it-helper': MarkdownItExportHelper,
-    'markdown-it-sidenote': MarkdownItSidenote,
+    'markdown-it-sidenote': MarkdownItSidenote.default,
 }
 
-export var plugins: markdowItPlugin[] = [
+export var plugins: markdownItPlugin[] = [
     // $('markdown-it-toc'),
     // $('markdown-it-anchor'), // MarkdownItAnchorLink requires MarkdownItTOC
     $('markdown-it-table-of-contents', { includeLevel: config.tocLevels }),
@@ -44,15 +45,13 @@ export var plugins: markdowItPlugin[] = [
     $('markdown-it-bracketed-spans')
 ].filter(p => !!p);
 
-function $(name: string, ...args: any[]): markdowItPlugin {
-    for (let d of config.disabledPlugins) {
-        if ('markdown-it-' + d == name) return undefined;
-    }
-    let plugin = myPlugins[name];
-    if (!plugin) plugin = require(name);
-    if (!plugin) return undefined;
-    return {
-        plugin: plugin,
-        args: args,
-    }
+function $(name: string, ...args: any[]): markdownItPlugin | undefined {
+    if (config.disabledPlugins.some(d => `markdown-it-${d}` === name)) return;
+    
+    const plugin = myPlugins[name] || (() => {
+        try { return require(name); } 
+        catch (e) { console.error(`Plugin ${name} fehlgeschlagen:`, e); }
+    })();
+    
+    return plugin ? { plugin, args } : undefined;
 }
