@@ -23,11 +23,9 @@ interface MarkdownItState {
     src: string;
     pos: number;
     posMax: number;
-    tokens: any[];
-    md: any;
-    env: any;
+    md: MarkdownIt;
     push: (type: string, tag: string, nesting: number) => any;
-  }
+}
 
 const MarginNoteConfig: NoteConfig = {
     type: 'marginal_note',
@@ -57,12 +55,15 @@ export default function (md: MarkdownIt) {
 
 function registerRendererRules(md: MarkdownIt, config: NoteConfig) {
     const type = config.type;
+    
+    // Updated renderer rules for new token structure
     md.renderer.rules[`${type}_open`] = (tokens, idx) => `<span class="${config.refClass}">`;
-    md.renderer.rules[`${type}_text`] = (tokens, idx) => tokens[idx].content || '';
+    md.renderer.rules[`${type}_ref_open`] = () => ''; // No additional HTML needed
+    md.renderer.rules[`${type}_ref_close`] = () => ''; // No additional HTML needed
     md.renderer.rules[`${type}_content_open`] = () => `<span class="${config.cssClass}">`;
     md.renderer.rules[`${type}_content_close`] = () => '</span>';
     md.renderer.rules[`${type}_close`] = () => '</span>';
-  }
+}
 
 /**
  * Process both sidenotes and marginal notes
@@ -135,17 +136,29 @@ function createNoteTokens(state: MarkdownItState, text: string, note: string, co
     const tokenOpen = state.push(`${type}_open`, 'span', 1);
     tokenOpen.markup = config.openMarker;
     
-    // Text token
-    const tokenText = state.push(`${type}_text`, '', 0);
-    tokenText.content = text;
+    // Reference section with markdown support
+    const tokenRefOpen = state.push(`${type}_ref_open`, '', 1);
+    
+    try {
+        // Process reference text with markdown support
+        processTextWithMarkdown(state, text);
+    } catch (e) {
+        console.error(`Error processing ${type} reference:`, e);
+        // Fallback to plain text
+        const fallbackText = state.push('text', '', 0);
+        fallbackText.content = text;
+    }
+    
+    const tokenRefClose = state.push(`${type}_ref_close`, '', -1);
     
     // Note content opening token
     const tokenNoteOpen = state.push(`${type}_content_open`, 'span', 1);
 
     try {
-        processNoteContent(state, note);
+        // Process note content with markdown support
+        processTextWithMarkdown(state, note);
     } catch (e) {
-        console.error(`Error processing ${type}:`, e);
+        console.error(`Error processing ${type} note:`, e);
         // Fallback to plain text
         const fallbackText = state.push('text', '', 0);
         fallbackText.content = note;
@@ -157,32 +170,25 @@ function createNoteTokens(state: MarkdownItState, text: string, note: string, co
 }
 
 /**
- * Process the content of a note with inline markdown support
+ * Process text with inline markdown support
  */
-function processNoteContent(state: MarkdownItState, note: string): void {
-    if (!note || note.length === 0) {
-        // Empty note content
+function processTextWithMarkdown(state: MarkdownItState, content: string): void {
+    if (!content || content.length === 0) {
+        // Empty content
         const emptyText = state.push('text', '', 0);
         emptyText.content = '';
         return;
     }
     
-    // Save original state
-    const oldPos = state.pos;
-    const oldMax = state.posMax;
+    // DON'T modify the existing state - use parseInline instead
+    // This is the key fix - use the proper API for parsing fragments
+    const tempEnv = {};
+    const tokens = state.md.parseInline(content, tempEnv);
     
-    // Create a new state for note content
-    const inlineState = new state.md.inline.State(note, state.md, state.env, []);
-    state.pos = 0;
-    state.posMax = note.length;
-    
-    // Tokenize the note content
-    const tokens = state.md.inline.tokenize(inlineState);
-    
-    if (tokens && Array.isArray(tokens)) {
-        tokens.forEach(token => {
-            state.push(token.type, token.tag, token.nesting);
-            const newToken = state.tokens[state.tokens.length - 1];
+    if (tokens && tokens[0] && tokens[0].children) {
+        // Transfer the resulting inline tokens to our token stream
+        tokens[0].children.forEach((token) => {
+            const newToken = state.push(token.type, token.tag, token.nesting);
             
             // Copy all token properties
             Object.keys(token).forEach(key => {
@@ -192,12 +198,8 @@ function processNoteContent(state: MarkdownItState, note: string): void {
             });
         });
     } else {
-        // Fallback if tokenization fails
+        // Fallback if parsing fails
         const plainText = state.push('text', '', 0);
-        plainText.content = note;
+        plainText.content = content;
     }
-    
-    // Restore original state
-    state.pos = oldPos;
-    state.posMax = oldMax;
 }
