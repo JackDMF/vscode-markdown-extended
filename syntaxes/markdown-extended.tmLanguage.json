@@ -1,0 +1,129 @@
+{
+    "name": "Markdown Extended",
+    "scopeName": "text.html.markdown.extended",
+    "injectionSelector": "L:text.html.markdown",
+    "patterns": [
+      {
+        "include": "#sidenote"
+      },
+      {
+        "include": "#marginal_note"
+      },
+      {
+        "include": "#left_sidebar"
+      },
+      {
+        "include": "#right_sidebar"
+      },
+      {
+        "include": "#highlight"
+      },
+      {
+        "include": "#kbd"
+      }
+    ],
+    "repository": {
+      "sidenote": {
+        "name": "markup.sidenote.markdown",
+        "match": "\\+\\+(.*?)\\|(.*?)\\+\\+",
+        "captures": {
+          "0": {
+            "name": "markup.sidenote.container.markdown"
+          },
+          "1": {
+            "name": "markup.sidenote.reference.markdown",
+            "patterns": [
+              { "include": "text.html.markdown#inline" }
+            ]
+          },
+          "2": {
+            "name": "markup.sidenote.content.markdown",
+            "patterns": [
+              { "include": "text.html.markdown#inline" }
+            ]
+          }
+        }
+      },
+      "marginal_note": {
+        "name": "markup.marginalnote.markdown",
+        "match": "!!(.*?)\\|(.*?)!!",
+        "captures": {
+          "0": {
+            "name": "markup.marginalnote.container.markdown"
+          },
+          "1": {
+            "name": "markup.marginalnote.reference.markdown",
+            "patterns": [
+              { "include": "text.html.markdown#inline" }
+            ]
+          },
+          "2": {
+            "name": "markup.marginalnote.content.markdown",
+            "patterns": [
+              { "include": "text.html.markdown#inline" }
+            ]
+          }
+        }
+      },
+      "left_sidebar": {
+        "name": "markup.leftsidebar.markdown",
+        "match": "\\$(.*?)\\$",
+        "captures": {
+          "0": {
+            "name": "markup.leftsidebar.container.markdown"
+          },
+          "1": {
+            "name": "markup.leftsidebar.content.markdown",
+            "patterns": [
+              { "include": "text.html.markdown#inline" }
+            ]
+          }
+        }
+      },
+      "right_sidebar": {
+        "name": "markup.rightsidebar.markdown",
+        "match": "@(.*?)@",
+        "captures": {
+          "0": {
+            "name": "markup.rightsidebar.container.markdown"
+          },
+          "1": {
+            "name": "markup.rightsidebar.content.markdown",
+            "patterns": [
+              { "include": "text.html.markdown#inline" }
+            ]
+          }
+        }
+      },
+      "highlight": {
+        "name": "markup.highlight.markdown",
+        "match": "==(.*?)==",
+        "captures": {
+          "0": {
+            "name": "markup.highlight.container.markdown"
+          },
+          "1": {
+            "name": "markup.highlight.content.markdown",
+            "patterns": [
+              { "include": "text.html.markdown#inline" }
+            ]
+          }
+        }
+      },
+      "kbd": {
+        "name": "markup.kbd.markdown",
+        "match": "\\[\\[(.*?)\\]\\]",
+        "captures": {
+          "0": {
+            "name": "markup.kbd.container.markdown"
+          },
+          "1": {
+            "name": "markup.kbd.content.markdown",
+            "patterns": [
+              { "include": "text.html.markdown#inline" }
+            ]
+          }
+        }
+      }
+    }
+  }

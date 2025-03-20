@@ -3,7 +3,7 @@
   "displayName": "Markdown Extended",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo.png",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "publisher": "jackdmf",
   "engines": {
     "vscode": "^1.54.0"
@@ -21,33 +21,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:markdown",
-    "onCommand:markdownExtended.export",
-    "onCommand:markdownExtended.exportWorkspace",
-    "onCommand:markdownExtended.copy",
-    "onCommand:markdownExtended.copyWithStyle",
-    "onCommand:markdownExtended.pasteAsTable",
-    "onCommand:markdownExtended.formateTable",
-    "onCommand:markdownExtended.toggleBold",
-    "onCommand:markdownExtended.toggleCodeBlock",
-    "onCommand:markdownExtended.toggleCodeInline",
-    "onCommand:markdownExtended.toggleItalics",
-    "onCommand:markdownExtended.toggleSubscript",
-    "onCommand:markdownExtended.toggleOList",
-    "onCommand:markdownExtended.toggleStrikethrough",
-    "onCommand:markdownExtended.toggleUList",
-    "onCommand:markdownExtended.toggleUnderLine",
-    "onCommand:markdownExtended.toggleMark",
-    "onCommand:markdownExtended.toggleSuperscript",
-    "onCommand:markdownExtended.toggleBlockQuote",
-    "onCommand:markdownExtended.addColumnRight",
-    "onCommand:markdownExtended.addColumnLeft",
-    "onCommand:markdownExtended.addRowBelow",
-    "onCommand:markdownExtended.addRowAbove",
-    "onCommand:markdownExtended.DeleteColumn",
-    "onCommand:markdownExtended.DeleteRow",
-    "onCommand:markdownExtended.MoveColumnLeft",
-    "onCommand:markdownExtended.MoveColumnRight"
+    "onLanguage:markdown"
   ],
   "main": "./out/src/extension",
   "contributes": {
@@ -55,6 +29,47 @@
       {
         "language": "markdown",
         "path": "./snippets/markdown.code-snippets"
+      }
+    ],
+    "grammars": [
+      {
+        "scopeName": "text.html.markdown.extended",
+        "path": "./syntaxes/markdown-extended.tmLanguage.json",
+        "injectTo": ["text.html.markdown"]
+      }
+    ],
+    "colors": [
+      {
+        "id": "markdown.sidenote.textColor",
+        "description": "Color for sidenote reference text",
+        "defaults": {
+          "dark": "#75BFFF",
+          "light": "#0066B8"
+        }
+      },
+      {
+        "id": "markdown.marginalnote.textColor",
+        "description": "Color for marginal note reference text",
+        "defaults": {
+          "dark": "#FF7B72",
+          "light": "#D73A49"
+        }
+      },
+      {
+        "id": "markdown.leftsidebar.textColor",
+        "description": "Color for left sidebar text",
+        "defaults": {
+          "dark": "#56B6C2",
+          "light": "#0B7E85"
+        }
+      },
+      {
+        "id": "markdown.rightsidebar.textColor",
+        "description": "Color for right sidebar text",
+        "defaults": {
+          "dark": "#D2A8FF",
+          "light": "#6F42C1"
+        }
       }
     ],
     "commands": [
