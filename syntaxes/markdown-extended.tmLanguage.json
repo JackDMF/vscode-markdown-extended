@@ -1,129 +1,216 @@
 {
-    "name": "Markdown Extended",
-    "scopeName": "text.html.markdown.extended",
-    "injectionSelector": "L:text.html.markdown",
-    "patterns": [
-      {
-        "include": "#sidenote"
-      },
-      {
-        "include": "#marginal_note"
-      },
-      {
-        "include": "#left_sidebar"
-      },
-      {
-        "include": "#right_sidebar"
-      },
-      {
-        "include": "#highlight"
-      },
-      {
-        "include": "#kbd"
+  "name": "Markdown Extended",
+  "scopeName": "text.html.markdown.extended",
+  "injectionSelector": "L:text.html.markdown",
+  "patterns": [
+    {
+      "include": "#sidenote"
+    },
+    {
+      "include": "#marginal_note"
+    },
+    {
+      "include": "#left_sidebar"
+    },
+    {
+      "include": "#right_sidebar"
+    },
+    {
+      "include": "#highlight"
+    },
+    {
+      "include": "#kbd"
+    },
+    {
+      "include": "#admonition"
+    }
+  ],
+  "repository": {
+    "sidenote": {
+      "name": "markup.sidenote.markdown",
+      "match": "\\+\\+(.*?)\\|(.*?)\\+\\+",
+      "captures": {
+        "0": {
+          "name": "markup.sidenote.container.markdown"
+        },
+        "1": {
+          "name": "markup.sidenote.reference.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown#inline"
+            }
+          ]
+        },
+        "2": {
+          "name": "markup.sidenote.content.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown#inline"
+            }
+          ]
+        }
       }
-    ],
-    "repository": {
-      "sidenote": {
-        "name": "markup.sidenote.markdown",
-        "match": "\\+\\+(.*?)\\|(.*?)\\+\\+",
-        "captures": {
-          "0": {
-            "name": "markup.sidenote.container.markdown"
-          },
-          "1": {
-            "name": "markup.sidenote.reference.markdown",
-            "patterns": [
-              { "include": "text.html.markdown#inline" }
-            ]
-          },
-          "2": {
-            "name": "markup.sidenote.content.markdown",
-            "patterns": [
-              { "include": "text.html.markdown#inline" }
-            ]
-          }
+    },
+    "marginal_note": {
+      "name": "markup.marginalnote.markdown",
+      "match": "!!(.*?)\\|(.*?)!!",
+      "captures": {
+        "0": {
+          "name": "markup.marginalnote.container.markdown"
+        },
+        "1": {
+          "name": "markup.marginalnote.reference.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown#inline"
+            }
+          ]
+        },
+        "2": {
+          "name": "markup.marginalnote.content.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown#inline"
+            }
+          ]
+        }
+      }
+    },
+    "left_sidebar": {
+      "name": "markup.leftsidebar.markdown",
+      "match": "\\$(.*?)\\$",
+      "captures": {
+        "0": {
+          "name": "markup.leftsidebar.container.markdown"
+        },
+        "1": {
+          "name": "markup.leftsidebar.content.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown#inline"
+            }
+          ]
+        }
+      }
+    },
+    "right_sidebar": {
+      "name": "markup.rightsidebar.markdown",
+      "match": "@(.*?)@",
+      "captures": {
+        "0": {
+          "name": "markup.rightsidebar.container.markdown"
+        },
+        "1": {
+          "name": "markup.rightsidebar.content.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown#inline"
+            }
+          ]
+        }
+      }
+    },
+    "highlight": {
+      "name": "markup.highlight.markdown",
+      "match": "==(.*?)==",
+      "captures": {
+        "0": {
+          "name": "markup.highlight.container.markdown"
+        },
+        "1": {
+          "name": "markup.highlight.content.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown#inline"
+            }
+          ]
+        }
+      }
+    },
+    "kbd": {
+      "name": "markup.kbd.markdown",
+      "match": "\\[\\[(.*?)\\]\\]",
+      "captures": {
+        "0": {
+          "name": "markup.kbd.container.markdown"
+        },
+        "1": {
+          "name": "markup.kbd.content.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown#inline"
+            }
+          ]
+        }
+      }
+    },
+    "admonition": {
+      "name": "markup.admonition.markdown",
+      "begin": "^\\s*(!!!)(\\s+)(note|summary|abstract|tldr|info|todo|tip|hint|success|check|done|question|help|faq|warning|attention|caution|failure|fail|missing|danger|error|bug|example|snippet|quote|cite)(?:(\\s+)(.+?))?$",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.admonition.markdown"
+        },
+        "2": {
+          "name": "markup.admonition.markdown"
+        },
+        "3": {
+          "name": "entity.name.admonition.qualifier.markdown"
+        },
+        "4": {
+          "name": "markup.admonition.markdown"
+        },
+        "5": {
+          "name": "entity.name.admonition.title.markdown"
         }
       },
-      "marginal_note": {
-        "name": "markup.marginalnote.markdown",
-        "match": "!!(.*?)\\|(.*?)!!",
-        "captures": {
-          "0": {
-            "name": "markup.marginalnote.container.markdown"
-          },
-          "1": {
-            "name": "markup.marginalnote.reference.markdown",
-            "patterns": [
-              { "include": "text.html.markdown#inline" }
-            ]
-          },
-          "2": {
-            "name": "markup.marginalnote.content.markdown",
-            "patterns": [
-              { "include": "text.html.markdown#inline" }
-            ]
+      "patterns": [
+        {
+          "match": "^\\s{4}(.*)$",
+          "captures": {
+            "0": {
+              "name": "markup.admonition.content.markdown"
+            },
+            "1": {
+              "name": "markup.admonition.body.markdown",
+              "patterns": [
+                {
+                  "include": "text.html.markdown#inline"
+                },
+                {
+                  "include": "#admonition"
+                }
+              ]
+            }
           }
         }
-      },
-      "left_sidebar": {
-        "name": "markup.leftsidebar.markdown",
-        "match": "\\$(.*?)\\$",
-        "captures": {
-          "0": {
-            "name": "markup.leftsidebar.container.markdown"
-          },
-          "1": {
-            "name": "markup.leftsidebar.content.markdown",
-            "patterns": [
-              { "include": "text.html.markdown#inline" }
-            ]
-          }
+      ],
+      "end": "^(?!\\s{4})(?=\\s*[^ ])",
+      "contentName": "markup.admonition.content.markdown"
+    },
+    "subscript": {
+      "name": "markup.subscript.markdown",
+      "match": "\\~([^\\~\\n]+?)\\~",
+      "captures": {
+        "0": {
+          "name": "markup.subscript.container.markdown"
+        },
+        "1": {
+          "name": "markup.subscript.content.markdown"
         }
-      },
-      "right_sidebar": {
-        "name": "markup.rightsidebar.markdown",
-        "match": "@(.*?)@",
-        "captures": {
-          "0": {
-            "name": "markup.rightsidebar.container.markdown"
-          },
-          "1": {
-            "name": "markup.rightsidebar.content.markdown",
-            "patterns": [
-              { "include": "text.html.markdown#inline" }
-            ]
-          }
-        }
-      },
-      "highlight": {
-        "name": "markup.highlight.markdown",
-        "match": "==(.*?)==",
-        "captures": {
-          "0": {
-            "name": "markup.highlight.container.markdown"
-          },
-          "1": {
-            "name": "markup.highlight.content.markdown",
-            "patterns": [
-              { "include": "text.html.markdown#inline" }
-            ]
-          }
-        }
-      },
-      "kbd": {
-        "name": "markup.kbd.markdown",
-        "match": "\\[\\[(.*?)\\]\\]",
-        "captures": {
-          "0": {
-            "name": "markup.kbd.container.markdown"
-          },
-          "1": {
-            "name": "markup.kbd.content.markdown",
-            "patterns": [
-              { "include": "text.html.markdown#inline" }
-            ]
-          }
+      }
+    },
+    "superscript": {
+      "name": "markup.superscript.markdown",
+      "match": "\\^([^\\^\\n]+?)\\^",
+      "captures": {
+        "0": {
+          "name": "markup.superscript.container.markdown"
+        },
+        "1": {
+          "name": "markup.superscript.content.markdown"
         }
       }
     }
   }
+}
