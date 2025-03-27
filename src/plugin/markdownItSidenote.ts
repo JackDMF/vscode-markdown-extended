@@ -1,5 +1,11 @@
 import { MarkdownIt } from 'markdown-it';
 
+// This plugin adds support for sidenotes and marginal notes in Markdown using custom tokens
+// It allows users to create notes that can be displayed in the margin or as sidenotes
+
+let parseDepth = 0; // Track the current parse depth to prevent excessive recursion
+const MAX_PARSE_DEPTH = 3; // Reasonable limit for nesting
+
 // Constants for existing notes
 const SN_TOKEN = '+';
 const SN_TOKEN_CODE = SN_TOKEN.charCodeAt(0);
@@ -297,25 +303,42 @@ function processTextWithMarkdown(state: MarkdownItState, content: string): void 
         return;
     }
     
-    // Use parseInline for proper fragment parsing
-    const tempEnv = {};
-    const tokens = state.md.parseInline(content, tempEnv);
-    
-    if (tokens && tokens[0] && tokens[0].children) {
-        // Transfer the resulting inline tokens to our token stream
-        tokens[0].children.forEach((token) => {
-            const newToken = state.push(token.type, token.tag, token.nesting);
-            
-            // Copy all token properties
-            Object.keys(token).forEach(key => {
-                if (key !== 'type' && key !== 'tag' && key !== 'nesting') {
-                    newToken[key] = token[key];
-                }
-            });
-        });
-    } else {
-        // Fallback if parsing fails
+    // Check recursion depth
+    if (parseDepth >= MAX_PARSE_DEPTH) {
+        // Exceeded maximum nesting level, treat as plain text
         const plainText = state.push('text', '', 0);
         plainText.content = content;
+        console.warn('Maximum nesting level exceeded in markdown-it-sidenote');
+        return;
+    }
+    
+    // Increment parse depth counter
+    parseDepth++;
+    try {
+    
+        // Use parseInline for proper fragment parsing
+        const tempEnv = {};
+        const tokens = state.md.parseInline(content, tempEnv);
+        
+        if (tokens && tokens[0] && tokens[0].children) {
+            // Transfer the resulting inline tokens to our token stream
+            tokens[0].children.forEach((token) => {
+                const newToken = state.push(token.type, token.tag, token.nesting);
+                
+                // Copy all token properties
+                Object.keys(token).forEach(key => {
+                    if (key !== 'type' && key !== 'tag' && key !== 'nesting') {
+                        newToken[key] = token[key];
+                    }
+                });
+            });
+        } else {
+            // Fallback if parsing fails
+            const plainText = state.push('text', '', 0);
+            plainText.content = content;
+        }
+    } finally {
+        // Always decrement counter to prevent leaks
+        parseDepth--;
     }
 }
