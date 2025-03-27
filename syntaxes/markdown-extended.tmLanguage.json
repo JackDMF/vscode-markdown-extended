@@ -28,7 +28,7 @@
   "repository": {
     "sidenote": {
       "name": "markup.sidenote.markdown",
-      "match": "\\+\\+(.*?)\\|(.*?)\\+\\+",
+      "match": "\\+\\+(\\S.*?)\\|(.*?\\S?)\\+\\+",
       "captures": {
         "0": {
           "name": "markup.sidenote.container.markdown"
@@ -53,7 +53,7 @@
     },
     "marginal_note": {
       "name": "markup.marginalnote.markdown",
-      "match": "!!(.*?)\\|(.*?)!!",
+      "match": "(?<=\\s)!!(\\S.*?)\\|(.*?\\S?)!!(?=\\s)",
       "captures": {
         "0": {
           "name": "markup.marginalnote.container.markdown"
@@ -78,7 +78,7 @@
     },
     "left_sidebar": {
       "name": "markup.leftsidebar.markdown",
-      "match": "\\$(.*?)\\$",
+      "match": "\\$(\\S.*?\\S)\\$",
       "captures": {
         "0": {
           "name": "markup.leftsidebar.container.markdown"
@@ -95,7 +95,7 @@
     },
     "right_sidebar": {
       "name": "markup.rightsidebar.markdown",
-      "match": "@(.*?)@",
+      "match": "@(\\S.*?\\S)@",
       "captures": {
         "0": {
           "name": "markup.rightsidebar.container.markdown"
@@ -112,7 +112,7 @@
     },
     "highlight": {
       "name": "markup.highlight.markdown",
-      "match": "==(.*?)==",
+      "match": "(?<=\\s)==(\\S.*?\\S)==(?=\\s)",
       "captures": {
         "0": {
           "name": "markup.highlight.container.markdown"
@@ -129,7 +129,7 @@
     },
     "kbd": {
       "name": "markup.kbd.markdown",
-      "match": "\\[\\[(.*?)\\]\\]",
+      "match": "\\[\\[(\\S.*?\\S)\\]\\]",
       "captures": {
         "0": {
           "name": "markup.kbd.container.markdown"
@@ -190,7 +190,7 @@
     },
     "subscript": {
       "name": "markup.subscript.markdown",
-      "match": "\\~([^\\~\\n]+?)\\~",
+      "match": "(?<=\\s)~([^~\\n].*?[^~\\n])~(?=\\s)",
       "captures": {
         "0": {
           "name": "markup.subscript.container.markdown"
@@ -202,7 +202,7 @@
     },
     "superscript": {
       "name": "markup.superscript.markdown",
-      "match": "\\^([^\\^\\n]+?)\\^",
+      "match": "(?<=\\s)\\^([^\\^\\n].*?[^\\^\\n])\\^(?=\\s)",
       "captures": {
         "0": {
           "name": "markup.superscript.container.markdown"
