@@ -224,18 +224,18 @@ function processNote(state: MarkdownItState, silent: boolean, start: number, con
         return false;
     }
 
-    // Find closing markers
-    let endPos = state.src.indexOf(config.closeMarker, start + 2);
-    if (endPos === -1) return false;
+    // Limit search to a reasonable range - replace the existing endPos finding
+    const SEARCH_LIMIT = 1000; // Reasonable limit to search within
+    const searchEndBound = Math.min(max, start + 2 + SEARCH_LIMIT);
     
-    // Check for reasonable content length (prevent massive notes)
-    const MAX_NOTE_LENGTH = 10000;
-    if (endPos - start > MAX_NOTE_LENGTH) {
-        if (!silent) {
-            console.warn('Note content too long (exceeds maximum length)');
-        }
-        return false;
-    }
+    // Search within the bounded region instead of the entire document
+    const searchRegion = state.src.slice(start + 2, searchEndBound);
+    const relativeEndPos = searchRegion.indexOf(config.closeMarker);
+    
+    if (relativeEndPos === -1) return false;
+    
+    // Convert relative position to absolute position
+    const endPos = start + 2 + relativeEndPos;
 
     // Extract content
     const content = state.src.slice(start + 2, endPos);
