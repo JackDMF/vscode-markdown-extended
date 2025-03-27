@@ -272,41 +272,48 @@ function processNote(state: MarkdownItState, silent: boolean, start: number, con
 function createNoteTokens(state: MarkdownItState, text: string, note: string, config: NoteConfig): void {
     const type = config.type;
     
-    // Opening token
-    const tokenOpen = state.push(`${type}_open`, 'span', 1);
-    tokenOpen.markup = config.openMarker;
-    
-    // Reference section with markdown support
-    const tokenRefOpen = state.push(`${type}_ref_open`, '', 1);
-    
     try {
-        // Process reference text with markdown support
-        processTextWithMarkdown(state, text);
-    } catch (e) {
-        console.error(`Error processing ${type} reference:`, e);
-        // Fallback to plain text
-        const fallbackText = state.push('text', '', 0);
-        fallbackText.content = text;
-    }
-    
-    const tokenRefClose = state.push(`${type}_ref_close`, '', -1);
-    
-    // Note content opening token
-    const tokenNoteOpen = state.push(`${type}_content_open`, 'span', 1);
+        // Opening token
+        const tokenOpen = state.push(`${type}_open`, 'span', 1);
+        tokenOpen.markup = config.openMarker;
+        
+        // Reference section with markdown support
+        const tokenRefOpen = state.push(`${type}_ref_open`, '', 1);
+        
+        try {
+            // Process reference text with markdown support
+            processTextWithMarkdown(state, text);
+        } catch (e) {
+            console.error(`Error processing ${type} reference:`, e);
+            // Fallback to plain text
+            const fallbackText = state.push('text', '', 0);
+            fallbackText.content = text;
+        }
+        
+        const tokenRefClose = state.push(`${type}_ref_close`, '', -1);
+        
+        // Note content opening token
+        const tokenNoteOpen = state.push(`${type}_content_open`, 'span', 1);
 
-    try {
-        // Process note content with markdown support
-        processTextWithMarkdown(state, note);
+        try {
+            // Process note content with markdown support
+            processTextWithMarkdown(state, note);
+        } catch (e) {
+            console.error(`Error processing ${type} note:`, e);
+            // Fallback to plain text
+            const fallbackText = state.push('text', '', 0);
+            fallbackText.content = note;
+        }
+        
+        // Closing tokens
+        state.push(`${type}_content_close`, 'span', -1);
+        state.push(`${type}_close`, 'span', -1);
     } catch (e) {
-        console.error(`Error processing ${type} note:`, e);
-        // Fallback to plain text
-        const fallbackText = state.push('text', '', 0);
-        fallbackText.content = note;
+        console.error(`Critical error in ${type} token creation:`, e);
+        // Emergency recovery - add a simple text token as fallback
+        const emergencyText = state.push('text', '', 0);
+        emergencyText.content = `${text}|${note}`;
     }
-    
-    // Closing tokens
-    state.push(`${type}_content_close`, 'span', -1);
-    state.push(`${type}_close`, 'span', -1);
 }
 
 /**
