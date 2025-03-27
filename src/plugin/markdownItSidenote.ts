@@ -227,6 +227,15 @@ function processNote(state: MarkdownItState, silent: boolean, start: number, con
     // Find closing markers
     let endPos = state.src.indexOf(config.closeMarker, start + 2);
     if (endPos === -1) return false;
+    
+    // Check for reasonable content length (prevent massive notes)
+    const MAX_NOTE_LENGTH = 10000;
+    if (endPos - start > MAX_NOTE_LENGTH) {
+        if (!silent) {
+            console.warn('Note content too long (exceeds maximum length)');
+        }
+        return false;
+    }
 
     // Extract content
     const content = state.src.slice(start + 2, endPos);
@@ -235,6 +244,14 @@ function processNote(state: MarkdownItState, silent: boolean, start: number, con
 
     const text = content.slice(0, pipePos);
     const note = content.slice(pipePos + 1);
+    
+    // Check for empty reference text
+    if (text.trim().length === 0) {
+        if (!silent) {
+            console.warn('Empty reference text in note');
+        }
+        return false;
+    }
 
     // Skip in silent mode
     if (silent) {
