@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { install, Browser, BrowserPlatform } from '@puppeteer/browsers';
+import { install, Browser, BrowserPlatform, computeExecutablePath } from '@puppeteer/browsers';
 import { config } from '../common/config';
 
 /**
@@ -74,7 +74,7 @@ export class BrowserManager {
             return customExecutable;
         }
         
-        // Check if browser is already installed
+        // Check if browser is already installed (using cached path)
         if (this._browserPath && !options?.force && fs.existsSync(this._browserPath)) {
             return this._browserPath;
         }
@@ -84,8 +84,20 @@ export class BrowserManager {
             const buildId = options?.buildId || this.BROWSER_BUILD_ID;
             const platform = this.detectPlatform();
             
+            // Ensure cache directory exists
+            if (!fs.existsSync(cacheDir)) {
+                await fs.promises.mkdir(cacheDir, { recursive: true });
+            }
+            
+            // Use @puppeteer/browsers' computeExecutablePath to get the correct path
+            const expectedPath = computeExecutablePath({
+                cacheDir,
+                browser: Browser.CHROME,
+                buildId,
+                platform
+            });
+            
             // Check if browser exists at expected path
-            const expectedPath = this.getExpectedBrowserPath(cacheDir, buildId, platform);
             if (!options?.force && fs.existsSync(expectedPath)) {
                 this._browserPath = expectedPath;
                 return expectedPath;
@@ -204,32 +216,6 @@ export class BrowserManager {
     }
     
     /**
-     * Get the expected path for the browser executable
-     * 
-     * @param cacheDir Cache directory
-     * @param buildId Browser build ID
-     * @param platform Browser platform
-     * @returns Expected executable path
-     */
-    private getExpectedBrowserPath(cacheDir: string, buildId: string, platform: BrowserPlatform): string {
-        const browserDir = path.join(cacheDir, Browser.CHROME, `${platform}-${buildId}`);
-        
-        // Platform-specific executable paths
-        switch (platform) {
-            case BrowserPlatform.WIN32:
-            case BrowserPlatform.WIN64:
-                return path.join(browserDir, 'chrome.exe');
-            case BrowserPlatform.MAC:
-            case BrowserPlatform.MAC_ARM:
-                return path.join(browserDir, 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing');
-            case BrowserPlatform.LINUX:
-                return path.join(browserDir, 'chrome');
-            default:
-                throw new Error(`Unknown platform: ${platform}`);
-        }
-    }
-    
-    /**
      * Get the currently installed browser path (if any)
      * 
      * @returns Browser executable path or undefined if not installed
@@ -242,6 +228,25 @@ export class BrowserManager {
         
         if (this._browserPath && fs.existsSync(this._browserPath)) {
             return this._browserPath;
+        }
+        
+        // Try to compute path from cache
+        try {
+            const cacheDir = this.getBrowserCacheDir();
+            const platform = this.detectPlatform();
+            const executablePath = computeExecutablePath({
+                cacheDir,
+                browser: Browser.CHROME,
+                buildId: this.BROWSER_BUILD_ID,
+                platform
+            });
+            
+            if (fs.existsSync(executablePath)) {
+                this._browserPath = executablePath;
+                return executablePath;
+            }
+        } catch (error) {
+            // Ignore errors, just return undefined
         }
         
         return undefined;
