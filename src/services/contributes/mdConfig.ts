@@ -13,7 +13,10 @@ class MDConfig extends ConfigReader {
         super('markdown');
     }
 
-    onChange() { }
+    onChange(e?: vscode.ConfigurationChangeEvent): void {
+        // Configuration change handling can be added here if needed
+    }
+    
     styles(uri: vscode.Uri): MarkdownStyles {
         const ISURL = /^\s*https?:\/\//i;
         let styles: MarkdownStyles = {

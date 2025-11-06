@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { outputPanel } from '../../extension';
-import { config } from './config';
 import { ExportRport } from '../exporter/interfaces';
+import { ExtensionContext } from './extensionContext';
+import { config } from './config';
 
 export function calculateExportPath(uri: vscode.Uri, format: string): string {
     let outDirName = config.exportOutDirName;
@@ -72,23 +72,35 @@ export function parseError(error: any): string {
     }
 }
 
-export function showMessagePanel(message: any) {
-    outputPanel.clear();
-    outputPanel.appendLine(parseError(message));
-    outputPanel.show();
-}
-
 export function mergeSettings(...args: any[]) {
     return args.reduce((p, c) => {
         return Object.assign(p, c);
     }, {});
 }
 
+/**
+ * Show export report with file list
+ */
 export async function showExportReport(report: ExportRport) {
     let msg = `${report.files.length} file(s) exported in ${report.duration / 1000} seconds`;
     let viewReport = "View Report";
     let btn = await vscode.window.showInformationMessage(msg, viewReport);
     if (btn !== viewReport) return;
-    let rpt = `${msg}:\n\n` + report.files.join('\n');
-    showMessagePanel(rpt);
+    
+    // Show detailed report in output panel
+    const outputPanel = ExtensionContext.current.outputPanel;
+    outputPanel.clear();
+    outputPanel.appendLine(`=== Export Report ===`);
+    outputPanel.appendLine(`Time: ${new Date().toLocaleTimeString()}`);
+    outputPanel.appendLine(`Duration: ${report.duration / 1000} seconds`);
+    outputPanel.appendLine(`Files exported: ${report.files.length}`);
+    outputPanel.appendLine('');
+    outputPanel.appendLine('Files:');
+    report.files.forEach((file, index) => {
+        outputPanel.appendLine(`  ${index + 1}. ${file}`);
+    });
+    outputPanel.appendLine('');
+    outputPanel.appendLine(`=== End Report ===`);
+    outputPanel.show();
 }
+

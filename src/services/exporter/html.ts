@@ -5,6 +5,7 @@ import * as path from 'path';
 import { renderPage } from './shared';
 import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
 import { setTimeout } from 'timers';
+import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
 
 /**
  * HTML exporter for markdown documents.
@@ -52,14 +53,32 @@ class HtmlExporter implements MarkdownExporter {
                     () => {
                         if (progress) progress.report({
                             message: `${path.basename(c.fileName)} (${i + 1}/${count})`,
-                            increment: ~~(1 / count
-                                * 100)
+                            increment: ~~(1 / count * 100)
                         });
                     }
                 )
                 .then(
                     () => this.exportFile(c)
-                );
+                )
+                .catch(async (error) => {
+                    // Use centralized error handler
+                    await ErrorHandler.handle(error, {
+                        operation: 'Export to HTML',
+                        filePath: c.uri.fsPath,
+                        details: {
+                            outputPath: c.fileName,
+                            currentItem: i + 1,
+                            totalItems: count
+                        },
+                        recoveryOptions: [
+                            ErrorHandler.retryOption(async () => {
+                                await this.exportFile(c);
+                            }),
+                            ErrorHandler.openFileOption(c.uri.fsPath)
+                        ]
+                    }, ErrorSeverity.Error);
+                    throw error;
+                });
         }, Promise.resolve(null));
     }
     private async exportFile(item: ExportItem) {

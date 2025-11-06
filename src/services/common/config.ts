@@ -45,7 +45,10 @@ class Config extends ConfigReader {
         }
     }
 
-    onChange() { }
+    onChange(e?: vscode.ConfigurationChangeEvent): void {
+        // Configuration change handling can be added here if needed
+    }
+    
     get disabledPlugins(): string[] {
         let conf = this.read<string>('disabledPlugins').trim();
         if (!conf) return [];

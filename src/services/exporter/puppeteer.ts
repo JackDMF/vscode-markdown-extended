@@ -8,6 +8,7 @@ import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfac
 import { config } from '../common/config';
 import { BrowserManager } from '../browser/browserManager';
 import { ExtensionContext } from '../common/extensionContext';
+import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
 
 /**
  * Puppeteer-based exporter for PDF, PNG, and JPG formats.
@@ -85,7 +86,30 @@ class PuppeteerExporter implements MarkdownExporter {
                     return Promise.reject(err);
                 });
         } catch (error) {
-            return this.handleExportError(error, items);
+            // Use centralized error handler with recovery options
+            await ErrorHandler.handle(error, {
+                operation: 'Export to ' + items[0]?.format || 'file',
+                filePath: items[0]?.uri.fsPath,
+                details: {
+                    formatType: items[0]?.format,
+                    itemCount: items.length,
+                    outputPath: items[0]?.fileName
+                },
+                recoveryOptions: [
+                    ErrorHandler.retryOption(async () => {
+                        await this.Export(items, progress);
+                    }),
+                    ErrorHandler.openSettingsOption('markdownExtended.puppeteerExecutable'),
+                    {
+                        label: 'Install Browser',
+                        action: async () => {
+                            await vscode.commands.executeCommand('markdownExtended.installBrowser');
+                        }
+                    }
+                ]
+            }, ErrorSeverity.Error);
+            
+            throw error;
         }
     }
     private async exportFile(item: ExportItem, page: puppeteer.Page) {
@@ -127,62 +151,6 @@ class PuppeteerExporter implements MarkdownExporter {
             exportFormat.JPG,
             exportFormat.PNG
         ].indexOf(format) > -1;
-    }
-
-    /**
-     * Handle export errors with user-friendly messages
-     */
-    private async handleExportError(error: any, items: ExportItem[]): Promise<never> {
-        const errorMessage = error?.message || String(error);
-        let userMessage = 'Export failed: ';
-        let showDetails = false;
-
-        if (errorMessage.includes('Could not find') || errorMessage.includes('Browser') || errorMessage.includes('Chromium')) {
-            userMessage += 'Browser not found. ';
-            const action = await vscode.window.showErrorMessage(
-                userMessage + 'Would you like to configure a custom browser path?',
-                'Configure Browser',
-                'View Details',
-                'Retry'
-            );
-
-            if (action === 'Configure Browser') {
-                await vscode.commands.executeCommand(
-                    'workbench.action.openSettings',
-                    'markdownExtended.puppeteerExecutable'
-                );
-            } else if (action === 'View Details') {
-                showDetails = true;
-            }
-        } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
-            userMessage += 'Operation timed out. The page may be taking too long to load.';
-            await vscode.window.showErrorMessage(userMessage, 'View Details');
-            showDetails = true;
-        } else if (errorMessage.includes('EACCES') || errorMessage.includes('permission')) {
-            userMessage += 'Permission denied. Check file permissions for the output directory.';
-            await vscode.window.showErrorMessage(userMessage, 'View Details');
-            showDetails = true;
-        } else {
-            userMessage += 'An unexpected error occurred.';
-            await vscode.window.showErrorMessage(userMessage, 'View Details');
-            showDetails = true;
-        }
-
-        if (showDetails) {
-            const detailsMessage = [
-                'Export Error Details:',
-                `Files to export: ${items.map(i => path.basename(i.fileName)).join(', ')}`,
-                `Error: ${errorMessage}`,
-                error.stack ? `Stack: ${error.stack}` : ''
-            ].filter(Boolean).join('\n');
-            
-            vscode.window.showErrorMessage('Check Output panel for error details.');
-            const output = vscode.window.createOutputChannel('MDExtended Export Error');
-            output.appendLine(detailsMessage);
-            output.show();
-        }
-
-        return Promise.reject(error);
     }
 }
 

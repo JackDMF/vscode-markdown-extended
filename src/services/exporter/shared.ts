@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { markdown } from '../../extension';
+import { ExtensionContext } from '../common/extensionContext';
 import { MarkdownDocument } from '../common/markdownDocument';
 import { Contributes } from '../contributes/contributes';
 import { MarkdownItEnv } from '../common/interfaces';
@@ -60,6 +60,7 @@ export function renderHTML(doc: MarkdownDocument): string {
             embedImage: true,
         },
     }
+    const markdown = ExtensionContext.current.markdown;
     let content = markdown.render(doc.content, env);
     return content.trim();
 }
@@ -130,8 +131,12 @@ function getSciprts(): string {
     return scripts.join('\n');
 }
 
+/**
+ * Ensure markdown engine is initialized
+ */
 export async function ensureMarkdownEngine() {
-    if (!markdown) {
+    if (!ExtensionContext.current.isMarkdownInitialized) {
         await vscode.commands.executeCommand('markdown.api.render', 'init markdown engine');
     }
 }
+
