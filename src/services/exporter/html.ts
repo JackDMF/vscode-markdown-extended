@@ -6,7 +6,44 @@ import { renderPage } from './shared';
 import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
 import { setTimeout } from 'timers';
 
+/**
+ * HTML exporter for markdown documents.
+ * Implements singleton pattern for consistent exporter access.
+ */
 class HtmlExporter implements MarkdownExporter {
+    private static _instance?: HtmlExporter;
+    
+    /**
+     * Private constructor to enforce singleton pattern
+     */
+    private constructor() {}
+    
+    /**
+     * Get the HtmlExporter singleton instance
+     */
+    static get instance(): HtmlExporter {
+        if (!HtmlExporter._instance) {
+            HtmlExporter._instance = new HtmlExporter();
+        }
+        return HtmlExporter._instance;
+    }
+    
+    /**
+     * Set a custom instance (for testing purposes only)
+     * @internal
+     */
+    static _setInstance(instance: HtmlExporter): void {
+        HtmlExporter._instance = instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing purposes only)
+     * @internal
+     */
+    static _reset(): void {
+        HtmlExporter._instance = undefined;
+    }
+
     async Export(items: ExportItem[], progress: Progress) {
         let count = items.length;
         return items.reduce((p, c, i) => {
@@ -43,4 +80,9 @@ class HtmlExporter implements MarkdownExporter {
         return exportFormat.HTML == format;
     }
 }
-export const htmlExporter = new HtmlExporter();
+
+/**
+ * Singleton instance of HtmlExporter for backward compatibility.
+ * @deprecated Use HtmlExporter.instance instead
+ */
+export const htmlExporter = HtmlExporter.instance;

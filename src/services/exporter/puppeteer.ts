@@ -9,7 +9,44 @@ import { config } from '../common/config';
 import { BrowserManager } from '../browser/browserManager';
 import { ExtensionContext } from '../common/extensionContext';
 
+/**
+ * Puppeteer-based exporter for PDF, PNG, and JPG formats.
+ * Implements singleton pattern for consistent exporter access.
+ */
 class PuppeteerExporter implements MarkdownExporter {
+    private static _instance?: PuppeteerExporter;
+    
+    /**
+     * Private constructor to enforce singleton pattern
+     */
+    private constructor() {}
+    
+    /**
+     * Get the PuppeteerExporter singleton instance
+     */
+    static get instance(): PuppeteerExporter {
+        if (!PuppeteerExporter._instance) {
+            PuppeteerExporter._instance = new PuppeteerExporter();
+        }
+        return PuppeteerExporter._instance;
+    }
+    
+    /**
+     * Set a custom instance (for testing purposes only)
+     * @internal
+     */
+    static _setInstance(instance: PuppeteerExporter): void {
+        PuppeteerExporter._instance = instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing purposes only)
+     * @internal
+     */
+    static _reset(): void {
+        PuppeteerExporter._instance = undefined;
+    }
+
     async Export(items: ExportItem[], progress: Progress) {
         let count = items.length;
         
@@ -148,7 +185,12 @@ class PuppeteerExporter implements MarkdownExporter {
         return Promise.reject(error);
     }
 }
-export const puppeteerExporter = new PuppeteerExporter();
+
+/**
+ * Singleton instance of PuppeteerExporter for backward compatibility.
+ * @deprecated Use PuppeteerExporter.instance instead
+ */
+export const puppeteerExporter = PuppeteerExporter.instance;
 
 function getInjectStyle(formate: exportFormat): string {
     switch (formate) {

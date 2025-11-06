@@ -2,9 +2,47 @@ import { ConfigReader } from "./configReader";
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 
+/**
+ * Configuration reader for markdown-extended settings.
+ * Implements singleton pattern for consistent configuration access.
+ */
 class Config extends ConfigReader {
-    constructor() {
+    private static _instance?: Config;
+    
+    /**
+     * Private constructor to enforce singleton pattern
+     */
+    private constructor() {
         super('markdownExtended');
+    }
+    
+    /**
+     * Get the Config singleton instance
+     */
+    static get instance(): Config {
+        if (!Config._instance) {
+            Config._instance = new Config();
+        }
+        return Config._instance;
+    }
+    
+    /**
+     * Set a custom instance (for testing purposes only)
+     * @internal
+     */
+    static _setInstance(instance: Config): void {
+        Config._instance = instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing purposes only)
+     * @internal
+     */
+    static _reset(): void {
+        if (Config._instance) {
+            Config._instance.dispose();
+            Config._instance = undefined;
+        }
     }
 
     onChange() { }
@@ -108,4 +146,8 @@ class Config extends ConfigReader {
     }
 }
 
-export const config = new Config();
+/**
+ * Singleton instance of Config for backward compatibility.
+ * @deprecated Use Config.instance instead
+ */
+export const config = Config.instance;
