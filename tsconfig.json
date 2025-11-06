@@ -12,10 +12,25 @@
         "typeRoots": [
             "node_modules/@types",
             "src/@types"
-        ]
+        ],
+        
+        // Gradual strict mode - enable more as code improves
+        "strict": false,
+        "noImplicitAny": false,
+        "strictNullChecks": false,
+        
+        // Practical checks we can enforce now
+        "noFallthroughCasesInSwitch": true,
+        "forceConsistentCasingInFileNames": true,
+        
+        // Module Resolution
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "resolveJsonModule": true
     },
     "exclude": [
         "node_modules",
-        ".vscode-test"
+        ".vscode-test",
+        "out"
     ]
 }

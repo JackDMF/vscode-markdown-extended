@@ -3,8 +3,33 @@ import { MarkdownIt } from 'markdown-it';
 // This plugin adds support for sidenotes and marginal notes in Markdown using custom tokens
 // It allows users to create notes that can be displayed in the margin or as sidenotes
 
-let parseDepth = 0; // Track the current parse depth to prevent excessive recursion
+// Use WeakMap for thread-safe parse depth tracking per state
+const parseDepthMap = new WeakMap<any, number>();
 const MAX_PARSE_DEPTH = 3; // Reasonable limit for nesting
+
+/**
+ * Get current parse depth for a state
+ */
+function getParseDepth(state: any): number {
+    return parseDepthMap.get(state) || 0;
+}
+
+/**
+ * Increment parse depth for a state
+ */
+function incrementParseDepth(state: any): void {
+    parseDepthMap.set(state, getParseDepth(state) + 1);
+}
+
+/**
+ * Decrement parse depth for a state
+ */
+function decrementParseDepth(state: any): void {
+    const current = getParseDepth(state);
+    if (current > 0) {
+        parseDepthMap.set(state, current - 1);
+    }
+}
 
 // Constants for existing notes
 const SN_TOKEN = '+';
@@ -327,8 +352,8 @@ function processTextWithMarkdown(state: MarkdownItState, content: string): void 
         return;
     }
     
-    // Check recursion depth
-    if (parseDepth >= MAX_PARSE_DEPTH) {
+    // Check recursion depth using WeakMap-based tracking
+    if (getParseDepth(state) >= MAX_PARSE_DEPTH) {
         // Exceeded maximum nesting level, treat as plain text
         const plainText = state.push('text', '', 0);
         plainText.content = content;
@@ -337,7 +362,7 @@ function processTextWithMarkdown(state: MarkdownItState, content: string): void 
     }
     
     // Increment parse depth counter
-    parseDepth++;
+    incrementParseDepth(state);
     try {
     
         // Use parseInline for proper fragment parsing
@@ -363,6 +388,6 @@ function processTextWithMarkdown(state: MarkdownItState, content: string): void 
         }
     } finally {
         // Always decrement counter to prevent leaks
-        parseDepth--;
+        decrementParseDepth(state);
     }
 }

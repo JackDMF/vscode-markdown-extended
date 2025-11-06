@@ -2,9 +2,20 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { markdown } from '../../extension';
 import { MarkdownDocument } from '../common/markdownDocument';
-import { template } from './template';
 import { Contributes } from '../contributes/contributes';
 import { MarkdownItEnv } from '../common/interfaces';
+
+/**
+ * Escape HTML special characters to prevent XSS
+ */
+function escapeHtml(text: string): string {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 
 export function renderPage(
     document: MarkdownDocument | vscode.TextDocument,
@@ -16,13 +27,28 @@ export function renderPage(
     else if (document.getText)
         doc = new MarkdownDocument(document);
 
-    let title = doc.meta.raw.title || path.basename(doc.document.uri.fsPath);
+    let title = escapeHtml(doc.meta.raw.title || path.basename(doc.document.uri.fsPath));
     let styles = getStyles(doc.document.uri, injectStyle);
     let scripts = getSciprts();
     let html = renderHTML(doc);
     //should put both classes, because we cannot determine if a user style URL is a theme or not
     let mdClass = "markdown-body vscode-body vscode-light";
-    return eval(template);
+    
+    // Use template literal directly instead of eval()
+    return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${title}</title>
+${styles}
+</head>
+<body class="${mdClass}">
+<div class="content">
+    ${html}
+</div>
+${scripts}
+</body>
+</html>`;
 }
 
 export function renderHTML(doc: MarkdownDocument): string {

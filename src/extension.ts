@@ -3,6 +3,7 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { CommandExportCurrent } from './commands/exportCurrent';
+import { CommandInstallBrowser } from './commands/installBrowser';
 import * as markdowIt from './@types/markdown-it';
 import { plugins } from './plugin/plugins';
 import { CommandCopy, CommandCopyWithStyles } from './commands/copy';
@@ -33,16 +34,25 @@ export function activate(ctx: vscode.ExtensionContext) {
         new CommandCopyWithStyles(),
         new CommandPasteTable(),
         new CommandFormateTable(),
+        new CommandInstallBrowser(),
     ].filter(Boolean);
     
     ctx.subscriptions.push(...subscriptions);
     return {
         extendMarkdownIt(md: markdowIt.MarkdownIt) {
-            plugins.forEach(({plugin, args}) => {
-                if (typeof plugin === 'function') {
-                    md.use(plugin, ...args);
-                }
-            });
+            // Filter out null/undefined plugins and add error handling
+            plugins
+                .filter(p => p && typeof p.plugin === 'function')
+                .forEach(({plugin, args}) => {
+                    try {
+                        md.use(plugin, ...args);
+                    } catch (error) {
+                        console.error('Failed to load markdown plugin:', error);
+                        vscode.window.showWarningMessage(
+                            `Markdown plugin failed to load: ${error.message}`
+                        );
+                    }
+                });
             markdown = md;
             return md;
         }

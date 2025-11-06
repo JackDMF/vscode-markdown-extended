@@ -65,6 +65,7 @@ export function getDataUriSchema(fileName: string): string {
             break;
         case ".ttf":
             mimeType = "font/ttf"
+            break;
         case ".sfnt":
             mimeType = "font/sfnt"
             break;
