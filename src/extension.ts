@@ -14,16 +14,29 @@ import { CommandFormateTable } from './commands/formateTable';
 import { commandToggles } from './commands/toggleFormats';
 import { commandTableEdits } from './commands/tableEdits';
 import { CommandExportWorkSpace } from './commands/exportWorkspace';
+import { ExtensionContext } from './services/common/extensionContext';
 
+// Deprecated: Use ExtensionContext.current.markdown instead
+// @deprecated
 export var markdown: markdowIt.MarkdownIt;
+// Deprecated: Use ExtensionContext.current.vsContext instead
+// @deprecated
 export var context: vscode.ExtensionContext;
-export var outputPanel = vscode.window.createOutputChannel("MDExtended");
+// Deprecated: Use ExtensionContext.current.outputPanel instead
+// @deprecated
+export var outputPanel: vscode.OutputChannel;
+
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
 export function activate(ctx: vscode.ExtensionContext) {
+    // Initialize the new centralized extension context
+    const extensionContext = ExtensionContext.initialize(ctx);
+    
+    // Maintain backwards compatibility with old global exports
     context = ctx;
+    outputPanel = extensionContext.outputPanel;
     const subscriptions = [
-        outputPanel,
+        extensionContext.outputPanel,
         config,
         mdConfig,
         commandToggles,
@@ -53,7 +66,11 @@ export function activate(ctx: vscode.ExtensionContext) {
                         );
                     }
                 });
+            
+            // Update both new and legacy references
+            extensionContext.setMarkdown(md);
             markdown = md;
+            
             return md;
         }
     };

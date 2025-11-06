@@ -1,22 +1,22 @@
 import * as puppeteer from 'puppeteer-core';
-import { install, Browser, BrowserPlatform, resolveBuildId, computeExecutablePath } from '@puppeteer/browsers';
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
 import { MarkdownDocument } from '../common/markdownDocument';
 import { mkdirsSync, mergeSettings } from '../common/tools';
 import { renderPage } from './shared';
 import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
 import { config } from '../common/config';
-import { context } from '../../extension';
+import { BrowserManager } from '../browser/browserManager';
+import { ExtensionContext } from '../common/extensionContext';
 
 class PuppeteerExporter implements MarkdownExporter {
     async Export(items: ExportItem[], progress: Progress) {
         let count = items.length;
         
         try {
-            // Ensure browser is available
-            const executablePath = await this.ensureBrowser(progress);
+            // Ensure browser is available using centralized BrowserManager
+            const browserManager = BrowserManager.getInstance(ExtensionContext.current.vsContext);
+            const executablePath = await browserManager.ensureBrowser(progress);
             
             progress.report({ message: "Initializing browser..." });
             const browser = await puppeteer.launch({
@@ -90,137 +90,6 @@ class PuppeteerExporter implements MarkdownExporter {
             exportFormat.JPG,
             exportFormat.PNG
         ].indexOf(format) > -1;
-    }
-
-    /**
-     * Ensure browser is available, downloading if necessary
-     * @param progress Progress reporter
-     * @returns Path to browser executable, or empty string to use bundled browser
-     */
-    private async ensureBrowser(progress: Progress): Promise<string> {
-        // If user configured a custom executable, validate and use it
-        const customExe = config.puppeteerExecutable;
-        if (customExe) {
-            if (fs.existsSync(customExe)) {
-                return customExe;
-            } else {
-                vscode.window.showWarningMessage(
-                    `Configured Puppeteer executable not found: ${customExe}. Will download Chromium instead.`
-                );
-            }
-        }
-
-        // Use extension's global storage for browser cache
-        const cacheDir = path.join(context.globalStorageUri.fsPath, 'browsers');
-        
-        try {
-            // Ensure cache directory exists
-            if (!fs.existsSync(cacheDir)) {
-                fs.mkdirSync(cacheDir, { recursive: true });
-            }
-
-            // Detect platform
-            const platform = this.detectBrowserPlatform();
-            
-            // Get the latest stable Chrome build ID
-            const buildId = await resolveBuildId(Browser.CHROME, platform, 'stable');
-            
-            // Compute where the browser would be installed
-            const executablePath = computeExecutablePath({
-                browser: Browser.CHROME,
-                buildId,
-                cacheDir
-            });
-
-            // Check if browser is already installed
-            if (fs.existsSync(executablePath)) {
-                return executablePath;
-            }
-
-            // Browser not found, ask user to download
-            const storageKey = 'puppeteer.chromiumDownloadConfirmed';
-            const confirmed = context.globalState.get<boolean>(storageKey);
-            
-            if (!confirmed) {
-                const result = await vscode.window.showInformationMessage(
-                    "Chromium browser (~150MB) needs to be downloaded for PDF/PNG/JPG export. Download now?",
-                    "Yes", "No"
-                );
-
-                if (result !== "Yes") {
-                    throw new Error("Download cancelled. Configure 'markdownExtended.puppeteerExecutable' to use a custom browser.");
-                }
-                
-                // Remember user's choice
-                await context.globalState.update(storageKey, true);
-            }
-
-            // Download the browser
-            progress.report({ message: "Downloading Chromium browser..." });
-            
-            await this.downloadBrowser(progress, cacheDir, buildId, platform);
-            
-            // Verify installation
-            if (!fs.existsSync(executablePath)) {
-                throw new Error(`Browser download completed but executable not found at: ${executablePath}`);
-            }
-            
-            return executablePath;
-
-        } catch (error) {
-            throw new Error(`Failed to ensure browser: ${error.message}\nCache directory: ${cacheDir}`);
-        }
-    }
-
-    /**
-     * Download browser with progress reporting
-     */
-    private async downloadBrowser(progress: Progress, cacheDir: string, buildId: string, platform: BrowserPlatform): Promise<void> {
-        progress.report({ message: "Downloading Chromium..." });
-        
-        let lastProgress = 0;
-        
-        try {
-            await install({
-                browser: Browser.CHROME,
-                buildId,
-                cacheDir,
-                platform,
-                downloadProgressCallback: (downloadedBytes: number, totalBytes: number) => {
-                    const percent = Math.floor((downloadedBytes / totalBytes) * 100);
-                    if (percent !== lastProgress && percent % 5 === 0) { // Update every 5%
-                        progress.report({
-                            message: `Downloading Chromium (${percent}%)`,
-                            increment: percent - lastProgress
-                        });
-                        lastProgress = percent;
-                    }
-                }
-            });
-            
-            progress.report({ message: "Download complete!" });
-        } catch (error) {
-            throw new Error(`Failed to download browser: ${error.message}`);
-        }
-    }
-
-    /**
-     * Detect the current browser platform
-     */
-    private detectBrowserPlatform(): BrowserPlatform {
-        const platform = process.platform;
-        const arch = process.arch;
-
-        switch (platform) {
-            case 'win32':
-                return arch === 'x64' ? BrowserPlatform.WIN64 : BrowserPlatform.WIN32;
-            case 'darwin':
-                return arch === 'arm64' ? BrowserPlatform.MAC_ARM : BrowserPlatform.MAC;
-            case 'linux':
-                return BrowserPlatform.LINUX;
-            default:
-                throw new Error(`Unsupported platform: ${platform}`);
-        }
     }
 
     /**
