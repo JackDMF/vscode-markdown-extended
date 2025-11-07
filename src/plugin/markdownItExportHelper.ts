@@ -4,6 +4,27 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { fileToDataUri } from '../services/common/dataUri';
 
+/**
+ * Markdown-it plugin to prepare images for HTML export.
+ * 
+ * This plugin:
+ * - Removes VS Code file:// URIs from image paths
+ * - Embeds images as base64 data URIs when embedImage is enabled
+ * - Resolves relative image paths to absolute paths
+ * 
+ * @param md - The markdown-it instance
+ * @example
+ * ```typescript
+ * // In export code:
+ * const env: HtmlExporterEnv = {
+ *   uri: documentUri,
+ *   embedImage: true,
+ *   vsUri: 'file:///',
+ *   workspaceFolder: workspace.workspaceFolders[0]
+ * };
+ * md.render(content, { htmlExporter: env });
+ * ```
+ */
 export function MarkdownItExportHelper(md: MarkdownIt) {
     md.core.ruler.push("exportHelper", exportHelperWorker);
 }
