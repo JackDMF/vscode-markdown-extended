@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import { mkdirsSync } from '../common/tools';
+import { promises as fsPromises } from 'fs';
+import { mkdirsSync, mkdirsAsync } from '../common/tools';
 import * as path from 'path';
 import { renderPage } from './shared';
 import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
@@ -82,18 +83,14 @@ export class HtmlExporter implements MarkdownExporter {
         }, Promise.resolve(null));
     }
     private async exportFile(item: ExportItem) {
-
-        let document = await vscode.workspace.openTextDocument(item.uri);
-        let html = renderPage(document);
-        mkdirsSync(path.dirname(item.fileName));
-        return new Promise((resolve, reject) => {
-            try {
-                fs.writeFileSync(item.fileName, html, "utf-8");
-                resolve("ok");
-            } catch (error) {
-                reject(error);
-            }
-        });
+        const document = await vscode.workspace.openTextDocument(item.uri);
+        const html = renderPage(document);
+        
+        // Use async directory creation
+        await mkdirsAsync(path.dirname(item.fileName));
+        
+        // Use async file write
+        await fsPromises.writeFile(item.fileName, html, "utf-8");
     }
     FormatAvailable(format: exportFormat) {
         return exportFormat.HTML == format;

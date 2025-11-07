@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import { promises as fsPromises } from 'fs';
 
 /**
  * cssFileToDataUri embeds files referred by url(), with data uri, while fileToDataUri not
@@ -94,4 +95,65 @@ export function getDataUriSchema(fileName: string): string {
             throw (`Unsupported mimeType for "${ext}" file.`);
     }
     return `data:${mimeType};base64,`
+}
+
+/**
+ * Async version: cssFileToDataUri embeds files referred by url(), with data uri
+ * @param cssFileName path of the css file
+ */
+export async function cssFileToDataUriAsync(cssFileName: string): Promise<string> {
+    const URL_REG = /url\(([^()'"]+?)\)|url\(['"](.+?)['"]\)/ig;
+    
+    try {
+        await fsPromises.access(cssFileName);
+    } catch {
+        return "";
+    }
+    
+    const css = (await fsPromises.readFile(cssFileName)).toString();
+    
+    // Process URLs - need to handle async file reads
+    const urlMatches: Array<{match: string, filePath: string}> = [];
+    let match;
+    while ((match = URL_REG.exec(css)) !== null) {
+        const filePath = match[1] || match[2];
+        if (filePath && filePath.substr(0, 5).toLocaleLowerCase() !== "data:") {
+            urlMatches.push({ match: match[0], filePath });
+        }
+    }
+    
+    // Process all URLs concurrently
+    let processedCss = css;
+    for (const { match: matchStr, filePath: urlPath } of urlMatches) {
+        let resolvedPath = urlPath;
+        if (!path.isAbsolute(resolvedPath)) {
+            resolvedPath = path.resolve(path.dirname(cssFileName), resolvedPath);
+        }
+        
+        try {
+            const dataUri = await fileToDataUriAsync(resolvedPath);
+            processedCss = processedCss.replace(matchStr, `url("${dataUri}")`);
+        } catch (error) {
+            console.log(error);
+            // Keep original if conversion fails
+        }
+    }
+    
+    return `data:text/css;base64,${Buffer.from(processedCss).toString("base64")}`;
+}
+
+/**
+ * Async version: fileToDataUri encodes a file as data uri
+ * @param fileName path of the file
+ */
+export async function fileToDataUriAsync(fileName: string): Promise<string | null> {
+    try {
+        await fsPromises.access(fileName);
+    } catch {
+        return null;
+    }
+    
+    const schema = getDataUriSchema(fileName);
+    const buf = await fsPromises.readFile(fileName);
+    return `${schema}${buf.toString("base64")}`;
 }

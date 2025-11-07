@@ -3,10 +3,19 @@ import * as toc from 'markdown-it-table-of-contents';
 import { slugify } from './shared';
 import { config } from '../services/common/config';
 
-export function MarkdownItTOC(md: MarkdownIt) {
+/**
+ * Markdown-it plugin for table of contents with anchor links.
+ * This plugin is compatible with markdown-it's plugin system - do NOT call md.use() inside it.
+ * 
+ * @param md - The markdown-it instance
+ */
+export function MarkdownItTOC(md: MarkdownIt): void {
     md.renderer.rules.tocAnchor = renderHtml;
     md.core.ruler.push("tocAnchor", tocAnchorWorker);
-    md.use(toc, { slugify: slugify, includeLevel: config.tocLevels });
+    
+    // Apply the toc plugin directly (not via md.use())
+    const tocPlugin = toc as any;
+    tocPlugin(md, { slugify: slugify, includeLevel: config.tocLevels });
 }
 
 function renderHtml(tokens: Token[], idx: number) {

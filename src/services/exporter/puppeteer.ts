@@ -2,7 +2,7 @@ import * as puppeteer from 'puppeteer-core';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { MarkdownDocument } from '../common/markdownDocument';
-import { mkdirsSync, mergeSettings } from '../common/tools';
+import { mkdirsSync, mkdirsAsync, mergeSettings } from '../common/tools';
 import { renderPage } from './shared';
 import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
 import { config } from '../common/config';
@@ -136,7 +136,7 @@ export class PuppeteerExporter implements MarkdownExporter {
         let inject = getInjectStyle(item.format);
         let html = renderPage(document, inject);
         let ptConf: any = {};
-        mkdirsSync(path.dirname(item.fileName));
+        await mkdirsAsync(path.dirname(item.fileName));
 
         await page.setContent(html, { waitUntil: 'networkidle0' });
         switch (item.format) {

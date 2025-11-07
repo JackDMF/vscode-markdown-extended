@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { promises as fsPromises } from 'fs';
 import { ExportRport } from '../exporter/interfaces';
 import { ExtensionContext } from './extensionContext';
 import { config } from './config';
@@ -46,6 +47,26 @@ export function mkdirs(dirname, callback) {
     });
 }
 
+/**
+ * Create directory recursively (async version using fs.promises)
+ * @param dirname Path to create
+ * @returns Promise that resolves when directory is created
+ */
+export async function mkdirsAsync(dirname: string): Promise<void> {
+    try {
+        await fsPromises.mkdir(dirname, { recursive: true });
+    } catch (error) {
+        // Ignore error if directory already exists
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+            throw error;
+        }
+    }
+}
+
+/**
+ * Create directory recursively (synchronous version)
+ * @deprecated Use mkdirsAsync for better performance and non-blocking operation
+ */
 export function mkdirsSync(dirname) {
     if (fs.existsSync(dirname)) {
         return true;
