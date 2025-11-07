@@ -78,4 +78,7 @@ export function activate(ctx: vscode.ExtensionContext) {
 
 // this method is called when your extension is deactivated
 export function deactivate() {
+    // Clean up the ExtensionContext singleton
+    // This ensures proper resource cleanup when the extension is deactivated
+    ExtensionContext._reset();
 }

@@ -50,6 +50,8 @@ class PuppeteerExporter implements MarkdownExporter {
 
     async Export(items: ExportItem[], progress: Progress) {
         let count = items.length;
+        let browser: puppeteer.Browser | undefined;
+        let page: puppeteer.Page | undefined;
         
         try {
             // Ensure browser is available using centralized BrowserManager
@@ -57,14 +59,15 @@ class PuppeteerExporter implements MarkdownExporter {
             const executablePath = await browserManager.ensureBrowser(progress);
             
             progress.report({ message: "Initializing browser..." });
-            const browser = await puppeteer.launch({
+            browser = await puppeteer.launch({
                 executablePath: executablePath || undefined,
                 headless: true, // Use headless mode
                 args: ['--no-sandbox', '--disable-setuid-sandbox'] // For compatibility
             });
-            const page = await browser.newPage();
+            page = await browser.newPage();
 
-            return items.reduce(
+            // Process all export items sequentially
+            await items.reduce(
                 (p, c, i) => {
                     return p
                         .then(
@@ -76,15 +79,11 @@ class PuppeteerExporter implements MarkdownExporter {
                             }
                         )
                         .then(
-                            () => this.exportFile(c, page)
+                            () => this.exportFile(c, page!)
                         );
                 },
                 Promise.resolve(null)
-            ).then(async () => await browser.close())
-                .catch(async err => {
-                    await browser.close();
-                    return Promise.reject(err);
-                });
+            );
         } catch (error) {
             // Use centralized error handler with recovery options
             await ErrorHandler.handle(error, {
@@ -110,6 +109,26 @@ class PuppeteerExporter implements MarkdownExporter {
             }, ErrorSeverity.Error);
             
             throw error;
+        } finally {
+            // Critical: Always clean up resources in reverse order of creation
+            // Close page first, then browser
+            try {
+                if (page) {
+                    await page.close();
+                }
+            } catch (closeError) {
+                // Log but don't throw - we still want to close the browser
+                console.error('Error closing page:', closeError);
+            }
+            
+            try {
+                if (browser) {
+                    await browser.close();
+                }
+            } catch (closeError) {
+                // Log but don't throw - cleanup errors shouldn't mask original error
+                console.error('Error closing browser:', closeError);
+            }
         }
     }
     private async exportFile(item: ExportItem, page: puppeteer.Page) {
