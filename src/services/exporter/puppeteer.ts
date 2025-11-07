@@ -14,7 +14,7 @@ import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
  * Puppeteer-based exporter for PDF, PNG, and JPG formats.
  * Implements singleton pattern for consistent exporter access.
  */
-class PuppeteerExporter implements MarkdownExporter {
+export class PuppeteerExporter implements MarkdownExporter {
     private static _instance?: PuppeteerExporter;
     
     /**

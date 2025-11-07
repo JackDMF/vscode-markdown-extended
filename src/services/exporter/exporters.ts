@@ -1,9 +1,9 @@
 import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { config } from '../common/config';
+import { Config } from '../common/config';
 import { ExporterQuickPickItem, exporterType, MarkdownExporter, exportFormat, FormatQuickPickItem } from './interfaces';
-import { htmlExporter } from './html';
-import { puppeteerExporter } from './puppeteer';
+import { HtmlExporter } from './html';
+import { PuppeteerExporter } from './puppeteer';
 
 export async function pickFormat(): Promise<exportFormat> {
     let items = [
@@ -50,18 +50,18 @@ export async function pickExporter(format: exportFormat): Promise<MarkdownExport
 function getAvailableExporters(format: exportFormat): ExporterQuickPickItem[] {
     let items: ExporterQuickPickItem[] = [];
 
-    if (htmlExporter.FormatAvailable(format)) items.push(
+    if (HtmlExporter.instance.FormatAvailable(format)) items.push(
         <ExporterQuickPickItem>{
             label: "HTML Exporter",
             description: "export to html.",
-            exporter: htmlExporter,
+            exporter: HtmlExporter.instance,
         }
     );
-    if (puppeteerExporter.FormatAvailable(format)) items.push(
+    if (PuppeteerExporter.instance.FormatAvailable(format)) items.push(
         <ExporterQuickPickItem>{
             label: "Puppeteer Exporter",
             description: "export to pdf/png/jpg.",
-            exporter: puppeteerExporter,
+            exporter: PuppeteerExporter.instance,
         }
     );
     return items;

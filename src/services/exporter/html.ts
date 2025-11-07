@@ -11,7 +11,7 @@ import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
  * HTML exporter for markdown documents.
  * Implements singleton pattern for consistent exporter access.
  */
-class HtmlExporter implements MarkdownExporter {
+export class HtmlExporter implements MarkdownExporter {
     private static _instance?: HtmlExporter;
     
     /**

@@ -6,7 +6,7 @@ import * as fs from 'fs';
  * Configuration reader for markdown-extended settings.
  * Implements singleton pattern for consistent configuration access.
  */
-class Config extends ConfigReader {
+export class Config extends ConfigReader {
     private static _instance?: Config;
     
     /**
