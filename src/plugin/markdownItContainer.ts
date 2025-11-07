@@ -1,5 +1,6 @@
 import { MarkdownIt } from '../@types/markdown-it';
-import * as container from 'markdown-it-container';
+// Use default import for CommonJS module
+import container = require('markdown-it-container');
 
 /**
  * Markdown-it plugin wrapper for markdown-it-container with custom validation and rendering.
@@ -9,9 +10,8 @@ import * as container from 'markdown-it-container';
  */
 export function MarkdownItContainer(md: MarkdownIt): void {
     // Apply the container plugin directly (not via md.use())
-    // This is the proper way to write a markdown-it plugin
-    const containerPlugin = container as any;
-    containerPlugin(md, "container", { validate: validate, render: render });
+    // markdown-it-container is a CommonJS module that exports a function directly
+    container(md, "container", { validate: validate, render: render });
 }
 
 function validate(): boolean {
