@@ -1,0 +1,358 @@
+%YAML 1.2
+---
+# Sublime Syntax for Markdown Extended
+# Based on VS Code Markdown Extended extension
+# Context-based nesting version - supports nested patterns without recursion
+
+name: Markdown Extended
+file_extensions:
+  - md
+  - mdown
+  - markdown
+  - markdn
+scope: text.html.markdown.extended
+version: 4
+
+contexts:
+  main:
+    - include: block-elements
+    - include: inline-elements
+
+  # Block-level patterns (start of line)
+  block-elements:
+    - include: admonition
+    - include: toc
+    - include: footnote-reference
+    - include: checkbox
+
+  # Inline patterns that can nest (order matters - longer patterns first)
+  inline-elements:
+    - include: strong-emphasis    # __text__ (2 chars)
+    - include: bold-emphasis      # **text** (2 chars)
+    - include: strikethrough      # ~~text~~ (2 chars)
+    - include: sidenote           # ++ref|note++ (2 chars)
+    - include: marginal-note      # !!ref|note!! (2 chars)
+    - include: highlight          # ==text== (2 chars)
+    - include: underline          # _text_ (1 char)
+    - include: italic             # *text* (1 char)
+    - include: kbd                # [[Key]]
+    - include: left-sidebar       # $text$
+    - include: right-sidebar      # @text@
+    - include: superscript        # ^text^
+    - include: subscript          # ~text~
+
+  # Nested inline - everything except the parent context
+  # Each pattern's content context will include this with one exclusion
+  nested-inline-no-sidenote:
+    - include: strong-emphasis
+    - include: bold-emphasis
+    - include: strikethrough
+    - include: marginal-note
+    - include: highlight
+    - include: underline
+    - include: italic
+    - include: kbd
+    - include: left-sidebar
+    - include: right-sidebar
+    - include: superscript
+    - include: subscript
+
+  nested-inline-no-marginal:
+    - include: strong-emphasis
+    - include: bold-emphasis
+    - include: strikethrough
+    - include: sidenote
+    - include: highlight
+    - include: underline
+    - include: italic
+    - include: kbd
+    - include: left-sidebar
+    - include: right-sidebar
+    - include: superscript
+    - include: subscript
+
+  nested-inline-no-italic:
+    - include: strong-emphasis
+    - include: bold-emphasis
+    - include: strikethrough
+    - include: sidenote
+    - include: marginal-note
+    - include: highlight
+    - include: underline
+    - include: kbd
+    - include: left-sidebar
+    - include: right-sidebar
+    - include: superscript
+    - include: subscript
+
+  nested-inline-no-bold:
+    - include: strong-emphasis
+    - include: strikethrough
+    - include: sidenote
+    - include: marginal-note
+    - include: highlight
+    - include: underline
+    - include: italic
+    - include: kbd
+    - include: left-sidebar
+    - include: right-sidebar
+    - include: superscript
+    - include: subscript
+
+  nested-inline-no-underline:
+    - include: strong-emphasis
+    - include: bold-emphasis
+    - include: strikethrough
+    - include: sidenote
+    - include: marginal-note
+    - include: highlight
+    - include: italic
+    - include: kbd
+    - include: left-sidebar
+    - include: right-sidebar
+    - include: superscript
+    - include: subscript
+
+  nested-inline-no-strong:
+    - include: bold-emphasis
+    - include: strikethrough
+    - include: sidenote
+    - include: marginal-note
+    - include: highlight
+    - include: underline
+    - include: italic
+    - include: kbd
+    - include: left-sidebar
+    - include: right-sidebar
+    - include: superscript
+    - include: subscript
+
+  nested-inline-no-strikethrough:
+    - include: strong-emphasis
+    - include: bold-emphasis
+    - include: sidenote
+    - include: marginal-note
+    - include: highlight
+    - include: underline
+    - include: italic
+    - include: kbd
+    - include: left-sidebar
+    - include: right-sidebar
+    - include: superscript
+    - include: subscript
+
+  nested-inline-no-highlight:
+    - include: strong-emphasis
+    - include: bold-emphasis
+    - include: strikethrough
+    - include: sidenote
+    - include: marginal-note
+    - include: underline
+    - include: italic
+    - include: kbd
+    - include: left-sidebar
+    - include: right-sidebar
+    - include: superscript
+    - include: subscript
+
+  # ===== SIDENOTES =====
+  # ++reference|note++ or ++1reference|note++ (with color variant)
+  sidenote:
+    - match: '\+\+([0-9]{1,2})?'
+      scope: punctuation.definition.sidenote.begin.markdown
+      captures:
+        1: constant.numeric.sidenote.variant.markdown
+      push: sidenote-reference
+
+  sidenote-reference:
+    - meta_scope: markup.sidenote.reference.markdown
+    - match: '\|'
+      scope: punctuation.separator.sidenote.markdown
+      set: sidenote-note
+    - match: '\+\+'
+      scope: punctuation.definition.sidenote.end.markdown
+      pop: true
+    - include: nested-inline-no-sidenote
+
+  sidenote-note:
+    - meta_scope: markup.sidenote.content.markdown
+    - match: '\+\+'
+      scope: punctuation.definition.sidenote.end.markdown
+      pop: true
+    - include: nested-inline-no-sidenote
+
+  # ===== MARGINAL NOTES =====
+  # !!reference|note!! or !!1reference|note!!
+  marginal-note:
+    - match: '!!([0-9]{1,2})?'
+      scope: punctuation.definition.marginalnote.begin.markdown
+      captures:
+        1: constant.numeric.marginalnote.variant.markdown
+      push: marginal-note-reference
+
+  marginal-note-reference:
+    - meta_scope: markup.marginalnote.reference.markdown
+    - match: '\|'
+      scope: punctuation.separator.marginalnote.markdown
+      set: marginal-note-note
+    - match: '!!'
+      scope: punctuation.definition.marginalnote.end.markdown
+      pop: true
+    - include: nested-inline-no-marginal
+
+  marginal-note-note:
+    - meta_scope: markup.marginalnote.content.markdown
+    - match: '!!'
+      scope: punctuation.definition.marginalnote.end.markdown
+      pop: true
+    - include: nested-inline-no-marginal
+
+  # ===== MARKDOWN-IT-IB EMPHASIS =====
+  # Strong: __text__ → <strong>
+  strong-emphasis:
+    - match: '__'
+      scope: punctuation.definition.strong.begin.markdown
+      push: strong-content
+
+  strong-content:
+    - meta_scope: markup.strong.markdown
+    - match: '__'
+      scope: punctuation.definition.strong.end.markdown
+      pop: true
+    - include: nested-inline-no-strong
+
+  # Bold: **text** → <b>
+  bold-emphasis:
+    - match: '\*\*'
+      scope: punctuation.definition.bold.begin.markdown
+      push: bold-content
+
+  bold-content:
+    - meta_scope: markup.bold.markdown
+    - match: '\*\*'
+      scope: punctuation.definition.bold.end.markdown
+      pop: true
+    - include: nested-inline-no-bold
+
+  # Underline: _text_ → <u>
+  underline:
+    - match: '_'
+      scope: punctuation.definition.underline.begin.markdown
+      push: underline-content
+
+  underline-content:
+    - meta_scope: markup.underline.markdown
+    - match: '_'
+      scope: punctuation.definition.underline.end.markdown
+      pop: true
+    - include: nested-inline-no-underline
+
+  # Italic: *text* → <i>
+  italic:
+    - match: '\*'
+      scope: punctuation.definition.italic.begin.markdown
+      push: italic-content
+
+  italic-content:
+    - meta_scope: markup.italic.markdown
+    - match: '\*'
+      scope: punctuation.definition.italic.end.markdown
+      pop: true
+    - include: nested-inline-no-italic
+
+  # Strikethrough: ~~text~~ → <s>
+  strikethrough:
+    - match: '~~'
+      scope: punctuation.definition.strikethrough.begin.markdown
+      push: strikethrough-content
+
+  strikethrough-content:
+    - meta_scope: markup.strikethrough.markdown
+    - match: '~~'
+      scope: punctuation.definition.strikethrough.end.markdown
+      pop: true
+    - include: nested-inline-no-strikethrough
+
+  # ===== OTHER INLINE PATTERNS =====
+  # Highlight/Mark: ==text==
+  highlight:
+    - match: '=='
+      scope: punctuation.definition.highlight.begin.markdown
+      push: highlight-content
+
+  highlight-content:
+    - meta_scope: markup.highlight.markdown
+    - match: '=='
+      scope: punctuation.definition.highlight.end.markdown
+      pop: true
+    - include: nested-inline-no-highlight
+
+  # Left Sidebar: $content$
+  left-sidebar:
+    - match: '\$([^$]+)\$'
+      scope: markup.leftsidebar.markdown
+      captures:
+        1: markup.leftsidebar.content.markdown
+
+  # Right Sidebar: @content@
+  right-sidebar:
+    - match: '@([^@]+)@'
+      scope: markup.rightsidebar.markdown
+      captures:
+        1: markup.rightsidebar.content.markdown
+
+  # Keyboard Keys: [[Key]]
+  kbd:
+    - match: '\[\[([^\]]+)\]\]'
+      scope: markup.kbd.markdown
+      captures:
+        1: markup.kbd.content.markdown
+
+  # Superscript: ^text^
+  superscript:
+    - match: '\^([^^]+)\^'
+      scope: markup.superscript.markdown
+      captures:
+        1: markup.superscript.content.markdown
+
+  # Subscript: ~text~
+  subscript:
+    - match: '~([^~]+)~'
+      scope: markup.subscript.markdown
+      captures:
+        1: markup.subscript.content.markdown
+
+  # Table of Contents: [[TOC]]
+  toc:
+    - match: '\[\[TOC\]\]'
+      scope: markup.toc.markdown
+
+  # ===== BLOCK PATTERNS =====
+  # Admonitions: !!! type "Title"
+  admonition:
+    - match: '^(\s*)(!!!) (note|warning|danger|success|info|tip|question|abstract|bug|example|quote)(?:\s+"([^"]+)")?'
+      captures:
+        2: keyword.control.admonition.markdown
+        3: entity.name.type.admonition.markdown
+        4: string.quoted.double.admonition.title.markdown
+      push: admonition-body
+
+  admonition-body:
+    - match: '^(?=\S)'
+      pop: true
+    - match: '^\s{4,}(.+)$'
+      captures:
+        1: markup.admonition.content.markdown
+
+  # Footnote Reference: [^1]
+  footnote-reference:
+    - match: '\[\^([0-9]+)\]'
+      scope: markup.footnote.reference.markdown
+      captures:
+        1: constant.numeric.footnote.markdown
+
+  # Checkbox: [ ] or [x]
+  checkbox:
+    - match: '^\s*-\s+\[([ xX])\]'
+      captures:
+        1: markup.checkbox.markdown
