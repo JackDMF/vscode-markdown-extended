@@ -1,6 +1,8 @@
-# Markdown Extended for Sublime Text
+# Markdown Extended for Sublime Text & Textastic
 
 Syntax highlighting for Markdown Extended - brings extended markdown features from the VS Code extension to Sublime Text with **full nesting support**.
+
+**Also compatible with Textastic for iOS!** See [TEXTASTIC_INSTALL.md](TEXTASTIC_INSTALL.md) for installation instructions.
 
 ## Features
 
