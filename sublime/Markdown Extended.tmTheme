@@ -23,6 +23,20 @@
 			</dict>
 		</dict>
 		
+		<!-- ===== PUNCTUATION (DELIMITERS) - MUST BE FIRST ===== -->
+		<!-- All markup delimiters should be dark grey to be unobtrusive -->
+		<dict>
+			<key>name</key>
+			<string>Punctuation: All markup delimiters</string>
+			<key>scope</key>
+			<string>punctuation.definition, punctuation.separator</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#666666</string>
+			</dict>
+		</dict>
+		
 		<!-- Standard Markdown Elements -->
 		<dict>
 			<key>name</key>
@@ -35,6 +49,32 @@
 				<string>#00aee8</string>
 				<key>fontStyle</key>
 				<string>bold</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Markup: Left Sidebar in Heading (higher specificity)</string>
+			<key>scope</key>
+			<string>markup.heading markup.leftsidebar</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#00aee8</string>
+				<key>fontStyle</key>
+				<string>bold italic</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Markup: Right Sidebar in Heading (higher specificity)</string>
+			<key>scope</key>
+			<string>markup.heading markup.rightsidebar</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#6f4dff</string>
+				<key>fontStyle</key>
+				<string>bold italic</string>
 			</dict>
 		</dict>
 		<dict>
@@ -127,6 +167,28 @@
 			<dict>
 				<key>foreground</key>
 				<string>#00c76a</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Table: Pipe separators</string>
+			<key>scope</key>
+			<string>punctuation.separator.table.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#666666</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Table: Header delimiters</string>
+			<key>scope</key>
+			<string>punctuation.definition.table.header.markdown, punctuation.definition.table.alignment.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#666666</string>
 			</dict>
 		</dict>
 		
@@ -558,108 +620,42 @@
 			</dict>
 		</dict>
 		
-		<!-- Attributes {.class #id} -->
+		<!-- Attributes {.class #id key=value} -->
 		<dict>
 			<key>name</key>
-			<string>Attributes Container</string>
+			<string>Attribute Keys</string>
 			<key>scope</key>
-			<string>meta.attributes.markdown</string>
+			<string>entity.other.attribute-name</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
-				<string>#6a5f66</string>
+				<string>#666666</string>
 			</dict>
 		</dict>
 		<dict>
 			<key>name</key>
-			<string>Attributes Punctuation</string>
-			<key>scope</key>
-			<string>punctuation.definition.attributes.begin.markdown, punctuation.definition.attributes.end.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#8d8188</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Attributes Class Prefix</string>
-			<key>scope</key>
-			<string>punctuation.definition.class.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#9b7bff</string>
-				<key>fontStyle</key>
-				<string>bold</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Attributes Class Name</string>
-			<key>scope</key>
-			<string>entity.other.attribute-name.class.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#00aee8</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Attributes ID Prefix</string>
-			<key>scope</key>
-			<string>punctuation.definition.id.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#9b7bff</string>
-				<key>fontStyle</key>
-				<string>bold</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Attributes ID Name</string>
-			<key>scope</key>
-			<string>entity.other.attribute-name.id.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#00aee8</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Attributes Key</string>
-			<key>scope</key>
-			<string>entity.other.attribute-name.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#00aee8</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Attributes Equals</string>
-			<key>scope</key>
-			<string>punctuation.separator.key-value.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#9b7bff</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Attributes Value</string>
+			<string>Attribute Values</string>
 			<key>scope</key>
 			<string>string.unquoted.attribute-value.markdown</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
-				<string>#00c76a</string>
+				<string>#ffb400</string>
+				<key>fontStyle</key>
+				<string>italic</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Attribute Class/ID Names</string>
+			<key>scope</key>
+			<string>entity.other.attribute-name.class.markdown, entity.other.attribute-name.id.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#00aee8</string>
+				<key>fontStyle</key>
+				<string>italic</string>
 			</dict>
 		</dict>
 		

@@ -578,12 +578,12 @@ contexts:
     - meta_scope: markup.table.markdown
     - match: '$'
       pop: true
-    - match: '\|'
-      scope: punctuation.separator.table.markdown
-    - match: ':-+:|:-+|-+:'
-      scope: punctuation.definition.table.alignment.markdown
     - match: '-{3,}'
       scope: punctuation.definition.table.header.markdown
+    - match: ':-+:|:-+|-+:'
+      scope: punctuation.definition.table.alignment.markdown
+    - match: '\|'
+      scope: punctuation.separator.table.markdown
     - include: inline-elements
 
   # Footnote Definition: [^1]: text

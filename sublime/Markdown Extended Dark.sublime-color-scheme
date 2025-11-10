@@ -60,12 +60,33 @@
     "line_highlight": "#2a2330"
   },
   "rules": [
+    // ===== PUNCTUATION (DELIMITERS) - MUST BE FIRST =====
+    // All markup delimiters should be dark grey to be unobtrusive
+    {
+      "name": "Punctuation: All markup delimiters",
+      "scope": "punctuation.definition, punctuation.separator",
+      "foreground": "#888888",
+      "font_style": ""
+    },
+    
     // ===== STANDARD MARKDOWN =====
     {
       "name": "Markup: Heading",
       "scope": "markup.heading, entity.name.section.markdown",
       "font_style": "bold",
       "foreground": "var(dm_accent5)"
+    },
+    {
+      "name": "Markup: Left Sidebar in Heading (higher specificity)",
+      "scope": "markup.heading markup.leftsidebar",
+      "foreground": "var(dm_accent5)",
+      "font_style": "bold italic"
+    },
+    {
+      "name": "Markup: Right Sidebar in Heading (higher specificity)",
+      "scope": "markup.heading markup.rightsidebar",
+      "foreground": "var(dm_accent6)",
+      "font_style": "bold italic"
     },
     {
       "name": "Markup: Bold (strong tag via __text__)",
@@ -98,6 +119,16 @@
       "name": "Markup: List",
       "scope": "markup.list",
       "foreground": "var(dm_accent4)"
+    },
+    {
+      "name": "Table: Pipe separators",
+      "scope": "punctuation.separator.table.markdown",
+      "foreground": "#888888"
+    },
+    {
+      "name": "Table: Header delimiters",
+      "scope": "punctuation.definition.table.header.markdown, punctuation.definition.table.alignment.markdown",
+      "foreground": "#888888"
     },
     
     // ===== EXTENDED SYNTAX RULES =====
@@ -297,11 +328,23 @@
       "font_style": "bold"
     },
     
-    // Attributes: {.class #id}
+    // Attributes: {.class #id key=value}
     {
-      "name": "Attributes",
-      "scope": "markup.attributes.markdown, meta.attributes.markdown",
-      "foreground": "var(dm_dimmed1)",
+      "name": "Attribute Keys",
+      "scope": "entity.other.attribute-name",
+      "foreground": "#888888",
+      "font_style": ""
+    },
+    {
+      "name": "Attribute Values",
+      "scope": "string.unquoted.attribute-value.markdown",
+      "foreground": "var(dm_accent3)",
+      "font_style": "italic"
+    },
+    {
+      "name": "Attribute Class/ID Names",
+      "scope": "entity.other.attribute-name.class.markdown, entity.other.attribute-name.id.markdown",
+      "foreground": "var(dm_accent5)",
       "font_style": "italic"
     },
     
