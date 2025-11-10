@@ -345,22 +345,9 @@
 		<!-- Keyboard Keys [[Key]] -->
 		<dict>
 			<key>name</key>
-			<string>Keyboard Key Container</string>
+			<string>Keyboard Key</string>
 			<key>scope</key>
-			<string>markup.kbd.container.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#6a5f66</string>
-				<key>background</key>
-				<string>#fffaf9</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Keyboard Key Content</string>
-			<key>scope</key>
-			<string>markup.kbd.content.markdown</string>
+			<string>markup.kbd.markdown, markup.kbd.content.markdown</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
@@ -451,20 +438,9 @@
 		<!-- Superscript ^text^ -->
 		<dict>
 			<key>name</key>
-			<string>Superscript Container</string>
+			<string>Superscript</string>
 			<key>scope</key>
-			<string>markup.superscript.container.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#00c76a</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Superscript Content</string>
-			<key>scope</key>
-			<string>markup.superscript.content.markdown</string>
+			<string>markup.superscript.markdown, markup.superscript.content.markdown</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
@@ -477,20 +453,9 @@
 		<!-- Subscript ~text~ -->
 		<dict>
 			<key>name</key>
-			<string>Subscript Container</string>
+			<string>Subscript</string>
 			<key>scope</key>
-			<string>markup.subscript.container.markdown</string>
-			<key>settings</key>
-			<dict>
-				<key>foreground</key>
-				<string>#00aee8</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>name</key>
-			<string>Subscript Content</string>
-			<key>scope</key>
-			<string>markup.subscript.content.markdown</string>
+			<string>markup.subscript.markdown, markup.subscript.content.markdown</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>

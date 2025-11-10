@@ -21,7 +21,6 @@ contexts:
   # Block-level patterns (start of line)
   block-elements:
     - include: fenced-code-block
-    - include: indented-code-block
     - include: setext-heading
     - include: atx-heading
     - include: table
@@ -537,13 +536,6 @@ contexts:
         2: punctuation.definition.fenced.markdown
       pop: true
 
-  # Indented Code Blocks: 4+ spaces
-  indented-code-block:
-    - match: '^(    |\t)(.+)$'
-      scope: markup.raw.block.markdown
-      captures:
-        2: meta.code-fence.definition.markdown
-
   # Setext Headings: underlined with === or ---
   setext-heading:
     - match: '^(?=.+\n(?:=+|-+)\s*$)'
@@ -663,6 +655,7 @@ contexts:
   list-content:
     - match: '^(?=\S)'
       pop: true
+    - include: block-elements
     - include: inline-elements
 
   # Admonitions: !!! type "Title"

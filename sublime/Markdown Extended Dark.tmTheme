@@ -303,7 +303,7 @@
 			<key>name</key>
 			<string>Keyboard Key</string>
 			<key>scope</key>
-			<string>markup.kbd.container.markdown, markup.kbd.content.markdown</string>
+			<string>markup.kbd.markdown, markup.kbd.content.markdown</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
@@ -387,7 +387,7 @@
 			<key>name</key>
 			<string>Superscript</string>
 			<key>scope</key>
-			<string>markup.superscript.container.markdown, markup.superscript.content.markdown</string>
+			<string>markup.superscript.markdown, markup.superscript.content.markdown</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
@@ -402,7 +402,7 @@
 			<key>name</key>
 			<string>Subscript</string>
 			<key>scope</key>
-			<string>markup.subscript.container.markdown, markup.subscript.content.markdown</string>
+			<string>markup.subscript.markdown, markup.subscript.content.markdown</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
