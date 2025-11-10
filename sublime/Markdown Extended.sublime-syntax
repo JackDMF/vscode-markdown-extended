@@ -20,13 +20,30 @@ contexts:
 
   # Block-level patterns (start of line)
   block-elements:
+    - include: fenced-code-block
+    - include: indented-code-block
+    - include: setext-heading
+    - include: atx-heading
+    - include: table
+    - include: horizontal-rule
+    - include: footnote-definition
+    - include: link-reference-definition
+    - include: definition-list
     - include: admonition
+    - include: blockquote
+    - include: list
     - include: toc
     - include: footnote-reference
     - include: checkbox
 
   # Inline patterns that can nest (order matters - longer patterns first)
   inline-elements:
+    - include: inline-code        # `code` (MUST be first - no nesting allowed)
+    - include: image-inline       # ![alt](url)
+    - include: image-reference    # ![alt][ref]
+    - include: link-inline        # [text](url)
+    - include: link-reference     # [text][ref]
+    - include: autolink           # <http://url>
     - include: strong-emphasis    # __text__ (2 chars)
     - include: bold-emphasis      # **text** (2 chars)
     - include: strikethrough      # ~~text~~ (2 chars)
@@ -155,6 +172,145 @@ contexts:
     - include: superscript
     - include: subscript
 
+  nested-inline-no-left-sidebar:
+    - include: strong-emphasis
+    - include: bold-emphasis
+    - include: strikethrough
+    - include: sidenote
+    - include: marginal-note
+    - include: highlight
+    - include: underline
+    - include: italic
+    - include: kbd
+    - include: right-sidebar
+    - include: superscript
+    - include: subscript
+
+  nested-inline-no-right-sidebar:
+    - include: strong-emphasis
+    - include: bold-emphasis
+    - include: strikethrough
+    - include: sidenote
+    - include: marginal-note
+    - include: highlight
+    - include: underline
+    - include: italic
+    - include: kbd
+    - include: left-sidebar
+    - include: superscript
+    - include: subscript
+
+  # ===== INLINE CODE =====
+  # Inline code: `code` (no nesting allowed inside code)
+  inline-code:
+    - match: '(`+)([^`]|(?!\1)`)*+\1'
+      scope: markup.raw.inline.markdown
+      captures:
+        1: punctuation.definition.raw.begin.markdown
+
+  # ===== LINKS =====
+  # Inline link: [text](url "title")
+  link-inline:
+    - match: '\[(?=[^\]]*\]\([^\)]*\))'
+      scope: punctuation.definition.link.begin.markdown
+      push: link-inline-text
+
+  link-inline-text:
+    - meta_scope: markup.underline.link.markdown
+    - match: '\]'
+      scope: punctuation.definition.link.end.markdown
+      set: link-inline-url
+    - include: inline-elements
+
+  link-inline-url:
+    - match: '\('
+      scope: punctuation.definition.metadata.begin.markdown
+    - match: '(?:"([^"]+)")?\)'
+      scope: punctuation.definition.metadata.end.markdown
+      captures:
+        1: string.quoted.double.link.title.markdown
+      pop: true
+    - match: '[^\s)]+'
+      scope: markup.underline.link.url.markdown
+
+  # Reference link: [text][ref] or [text][]
+  link-reference:
+    - match: '\[(?=[^\]]*\]\s*\[[^\]]*\])'
+      scope: punctuation.definition.link.begin.markdown
+      push: link-reference-text
+
+  link-reference-text:
+    - meta_scope: markup.underline.link.markdown
+    - match: '\]'
+      scope: punctuation.definition.link.end.markdown
+      set: link-reference-id
+    - include: inline-elements
+
+  link-reference-id:
+    - match: '\['
+      scope: punctuation.definition.reference.begin.markdown
+    - match: '\]'
+      scope: punctuation.definition.reference.end.markdown
+      pop: true
+    - match: '[^\]]+'
+      scope: constant.other.reference.markdown
+
+  # Autolink: <http://url> or <email@domain>
+  autolink:
+    - match: '<([a-zA-Z][a-zA-Z0-9+.-]*:[^\s>]+|[^\s@>]+@[^\s>]+)>'
+      scope: markup.underline.link.markdown
+      captures:
+        1: markup.underline.link.url.markdown
+
+  # ===== IMAGES =====
+  # Image inline: ![alt](url "title")
+  image-inline:
+    - match: '!\[(?=[^\]]*\]\([^\)]*\))'
+      scope: punctuation.definition.image.begin.markdown
+      push: image-inline-alt
+
+  image-inline-alt:
+    - meta_scope: markup.underline.link.image.markdown
+    - match: '\]'
+      scope: punctuation.definition.image.end.markdown
+      set: image-inline-url
+    - match: '[^\]]+'
+      scope: string.other.link.description.markdown
+
+  image-inline-url:
+    - match: '\('
+      scope: punctuation.definition.metadata.begin.markdown
+    - match: '(?:"([^"]+)")?\)'
+      scope: punctuation.definition.metadata.end.markdown
+      captures:
+        1: string.quoted.double.link.title.markdown
+      pop: true
+    - match: '[^\s)]+'
+      scope: markup.underline.link.image.url.markdown
+
+  # Image reference: ![alt][ref] or ![alt][]
+  image-reference:
+    - match: '!\[(?=[^\]]*\]\s*\[[^\]]*\])'
+      scope: punctuation.definition.image.begin.markdown
+      push: image-reference-alt
+
+  image-reference-alt:
+    - meta_scope: markup.underline.link.image.markdown
+    - match: '\]'
+      scope: punctuation.definition.image.end.markdown
+      set: image-reference-id
+    - match: '[^\]]+'
+      scope: string.other.link.description.markdown
+
+  image-reference-id:
+    - match: '\['
+      scope: punctuation.definition.reference.begin.markdown
+    - match: '\]'
+      scope: punctuation.definition.reference.end.markdown
+      pop: true
+    - match: '[^\]]+'
+      scope: constant.other.reference.markdown
+
   # ===== SIDENOTES =====
   # ++reference|note++ or ++1reference|note++ (with color variant)
   sidenote:
@@ -184,7 +340,7 @@ contexts:
   # ===== MARGINAL NOTES =====
   # !!reference|note!! or !!1reference|note!!
   marginal-note:
-    - match: '!!([0-9]{1,2})?'
+    - match: '!!(?!!)([0-9]{1,2})?'
       scope: punctuation.definition.marginalnote.begin.markdown
       captures:
         1: constant.numeric.marginalnote.variant.markdown
@@ -236,26 +392,26 @@ contexts:
 
   # Underline: _text_ → <u>
   underline:
-    - match: '_'
+    - match: '(?<!_)_(?!_)'
       scope: punctuation.definition.underline.begin.markdown
       push: underline-content
 
   underline-content:
     - meta_scope: markup.underline.markdown
-    - match: '_'
+    - match: '_(?!_)'
       scope: punctuation.definition.underline.end.markdown
       pop: true
     - include: nested-inline-no-underline
 
   # Italic: *text* → <i>
   italic:
-    - match: '\*'
+    - match: '(?<!\*)\*(?!\*)'
       scope: punctuation.definition.italic.begin.markdown
       push: italic-content
 
   italic-content:
     - meta_scope: markup.italic.markdown
-    - match: '\*'
+    - match: '\*(?!\*)'
       scope: punctuation.definition.italic.end.markdown
       pop: true
     - include: nested-inline-no-italic
@@ -289,17 +445,29 @@ contexts:
 
   # Left Sidebar: $content$
   left-sidebar:
-    - match: '\$([^$]+)\$'
-      scope: markup.leftsidebar.markdown
-      captures:
-        1: markup.leftsidebar.content.markdown
+    - match: '\$'
+      scope: punctuation.definition.leftsidebar.begin.markdown
+      push: left-sidebar-content
+
+  left-sidebar-content:
+    - meta_scope: markup.leftsidebar.markdown
+    - match: '\$'
+      scope: punctuation.definition.leftsidebar.end.markdown
+      pop: true
+    - include: nested-inline-no-left-sidebar
 
   # Right Sidebar: @content@
   right-sidebar:
-    - match: '@([^@]+)@'
-      scope: markup.rightsidebar.markdown
-      captures:
-        1: markup.rightsidebar.content.markdown
+    - match: '@'
+      scope: punctuation.definition.rightsidebar.begin.markdown
+      push: right-sidebar-content
+
+  right-sidebar-content:
+    - meta_scope: markup.rightsidebar.markdown
+    - match: '@'
+      scope: punctuation.definition.rightsidebar.end.markdown
+      pop: true
+    - include: nested-inline-no-right-sidebar
 
   # Keyboard Keys: [[Key]]
   kbd:
@@ -317,7 +485,7 @@ contexts:
 
   # Subscript: ~text~
   subscript:
-    - match: '~([^~]+)~'
+    - match: '(?<!~)~(?!~)([^~]+)~(?!~)'
       scope: markup.subscript.markdown
       captures:
         1: markup.subscript.content.markdown
@@ -328,9 +496,136 @@ contexts:
       scope: markup.toc.markdown
 
   # ===== BLOCK PATTERNS =====
+  # Fenced Code Blocks: ```lang
+  fenced-code-block:
+    - match: '^(\s*)(`{3,}|~{3,})\s*(\w+)?\s*$'
+      captures:
+        2: punctuation.definition.fenced.markdown
+        3: entity.name.language.markdown
+      push: fenced-code-block-content
+
+  fenced-code-block-content:
+    - meta_scope: markup.raw.block.fenced.markdown
+    - match: '^(\s*)(`{3,}|~{3,})\s*$'
+      captures:
+        2: punctuation.definition.fenced.markdown
+      pop: true
+
+  # Indented Code Blocks: 4+ spaces
+  indented-code-block:
+    - match: '^(    |\t)(.+)$'
+      scope: markup.raw.block.markdown
+      captures:
+        2: meta.code-fence.definition.markdown
+
+  # Setext Headings: underlined with === or ---
+  setext-heading:
+    - match: '^(.+)\n(=+|-+)\s*$'
+      scope: markup.heading.markdown
+      captures:
+        1: entity.name.section.markdown
+        2: punctuation.definition.heading.markdown
+
+  # ATX Headings: # Header
+  atx-heading:
+    - match: '^(#{1,6})\s+(.+?)(\s+#*)?$'
+      scope: markup.heading.markdown
+      captures:
+        1: punctuation.definition.heading.begin.markdown
+        2: entity.name.section.markdown
+        3: punctuation.definition.heading.end.markdown
+
+  # Tables: GFM pipe tables
+  table:
+    - match: '^\s*\|'
+      push: table-row
+
+  table-row:
+    - meta_scope: markup.table.markdown
+    - match: '$'
+      pop: true
+    - match: '\|'
+      scope: punctuation.separator.table.markdown
+    - match: ':-+:|:-+|-+:'
+      scope: punctuation.definition.table.alignment.markdown
+    - match: '-{3,}'
+      scope: punctuation.definition.table.header.markdown
+    - include: inline-elements
+
+  # Footnote Definition: [^1]: text
+  footnote-definition:
+    - match: '^\[\^([^\]]+)\]:\s+'
+      captures:
+        0: punctuation.definition.footnote.markdown
+        1: constant.numeric.footnote.markdown
+      push: footnote-definition-content
+
+  footnote-definition-content:
+    - meta_scope: markup.footnote.definition.markdown
+    - match: '^(?!\s{4,})'
+      pop: true
+    - include: inline-elements
+
+  # Link Reference Definition: [id]: url "title"
+  link-reference-definition:
+    - match: '^\s{0,3}\[([^\]]+)\]:\s+(\S+)(?:\s+"([^"]+)")?'
+      scope: meta.link.reference.definition.markdown
+      captures:
+        1: constant.other.reference.markdown
+        2: markup.underline.link.url.markdown
+        3: string.quoted.double.link.title.markdown
+
+  # Definition Lists: term\n: definition
+  definition-list:
+    - match: '^([^\n:]+)\n:\s+'
+      captures:
+        1: markup.bold.definition.term.markdown
+      push: definition-list-content
+
+  definition-list-content:
+    - meta_scope: markup.list.definition.markdown
+    - match: '^(?!\s)'
+      pop: true
+    - include: inline-elements
+
+  # Blockquotes: > text
+  blockquote:
+    - match: '^(\s*)(>)\s+'
+      captures:
+        2: punctuation.definition.blockquote.markdown
+      push: blockquote-content
+
+  blockquote-content:
+    - meta_scope: markup.quote.markdown
+    - match: '^(?!\s*>)'
+      pop: true
+    - match: '^(\s*)(>)\s+'
+      captures:
+        2: punctuation.definition.blockquote.markdown
+    - include: block-elements
+    - include: inline-elements
+
+  # Horizontal Rules: ---, ***, ___
+  horizontal-rule:
+    - match: '^\s*([*\-_])\s*\1\s*\1[\s\1]*$'
+      scope: meta.separator.markdown
+
+  # Lists: - item or 1. item
+  list:
+    - match: '^\s*([*+\-]|\d+\.)\s+'
+      scope: markup.list.markdown
+      captures:
+        1: punctuation.definition.list.markdown
+      push: list-content
+
+  list-content:
+    - match: '^(?=\S)'
+      pop: true
+    - include: inline-elements
+
   # Admonitions: !!! type "Title"
   admonition:
-    - match: '^(\s*)(!!!) (note|warning|danger|success|info|tip|question|abstract|bug|example|quote)(?:\s+"([^"]+)")?'
+    - match: '^(\s*)(!!!) (note|warning|danger|success|info|tip|question|abstract|bug|example|quote|summary|tldr|hint|check|done|help|faq|attention|caution|failure|fail|missing|error|snippet|cite)(?:\s+"([^"]+)")?'
       captures:
         2: keyword.control.admonition.markdown
         3: entity.name.type.admonition.markdown
@@ -340,9 +635,7 @@ contexts:
   admonition-body:
     - match: '^(?=\S)'
       pop: true
-    - match: '^\s{4,}(.+)$'
-      captures:
-        1: markup.admonition.content.markdown
+    - include: inline-elements
 
   # Footnote Reference: [^1]
   footnote-reference:
