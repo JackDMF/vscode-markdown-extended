@@ -43,6 +43,22 @@ Command palette or right-click shortcuts for markdown editing:
 
 See [Editing Helpers and Keys](#editing-helpers-and-keys) for details.
 
+### Color Themes
+
+Two included color themes for enhanced markdown syntax highlighting:
+
+- **Markdown Extended Light** - Clean, readable colors matching Styles.css light mode
+- **Markdown Extended Dark** - Eye-friendly dark theme matching Styles.css dark mode
+
+**To activate**: Press `Ctrl+K Ctrl+T` and select "Markdown Extended Light" or "Markdown Extended Dark"
+
+All colors extracted from the official Styles.css:
+- Italic (*): Gold - Underline (_): Green - Bold (**): Purple - Strong (__): Cyan
+- Strikethrough (~~): Pink/Red - Highlight (==): Orange
+- Sidenotes, marginal notes, sidebars, TOC, footnotes with distinct colors
+
+See [themes/README.md](./themes/README.md) for color mapping details.
+
 ### Extended Syntaxes
 
 Built-in syntax extensions:

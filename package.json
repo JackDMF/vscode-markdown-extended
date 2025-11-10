@@ -25,6 +25,18 @@
   ],
   "main": "./out/src/extension",
   "contributes": {
+    "themes": [
+      {
+        "label": "Markdown Extended Light",
+        "uiTheme": "vs",
+        "path": "./themes/markdown-extended-light.json"
+      },
+      {
+        "label": "Markdown Extended Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/markdown-extended-dark.json"
+      }
+    ],
     "snippets": [
       {
         "language": "markdown",
