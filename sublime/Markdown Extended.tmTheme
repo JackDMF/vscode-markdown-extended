@@ -596,13 +596,140 @@
 		<!-- Attributes {.class #id} -->
 		<dict>
 			<key>name</key>
-			<string>Attributes</string>
+			<string>Attributes Container</string>
 			<key>scope</key>
-			<string>markup.attributes.markdown, meta.attributes.markdown</string>
+			<string>meta.attributes.markdown</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
 				<string>#6a5f66</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Attributes Punctuation</string>
+			<key>scope</key>
+			<string>punctuation.definition.attributes.begin.markdown, punctuation.definition.attributes.end.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#8d8188</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Attributes Class Prefix</string>
+			<key>scope</key>
+			<string>punctuation.definition.class.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#9b7bff</string>
+				<key>fontStyle</key>
+				<string>bold</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Attributes Class Name</string>
+			<key>scope</key>
+			<string>entity.other.attribute-name.class.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#00aee8</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Attributes ID Prefix</string>
+			<key>scope</key>
+			<string>punctuation.definition.id.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#9b7bff</string>
+				<key>fontStyle</key>
+				<string>bold</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Attributes ID Name</string>
+			<key>scope</key>
+			<string>entity.other.attribute-name.id.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#00aee8</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Attributes Key</string>
+			<key>scope</key>
+			<string>entity.other.attribute-name.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#00aee8</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Attributes Equals</string>
+			<key>scope</key>
+			<string>punctuation.separator.key-value.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#9b7bff</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Attributes Value</string>
+			<key>scope</key>
+			<string>string.unquoted.attribute-value.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#00c76a</string>
+			</dict>
+		</dict>
+		
+		<!-- Standalone Span [text] -->
+		<dict>
+			<key>name</key>
+			<string>Standalone Span</string>
+			<key>scope</key>
+			<string>meta.span.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#6a5f66</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Standalone Span Punctuation</string>
+			<key>scope</key>
+			<string>punctuation.definition.span.begin.markdown, punctuation.definition.span.end.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#8d8188</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>name</key>
+			<string>Standalone Span Text</string>
+			<key>scope</key>
+			<string>string.unquoted.span.markdown</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>#ff5a1b</string>
 				<key>fontStyle</key>
 				<string>italic</string>
 			</dict>

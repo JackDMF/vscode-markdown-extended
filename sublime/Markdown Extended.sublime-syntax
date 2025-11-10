@@ -43,7 +43,9 @@ contexts:
     - include: image-reference    # ![alt][ref]
     - include: link-inline        # [text](url)
     - include: link-reference     # [text][ref]
+    - include: standalone-span    # [text] (not a link)
     - include: autolink           # <http://url>
+    - include: attributes         # {.class #id key=value}
     - include: strong-emphasis    # __text__ (2 chars)
     - include: bold-emphasis      # **text** (2 chars)
     - include: strikethrough      # ~~text~~ (2 chars)
@@ -469,6 +471,30 @@ contexts:
       pop: true
     - include: nested-inline-no-right-sidebar
 
+  # Attributes: {.class #id key=value}
+  attributes:
+    - match: '(\{)(\.)?([a-zA-Z0-9_-]+)?(\s*#)?([a-zA-Z0-9_-]+)?(\s+[a-zA-Z0-9_-]+)?(=)?([a-zA-Z0-9_"-]+)?(\})'
+      scope: meta.attributes.markdown
+      captures:
+        1: punctuation.definition.attributes.begin.markdown
+        2: punctuation.definition.class.markdown
+        3: entity.other.attribute-name.class.markdown
+        4: punctuation.definition.id.markdown
+        5: entity.other.attribute-name.id.markdown
+        6: entity.other.attribute-name.markdown
+        7: punctuation.separator.key-value.markdown
+        8: string.unquoted.attribute-value.markdown
+        9: punctuation.definition.attributes.end.markdown
+
+  # Standalone Span: [text] (not followed by link/reference syntax)
+  standalone-span:
+    - match: '(\[)([^\]]+)(\])(?!\(|\[)'
+      scope: meta.span.markdown
+      captures:
+        1: punctuation.definition.span.begin.markdown
+        2: string.unquoted.span.markdown
+        3: punctuation.definition.span.end.markdown
+
   # Keyboard Keys: [[Key]]
   kbd:
     - match: '\[\[([^\]]+)\]\]'
@@ -520,20 +546,36 @@ contexts:
 
   # Setext Headings: underlined with === or ---
   setext-heading:
-    - match: '^(.+)\n(=+|-+)\s*$'
-      scope: markup.heading.markdown
+    - match: '^(?=.+\n(?:=+|-+)\s*$)'
+      push: setext-heading-content
+
+  setext-heading-content:
+    - meta_scope: markup.heading.markdown
+    - match: '^(=+|-+)\s*$'
       captures:
-        1: entity.name.section.markdown
-        2: punctuation.definition.heading.markdown
+        1: punctuation.definition.heading.markdown
+      pop: true
+    - match: '^'
+      push:
+        - meta_scope: entity.name.section.markdown
+        - match: '$'
+          pop: true
+        - include: inline-elements
 
   # ATX Headings: # Header
   atx-heading:
-    - match: '^(#{1,6})\s+(.+?)(\s+#*)?$'
-      scope: markup.heading.markdown
+    - match: '^(#{1,6})\s+'
       captures:
         1: punctuation.definition.heading.begin.markdown
-        2: entity.name.section.markdown
-        3: punctuation.definition.heading.end.markdown
+      push: atx-heading-content
+
+  atx-heading-content:
+    - meta_scope: markup.heading.markdown entity.name.section.markdown
+    - match: '(\s+#*)?\s*$'
+      captures:
+        1: punctuation.definition.heading.end.markdown
+      pop: true
+    - include: inline-elements
 
   # Tables: GFM pipe tables
   table:
@@ -635,6 +677,7 @@ contexts:
   admonition-body:
     - match: '^(?=\S)'
       pop: true
+    - include: block-elements
     - include: inline-elements
 
   # Footnote Reference: [^1]
