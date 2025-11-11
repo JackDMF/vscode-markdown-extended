@@ -1,5 +1,56 @@
 # Change Log
 
+## v2.1.1 - Patch Release: License and Repository Updates
+
+### 📝 Updates
+
+- **License**: Updated copyright to acknowledge both original author (jebbs, 2018) and current maintainer (JackDMF, 2025)
+- **Repository URLs**: Updated all GitHub URLs from qjebbs to JackDMF organization
+  - Bug tracker URLs in package.json
+  - Homepage and repository links
+  - Issue reporter in error handler
+  - Documentation references in README
+
+### 🔧 Maintenance
+
+- No functional changes to extension behavior
+- Historical changelog references preserved for accuracy
+
+---
+
+## v2.1.0 - Feature Release: Enhanced Syntax Support
+
+### ✨ New Features
+
+- **Extended Markdown Syntax**: Additional syntax highlighting and parsing improvements
+- **Enhanced Color Themes**: Improved color customization for sidenotes and sidebars
+  - Sidenote text color: `markdown.sidenote.textColor`
+  - Marginal note text color: `markdown.marginalnote.textColor`
+  - Left sidebar text color: `markdown.leftsidebar.textColor`
+  - Right sidebar text color: `markdown.rightsidebar.textColor`
+
+### 🔧 Improvements
+
+- Updated dependencies for better compatibility
+- Performance optimizations
+
+---
+
+## v2.0.1 - Patch Release: Stability and Bug Fixes
+
+### 🐛 Bug Fixes
+
+- Fixed minor issues from v2.0.0 release
+- Improved error handling stability
+- Enhanced compatibility with latest VS Code versions
+
+### 🔧 Maintenance
+
+- Updated development dependencies
+- Minor documentation corrections
+
+---
+
 ## v2.0.0 - Major Release: Complete Architecture Modernization
 
 This release represents a complete rewrite and modernization of the extension with enterprise-grade architecture, comprehensive testing, and new features.

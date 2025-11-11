@@ -3,19 +3,19 @@
   "displayName": "Markdown Extended Pro",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo.png",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "publisher": "jackdmf",
   "engines": {
     "vscode": "^1.80.0"
   },
   "license": "SEE LICENSE IN LICENSE.txt",
   "bugs": {
-    "url": "https://github.com/qjebbs/vscode-markdown-extended/issues"
+    "url": "https://github.com/JackDMF/vscode-markdown-extended/issues"
   },
-  "homepage": "https://github.com/qjebbs/vscode-markdown-extended/blob/master/README.md",
+  "homepage": "https://github.com/JackDMF/vscode-markdown-extended/blob/master/README.md",
   "repository": {
     "type": "git",
-    "url": "https://github.com/qjebbs/vscode-markdown-extended.git"
+    "url": "https://github.com/JackDMF/vscode-markdown-extended.git"
   },
   "categories": [
     "Other"

@@ -229,7 +229,7 @@ Default Keyboard Shortcut bindings are removed due to conflict issues on platfor
 
 ![moveCols](./images/moveCols.gif)
 
-> Move columns key bindings has been changed to `ctrl+shift+t ctrl+shift+left/right`, due to [#57](https://github.com/qjebbs/vscode-markdown-extended/issues/57), [#68](https://github.com/qjebbs/vscode-markdown-extended/issues/68)
+> Move columns key bindings has been changed to `ctrl+shift+t ctrl+shift+left/right`, due to [#57](https://github.com/JackDMF/vscode-markdown-extended/issues/57), [#68](https://github.com/JackDMF/vscode-markdown-extended/issues/68)
 
 ### Paste as Markdown Table
 
