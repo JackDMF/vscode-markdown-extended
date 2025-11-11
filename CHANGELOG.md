@@ -1,5 +1,23 @@
 # Change Log
 
+## v2.1.4 - Critical Fix: Include markdown-it plugin dependencies
+
+### 🐛 Critical Bug Fix
+
+- **Fixed missing markdown-it plugins in published package**: Plugins and their dependencies are now correctly included
+- **Root cause**: `.vscodeignore` was excluding `node_modules`, preventing externalized plugins from being packaged
+- **Solution**: Removed `node_modules/**` exclusion and externalized plugins in esbuild configuration
+
+### 📝 Technical Details
+
+Previous versions (2.1.2 and 2.1.3) externalized markdown-it plugins in esbuild but failed to include them in the published `.vsix` package because `.vscodeignore` excluded all `node_modules`. This version:
+
+1. Externalizes markdown-it plugins in esbuild (not bundled into dist/extension.js)
+2. Includes plugin dependencies in the published package (removed node_modules exclusion)
+3. Results in proper plugin loading at runtime from node_modules
+
+---
+
 ## v2.1.3 - Republish of v2.1.2 Fix
 
 This version ensures the marketplace package includes the corrected `dist/extension.js` with externalized markdown-it plugins. No code changes from v2.1.2.

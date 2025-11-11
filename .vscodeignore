@@ -25,7 +25,6 @@ sublime/TEXTASTIC_QUICK_REF.md
 
 # Build artifacts
 *.vsix
-node_modules/**
 dist/bundle-stats.html
 dist/*.map
 
