@@ -1,7 +1,6 @@
 import { Command } from './command';
 import * as vscode from 'vscode';
 import { BrowserManager } from '../services/browser/browserManager';
-import { ExtensionContext } from '../services/common/extensionContext';
 
 export class CommandInstallBrowser extends Command {
     async execute() {

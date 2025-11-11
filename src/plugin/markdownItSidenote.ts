@@ -172,7 +172,7 @@ interface ValidatedNote {
  * Configuration for marginal notes (!!text|note!!).
  * Marginal notes appear in the document margin.
  */
-const MarginNoteConfig: NoteConfig = {
+const marginNoteConfig: NoteConfig = {
     type: 'marginal_note',
     openMarker: MN_TOKEN + MN_TOKEN,
     openMarkerCode: MN_TOKEN_CODE,
@@ -185,7 +185,7 @@ const MarginNoteConfig: NoteConfig = {
  * Configuration for sidenotes (++text|note++).
  * Sidenotes appear as floating annotations.
  */
-const SideNoteConfig: NoteConfig = {
+const sideNoteConfig: NoteConfig = {
     type: 'sidenote',
     openMarker: SN_TOKEN + SN_TOKEN,
     openMarkerCode: SN_TOKEN_CODE,
@@ -197,7 +197,7 @@ const SideNoteConfig: NoteConfig = {
 /**
  * Configuration for left sidebar annotations ($content$).
  */
-const LeftSidebarConfig: SidebarConfig = {
+const leftSidebarConfig: SidebarConfig = {
     type: 'left_sidebar',
     openMarker: LEFT_SIDEBAR_TOKEN,
     openMarkerCode: LEFT_SIDEBAR_TOKEN_CODE,
@@ -208,7 +208,7 @@ const LeftSidebarConfig: SidebarConfig = {
 /**
  * Configuration for right sidebar annotations (@content@).
  */
-const RightSidebarConfig: SidebarConfig = {
+const rightSidebarConfig: SidebarConfig = {
     type: 'right_sidebar',
     openMarker: RIGHT_SIDEBAR_TOKEN,
     openMarkerCode: RIGHT_SIDEBAR_TOKEN_CODE,
@@ -277,13 +277,13 @@ function registerRendererRules(md: MarkdownIt, config: RenderConfig): void {
 export default function (md: MarkdownIt) {
     // Register notes tokenizer (handles both ++ and !!)
     md.inline.ruler.before('link', 'notes', notesTokenizer as any);
-    registerRendererRules(md, SideNoteConfig);
-    registerRendererRules(md, MarginNoteConfig);
+    registerRendererRules(md, sideNoteConfig);
+    registerRendererRules(md, marginNoteConfig);
     
     // Register sidebar tokenizer (handles both $ and @)
     md.inline.ruler.before('link', 'sidebars', sidebarTokenizer as any);
-    registerRendererRules(md, LeftSidebarConfig);
-    registerRendererRules(md, RightSidebarConfig);
+    registerRendererRules(md, leftSidebarConfig);
+    registerRendererRules(md, rightSidebarConfig);
 }
 
 // ============================================================================
@@ -317,9 +317,9 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
     // Detect sidebar type based on opening marker
     let config: SidebarConfig;
     if (char === LEFT_SIDEBAR_TOKEN_CODE) {
-        config = LeftSidebarConfig;
+        config = leftSidebarConfig;
     } else if (char === RIGHT_SIDEBAR_TOKEN_CODE) {
-        config = RightSidebarConfig;
+        config = rightSidebarConfig;
     } else {
         return false;
     }
@@ -391,16 +391,16 @@ function notesTokenizer(state: MarkdownItState, silent: boolean): boolean {
     const char = state.src.charCodeAt(start);
     
     // Early exit if not a potential note marker
-    if (char !== SideNoteConfig.openMarkerCode && char !== MarginNoteConfig.openMarkerCode) {
+    if (char !== sideNoteConfig.openMarkerCode && char !== marginNoteConfig.openMarkerCode) {
         return false;
     }
 
     // Detect note type based on opening marker
     let noteConfig: NoteConfig;
-    if (char === SideNoteConfig.openMarkerCode && state.src.charCodeAt(start + 1) === SideNoteConfig.openMarkerCode) {
-        noteConfig = SideNoteConfig;
-    } else if (char === MarginNoteConfig.openMarkerCode && state.src.charCodeAt(start + 1) === MarginNoteConfig.openMarkerCode) {
-        noteConfig = MarginNoteConfig;
+    if (char === sideNoteConfig.openMarkerCode && state.src.charCodeAt(start + 1) === sideNoteConfig.openMarkerCode) {
+        noteConfig = sideNoteConfig;
+    } else if (char === marginNoteConfig.openMarkerCode && state.src.charCodeAt(start + 1) === marginNoteConfig.openMarkerCode) {
+        noteConfig = marginNoteConfig;
     } else {
         return false;
     }
@@ -461,10 +461,10 @@ function findClosingMarker(
  * @param content - Content to process
  * @param contextName - Description for error messages (unused - kept for future debugging)
  */
-function processContentSafely(state: MarkdownItState, content: string, contextName: string): void {
+function processContentSafely(state: MarkdownItState, content: string, _contextName: string): void {
     try {
         processTextWithMarkdown(state, content);
-    } catch (e) {
+    } catch {
         // Fallback to plain text on error - silently handle to prevent plugin failures
         const fallback = state.push('text', '', 0);
         fallback.content = content;
@@ -549,7 +549,7 @@ function createNoteTokens(state: MarkdownItState, text: string, note: string, co
         // Create closing token
         state.push(`${type}_close`, 'span', -1);
         
-    } catch (e) {
+    } catch {
         // Emergency recovery - add simple text token as fallback
         // Critical errors are silently handled to prevent plugin failures
         const emergencyText = state.push('text', '', 0);

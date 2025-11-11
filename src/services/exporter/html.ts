@@ -3,7 +3,7 @@ import { promises as fsPromises } from 'fs';
 import { mkdirsAsync } from '../common/tools';
 import * as path from 'path';
 import { renderPage } from './shared';
-import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
+import { MarkdownExporter, ExportFormat, Progress, ExportItem } from './interfaces';
 import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
 
 /**
@@ -44,6 +44,7 @@ export class HtmlExporter implements MarkdownExporter {
         HtmlExporter._instance = undefined;
     }
 
+    // eslint-disable-next-line @typescript-eslint/naming-convention
     async Export(items: ExportItem[], progress: Progress) {
         const count = items.length;
         return items.reduce((p, c, i) => {
@@ -90,8 +91,9 @@ export class HtmlExporter implements MarkdownExporter {
         // Use async file write
         await fsPromises.writeFile(item.fileName, html, "utf-8");
     }
-    FormatAvailable(format: exportFormat) {
-        return exportFormat.HTML === format;
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    FormatAvailable(format: ExportFormat) {
+        return ExportFormat.HTML === format;
     }
 }
 

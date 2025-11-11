@@ -1,23 +1,22 @@
 import * as vscode from 'vscode';
-import { MarkdownDocument } from '../common/markdownDocument';
 
 export type Progress = vscode.Progress<{ message?: string; increment?: number }>;
 
-export enum exportFormat {
+export enum ExportFormat {
     PDF = "pdf",
     HTML = "html",
     JPG = "jpg",
     PNG = "png",
 }
 
-export enum exporterType {
+export enum ExporterType {
     HTML,
     Phantom,
     Puppeteer,
 }
 
 export interface FormatQuickPickItem extends vscode.QuickPickItem {
-    format: exportFormat;
+    format: ExportFormat;
 }
 
 export interface ExporterQuickPickItem extends vscode.QuickPickItem {
@@ -26,17 +25,19 @@ export interface ExporterQuickPickItem extends vscode.QuickPickItem {
 
 export interface ExportItem {
     uri: vscode.Uri,
-    format: exportFormat,
+    format: ExportFormat,
     fileName: string,
 }
 export interface MarkdownExporter {
+    // eslint-disable-next-line @typescript-eslint/naming-convention
     Export: (confs: ExportItem[], progress: Progress) => Promise<any>;
-    FormatAvailable: (format: exportFormat) => boolean;
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    FormatAvailable: (format: ExportFormat) => boolean;
 }
-export interface exportOption {
+export interface ExportOption {
     exporter: MarkdownExporter,
     progress: Progress,
-    format: exportFormat
+    format: ExportFormat
 }
 
 export interface ExportRport {

@@ -4,7 +4,7 @@ import * as path from 'path';
 import { MarkdownDocument } from '../common/markdownDocument';
 import { mkdirsAsync, mergeSettings } from '../common/tools';
 import { renderPage } from './shared';
-import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
+import { MarkdownExporter, ExportFormat, Progress, ExportItem } from './interfaces';
 import { Config } from '../common/config';
 import { BrowserManager } from '../browser/browserManager';
 import { ExtensionContext } from '../common/extensionContext';
@@ -48,6 +48,7 @@ export class PuppeteerExporter implements MarkdownExporter {
         PuppeteerExporter._instance = undefined;
     }
 
+    // eslint-disable-next-line @typescript-eslint/naming-convention
     async Export(items: ExportItem[], progress: Progress) {
         const count = items.length;
         let browser: puppeteer.Browser | undefined;
@@ -79,7 +80,12 @@ export class PuppeteerExporter implements MarkdownExporter {
                             }
                         )
                         .then(
-                            () => this.exportFile(c, page!)
+                            () => {
+                                if (!page) {
+                                    throw new Error('Browser page is not initialized');
+                                }
+                                return this.exportFile(c, page);
+                            }
                         );
                 },
                 Promise.resolve(null)
@@ -142,7 +148,7 @@ export class PuppeteerExporter implements MarkdownExporter {
 
         await page.setContent(html, { waitUntil: 'networkidle0' });
         switch (item.format) {
-            case exportFormat.PDF:
+            case ExportFormat.PDF:
                 ptConf = mergeSettings(
                     Config.instance.puppeteerDefaultSetting.pdf,
                     Config.instance.puppeteerUserSetting.pdf,
@@ -151,26 +157,27 @@ export class PuppeteerExporter implements MarkdownExporter {
                 ptConf = Object.assign(ptConf, { path: item.fileName });
                 await page.pdf(ptConf);
                 break;
-            case exportFormat.JPG:
-            case exportFormat.PNG:
+            case ExportFormat.JPG:
+            case ExportFormat.PNG:
                 ptConf = mergeSettings(
                     Config.instance.puppeteerDefaultSetting.image,
                     Config.instance.puppeteerUserSetting.image,
                     document.meta.puppeteerImage
                 );
-                ptConf = Object.assign(ptConf, { path: item.fileName, type: item.format === exportFormat.JPG ? "jpeg" : "png" });
-                if (item.format === exportFormat.PNG) {ptConf.quality = undefined;}
+                ptConf = Object.assign(ptConf, { path: item.fileName, type: item.format === ExportFormat.JPG ? "jpeg" : "png" });
+                if (item.format === ExportFormat.PNG) {ptConf.quality = undefined;}
                 await page.screenshot(ptConf);
                 break;
             default:
                 return Promise.reject("PuppeteerExporter does not support HTML export.");
         }
     }
-    FormatAvailable(format: exportFormat) {
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    FormatAvailable(format: ExportFormat) {
         return [
-            exportFormat.PDF,
-            exportFormat.JPG,
-            exportFormat.PNG
+            ExportFormat.PDF,
+            ExportFormat.JPG,
+            ExportFormat.PNG
         ].indexOf(format) > -1;
     }
 }
@@ -181,17 +188,17 @@ export class PuppeteerExporter implements MarkdownExporter {
  */
 export const puppeteerExporter = PuppeteerExporter.instance;
 
-function getInjectStyle(formate: exportFormat): string {
+function getInjectStyle(formate: ExportFormat): string {
     switch (formate) {
-        case exportFormat.PDF:
+        case ExportFormat.PDF:
             return `body, .vscode-body {
                 max-width: 100% !important;
                 width: 1000px !important;
                 margin: 0!important;
                 padding: 0!important;
             }`;
-        case exportFormat.JPG:
-        case exportFormat.PNG:
+        case ExportFormat.JPG:
+        case ExportFormat.PNG:
             return `body, .vscode-body {
                 width: 1000px !important;
             }`

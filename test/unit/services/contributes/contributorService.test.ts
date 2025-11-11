@@ -44,11 +44,11 @@ suite('ContributorService Tests', () => {
         const instance = ContributorService.instance;
         
         // Get official styles
-        const officialStyles = instance.getStyles(c => c.type === ContributorType.official);
+        const officialStyles = instance.getStyles(c => c.type === ContributorType.Official);
         assert.ok(Array.isArray(officialStyles), 'Should return array for official styles');
         
         // Get third-party styles
-        const thirdPartyStyles = instance.getStyles(c => c.type === ContributorType.thirdParty);
+        const thirdPartyStyles = instance.getStyles(c => c.type === ContributorType.ThirdParty);
         assert.ok(Array.isArray(thirdPartyStyles), 'Should return array for third-party styles');
     });
 
@@ -56,11 +56,11 @@ suite('ContributorService Tests', () => {
         const instance = ContributorService.instance;
         
         // Get official scripts
-        const officialScripts = instance.getScripts(c => c.type === ContributorType.official);
+        const officialScripts = instance.getScripts(c => c.type === ContributorType.Official);
         assert.ok(Array.isArray(officialScripts), 'Should return array for official scripts');
         
         // Get third-party scripts
-        const thirdPartyScripts = instance.getScripts(c => c.type === ContributorType.thirdParty);
+        const thirdPartyScripts = instance.getScripts(c => c.type === ContributorType.ThirdParty);
         assert.ok(Array.isArray(thirdPartyScripts), 'Should return array for third-party scripts');
     });
 
@@ -74,9 +74,9 @@ suite('ContributorService Tests', () => {
     });
 
     test('ContributorType enum should have correct values', () => {
-        assert.strictEqual(ContributorType.unknown, 0, 'unknown should be 0');
-        assert.strictEqual(ContributorType.official, 1, 'official should be 1');
-        assert.strictEqual(ContributorType.thirdParty, 2, 'thirdParty should be 2');
+        assert.strictEqual(ContributorType.Unknown, 0, 'Unknown should be 0');
+        assert.strictEqual(ContributorType.Official, 1, 'Official should be 1');
+        assert.strictEqual(ContributorType.ThirdParty, 2, 'ThirdParty should be 2');
     });
 
     test('should handle empty filter for getStyles', () => {

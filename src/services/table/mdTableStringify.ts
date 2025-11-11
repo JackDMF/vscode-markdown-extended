@@ -3,8 +3,8 @@ import { MonoSpaceLength } from "./monospace";
 export function stringifyMDTable(table: MDTable, compact?: boolean, padding?: number): string {
     padding = padding || 1;
     const rows = table.data.map((row, i) => table.indentation + stringifyRow(row, table.columnWidths, table.aligns, table.rowMergeFlags[i], compact, padding));
-    const Sep = table.indentation + stringifyHeaderSeperator(table, compact, padding);
-    rows.splice(table.headerRowCount, 0, Sep);
+    const sep = table.indentation + stringifyHeaderSeperator(table, compact, padding);
+    rows.splice(table.headerRowCount, 0, sep);
     return rows.join('\n');
 }
 
@@ -32,16 +32,16 @@ function stringifyRow(row: string[], columnWidths: number[], aligns: TableAlign[
 }
 function formatHeaderCell(align: TableAlign, columnWidth: number, compact: boolean, padding: number) {
     switch (align) {
-        case TableAlign.center:
+        case TableAlign.Center:
             if (compact) {return ":-:";}
             return addPadding(":" + "-".repeat(columnWidth - 2) + ":", padding, padding);
-        case TableAlign.left:
+        case TableAlign.Left:
             if (compact) {return ":-";}
             return addPadding(":" + "-".repeat(columnWidth - 1), padding, padding);
-        case TableAlign.right:
+        case TableAlign.Right:
             if (compact) {return "-:";}
             return addPadding("-".repeat(columnWidth - 1) + ":", padding, padding);
-        case TableAlign.auto:
+        case TableAlign.Auto:
         default:
             if (compact) {return "-";}
             return addPadding("-".repeat(columnWidth), padding, padding);
@@ -51,18 +51,18 @@ function formatCell(cell: string, width: number, align: TableAlign, padding: num
     let leftPadding = padding;
     let rightPadding = padding;
     switch (align) {
-        case TableAlign.center:
+        case TableAlign.Center:
             leftPadding += ~~((width - MonoSpaceLength(cell)) / 2);
             rightPadding += ~~((width - MonoSpaceLength(cell)) / 2);
             if (leftPadding + rightPadding !== width - MonoSpaceLength(cell) + padding * 2) {rightPadding += 1;}
             break;
-        case TableAlign.left:
+        case TableAlign.Left:
             rightPadding += (width - MonoSpaceLength(cell));
             break;
-        case TableAlign.right:
+        case TableAlign.Right:
             leftPadding += (width - MonoSpaceLength(cell));
             break;
-        case TableAlign.auto:
+        case TableAlign.Auto:
         default:
             rightPadding += (width - MonoSpaceLength(cell));
             break;

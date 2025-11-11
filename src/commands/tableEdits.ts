@@ -1,48 +1,48 @@
 import { CommandConfig, Commands } from './commands';
 import { editTables } from '../services/table/editTables';
-import { editType, targetType } from '../services/table/editTable';
+import { EditType, TargetType } from '../services/table/editTable';
 
 
 const cmds: CommandConfig[] = [
     {
         commandId: "markdownExtended.addRowAbove",
         worker: editTables,
-        args: [editType.add, targetType.row, true]
+        args: [EditType.Add, TargetType.Row, true]
     },
     {
         commandId: "markdownExtended.addRowBelow",
         worker: editTables,
-        args: [editType.add, targetType.row, false]
+        args: [EditType.Add, TargetType.Row, false]
     },
     {
         commandId: "markdownExtended.DeleteRow",
         worker: editTables,
-        args: [editType.delete, targetType.row]
+        args: [EditType.Delete, TargetType.Row]
     },
     {
         commandId: "markdownExtended.addColumnLeft",
         worker: editTables,
-        args: [editType.add, targetType.column, true]
+        args: [EditType.Add, TargetType.Column, true]
     },
     {
         commandId: "markdownExtended.addColumnRight",
         worker: editTables,
-        args: [editType.add, targetType.column, false]
+        args: [EditType.Add, TargetType.Column, false]
     },
     {
         commandId: "markdownExtended.DeleteColumn",
         worker: editTables,
-        args: [editType.delete, targetType.column]
+        args: [EditType.Delete, TargetType.Column]
     },
     {
         commandId: "markdownExtended.MoveColumnLeft",
         worker: editTables,
-        args: [editType.move, targetType.column, true]
+        args: [EditType.Move, TargetType.Column, true]
     },
     {
         commandId: "markdownExtended.MoveColumnRight",
         worker: editTables,
-        args: [editType.move, targetType.column, false]
+        args: [EditType.Move, TargetType.Column, false]
     },
 ]
 

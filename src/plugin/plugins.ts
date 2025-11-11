@@ -4,11 +4,12 @@ import { MarkdownItAnchorLink } from './markdownItAnchorLink';
 import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { Config } from '../services/common/config';
+// eslint-disable-next-line @typescript-eslint/naming-convention
 import * as MarkdownItSidenote from './markdownItSidenote';
 import { MarkdownIt } from '../@types/markdown-it';
 import { ExtensionContext } from '../services/common/extensionContext';
 
-interface markdownItPlugin {
+interface MarkdownItPlugin {
     plugin: (md: MarkdownIt, ...args: any[]) => void;
     args: any[];
 }
@@ -22,7 +23,7 @@ const myPlugins: Record<string, any> = {
     'markdown-it-sidenote': MarkdownItSidenote.default,
 }
 
-export const plugins: markdownItPlugin[] = [
+export const plugins: MarkdownItPlugin[] = [
     // $('markdown-it-toc'),
     // $('markdown-it-anchor'), // MarkdownItAnchorLink requires MarkdownItTOC
     $('markdown-it-table-of-contents', { includeLevel: Config.instance.tocLevels }),
@@ -46,7 +47,7 @@ export const plugins: markdownItPlugin[] = [
     $('markdown-it-bracketed-spans')
 ].filter(p => !!p);
 
-function $(name: string, ...args: any[]): markdownItPlugin | undefined {
+function $(name: string, ...args: any[]): MarkdownItPlugin | undefined {
     if (Config.instance.disabledPlugins.some(d => `markdown-it-${d}` === name)) {return;}
     
     const plugin = myPlugins[name] || (() => {

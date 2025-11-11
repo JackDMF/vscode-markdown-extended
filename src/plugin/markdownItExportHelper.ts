@@ -25,6 +25,7 @@ import { fileToDataUri } from '../services/common/dataUri';
  * md.render(content, { htmlExporter: env });
  * ```
  */
+// eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItExportHelper(md: MarkdownIt) {
     md.core.ruler.push("exportHelper", exportHelperWorker);
 }

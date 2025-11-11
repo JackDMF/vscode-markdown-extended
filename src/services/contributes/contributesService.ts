@@ -88,7 +88,7 @@ export class ContributesService implements IContributesService {
          */
         official: (): string => {
             return this._contributorService.getStyles(
-                c => c.type === ContributorType.official
+                c => c.type === ContributorType.Official
             ).join("\n").trim();
         },
         
@@ -97,7 +97,7 @@ export class ContributesService implements IContributesService {
          */
         thirdParty: (): string => {
             return this._contributorService.getStyles(
-                c => c.type !== ContributorType.official
+                c => c.type !== ContributorType.Official
             ).join("\n").trim();
         },
         
@@ -129,7 +129,7 @@ export class ContributesService implements IContributesService {
          */
         official: (): string => {
             return this._contributorService.getScripts(
-                c => c.type === ContributorType.official
+                c => c.type === ContributorType.Official
             ).join("\n").trim();
         },
         
@@ -138,7 +138,7 @@ export class ContributesService implements IContributesService {
          */
         thirdParty: (): string => {
             return this._contributorService.getScripts(
-                c => c.type !== ContributorType.official
+                c => c.type !== ContributorType.Official
             ).join("\n").trim();
         }
     };
@@ -166,6 +166,7 @@ export class ContributesService implements IContributesService {
  * Namespace export for backward compatibility
  * @deprecated Use ContributesService.instance instead
  */
+// eslint-disable-next-line @typescript-eslint/naming-convention
 export const Contributes = {
     Styles: {
         all: () => ContributesService.instance.styles.all(),

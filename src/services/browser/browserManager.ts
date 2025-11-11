@@ -267,7 +267,7 @@ export class BrowserManager {
                 this._browserPath = executablePath;
                 return executablePath;
             }
-        } catch (error) {
+        } catch {
             // Ignore errors, just return undefined
         }
         

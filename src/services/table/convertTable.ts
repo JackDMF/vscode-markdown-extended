@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import * as csv from './csv';
 import * as mdTable from './mdTable';
 

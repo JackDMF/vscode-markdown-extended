@@ -13,7 +13,7 @@ class MDConfig extends ConfigReader {
         super('markdown');
     }
 
-    onChange(e?: vscode.ConfigurationChangeEvent): void {
+    onChange(_e?: vscode.ConfigurationChangeEvent): void {
         // Configuration change handling can be added here if needed
     }
     

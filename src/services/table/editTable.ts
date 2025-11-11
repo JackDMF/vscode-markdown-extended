@@ -3,15 +3,15 @@ import { DocumentTable } from "./documentTables";
 import { splitColumns } from './mdTableParse';
 import { Edit, editTextDocument } from '../common/editTextDocument';
 
-export enum editType {
-    add,
-    delete,
-    move,
+export enum EditType {
+    Add,
+    Delete,
+    Move,
 }
 
-export enum targetType {
-    row,
-    column,
+export enum TargetType {
+    Row,
+    Column,
 }
 
 interface SelectedRange {
@@ -20,34 +20,34 @@ interface SelectedRange {
     count: number, // count of table column/row
 }
 
-export function editTable(editor: vscode.TextEditor, table: DocumentTable, et: editType, tt: targetType, before: boolean) {
+export function editTable(editor: vscode.TextEditor, table: DocumentTable, et: EditType, tt: TargetType, before: boolean) {
     editTextDocument(
         editor.document,
         [getTableEdit(editor, table, et, tt, before)]
     );
 }
 
-export function getTableEdit(editor: vscode.TextEditor, table: DocumentTable, et: editType, tt: targetType, before: boolean): Edit {
+export function getTableEdit(editor: vscode.TextEditor, table: DocumentTable, et: EditType, tt: TargetType, before: boolean): Edit {
     const document = editor.document;
     const selection = editor.selection;
     let offsetLine = 0;
     let offsetCharachter = 0;
 
     let rng: SelectedRange = undefined;
-    if (tt === targetType.row) {
-        rng = getSelectedRow(table, selection, et === editType.add ? before : true);
+    if (tt === TargetType.Row) {
+        rng = getSelectedRow(table, selection, et === EditType.Add ? before : true);
         switch (et) {
-            case editType.add:
+            case EditType.Add:
                 offsetLine = before ? rng.count : 0;
                 offsetCharachter = 0;
                 table.table.addRow(rng.start, rng.count);
                 break;
-            case editType.delete:
+            case EditType.Delete:
                 offsetLine = 0;
                 offsetCharachter = 0;
                 table.table.deleteRow(rng.start, rng.count);
                 break;
-            case editType.move:
+            case EditType.Move:
                 offsetLine = before ? -rng.count : rng.count;
                 offsetCharachter = 0;
                 table.table.moveRow(rng.start, rng.count, before ? -1 : 1);
@@ -57,19 +57,19 @@ export function getTableEdit(editor: vscode.TextEditor, table: DocumentTable, et
         }
     }
     else {
-        rng = getSelectedColumn(table, selection, et === editType.add ? before : true, document);
+        rng = getSelectedColumn(table, selection, et === EditType.Add ? before : true, document);
         switch (et) {
-            case editType.add:
+            case EditType.Add:
                 offsetLine = 0;
                 offsetCharachter = before ? 4 * rng.count : 0;
                 table.table.addColumn(rng.start, rng.count);
                 break;
-            case editType.delete:
+            case EditType.Delete:
                 offsetLine = 0;
                 offsetCharachter = 0;
                 table.table.deleteColumn(rng.start, rng.count);
                 break;
-            case editType.move:
+            case EditType.Move:
                 offsetLine = 0;
                 offsetCharachter = 0;
                 const offsetCol = table.table.columnWidths[rng.start + (before ? -1 : rng.count)];
@@ -124,15 +124,11 @@ function getSelectedColumn(table: DocumentTable, selection: vscode.Selection, in
     const intersectSelection = selection.intersection(table.range);
     const selectionStartLine = document.lineAt(intersectSelection.start.line).range;
     const effectiveRange = intersectSelection.intersection(selectionStartLine);
-    const selectionEndLine = document.lineAt(intersectSelection.end.line).range;
     let colStart = -1;
     let colCount = 0;
     const startLineCells = getRowCells(document, selectionStartLine);
-    const endLineCells = getRowCells(document, selectionEndLine);
-    const selectionStartPoint = new vscode.Range(intersectSelection.start, intersectSelection.start);
-    const selectionEndPoint = new vscode.Range(intersectSelection.end, intersectSelection.end);
 
-    startLineCells.map((c, i, ar) => {
+    startLineCells.map((c, i) => {
         if (c.intersection(selection)) {
             if (colStart < 0) {colStart = i;}
             colCount++;

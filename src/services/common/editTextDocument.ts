@@ -8,10 +8,10 @@ export interface Edit {
 
 export interface SelectionOffset {
     orignal: vscode.Selection;
-    offset: offset;
+    offset: Offset;
 }
 
-interface offset {
+interface Offset {
     line: number;
     charachter: number;
 }

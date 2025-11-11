@@ -11,6 +11,7 @@ import { Config } from '../services/common/config';
  * 
  * @param md - The markdown-it instance
  */
+// eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItTOC(md: MarkdownIt): void {
     md.renderer.rules.tocAnchor = renderHtml;
     md.core.ruler.push("tocAnchor", tocAnchorWorker);

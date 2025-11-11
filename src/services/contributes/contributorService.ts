@@ -17,9 +17,9 @@ export interface IContributor {
  * Type of contributor (official VS Code or third-party)
  */
 export enum ContributorType {
-    unknown,
-    official,
-    thirdParty,
+    Unknown,
+    Official,
+    ThirdParty,
 }
 
 /**
@@ -133,13 +133,13 @@ export class ContributorService implements IContributorService {
      */
     private getContributorType(ext: vscode.Extension<any>): ContributorType {
         if (!ext || !ext.packageJSON || !ext.packageJSON.publisher) {
-            return ContributorType.unknown;
+            return ContributorType.Unknown;
         }
         
         if (ext.packageJSON.publisher === "vscode") {
-            return ContributorType.official;
+            return ContributorType.Official;
         } else {
-            return ContributorType.thirdParty;
+            return ContributorType.ThirdParty;
         }
     }
     
@@ -166,6 +166,7 @@ export class ContributorService implements IContributorService {
  * Singleton instance for backward compatibility
  * @deprecated Use ContributorService.instance instead
  */
+// eslint-disable-next-line @typescript-eslint/naming-convention
 export const Contributors = {
     Type: ContributorType,
     getStyles: (filter?: (contributor: IContributor) => boolean) => 

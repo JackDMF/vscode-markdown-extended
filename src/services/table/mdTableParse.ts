@@ -22,7 +22,7 @@ export function parseMDTAble(source: string): MDTable {
     const table = new MDTable(data, headerRowCount, indentation);
     const aligns = parseAlins(sepRowCells);
     if (table.columnCount > aligns.length)
-        {aligns.push(...new Array(table.columnCount - aligns.length).fill(TableAlign.auto));}
+        {aligns.push(...new Array(table.columnCount - aligns.length).fill(TableAlign.Auto));}
     table.aligns = aligns;
     const mergeFlags = lines.map(line => line.trim().endsWith('\\'));
     mergeFlags.splice(headerRowCount, 1);
@@ -89,9 +89,9 @@ function parseAlins(row: string[]): TableAlign[] {
         const str = c.trim();
         const left = str.substr(0, 1) === ":";
         const right = str.substr(str.length - 1, 1) === ":";
-        if (left && right) {return TableAlign.center;}
-        if (left) {return TableAlign.left;}
-        if (right) {return TableAlign.right;}
-        return TableAlign.auto;
+        if (left && right) {return TableAlign.Center;}
+        if (left) {return TableAlign.Left;}
+        if (right) {return TableAlign.Right;}
+        return TableAlign.Auto;
     });
 }

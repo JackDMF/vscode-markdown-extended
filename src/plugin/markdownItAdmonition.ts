@@ -17,6 +17,7 @@ const
         "quote", "cite",   //rgba(158, 158, 158, .1) "\E244"
     ];
 
+// eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItAdmonition(md: MarkdownIt) {
     md.block.ruler.after("fence", "admonition", admonition, {});
     md.renderer.rules["admonition_open"] = render;

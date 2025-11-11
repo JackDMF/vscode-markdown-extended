@@ -18,6 +18,7 @@ const anchorLinkReg = /\[.+?\]\(\s*#(\S+?)\s*\)/ig;
  * // Link href will be converted to "#my-heading"
  * ```
  */
+// eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItAnchorLink(md: MarkdownIt) {
     md.core.ruler.push("anchorLink", anchorLinkWorker);
 }

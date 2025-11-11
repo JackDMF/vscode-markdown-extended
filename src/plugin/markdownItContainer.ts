@@ -9,6 +9,7 @@ import container = require('markdown-it-container');
  * 
  * @param md - The markdown-it instance
  */
+// eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItContainer(md: MarkdownIt): void {
     // Apply the container plugin directly (not via md.use())
     // markdown-it-container is a CommonJS module that exports a function directly

@@ -79,7 +79,6 @@ export function mkdirsSync(dirname) {
 }
 
 export function parseError(error: any): string {
-    const nb = Buffer.alloc(0);
     if (typeof (error) === "string") {
         return error;
     } else if (error instanceof TypeError || error instanceof Error) {

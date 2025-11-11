@@ -1,29 +1,29 @@
 import * as vscode from 'vscode';
-import { ExporterQuickPickItem, MarkdownExporter, exportFormat, FormatQuickPickItem } from './interfaces';
+import { ExporterQuickPickItem, MarkdownExporter, ExportFormat, FormatQuickPickItem } from './interfaces';
 import { HtmlExporter } from './html';
 import { PuppeteerExporter } from './puppeteer';
 
-export async function pickFormat(): Promise<exportFormat> {
+export async function pickFormat(): Promise<ExportFormat | undefined> {
     const items = [
         <FormatQuickPickItem>{
             label: "Self-contained HTML",
             // description: "Export to self-contained HTML.",
-            format:exportFormat.HTML,
+            format:ExportFormat.HTML,
         },
         <FormatQuickPickItem>{
             label: "PDF File",
             // description: "Export to PDF.",
-            format:exportFormat.PDF,
+            format:ExportFormat.PDF,
         },
         <FormatQuickPickItem>{
             label: "PNG Image",
             // description: "Export to PNG image.",
-            format:exportFormat.PNG,
+            format:ExportFormat.PNG,
         },
         <FormatQuickPickItem>{
             label: "JPG Image",
             // description: "Export to jpg image.",
-            format:exportFormat.JPG,
+            format:ExportFormat.JPG,
         }
     ];
     const pick = await vscode.window.showQuickPick<FormatQuickPickItem>(
@@ -34,7 +34,7 @@ export async function pickFormat(): Promise<exportFormat> {
     return pick.format;
 }
 
-export async function pickExporter(format: exportFormat): Promise<MarkdownExporter> {
+export async function pickExporter(format: ExportFormat): Promise<MarkdownExporter | undefined> {
     const availableExporters = getAvailableExporters(format);
     if (availableExporters.length === 1) {return availableExporters[0].exporter;}
     const pick = await vscode.window.showQuickPick<ExporterQuickPickItem>(
@@ -45,7 +45,7 @@ export async function pickExporter(format: exportFormat): Promise<MarkdownExport
     return pick.exporter;
 }
 
-function getAvailableExporters(format: exportFormat): ExporterQuickPickItem[] {
+function getAvailableExporters(format: ExportFormat): ExporterQuickPickItem[] {
     const items: ExporterQuickPickItem[] = [];
 
     if (HtmlExporter.instance.FormatAvailable(format)) {items.push(

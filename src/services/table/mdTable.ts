@@ -3,10 +3,10 @@ import { stringifyMDTable } from "./mdTableStringify";
 import { MonoSpaceLength } from "./monospace";
 
 export enum TableAlign {
-    auto,
-    left,
-    center,
-    right,
+    Auto,
+    Left,
+    Center,
+    Right,
 }
 export class MDTable {
     private _data: string[][];
@@ -33,7 +33,7 @@ export class MDTable {
         this._data = data;
         this._rowCount = this._data.length;
         this.alignColumns();
-        this._aligns = new Array(data.length).fill(TableAlign.auto);
+        this._aligns = new Array(data.length).fill(TableAlign.Auto);
         this._rowMergeFlags = new Array(data.length).fill(false);
         this._columnWidths = this.calcColumnWidths();
     }
@@ -98,7 +98,7 @@ export class MDTable {
         for (let i = 0; i < this._data.length; i++) {
             this._data[i].splice(pos, 0, ...new Array(count).fill(""));
         }
-        this._aligns.splice(pos, 0, ...new Array(count).fill(TableAlign.auto));
+        this._aligns.splice(pos, 0, ...new Array(count).fill(TableAlign.Auto));
         this._columnWidths.splice(pos, 0, ...new Array(count).fill(1));
         this._columnCount += count;
     }
@@ -121,14 +121,14 @@ export class MDTable {
                     }
                 );
                 switch (this._aligns[i]) {
-                    case TableAlign.left:
-                    case TableAlign.right:
+                    case TableAlign.Left:
+                    case TableAlign.Right:
                         ws.push(2);
                         break;
-                    case TableAlign.center:
+                    case TableAlign.Center:
                         ws.push(3);
                         break;
-                    case TableAlign.auto:
+                    case TableAlign.Auto:
                     default:
                         ws.push(1);
                         break;

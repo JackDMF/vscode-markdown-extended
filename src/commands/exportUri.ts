@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { pickExporter, pickFormat } from "../services/exporter/exporters";
 import { ensureMarkdownEngine } from '../services/exporter/shared';
-import { exportOption } from "../services/exporter/interfaces";
+import { ExportOption } from "../services/exporter/interfaces";
 import { MarkdownExport } from "../services/exporter/export";
 import { showExportReport } from "../services/common/tools";
 
@@ -20,7 +20,7 @@ export async function exportUri(uri: vscode.Uri) {
         },
         progress => MarkdownExport(
             uri,
-            <exportOption>{
+            <ExportOption>{
                 exporter: exporter,
                 progress: progress,
                 format: format
