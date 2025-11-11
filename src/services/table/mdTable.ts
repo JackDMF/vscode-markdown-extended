@@ -82,11 +82,11 @@ export class MDTable {
         this._rowCount -= count;
     }
     moveRow(start: number, count: number, offset: number) {
-        if (start < 0 || count == 0 || offset == 0) {return;}
+        if (start < 0 || count === 0 || offset === 0) {return;}
         this.moveArray(this._data, start, count, offset);
     }
     moveColumn(start: number, count: number, offset: number) {
-        if (start < 0 || count == 0 || offset == 0) {return;}
+        if (start < 0 || count === 0 || offset === 0) {return;}
         for (let i = 0; i < this._data.length; i++) {
             this.moveArray(this._data[i], start, count, offset);
         }

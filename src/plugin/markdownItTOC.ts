@@ -1,5 +1,6 @@
 import { MarkdownIt, Token } from '../@types/markdown-it';
 // Use default import for CommonJS module
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import toc = require('markdown-it-table-of-contents');
 import { slugify } from './shared';
 import { Config } from '../services/common/config';
@@ -29,7 +30,7 @@ function renderHtml(tokens: Token[], idx: number) {
 function tocAnchorWorker(state: any) {
     const tokens: Token[] = [];
     state.tokens.map((t, i, ts) => {
-        if (t.type == "heading_open") {
+        if (t.type === "heading_open") {
             const anchor = new state.Token("tocAnchor", "a", 0);
             anchor.content = ts[i + 1].content;
             tokens.push(anchor);

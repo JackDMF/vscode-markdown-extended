@@ -34,8 +34,8 @@ export function getTableEdit(editor: vscode.TextEditor, table: DocumentTable, et
     let offsetCharachter = 0;
 
     let rng: SelectedRange = undefined;
-    if (tt == targetType.row) {
-        rng = getSelectedRow(table, selection, et == editType.add ? before : true);
+    if (tt === targetType.row) {
+        rng = getSelectedRow(table, selection, et === editType.add ? before : true);
         switch (et) {
             case editType.add:
                 offsetLine = before ? rng.count : 0;
@@ -57,7 +57,7 @@ export function getTableEdit(editor: vscode.TextEditor, table: DocumentTable, et
         }
     }
     else {
-        rng = getSelectedColumn(table, selection, et == editType.add ? before : true, document);
+        rng = getSelectedColumn(table, selection, et === editType.add ? before : true, document);
         switch (et) {
             case editType.add:
                 offsetLine = 0;
@@ -173,7 +173,7 @@ function getRowCells(document: vscode.TextDocument, line: vscode.Range): vscode.
         const start = new vscode.Position(line.start.line, pos);
         const end = new vscode.Position(line.start.line, pos + c.length);
         pos += c.length + 1; //cell.length + '|'.length
-        if ((i == 0 || i == ar.length - 1) && !c.trim()) {return undefined;}
+        if ((i === 0 || i === ar.length - 1) && !c.trim()) {return undefined;}
         return new vscode.Range(start, end);
     }).filter(r => r !== undefined);
 }

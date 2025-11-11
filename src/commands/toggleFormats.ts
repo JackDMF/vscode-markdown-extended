@@ -114,7 +114,7 @@ const togglers: CommandConfig[] = [
     },
 ]
 
-export var commandToggles = new Commands(togglers);
+export const commandToggles = new Commands(togglers);
 
 function toggle(
     detect: RegExp,

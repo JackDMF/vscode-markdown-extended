@@ -46,4 +46,4 @@ const cmds: CommandConfig[] = [
     },
 ]
 
-export var commandTableEdits = new Commands(cmds);
+export const commandTableEdits = new Commands(cmds);

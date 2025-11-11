@@ -14,7 +14,7 @@ export function cssFileToDataUri(cssFileName: string): string {
     let css = fs.readFileSync(cssFileName).toString();
     css = css.replace(URL_REG, (substr, ...args: any[]) => {
         let filePath: string = args[0] || args[1];
-        if (filePath.substr(0, 5).toLocaleLowerCase() == "data:") {
+        if (filePath.substr(0, 5).toLocaleLowerCase() === "data:") {
             return substr;
         }
         if (!path.isAbsolute(filePath))

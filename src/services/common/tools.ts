@@ -32,7 +32,7 @@ export function calculateExportPath(uri: vscode.Uri, format: string): string {
 
 export function isSubPath(from: string, to: string): boolean {
     const rel = path.relative(to, from);
-    return !(path.isAbsolute(rel) || rel.substr(0, 2) == "..")
+    return !(path.isAbsolute(rel) || rel.substr(0, 2) === "..")
 }
 
 export function mkdirs(dirname, callback) {

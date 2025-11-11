@@ -22,7 +22,7 @@ const myPlugins: Record<string, any> = {
     'markdown-it-sidenote': MarkdownItSidenote.default,
 }
 
-export var plugins: markdownItPlugin[] = [
+export const plugins: markdownItPlugin[] = [
     // $('markdown-it-toc'),
     // $('markdown-it-anchor'), // MarkdownItAnchorLink requires MarkdownItTOC
     $('markdown-it-table-of-contents', { includeLevel: Config.instance.tocLevels }),
@@ -51,6 +51,7 @@ function $(name: string, ...args: any[]): markdownItPlugin | undefined {
     
     const plugin = myPlugins[name] || (() => {
         try { 
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
             return require(name); 
         } catch (e) { 
             const output = ExtensionContext.current.outputPanel;

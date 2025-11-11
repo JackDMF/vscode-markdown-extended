@@ -43,7 +43,7 @@ function matchedInCursor(
     const text = document.getText(lines);
     const newLinePos: number[] = [];
     for (let i = 0; i < text.length; i++) {
-        if (text.substr(i, 1) == '\n') {newLinePos.push(i);}
+        if (text.substr(i, 1) === '\n') {newLinePos.push(i);}
     }
     rule.lastIndex = 0;
     let matches: RegExpMatchArray;
@@ -78,7 +78,7 @@ function getWord(document: vscode.TextDocument, selection: vscode.Selection): vs
     const txtLine = document.lineAt(selection.active.line).text;
     const spacePreceding = txtLine.lastIndexOf(' ', selection.start.character - 1);
     let spaceFollowing = txtLine.indexOf(' ', selection.end.character);
-    if (spaceFollowing == -1) {
+    if (spaceFollowing === -1) {
         spaceFollowing = txtLine.length;
     }
     return new vscode.Selection(new vscode.Position(selection.active.line, spacePreceding + 1), new vscode.Position(selection.active.line, spaceFollowing));

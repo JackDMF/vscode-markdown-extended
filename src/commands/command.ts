@@ -15,7 +15,9 @@ export abstract class Command extends Disposable {
     }
 
     dispose() {
-        this._disposable && this._disposable.dispose();
+        if (this._disposable) {
+            this._disposable.dispose();
+        }
     }
 
     private executeCatch(...args: any[]): any {

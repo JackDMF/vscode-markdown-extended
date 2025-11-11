@@ -39,7 +39,9 @@ export abstract class ConfigReader extends vscode.Disposable {
     }
     dispose() {
         // Clean up event listener
-        this._disposable && this._disposable.dispose();
+        if (this._disposable) {
+            this._disposable.dispose();
+        }
         
         // Clear folder configuration cache to prevent memory leaks
         this._folderConfs = {};

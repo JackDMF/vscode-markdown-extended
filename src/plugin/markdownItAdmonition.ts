@@ -125,7 +125,7 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
     token.info = classes.join(' ');
     token.map = [startLine, startLine + 1];
 
-    if (title != '') {
+    if (title !== '') {
         // admonition title
         token = state.push("admonition_title_open", "p", 1);
         token.markup = markup + " " + type;

@@ -91,7 +91,7 @@ export class HtmlExporter implements MarkdownExporter {
         await fsPromises.writeFile(item.fileName, html, "utf-8");
     }
     FormatAvailable(format: exportFormat) {
-        return exportFormat.HTML == format;
+        return exportFormat.HTML === format;
     }
 }
 

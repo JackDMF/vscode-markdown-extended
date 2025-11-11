@@ -25,7 +25,7 @@ export function MarkdownItAnchorLink(md: MarkdownIt) {
 function anchorLinkWorker(state: any) {
     state.tokens.map(t => {
         if (
-            t.type == "inline" &&
+            t.type === "inline" &&
             t.children &&
             t.children.length &&
             anchorLinkReg.test(t.content)
@@ -36,12 +36,12 @@ function anchorLinkWorker(state: any) {
             while (matches = anchorLinkReg.exec(t.content)) {
                 links.push("#" + slugify(matches[1]));
             }
-            const linkCount: number = t.children.reduce((p, c) => p += c.type == "link_open" ? 1 : 0, 0);
+            const linkCount: number = t.children.reduce((p, c) => p += c.type === "link_open" ? 1 : 0, 0);
             if (linkCount !== links.length) {
                 console.log("markdownExtended: Link count and link token count mismatch!");
             } else {
                 t.children.map(t => {
-                    if (t.type == "link_open")
+                    if (t.type === "link_open")
                         {t.attrs = [["href", links.shift()]];}
                 });
             }

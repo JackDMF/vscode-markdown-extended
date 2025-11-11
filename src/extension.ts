@@ -19,13 +19,13 @@ import { BrowserManager } from './services/browser/browserManager';
 
 // Deprecated: Use ExtensionContext.current.markdown instead
 // @deprecated
-export var markdown: markdowIt.MarkdownIt;
+export let markdown: markdowIt.MarkdownIt;
 // Deprecated: Use ExtensionContext.current.vsContext instead
 // @deprecated
-export var context: vscode.ExtensionContext;
+export let context: vscode.ExtensionContext;
 // Deprecated: Use ExtensionContext.current.outputPanel instead
 // @deprecated
-export var outputPanel: vscode.OutputChannel;
+export let outputPanel: vscode.OutputChannel;
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed

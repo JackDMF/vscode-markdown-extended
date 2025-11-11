@@ -36,7 +36,7 @@ function exportHelperWorker(state: any) {
 }
 function enumTokens(tokens: Token[], env: HtmlExporterEnv) {
     tokens.map(t => {
-        if (t.type == "image") {
+        if (t.type === "image") {
             removeVsUri(t, env);
             if (env.embedImage) {embedImage(t, env);}
         }
@@ -47,7 +47,7 @@ function removeVsUri(token: Token, env: HtmlExporterEnv) {
     let index = 0;
     let src = "";
     for (let i = 0; i < token.attrs.length; i++) {
-        if (token.attrs[i][0] == "src") {
+        if (token.attrs[i][0] === "src") {
             index = i;
             src = token.attrs[i][1];
         }
@@ -58,7 +58,7 @@ function embedImage(token: Token, env: HtmlExporterEnv) {
     let index = 0;
     let src = "";
     for (let i = 0; i < token.attrs.length; i++) {
-        if (token.attrs[i][0] == "src") {
+        if (token.attrs[i][0] === "src") {
             index = i;
             src = token.attrs[i][1];
             break;

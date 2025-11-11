@@ -24,10 +24,10 @@ export class MarkdownDocument {
         let startLine = -1;
         let endLine = -1;
 
-        if (this.document.lineAt(0).text == "---") {
+        if (this.document.lineAt(0).text === "---") {
             startLine = 0;
             for (let i = 1; i < this.document.lineCount; i++) {
-                if (this.document.lineAt(i).text == "---") {
+                if (this.document.lineAt(i).text === "---") {
                     endLine = i;
                     break;
                 }
@@ -35,7 +35,7 @@ export class MarkdownDocument {
             if (endLine < 0) {startLine = -1;}
         }
 
-        if (startLine == 0 && endLine > 0)
+        if (startLine === 0 && endLine > 0)
             {meta = this.document.getText(
                 this.document.lineAt(1).range.union(
                     this.document.lineAt(endLine - 1).range

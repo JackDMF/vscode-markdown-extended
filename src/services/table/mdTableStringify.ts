@@ -17,7 +17,7 @@ function stringifyHeaderSeperator(table: MDTable, compact: boolean, padding: num
 }
 function stringifyRow(row: string[], columnWidths: number[], aligns: TableAlign[], merged: boolean, compact: boolean, padding: number): string {
     return row.reduce((p, c, i) => {
-        const splittor = (i == row.length - 1 && merged) ? '\\' : '|';
+        const splittor = (i === row.length - 1 && merged) ? '\\' : '|';
         if (c === null) {return p + splittor;}
         // current col width
         let width = columnWidths[i];
@@ -54,7 +54,7 @@ function formatCell(cell: string, width: number, align: TableAlign, padding: num
         case TableAlign.center:
             leftPadding += ~~((width - MonoSpaceLength(cell)) / 2);
             rightPadding += ~~((width - MonoSpaceLength(cell)) / 2);
-            if (leftPadding + rightPadding != width - MonoSpaceLength(cell) + padding * 2) {rightPadding += 1;}
+            if (leftPadding + rightPadding !== width - MonoSpaceLength(cell) + padding * 2) {rightPadding += 1;}
             break;
         case TableAlign.left:
             rightPadding += (width - MonoSpaceLength(cell));

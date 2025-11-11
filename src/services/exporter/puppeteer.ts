@@ -158,8 +158,8 @@ export class PuppeteerExporter implements MarkdownExporter {
                     Config.instance.puppeteerUserSetting.image,
                     document.meta.puppeteerImage
                 );
-                ptConf = Object.assign(ptConf, { path: item.fileName, type: item.format == exportFormat.JPG ? "jpeg" : "png" });
-                if (item.format == exportFormat.PNG) {ptConf.quality = undefined;}
+                ptConf = Object.assign(ptConf, { path: item.fileName, type: item.format === exportFormat.JPG ? "jpeg" : "png" });
+                if (item.format === exportFormat.PNG) {ptConf.quality = undefined;}
                 await page.screenshot(ptConf);
                 break;
             default:

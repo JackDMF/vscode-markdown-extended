@@ -44,7 +44,9 @@ export class Commands extends Disposable {
     }
 
     dispose() {
-        this._disposables && this._disposables.length && this._disposables.map(d => d.dispose());
+        if (this._disposables && this._disposables.length) {
+            this._disposables.forEach(d => d.dispose());
+        }
     }
 
     /**

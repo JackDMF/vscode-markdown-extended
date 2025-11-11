@@ -36,35 +36,35 @@ export function splitColumns(line: string): string[] {
     line = line.trim();
     for (let i = 0; i < line.length; i++) {
         const chr = line.charAt(i);
-        if (chr == '\\') {
+        if (chr === '\\') {
             i++;
             continue;
-        } else if (chr == '`') {
+        } else if (chr === '`') {
             // Skip over | and \ inside code spans
             // Code spans begin and end with a matching number of backticks
             let openingQuoteCount = 1;
             i++;
-            while (i < line.length && line.charAt(i) == '`') {
+            while (i < line.length && line.charAt(i) === '`') {
                 openingQuoteCount++;
                 i++
             }
 
             let quoteCount = 0;
             while (i < line.length) {
-                if (line.charAt(i) == '`')
+                if (line.charAt(i) === '`')
                     {quoteCount++;}
                 else
                     {quoteCount = 0;}
-                if (quoteCount == openingQuoteCount) {break;}
+                if (quoteCount === openingQuoteCount) {break;}
                 i++;
             }
-        } else if (chr == '|') {
+        } else if (chr === '|') {
             cells.push(line.substring(start, i));
             start = i + 1;
         }
     }
     // merged rows use '\' as end row seprator
-    if (line.charAt(line.length - 1) == '\\') {
+    if (line.charAt(line.length - 1) === '\\') {
         cells.push(line.substring(start, line.length - 1));
         start = line.length;
     }
@@ -87,8 +87,8 @@ function testSepRow(row: string[]): boolean {
 function parseAlins(row: string[]): TableAlign[] {
     return row.map(c => {
         const str = c.trim();
-        const left = str.substr(0, 1) == ":";
-        const right = str.substr(str.length - 1, 1) == ":";
+        const left = str.substr(0, 1) === ":";
+        const right = str.substr(str.length - 1, 1) === ":";
         if (left && right) {return TableAlign.center;}
         if (left) {return TableAlign.left;}
         if (right) {return TableAlign.right;}
