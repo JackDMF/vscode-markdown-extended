@@ -7,3 +7,13 @@ src/**
 .gitignore
 tsconfig.json
 vsc-extension-quickstart.md
+.idea/**
+.mocharc.json
+**/*.ts
+!out/**/*.js
+docs/**
+sublime/TEST.md
+sublime/TESTS.md
+sublime/TEXTASTIC_INSTALL.md
+sublime/TEXTASTIC_QUICK_REF.md
+*.vsix

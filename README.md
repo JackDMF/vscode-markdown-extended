@@ -1,9 +1,9 @@
-# Markdown Extended
+# Markdown Extended Pro
 
-[![version](https://img.shields.io/vscode-marketplace/v/jackdmf.markdown-extended.svg?style=flat-square&label=vscode%20marketplace)](https://marketplace.visualstudio.com/items?itemName=jackdmf.markdown-extended)
-[![installs](https://img.shields.io/vscode-marketplace/d/jackdmf.markdown-extended.svg?style=flat-square)](https://marketplace.visualstudio.com/items?itemName=jackdmf.markdown-extended)
+[![version](https://img.shields.io/vscode-marketplace/v/jackdmf.markdown-extended-pro.svg?style=flat-square&label=vscode%20marketplace)](https://marketplace.visualstudio.com/items?itemName=jackdmf.markdown-extended-pro)
+[![installs](https://img.shields.io/vscode-marketplace/d/jackdmf.markdown-extended-pro.svg?style=flat-square)](https://marketplace.visualstudio.com/items?itemName=jackdmf.markdown-extended-pro)
 
-Markdown Extended is a comprehensive extension that extends syntaxes and abilities to VSCode's built-in markdown functionality.
+Markdown Extended Pro is a comprehensive extension that extends syntaxes and abilities to VSCode's built-in markdown functionality.
 
 **Key Features:**
 
