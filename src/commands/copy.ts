@@ -25,17 +25,17 @@ export class CommandCopyWithStyles extends Command {
 
 async function renderMarkdown(style: boolean): Promise<string> {
     await ensureMarkdownEngine();
-    let document = vscode.window.activeTextEditor.document;
-    let selection = vscode.window.activeTextEditor.selection;
+    const document = vscode.window.activeTextEditor.document;
+    const selection = vscode.window.activeTextEditor.selection;
     let rendered = "";
     let doc: MarkdownDocument;
     if (selection.isEmpty)
-        doc = new MarkdownDocument(document);
+        {doc = new MarkdownDocument(document);}
     else
-        doc = new MarkdownDocument(document, document.getText(selection));
+        {doc = new MarkdownDocument(document, document.getText(selection));}
     if (style)
-        rendered = renderPage(doc);
+        {rendered = renderPage(doc);}
     else
-        rendered = renderHTML(doc);
+        {rendered = renderHTML(doc);}
     return rendered;
 }

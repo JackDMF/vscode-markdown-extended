@@ -23,16 +23,16 @@ export function renderPage(
 ): string {
     let doc: MarkdownDocument = undefined;
     if (document instanceof MarkdownDocument)
-        doc = document;
+        {doc = document;}
     else if (document.getText)
-        doc = new MarkdownDocument(document);
+        {doc = new MarkdownDocument(document);}
 
-    let title = escapeHtml(doc.meta.raw.title || path.basename(doc.document.uri.fsPath));
-    let styles = getStyles(doc.document.uri, injectStyle);
-    let scripts = getSciprts();
-    let html = renderHTML(doc);
+    const title = escapeHtml(doc.meta.raw.title || path.basename(doc.document.uri.fsPath));
+    const styles = getStyles(doc.document.uri, injectStyle);
+    const scripts = getSciprts();
+    const html = renderHTML(doc);
     //should put both classes, because we cannot determine if a user style URL is a theme or not
-    let mdClass = "markdown-body vscode-body vscode-light";
+    const mdClass = "markdown-body vscode-body vscode-light";
     
     // Use template literal directly instead of eval()
     return `<!DOCTYPE html>
@@ -52,7 +52,7 @@ ${scripts}
 }
 
 export function renderHTML(doc: MarkdownDocument): string {
-    let env: MarkdownItEnv = {
+    const env: MarkdownItEnv = {
         htmlExporter: {
             uri: doc.document.uri,
             workspaceFolder: getworkspaceFolder(doc.document.uri),
@@ -61,16 +61,16 @@ export function renderHTML(doc: MarkdownDocument): string {
         },
     }
     const markdown = ExtensionContext.current.markdown;
-    let content = markdown.render(doc.content, env);
+    const content = markdown.render(doc.content, env);
     return content.trim();
 }
 function getworkspaceFolder(uri): vscode.Uri {
-    let root = vscode.workspace.getWorkspaceFolder(uri);
+    const root = vscode.workspace.getWorkspaceFolder(uri);
     return (root && root.uri) ? root.uri : undefined;
 }
 function getVsUri(uri: vscode.Uri): string {
-    let root = vscode.workspace.getWorkspaceFolder(uri);
-    let p = (root && root.uri) ? '/' + root.uri.fsPath + '/' : "";
+    const root = vscode.workspace.getWorkspaceFolder(uri);
+    const p = (root && root.uri) ? '/' + root.uri.fsPath + '/' : "";
     // FIXME: vscode has a bug encoding shared path, which cannot be replaced
     // nor can vscode display images if workspace is in a shared folder.
     // FIXME: can special chr exists in uri that need escape when use regex?
@@ -78,11 +78,11 @@ function getVsUri(uri: vscode.Uri): string {
 }
 
 function getStyles(uri: vscode.Uri, injectStyle?: string): string {
-    let styles: string[] = [];
+    const styles: string[] = [];
 
-    let official = Contributes.Styles.official();
-    let thirdParty = Contributes.Styles.thirdParty();
-    let user = Contributes.Styles.user(uri);
+    const official = Contributes.Styles.official();
+    const thirdParty = Contributes.Styles.thirdParty();
+    const user = Contributes.Styles.user(uri);
 
     if (injectStyle) {
         styles.push("");
@@ -110,10 +110,10 @@ function getStyles(uri: vscode.Uri, injectStyle?: string): string {
     return styles.join('\n');
 }
 function getSciprts(): string {
-    let scripts: string[] = [];
+    const scripts: string[] = [];
 
     // let official = Contributes.Scripts.official();
-    let thirdParty = Contributes.Scripts.thirdParty();
+    const thirdParty = Contributes.Scripts.thirdParty();
 
     // if (official) {
     //     scripts.push("");

@@ -32,22 +32,22 @@ export class MarkdownDocument {
                     break;
                 }
             }
-            if (endLine < 0) startLine = -1;
+            if (endLine < 0) {startLine = -1;}
         }
 
         if (startLine == 0 && endLine > 0)
-            meta = this.document.getText(
+            {meta = this.document.getText(
                 this.document.lineAt(1).range.union(
                     this.document.lineAt(endLine - 1).range
                 )
-            );
+            );}
         else
-            meta = "";
+            {meta = "";}
         this._meta = new MetaData(meta, this.document.uri);
-        if (!this._content) this._content = this.document.getText(
+        if (!this._content) {this._content = this.document.getText(
             this.document.lineAt(endLine + 1).range.union(
                 this.document.lineAt(this.document.lineCount - 1).range
             )
-        );
+        );}
     }
 }

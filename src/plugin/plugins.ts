@@ -47,7 +47,7 @@ export var plugins: markdownItPlugin[] = [
 ].filter(p => !!p);
 
 function $(name: string, ...args: any[]): markdownItPlugin | undefined {
-    if (Config.instance.disabledPlugins.some(d => `markdown-it-${d}` === name)) return;
+    if (Config.instance.disabledPlugins.some(d => `markdown-it-${d}` === name)) {return;}
     
     const plugin = myPlugins[name] || (() => {
         try { 

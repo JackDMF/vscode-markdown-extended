@@ -45,15 +45,15 @@ export class HtmlExporter implements MarkdownExporter {
     }
 
     async Export(items: ExportItem[], progress: Progress) {
-        let count = items.length;
+        const count = items.length;
         return items.reduce((p, c, i) => {
             return p
                 .then(
                     () => {
-                        if (progress) progress.report({
+                        if (progress) {progress.report({
                             message: `${path.basename(c.fileName)} (${i + 1}/${count})`,
                             increment: ~~(1 / count * 100)
-                        });
+                        });}
                     }
                 )
                 .then(

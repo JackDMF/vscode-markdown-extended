@@ -1,19 +1,33 @@
+# Build outputs and sources
 .vscode/**
 .vscode-test/**
-out/test/**
-test/**
 src/**
+out/**
+test/**
 **/*.map
+
+# Configuration and development files
 .gitignore
 tsconfig.json
+esbuild.js
+eslint.config.js
 vsc-extension-quickstart.md
 .idea/**
 .mocharc.json
 **/*.ts
-!out/**/*.js
+
+# Documentation and test files
 docs/**
 sublime/TEST.md
 sublime/TESTS.md
 sublime/TEXTASTIC_INSTALL.md
 sublime/TEXTASTIC_QUICK_REF.md
+
+# Build artifacts
 *.vsix
+node_modules/**
+dist/bundle-stats.html
+dist/*.map
+
+# Keep only the bundled output
+!dist/extension.js

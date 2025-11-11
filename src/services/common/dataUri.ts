@@ -8,9 +8,9 @@ import { ExtensionContext } from './extensionContext';
  * @param cssFileName path of the css file
  */
 export function cssFileToDataUri(cssFileName: string): string {
-    let URL_REG = /url\(([^()'"]+?)\)|url\(['"](.+?)['"]\)/ig;
+    const URL_REG = /url\(([^()'"]+?)\)|url\(['"](.+?)['"]\)/ig;
     if (!fs.existsSync(cssFileName))
-        return "";
+        {return "";}
     let css = fs.readFileSync(cssFileName).toString();
     css = css.replace(URL_REG, (substr, ...args: any[]) => {
         let filePath: string = args[0] || args[1];
@@ -18,7 +18,7 @@ export function cssFileToDataUri(cssFileName: string): string {
             return substr;
         }
         if (!path.isAbsolute(filePath))
-            filePath = path.resolve(path.dirname(cssFileName), filePath)
+            {filePath = path.resolve(path.dirname(cssFileName), filePath)}
         try {
             return `url("${fileToDataUri(filePath)}")`;
         } catch (error) {
@@ -39,9 +39,9 @@ export function cssFileToDataUri(cssFileName: string): string {
  */
 export function fileToDataUri(fileName: string): string {
     if (!fs.existsSync(fileName))
-        return null;
-    let schema = getDataUriSchema(fileName);
-    let buf = fs.readFileSync(fileName);
+        {return null;}
+    const schema = getDataUriSchema(fileName);
+    const buf = fs.readFileSync(fileName);
     return `${schema}${buf.toString("base64")}`
 }
 
@@ -51,7 +51,7 @@ export function fileToDataUri(fileName: string): string {
  * @param fileName path of the file
  */
 export function getDataUriSchema(fileName: string): string {
-    let ext = path.extname(fileName).toLowerCase();
+    const ext = path.extname(fileName).toLowerCase();
     let mimeType = null;
     switch (ext) {
         case ".js":

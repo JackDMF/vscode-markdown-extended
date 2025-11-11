@@ -7,11 +7,11 @@ import { ExtensionContext } from './extensionContext';
 import { Config } from './config';
 
 export function calculateExportPath(uri: vscode.Uri, format: string): string {
-    let outDirName = Config.instance.exportOutDirName;
-    let folder = vscode.workspace.getWorkspaceFolder(uri);
-    let wkdir = folder ? folder.uri.fsPath : "";
+    const outDirName = Config.instance.exportOutDirName;
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    const wkdir = folder ? folder.uri.fsPath : "";
     let exportDir: string;
-    let uriPath = uri.fsPath;
+    const uriPath = uri.fsPath;
     if (!path.isAbsolute(uriPath)) {
         throw new Error("please save file before export: " + uriPath);
     }
@@ -31,7 +31,7 @@ export function calculateExportPath(uri: vscode.Uri, format: string): string {
 }
 
 export function isSubPath(from: string, to: string): boolean {
-    let rel = path.relative(to, from);
+    const rel = path.relative(to, from);
     return !(path.isAbsolute(rel) || rel.substr(0, 2) == "..")
 }
 
@@ -79,14 +79,14 @@ export function mkdirsSync(dirname) {
 }
 
 export function parseError(error: any): string {
-    let nb = Buffer.alloc(0);
+    const nb = Buffer.alloc(0);
     if (typeof (error) === "string") {
         return error;
     } else if (error instanceof TypeError || error instanceof Error) {
-        let err = error as TypeError;
+        const err = error as TypeError;
         return err.message + '\n' + err.stack;
     } else if (error instanceof Array) {
-        let arrs = error as any[];
+        const arrs = error as any[];
         return arrs.reduce((p, err) => p + '\n\n' + err.message + '\n' + err.stack, "");
     } else {
         return error.toString();
@@ -103,10 +103,10 @@ export function mergeSettings(...args: any[]) {
  * Show export report with file list
  */
 export async function showExportReport(report: ExportRport) {
-    let msg = `${report.files.length} file(s) exported in ${report.duration / 1000} seconds`;
-    let viewReport = "View Report";
-    let btn = await vscode.window.showInformationMessage(msg, viewReport);
-    if (btn !== viewReport) return;
+    const msg = `${report.files.length} file(s) exported in ${report.duration / 1000} seconds`;
+    const viewReport = "View Report";
+    const btn = await vscode.window.showInformationMessage(msg, viewReport);
+    if (btn !== viewReport) {return;}
     
     // Show detailed report in output panel
     const outputPanel = ExtensionContext.current.outputPanel;

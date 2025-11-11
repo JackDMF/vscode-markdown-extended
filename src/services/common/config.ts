@@ -61,8 +61,8 @@ export class Config extends ConfigReader {
      * ```
      */
     get disabledPlugins(): string[] {
-        let conf = this.read<string>('disabledPlugins').trim();
-        if (!conf) return [];
+        const conf = this.read<string>('disabledPlugins').trim();
+        if (!conf) {return [];}
         return conf.toLowerCase().split(',').map(p => p.trim());
     }
     
@@ -76,11 +76,11 @@ export class Config extends ConfigReader {
      * const levels = config.tocLevels; // [1, 2, 3, 4]
      * ```
      */
-    get tocLevels(): Number[] {
-        let conf = this.read<Number[]>('tocLevels');
-        if (!(conf instanceof Array)) conf = [];
-        if (conf.length) conf = conf.filter(c => typeof c == "number");
-        if (!conf.length) return [1, 2, 3];
+    get tocLevels(): number[] {
+        let conf = this.read<number[]>('tocLevels');
+        if (!(conf instanceof Array)) {conf = [];}
+        if (conf.length) {conf = conf.filter(c => typeof c === "number");}
+        if (!conf.length) {return [1, 2, 3];}
         return conf;
     }
     
@@ -105,7 +105,7 @@ export class Config extends ConfigReader {
      * ```
      */
     get puppeteerExecutable(): string {
-        let exe = this.read<string>('puppeteerExecutable');
+        const exe = this.read<string>('puppeteerExecutable');
         return fs.existsSync(exe) ? exe : "";
     }
     

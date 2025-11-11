@@ -21,7 +21,7 @@ function validate(): boolean {
 function render(tokens, idx): string {
     if (tokens[idx].nesting === 1) {
         // opening tag 
-        let cls = escape(tokens[idx].info.trim());
+        const cls = escape(tokens[idx].info.trim());
         return `<div class="${cls}">\n`;
     } else {
         // closing tag 

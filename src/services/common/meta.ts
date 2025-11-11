@@ -9,11 +9,11 @@ export class MetaData {
         this._meta = yaml.load(data) || {};
     }
     get puppeteerPDF() {
-        if (!this._meta.puppeteer) return {};
+        if (!this._meta.puppeteer) {return {};}
         return this._meta.puppeteer.pdf || {};
     }
     get puppeteerImage() {
-        if (!this._meta.puppeteer) return {};
+        if (!this._meta.puppeteer) {return {};}
         return this._meta.puppeteer.image || {};
     }
     get raw() {

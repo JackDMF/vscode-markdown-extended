@@ -57,7 +57,7 @@ export class Commands extends Disposable {
     ): () => void {
         return () => {
             try {
-                let pm = func(...args);
+                const pm = func(...args);
                 if (pm instanceof Promise) {
                     pm.catch(error => {
                         ErrorHandler.handle(error, {

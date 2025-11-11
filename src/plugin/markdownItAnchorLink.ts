@@ -31,18 +31,18 @@ function anchorLinkWorker(state: any) {
             anchorLinkReg.test(t.content)
         ) {
             let matches: RegExpMatchArray;
-            let links: string[] = [];
+            const links: string[] = [];
             anchorLinkReg.lastIndex = 0;
             while (matches = anchorLinkReg.exec(t.content)) {
                 links.push("#" + slugify(matches[1]));
             }
-            let linkCount: number = t.children.reduce((p, c) => p += c.type == "link_open" ? 1 : 0, 0);
+            const linkCount: number = t.children.reduce((p, c) => p += c.type == "link_open" ? 1 : 0, 0);
             if (linkCount !== links.length) {
                 console.log("markdownExtended: Link count and link token count mismatch!");
             } else {
                 t.children.map(t => {
                     if (t.type == "link_open")
-                        t.attrs = [["href", links.shift()]];
+                        {t.attrs = [["href", links.shift()]];}
                 });
             }
         }

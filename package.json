@@ -23,7 +23,7 @@
   "activationEvents": [
     "onLanguage:markdown"
   ],
-  "main": "./out/src/extension",
+  "main": "./dist/extension.js",
   "contributes": {
     "themes": [
       {
@@ -378,11 +378,18 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "pwsh.exe -Command 'rm -r -fo @(gci -r -fi .local*); npm run compile'",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node ./out/test/index.js",
-    "test:unit": "npm run compile && node ./out/test/runTest.js"
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "analyze": "node esbuild.js --analyze",
+    "compile-tests": "tsc -p ./",
+    "watch-tests": "tsc -watch -p ./",
+    "pretest": "npm run compile-tests",
+    "test": "npm run compile-tests && node ./out/test/index.js",
+    "test:unit": "npm run compile-tests && node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts",
+    "lint:fix": "eslint src --ext ts --fix"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",
@@ -390,7 +397,12 @@
     "@types/node": "^22.13.9",
     "@types/sinon": "^17.0.4",
     "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.4",
+    "@typescript-eslint/parser": "^8.46.4",
     "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.27.0",
+    "esbuild-visualizer": "^0.7.0",
+    "eslint": "^9.39.1",
     "glob": "^11.0.3",
     "mocha": "^11.7.5",
     "sinon": "^21.0.0",

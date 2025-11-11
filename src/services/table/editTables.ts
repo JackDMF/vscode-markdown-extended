@@ -5,12 +5,12 @@ import { editTextDocument } from '../common/editTextDocument';
 
 
 export function editTables(et: editType, tt: targetType, before: boolean) {
-    let editor = vscode.window.activeTextEditor;
-    let document = editor.document;
-    let selection = editor.selection;
+    const editor = vscode.window.activeTextEditor;
+    const document = editor.document;
+    const selection = editor.selection;
 
-    let tables = tablesOf(document).filter(t => t.range.intersection(selection));
-    if (!tables || !tables.length) return;
+    const tables = tablesOf(document).filter(t => t.range.intersection(selection));
+    if (!tables || !tables.length) {return;}
 
     editTextDocument(
         editor.document,

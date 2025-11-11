@@ -4,13 +4,13 @@ import { editTextDocument, Edit } from '../services/common/editTextDocument';
 import { tablesOf } from '../services/table/documentTables';
 export class CommandFormateTable extends Command {
     execute() {
-        let editor = vscode.window.activeTextEditor;
-        let selection = editor.selection;
-        let tables = tablesOf(editor.document);
-        let edits: Edit[] = [];
+        const editor = vscode.window.activeTextEditor;
+        const selection = editor.selection;
+        const tables = tablesOf(editor.document);
+        const edits: Edit[] = [];
         tables.map(t => {
             if (t.range.intersection(selection))
-                edits.push({ range: t.range, replace: t.table.stringify() });
+                {edits.push({ range: t.range, replace: t.table.stringify() });}
         });
         return editTextDocument(
             editor.document,

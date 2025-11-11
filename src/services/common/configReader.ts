@@ -70,27 +70,27 @@ export abstract class ConfigReader extends vscode.Disposable {
             throw new Error('ConfigReader.read: transformer requires uri parameter');
         }
         
-        if (!uri) return this._conf.get<T>(key); // no uri? return global value.
+        if (!uri) {return this._conf.get<T>(key);} // no uri? return global value.
         
-        let folder = vscode.workspace.getWorkspaceFolder(uri);
-        if (!folder || !folder.uri) return this._conf.get<T>(key); // new file or not current workspace file? return global value.
+        const folder = vscode.workspace.getWorkspaceFolder(uri);
+        if (!folder || !folder.uri) {return this._conf.get<T>(key);} // new file or not current workspace file? return global value.
         
         let folderConf = this._folderConfs[folder.uri.fsPath];
         if (!folderConf) {
             folderConf = vscode.workspace.getConfiguration(this._section, folder.uri);
             this._folderConfs[folder.uri.fsPath] = folderConf;
         }
-        let results = folderConf.inspect<T>(key);
+        const results = folderConf.inspect<T>(key);
 
         let value: T | undefined = undefined;
         if (results.workspaceFolderValue !== undefined)
-            value = results.workspaceFolderValue;
+            {value = results.workspaceFolderValue;}
         else if (results.workspaceValue !== undefined)
-            value = results.workspaceValue;
+            {value = results.workspaceValue;}
         else if (results.globalValue !== undefined)
-            value = results.globalValue;
+            {value = results.globalValue;}
         else
-            value = results.defaultValue;
+            {value = results.defaultValue;}
             
         if (transformer && folder && folder.uri && value !== undefined) {
             return transformer(folder.uri, value);
@@ -108,7 +108,7 @@ export abstract class ConfigReader extends vscode.Disposable {
     private getConfObjects(configName: string) {
         this._conf = vscode.workspace.getConfiguration(configName);
         this._folderConfs = {};
-        if (!vscode.workspace.workspaceFolders) return;
+        if (!vscode.workspace.workspaceFolders) {return;}
         vscode.workspace.workspaceFolders.map(
             f => this._folderConfs[f.uri.fsPath] = vscode.workspace.getConfiguration(configName, f.uri)
         );

@@ -330,8 +330,8 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
     }
 
     // Find closing marker
-    let endPos = state.src.indexOf(config.closeMarker, start + 1);
-    if (endPos === -1) return false;
+    const endPos = state.src.indexOf(config.closeMarker, start + 1);
+    if (endPos === -1) {return false;}
 
     // Skip in silent mode
     if (silent) {
@@ -420,13 +420,13 @@ function notesTokenizer(state: MarkdownItState, silent: boolean): boolean {
  */
 function validateNoteContent(content: string): ValidatedNote | null {
     const pipePos = content.indexOf(TOKEN_PIPE);
-    if (pipePos === -1) return null;
+    if (pipePos === -1) {return null;}
     
     const text = content.slice(0, pipePos);
     const note = content.slice(pipePos + 1);
     
     // Reference text cannot be empty
-    if (text.trim().length === 0) return null;
+    if (text.trim().length === 0) {return null;}
     
     return { text, note };
 }
@@ -491,7 +491,7 @@ function processNote(state: MarkdownItState, silent: boolean, start: number, con
 
     // Find closing marker within reasonable search bounds
     const endPos = findClosingMarker(state.src, start + 2, config.closeMarker);
-    if (endPos === null) return false;
+    if (endPos === null) {return false;}
 
     // Extract and validate content structure (text|note)
     const content = state.src.slice(start + 2, endPos);

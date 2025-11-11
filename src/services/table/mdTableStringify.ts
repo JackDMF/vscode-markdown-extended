@@ -2,14 +2,14 @@ import { MDTable, TableAlign } from "./mdTable";
 import { MonoSpaceLength } from "./monospace";
 export function stringifyMDTable(table: MDTable, compact?: boolean, padding?: number): string {
     padding = padding || 1;
-    let rows = table.data.map((row, i) => table.indentation + stringifyRow(row, table.columnWidths, table.aligns, table.rowMergeFlags[i], compact, padding));
-    let Sep = table.indentation + stringifyHeaderSeperator(table, compact, padding);
+    const rows = table.data.map((row, i) => table.indentation + stringifyRow(row, table.columnWidths, table.aligns, table.rowMergeFlags[i], compact, padding));
+    const Sep = table.indentation + stringifyHeaderSeperator(table, compact, padding);
     rows.splice(table.headerRowCount, 0, Sep);
     return rows.join('\n');
 }
 
 function stringifyHeaderSeperator(table: MDTable, compact: boolean, padding: number): string {
-    let colCount = table.data[0].length;
+    const colCount = table.data[0].length;
     return [...Array(colCount).keys()].reduce(
         (p, i) => p + formatHeaderCell(table.aligns[i], table.columnWidths[i], compact, padding) + "|"
         , "|"
@@ -17,8 +17,8 @@ function stringifyHeaderSeperator(table: MDTable, compact: boolean, padding: num
 }
 function stringifyRow(row: string[], columnWidths: number[], aligns: TableAlign[], merged: boolean, compact: boolean, padding: number): string {
     return row.reduce((p, c, i) => {
-        let splittor = (i == row.length - 1 && merged) ? '\\' : '|';
-        if (c === null) return p + splittor;
+        const splittor = (i == row.length - 1 && merged) ? '\\' : '|';
+        if (c === null) {return p + splittor;}
         // current col width
         let width = columnWidths[i];
         let idx = i + 1;
@@ -33,17 +33,17 @@ function stringifyRow(row: string[], columnWidths: number[], aligns: TableAlign[
 function formatHeaderCell(align: TableAlign, columnWidth: number, compact: boolean, padding: number) {
     switch (align) {
         case TableAlign.center:
-            if (compact) return ":-:";
+            if (compact) {return ":-:";}
             return addPadding(":" + "-".repeat(columnWidth - 2) + ":", padding, padding);
         case TableAlign.left:
-            if (compact) return ":-";
+            if (compact) {return ":-";}
             return addPadding(":" + "-".repeat(columnWidth - 1), padding, padding);
         case TableAlign.right:
-            if (compact) return "-:";
+            if (compact) {return "-:";}
             return addPadding("-".repeat(columnWidth - 1) + ":", padding, padding);
         case TableAlign.auto:
         default:
-            if (compact) return "-";
+            if (compact) {return "-";}
             return addPadding("-".repeat(columnWidth), padding, padding);
     }
 }
@@ -54,7 +54,7 @@ function formatCell(cell: string, width: number, align: TableAlign, padding: num
         case TableAlign.center:
             leftPadding += ~~((width - MonoSpaceLength(cell)) / 2);
             rightPadding += ~~((width - MonoSpaceLength(cell)) / 2);
-            if (leftPadding + rightPadding != width - MonoSpaceLength(cell) + padding * 2) rightPadding += 1;
+            if (leftPadding + rightPadding != width - MonoSpaceLength(cell) + padding * 2) {rightPadding += 1;}
             break;
         case TableAlign.left:
             rightPadding += (width - MonoSpaceLength(cell));

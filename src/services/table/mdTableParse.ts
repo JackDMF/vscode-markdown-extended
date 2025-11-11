@@ -3,9 +3,9 @@ import { MDTable, TableAlign } from "./mdTable";
 const leadingSpaceReg = /^\s*/;
 
 export function parseMDTAble(source: string): MDTable {
-    let lines = source.replace(/\r?\n/g, "\n").split("\n");
-    if (lines.length < 2) return undefined; //should have at least two line
-    let data = lines.map(line => getColumns(line));
+    const lines = source.replace(/\r?\n/g, "\n").split("\n");
+    if (lines.length < 2) {return undefined;} //should have at least two line
+    const data = lines.map(line => getColumns(line));
     let headerRowCount = 0;
     let sepRowCells: string[];
     // find and extract header seprator row.
@@ -16,26 +16,26 @@ export function parseMDTAble(source: string): MDTable {
             break;
         }
     }
-    if (!headerRowCount) return undefined;
+    if (!headerRowCount) {return undefined;}
 
-    let indentation = lines[0].match(leadingSpaceReg)[0];
-    let table = new MDTable(data, headerRowCount, indentation);
-    let aligns = parseAlins(sepRowCells);
+    const indentation = lines[0].match(leadingSpaceReg)[0];
+    const table = new MDTable(data, headerRowCount, indentation);
+    const aligns = parseAlins(sepRowCells);
     if (table.columnCount > aligns.length)
-        aligns.push(...new Array(table.columnCount - aligns.length).fill(TableAlign.auto));
+        {aligns.push(...new Array(table.columnCount - aligns.length).fill(TableAlign.auto));}
     table.aligns = aligns;
-    let mergeFlags = lines.map(line => line.trim().endsWith('\\'));
+    const mergeFlags = lines.map(line => line.trim().endsWith('\\'));
     mergeFlags.splice(headerRowCount, 1);
     table.rowMergeFlags = mergeFlags;
     return table;
 }
 
 export function splitColumns(line: string): string[] {
-    let cells: string[] = [];
+    const cells: string[] = [];
     let start = 0;
     line = line.trim();
     for (let i = 0; i < line.length; i++) {
-        let chr = line.charAt(i);
+        const chr = line.charAt(i);
         if (chr == '\\') {
             i++;
             continue;
@@ -52,10 +52,10 @@ export function splitColumns(line: string): string[] {
             let quoteCount = 0;
             while (i < line.length) {
                 if (line.charAt(i) == '`')
-                    quoteCount++;
+                    {quoteCount++;}
                 else
-                    quoteCount = 0;
-                if (quoteCount == openingQuoteCount) break;
+                    {quoteCount = 0;}
+                if (quoteCount == openingQuoteCount) {break;}
                 i++;
             }
         } else if (chr == '|') {
@@ -73,25 +73,25 @@ export function splitColumns(line: string): string[] {
 }
 
 function getColumns(line: string): string[] {
-    let cells = splitColumns(line);
-    if (!cells[0].trim()) cells.shift();
-    if (cells.length && !cells[cells.length - 1].trim()) cells.pop();
+    const cells = splitColumns(line);
+    if (!cells[0].trim()) {cells.shift();}
+    if (cells.length && !cells[cells.length - 1].trim()) {cells.pop();}
     return cells.map(c => c ? c.trim() : null);
 }
 function testSepRow(row: string[]): boolean {
     return row.reduce((p, c) => {
-        if (!p) return false;
+        if (!p) {return false;}
         return !!c && /^:?[-=]+:?$/i.test(c.trim());
     }, true);
 }
 function parseAlins(row: string[]): TableAlign[] {
     return row.map(c => {
-        let str = c.trim();
-        let left = str.substr(0, 1) == ":";
-        let right = str.substr(str.length - 1, 1) == ":";
-        if (left && right) return TableAlign.center;
-        if (left) return TableAlign.left;
-        if (right) return TableAlign.right;
+        const str = c.trim();
+        const left = str.substr(0, 1) == ":";
+        const right = str.substr(str.length - 1, 1) == ":";
+        if (left && right) {return TableAlign.center;}
+        if (left) {return TableAlign.left;}
+        if (right) {return TableAlign.right;}
         return TableAlign.auto;
     });
 }

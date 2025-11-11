@@ -8,10 +8,10 @@ import { showExportReport } from "../services/common/tools";
 export async function exportUri(uri: vscode.Uri) {
 
     await ensureMarkdownEngine();
-    let format = await pickFormat();
-    if (!format) return;
-    let exporter = await pickExporter(format);
-    if (!exporter) return;
+    const format = await pickFormat();
+    if (!format) {return;}
+    const exporter = await pickExporter(format);
+    if (!exporter) {return;}
 
     return vscode.window.withProgress(
         <vscode.ProgressOptions>{

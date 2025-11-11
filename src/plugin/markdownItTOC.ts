@@ -21,16 +21,16 @@ export function MarkdownItTOC(md: MarkdownIt): void {
 
 function renderHtml(tokens: Token[], idx: number) {
     // console.log("request anchor for:", idx, tokens[idx].content);
-    let token = tokens[idx];
-    if (token.type !== "tocAnchor") return tokens[idx].content;
+    const token = tokens[idx];
+    if (token.type !== "tocAnchor") {return tokens[idx].content;}
     return `<a for="toc-anchor" id="${slugify(token.content)}"></a>`;
 }
 
 function tocAnchorWorker(state: any) {
-    let tokens: Token[] = [];
+    const tokens: Token[] = [];
     state.tokens.map((t, i, ts) => {
         if (t.type == "heading_open") {
-            let anchor = new state.Token("tocAnchor", "a", 0);
+            const anchor = new state.Token("tocAnchor", "a", 0);
             anchor.content = ts[i + 1].content;
             tokens.push(anchor);
         }

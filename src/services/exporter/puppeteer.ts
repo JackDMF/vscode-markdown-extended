@@ -49,7 +49,7 @@ export class PuppeteerExporter implements MarkdownExporter {
     }
 
     async Export(items: ExportItem[], progress: Progress) {
-        let count = items.length;
+        const count = items.length;
         let browser: puppeteer.Browser | undefined;
         let page: puppeteer.Page | undefined;
         
@@ -72,10 +72,10 @@ export class PuppeteerExporter implements MarkdownExporter {
                     return p
                         .then(
                             () => {
-                                if (progress) progress.report({
+                                if (progress) {progress.report({
                                     message: `${path.basename(c.fileName)} (${i + 1}/${count})`,
                                     increment: ~~(1 / count * 100)
-                                });
+                                });}
                             }
                         )
                         .then(
@@ -134,9 +134,9 @@ export class PuppeteerExporter implements MarkdownExporter {
         }
     }
     private async exportFile(item: ExportItem, page: puppeteer.Page) {
-        let document = new MarkdownDocument(await vscode.workspace.openTextDocument(item.uri));
-        let inject = getInjectStyle(item.format);
-        let html = renderPage(document, inject);
+        const document = new MarkdownDocument(await vscode.workspace.openTextDocument(item.uri));
+        const inject = getInjectStyle(item.format);
+        const html = renderPage(document, inject);
         let ptConf: any = {};
         await mkdirsAsync(path.dirname(item.fileName));
 
@@ -159,7 +159,7 @@ export class PuppeteerExporter implements MarkdownExporter {
                     document.meta.puppeteerImage
                 );
                 ptConf = Object.assign(ptConf, { path: item.fileName, type: item.format == exportFormat.JPG ? "jpeg" : "png" });
-                if (item.format == exportFormat.PNG) ptConf.quality = undefined;
+                if (item.format == exportFormat.PNG) {ptConf.quality = undefined;}
                 await page.screenshot(ptConf);
                 break;
             default:

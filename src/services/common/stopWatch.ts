@@ -14,8 +14,8 @@ export class StopWatch {
     }
     get duration(): number {
         if (this.endTime)
-            return this.endTime.getTime() - this.startTime.getTime();
+            {return this.endTime.getTime() - this.startTime.getTime();}
         else
-            return new Date().getTime() - this.startTime.getTime();
+            {return new Date().getTime() - this.startTime.getTime();}
     }
 }

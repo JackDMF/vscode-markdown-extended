@@ -20,7 +20,7 @@ export abstract class Command extends Disposable {
 
     private executeCatch(...args: any[]): any {
         try {
-            let pm = this.execute(...args);
+            const pm = this.execute(...args);
             if (pm instanceof Promise) {
                 pm.catch(error => {
                     ErrorHandler.handle(error, {
