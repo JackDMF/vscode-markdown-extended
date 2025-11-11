@@ -17,26 +17,40 @@ export = MarkdownIt;
 export as namespace markdownit;
 
 declare module MarkdownIt {
+    /**
+     * Environment object for markdown-it rendering
+     */
+    interface Environment {
+        [key: string]: unknown;
+    }
+    
+    /**
+     * Plugin function type
+     */
+    type PluginSimple = (md: MarkdownIt, ...params: unknown[]) => void;
+    type PluginWithOptions<T = unknown> = (md: MarkdownIt, options?: T) => void;
+    type PluginWithParams = (md: MarkdownIt, ...params: unknown[]) => void;
+    
     interface MarkdownIt {
-        render(md: string, env?: any): string;
-        renderInline(md: string, env?: any): string;
-        parse(src: string, env: any): Token[];
-        parseInline(src: string, env: any): Token[];
-        use(plugin: any, ...params: any[]): MarkdownIt;
+        render(md: string, env?: Environment): string;
+        renderInline(md: string, env?: Environment): string;
+        parse(src: string, env: Environment): Token[];
+        parseInline(src: string, env: Environment): Token[];
+        use(plugin: PluginSimple | PluginWithOptions | PluginWithParams, ...params: unknown[]): MarkdownIt;
         utils: {
-            assign(obj: any): any;
-            isString(obj: any): boolean;
-            has(object: any, key: string): boolean;
+            assign<T extends object>(obj: T): T;
+            isString(obj: unknown): obj is string;
+            has(object: Record<string, unknown>, key: string): boolean;
             unescapeMd(str: string): string;
             unescapeAll(str: string): string;
-            isValidEntityCode(str: any): boolean;
+            isValidEntityCode(code: number): boolean;
             fromCodePoint(str: string): string;
             escapeHtml(str: string): string;
-            arrayReplaceAt(src: any[], pos: number, newElements: any[]): any[]
-            isSpace(str: any): boolean;
-            isWhiteSpace(str: any): boolean
-            isMdAsciiPunct(str: any): boolean;
-            isPunctChar(str: any): boolean;
+            arrayReplaceAt<T>(src: T[], pos: number, newElements: T[]): T[]
+            isSpace(code: number): boolean;
+            isWhiteSpace(code: number): boolean
+            isMdAsciiPunct(code: number): boolean;
+            isPunctChar(ch: string): boolean;
             escapeRE(str: string): string;
             normalizeReference(str: string): string;
         }
@@ -48,7 +62,7 @@ declare module MarkdownIt {
         validateLink(url: string): boolean;
         block: ParserBlock;
         core: Core;
-        helpers: any;
+        helpers: Record<string, unknown>;
         inline: ParserInline;
         linkify: LinkifyIt;
         renderer: Renderer;
@@ -61,17 +75,17 @@ declare module MarkdownIt {
         linkify?: boolean;
         typographer?: boolean;
         quotes?: string;
-        highlight?: (str: string, lang: string) => void;
+        highlight?: (str: string, lang: string) => string | void;
     }
     interface LinkifyIt {
         tlds(lang: string, linkified: boolean): void;
     }
     interface Renderer {
         rules: { [name: string]: TokenRender };
-        render(tokens: Token[], options: any, env: any): string;
+        render(tokens: Token[], options: Options, env: Environment): string;
         renderAttrs(token: Token): string;
-        renderInline(tokens: Token[], options: any, env: any): string;
-        renderToken(tokens: Token[], idx: number, options: any): string;
+        renderInline(tokens: Token[], options: Options, env: Environment): string;
+        renderToken(tokens: Token[], idx: number, options: Options): string;
     }
     interface Token {
         attrGet: (name: string) => string | null;
@@ -88,42 +102,62 @@ declare module MarkdownIt {
         level: number;
         map: number[];
         markup: string;
-        meta: any;
+        meta: unknown;
         nesting: number;
         tag: string;
         type: string;
     }
 
-    type TokenRender = (tokens: Token[], index: number, options: any, env: any, self: Renderer) => void;
+    type TokenRender = (tokens: Token[], index: number, options: Options, env: Environment, self: Renderer) => string;
 
-    // interface Rule {
-    //     (state: any): void;
-    // }
-    type Rule = (state: any, startLine: number, endLine: number, silent: boolean) => void;
+    /**
+     * State object passed to rules
+     */
+    interface StateBase {
+        src: string;
+        env: Environment;
+        tokens: Token[];
+        [key: string]: unknown;
+    }
+    
+    /**
+     * Block rule function
+     */
+    type RuleBlock = (state: StateBase, startLine: number, endLine: number, silent: boolean) => boolean;
+    
+    /**
+     * Inline rule function
+     */
+    type RuleInline = (state: StateBase, silent: boolean) => boolean;
+    
+    /**
+     * Core rule function
+     */
+    type RuleCore = (state: StateBase) => void;
 
     interface Ruler {
-        after(afterName: string, ruleName: string, rule: Rule, options?: any): void;
-        at(name: string, rule: Rule, options?: any): void;
-        before(beforeName: string, ruleName: string, rule: Rule, options?: any): void;
+        after(afterName: string, ruleName: string, rule: RuleBlock | RuleInline | RuleCore, options?: Record<string, unknown>): void;
+        at(name: string, rule: RuleBlock | RuleInline | RuleCore, options?: Record<string, unknown>): void;
+        before(beforeName: string, ruleName: string, rule: RuleBlock | RuleInline | RuleCore, options?: Record<string, unknown>): void;
         disable(rules: string | string[], ignoreInvalid?: boolean): string[];
         enable(rules: string | string[], ignoreInvalid?: boolean): string[];
         enableOnly(rule: string, ignoreInvalid?: boolean): void;
-        getRules(chain: string): Rule[];
-        push(ruleName: string, rule: Rule, options?: any): void;
+        getRules(chain: string): (RuleBlock | RuleInline | RuleCore)[];
+        push(ruleName: string, rule: RuleBlock | RuleInline | RuleCore, options?: Record<string, unknown>): void;
     }
 
     interface ParserBlock {
-        parse(src: string, md: MarkdownIt, env: any, outTokens: Token[]): void;
+        parse(src: string, md: MarkdownIt, env: Environment, outTokens: Token[]): void;
         ruler: Ruler;
     }
 
     interface Core {
-        process(state: any): void;
+        process(state: StateBase): void;
         ruler: Ruler;
     }
 
     interface ParserInline {
-        parse(src: string, md: MarkdownIt, env: any, outTokens: Token[]): void;
+        parse(src: string, md: MarkdownIt, env: Environment, outTokens: Token[]): void;
         ruler: Ruler;
         ruler2: Ruler;
     }

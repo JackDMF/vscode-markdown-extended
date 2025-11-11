@@ -1,0 +1,411 @@
+{
+  "name": "Markdown Extended Dark",
+  "author": "Based on VS Code Markdown Extended and Styles.css",
+  "variables": {
+    // ===== DARK MODE COLORS (from Styles.css) =====
+    "dm_background": "#1a1620",
+    "dm_text": "#ffffff",
+    "dm_accent1": "#ff2d8a",    // pink
+    "dm_accent2": "#ff7a24",    // orange
+    "dm_accent3": "#ffd700",    // gold/yellow
+    "dm_accent4": "#21e968",    // green
+    "dm_accent5": "#00d9ff",    // cyan
+    "dm_accent6": "#9b7bff",    // purple
+    "dm_dimmed1": "#e1e0e6",
+    "dm_dimmed2": "#b5b1ba",
+    "dm_grey_text": "#b5b1ba",
+    
+    // ===== SIDENOTE COLORS (dark mode) =====
+    "sn_1_dark": "#ff6b9d",     // light pink
+    "sn_2_dark": "#9d7ce8",     // light purple
+    "sn_3_dark": "#8b5cf6",     // light indigo
+    "sn_4_dark": "#60a5fa",     // light blue
+    "sn_5_dark": "#67e8f9",     // light cyan
+    "sn_6_dark": "#6ee7b7",     // light teal
+    "sn_7_dark": "#68d391",     // light green
+    "sn_8_dark": "#fbbf24",     // light orange
+    "sn_9_dark": "#f87171",     // light red
+    "sn_10_dark": "#fcd34d",    // light amber
+    
+    // ===== SEMANTIC COLORS FROM STYLES.CSS (dark mode) =====
+    "sidenote_ref_num_dark": "#9b7bff",      // dm_accent6
+    "sidenote_ref_symbol_dark": "#ff7a24",   // dm_accent2
+    "verse_text_dark": "#21e968",            // dm_accent4 (green)
+    "chapter_text_dark": "#00d9ff",          // dm_accent5 (cyan)
+    "checked_dark": "#21e968",               // dm_accent4 (green)
+    "new_dark": "#ffd700",                   // dm_accent3 (gold)
+    "changed_dark": "#21e968",               // dm_accent4 (green)
+    "obsolete_dark": "#ff2d8a",              // dm_accent1 (pink)
+    "important_dark": "#ffd700",             // dm_accent3 (gold)
+    "question_dark": "#00d9ff",              // dm_accent5 (cyan)
+    "answer_dark": "#e1e0e6",                // dm_dimmed1
+    
+    // ===== ADMONITION COLORS =====
+    "admonition_blue": "#4a8aff",
+    "admonition_cyan": "#00b0ff",
+    "admonition_teal": "#00bfa5",
+    "admonition_info": "#00b8d4",
+    "admonition_success": "#00c853",
+    "admonition_warning": "#ff9100",
+    "admonition_danger": "#ff5252",
+    
+    // ===== HIGHLIGHT COLORS =====
+    "highlight_yellow_dark": "#ffd700",
+    "highlight_bg_dark": "rgba(255, 215, 0, 0.2)"
+  },
+  "globals": {
+    "background": "var(dm_background)",
+    "foreground": "var(dm_text)",
+    "caret": "var(dm_text)",
+    "line_highlight": "#2a2330"
+  },
+  "rules": [
+    // ===== PUNCTUATION (DELIMITERS) - MUST BE FIRST =====
+    // All markup delimiters should be dark grey to be unobtrusive
+    {
+      "name": "Punctuation: All markup delimiters",
+      "scope": "punctuation.definition, punctuation.separator",
+      "foreground": "#888888",
+      "font_style": ""
+    },
+    
+    // ===== STANDARD MARKDOWN =====
+    {
+      "name": "Markup: Heading",
+      "scope": "markup.heading, entity.name.section.markdown",
+      "font_style": "bold",
+      "foreground": "var(dm_accent5)"
+    },
+    {
+      "name": "Markup: Left Sidebar in Heading (higher specificity)",
+      "scope": "markup.heading markup.leftsidebar",
+      "foreground": "var(dm_accent5)",
+      "font_style": "bold italic"
+    },
+    {
+      "name": "Markup: Right Sidebar in Heading (higher specificity)",
+      "scope": "markup.heading markup.rightsidebar",
+      "foreground": "var(dm_accent6)",
+      "font_style": "bold italic"
+    },
+    {
+      "name": "Markup: Bold (strong tag via __text__)",
+      "scope": "markup.bold",
+      "font_style": "bold"
+    },
+    {
+      "name": "Markup: Italic (em tag via _text_)",
+      "scope": "markup.italic",
+      "font_style": "italic"
+    },
+    {
+      "name": "Markup: Quote",
+      "scope": "markup.quote",
+      "foreground": "var(dm_grey_text)",
+      "font_style": "italic"
+    },
+    {
+      "name": "Markup: Code",
+      "scope": "markup.raw, markup.raw.inline",
+      "background": "#332d3a",
+      "foreground": "var(dm_accent2)"
+    },
+    {
+      "name": "Markup: Link",
+      "scope": "markup.underline.link",
+      "foreground": "var(dm_accent5)"
+    },
+    {
+      "name": "Markup: List",
+      "scope": "markup.list",
+      "foreground": "var(dm_accent4)"
+    },
+    {
+      "name": "Table: Pipe separators",
+      "scope": "punctuation.separator.table.markdown",
+      "foreground": "#888888"
+    },
+    {
+      "name": "Table: Header delimiters",
+      "scope": "punctuation.definition.table.header.markdown, punctuation.definition.table.alignment.markdown",
+      "foreground": "#888888"
+    },
+    
+    // ===== EXTENDED SYNTAX RULES =====
+    
+    // Sidenotes: ++ref|note++
+    {
+      "name": "Sidenote Container",
+      "scope": "markup.sidenote.container.markdown",
+      "foreground": "var(sidenote_ref_num_dark)"
+    },
+    {
+      "name": "Sidenote Reference",
+      "scope": "markup.sidenote.reference.markdown",
+      "foreground": "var(sn_1_dark)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Sidenote Content",
+      "scope": "markup.sidenote.content.markdown",
+      "foreground": "var(dm_grey_text)",
+      "font_style": "italic"
+    },
+    
+    // Marginal Notes: !!ref|note!!
+    {
+      "name": "Marginal Note Container",
+      "scope": "markup.marginalnote.container.markdown",
+      "foreground": "var(sidenote_ref_symbol_dark)"
+    },
+    {
+      "name": "Marginal Note Reference",
+      "scope": "markup.marginalnote.reference.markdown",
+      "foreground": "var(sidenote_ref_symbol_dark)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Marginal Note Content",
+      "scope": "markup.marginalnote.content.markdown",
+      "foreground": "var(dm_grey_text)",
+      "font_style": "italic"
+    },
+    
+    // Left/Right Sidebars: $content$ / @content@
+    {
+      "name": "Left Sidebar",
+      "scope": "markup.leftsidebar.container.markdown, markup.leftsidebar.content.markdown",
+      "foreground": "var(dm_accent5)",
+      "font_style": "italic"
+    },
+    {
+      "name": "Right Sidebar",
+      "scope": "markup.rightsidebar.container.markdown, markup.rightsidebar.content.markdown",
+      "foreground": "var(dm_accent6)",
+      "font_style": "italic"
+    },
+    
+    // Highlight/Mark: ==text== (orange foreground)
+    {
+      "name": "Highlight",
+      "scope": "markup.highlight.markdown, markup.highlight.content.markdown",
+      "foreground": "var(dm_accent2)"  // orange
+    },
+    
+    // ===== MARKDOWN-IT-IB EMPHASIS =====
+    // markdown-it-ib changes rendering: *italic*, _underline_, **bold**, __strong__
+    // Colors from Styles.css --i-fg, --em-fg, --b-fg, --strong-fg
+    
+    // Italic: *text* → <i> (--i-fg: dm-accent3 = gold)
+    {
+      "name": "Italic (markdown-it-ib)",
+      "scope": "markup.italic.markdown, markup.italic.content.markdown",
+      "foreground": "var(dm_accent3)",  // #ffd700 gold
+      "font_style": "italic"
+    },
+    
+    // Underline: _text_ → <u> (--em-fg: dm-accent4 = green)
+    {
+      "name": "Underline/Em (markdown-it-ib)",
+      "scope": "markup.underline.markdown, markup.underline.content.markdown",
+      "foreground": "var(dm_accent4)"  // #21e968 green
+    },
+    
+    // Bold: **text** → <b> (--b-fg: dm-accent6 = purple)
+    {
+      "name": "Bold (markdown-it-ib)",
+      "scope": "markup.bold.markdown, markup.bold.content.markdown",
+      "foreground": "var(dm_accent6)",  // #9b7bff purple
+      "font_style": "bold"
+    },
+    
+    // Strong: __text__ → <strong> (--strong-fg: dm-accent5 = cyan)
+    {
+      "name": "Strong (markdown-it-ib)",
+      "scope": "markup.strong.markdown, markup.strong.content.markdown",
+      "foreground": "var(dm_accent5)",  // #00d9ff cyan
+      "font_style": "bold"
+    },
+    
+    // Strikethrough: ~~text~~ → <s> (--s-fg: dm-accent1 = pink/red)
+    {
+      "name": "Strikethrough",
+      "scope": "markup.strikethrough.markdown, markup.strikethrough.content.markdown",
+      "foreground": "var(dm_accent1)"  // #ff2d8a pink/red
+    },
+    
+    // Keyboard Keys: [[Key]]
+    {
+      "name": "Keyboard Key",
+      "scope": "markup.kbd.container.markdown, markup.kbd.content.markdown",
+      "foreground": "var(dm_dimmed1)",
+      "font_style": "bold"
+    },
+    
+    // Admonitions: !!! type
+    {
+      "name": "Admonition Punctuation",
+      "scope": "punctuation.definition.admonition.markdown",
+      "foreground": "var(admonition_blue)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Admonition Qualifier",
+      "scope": "entity.name.admonition.qualifier.markdown",
+      "foreground": "var(admonition_blue)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Admonition Title",
+      "scope": "entity.name.admonition.title.markdown",
+      "foreground": "var(admonition_blue)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Admonition Content",
+      "scope": "markup.admonition.content.markdown",
+      "foreground": "var(dm_grey_text)",
+      "font_style": "italic"
+    },
+    
+    // Table of Contents: [[TOC]]
+    {
+      "name": "Table of Contents",
+      "scope": "markup.toc.markdown",
+      "foreground": "var(dm_accent6)",
+      "font_style": "bold"
+    },
+    
+    // Superscript: ^text^
+    {
+      "name": "Superscript",
+      "scope": "markup.superscript.container.markdown, markup.superscript.content.markdown",
+      "foreground": "var(verse_text_dark)",
+      "font_style": "italic"
+    },
+    
+    // Subscript: ~text~
+    {
+      "name": "Subscript",
+      "scope": "markup.subscript.container.markdown, markup.subscript.content.markdown",
+      "foreground": "var(chapter_text_dark)",
+      "font_style": "italic"
+    },
+    
+    // Footnotes
+    {
+      "name": "Footnote Reference",
+      "scope": "markup.footnote.reference.markdown",
+      "foreground": "var(verse_text_dark)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Footnote Definition",
+      "scope": "markup.footnote.definition.markdown",
+      "foreground": "var(dm_grey_text)",
+      "font_style": "italic"
+    },
+    
+    // Abbreviation: *[ABBR]: text
+    {
+      "name": "Abbreviation Name",
+      "scope": "entity.name.abbreviation.markdown",
+      "foreground": "var(dm_accent5)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Abbreviation Definition",
+      "scope": "string.other.abbreviation.definition.markdown",
+      "foreground": "var(dm_grey_text)",
+      "font_style": "italic"
+    },
+    
+    // Checkbox: [ ] [x]
+    {
+      "name": "Checkbox",
+      "scope": "markup.checkbox.markdown, constant.other.checkbox.state.markdown",
+      "foreground": "var(checked_dark)",
+      "font_style": "bold"
+    },
+    
+    // Attributes: {.class #id key=value}
+    {
+      "name": "Attribute Keys",
+      "scope": "entity.other.attribute-name",
+      "foreground": "#888888",
+      "font_style": ""
+    },
+    {
+      "name": "Attribute Values",
+      "scope": "string.unquoted.attribute-value.markdown",
+      "foreground": "var(dm_accent3)",
+      "font_style": "italic"
+    },
+    {
+      "name": "Attribute Class/ID Names",
+      "scope": "entity.other.attribute-name.class.markdown, entity.other.attribute-name.id.markdown",
+      "foreground": "var(dm_accent5)",
+      "font_style": "italic"
+    },
+    
+    // Container: ::: name
+    {
+      "name": "Container",
+      "scope": "punctuation.definition.container.markdown, entity.name.container.markdown, punctuation.definition.container.end.markdown",
+      "foreground": "var(dm_accent6)",
+      "font_style": "bold"
+    },
+    
+    // Definition Lists
+    {
+      "name": "Definition Term",
+      "scope": "markup.definition.term.markdown",
+      "font_style": "bold",
+      "foreground": "var(dm_accent4)"
+    },
+    {
+      "name": "Definition Content",
+      "scope": "markup.definition.definition.markdown, markup.definition.content.markdown",
+      "foreground": "var(dm_grey_text)",
+      "font_style": "italic"
+    },
+    
+    // ===== SPECIAL STATUS MARKERS =====
+    {
+      "name": "New Content",
+      "scope": "markup.new.markdown",
+      "foreground": "var(new_dark)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Changed Content",
+      "scope": "markup.changed.markdown",
+      "foreground": "var(changed_dark)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Obsolete Content",
+      "scope": "markup.obsolete.markdown",
+      "foreground": "var(obsolete_dark)",
+      "font_style": "italic strikethrough"
+    },
+    {
+      "name": "Important Content",
+      "scope": "markup.important.markdown",
+      "foreground": "var(important_dark)",
+      "font_style": "bold"
+    },
+    {
+      "name": "Question Content",
+      "scope": "markup.question.markdown",
+      "foreground": "var(question_dark)",
+      "font_style": "italic"
+    },
+    {
+      "name": "Answer Content",
+      "scope": "markup.answer.markdown",
+      "foreground": "var(answer_dark)",
+      "font_style": "italic"
+    }
+  ]
+}

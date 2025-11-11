@@ -13,27 +13,30 @@ class MDConfig extends ConfigReader {
         super('markdown');
     }
 
-    onChange() { }
+    onChange(_e?: vscode.ConfigurationChangeEvent): void {
+        // Configuration change handling can be added here if needed
+    }
+    
     styles(uri: vscode.Uri): MarkdownStyles {
         const ISURL = /^\s*https?:\/\//i;
-        let styles: MarkdownStyles = {
+        const styles: MarkdownStyles = {
             embedded: [],
             linked: [],
         };
-        let stylePathes = this.read<string[]>('styles', uri, (root, value) => {
+        const stylePathes = this.read<string[]>('styles', uri, (root, value) => {
             return value.map(v => {
                 if (!ISURL.test(v) && !path.isAbsolute(v))
-                    v = path.join(root.fsPath, v);
+                    {v = path.join(root.fsPath, v);}
                 return v;
             })
         });
-        if (!stylePathes || !stylePathes.length) return styles;
+        if (!stylePathes || !stylePathes.length) {return styles;}
         stylePathes.map(fileOrUrl => {
             if (ISURL.test(fileOrUrl)) {
                 styles.linked.push(`<link rel="stylesheet" href="${fileOrUrl}">`);
             } else {
-                let result = readContributeFile(fileOrUrl, true);
-                if (result) styles.embedded.push(result);
+                const result = readContributeFile(fileOrUrl, true);
+                if (result) {styles.embedded.push(result);}
             }
         });
         return styles;

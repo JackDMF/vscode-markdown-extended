@@ -17,6 +17,7 @@ const
         "quote", "cite",   //rgba(158, 158, 158, .1) "\E244"
     ];
 
+// eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItAdmonition(md: MarkdownIt) {
     md.block.ruler.after("fence", "admonition", admonition, {});
     md.renderer.rules["admonition_open"] = render;
@@ -26,7 +27,7 @@ export function MarkdownItAdmonition(md: MarkdownIt) {
 }
 
 function render(tokens: Token[], idx: number, _options: any, env: any, self: Renderer) {
-    var token = tokens[idx];
+    const token = tokens[idx];
     if (token.type === "admonition_open") {
         tokens[idx].attrJoin("class", "admonition " + token.info);
     } else if (token.type === "admonition_title_open") {
@@ -37,22 +38,22 @@ function render(tokens: Token[], idx: number, _options: any, env: any, self: Ren
 
 function admonition(state: any, startLine: number, endLine: number, silent: boolean) {
     // if it's indented more than 3 spaces, it should be a code block
-    if (state.tShift[startLine] - state.blkIndent >= 4) return false;
+    if (state.tShift[startLine] - state.blkIndent >= 4) {return false;}
     let pos: number = state.bMarks[startLine] + state.tShift[startLine];
     let max: number = state.eMarks[startLine];
-    let marker: number = state.src.charCodeAt(pos);
-    if (marker !== _marker) return false;
+    const marker: number = state.src.charCodeAt(pos);
+    if (marker !== _marker) {return false;}
 
     // scan marker length
     let mem = pos;
     pos = state.skipChars(pos, marker);
-    let len = pos - mem;
-    if (len < _minMarkerLen) return false;
+    const len = pos - mem;
+    if (len < _minMarkerLen) {return false;}
 
-    let markup: string = state.src.slice(mem, pos);
+    const markup: string = state.src.slice(mem, pos);
     // https://python-markdown.github.io/extensions/admonition/
-    let params: string = state.src.slice(pos, max).trim();
-    let quoteIdx = params.indexOf('"');
+    const params: string = state.src.slice(pos, max).trim();
+    const quoteIdx = params.indexOf('"');
     let type = "";
     let classes: string[] = [];
     let title = "";
@@ -87,11 +88,11 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
 
 
     // Since start is found, we can report success here in validation mode
-    if (silent) return true;
+    if (silent) {return true;}
 
-    let oldParent = state.parentType;
-    let oldLineMax = state.lineMax;
-    let oldIndent = state.blkIndent;
+    const oldParent = state.parentType;
+    const oldLineMax = state.lineMax;
+    const oldIndent = state.blkIndent;
 
     state.blkIndent += 4;
 
@@ -125,7 +126,7 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
     token.info = classes.join(' ');
     token.map = [startLine, startLine + 1];
 
-    if (title != '') {
+    if (title !== '') {
         // admonition title
         token = state.push("admonition_title_open", "p", 1);
         token.markup = markup + " " + type;

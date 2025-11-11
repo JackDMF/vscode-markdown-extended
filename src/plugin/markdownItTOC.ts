@@ -1,26 +1,38 @@
 import { MarkdownIt, Token } from '../@types/markdown-it';
-import * as toc from 'markdown-it-table-of-contents';
+// Use default import for CommonJS module
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import toc = require('markdown-it-table-of-contents');
 import { slugify } from './shared';
-import { config } from '../services/common/config';
+import { Config } from '../services/common/config';
 
-export function MarkdownItTOC(md: MarkdownIt) {
+/**
+ * Markdown-it plugin for table of contents with anchor links.
+ * This plugin is compatible with markdown-it's plugin system - do NOT call md.use() inside it.
+ * 
+ * @param md - The markdown-it instance
+ */
+// eslint-disable-next-line @typescript-eslint/naming-convention
+export function MarkdownItTOC(md: MarkdownIt): void {
     md.renderer.rules.tocAnchor = renderHtml;
     md.core.ruler.push("tocAnchor", tocAnchorWorker);
-    md.use(toc, { slugify: slugify, includeLevel: config.tocLevels });
+    
+    // Apply the toc plugin directly (not via md.use())
+    // markdown-it-table-of-contents is a CommonJS module that exports a function directly
+    toc(md, { slugify: slugify, includeLevel: Config.instance.tocLevels });
 }
 
 function renderHtml(tokens: Token[], idx: number) {
     // console.log("request anchor for:", idx, tokens[idx].content);
-    let token = tokens[idx];
-    if (token.type !== "tocAnchor") return tokens[idx].content;
+    const token = tokens[idx];
+    if (token.type !== "tocAnchor") {return tokens[idx].content;}
     return `<a for="toc-anchor" id="${slugify(token.content)}"></a>`;
 }
 
 function tocAnchorWorker(state: any) {
-    let tokens: Token[] = [];
+    const tokens: Token[] = [];
     state.tokens.map((t, i, ts) => {
-        if (t.type == "heading_open") {
-            let anchor = new state.Token("tocAnchor", "a", 0);
+        if (t.type === "heading_open") {
+            const anchor = new state.Token("tocAnchor", "a", 0);
             anchor.content = ts[i + 1].content;
             tokens.push(anchor);
         }

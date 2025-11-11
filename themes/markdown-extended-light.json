@@ -1,0 +1,200 @@
+{
+  "name": "Markdown Extended Light",
+  "type": "light",
+  "colors": {
+    "editor.background": "#fffaf9",
+    "editor.foreground": "#1b1220"
+  },
+  "tokenColors": [
+    {
+      "name": "Italic (markdown-it-ib)",
+      "scope": "markup.italic.markdown",
+      "settings": {
+        "foreground": "#ffb400",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "name": "Underline (markdown-it-ib)",
+      "scope": "markup.underline.markdown",
+      "settings": {
+        "foreground": "#00c76a",
+        "fontStyle": "underline"
+      }
+    },
+    {
+      "name": "Bold (markdown-it-ib)",
+      "scope": "markup.bold.markdown",
+      "settings": {
+        "foreground": "#6f4dff",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Strong (markdown-it-ib)",
+      "scope": "markup.strong.markdown",
+      "settings": {
+        "foreground": "#00aee8",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Strikethrough",
+      "scope": "markup.strikethrough.markdown",
+      "settings": {
+        "foreground": "#ff0f6e",
+        "fontStyle": "strikethrough"
+      }
+    },
+    {
+      "name": "Highlight",
+      "scope": "markup.highlight.markdown, markup.highlight.content.markdown",
+      "settings": {
+        "foreground": "#ff5a1b"
+      }
+    },
+    {
+      "name": "Sidenote Reference",
+      "scope": "markup.sidenote.reference.markdown",
+      "settings": {
+        "foreground": "#6f4dff"
+      }
+    },
+    {
+      "name": "Sidenote Content",
+      "scope": "markup.sidenote.content.markdown",
+      "settings": {
+        "foreground": "#ff5a1b"
+      }
+    },
+    {
+      "name": "Sidenote Variant Number",
+      "scope": "constant.numeric.sidenote.variant.markdown",
+      "settings": {
+        "foreground": "#6f4dff",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Marginal Note Reference",
+      "scope": "markup.marginalnote.reference.markdown",
+      "settings": {
+        "foreground": "#ff5a1b"
+      }
+    },
+    {
+      "name": "Marginal Note Content",
+      "scope": "markup.marginalnote.content.markdown",
+      "settings": {
+        "foreground": "#6f4dff"
+      }
+    },
+    {
+      "name": "Marginal Note Variant Number",
+      "scope": "constant.numeric.marginalnote.variant.markdown",
+      "settings": {
+        "foreground": "#ff5a1b",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Left Sidebar",
+      "scope": "markup.leftsidebar.markdown, markup.leftsidebar.content.markdown",
+      "settings": {
+        "foreground": "#00c76a"
+      }
+    },
+    {
+      "name": "Right Sidebar",
+      "scope": "markup.rightsidebar.markdown, markup.rightsidebar.content.markdown",
+      "settings": {
+        "foreground": "#6f4dff"
+      }
+    },
+    {
+      "name": "Keyboard Shortcut",
+      "scope": "markup.kbd.markdown, markup.kbd.content.markdown",
+      "settings": {
+        "foreground": "#8d8188",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Superscript",
+      "scope": "markup.superscript.markdown, markup.superscript.content.markdown",
+      "settings": {
+        "foreground": "#00c76a",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "name": "Subscript",
+      "scope": "markup.subscript.markdown, markup.subscript.content.markdown",
+      "settings": {
+        "foreground": "#00aee8",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "name": "Table of Contents",
+      "scope": "markup.toc.markdown",
+      "settings": {
+        "foreground": "#6f4dff",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Admonition Keyword",
+      "scope": "punctuation.definition.admonition.markdown",
+      "settings": {
+        "foreground": "#0d6efd",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Admonition Type",
+      "scope": "entity.name.admonition.qualifier.markdown",
+      "settings": {
+        "foreground": "#0d6efd",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Admonition Title",
+      "scope": "entity.name.admonition.title.markdown",
+      "settings": {
+        "foreground": "#0d6efd"
+      }
+    },
+    {
+      "name": "Admonition Content",
+      "scope": "markup.admonition.content.markdown, markup.admonition.body.markdown",
+      "settings": {
+        "foreground": "#1b1220"
+      }
+    },
+    {
+      "name": "Footnote Reference",
+      "scope": "markup.footnote.reference.markdown",
+      "settings": {
+        "foreground": "#00c76a",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Footnote Number",
+      "scope": "constant.numeric.footnote.markdown",
+      "settings": {
+        "foreground": "#00c76a"
+      }
+    },
+    {
+      "name": "Checkbox",
+      "scope": "constant.other.checkbox.state.markdown",
+      "settings": {
+        "foreground": "#00c76a",
+        "fontStyle": "bold"
+      }
+    }
+  ]
+}

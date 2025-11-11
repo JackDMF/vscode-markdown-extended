@@ -1,10 +1,21 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { markdown } from '../../extension';
+import { ExtensionContext } from '../common/extensionContext';
 import { MarkdownDocument } from '../common/markdownDocument';
-import { template } from './template';
 import { Contributes } from '../contributes/contributes';
 import { MarkdownItEnv } from '../common/interfaces';
+
+/**
+ * Escape HTML special characters to prevent XSS
+ */
+function escapeHtml(text: string): string {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 
 export function renderPage(
     document: MarkdownDocument | vscode.TextDocument,
@@ -12,21 +23,36 @@ export function renderPage(
 ): string {
     let doc: MarkdownDocument = undefined;
     if (document instanceof MarkdownDocument)
-        doc = document;
+        {doc = document;}
     else if (document.getText)
-        doc = new MarkdownDocument(document);
+        {doc = new MarkdownDocument(document);}
 
-    let title = doc.meta.raw.title || path.basename(doc.document.uri.fsPath);
-    let styles = getStyles(doc.document.uri, injectStyle);
-    let scripts = getSciprts();
-    let html = renderHTML(doc);
+    const title = escapeHtml(doc.meta.raw.title || path.basename(doc.document.uri.fsPath));
+    const styles = getStyles(doc.document.uri, injectStyle);
+    const scripts = getSciprts();
+    const html = renderHTML(doc);
     //should put both classes, because we cannot determine if a user style URL is a theme or not
-    let mdClass = "markdown-body vscode-body vscode-light";
-    return eval(template);
+    const mdClass = "markdown-body vscode-body vscode-light";
+    
+    // Use template literal directly instead of eval()
+    return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${title}</title>
+${styles}
+</head>
+<body class="${mdClass}">
+<div class="content">
+    ${html}
+</div>
+${scripts}
+</body>
+</html>`;
 }
 
 export function renderHTML(doc: MarkdownDocument): string {
-    let env: MarkdownItEnv = {
+    const env: MarkdownItEnv = {
         htmlExporter: {
             uri: doc.document.uri,
             workspaceFolder: getworkspaceFolder(doc.document.uri),
@@ -34,16 +60,17 @@ export function renderHTML(doc: MarkdownDocument): string {
             embedImage: true,
         },
     }
-    let content = markdown.render(doc.content, env);
+    const markdown = ExtensionContext.current.markdown;
+    const content = markdown.render(doc.content, env);
     return content.trim();
 }
 function getworkspaceFolder(uri): vscode.Uri {
-    let root = vscode.workspace.getWorkspaceFolder(uri);
+    const root = vscode.workspace.getWorkspaceFolder(uri);
     return (root && root.uri) ? root.uri : undefined;
 }
 function getVsUri(uri: vscode.Uri): string {
-    let root = vscode.workspace.getWorkspaceFolder(uri);
-    let p = (root && root.uri) ? '/' + root.uri.fsPath + '/' : "";
+    const root = vscode.workspace.getWorkspaceFolder(uri);
+    const p = (root && root.uri) ? '/' + root.uri.fsPath + '/' : "";
     // FIXME: vscode has a bug encoding shared path, which cannot be replaced
     // nor can vscode display images if workspace is in a shared folder.
     // FIXME: can special chr exists in uri that need escape when use regex?
@@ -51,11 +78,11 @@ function getVsUri(uri: vscode.Uri): string {
 }
 
 function getStyles(uri: vscode.Uri, injectStyle?: string): string {
-    let styles: string[] = [];
+    const styles: string[] = [];
 
-    let official = Contributes.Styles.official();
-    let thirdParty = Contributes.Styles.thirdParty();
-    let user = Contributes.Styles.user(uri);
+    const official = Contributes.Styles.official();
+    const thirdParty = Contributes.Styles.thirdParty();
+    const user = Contributes.Styles.user(uri);
 
     if (injectStyle) {
         styles.push("");
@@ -83,10 +110,10 @@ function getStyles(uri: vscode.Uri, injectStyle?: string): string {
     return styles.join('\n');
 }
 function getSciprts(): string {
-    let scripts: string[] = [];
+    const scripts: string[] = [];
 
     // let official = Contributes.Scripts.official();
-    let thirdParty = Contributes.Scripts.thirdParty();
+    const thirdParty = Contributes.Scripts.thirdParty();
 
     // if (official) {
     //     scripts.push("");
@@ -104,8 +131,12 @@ function getSciprts(): string {
     return scripts.join('\n');
 }
 
+/**
+ * Ensure markdown engine is initialized
+ */
 export async function ensureMarkdownEngine() {
-    if (!markdown) {
+    if (!ExtensionContext.current.isMarkdownInitialized) {
         await vscode.commands.executeCommand('markdown.api.render', 'init markdown engine');
     }
 }
+

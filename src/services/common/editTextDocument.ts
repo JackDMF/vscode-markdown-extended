@@ -8,31 +8,31 @@ export interface Edit {
 
 export interface SelectionOffset {
     orignal: vscode.Selection;
-    offset: offset;
+    offset: Offset;
 }
 
-interface offset {
+interface Offset {
     line: number;
     charachter: number;
 }
 
 export async function editTextDocument(document: vscode.TextDocument, edits: Edit[]) {
-    let editor = await vscode.window.showTextDocument(document);
+    const editor = await vscode.window.showTextDocument(document);
     return editor.edit(e => {
         edits.map(edit => {
-            if (!edit || !edit.range || !edit.replace) return;
+            if (!edit || !edit.range || !edit.replace) {return;}
             e.replace(edit.range, edit.replace);
         })
     }).then(() => {
-        let offsets = edits.map(e => e.selectionOffset).filter(s => !!s);
+        const offsets = edits.map(e => e.selectionOffset).filter(s => !!s);
         applyOffset(editor, offsets);
     });
 }
 
 function applyOffset(editor: vscode.TextEditor, offsets: SelectionOffset[]) {
-    if (!editor || !offsets || !offsets.length) return;
-    let selections = offsets.map(s => {
-        if (!s || !s.orignal) return undefined;
+    if (!editor || !offsets || !offsets.length) {return;}
+    const selections = offsets.map(s => {
+        if (!s || !s.orignal) {return undefined;}
         return new vscode.Selection(
             s.orignal.start.translate(s.offset.line, s.offset.charachter),
             s.orignal.end.translate(s.offset.line, s.offset.charachter)

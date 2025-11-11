@@ -8,25 +8,25 @@ export function toggleFormat(
     off: RegExp, offReplace: string,
     multiLine: boolean
 ) {
-    if (!editor || !editor.document) return;
+    if (!editor || !editor.document) {return;}
     let isOn = false;
-    let document = editor.document;
-    let selection = editor.selection;
+    const document = editor.document;
+    const selection = editor.selection;
     let target = matchedInCursor(document, selection, detect);
     let newText = "";
     if (target)
-        isOn = true;
+        {isOn = true;}
     else
         if (multiLine)
-            target = getLines(document, selection);
+            {target = getLines(document, selection);}
         else
-            target = getWord(document, selection);
+            {target = getWord(document, selection);}
     // select target for better user experience.
     editor.selections = [target];
     if (isOn)
-        newText = document.getText(target).replace(off, offReplace);
+        {newText = document.getText(target).replace(off, offReplace);}
     else
-        newText = document.getText(target).replace(on, onReplace);
+        {newText = document.getText(target).replace(on, onReplace);}
     // console.log(document.getText(target));
     editTextDocument(document, [{
         range: target,
@@ -39,25 +39,25 @@ function matchedInCursor(
     selection: vscode.Selection,
     rule: RegExp
 ): vscode.Selection {
-    let lines = getLines(document, selection);
-    let text = document.getText(lines);
-    let newLinePos: number[] = [];
+    const lines = getLines(document, selection);
+    const text = document.getText(lines);
+    const newLinePos: number[] = [];
     for (let i = 0; i < text.length; i++) {
-        if (text.substr(i, 1) == '\n') newLinePos.push(i);
+        if (text.substr(i, 1) === '\n') {newLinePos.push(i);}
     }
     rule.lastIndex = 0;
     let matches: RegExpMatchArray;
     while (matches = rule.exec(text)) {
-        let start = convertPosition(
+        const start = convertPosition(
             new vscode.Position(selection.start.line, matches.index),
             newLinePos,
         );
-        let end = convertPosition(
+        const end = convertPosition(
             new vscode.Position(selection.start.line, matches.index + matches[0].length),
             newLinePos,
         );
-        let rng = new vscode.Selection(start, end);
-        if (rng.intersection(selection)) return rng;
+        const rng = new vscode.Selection(start, end);
+        if (rng.intersection(selection)) {return rng;}
     }
     return undefined;
 }
@@ -75,17 +75,17 @@ function convertPosition(pos: vscode.Position, newLinePos: number[]): vscode.Pos
 }
 
 function getWord(document: vscode.TextDocument, selection: vscode.Selection): vscode.Selection {
-    let txtLine = document.lineAt(selection.active.line).text;
-    let spacePreceding = txtLine.lastIndexOf(' ', selection.start.character - 1);
+    const txtLine = document.lineAt(selection.active.line).text;
+    const spacePreceding = txtLine.lastIndexOf(' ', selection.start.character - 1);
     let spaceFollowing = txtLine.indexOf(' ', selection.end.character);
-    if (spaceFollowing == -1) {
+    if (spaceFollowing === -1) {
         spaceFollowing = txtLine.length;
     }
     return new vscode.Selection(new vscode.Position(selection.active.line, spacePreceding + 1), new vscode.Position(selection.active.line, spaceFollowing));
 }
 
 function getLines(document: vscode.TextDocument, selection: vscode.Selection): vscode.Selection {
-    let lines = document.lineAt(selection.start).range.union(
+    const lines = document.lineAt(selection.start).range.union(
         document.lineAt(selection.end).range
     );
     return new vscode.Selection(lines.start, lines.end);

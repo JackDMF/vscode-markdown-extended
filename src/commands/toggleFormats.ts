@@ -1,4 +1,3 @@
-import { Command } from './command';
 import * as vscode from 'vscode';
 import { toggleFormat } from '../services/helpers/toggleFormat';
 import { CommandConfig, Commands } from './commands';
@@ -114,7 +113,7 @@ const togglers: CommandConfig[] = [
     },
 ]
 
-export var commandToggles = new Commands(togglers);
+export const commandToggles = new Commands(togglers);
 
 function toggle(
     detect: RegExp,

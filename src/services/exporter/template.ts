@@ -1,5 +1,5 @@
-export var template=
-`\`<!DOCTYPE html>
+export const template=
+`<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
@@ -13,4 +13,4 @@ export var template=
 \${scripts}
 </body>
 </html>
-\``;
+`;

@@ -29,6 +29,16 @@
 			"script": "compile",
 			"group": "build",
 			"problemMatcher": []
+		},
+		{
+			"type": "npm",
+			"script": "test:unit",
+			"group": "test",
+			"problemMatcher": [],
+			"presentation": {
+				"reveal": "always",
+				"panel": "new"
+			}
 		}
 	]
 }

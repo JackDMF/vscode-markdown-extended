@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 
 export interface MarkdownItEnv {
-    htmlExporter?: HtmlExporterEnv,
+    htmlExporter?: HtmlExporterEnv;
+    [key: string]: unknown;
 }
 
 export interface HtmlExporterEnv {
-    uri: vscode.Uri,
-    workspaceFolder: vscode.Uri,
-    vsUri: string,
-    embedImage: boolean,
+    uri: vscode.Uri;
+    workspaceFolder: vscode.Uri;
+    vsUri: string;
+    embedImage: boolean;
 }

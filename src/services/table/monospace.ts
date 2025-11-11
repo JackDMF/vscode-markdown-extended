@@ -27,11 +27,12 @@ const HIGH_POINTS_REG = /[\u{10000}-\u{FFFFF}]/ug;
  * Calculate the Monospace Length of a string, takes CJK character as length of 2
  * @param text text to calculate
  */
+// eslint-disable-next-line @typescript-eslint/naming-convention
 export function MonoSpaceLength(text: string): number {
-    let highPointCount = (text.length - text.replace(HIGH_POINTS_REG, '').length) / 2;
-    let characterCount = text.length - highPointCount;
-    let halfWidthCount = text.replace(CJKV_REG, '').length;
-    let fullWidthCount = characterCount - halfWidthCount;
+    const highPointCount = (text.length - text.replace(HIGH_POINTS_REG, '').length) / 2;
+    const characterCount = text.length - highPointCount;
+    const halfWidthCount = text.replace(CJKV_REG, '').length;
+    const fullWidthCount = characterCount - halfWidthCount;
 
     return fullWidthCount * 2 + halfWidthCount;
 }

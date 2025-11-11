@@ -1,0 +1,58 @@
+/* Styling for sidenotes and margin notes */
+.sn-ref {
+  position: relative;
+  vertical-align: baseline;
+}
+
+.sidenote {
+  float: right;
+  clear: right;
+  margin-right: -60%;
+  width: 50%;
+  margin-top: 0;
+  margin-bottom: 0;
+  font-size: 0.9em;
+  opacity: 0.8;
+  padding-left: 1em;
+}
+
+.mn-ref {
+  position: relative;
+  vertical-align: baseline;
+}
+
+.mnote {
+  float: right;
+  clear: right;
+  margin-right: -60%;
+  width: 50%;
+  margin-top: 0;
+  margin-bottom: 0;
+  font-size: 0.9em;
+  font-weight: bold;
+  opacity: 0.8;
+  padding-left: 1em;
+}
+
+/* Styling for sidebars */
+.left-sidebar {
+  float: left;
+  clear: left;
+  margin-left: -40%;
+  width: 35%;
+  font-size: 0.9em;
+  font-style: italic;
+  opacity: 0.8;
+  padding-right: 1em;
+}
+
+.right-sidebar {
+  float: right;
+  clear: right;
+  margin-right: -40%;
+  width: 35%;
+  font-size: 0.9em;
+  font-style: italic;
+  opacity: 0.8;
+  padding-left: 1em;
+}

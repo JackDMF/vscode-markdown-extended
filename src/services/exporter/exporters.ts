@@ -1,68 +1,66 @@
-import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { config } from '../common/config';
-import { ExporterQuickPickItem, exporterType, MarkdownExporter, exportFormat, FormatQuickPickItem } from './interfaces';
-import { htmlExporter } from './html';
-import { puppeteerExporter } from './puppeteer';
+import { ExporterQuickPickItem, MarkdownExporter, ExportFormat, FormatQuickPickItem } from './interfaces';
+import { HtmlExporter } from './html';
+import { PuppeteerExporter } from './puppeteer';
 
-export async function pickFormat(): Promise<exportFormat> {
-    let items = [
+export async function pickFormat(): Promise<ExportFormat | undefined> {
+    const items = [
         <FormatQuickPickItem>{
             label: "Self-contained HTML",
             // description: "Export to self-contained HTML.",
-            format:exportFormat.HTML,
+            format:ExportFormat.HTML,
         },
         <FormatQuickPickItem>{
             label: "PDF File",
             // description: "Export to PDF.",
-            format:exportFormat.PDF,
+            format:ExportFormat.PDF,
         },
         <FormatQuickPickItem>{
             label: "PNG Image",
             // description: "Export to PNG image.",
-            format:exportFormat.PNG,
+            format:ExportFormat.PNG,
         },
         <FormatQuickPickItem>{
             label: "JPG Image",
             // description: "Export to jpg image.",
-            format:exportFormat.JPG,
+            format:ExportFormat.JPG,
         }
     ];
-    let pick = await vscode.window.showQuickPick<FormatQuickPickItem>(
+    const pick = await vscode.window.showQuickPick<FormatQuickPickItem>(
         items,
         <vscode.QuickPickOptions>{ placeHolder: `Select export format...` }
     );
-    if (!pick) return undefined;
+    if (!pick) {return undefined;}
     return pick.format;
 }
 
-export async function pickExporter(format: exportFormat): Promise<MarkdownExporter> {
-    let availableExporters = getAvailableExporters(format);
-    if (availableExporters.length == 1) return availableExporters[0].exporter;
-    let pick = await vscode.window.showQuickPick<ExporterQuickPickItem>(
+export async function pickExporter(format: ExportFormat): Promise<MarkdownExporter | undefined> {
+    const availableExporters = getAvailableExporters(format);
+    if (availableExporters.length === 1) {return availableExporters[0].exporter;}
+    const pick = await vscode.window.showQuickPick<ExporterQuickPickItem>(
         availableExporters,
         <vscode.QuickPickOptions>{ placeHolder: `Select an exporter to export ${format}...` }
     );
-    if (!pick) return undefined;
+    if (!pick) {return undefined;}
     return pick.exporter;
 }
 
-function getAvailableExporters(format: exportFormat): ExporterQuickPickItem[] {
-    let items: ExporterQuickPickItem[] = [];
+function getAvailableExporters(format: ExportFormat): ExporterQuickPickItem[] {
+    const items: ExporterQuickPickItem[] = [];
 
-    if (htmlExporter.FormatAvailable(format)) items.push(
+    if (HtmlExporter.instance.FormatAvailable(format)) {items.push(
         <ExporterQuickPickItem>{
             label: "HTML Exporter",
             description: "export to html.",
-            exporter: htmlExporter,
+            exporter: HtmlExporter.instance,
         }
-    );
-    if (puppeteerExporter.FormatAvailable(format)) items.push(
+    );}
+    if (PuppeteerExporter.instance.FormatAvailable(format)) {items.push(
         <ExporterQuickPickItem>{
             label: "Puppeteer Exporter",
             description: "export to pdf/png/jpg.",
-            exporter: puppeteerExporter,
+            exporter: PuppeteerExporter.instance,
         }
-    );
+    );}
     return items;
 }

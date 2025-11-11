@@ -9,10 +9,10 @@ import { cssFileToDataUri, fileToDataUri } from '../common/dataUri';
  */
 export function readContributeFile(file: string, isStyle: boolean): string {
     if (!fs.existsSync(file))
-        return "";
-    let cmt = `<!-- ${path.basename(file)} -->\n`;
+        {return "";}
+    const cmt = `<!-- ${path.basename(file)} -->\n`;
     if (isStyle)
-        return cmt + `<link rel="stylesheet" type="text/css" href="${cssFileToDataUri(file)}"/>`;
+        {return cmt + `<link rel="stylesheet" type="text/css" href="${cssFileToDataUri(file)}"/>`;}
     return cmt + `<script type="text/javascript" src="${fileToDataUri(file)}"/></script>`;
 
 }
@@ -24,11 +24,11 @@ export function readContributeFile(file: string, isStyle: boolean): string {
  * @param comment comment to put beside the contribute item
  */
 export function createContributeItem(content: string | Buffer, isStyle: boolean, comment: string): string {
-    if (!content) return "";
-    let b64 = content instanceof Buffer ?
+    if (!content) {return "";}
+    const b64 = content instanceof Buffer ?
         content.toString("base64") :
-        Buffer.from(content).toString("base64");
-    let cmt = comment ? `<!-- ${comment} -->\n` : "";
+        Buffer.from(content as string).toString("base64");
+    const cmt = comment ? `<!-- ${comment} -->\n` : "";
     if (isStyle) {
         return cmt + `<link rel="stylesheet" type="text/css" href="data:text/css;base64,${b64}"/>`
     } else {

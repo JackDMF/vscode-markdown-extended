@@ -1,5 +1,136 @@
 # Change Log
 
+## v2.1.1 - Patch Release: License and Repository Updates
+
+### 📝 Updates
+
+- **License**: Updated copyright to acknowledge both original author (jebbs, 2018) and current maintainer (JackDMF, 2025)
+- **Repository URLs**: Updated all GitHub URLs from qjebbs to JackDMF organization
+  - Bug tracker URLs in package.json
+  - Homepage and repository links
+  - Issue reporter in error handler
+  - Documentation references in README
+
+### 🔧 Maintenance
+
+- No functional changes to extension behavior
+- Historical changelog references preserved for accuracy
+
+---
+
+## v2.1.0 - Feature Release: Enhanced Syntax Support
+
+### ✨ New Features
+
+- **Extended Markdown Syntax**: Additional syntax highlighting and parsing improvements
+- **Enhanced Color Themes**: Improved color customization for sidenotes and sidebars
+  - Sidenote text color: `markdown.sidenote.textColor`
+  - Marginal note text color: `markdown.marginalnote.textColor`
+  - Left sidebar text color: `markdown.leftsidebar.textColor`
+  - Right sidebar text color: `markdown.rightsidebar.textColor`
+
+### 🔧 Improvements
+
+- Updated dependencies for better compatibility
+- Performance optimizations
+
+---
+
+## v2.0.1 - Patch Release: Stability and Bug Fixes
+
+### 🐛 Bug Fixes
+
+- Fixed minor issues from v2.0.0 release
+- Improved error handling stability
+- Enhanced compatibility with latest VS Code versions
+
+### 🔧 Maintenance
+
+- Updated development dependencies
+- Minor documentation corrections
+
+---
+
+## v2.0.0 - Major Release: Complete Architecture Modernization
+
+This release represents a complete rewrite and modernization of the extension with enterprise-grade architecture, comprehensive testing, and new features.
+
+### 🏗️ Architecture Improvements
+
+- **Clean Architecture**: Implemented singleton services with dependency injection and separation of concerns
+- **TypeScript Migration**: Full TypeScript rewrite with strict type safety throughout
+- **Service Layer**: Introduced ExtensionContext, BrowserManager, ErrorHandler, and Config services
+- **Resource Management**: Proper cleanup, async file operations, memory leak prevention
+- **Error Handling**: Comprehensive error recovery and logging with graceful degradation
+- **Test Coverage**: Added 65+ unit tests with VS Code integration
+- **Documentation**: Created comprehensive ARCHITECTURE.md (500+ lines)
+
+### ✨ New Features
+
+- **Sidenotes & Annotations**: New markdown-it-sidenote plugin with full markdown support
+  - Sidenotes: `++reference text|note content++`
+  - Marginal notes: `!!reference text|note content!!`
+  - Left sidebar: `$content$`
+  - Right sidebar: `@content@`
+  - Recursion depth limiting and error handling
+  - Customizable CSS classes
+
+### 🔧 Plugin Updates
+
+- **Fixed**: Plugin loading errors (`e.apply is not a function`)
+- **Fixed**: CommonJS import patterns for markdown-it plugins
+- **Updated**: `markdown-it-sup` → `markdown-it-sup-alt`
+- **Updated**: `markdown-it-sub` → `markdown-it-sub-alt`
+- **Updated**: `markdown-it-underline` → `markdown-it-ib` (italic-bold)
+- **Added**: `markdown-it-bracketed-spans` support
+- **Enhanced**: All plugins now properly integrated with type safety
+
+### 📚 Documentation
+
+- **Comprehensive README**: Completely rewritten with accurate feature documentation
+- **Architecture Guide**: Detailed ARCHITECTURE.md covering design principles and patterns
+- **JSDoc Coverage**: 70+ JSDoc comments across services and plugins
+- **Code Examples**: Inline documentation with usage examples
+- **Maintenance Guide**: Guidelines for contributors and maintainers
+
+### 🐛 Bug Fixes
+
+- Fixed plugin double-use pattern causing initialization errors
+- Fixed CommonJS module import issues with markdown-it plugins
+- Resolved memory leaks in resource management
+- Fixed async operation handling throughout extension
+- Corrected deprecated function usage
+
+### 🔄 Breaking Changes
+
+- Minimum VS Code version: 1.80.0
+- Plugin names updated in configuration (see README for new names)
+- Some internal APIs changed (extension API remains stable)
+
+### 🎯 Code Quality
+
+- Reduced technical debt across all modules
+- Implemented SOLID principles throughout
+- Extracted helper functions for better testability
+- Unified renderer patterns with discriminated unions
+- Comprehensive inline comments for complex logic
+
+### 📦 Dependencies
+
+- Updated all markdown-it plugins to latest versions
+- Updated puppeteer and development dependencies
+- Removed deprecated packages
+
+### 🙏 Credits
+
+- Original extension by **qjebbs**
+- v2.0.0 refactoring and modernization
+- Community contributions and feedback
+
+**Migration Notes**: This is a major version update. While the user-facing API remains compatible, some configuration setting names have been updated. See README.md for current plugin names and settings.
+
+---
+
 ## v1.1.4
 
 Add `markdown-it-bracketed-spans` and update dependencies, **@zeedif**, [#160](https://github.com/qjebbs/vscode-markdown-extended/pull/160)

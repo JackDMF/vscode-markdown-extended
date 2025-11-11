@@ -1,16 +1,17 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { outputPanel } from '../../extension';
-import { config } from './config';
+import { promises as fsPromises } from 'fs';
 import { ExportRport } from '../exporter/interfaces';
+import { ExtensionContext } from './extensionContext';
+import { Config } from './config';
 
 export function calculateExportPath(uri: vscode.Uri, format: string): string {
-    let outDirName = config.exportOutDirName;
-    let folder = vscode.workspace.getWorkspaceFolder(uri);
-    let wkdir = folder ? folder.uri.fsPath : "";
+    const outDirName = Config.instance.exportOutDirName;
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    const wkdir = folder ? folder.uri.fsPath : "";
     let exportDir: string;
-    let uriPath = uri.fsPath;
+    const uriPath = uri.fsPath;
     if (!path.isAbsolute(uriPath)) {
         throw new Error("please save file before export: " + uriPath);
     }
@@ -30,8 +31,8 @@ export function calculateExportPath(uri: vscode.Uri, format: string): string {
 }
 
 export function isSubPath(from: string, to: string): boolean {
-    let rel = path.relative(to, from);
-    return !(path.isAbsolute(rel) || rel.substr(0, 2) == "..")
+    const rel = path.relative(to, from);
+    return !(path.isAbsolute(rel) || rel.substr(0, 2) === "..")
 }
 
 export function mkdirs(dirname, callback) {
@@ -46,6 +47,26 @@ export function mkdirs(dirname, callback) {
     });
 }
 
+/**
+ * Create directory recursively (async version using fs.promises)
+ * @param dirname Path to create
+ * @returns Promise that resolves when directory is created
+ */
+export async function mkdirsAsync(dirname: string): Promise<void> {
+    try {
+        await fsPromises.mkdir(dirname, { recursive: true });
+    } catch (error) {
+        // Ignore error if directory already exists
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+            throw error;
+        }
+    }
+}
+
+/**
+ * Create directory recursively (synchronous version)
+ * @deprecated Use mkdirsAsync for better performance and non-blocking operation
+ */
 export function mkdirsSync(dirname) {
     if (fs.existsSync(dirname)) {
         return true;
@@ -58,24 +79,17 @@ export function mkdirsSync(dirname) {
 }
 
 export function parseError(error: any): string {
-    let nb = Buffer.alloc(0);
     if (typeof (error) === "string") {
         return error;
     } else if (error instanceof TypeError || error instanceof Error) {
-        let err = error as TypeError;
+        const err = error as TypeError;
         return err.message + '\n' + err.stack;
     } else if (error instanceof Array) {
-        let arrs = error as any[];
+        const arrs = error as any[];
         return arrs.reduce((p, err) => p + '\n\n' + err.message + '\n' + err.stack, "");
     } else {
         return error.toString();
     }
-}
-
-export function showMessagePanel(message: any) {
-    outputPanel.clear();
-    outputPanel.appendLine(parseError(message));
-    outputPanel.show();
 }
 
 export function mergeSettings(...args: any[]) {
@@ -84,11 +98,29 @@ export function mergeSettings(...args: any[]) {
     }, {});
 }
 
+/**
+ * Show export report with file list
+ */
 export async function showExportReport(report: ExportRport) {
-    let msg = `${report.files.length} file(s) exported in ${report.duration / 1000} seconds`;
-    let viewReport = "View Report";
-    let btn = await vscode.window.showInformationMessage(msg, viewReport);
-    if (btn !== viewReport) return;
-    let rpt = `${msg}:\n\n` + report.files.join('\n');
-    showMessagePanel(rpt);
+    const msg = `${report.files.length} file(s) exported in ${report.duration / 1000} seconds`;
+    const viewReport = "View Report";
+    const btn = await vscode.window.showInformationMessage(msg, viewReport);
+    if (btn !== viewReport) {return;}
+    
+    // Show detailed report in output panel
+    const outputPanel = ExtensionContext.current.outputPanel;
+    outputPanel.clear();
+    outputPanel.appendLine(`=== Export Report ===`);
+    outputPanel.appendLine(`Time: ${new Date().toLocaleTimeString()}`);
+    outputPanel.appendLine(`Duration: ${report.duration / 1000} seconds`);
+    outputPanel.appendLine(`Files exported: ${report.files.length}`);
+    outputPanel.appendLine('');
+    outputPanel.appendLine('Files:');
+    report.files.forEach((file, index) => {
+        outputPanel.appendLine(`  ${index + 1}. ${file}`);
+    });
+    outputPanel.appendLine('');
+    outputPanel.appendLine(`=== End Report ===`);
+    outputPanel.show();
 }
+

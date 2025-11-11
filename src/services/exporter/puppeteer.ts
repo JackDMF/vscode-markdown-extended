@@ -1,131 +1,204 @@
-import * as puppeteer from 'puppeteer';
-import {PUPPETEER_REVISIONS} from 'puppeteer-core/lib/cjs/puppeteer/revisions.js';
+import * as puppeteer from 'puppeteer-core';
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
 import { MarkdownDocument } from '../common/markdownDocument';
-import { mkdirsSync, mergeSettings } from '../common/tools';
+import { mkdirsAsync, mergeSettings } from '../common/tools';
 import { renderPage } from './shared';
-import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
-import { config } from '../common/config';
-import { context } from '../../extension';
+import { MarkdownExporter, ExportFormat, Progress, ExportItem } from './interfaces';
+import { Config } from '../common/config';
+import { BrowserManager } from '../browser/browserManager';
+import { ExtensionContext } from '../common/extensionContext';
+import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
 
-class PuppeteerExporter implements MarkdownExporter {
+/**
+ * Puppeteer-based exporter for PDF, PNG, and JPG formats.
+ * Implements singleton pattern for consistent exporter access.
+ */
+export class PuppeteerExporter implements MarkdownExporter {
+    private static _instance?: PuppeteerExporter;
+    
+    /**
+     * Private constructor to enforce singleton pattern
+     */
+    private constructor() {}
+    
+    /**
+     * Get the PuppeteerExporter singleton instance
+     */
+    static get instance(): PuppeteerExporter {
+        if (!PuppeteerExporter._instance) {
+            PuppeteerExporter._instance = new PuppeteerExporter();
+        }
+        return PuppeteerExporter._instance;
+    }
+    
+    /**
+     * Set a custom instance (for testing purposes only)
+     * @internal
+     */
+    static _setInstance(instance: PuppeteerExporter): void {
+        PuppeteerExporter._instance = instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing purposes only)
+     * @internal
+     */
+    static _reset(): void {
+        PuppeteerExporter._instance = undefined;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/naming-convention
     async Export(items: ExportItem[], progress: Progress) {
-        let count = items.length;
-        if (!this.checkPuppeteerBinary()) {
-            let result = await vscode.window.showInformationMessage("Do you want to download exporter dependency Chromium?", "Yes", "No");
-            if (result == "Yes") {
-                await this.fetchBinary(progress);
-            } else {
-                return Promise.reject("Download cancelled. Try configure 'markdownExtended.puppeteerExecutable' to use customize executable.");
+        const count = items.length;
+        let browser: puppeteer.Browser | undefined;
+        let page: puppeteer.Page | undefined;
+        
+        try {
+            // Ensure browser is available using centralized BrowserManager
+            const browserManager = BrowserManager.instance;
+            const executablePath = await browserManager.ensureBrowser(progress);
+            
+            progress.report({ message: "Initializing browser..." });
+            browser = await puppeteer.launch({
+                executablePath: executablePath || undefined,
+                headless: true, // Use headless mode
+                args: ['--no-sandbox', '--disable-setuid-sandbox'] // For compatibility
+            });
+            page = await browser.newPage();
+
+            // Process all export items sequentially
+            await items.reduce(
+                (p, c, i) => {
+                    return p
+                        .then(
+                            () => {
+                                if (progress) {progress.report({
+                                    message: `${path.basename(c.fileName)} (${i + 1}/${count})`,
+                                    increment: ~~(1 / count * 100)
+                                });}
+                            }
+                        )
+                        .then(
+                            () => {
+                                if (!page) {
+                                    throw new Error('Browser page is not initialized');
+                                }
+                                return this.exportFile(c, page);
+                            }
+                        );
+                },
+                Promise.resolve(null)
+            );
+        } catch (error) {
+            // Use centralized error handler with recovery options
+            await ErrorHandler.handle(error, {
+                operation: 'Export to ' + items[0]?.format || 'file',
+                filePath: items[0]?.uri.fsPath,
+                details: {
+                    formatType: items[0]?.format,
+                    itemCount: items.length,
+                    outputPath: items[0]?.fileName
+                },
+                recoveryOptions: [
+                    ErrorHandler.retryOption(async () => {
+                        await this.Export(items, progress);
+                    }),
+                    ErrorHandler.openSettingsOption('markdownExtended.puppeteerExecutable'),
+                    {
+                        label: 'Install Browser',
+                        action: async () => {
+                            await vscode.commands.executeCommand('markdownExtended.installBrowser');
+                        }
+                    }
+                ]
+            }, ErrorSeverity.Error);
+            
+            throw error;
+        } finally {
+            // Critical: Always clean up resources in reverse order of creation
+            // Close page first, then browser
+            try {
+                if (page) {
+                    await page.close();
+                }
+            } catch (closeError) {
+                // Log but don't throw - we still want to close the browser
+                const output = ExtensionContext.current.outputPanel;
+                output.appendLine(`[WARNING] Error closing page: ${closeError instanceof Error ? closeError.message : String(closeError)}`);
+            }
+            
+            try {
+                if (browser) {
+                    await browser.close();
+                }
+            } catch (closeError) {
+                // Log but don't throw - cleanup errors shouldn't mask original error
+                const output = ExtensionContext.current.outputPanel;
+                output.appendLine(`[WARNING] Error closing browser: ${closeError instanceof Error ? closeError.message : String(closeError)}`);
             }
         }
-        progress.report({ message: "Initializing..." });
-        const browser = await puppeteer.launch(<puppeteer.LaunchOptions>{
-            executablePath: config.puppeteerExecutable,
-            // headless: false,
-        });
-        const page = await browser.newPage();
-
-        return items.reduce(
-            (p, c, i) => {
-                return p
-                    .then(
-                        () => {
-                            if (progress) progress.report({
-                                message: `${path.basename(c.fileName)} (${i + 1}/${count})`,
-                                increment: ~~(1 / count * 100)
-                            });
-                        }
-                    )
-                    .then(
-                        () => this.exportFile(c, page)
-                    );
-            },
-            Promise.resolve(null)
-        ).then(async () => await browser.close())
-            .catch(async err => {
-                await browser.close();
-                return Promise.reject(err);
-            });
-
     }
     private async exportFile(item: ExportItem, page: puppeteer.Page) {
-        let document = new MarkdownDocument(await vscode.workspace.openTextDocument(item.uri));
-        let inject = getInjectStyle(item.format);
-        let html = renderPage(document, inject);
+        const document = new MarkdownDocument(await vscode.workspace.openTextDocument(item.uri));
+        const inject = getInjectStyle(item.format);
+        const html = renderPage(document, inject);
         let ptConf: any = {};
-        mkdirsSync(path.dirname(item.fileName));
+        await mkdirsAsync(path.dirname(item.fileName));
 
         await page.setContent(html, { waitUntil: 'networkidle0' });
         switch (item.format) {
-            case exportFormat.PDF:
+            case ExportFormat.PDF:
                 ptConf = mergeSettings(
-                    config.puppeteerDefaultSetting.pdf,
-                    config.puppeteerUserSetting.pdf,
+                    Config.instance.puppeteerDefaultSetting.pdf,
+                    Config.instance.puppeteerUserSetting.pdf,
                     document.meta.puppeteerPDF
                 );
                 ptConf = Object.assign(ptConf, { path: item.fileName });
                 await page.pdf(ptConf);
                 break;
-            case exportFormat.JPG:
-            case exportFormat.PNG:
+            case ExportFormat.JPG:
+            case ExportFormat.PNG:
                 ptConf = mergeSettings(
-                    config.puppeteerDefaultSetting.image,
-                    config.puppeteerUserSetting.image,
+                    Config.instance.puppeteerDefaultSetting.image,
+                    Config.instance.puppeteerUserSetting.image,
                     document.meta.puppeteerImage
                 );
-                ptConf = Object.assign(ptConf, { path: item.fileName, type: item.format == exportFormat.JPG ? "jpeg" : "png" });
-                if (item.format == exportFormat.PNG) ptConf.quality = undefined;
+                ptConf = Object.assign(ptConf, { path: item.fileName, type: item.format === ExportFormat.JPG ? "jpeg" : "png" });
+                if (item.format === ExportFormat.PNG) {ptConf.quality = undefined;}
                 await page.screenshot(ptConf);
                 break;
             default:
                 return Promise.reject("PuppeteerExporter does not support HTML export.");
         }
     }
-    FormatAvailable(format: exportFormat) {
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    FormatAvailable(format: ExportFormat) {
         return [
-            exportFormat.PDF,
-            exportFormat.JPG,
-            exportFormat.PNG
+            ExportFormat.PDF,
+            ExportFormat.JPG,
+            ExportFormat.PNG
         ].indexOf(format) > -1;
     }
-
-    private checkPuppeteerBinary() {
-        return config.puppeteerExecutable || fs.existsSync(puppeteer.executablePath());
-    }
-    private async fetchBinary(progress: Progress) {
-        let pt = require('puppeteer');
-        let fetcher = pt.createBrowserFetcher();
-        const revisionInfo = fetcher.revisionInfo(PUPPETEER_REVISIONS.chromium);
-        let lastPg = 0;
-        progress.report({
-            message: "Downloading Chromium...",
-        });
-        return fetcher.download(revisionInfo.revision, (downloadedBytes: number, totalBytes: number) => {
-            let pg: number = ~~(downloadedBytes / totalBytes * 100);
-            if (pg - lastPg) progress.report({
-                message: `Downloading Chromium...(${pg}%)`,
-                increment: pg - lastPg
-            });
-            lastPg = pg;
-        });
-    }
 }
-export const puppeteerExporter = new PuppeteerExporter();
 
-function getInjectStyle(formate: exportFormat): string {
+/**
+ * Singleton instance of PuppeteerExporter for backward compatibility.
+ * @deprecated Use PuppeteerExporter.instance instead
+ */
+export const puppeteerExporter = PuppeteerExporter.instance;
+
+function getInjectStyle(formate: ExportFormat): string {
     switch (formate) {
-        case exportFormat.PDF:
+        case ExportFormat.PDF:
             return `body, .vscode-body {
                 max-width: 100% !important;
                 width: 1000px !important;
                 margin: 0!important;
                 padding: 0!important;
             }`;
-        case exportFormat.JPG:
-        case exportFormat.PNG:
+        case ExportFormat.JPG:
+        case ExportFormat.PNG:
             return `body, .vscode-body {
                 width: 1000px !important;
             }`

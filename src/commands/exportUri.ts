@@ -1,17 +1,17 @@
 import * as vscode from 'vscode';
 import { pickExporter, pickFormat } from "../services/exporter/exporters";
 import { ensureMarkdownEngine } from '../services/exporter/shared';
-import { exportOption } from "../services/exporter/interfaces";
+import { ExportOption } from "../services/exporter/interfaces";
 import { MarkdownExport } from "../services/exporter/export";
 import { showExportReport } from "../services/common/tools";
 
 export async function exportUri(uri: vscode.Uri) {
 
     await ensureMarkdownEngine();
-    let format = await pickFormat();
-    if (!format) return;
-    let exporter = await pickExporter(format);
-    if (!exporter) return;
+    const format = await pickFormat();
+    if (!format) {return;}
+    const exporter = await pickExporter(format);
+    if (!exporter) {return;}
 
     return vscode.window.withProgress(
         <vscode.ProgressOptions>{
@@ -20,7 +20,7 @@ export async function exportUri(uri: vscode.Uri) {
         },
         progress => MarkdownExport(
             uri,
-            <exportOption>{
+            <ExportOption>{
                 exporter: exporter,
                 progress: progress,
                 format: format

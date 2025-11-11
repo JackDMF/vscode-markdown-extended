@@ -1,60 +1,89 @@
 {
-  "name": "markdown-extended",
-  "displayName": "Markdown Extended",
+  "name": "markdown-extended-pro",
+  "displayName": "Markdown Extended Pro",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo.png",
-  "version": "1.1.4",
-  "publisher": "jebbs",
+  "version": "2.1.1",
+  "publisher": "jackdmf",
   "engines": {
-    "vscode": "^1.54.0"
+    "vscode": "^1.80.0"
   },
   "license": "SEE LICENSE IN LICENSE.txt",
   "bugs": {
-    "url": "https://github.com/qjebbs/vscode-markdown-extended/issues"
+    "url": "https://github.com/JackDMF/vscode-markdown-extended/issues"
   },
-  "homepage": "https://github.com/qjebbs/vscode-markdown-extended/blob/master/README.md",
+  "homepage": "https://github.com/JackDMF/vscode-markdown-extended/blob/master/README.md",
   "repository": {
     "type": "git",
-    "url": "https://github.com/qjebbs/vscode-markdown-extended.git"
+    "url": "https://github.com/JackDMF/vscode-markdown-extended.git"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:markdown",
-    "onCommand:markdownExtended.export",
-    "onCommand:markdownExtended.exportWorkspace",
-    "onCommand:markdownExtended.copy",
-    "onCommand:markdownExtended.copyWithStyle",
-    "onCommand:markdownExtended.pasteAsTable",
-    "onCommand:markdownExtended.formateTable",
-    "onCommand:markdownExtended.toggleBold",
-    "onCommand:markdownExtended.toggleCodeBlock",
-    "onCommand:markdownExtended.toggleCodeInline",
-    "onCommand:markdownExtended.toggleItalics",
-    "onCommand:markdownExtended.toggleSubscript",
-    "onCommand:markdownExtended.toggleOList",
-    "onCommand:markdownExtended.toggleStrikethrough",
-    "onCommand:markdownExtended.toggleUList",
-    "onCommand:markdownExtended.toggleUnderLine",
-    "onCommand:markdownExtended.toggleMark",
-    "onCommand:markdownExtended.toggleSuperscript",
-    "onCommand:markdownExtended.toggleBlockQuote",
-    "onCommand:markdownExtended.addColumnRight",
-    "onCommand:markdownExtended.addColumnLeft",
-    "onCommand:markdownExtended.addRowBelow",
-    "onCommand:markdownExtended.addRowAbove",
-    "onCommand:markdownExtended.DeleteColumn",
-    "onCommand:markdownExtended.DeleteRow",
-    "onCommand:markdownExtended.MoveColumnLeft",
-    "onCommand:markdownExtended.MoveColumnRight"
+    "onLanguage:markdown"
   ],
-  "main": "./out/src/extension",
+  "main": "./dist/extension.js",
   "contributes": {
+    "themes": [
+      {
+        "label": "Markdown Extended Light",
+        "uiTheme": "vs",
+        "path": "./themes/markdown-extended-light.json"
+      },
+      {
+        "label": "Markdown Extended Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/markdown-extended-dark.json"
+      }
+    ],
     "snippets": [
       {
         "language": "markdown",
         "path": "./snippets/markdown.code-snippets"
+      }
+    ],
+    "grammars": [
+      {
+        "scopeName": "text.html.markdown.extended",
+        "path": "./syntaxes/markdown-extended.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ]
+      }
+    ],
+    "colors": [
+      {
+        "id": "markdown.sidenote.textColor",
+        "description": "Color for sidenote reference text",
+        "defaults": {
+          "dark": "#75BFFF",
+          "light": "#0066B8"
+        }
+      },
+      {
+        "id": "markdown.marginalnote.textColor",
+        "description": "Color for marginal note reference text",
+        "defaults": {
+          "dark": "#FF7B72",
+          "light": "#D73A49"
+        }
+      },
+      {
+        "id": "markdown.leftsidebar.textColor",
+        "description": "Color for left sidebar text",
+        "defaults": {
+          "dark": "#56B6C2",
+          "light": "#0B7E85"
+        }
+      },
+      {
+        "id": "markdown.rightsidebar.textColor",
+        "description": "Color for right sidebar text",
+        "defaults": {
+          "dark": "#D2A8FF",
+          "light": "#6F42C1"
+        }
       }
     ],
     "commands": [
@@ -66,6 +95,11 @@
       {
         "command": "markdownExtended.exportWorkspace",
         "title": "%markdownExtended.exportWorkspace%",
+        "category": "Markdown"
+      },
+      {
+        "command": "markdownExtended.installBrowser",
+        "title": "Install Chromium Browser for Export",
         "category": "Markdown"
       },
       {
@@ -344,18 +378,39 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "find node_modules/puppeteer -name '.local*' | xargs rm -rf && npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "analyze": "node esbuild.js --analyze",
+    "compile-tests": "tsc -p ./",
+    "watch-tests": "tsc -watch -p ./",
+    "pretest": "npm run compile-tests",
+    "test": "npm run compile-tests && node ./out/test/index.js",
+    "test:unit": "npm run compile-tests && node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts",
+    "lint:fix": "eslint src --ext ts --fix"
   },
   "devDependencies": {
+    "@types/glob": "^8.1.0",
     "@types/mocha": "^10.0.6",
-    "@types/node": "18.x",
-    "@types/vscode": "^1.54.0",
+    "@types/node": "^22.13.9",
+    "@types/sinon": "^17.0.4",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.4",
+    "@typescript-eslint/parser": "^8.46.4",
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.27.0",
+    "esbuild-visualizer": "^0.7.0",
+    "eslint": "^9.39.1",
+    "glob": "^11.0.3",
+    "mocha": "^11.7.5",
+    "sinon": "^21.0.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.4.3"
   },
   "dependencies": {
-    "clipboardy": "^2.3.0",
+    "@puppeteer/browsers": "^2.10.13",
     "highlight.js": "^11.9.0",
     "js-yaml": "^4.1.0",
     "markdown-it-abbr": "^2.0.0",
@@ -364,17 +419,17 @@
     "markdown-it-checkbox": "^1.1.0",
     "markdown-it-container": "^4.0.0",
     "markdown-it-deflist": "^3.0.0",
-    "markdown-it-emoji": "^2.0.2",
+    "markdown-it-emoji": "^3.0.0",
     "markdown-it-footnote": "^4.0.0",
     "markdown-it-html5-embed": "^0.3.3",
+    "markdown-it-ib": "^2.0.0",
     "markdown-it-kbd": "^2.2.2",
     "markdown-it-mark": "^4.0.0",
     "markdown-it-multimd-table": "^4.2.3",
-    "markdown-it-sub": "^2.0.0",
-    "markdown-it-sup": "^2.0.0",
-    "markdown-it-table-of-contents": "^0.6.0",
-    "markdown-it-underline": "^1.0.1",
+    "markdown-it-sub-alt": "^1.0.0",
+    "markdown-it-sup-alt": "^1.0.2",
+    "markdown-it-table-of-contents": "^0.9.0",
     "papaparse": "^5.4.1",
-    "puppeteer": "^19.4.1"
+    "puppeteer": "^24.3.1"
   }
 }
