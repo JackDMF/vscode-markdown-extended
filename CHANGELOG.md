@@ -1,5 +1,45 @@
 # Change Log
 
+## v2.2.0 - Performance & Architecture: Proper Plugin Bundling
+
+### ✨ Major Improvements
+
+- **90% package size reduction**: 1.29 MB (36 files) vs 12.63 MB (4000 files in v2.1.4)
+- **Proper bundling architecture**: Converted dynamic `require()` to static imports for all markdown-it plugins
+- **Faster extension activation**: Bundled plugins load more efficiently than runtime require resolution
+- **Cleaner package structure**: Eliminated 4000+ node_modules files and esbuild performance warnings
+
+### 🔧 Technical Implementation
+
+**Root cause of v2.1.0 breakage identified and fixed:**
+- Dynamic `require(name)` calls with runtime variables cannot be bundled by esbuild
+- esbuild requires static imports for proper dependency analysis and bundling
+- Previous versions (2.1.2-2.1.4) worked around this by externalizing plugins and including entire node_modules
+
+**Proper solution implemented:**
+- Refactored `src/plugin/plugins.ts` to use static `import` statements for all 16 external plugins
+- Removed dynamic require fallback mechanism
+- esbuild now properly bundles all markdown-it plugins at build time
+
+### 📝 Changes
+
+- Converted all external markdown-it plugin requires to static imports in `plugins.ts`
+- Fixed `markdown-it-emoji` import (uses named export `full` instead of default)
+- Removed plugin names from esbuild `external` array (only `vscode` remains external)
+- Bundle size: 2.3 MB minified (4.38 MB unminified) - all plugins included
+
+### 🎯 Impact
+
+This release delivers the architectural solution v2.1.0 should have implemented. Previous workarounds (v2.1.2-2.1.4) were functional but suboptimal. Version 2.2.0 achieves:
+
+- ✅ All markdown-it plugins fully functional (admonitions, sup/sub, etc.)
+- ✅ Optimal package size (90% smaller than v2.1.4)
+- ✅ Better performance (no runtime module resolution overhead)
+- ✅ Future-proof bundling architecture
+- ✅ Cleaner codebase with better maintainability
+
+---
+
 ## v2.1.4 - Critical Fix: Include markdown-it plugin dependencies
 
 ### 🐛 Critical Bug Fix

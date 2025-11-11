@@ -7,7 +7,23 @@ import { Config } from '../services/common/config';
 // eslint-disable-next-line @typescript-eslint/naming-convention
 import * as MarkdownItSidenote from './markdownItSidenote';
 import { MarkdownIt } from '../@types/markdown-it';
-import { ExtensionContext } from '../services/common/extensionContext';
+
+// Import all external markdown-it plugins statically for bundling
+import markdownItFootnote from 'markdown-it-footnote';
+import markdownItAbbr from 'markdown-it-abbr';
+import markdownItSupAlt from 'markdown-it-sup-alt';
+import markdownItSubAlt from 'markdown-it-sub-alt';
+import markdownItCheckbox from 'markdown-it-checkbox';
+import markdownItAttrs from 'markdown-it-attrs';
+import markdownItKbd from 'markdown-it-kbd';
+import markdownItIb from 'markdown-it-ib';
+import markdownItMark from 'markdown-it-mark';
+import markdownItDeflist from 'markdown-it-deflist';
+import { full as markdownItEmoji } from 'markdown-it-emoji';
+import markdownItMultimdTable from 'markdown-it-multimd-table';
+import markdownItHtml5Embed from 'markdown-it-html5-embed';
+import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
+import markdownItTableOfContents from 'markdown-it-table-of-contents';
 
 interface MarkdownItPlugin {
     plugin: (md: MarkdownIt, ...args: any[]) => void;
@@ -21,6 +37,22 @@ const myPlugins: Record<string, any> = {
     'markdown-it-anchor': MarkdownItAnchorLink,
     'markdown-it-helper': MarkdownItExportHelper,
     'markdown-it-sidenote': MarkdownItSidenote.default,
+    // External plugins - now statically imported for bundling
+    'markdown-it-footnote': markdownItFootnote,
+    'markdown-it-abbr': markdownItAbbr,
+    'markdown-it-sup-alt': markdownItSupAlt,
+    'markdown-it-sub-alt': markdownItSubAlt,
+    'markdown-it-checkbox': markdownItCheckbox,
+    'markdown-it-attrs': markdownItAttrs,
+    'markdown-it-kbd': markdownItKbd,
+    'markdown-it-ib': markdownItIb,
+    'markdown-it-mark': markdownItMark,
+    'markdown-it-deflist': markdownItDeflist,
+    'markdown-it-emoji': markdownItEmoji,
+    'markdown-it-multimd-table': markdownItMultimdTable,
+    'markdown-it-html5-embed': markdownItHtml5Embed,
+    'markdown-it-bracketed-spans': markdownItBracketedSpans,
+    'markdown-it-table-of-contents': markdownItTableOfContents,
 }
 
 export const plugins: MarkdownItPlugin[] = [
@@ -50,15 +82,7 @@ export const plugins: MarkdownItPlugin[] = [
 function $(name: string, ...args: any[]): MarkdownItPlugin | undefined {
     if (Config.instance.disabledPlugins.some(d => `markdown-it-${d}` === name)) {return;}
     
-    const plugin = myPlugins[name] || (() => {
-        try { 
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            return require(name); 
-        } catch (e) { 
-            const output = ExtensionContext.current.outputPanel;
-            output.appendLine(`[ERROR] Plugin ${name} failed to load: ${e instanceof Error ? e.message : String(e)}`);
-        }
-    })();
+    const plugin = myPlugins[name];
     
     return plugin ? { plugin, args } : undefined;
 }

@@ -3,7 +3,7 @@
   "displayName": "Markdown Extended Pro",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo.png",
-  "version": "2.1.4",
+  "version": "2.2.0",
   "publisher": "jackdmf",
   "engines": {
     "vscode": "^1.80.0"
