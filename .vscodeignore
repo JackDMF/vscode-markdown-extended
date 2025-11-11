@@ -25,6 +25,10 @@ sublime/TEXTASTIC_QUICK_REF.md
 
 # Build artifacts
 *.vsix
+# NOTE: node_modules is NOT excluded to include markdown-it plugin dependencies
+# These plugins are externalized (not bundled) in esbuild.js and loaded at runtime
+# This results in ~4000 files and 12MB package size, but ensures reliable plugin loading
+# TODO: Investigate bundling markdown-it plugins to reduce package size (see GitHub issue #XX)
 dist/bundle-stats.html
 dist/*.map
 
