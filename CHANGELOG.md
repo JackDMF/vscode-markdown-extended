@@ -1,5 +1,43 @@
 # Change Log
 
+## v2.1.2 - Critical Bugfix: Markdown-it Plugins Not Loading
+
+### 🐛 Critical Bug Fixes
+
+- **Fixed broken markdown-it plugins**: Admonitions, superscript, subscript, and all other markdown-it plugins now work correctly
+- **Root cause**: esbuild was bundling markdown-it plugins instead of loading them from node_modules at runtime
+- **Solution**: Externalized all markdown-it plugins in esbuild configuration to prevent bundling
+
+### 📝 Technical Details
+
+The v2.1.0 release switched from TypeScript compilation to esbuild bundling, but markdown-it plugins were being bundled into the main extension file. These plugins need to be loaded dynamically at runtime via `require()` from node_modules. The fix adds all markdown-it plugins to the esbuild `external` array:
+
+- `markdown-it-abbr`
+- `markdown-it-attrs`
+- `markdown-it-bracketed-spans`
+- `markdown-it-checkbox`
+- `markdown-it-container`
+- `markdown-it-deflist`
+- `markdown-it-emoji`
+- `markdown-it-footnote`
+- `markdown-it-html5-embed`
+- `markdown-it-ib`
+- `markdown-it-kbd`
+- `markdown-it-mark`
+- `markdown-it-multimd-table`
+- `markdown-it-sub-alt`
+- `markdown-it-sup-alt`
+- `markdown-it-table-of-contents`
+
+### ✅ What's Fixed
+
+- ✅ Admonitions now render with proper styling (note, warning, danger, tip)
+- ✅ Superscript syntax (`^text^`) works correctly
+- ✅ Subscript syntax (`~text~`) works correctly
+- ✅ All other markdown-it plugins function as expected
+
+---
+
 ## v2.1.1 - Patch Release: License and Repository Updates
 
 ### 📝 Updates
