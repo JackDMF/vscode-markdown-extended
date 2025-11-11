@@ -1,5 +1,11 @@
 # Change Log
 
+## v2.1.3 - Republish of v2.1.2 Fix
+
+This version ensures the marketplace package includes the corrected `dist/extension.js` with externalized markdown-it plugins. No code changes from v2.1.2.
+
+---
+
 ## v2.1.2 - Critical Bugfix: Markdown-it Plugins Not Loading
 
 ### 🐛 Critical Bug Fixes
