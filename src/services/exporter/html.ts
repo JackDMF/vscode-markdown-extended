@@ -1,11 +1,9 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
-import { mkdirsSync, mkdirsAsync } from '../common/tools';
+import { mkdirsAsync } from '../common/tools';
 import * as path from 'path';
 import { renderPage } from './shared';
 import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
-import { setTimeout } from 'timers';
 import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
 
 /**

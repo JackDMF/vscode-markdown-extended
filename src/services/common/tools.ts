@@ -4,10 +4,10 @@ import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import { ExportRport } from '../exporter/interfaces';
 import { ExtensionContext } from './extensionContext';
-import { config } from './config';
+import { Config } from './config';
 
 export function calculateExportPath(uri: vscode.Uri, format: string): string {
-    let outDirName = config.exportOutDirName;
+    let outDirName = Config.instance.exportOutDirName;
     let folder = vscode.workspace.getWorkspaceFolder(uri);
     let wkdir = folder ? folder.uri.fsPath : "";
     let exportDir: string;

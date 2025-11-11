@@ -3,7 +3,7 @@ import { MarkdownItContainer } from './markdownItContainer';
 import { MarkdownItAnchorLink } from './markdownItAnchorLink';
 import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
-import { config } from '../services/common/config';
+import { Config } from '../services/common/config';
 import * as MarkdownItSidenote from './markdownItSidenote';
 import { MarkdownIt } from '../@types/markdown-it';
 
@@ -24,7 +24,7 @@ const myPlugins: Record<string, any> = {
 export var plugins: markdownItPlugin[] = [
     // $('markdown-it-toc'),
     // $('markdown-it-anchor'), // MarkdownItAnchorLink requires MarkdownItTOC
-    $('markdown-it-table-of-contents', { includeLevel: config.tocLevels }),
+    $('markdown-it-table-of-contents', { includeLevel: Config.instance.tocLevels }),
     $('markdown-it-container'),
     $('markdown-it-admonition'),
     $('markdown-it-footnote'),
@@ -46,11 +46,11 @@ export var plugins: markdownItPlugin[] = [
 ].filter(p => !!p);
 
 function $(name: string, ...args: any[]): markdownItPlugin | undefined {
-    if (config.disabledPlugins.some(d => `markdown-it-${d}` === name)) return;
+    if (Config.instance.disabledPlugins.some(d => `markdown-it-${d}` === name)) return;
     
     const plugin = myPlugins[name] || (() => {
         try { return require(name); } 
-        catch (e) { console.error(`Plugin ${name} fehlgeschlagen:`, e); }
+        catch (e) { console.error(`Plugin ${name} failed to load:`, e); }
     })();
     
     return plugin ? { plugin, args } : undefined;

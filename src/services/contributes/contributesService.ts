@@ -1,4 +1,4 @@
-import { ContributorService, IContributor, ContributorType } from './contributorService';
+import { ContributorService, ContributorType } from './contributorService';
 import { createContributeItem } from './tools';
 import { mdConfig } from './mdConfig';
 import * as vscode from 'vscode';

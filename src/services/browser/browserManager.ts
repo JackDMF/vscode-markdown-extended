@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { install, Browser, BrowserPlatform, computeExecutablePath } from '@puppeteer/browsers';
-import { config } from '../common/config';
+import { Config } from '../common/config';
 
 /**
  * Progress reporter interface for browser download operations
@@ -69,7 +69,7 @@ export class BrowserManager {
      */
     async ensureBrowser(progress?: Progress, options?: BrowserInstallOptions): Promise<string> {
         // Check for custom Puppeteer executable path in settings
-        const customExecutable = config.puppeteerExecutable;
+        const customExecutable = Config.instance.puppeteerExecutable;
         if (customExecutable && fs.existsSync(customExecutable)) {
             return customExecutable;
         }
@@ -221,7 +221,7 @@ export class BrowserManager {
      * @returns Browser executable path or undefined if not installed
      */
     getBrowserPath(): string | undefined {
-        const customExecutable = config.puppeteerExecutable;
+        const customExecutable = Config.instance.puppeteerExecutable;
         if (customExecutable && fs.existsSync(customExecutable)) {
             return customExecutable;
         }

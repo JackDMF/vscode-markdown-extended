@@ -1,7 +1,5 @@
-import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { Config } from '../common/config';
-import { ExporterQuickPickItem, exporterType, MarkdownExporter, exportFormat, FormatQuickPickItem } from './interfaces';
+import { ExporterQuickPickItem, MarkdownExporter, exportFormat, FormatQuickPickItem } from './interfaces';
 import { HtmlExporter } from './html';
 import { PuppeteerExporter } from './puppeteer';
 

@@ -2,10 +2,10 @@ import * as puppeteer from 'puppeteer-core';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { MarkdownDocument } from '../common/markdownDocument';
-import { mkdirsSync, mkdirsAsync, mergeSettings } from '../common/tools';
+import { mkdirsAsync, mergeSettings } from '../common/tools';
 import { renderPage } from './shared';
 import { MarkdownExporter, exportFormat, Progress, ExportItem } from './interfaces';
-import { config } from '../common/config';
+import { Config } from '../common/config';
 import { BrowserManager } from '../browser/browserManager';
 import { ExtensionContext } from '../common/extensionContext';
 import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
@@ -142,8 +142,8 @@ export class PuppeteerExporter implements MarkdownExporter {
         switch (item.format) {
             case exportFormat.PDF:
                 ptConf = mergeSettings(
-                    config.puppeteerDefaultSetting.pdf,
-                    config.puppeteerUserSetting.pdf,
+                    Config.instance.puppeteerDefaultSetting.pdf,
+                    Config.instance.puppeteerUserSetting.pdf,
                     document.meta.puppeteerPDF
                 );
                 ptConf = Object.assign(ptConf, { path: item.fileName });
@@ -152,8 +152,8 @@ export class PuppeteerExporter implements MarkdownExporter {
             case exportFormat.JPG:
             case exportFormat.PNG:
                 ptConf = mergeSettings(
-                    config.puppeteerDefaultSetting.image,
-                    config.puppeteerUserSetting.image,
+                    Config.instance.puppeteerDefaultSetting.image,
+                    Config.instance.puppeteerUserSetting.image,
                     document.meta.puppeteerImage
                 );
                 ptConf = Object.assign(ptConf, { path: item.fileName, type: item.format == exportFormat.JPG ? "jpeg" : "png" });

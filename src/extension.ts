@@ -7,7 +7,7 @@ import { CommandInstallBrowser } from './commands/installBrowser';
 import * as markdowIt from './@types/markdown-it';
 import { plugins } from './plugin/plugins';
 import { CommandCopy, CommandCopyWithStyles } from './commands/copy';
-import { config } from './services/common/config';
+import { Config } from './services/common/config';
 import { mdConfig } from './services/contributes/mdConfig';
 import { CommandPasteTable } from './commands/pasteTable';
 import { CommandFormateTable } from './commands/formateTable';
@@ -37,7 +37,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     outputPanel = extensionContext.outputPanel;
     const subscriptions = [
         extensionContext.outputPanel,
-        config,
+        Config.instance,
         mdConfig,
         commandToggles,
         commandTableEdits,

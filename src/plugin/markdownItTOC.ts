@@ -2,7 +2,7 @@ import { MarkdownIt, Token } from '../@types/markdown-it';
 // Use default import for CommonJS module
 import toc = require('markdown-it-table-of-contents');
 import { slugify } from './shared';
-import { config } from '../services/common/config';
+import { Config } from '../services/common/config';
 
 /**
  * Markdown-it plugin for table of contents with anchor links.
@@ -16,7 +16,7 @@ export function MarkdownItTOC(md: MarkdownIt): void {
     
     // Apply the toc plugin directly (not via md.use())
     // markdown-it-table-of-contents is a CommonJS module that exports a function directly
-    toc(md, { slugify: slugify, includeLevel: config.tocLevels });
+    toc(md, { slugify: slugify, includeLevel: Config.instance.tocLevels });
 }
 
 function renderHtml(tokens: Token[], idx: number) {
