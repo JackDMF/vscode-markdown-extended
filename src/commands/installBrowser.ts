@@ -15,7 +15,7 @@ export class CommandInstallBrowser extends Command {
                 try {
                     progress.report({ message: 'Preparing...' });
 
-                    const browserManager = BrowserManager.getInstance(ExtensionContext.current.vsContext);
+                    const browserManager = BrowserManager.instance;
                     
                     // Check if already installed
                     if (browserManager.isBrowserInstalled()) {

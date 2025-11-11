@@ -455,17 +455,17 @@ function findClosingMarker(
 
 /**
  * Process content with markdown support, falling back to plain text on error.
+ * Errors are silently handled to prevent plugin failures.
  * 
  * @param state - Markdown-it parsing state
  * @param content - Content to process
- * @param contextName - Description for error messages
+ * @param contextName - Description for error messages (unused - kept for future debugging)
  */
 function processContentSafely(state: MarkdownItState, content: string, contextName: string): void {
     try {
         processTextWithMarkdown(state, content);
     } catch (e) {
-        console.error(`Error processing ${contextName}:`, e);
-        // Fallback to plain text on error
+        // Fallback to plain text on error - silently handle to prevent plugin failures
         const fallback = state.push('text', '', 0);
         fallback.content = content;
     }
@@ -498,9 +498,7 @@ function processNote(state: MarkdownItState, silent: boolean, start: number, con
     const validated = validateNoteContent(content);
     
     if (!validated) {
-        if (!silent) {
-            console.warn('Invalid note structure: missing pipe separator or empty reference text');
-        }
+        // Invalid note structure - silently fail in validation mode
         return false;
     }
 
@@ -552,8 +550,8 @@ function createNoteTokens(state: MarkdownItState, text: string, note: string, co
         state.push(`${type}_close`, 'span', -1);
         
     } catch (e) {
-        console.error(`Critical error in ${type} token creation:`, e);
         // Emergency recovery - add simple text token as fallback
+        // Critical errors are silently handled to prevent plugin failures
         const emergencyText = state.push('text', '', 0);
         emergencyText.content = `${text}|${note}`;
     }
@@ -601,9 +599,9 @@ function processTextWithMarkdown(state: MarkdownItState, content: string): void 
     // Prevents stack overflow in pathological cases like: ++ref|++nested|++deep|text+++++
     if (getParseDepth(state) >= MAX_PARSE_DEPTH) {
         // Exceeded maximum nesting level, treat as plain text
+        // This is a normal protective measure, not an error condition
         const plainText = state.push('text', '', 0);
         plainText.content = content;
-        console.warn('Maximum nesting level exceeded in markdown-it-sidenote');
         return;
     }
     

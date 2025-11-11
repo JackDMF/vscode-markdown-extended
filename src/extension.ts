@@ -15,6 +15,7 @@ import { commandToggles } from './commands/toggleFormats';
 import { commandTableEdits } from './commands/tableEdits';
 import { CommandExportWorkSpace } from './commands/exportWorkspace';
 import { ExtensionContext } from './services/common/extensionContext';
+import { BrowserManager } from './services/browser/browserManager';
 
 // Deprecated: Use ExtensionContext.current.markdown instead
 // @deprecated
@@ -31,6 +32,9 @@ export var outputPanel: vscode.OutputChannel;
 export function activate(ctx: vscode.ExtensionContext) {
     // Initialize the new centralized extension context
     const extensionContext = ExtensionContext.initialize(ctx);
+    
+    // Initialize BrowserManager singleton
+    BrowserManager.initialize(ctx);
     
     // Maintain backwards compatibility with old global exports
     context = ctx;
@@ -60,9 +64,11 @@ export function activate(ctx: vscode.ExtensionContext) {
                     try {
                         md.use(plugin, ...args);
                     } catch (error) {
-                        console.error('Failed to load markdown plugin:', error);
+                        const output = extensionContext.outputPanel;
+                        const errorMessage = error instanceof Error ? error.message : String(error);
+                        output.appendLine(`[ERROR] Failed to load markdown plugin: ${errorMessage}`);
                         vscode.window.showWarningMessage(
-                            `Markdown plugin failed to load: ${error.message}`
+                            `Markdown plugin failed to load: ${errorMessage}`
                         );
                     }
                 });

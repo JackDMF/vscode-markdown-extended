@@ -55,7 +55,7 @@ export class PuppeteerExporter implements MarkdownExporter {
         
         try {
             // Ensure browser is available using centralized BrowserManager
-            const browserManager = BrowserManager.getInstance(ExtensionContext.current.vsContext);
+            const browserManager = BrowserManager.instance;
             const executablePath = await browserManager.ensureBrowser(progress);
             
             progress.report({ message: "Initializing browser..." });
@@ -118,7 +118,8 @@ export class PuppeteerExporter implements MarkdownExporter {
                 }
             } catch (closeError) {
                 // Log but don't throw - we still want to close the browser
-                console.error('Error closing page:', closeError);
+                const output = ExtensionContext.current.outputPanel;
+                output.appendLine(`[WARNING] Error closing page: ${closeError instanceof Error ? closeError.message : String(closeError)}`);
             }
             
             try {
@@ -127,7 +128,8 @@ export class PuppeteerExporter implements MarkdownExporter {
                 }
             } catch (closeError) {
                 // Log but don't throw - cleanup errors shouldn't mask original error
-                console.error('Error closing browser:', closeError);
+                const output = ExtensionContext.current.outputPanel;
+                output.appendLine(`[WARNING] Error closing browser: ${closeError instanceof Error ? closeError.message : String(closeError)}`);
             }
         }
     }

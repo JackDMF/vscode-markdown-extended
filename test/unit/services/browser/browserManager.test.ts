@@ -27,22 +27,24 @@ suite('BrowserManager Tests', () => {
     });
 
     test('should be a singleton', () => {
-        const instance1 = BrowserManager.getInstance(mockContext);
-        const instance2 = BrowserManager.getInstance();
+        BrowserManager.initialize(mockContext);
+        const instance1 = BrowserManager.instance;
+        const instance2 = BrowserManager.instance;
         
         assert.strictEqual(instance1, instance2, 'Should return same instance');
     });
 
-    test('should throw error when getInstance called without context on first call', () => {
+    test('should throw error when instance accessed before initialization', () => {
         assert.throws(
-            () => BrowserManager.getInstance(),
-            /requires extension context/,
-            'Should throw error when context not provided on first call'
+            () => BrowserManager.instance,
+            /not initialized/,
+            'Should throw error when not initialized'
         );
     });
 
     test('should detect Windows 64-bit platform', () => {
-        const instance = BrowserManager.getInstance(mockContext);
+        BrowserManager.initialize(mockContext);
+        const instance = BrowserManager.instance;
         
         // Stub process.platform and process.arch
         const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -63,7 +65,8 @@ suite('BrowserManager Tests', () => {
     });
 
     test('should detect macOS ARM platform', () => {
-        const instance = BrowserManager.getInstance(mockContext);
+        BrowserManager.initialize(mockContext);
+        const instance = BrowserManager.instance;
         
         const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
         const originalArch = Object.getOwnPropertyDescriptor(process, 'arch');
@@ -82,7 +85,8 @@ suite('BrowserManager Tests', () => {
     });
 
     test('should detect Linux platform', () => {
-        const instance = BrowserManager.getInstance(mockContext);
+        BrowserManager.initialize(mockContext);
+        const instance = BrowserManager.instance;
         
         const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
         
@@ -98,7 +102,8 @@ suite('BrowserManager Tests', () => {
     });
 
     test('should throw error for unsupported platform', () => {
-        const instance = BrowserManager.getInstance(mockContext);
+        BrowserManager.initialize(mockContext);
+        const instance = BrowserManager.instance;
         
         const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
         
@@ -116,7 +121,8 @@ suite('BrowserManager Tests', () => {
     });
 
     test('should return browser cache directory in global storage', () => {
-        const instance = BrowserManager.getInstance(mockContext);
+        BrowserManager.initialize(mockContext);
+        const instance = BrowserManager.instance;
         
         const cacheDir = instance.getBrowserCacheDir();
         
@@ -126,7 +132,8 @@ suite('BrowserManager Tests', () => {
     });
 
     test('should check if browser is installed', () => {
-        const instance = BrowserManager.getInstance(mockContext);
+        BrowserManager.initialize(mockContext);
+        const instance = BrowserManager.instance;
         
         // This will check actual file system, so just verify it returns a boolean
         const isInstalled = instance.isBrowserInstalled();
@@ -135,19 +142,20 @@ suite('BrowserManager Tests', () => {
     });
 
     test('_reset should clear singleton instance', () => {
-        BrowserManager.getInstance(mockContext);
+        BrowserManager.initialize(mockContext);
         
         BrowserManager._reset();
         
         assert.throws(
-            () => BrowserManager.getInstance(),
-            /requires extension context/,
-            'Should require context after reset'
+            () => BrowserManager.instance,
+            /not initialized/,
+            'Should throw error when accessing instance after reset'
         );
     });
 
     test('getBrowserPath should return undefined or string', () => {
-        const instance = BrowserManager.getInstance(mockContext);
+        BrowserManager.initialize(mockContext);
+        const instance = BrowserManager.instance;
         
         const browserPath = instance.getBrowserPath();
         

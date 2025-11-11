@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
+import { ExtensionContext } from './extensionContext';
 
 /**
  * cssFileToDataUri embeds files referred by url(), with data uri, while fileToDataUri not
@@ -21,7 +22,11 @@ export function cssFileToDataUri(cssFileName: string): string {
         try {
             return `url("${fileToDataUri(filePath)}")`;
         } catch (error) {
-            console.log(error);
+            // Log errors but return original URL to avoid breaking CSS
+            if (ExtensionContext.isInitialized) {
+                const output = ExtensionContext.current.outputPanel;
+                output.appendLine(`[WARNING] Failed to convert URL to data URI: ${error instanceof Error ? error.message : String(error)}`);
+            }
             return substr;
         }
     });
@@ -134,7 +139,11 @@ export async function cssFileToDataUriAsync(cssFileName: string): Promise<string
             const dataUri = await fileToDataUriAsync(resolvedPath);
             processedCss = processedCss.replace(matchStr, `url("${dataUri}")`);
         } catch (error) {
-            console.log(error);
+            // Log errors but keep original URL to avoid breaking CSS
+            if (ExtensionContext.isInitialized) {
+                const output = ExtensionContext.current.outputPanel;
+                output.appendLine(`[WARNING] Failed to convert URL to data URI (async): ${error instanceof Error ? error.message : String(error)}`);
+            }
             // Keep original if conversion fails
         }
     }

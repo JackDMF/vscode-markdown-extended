@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { install, Browser, BrowserPlatform, computeExecutablePath } from '@puppeteer/browsers';
 import { Config } from '../common/config';
+import { ExtensionContext } from '../common/extensionContext';
 
 /**
  * Progress reporter interface for browser download operations
@@ -30,7 +31,7 @@ export interface BrowserInstallOptions {
  * 
  * @example
  * ```typescript
- * const browserManager = BrowserManager.getInstance(context);
+ * const browserManager = BrowserManager.instance;
  * const executablePath = await browserManager.ensureBrowser(progress);
  * ```
  */
@@ -47,17 +48,37 @@ export class BrowserManager {
     /**
      * Get the BrowserManager singleton instance
      * 
-     * @param context VS Code extension context (required on first call)
      * @returns The BrowserManager instance
+     * @throws Error if not initialized via initialize()
      */
-    static getInstance(context?: vscode.ExtensionContext): BrowserManager {
+    static get instance(): BrowserManager {
         if (!BrowserManager._instance) {
-            if (!context) {
-                throw new Error('BrowserManager requires extension context on first initialization');
-            }
-            BrowserManager._instance = new BrowserManager(context);
+            throw new Error('BrowserManager not initialized. Call BrowserManager.initialize() first.');
         }
         return BrowserManager._instance;
+    }
+    
+    /**
+     * Initialize the BrowserManager singleton.
+     * Should be called once during extension activation.
+     * 
+     * @param context VS Code extension context
+     * @returns The initialized BrowserManager instance
+     * @throws Error if already initialized
+     */
+    static initialize(context: vscode.ExtensionContext): BrowserManager {
+        if (BrowserManager._instance) {
+            throw new Error('BrowserManager already initialized');
+        }
+        BrowserManager._instance = new BrowserManager(context);
+        return BrowserManager._instance;
+    }
+    
+    /**
+     * Check if BrowserManager is initialized
+     */
+    static get isInitialized(): boolean {
+        return !!BrowserManager._instance;
     }
     
     /**
@@ -114,7 +135,8 @@ export class BrowserManager {
             return expectedPath;
             
         } catch (error) {
-            console.error('Browser installation failed:', error);
+            const output = ExtensionContext.current.outputPanel;
+            output.appendLine(`[ERROR] Browser installation failed: ${error instanceof Error ? error.message : String(error)}`);
             
             // User-friendly error message with recovery options
             const action = await vscode.window.showErrorMessage(
@@ -272,11 +294,12 @@ export class BrowserManager {
             if (fs.existsSync(cacheDir)) {
                 await fs.promises.rm(cacheDir, { recursive: true, force: true });
                 this._browserPath = undefined;
-                return true;
+                return false;
             }
             return false;
         } catch (error) {
-            console.error('Failed to remove browser:', error);
+            const output = ExtensionContext.current.outputPanel;
+            output.appendLine(`[ERROR] Failed to remove browser: ${error instanceof Error ? error.message : String(error)}`);
             return false;
         }
     }

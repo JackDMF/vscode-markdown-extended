@@ -1,19 +1,26 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as sinon from 'sinon';
-import { config } from '../../../../src/services/common/config';
+import { Config } from '../../../../src/services/common/config';
 
 suite('Config Tests', () => {
     let sandbox: sinon.SinonSandbox;
     let getConfigurationStub: sinon.SinonStub;
+    let config: Config;
 
     setup(() => {
         sandbox = sinon.createSandbox();
         getConfigurationStub = sandbox.stub(vscode.workspace, 'getConfiguration');
+        
+        // Get the singleton instance
+        config = Config.instance;
     });
 
     teardown(() => {
         sandbox.restore();
+        // Note: We don't call Config._reset() here because Config is shared across tests
+        // and properly disposes itself. The disposable warnings come from VS Code's internal
+        // test infrastructure, not from Config itself.
     });
 
     test('should be a singleton instance', () => {

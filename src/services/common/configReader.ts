@@ -65,6 +65,11 @@ export abstract class ConfigReader extends vscode.Disposable {
      */
     read<T>(key: string, uri: vscode.Uri, transformer: ConfigTransformer<T>): T;
     read<T>(key: string, uri?: vscode.Uri, transformer?: ConfigTransformer<T>): T {
+        // Validate parameters: transformer requires uri
+        if (transformer && !uri) {
+            throw new Error('ConfigReader.read: transformer requires uri parameter');
+        }
+        
         if (!uri) return this._conf.get<T>(key); // no uri? return global value.
         
         let folder = vscode.workspace.getWorkspaceFolder(uri);

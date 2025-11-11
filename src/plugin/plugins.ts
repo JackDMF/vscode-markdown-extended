@@ -6,6 +6,7 @@ import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { Config } from '../services/common/config';
 import * as MarkdownItSidenote from './markdownItSidenote';
 import { MarkdownIt } from '../@types/markdown-it';
+import { ExtensionContext } from '../services/common/extensionContext';
 
 interface markdownItPlugin {
     plugin: (md: MarkdownIt, ...args: any[]) => void;
@@ -49,8 +50,12 @@ function $(name: string, ...args: any[]): markdownItPlugin | undefined {
     if (Config.instance.disabledPlugins.some(d => `markdown-it-${d}` === name)) return;
     
     const plugin = myPlugins[name] || (() => {
-        try { return require(name); } 
-        catch (e) { console.error(`Plugin ${name} failed to load:`, e); }
+        try { 
+            return require(name); 
+        } catch (e) { 
+            const output = ExtensionContext.current.outputPanel;
+            output.appendLine(`[ERROR] Plugin ${name} failed to load: ${e instanceof Error ? e.message : String(e)}`);
+        }
     })();
     
     return plugin ? { plugin, args } : undefined;

@@ -93,7 +93,7 @@ export class ExtensionContext {
      */
     setMarkdown(md: markdownIt.MarkdownIt): void {
         if (this._markdown) {
-            console.warn('Markdown engine already initialized, replacing...');
+            this._outputPanel.appendLine('[WARNING] Markdown engine already initialized, replacing...');
         }
         this._markdown = md;
     }
