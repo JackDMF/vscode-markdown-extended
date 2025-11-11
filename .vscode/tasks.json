@@ -6,15 +6,16 @@
 		{
 			"type": "npm",
 			"script": "watch",
-			"problemMatcher":  {
-				"base": "$tsc-watch",
+			"problemMatcher": {
+				"owner": "esbuild",
+				"pattern": {
+					"regexp": "^✘ \\[ERROR\\] (.*)$",
+					"message": 1
+				},
 				"background": {
-					"beginsPattern": {
-						"regexp": "Starting compilation in watch mode|File change detected\\.\\s*Starting incremental compilation"
-					},
-					"endsPattern": {
-						"regexp": "(?:Compilation complete\\.|Found \\d+ errors?\\.)\\s*Watching for file changes\\."
-					}
+					"activeOnStart": true,
+					"beginsPattern": "^\\[watch\\] build started$",
+					"endsPattern": "^\\[watch\\] build finished$"
 				}
 			},
 			"isBackground": true,

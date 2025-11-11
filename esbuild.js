@@ -105,26 +105,7 @@ async function main() {
         sourcesContent: false,
         platform: 'node',
         outfile: 'dist/extension.js',
-        external: [
-            'vscode',
-            // Externalize all markdown-it plugins so they're loaded from node_modules at runtime
-            'markdown-it-abbr',
-            'markdown-it-attrs',
-            'markdown-it-bracketed-spans',
-            'markdown-it-checkbox',
-            'markdown-it-container',
-            'markdown-it-deflist',
-            'markdown-it-emoji',
-            'markdown-it-footnote',
-            'markdown-it-html5-embed',
-            'markdown-it-ib',
-            'markdown-it-kbd',
-            'markdown-it-mark',
-            'markdown-it-multimd-table',
-            'markdown-it-sub-alt',
-            'markdown-it-sup-alt',
-            'markdown-it-table-of-contents'
-        ],
+        external: ['vscode'],
         logLevel: 'silent',
         metafile: analyze, // Enable metafile for analysis
         plugins: [
