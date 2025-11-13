@@ -1,3 +1,5 @@
+![Logo](./images/logo.png)
+
 # Markdown Extended Pro
 
 [![version](https://img.shields.io/vscode-marketplace/v/jackdmf.markdown-extended-pro.svg?style=flat-square&label=vscode%20marketplace)](https://marketplace.visualstudio.com/items?itemName=jackdmf.markdown-extended-pro)
