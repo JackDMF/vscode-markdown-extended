@@ -1,5 +1,15 @@
 # Change Log
 
+## v2.2.1 - Logo Updates for Marketplace
+
+### 🎨 Visual Improvements
+
+- Updated extension logo for better marketplace visibility
+- Added optimized small logo (`logo-small.png`) for VS Code marketplace icon
+- Enhanced visual branding in extension listing
+
+---
+
 ## v2.2.0 - Performance & Architecture: Proper Plugin Bundling
 
 ### ✨ Major Improvements
