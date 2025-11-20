@@ -1,5 +1,15 @@
 # Change Log
 
+## v2.2.2 - PDF Layout Fixes
+
+### 🖨️ Printing Improvements
+
+- Removed the hard-coded 1000px width override applied only during Puppeteer PDF export so printed output now matches the HTML preview.
+- Default Puppeteer settings now set `preferCSSPageSize: true`, allowing any `@page` rules in user stylesheets to dictate the final paper size, margins, and orientation.
+- PNG/JPG exports keep their deterministic width to avoid regressions, but PDFs now faithfully honor CSS-driven layouts.
+
+---
+
 ## v2.2.1 - Logo Updates for Marketplace
 
 ### 🎨 Visual Improvements

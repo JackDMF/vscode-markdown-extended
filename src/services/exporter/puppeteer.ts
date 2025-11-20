@@ -154,6 +154,9 @@ export class PuppeteerExporter implements MarkdownExporter {
                     Config.instance.puppeteerUserSetting.pdf,
                     document.meta.puppeteerPDF
                 );
+                if (typeof ptConf.preferCSSPageSize === 'undefined') {
+                    ptConf.preferCSSPageSize = true;
+                }
                 ptConf = Object.assign(ptConf, { path: item.fileName });
                 await page.pdf(ptConf);
                 break;
@@ -190,13 +193,6 @@ export const puppeteerExporter = PuppeteerExporter.instance;
 
 function getInjectStyle(formate: ExportFormat): string {
     switch (formate) {
-        case ExportFormat.PDF:
-            return `body, .vscode-body {
-                max-width: 100% !important;
-                width: 1000px !important;
-                margin: 0!important;
-                padding: 0!important;
-            }`;
         case ExportFormat.JPG:
         case ExportFormat.PNG:
             return `body, .vscode-body {

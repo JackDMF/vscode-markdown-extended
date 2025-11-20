@@ -177,6 +177,7 @@ export class Config extends ConfigReader {
         return {
             pdf: {
                 printBackground: true,
+                preferCSSPageSize: true,
             },
             image: {
                 quality: 100,
