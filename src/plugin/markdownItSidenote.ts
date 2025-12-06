@@ -333,8 +333,10 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
     const endPos = state.src.indexOf(config.closeMarker, start + 1);
     if (endPos === -1) {return false;}
 
-    // Skip in silent mode
+    // In silent mode, we must still update state.pos before returning true
+    // (markdown-it contract: returning true means we consumed input)
     if (silent) {
+        state.pos = endPos + 1;
         return true;
     }
 
@@ -502,8 +504,10 @@ function processNote(state: MarkdownItState, silent: boolean, start: number, con
         return false;
     }
 
-    // Skip in silent mode (syntax check only)
+    // In silent mode, we must still update state.pos before returning true
+    // (markdown-it contract: returning true means we consumed input)
     if (silent) {
+        state.pos = endPos + 2;
         return true;
     }
 

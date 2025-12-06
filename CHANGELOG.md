@@ -1,5 +1,22 @@
 # Change Log
 
+## v2.2.3 - Critical Bug Fix: Extension Host Crash
+
+### 🐛 Bug Fixes
+
+- **Fixed extension host crash** when opening certain markdown files
+  - Root cause: Sidenote plugin tokenizers returned `true` in silent mode without incrementing `state.pos`, violating markdown-it's contract
+  - This caused the error: `"inline rule didn't increment state.pos"`
+  - Affected syntax: `@sidebar@`, `$sidebar$`, `++ref|note++`, `!!ref|note!!`
+  - Files with right-sidebar time notations like `@(3 Min.)@` would crash the extension host
+
+### 🧪 Tests
+
+- Added comprehensive unit tests for `markdownItSidenote` plugin (20 test cases)
+- Tests cover sidenotes, marginal notes, left/right sidebars, silent mode, and edge cases
+
+---
+
 ## v2.2.2 - PDF Layout Fixes
 
 ### 🖨️ Printing Improvements
