@@ -1,5 +1,16 @@
 # Change Log
 
+## v2.2.4 - Fix PDF Export on macOS
+
+### 🐛 Bug Fixes
+
+- **Fixed PDF export crash on macOS** when extensions contribute preview styles/scripts as objects instead of strings
+  - Root cause: `getContributeFiles` called `path.isAbsolute()` on an object (URI-like `{path: "..."}`) instead of a string
+  - Error: `The "path" argument must be of type string. Received an instance of Object`
+  - Now correctly handles both string and object-style contribution entries
+
+---
+
 ## v2.2.3 - Critical Bug Fix: Extension Host Crash
 
 ### 🐛 Bug Fixes

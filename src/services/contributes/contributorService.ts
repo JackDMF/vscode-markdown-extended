@@ -116,12 +116,21 @@ export class ContributorService implements IContributorService {
         const files = ext.packageJSON.contributes[name];
         
         if (files && files.length) {
-            files.forEach((file: string) => {
-                if (!path.isAbsolute(file)) {
-                    file = path.join(ext.extensionPath, file);
+            files.forEach((file: unknown) => {
+                // Some extensions contribute files as objects (e.g. URI-like {path: "..."})
+                let filePath: string;
+                if (typeof file === 'string') {
+                    filePath = file;
+                } else if (file && typeof file === 'object' && typeof (file as any).path === 'string') {
+                    filePath = (file as any).path;
+                } else {
+                    return; // skip invalid entries
                 }
-                if (fs.existsSync(file)) {
-                    results.push(file);
+                if (!path.isAbsolute(filePath)) {
+                    filePath = path.join(ext.extensionPath, filePath);
+                }
+                if (fs.existsSync(filePath)) {
+                    results.push(filePath);
                 }
             });
         }
