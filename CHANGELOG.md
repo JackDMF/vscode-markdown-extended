@@ -8,6 +8,8 @@
   - Root cause: `getContributeFiles` called `path.isAbsolute()` on an object (URI-like `{path: "..."}`) instead of a string
   - Error: `The "path" argument must be of type string. Received an instance of Object`
   - Now correctly handles both string and object-style contribution entries
+- **Fixed empty image embedding** during export (PR #2 by @GhostOps77)
+  - Skip embedding when image source is empty, preventing broken output
 
 ---
 
