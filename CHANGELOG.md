@@ -1,5 +1,10 @@
 # Change Log
 
+## v1.1.5
+
+Fix crash when loading extension contributes.
+Switch to esbuild, reduced extension size
+
 ## v1.1.4
 
 Add `markdown-it-bracketed-spans` and update dependencies, **@zeedif**, [#160](https://github.com/qjebbs/vscode-markdown-extended/pull/160)
