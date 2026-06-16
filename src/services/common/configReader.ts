@@ -8,7 +8,7 @@ export abstract class ConfigReader extends vscode.Disposable {
 
     private _section: string;
     private _disposable: vscode.Disposable;
-    private _conf: vscode.WorkspaceConfiguration;
+    private _conf!: vscode.WorkspaceConfiguration;
     private _folderConfs: ConfigMap = {};
 
     constructor(section: string) {
@@ -46,21 +46,21 @@ export abstract class ConfigReader extends vscode.Disposable {
      */
     read<T>(key: string, uri: vscode.Uri, func: (workspaceFolder: vscode.Uri, value: T) => T): T;
     read<T>(key: string, ...para: any[]): T {
-        if (!para || !para.length || !para[0]) return this._conf.get<T>(key); // no uri? return global value.
+        if (!para || !para.length || !para[0]) return this._conf.get<T>(key) as T; // no uri? return global value.
         let uri = para.shift() as vscode.Uri;
         let folder = vscode.workspace.getWorkspaceFolder(uri);
-        if (!folder || !folder.uri) return this._conf.get<T>(key); // new file or not current workspace file? return global value.
+        if (!folder || !folder.uri) return this._conf.get<T>(key) as T; // new file or not current workspace file? return global value.
         let folderConf = this._folderConfs[folder.uri.fsPath];
         if (!folderConf) {
             folderConf = vscode.workspace.getConfiguration(this._section, folder.uri);
             this._folderConfs[folder.uri.fsPath] = folderConf;
         }
-        let results = folderConf.inspect<T>(key);
+        let results = folderConf.inspect<T>(key)!;
 
-        let func: (settingRoot: vscode.Uri, settingValue: T) => T = undefined;
+        let func: ((settingRoot: vscode.Uri, settingValue: T) => T) | undefined;
         if (para.length) func = para.shift();
 
-        let value: T = undefined;
+        let value: T;
         if (results.workspaceFolderValue !== undefined)
             value = results.workspaceFolderValue;
         else if (results.workspaceValue !== undefined)
@@ -68,7 +68,7 @@ export abstract class ConfigReader extends vscode.Disposable {
         else if (results.globalValue !== undefined)
             value = results.globalValue;
         else
-            value = results.defaultValue;
+            value = results.defaultValue!;
         if (func && folder && folder.uri) return func(folder.uri, value);
         return value;
     }

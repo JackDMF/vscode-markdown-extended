@@ -3,11 +3,11 @@ import { MetaData } from './meta';
 
 export class MarkdownDocument {
     private _document: vscode.TextDocument;
-    private _meta: MetaData;
+    private _meta!: MetaData;
     private _content: string;
     constructor(document: vscode.TextDocument, overrideContent?: string) {
         this._document = document;
-        this._content = overrideContent;
+        this._content = overrideContent ?? '';
         this.load();
     }
     get meta() {

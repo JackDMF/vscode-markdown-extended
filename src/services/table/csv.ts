@@ -1,10 +1,11 @@
 
-import * as csv from 'papaparse';
 import { MDTable } from './mdTable';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const csv = require('papaparse');
 
 export function parse(source: string): MDTable {
     let table = csv.parse(source);
-    if (table.errors.length) return undefined;
+    if (table.errors.length) return undefined as any;
     //use "new MDTable(table.data)" to do the data regularization, then escape chr
     let data = escapeChars(new MDTable(table.data, 1));
     return new MDTable(data, 1);

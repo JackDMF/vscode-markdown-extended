@@ -9,7 +9,7 @@ import { setTimeout } from 'timers';
 class HtmlExporter implements MarkdownExporter {
     async Export(items: ExportItem[], progress: Progress) {
         let count = items.length;
-        return items.reduce((p, c, i) => {
+        return items.reduce<Promise<any>>((p, c, i) => {
             return p
                 .then(
                     () => {

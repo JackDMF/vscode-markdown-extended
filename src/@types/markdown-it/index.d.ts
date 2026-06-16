@@ -16,7 +16,7 @@ declare var MarkdownIt: MarkdownItStatic;
 export = MarkdownIt;
 export as namespace markdownit;
 
-declare module MarkdownIt {
+declare namespace MarkdownIt {
     interface MarkdownIt {
         render(md: string, env?: any): string;
         renderInline(md: string, env?: any): string;

@@ -1,5 +1,5 @@
 import { MarkdownIt, Token } from '../@types/markdown-it';
-import * as toc from 'markdown-it-table-of-contents';
+const toc = require('markdown-it-table-of-contents');
 import { slugify } from './shared';
 import { config } from '../services/common/config';
 
@@ -18,7 +18,7 @@ function renderHtml(tokens: Token[], idx: number) {
 
 function tocAnchorWorker(state: any) {
     let tokens: Token[] = [];
-    state.tokens.map((t, i, ts) => {
+    state.tokens.map((t: any, i: any, ts: any) => {
         if (t.type == "heading_open") {
             let anchor = new state.Token("tocAnchor", "a", 0);
             anchor.content = ts[i + 1].content;

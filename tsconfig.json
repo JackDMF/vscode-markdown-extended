@@ -12,7 +12,8 @@
         "typeRoots": [
             "node_modules/@types",
             "src/@types"
-        ]
+        ],
+        "types": ["mocha"]
     },
     "exclude": [
         "node_modules",

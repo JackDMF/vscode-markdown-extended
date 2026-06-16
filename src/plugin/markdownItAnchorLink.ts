@@ -8,24 +8,24 @@ export function MarkdownItAnchorLink(md: MarkdownIt) {
 }
 
 function anchorLinkWorker(state: any) {
-    state.tokens.map(t => {
+    state.tokens.map((t: any) => {
         if (
             t.type == "inline" &&
             t.children &&
             t.children.length &&
             anchorLinkReg.test(t.content)
         ) {
-            let matches: RegExpMatchArray;
+            let matches: RegExpMatchArray | null;
             let links: string[] = [];
             anchorLinkReg.lastIndex = 0;
             while (matches = anchorLinkReg.exec(t.content)) {
                 links.push("#" + slugify(matches[1]));
             }
-            let linkCount: number = t.children.reduce((p, c) => p += c.type == "link_open" ? 1 : 0, 0);
+            let linkCount: number = t.children.reduce((p: any, c: any) => p += c.type == "link_open" ? 1 : 0, 0);
             if (linkCount !== links.length) {
                 console.log("markdownExtended: Link count and link token count mismatch!");
             } else {
-                t.children.map(t => {
+                t.children.map((t: any) => {
                     if (t.type == "link_open")
                         t.attrs = [["href", links.shift()]];
                 });

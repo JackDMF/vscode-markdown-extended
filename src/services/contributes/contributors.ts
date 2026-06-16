@@ -19,16 +19,16 @@ export namespace Contributors {
 
     const all = vscode.extensions.all
         .map(e => getContributor(e))
-        .filter(c => c && (c.styles.length + c.scripts.length));
+        .filter((c): c is Contributor => !!c && !!(c.styles.length + c.scripts.length));
 
     export function getStyles(filter?: ((contributor: Contributor) => boolean)): string[] {
-        return getFiles(all, filter, true).map(file => readContributeFile(file, true));
+        return getFiles(all, true, filter).map(file => readContributeFile(file, true));
     }
     export function getScripts(filter?: ((contributor: Contributor) => boolean)): string[] {
-        return getFiles(all, filter, false).map(file => readContributeFile(file, false));
+        return getFiles(all, false, filter ).map(file => readContributeFile(file, false));
     }
 
-    function getContributor(ext: vscode.Extension<any>): Contributor {
+    function getContributor(ext: vscode.Extension<any>): Contributor | undefined {
         if (!ext || !ext.packageJSON || !ext.packageJSON.contributes)
             return undefined;
         return <Contributor>{
@@ -69,8 +69,8 @@ export namespace Contributors {
 
     function getFiles(
         contributors: Contributor[],
-        filter: ((contributor: Contributor) => boolean),
-        isStyle: boolean
+        isStyle: boolean,
+        filter?: ((contributor: Contributor) => boolean),
     ): string[] {
         let files: string[] = [];
         if (!filter) filter = () => true;

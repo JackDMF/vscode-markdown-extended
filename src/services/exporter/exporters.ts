@@ -32,7 +32,7 @@ export async function pickFormat(): Promise<exportFormat> {
         items,
         <vscode.QuickPickOptions>{ placeHolder: `Select export format...` }
     );
-    if (!pick) return undefined;
+    if (!pick) return undefined as any;
     return pick.format;
 }
 
@@ -43,7 +43,7 @@ export async function pickExporter(format: exportFormat): Promise<MarkdownExport
         availableExporters,
         <vscode.QuickPickOptions>{ placeHolder: `Select an exporter to export ${format}...` }
     );
-    if (!pick) return undefined;
+    if (!pick) return undefined as any;
     return pick.exporter;
 }
 

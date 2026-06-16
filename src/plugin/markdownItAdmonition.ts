@@ -68,7 +68,7 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
             type = "note";
         }
     } else {
-        type = params.split(" ").shift().toLowerCase();
+        type = params.split(" ").shift()!.toLowerCase();
         if (_types.indexOf(type) < 0) {
             type = "note";
             title = params;

@@ -33,10 +33,10 @@ export function cssFileToDataUri(cssFileName: string): string {
  */
 export function fileToDataUri(fileName: string): string {
     if (!fs.existsSync(fileName))
-        return null;
+        return "";
     let schema = getDataUriSchema(fileName);
     let buf = fs.readFileSync(fileName);
-    return `${schema}${buf.toString("base64")}`
+    return `${schema}${buf.toString("base64")}`;
 }
 
 /**

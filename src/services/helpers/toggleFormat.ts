@@ -46,7 +46,7 @@ function matchedInCursor(
         if (text.substr(i, 1) == '\n') newLinePos.push(i);
     }
     rule.lastIndex = 0;
-    let matches: RegExpMatchArray;
+    let matches: RegExpExecArray | null;
     while (matches = rule.exec(text)) {
         let start = convertPosition(
             new vscode.Position(selection.start.line, matches.index),
@@ -59,7 +59,7 @@ function matchedInCursor(
         let rng = new vscode.Selection(start, end);
         if (rng.intersection(selection)) return rng;
     }
-    return undefined;
+    return undefined as any;
 }
 
 function convertPosition(pos: vscode.Position, newLinePos: number[]): vscode.Position {

@@ -6,6 +6,7 @@ import { editTextDocument } from '../common/editTextDocument';
 
 export function editTables(et: editType, tt: targetType, before: boolean) {
     let editor = vscode.window.activeTextEditor;
+    if (!editor) return;
     let document = editor.document;
     let selection = editor.selection;
 

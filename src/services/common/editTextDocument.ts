@@ -24,19 +24,21 @@ export async function editTextDocument(document: vscode.TextDocument, edits: Edi
             e.replace(edit.range, edit.replace);
         })
     }).then(() => {
-        let offsets = edits.map(e => e.selectionOffset).filter(s => !!s);
+        let offsets = edits.map(e => e.selectionOffset).filter((s): s is SelectionOffset => !!s);
         applyOffset(editor, offsets);
     });
 }
 
 function applyOffset(editor: vscode.TextEditor, offsets: SelectionOffset[]) {
     if (!editor || !offsets || !offsets.length) return;
-    let selections = offsets.map(s => {
-        if (!s || !s.orignal) return undefined;
-        return new vscode.Selection(
-            s.orignal.start.translate(s.offset.line, s.offset.charachter),
-            s.orignal.end.translate(s.offset.line, s.offset.charachter)
-        )
-    });
+    let selections = offsets
+        .map(s => {
+            if (!s || !s.orignal) return undefined;
+            return new vscode.Selection(
+                s.orignal.start.translate(s.offset.line, s.offset.charachter),
+                s.orignal.end.translate(s.offset.line, s.offset.charachter)
+            )
+        })
+        .filter((s): s is vscode.Selection => s !== undefined);
     editor.selections = selections;
 }

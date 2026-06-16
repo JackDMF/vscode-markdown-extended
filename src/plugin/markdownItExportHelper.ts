@@ -61,5 +61,5 @@ function searchFile(name: string, paths: string[]): string {
         if (fs.existsSync(file))
             return file;
     }
-    return undefined;
+    return "";
 }

@@ -3,7 +3,7 @@ import { showMessagePanel } from '../services/common/tools';
 
 export interface CommandConfig {
     commandId: string;
-    worker: (...args) => any,
+    worker: (...args: any[]) => any,
     args: any[],
 }
 
@@ -26,7 +26,7 @@ export class Commands extends Disposable {
         this._disposables && this._disposables.length && this._disposables.map(d => d.dispose());
     }
 
-    private makeExecutor(func: (...args) => any, ...args: any[]): () => any {
+    private makeExecutor(func: (...args: any[]) => any, ...args: any[]): () => any {
         return () => {
             try {
                 let pm = func(...args);

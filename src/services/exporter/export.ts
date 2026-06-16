@@ -42,10 +42,12 @@ async function getFileList(arg?: vscode.Uri | vscode.Uri[]): Promise<vscode.Uri[
     } else if (arg instanceof vscode.Uri) {
         if (isDirectoryUri(arg)) {
             let folder = vscode.workspace.getWorkspaceFolder(arg);
-            let relPath = path.relative(folder.uri.fsPath, arg.fsPath);
-            if (relPath) relPath += '/';
-            let files = await vscode.workspace.findFiles(`${relPath}**/*.md`, "");
-            _files.push(...files.filter(file => isSubPath(file.fsPath, folder.uri.fsPath)));
+            if (folder) {
+                let relPath = path.relative(folder.uri.fsPath, arg.fsPath);
+                if (relPath) relPath += '/';
+                let files = await vscode.workspace.findFiles(`${relPath}**/*.md`, "");
+                _files.push(...files.filter(file => isSubPath(file.fsPath, folder.uri.fsPath)));
+            }
         } else {
             _files.push(arg);
         }

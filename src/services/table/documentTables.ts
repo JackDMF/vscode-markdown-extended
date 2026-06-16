@@ -20,7 +20,7 @@ export function tablesOf(document: vscode.TextDocument): DocumentTable[] {
 }
 
 
-function findTable(document: vscode.TextDocument, pos: number): DocumentTable {
+function findTable(document: vscode.TextDocument, pos: number): DocumentTable | undefined {
     if (pos < 0 || pos > document.lineCount - 1) return undefined;
     let i = 0, flag = false, start = 0, end = 0;
     for (i = pos; i < document.lineCount; i++) {

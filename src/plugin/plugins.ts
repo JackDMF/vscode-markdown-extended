@@ -10,7 +10,7 @@ interface markdowItPlugin {
     args: object[],
 }
 
-let myPlugins = {
+let myPlugins: Record<string, Function> = {
     'markdown-it-toc': MarkdownItTOC,
     'markdown-it-container': MarkdownItContainer,
     'markdown-it-admonition': MarkdownItAdmonition,
@@ -41,7 +41,7 @@ export var plugins: markdowItPlugin[] = [
     $('markdown-it-bracketed-spans')
 ].filter(p => !!p);
 
-function $(name: string, ...args: any[]): markdowItPlugin {
+function $(name: string, ...args: any[]): markdowItPlugin | undefined {
     for (let d of config.disabledPlugins) {
         if ('markdown-it-' + d == name) return undefined;
     }

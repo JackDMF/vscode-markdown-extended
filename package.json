@@ -349,7 +349,9 @@
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.6",
+    "@types/js-yaml": "^4.0.9",
+    "@types/markdown-it-container": "^4.0.0",
+    "@types/mocha": "^10.0.10",
     "@types/node": "18.x",
     "@types/vscode": "^1.54.0",
     "typescript": "^5.4.3"

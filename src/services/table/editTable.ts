@@ -33,7 +33,7 @@ export function getTableEdit(editor: vscode.TextEditor, table: DocumentTable, et
     let offsetLine = 0;
     let offsetCharachter = 0;
 
-    let rng: SelectedRange = undefined;
+    let rng: SelectedRange | undefined;
     if (tt == targetType.row) {
         rng = getSelectedRow(table, selection, et == editType.add ? before : true);
         switch (et) {
@@ -113,7 +113,7 @@ function getSelectedRow(table: DocumentTable, selection: vscode.Selection, inser
     }
     if (!insertBefore) rowStart += rowCount;
     return {
-        range: intersection,
+        range: intersection!,
         start: rowStart,
         count: rowCount,
     }
@@ -121,7 +121,7 @@ function getSelectedRow(table: DocumentTable, selection: vscode.Selection, inser
 
 // if not insert, insertBefore should be always true
 function getSelectedColumn(table: DocumentTable, selection: vscode.Selection, insertBefore: boolean, document: vscode.TextDocument): SelectedRange {
-    let intersectSelection = selection.intersection(table.range);
+    let intersectSelection = selection.intersection(table.range)!;
     let selectionStartLine = document.lineAt(intersectSelection.start.line).range;
     let effectiveRange = intersectSelection.intersection(selectionStartLine);
     let selectionEndLine = document.lineAt(intersectSelection.end.line).range;
@@ -161,7 +161,7 @@ function getSelectedColumn(table: DocumentTable, selection: vscode.Selection, in
 
     if (!insertBefore) colStart += colCount;
     return {
-        range: effectiveRange,
+        range: effectiveRange!,
         start: colStart,
         count: colCount,
     }

@@ -1,6 +1,6 @@
 export class StopWatch {
-    public startTime: Date
-    public endTime: Date
+    public startTime!: Date
+    public endTime?: Date
     constructor() {
         this.start();
     }

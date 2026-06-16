@@ -28,7 +28,7 @@ class PuppeteerExporter implements MarkdownExporter {
         });
         const page = await browser.newPage();
 
-        return items.reduce(
+        return items.reduce<Promise<any>>(
             (p, c, i) => {
                 return p
                     .then(
@@ -45,7 +45,7 @@ class PuppeteerExporter implements MarkdownExporter {
             },
             Promise.resolve(null)
         ).then(async () => await browser.close())
-            .catch(async err => {
+            .catch(async (err: any) => {
                 await browser.close();
                 return Promise.reject(err);
             });

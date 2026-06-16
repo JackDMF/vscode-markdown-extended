@@ -2,12 +2,12 @@ import { MDTable, TableAlign } from "./mdTable";
 
 const leadingSpaceReg = /^\s*/;
 
-export function parseMDTAble(source: string): MDTable {
+export function parseMDTAble(source: string): MDTable | undefined {
     let lines = source.replace(/\r?\n/g, "\n").split("\n");
     if (lines.length < 2) return undefined; //should have at least two line
     let data = lines.map(line => getColumns(line));
     let headerRowCount = 0;
-    let sepRowCells: string[];
+    let sepRowCells: string[] = [];
     // find and extract header seprator row.
     for (let i = 0; i < lines.length; i++) {
         if (testSepRow(data[i])) {
@@ -18,7 +18,7 @@ export function parseMDTAble(source: string): MDTable {
     }
     if (!headerRowCount) return undefined;
 
-    let indentation = lines[0].match(leadingSpaceReg)[0];
+    let indentation = lines[0].match(leadingSpaceReg)![0];
     let table = new MDTable(data, headerRowCount, indentation);
     let aligns = parseAlins(sepRowCells);
     if (table.columnCount > aligns.length)
@@ -76,7 +76,7 @@ function getColumns(line: string): string[] {
     let cells = splitColumns(line);
     if (!cells[0].trim()) cells.shift();
     if (cells.length && !cells[cells.length - 1].trim()) cells.pop();
-    return cells.map(c => c ? c.trim() : null);
+    return cells.map(c => c ? c.trim() : '');
 }
 function testSepRow(row: string[]): boolean {
     return row.reduce((p, c) => {

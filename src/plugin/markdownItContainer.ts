@@ -9,7 +9,7 @@ function validate(): boolean {
     return true;
 }
 
-function render(tokens, idx): string {
+function render(tokens: any, idx: any): string {
     if (tokens[idx].nesting === 1) {
         // opening tag 
         let cls = escape(tokens[idx].info.trim());
@@ -21,7 +21,7 @@ function render(tokens, idx): string {
 }
 
 function escape(str: string): string {
-    return str.replace(/"/g, '&quot;', )
+    return str.replace(/"/g, '&quot;',)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')

@@ -34,7 +34,7 @@ export function isSubPath(from: string, to: string): boolean {
     return !(path.isAbsolute(rel) || rel.substr(0, 2) == "..")
 }
 
-export function mkdirs(dirname, callback) {
+export function mkdirs(dirname: string, callback: () => void) {
     fs.exists(dirname, function (exists) {
         if (exists) {
             callback();
@@ -46,7 +46,7 @@ export function mkdirs(dirname, callback) {
     });
 }
 
-export function mkdirsSync(dirname) {
+export function mkdirsSync(dirname: string) {
     if (fs.existsSync(dirname)) {
         return true;
     } else {

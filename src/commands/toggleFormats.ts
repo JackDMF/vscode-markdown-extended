@@ -122,8 +122,12 @@ function toggle(
     on: RegExp, onReplace: string,
     off: RegExp, offReplace: string
 ) {
+    let editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        return;
+    }
     toggleFormat(
-        vscode.window.activeTextEditor,
+        editor,
         detect, on, onReplace, off, offReplace, multiLine
     );
 }

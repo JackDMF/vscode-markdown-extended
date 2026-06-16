@@ -9,13 +9,13 @@ export enum TableAlign {
     right,
 }
 export class MDTable {
-    private _data: string[][];
+    private _data!: string[][];
     private _headerRowCount: number;
-    private _aligns: TableAlign[];
+    private _aligns!: TableAlign[];
     private _indentation: string;
-    private _columnWidths: number[];
-    private _columnCount: number;
-    private _rowCount: number;
+    private _columnWidths!: number[];
+    private _columnCount!: number;
+    private _rowCount!: number;
     private _rowMergeFlags: boolean[] = [];
 
     constructor(data: string[][], headerRowCount: number, indentation: string = "") {
@@ -63,7 +63,7 @@ export class MDTable {
     public get columnWidths(): number[] {
         return this._columnWidths;
     }
-    static parse(source: string): MDTable {
+    static parse(source: string): MDTable | undefined {
         return parseMDTAble(source);
     }
     stringify(compact?: boolean, padding?: number): string {
