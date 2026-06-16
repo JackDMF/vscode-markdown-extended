@@ -11,8 +11,9 @@
             "request": "launch",
             "runtimeExecutable": "${execPath}",
             "args": ["--extensionDevelopmentPath=${workspaceRoot}" ],
-            "outFiles": ["${workspaceFolder}/out/src/**/*.js"],
-            "preLaunchTask": "npm: watch"
+            "outFiles": ["${workspaceFolder}/out/main.js"],
+            "preLaunchTask": "npm: build:watch",
+            "postDebugTask": "terminate build:watch"
         },
         {
             "name": "Launch Tests",

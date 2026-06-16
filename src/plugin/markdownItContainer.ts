@@ -1,5 +1,7 @@
 import { MarkdownIt } from '../@types/markdown-it';
-import * as container from 'markdown-it-container';
+// DO NOT USE, or ESBuild will wrap it with an object and break the plugin.
+// import * as container from 'markdown-it-container';
+const container = require('markdown-it-container');
 
 export function MarkdownItContainer(md: MarkdownIt) {
     md.use(container, "container", { validate: validate, render: render });

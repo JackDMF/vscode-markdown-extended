@@ -5,30 +5,55 @@
 	"tasks": [
 		{
 			"type": "npm",
-			"script": "watch",
-			"problemMatcher":  {
-				"base": "$tsc-watch",
+			"script": "build",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"type": "npm",
+			"script": "build:watch",
+			"problemMatcher": {
+				"pattern": [
+					{
+						"regexp": ".",
+						"file": 1,
+						"location": 2,
+						"message": 3
+					}
+				],
 				"background": {
 					"beginsPattern": {
-						"regexp": "Starting compilation in watch mode|File change detected\\.\\s*Starting incremental compilation"
+						"regexp": "esbuild"
 					},
 					"endsPattern": {
-						"regexp": "(?:Compilation complete\\.|Found \\d+ errors?\\.)\\s*Watching for file changes\\."
+						"regexp": "\\[watch\\] build finished"
 					}
 				}
 			},
 			"isBackground": true,
-			"presentation": {},
-			"group": {
-				"kind": "build",
-				"isDefault": true
-			}
+			"presentation": {
+				"reveal": "never"
+			},
+			"group": "build"
 		},
 		{
 			"type": "npm",
 			"script": "compile",
 			"group": "build",
 			"problemMatcher": []
+		},
+		{
+			"label": "terminate build:watch",
+			"type": "shell",
+			"command": "pkill -f 'esbuild\\.mjs.*--watch' 2>/dev/null || true",
+			"problemMatcher": [],
+			"presentation": {
+				"reveal": "never",
+				"close": true
+			}
 		}
 	]
 }

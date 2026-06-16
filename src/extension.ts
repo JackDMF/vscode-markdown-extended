@@ -37,7 +37,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     return {
         extendMarkdownIt(md: markdowIt.MarkdownIt) {
             plugins.map(p => {
-                md.use(p.plugin, ...p.args);
+                try {
+                    md.use(p.plugin, ...p.args);
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Failed to load markdown-it plugin ${p.plugin.name}: ${error}`);
+                }
             });
             markdown = md;
             return md;
