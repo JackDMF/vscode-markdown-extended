@@ -1,5 +1,22 @@
 # Change Log
 
+## v2.3.0 - Web Extension Support (vscode.dev)
+
+### ✨ New Features
+
+- **Works in vscode.dev and GitHub.dev** — the extension now ships as a web extension, enabling the full markdown preview and editing experience in browser-based VS Code
+  - All 20+ extended syntax plugins render correctly in the web preview
+  - All text-editing commands work (toggle bold/italic/lists/etc., table operations, paste as table, copy HTML to clipboard)
+  - Export to file (PDF/PNG/HTML) is not available in web — a clear message is shown if triggered
+- Added `"browser"` entry point (`dist/extension.web.js`) — a dedicated browser-safe bundle that excludes Node.js-only dependencies (puppeteer, fs, child_process)
+- Export and Install Browser context menu entries are hidden on web via `!isWeb` when-clause
+
+### 🧪 Tests
+
+- Added 13 unit tests for the new `fs` browser stub (`test/unit/stubs/fs.test.ts`)
+
+---
+
 ## v2.2.4 - Fix PDF Export on macOS
 
 ### 🐛 Bug Fixes

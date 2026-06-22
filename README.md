@@ -13,9 +13,12 @@ Markdown Extended Pro is a comprehensive extension that extends syntaxes and abi
 - 📝 **Advanced Note Types** - Sidenotes, marginal notes, and sidebar annotations
 - 📤 **WYSIWYG Exporter** - Export to HTML, PDF, PNG, JPEG with perfect fidelity
 - ✏️ **Editing Helpers** - Table formatting, text formatting toggles, and more
+- 🌐 **Web Extension** - Works in [vscode.dev](https://vscode.dev) and [github.dev](https://github.dev) (preview & editing; export requires desktop)
 - 🏗️ **Modern Architecture** - Built with TypeScript, comprehensive test coverage, robust error handling
 
 Export files are consistent with what you see in markdown preview, including syntaxes and styles contributed by other plugins.
+
+> **Note:** Export to file (PDF, PNG, HTML) requires the desktop version of VS Code. In [vscode.dev](https://vscode.dev), all syntax highlighting, preview plugins, and editing helpers are available — only file export is unavailable.
 
 ## Features
 

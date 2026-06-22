@@ -3,7 +3,7 @@
   "displayName": "Markdown Extended Pro",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo-small.png",
-  "version": "2.2.4",
+  "version": "2.3.0",
   "publisher": "jackdmf",
   "engines": {
     "vscode": "^1.80.0"
@@ -24,6 +24,7 @@
     "onLanguage:markdown"
   ],
   "main": "./dist/extension.js",
+  "browser": "./dist/extension.web.js",
   "contributes": {
     "themes": [
       {
@@ -226,7 +227,7 @@
     "menus": {
       "editor/context": [
         {
-          "when": "editorLangId == markdown",
+          "when": "editorLangId == markdown && !isWeb",
           "command": "markdownExtended.export",
           "group": "markdown"
         },
@@ -254,6 +255,7 @@
       "explorer/context": [
         {
           "command": "markdownExtended.exportWorkspace",
+          "when": "!isWeb",
           "group": "markdown"
         }
       ]
@@ -401,6 +403,7 @@
     "@typescript-eslint/parser": "^8.46.4",
     "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.27.0",
+    "path-browserify": "^1.0.1",
     "esbuild-visualizer": "^0.7.0",
     "eslint": "^9.39.1",
     "glob": "^11.0.3",
