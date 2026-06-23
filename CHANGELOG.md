@@ -1,5 +1,14 @@
 # Change Log
 
+## v2.5.0 - CJK-Friendly Emphasis
+
+### ✨ New Features
+
+- **`**bold**` and `*italic*` now work correctly next to Chinese, Japanese, and Korean text.** Integrated the [`markdown-it-cjk-friendly`](https://www.npmjs.com/package/markdown-it-cjk-friendly) plugin, which fixes the long-standing CommonMark issue where emphasis markers adjacent to CJK characters or punctuation (e.g. `**強調されます。**この文`) were rendered literally instead of as emphasis.
+  - Works in both the live preview and exports (HTML/PDF/PNG), and on web (vscode.dev).
+  - Can be turned off via `"markdownExtended.disabledPlugins": "cjk-friendly"`.
+  - Resolves the feature request from [PR #1](https://github.com/JackDMF/vscode-markdown-extended/pull/1).
+
 ## v2.4.0 - YAML Front Matter Support
 
 ### ✨ New Features

@@ -93,6 +93,7 @@ Integrated markdown-it plugins:
 - [markdown-it-html5-embed](https://www.npmjs.com/package/markdown-it-html5-embed) - Embed media
 - [markdown-it-container](https://www.npmjs.com/package/markdown-it-container) - Custom containers
 - [markdown-it-bracketed-spans](https://www.npmjs.com/package/markdown-it-bracketed-spans) - Span syntax
+- [markdown-it-cjk-friendly](https://www.npmjs.com/package/markdown-it-cjk-friendly) - Fixes `**bold**`/`*italic*` next to CJK (Chinese/Japanese/Korean) text
 
 > Post an issue on [GitHub][issues] if you want other plugins.
 
@@ -104,7 +105,7 @@ To disable integrated plugins, add their names (comma-separated, without `markdo
 "markdownExtended.disabledPlugins": "ib, emoji, bracketed-spans"
 ```
 
-**Available plugin names:** `table-of-contents`, `container`, `admonition`, `footnote`, `abbr`, `sup-alt`, `sub-alt`, `checkbox`, `attrs`, `kbd`, `ib`, `mark`, `deflist`, `emoji`, `multimd-table`, `html5-embed`, `sidenote`, `bracketed-spans`, `helper`
+**Available plugin names:** `table-of-contents`, `container`, `admonition`, `footnote`, `abbr`, `sup-alt`, `sub-alt`, `checkbox`, `attrs`, `kbd`, `ib`, `mark`, `deflist`, `emoji`, `multimd-table`, `html5-embed`, `sidenote`, `bracketed-spans`, `cjk-friendly`, `helper`
 
 ## Architecture & Development
 

@@ -25,6 +25,7 @@ import markdownItHtml5Embed from 'markdown-it-html5-embed';
 import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
 import markdownItFrontMatter from 'markdown-it-front-matter';
 import markdownItTableOfContents from 'markdown-it-table-of-contents';
+import markdownItCjkFriendly from 'markdown-it-cjk-friendly';
 
 interface MarkdownItPlugin {
     plugin: (md: MarkdownIt, ...args: any[]) => void;
@@ -55,6 +56,7 @@ const myPlugins: Record<string, any> = {
     'markdown-it-html5-embed': markdownItHtml5Embed,
     'markdown-it-bracketed-spans': markdownItBracketedSpans,
     'markdown-it-table-of-contents': markdownItTableOfContents,
+    'markdown-it-cjk-friendly': markdownItCjkFriendly,
 }
 
 export const plugins: MarkdownItPlugin[] = [
@@ -81,7 +83,10 @@ export const plugins: MarkdownItPlugin[] = [
     $('markdown-it-html5-embed', { html5embed: { useImageSyntax: true, useLinkSyntax: true } }),
     $('markdown-it-sidenote'),
     $('markdown-it-helper'),
-    $('markdown-it-bracketed-spans')
+    $('markdown-it-bracketed-spans'),
+    // Make CommonMark emphasis (**bold**, *italic*) work correctly adjacent to
+    // CJK (Chinese/Japanese/Korean) characters and punctuation.
+    $('markdown-it-cjk-friendly')
 ].filter(p => !!p);
 
 function $(name: string, ...args: any[]): MarkdownItPlugin | undefined {
