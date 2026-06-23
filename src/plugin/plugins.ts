@@ -23,6 +23,7 @@ import { full as markdownItEmoji } from 'markdown-it-emoji';
 import markdownItMultimdTable from 'markdown-it-multimd-table';
 import markdownItHtml5Embed from 'markdown-it-html5-embed';
 import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
+import markdownItFrontMatter from 'markdown-it-front-matter';
 import markdownItTableOfContents from 'markdown-it-table-of-contents';
 
 interface MarkdownItPlugin {
@@ -31,6 +32,7 @@ interface MarkdownItPlugin {
 }
 
 const myPlugins: Record<string, any> = {
+    'markdown-it-front-matter': markdownItFrontMatter,
     'markdown-it-toc': MarkdownItTOC,
     'markdown-it-container': MarkdownItContainer,
     'markdown-it-admonition': MarkdownItAdmonition,
@@ -56,6 +58,9 @@ const myPlugins: Record<string, any> = {
 }
 
 export const plugins: MarkdownItPlugin[] = [
+    // Consume YAML front matter first so it never renders in preview or export.
+    // The callback is required by the plugin; we intentionally ignore the value.
+    $('markdown-it-front-matter', () => { /* metadata consumed, not rendered */ }),
     // $('markdown-it-toc'),
     // $('markdown-it-anchor'), // MarkdownItAnchorLink requires MarkdownItTOC
     $('markdown-it-table-of-contents', { includeLevel: Config.instance.tocLevels }),

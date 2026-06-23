@@ -1,5 +1,13 @@
 # Change Log
 
+## v2.4.0 - YAML Front Matter Support
+
+### ✨ New Features
+
+- **YAML front matter is no longer rendered** in the live preview or in exports (HTML/PDF/PNG). A leading `---` … `---` block is now consumed as document metadata instead of leaking into the output as a horizontal rule plus raw text.
+  - Uses the standard [`markdown-it-front-matter`](https://www.npmjs.com/package/markdown-it-front-matter) plugin, registered first so the block is parsed before any other rule.
+  - Brings preview behaviour in line with VS Code's built-in markdown preview and with the existing export pipeline, which already stripped front matter via `MarkdownDocument`.
+
 ## v2.3.0 - Web Extension Support (vscode.dev)
 
 ### ✨ New Features
