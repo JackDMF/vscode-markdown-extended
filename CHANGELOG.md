@@ -1,5 +1,13 @@
 # Change Log
 
+## v2.5.1 - Front Matter Preview Fix
+
+### 🐛 Bug Fixes
+
+- **Fixed "Failed to parse frontmatter" error in the preview.** Removed the bundled [`markdown-it-front-matter`](https://www.npmjs.com/package/markdown-it-front-matter) plugin (added in 2.4.0), whose `front_matter` token shape conflicted with VS Code's built-in frontmatter renderer, causing `Cannot read properties of undefined (reading 'length')`.
+  - YAML front matter is now handled natively: the built-in preview renders or hides it (per `markdown.preview.frontMatter`), and the export pipeline continues to strip it via `MarkdownDocument`.
+  - To hide the frontmatter table in the preview, set `"markdown.preview.frontMatter": "hide"`.
+
 ## v2.5.0 - CJK-Friendly Emphasis
 
 ### ✨ New Features

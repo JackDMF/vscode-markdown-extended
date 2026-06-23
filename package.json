@@ -3,7 +3,7 @@
   "displayName": "Markdown Extended Pro",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo-small.png",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "publisher": "jackdmf",
   "engines": {
     "vscode": "^1.80.0"
@@ -425,7 +425,6 @@
     "markdown-it-deflist": "^3.0.0",
     "markdown-it-emoji": "^3.0.0",
     "markdown-it-footnote": "^4.0.0",
-    "markdown-it-front-matter": "^0.2.4",
     "markdown-it-html5-embed": "^0.3.3",
     "markdown-it-ib": "^2.0.0",
     "markdown-it-kbd": "^2.2.2",
