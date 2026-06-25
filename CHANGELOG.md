@@ -104,11 +104,13 @@
 ### 🔧 Technical Implementation
 
 **Root cause of v2.1.0 breakage identified and fixed:**
+
 - Dynamic `require(name)` calls with runtime variables cannot be bundled by esbuild
 - esbuild requires static imports for proper dependency analysis and bundling
 - Previous versions (2.1.2-2.1.4) worked around this by externalizing plugins and including entire node_modules
 
 **Proper solution implemented:**
+
 - Refactored `src/plugin/plugins.ts` to use static `import` statements for all 16 external plugins
 - Removed dynamic require fallback mechanism
 - esbuild now properly bundles all markdown-it plugins at build time
@@ -346,14 +348,13 @@ Fix: Get chromium revision for puppeteer downloading
 
 ## v1.1.0
 
-- Add snippets ([#116](https://github.com/qjebbs/vscode-markdown-extended/pull/116)), thanks to [heartacker ](https://github.com/heartacker)
+- Add snippets ([#116](https://github.com/qjebbs/vscode-markdown-extended/pull/116)), thanks to [heartacker](https://github.com/heartacker)
 - Fix admonitions ([#122](https://github.com/qjebbs/vscode-markdown-extended/pull/122)), thanks to [Juan Cruz](https://github.com/IJuanI)
 - Remove default key bindings. [#111](https://github.com/qjebbs/vscode-markdown-extended/pull/111)[#112](https://github.com/qjebbs/vscode-markdown-extended/pull/112)[#118](https://github.com/qjebbs/vscode-markdown-extended/pull/118), please consider:
 
-    - Switch to use command palette
-    - Switch to use snippets
-    - Setup key bindings on your own
-
+  - Switch to use command palette
+  - Switch to use snippets
+  - Setup key bindings on your own
 
 ## v1.0.19
 
@@ -387,7 +388,7 @@ Fix: Cannot embed img not in workspace folder, [#71](https://github.com/qjebbs/v
 
 - Improvement: No 'open preview first' prompt
 - Fix: Update package markdown-it-attrs, [#58](https://github.com/qjebbs/vscode-markdown-extended/issues/58)
-- Code optimization. 
+- Code optimization.
 
 ## v1.0.11
 
@@ -400,7 +401,7 @@ Fix: Cannot embed img not in workspace folder, [#71](https://github.com/qjebbs/v
 
 - Fix: Format with Japanese Hiragana characters [#51](https://github.com/qjebbs/vscode-markdown-extended/issues/51). Thanks to [TadaoYamaoka](https://github.com/TadaoYamaoka).
 - Update dependencies.
-- Code optimization. 
+- Code optimization.
 
 ## v1.0.9
 
