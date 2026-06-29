@@ -9,14 +9,14 @@ Markdown Extended Pro is a comprehensive extension that extends syntaxes and abi
 
 **Key Features:**
 
-- 🎨 **Extended Syntax Support** - 20+ markdown-it plugins for enhanced formatting
+- 🎨 **Extended Syntax Support** - 17 integrated markdown-it plugins plus built-in syntaxes
 - 📝 **Advanced Note Types** - Sidenotes, marginal notes, and sidebar annotations
-- 📤 **WYSIWYG Exporter** - Export to HTML, PDF, PNG, JPEG with perfect fidelity
+- 📤 **WYSIWYG Exporter** - Export to HTML, PDF, PNG, JPEG matching the preview
 - ✏️ **Editing Helpers** - Table formatting, text formatting toggles, and more
 - 🌐 **Web Extension** - Works in [vscode.dev](https://vscode.dev) and [github.dev](https://github.dev) (preview & editing; export requires desktop)
-- 🏗️ **Modern Architecture** - Built with TypeScript, comprehensive test coverage, robust error handling
+- 🏗️ **TypeScript Codebase** - Built with TypeScript, unit tests, and error recovery
 
-Export files are consistent with what you see in markdown preview, including syntaxes and styles contributed by other plugins.
+Export files aim to match the markdown preview, including syntaxes and styles contributed by other plugins.
 
 > **Note:** Export to file (PDF, PNG, HTML) requires the desktop version of VS Code. In [vscode.dev](https://vscode.dev), all syntax highlighting, preview plugins, and editing helpers are available — only file export is unavailable.
 
@@ -58,6 +58,7 @@ Two included color themes for enhanced markdown syntax highlighting:
 **To activate**: Press `Ctrl+K Ctrl+T` and select "Markdown Extended Light" or "Markdown Extended Dark"
 
 All colors extracted from the official Styles.css:
+
 - Italic (*): Gold - Underline (_): Green - Bold (**): Purple - Strong (__): Cyan
 - Strikethrough (~~): Pink/Red - Highlight (==): Orange
 - Sidenotes, marginal notes, sidebars, TOC, footnotes with distinct colors
@@ -109,13 +110,13 @@ To disable integrated plugins, add their names (comma-separated, without `markdo
 
 ## Architecture & Development
 
-This extension follows modern best practices with:
+This extension is built with:
 
-- **Clean Architecture**: Singleton services, dependency injection, separation of concerns
-- **Type Safety**: Full TypeScript with strict patterns
-- **Error Handling**: Comprehensive error recovery and logging
-- **Resource Management**: Proper cleanup, async operations, memory leak prevention
-- **Test Coverage**: 65+ unit tests with VS Code integration
+- **Service-based structure**: Singleton services and separation of concerns
+- **TypeScript**: Strongly typed source
+- **Error Handling**: Error recovery and logging
+- **Resource Management**: Cleanup, async operations, disposal of resources
+- **Tests**: Unit tests with VS Code integration
 
 For detailed architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -386,6 +387,15 @@ item **bold red**{style="color:red"}
 ```
 
 Example: item **bold red** (styled with inline CSS)
+
+Attributes also apply to the built-in sidenotes, marginal notes, and sidebars. Add `{.class #id key=val}` right after the closing marker:
+
+```markdown
+++ref|note++{.my-class}
+!!ref|note!!{.my-class}
+$left sidebar${.my-class}
+@right sidebar@{.my-class}
+```
 
 ### markdown-it-kbd
 

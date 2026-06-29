@@ -248,7 +248,8 @@ function registerRendererRules(md: MarkdownIt, config: RenderConfig): void {
     if ('refClass' in config) {
         // Note type (sidenote or marginal_note)
         // Structure: <span class="ref"><ref text></span><span class="note"><note content></span>
-        md.renderer.rules[`${type}_open`] = () => `<span class="${config.refClass}">`;
+        // The reference (outer) span carries any markdown-it-attrs attributes added via {.class}
+        md.renderer.rules[`${type}_open`] = (tokens, idx) => `<span${renderOpenTagAttrs(tokens[idx], config.refClass)}>`;
         md.renderer.rules[`${type}_ref_open`] = () => ''; // No additional wrapper
         md.renderer.rules[`${type}_ref_close`] = () => ''; // No additional wrapper
         md.renderer.rules[`${type}_content_open`] = () => `<span class="${config.cssClass}">`;
@@ -257,9 +258,45 @@ function registerRendererRules(md: MarkdownIt, config: RenderConfig): void {
     } else {
         // Sidebar type (left_sidebar or right_sidebar)
         // Structure: <span class="sidebar"><content></span>
-        md.renderer.rules[`${type}_open`] = () => `<span class="${config.cssClass}">`;
+        md.renderer.rules[`${type}_open`] = (tokens, idx) => `<span${renderOpenTagAttrs(tokens[idx], config.cssClass)}>`;
         md.renderer.rules[`${type}_close`] = () => '</span>';
     }
+}
+
+/**
+ * Build the attribute string for an opening span, merging the plugin's built-in
+ * CSS class with any attributes added through markdown-it-attrs ({.class #id key=val}).
+ *
+ * The built-in class is always preserved; user classes from {.class} are appended,
+ * and any other attributes (id, custom data-* etc.) are rendered as-is.
+ *
+ * @param token - The opening token (may carry attrs set by markdown-it-attrs)
+ * @param baseClass - The plugin's default CSS class for this element
+ * @returns Attribute string beginning with a leading space (e.g. ` class="x y" id="z"`)
+ */
+function renderOpenTagAttrs(token: any, baseClass: string): string {
+    const classes = [baseClass];
+    const others: string[] = [];
+
+    const attrs: [string, string][] = token && token.attrs ? token.attrs : [];
+    for (const [name, value] of attrs) {
+        if (name === 'class') {
+            if (value) {classes.push(value);}
+        } else {
+            others.push(`${name}="${md_escape(value)}"`);
+        }
+    }
+
+    let result = ` class="${md_escape(classes.join(' '))}"`;
+    if (others.length) {result += ' ' + others.join(' ');}
+    return result;
+}
+
+/** Minimal HTML attribute escaping for rendered attribute values. */
+function md_escape(value: string): string {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;');
 }
 
 /**

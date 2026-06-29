@@ -1,5 +1,13 @@
 # Change Log
 
+## v2.6.0 - Attributes on Sidebars & Notes
+
+### ✨ New Features
+
+- **`{.class #id key=val}` now works on sidenotes, marginal notes, and sidebars.** The opening-tag renderers are attribute-aware, so attributes added via [`markdown-it-attrs`](https://www.npmjs.com/package/markdown-it-attrs) merge with the built-in class instead of being dropped:
+  - `++ref|note++{.my-class}`, `!!ref|note!!{.my-class}`, `$left sidebar${.my-class}`, `@right sidebar@{.my-class}`
+  - Built-in classes are preserved; extra classes are appended and `#id`/custom attributes are escaped and rendered. Attributes attach to the outer/reference span.
+
 ## v2.5.1 - Front Matter Preview Fix
 
 ### 🐛 Bug Fixes
