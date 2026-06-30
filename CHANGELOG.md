@@ -1,5 +1,22 @@
 # Change Log
 
+## v3.0.0 (unreleased) — Onboarding, Accessible Exports & Settings Overhaul
+
+> **Breaking changes.** Existing settings keep working through deprecated aliases; please migrate to the new grouped keys.
+
+### ✨ New Features
+
+- **Getting Started walkthrough** that teaches the extended syntax and the export flow (Help → Get Started → *Get Started with Markdown Extended*).
+- **Grouped settings IA.** Settings are reorganized under `pdf.*`, `image.*`, `export.*`, `plugins.*`, and `toc.*`. Old flat keys (e.g. `markdownExtended.pdfFormat`) still work but are deprecated and read as a fallback.
+- **Export theme defaults to `auto`** — exports follow your active VS Code theme unless you pick `light`/`dark` (previously always light).
+- **Validated inputs** — PDF size/margins accept CSS lengths only; image quality is 0–100.
+- Exporter selection is now an extensible **registry** (Open–Closed).
+
+### ⚠️ Breaking Changes
+
+- Setting keys renamed (old keys deprecated but still honored): `pdfFormat` → `pdf.format`, `pdfMarginTop/Right/Bottom/Left` → `pdf.margin.*`, `pdfHeaderTemplate`/`pdfFooterTemplate` → `pdf.headerTemplate`/`pdf.footerTemplate`, `imageQuality`/`imageOmitBackground` → `image.*`, `exportTheme` → `export.theme`, `exportOutDirName` → `export.outDirName`, `puppeteerExecutable` → `export.puppeteerExecutable`, `disabledPlugins` → `plugins.disabled`, `tocLevels` → `toc.levels`.
+- `markdownExtended.export.theme` now defaults to `auto` instead of `light`.
+
 ## v2.9.0 - Friendlier Exports
 
 ### ✨ New Features / Improvements

@@ -520,6 +520,50 @@
         }
       }
     },
+    "walkthroughs": [
+      {
+        "id": "markdownExtendedGettingStarted",
+        "title": "Get Started with Markdown Extended",
+        "description": "Learn the extended Markdown syntax and export to HTML, PDF, or images.",
+        "steps": [
+          {
+            "id": "mdext.welcome",
+            "title": "Welcome",
+            "description": "What Markdown Extended Pro adds to your Markdown.",
+            "media": {
+              "markdown": "media/walkthrough/welcome.md"
+            }
+          },
+          {
+            "id": "mdext.syntax",
+            "title": "Extended syntax",
+            "description": "Admonitions, containers, marks, footnotes, and more.\n[Open a new Markdown file](command:workbench.action.files.newUntitledFile?%7B%22languageId%22%3A%22markdown%22%7D)",
+            "media": {
+              "markdown": "media/walkthrough/syntax.md"
+            }
+          },
+          {
+            "id": "mdext.export",
+            "title": "Export anywhere",
+            "description": "Self-contained HTML, PDF, PNG, or JPG.\n[Run Export](command:markdownExtended.export)",
+            "media": {
+              "markdown": "media/walkthrough/export.md"
+            },
+            "completionEvents": [
+              "onCommand:markdownExtended.export"
+            ]
+          },
+          {
+            "id": "mdext.theme",
+            "title": "Themes & CSS",
+            "description": "Light, dark, or auto export, plus your own stylesheet.\n[Open settings](command:workbench.action.openSettings?%22markdownExtended.export%22)",
+            "media": {
+              "markdown": "media/walkthrough/theme.md"
+            }
+          }
+        ]
+      }
+    ],
     "markdown.markdownItPlugins": true,
     "markdown.previewStyles": [
       "styles/markdown-it-admonition.css",
