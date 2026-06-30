@@ -1,5 +1,11 @@
 # Change Log
 
+## v2.7.1 - Maintenance
+
+### 🐛 Bug Fixes / Improvements
+
+- **Updated the README marketplace badges.** shields.io retired its VS Code Marketplace badges (both `vscode-marketplace` and `visual-studio-marketplace` now render "retired badge"), so the version/installs/rating badges now use the maintained [vsmarketplacebadges.dev](https://vsmarketplacebadges.dev) service.
+
 ## v2.7.0 - Mermaid Diagrams in Exports & Smaller HTML
 
 ### ✨ New Features
