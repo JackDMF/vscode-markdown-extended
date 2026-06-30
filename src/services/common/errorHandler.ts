@@ -74,6 +74,10 @@ export class ErrorHandler {
         context: ErrorContext,
         severity: ErrorSeverity = ErrorSeverity.Error
     ): Promise<void> {
+        // User-initiated cancellation is not an error — stay silent.
+        if (ErrorHandler.isCancellation(error)) {
+            return;
+        }
         const message = this.formatErrorMessage(error, context);
         const fullDetails = this.formatFullDetails(error, context);
         
@@ -95,6 +99,15 @@ export class ErrorHandler {
                 this.handleInfo(message);
                 break;
         }
+    }
+    
+    /**
+     * Whether an error represents a user-initiated cancellation (e.g. dismissing a
+     * consent dialog), which should be swallowed silently rather than reported.
+     */
+    private static isCancellation(error: any): boolean {
+        return error instanceof vscode.CancellationError
+            || (!!error && (error.name === 'Canceled' || error.name === 'CancellationError'));
     }
     
     /**

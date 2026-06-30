@@ -1,16 +1,16 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { ExportOption, ExportItem, ExportRport } from "./interfaces";
+import { ExportOption, ExportItem, ExportReport } from "./interfaces";
 import { calculateExportPath, isSubPath } from "../common/tools";
 import { StopWatch } from '../common/stopWatch';
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
-export function MarkdownExport(uri: vscode.Uri, option: ExportOption): Promise<ExportRport>;
+export function MarkdownExport(uri: vscode.Uri, option: ExportOption): Promise<ExportReport>;
 // eslint-disable-next-line @typescript-eslint/naming-convention
-export function MarkdownExport(uris: vscode.Uri[], option: ExportOption): Promise<ExportRport>;
+export function MarkdownExport(uris: vscode.Uri[], option: ExportOption): Promise<ExportReport>;
 // eslint-disable-next-line @typescript-eslint/naming-convention
-export async function MarkdownExport(arg: vscode.Uri | vscode.Uri[], option: ExportOption): Promise<ExportRport> {
+export async function MarkdownExport(arg: vscode.Uri | vscode.Uri[], option: ExportOption): Promise<ExportReport> {
     const confs = (await getFileList(arg)).map(uri => <ExportItem>{
         uri: uri,
         format: option.format,
@@ -19,7 +19,7 @@ export async function MarkdownExport(arg: vscode.Uri | vscode.Uri[], option: Exp
     const timer = new StopWatch();
     return option.exporter.Export(confs, option.progress)
         .then(() => {
-            return <ExportRport>{
+            return <ExportReport>{
                 duration: timer.stop(),
                 files: confs.map(c => c.fileName)
             }

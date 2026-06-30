@@ -30,7 +30,7 @@ export function renderPage(
 
     const title = escapeHtml(doc.meta.raw.title || path.basename(doc.document.uri.fsPath));
     const styles = getStyles(doc.document.uri, injectStyle);
-    const scripts = getSciprts();
+    const scripts = getScripts();
     const html = renderHTML(doc);
     // Set the preview body theme class so theme-aware stylesheets render in the
     // chosen mode (markdownExtended.exportTheme: light | dark | auto). Keep
@@ -115,7 +115,7 @@ function getStyles(uri: vscode.Uri, injectStyle?: string): string {
     styles.push("");
     return styles.join('\n');
 }
-function getSciprts(): string {
+function getScripts(): string {
     const scripts: string[] = [];
 
     // let official = Contributes.Scripts.official();

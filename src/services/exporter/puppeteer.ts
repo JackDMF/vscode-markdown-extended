@@ -56,8 +56,21 @@ export class PuppeteerExporter implements MarkdownExporter {
         let page: puppeteer.Page | undefined;
         
         try {
-            // Ensure browser is available using centralized BrowserManager
+            // Ensure browser is available using centralized BrowserManager.
+            // First-time PDF/PNG/JPG export needs a one-time Chromium download, so
+            // ask for consent instead of silently pulling ~170 MB.
             const browserManager = BrowserManager.instance;
+            if (!browserManager.isBrowserInstalled()) {
+                const choice = await vscode.window.showInformationMessage(
+                    'Exporting to PDF, PNG, or JPG needs a one-time Chromium download (~170 MB) to render the document. ' +
+                    'It is stored with the extension and reused for future exports.',
+                    { modal: true },
+                    'Download'
+                );
+                if (choice !== 'Download') {
+                    throw new vscode.CancellationError();
+                }
+            }
             const executablePath = await browserManager.ensureBrowser(progress);
             
             progress.report({ message: "Initializing browser..." });
@@ -69,28 +82,19 @@ export class PuppeteerExporter implements MarkdownExporter {
             page = await browser.newPage();
 
             // Process all export items sequentially
-            await items.reduce(
-                (p, c, i) => {
-                    return p
-                        .then(
-                            () => {
-                                if (progress) {progress.report({
-                                    message: `${path.basename(c.fileName)} (${i + 1}/${count})`,
-                                    increment: ~~(1 / count * 100)
-                                });}
-                            }
-                        )
-                        .then(
-                            () => {
-                                if (!page) {
-                                    throw new Error('Browser page is not initialized');
-                                }
-                                return this.exportFile(c, page);
-                            }
-                        );
-                },
-                Promise.resolve(null)
-            );
+            for (let i = 0; i < items.length; i++) {
+                const c = items[i];
+                if (progress) {
+                    progress.report({
+                        message: `${path.basename(c.fileName)} (${i + 1}/${count})`,
+                        increment: ~~(1 / count * 100)
+                    });
+                }
+                if (!page) {
+                    throw new Error('Browser page is not initialized');
+                }
+                await this.exportFile(c, page);
+            }
         } catch (error) {
             // Use centralized error handler with recovery options
             await ErrorHandler.handle(error, {

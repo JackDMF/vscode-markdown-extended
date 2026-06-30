@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
-import { ExportRport } from '../exporter/interfaces';
+import { ExportReport } from '../exporter/interfaces';
 import { ExtensionContext } from './extensionContext';
 import { Config } from './config';
 
@@ -101,10 +101,27 @@ export function mergeSettings(...args: any[]) {
 /**
  * Show export report with file list
  */
-export async function showExportReport(report: ExportRport) {
+export async function showExportReport(report: ExportReport) {
     const msg = `${report.files.length} file(s) exported in ${report.duration / 1000} seconds`;
+    const open = "Open";
+    const reveal = process.platform === 'darwin' ? "Reveal in Finder"
+        : process.platform === 'win32' ? "Reveal in File Explorer"
+        : "Open Containing Folder";
     const viewReport = "View Report";
-    const btn = await vscode.window.showInformationMessage(msg, viewReport);
+    const hasFiles = report.files.length > 0;
+    const btn = await vscode.window.showInformationMessage(
+        msg, ...(hasFiles ? [open, reveal, viewReport] : []));
+
+    if (btn === open) {
+        // Open the first exported file with the OS default app (browser, PDF
+        // viewer, image viewer, …) — the artifact, not a log.
+        await vscode.env.openExternal(vscode.Uri.file(report.files[0]));
+        return;
+    }
+    if (btn === reveal) {
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(report.files[0]));
+        return;
+    }
     if (btn !== viewReport) {return;}
     
     // Show detailed report in output panel

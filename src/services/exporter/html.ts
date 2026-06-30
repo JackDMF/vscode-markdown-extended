@@ -48,39 +48,37 @@ export class HtmlExporter implements MarkdownExporter {
     // eslint-disable-next-line @typescript-eslint/naming-convention
     async Export(items: ExportItem[], progress: Progress) {
         const count = items.length;
-        return items.reduce((p, c, i) => {
-            return p
-                .then(
-                    () => {
-                        if (progress) {progress.report({
-                            message: `${path.basename(c.fileName)} (${i + 1}/${count})`,
-                            increment: ~~(1 / count * 100)
-                        });}
-                    }
-                )
-                .then(
-                    () => this.exportFile(c)
-                )
-                .catch(async (error) => {
-                    // Use centralized error handler
-                    await ErrorHandler.handle(error, {
-                        operation: 'Export to HTML',
-                        filePath: c.uri.fsPath,
-                        details: {
-                            outputPath: c.fileName,
-                            currentItem: i + 1,
-                            totalItems: count
-                        },
-                        recoveryOptions: [
-                            ErrorHandler.retryOption(async () => {
-                                await this.exportFile(c);
-                            }),
-                            ErrorHandler.openFileOption(c.uri.fsPath)
-                        ]
-                    }, ErrorSeverity.Error);
-                    throw error;
-                });
-        }, Promise.resolve(null));
+        for (let i = 0; i < items.length; i++) {
+            const c = items[i];
+            try {
+                if (progress) {
+                    progress.report({
+                        message: `${path.basename(c.fileName)} (${i + 1}/${count})`,
+                        increment: ~~(1 / count * 100)
+                    });
+                }
+                await this.exportFile(c);
+            } catch (error) {
+                // Use centralized error handler
+                await ErrorHandler.handle(error, {
+                    operation: 'Export to HTML',
+                    filePath: c.uri.fsPath,
+                    details: {
+                        outputPath: c.fileName,
+                        currentItem: i + 1,
+                        totalItems: count
+                    },
+                    recoveryOptions: [
+                        ErrorHandler.retryOption(async () => {
+                            await this.exportFile(c);
+                        }),
+                        ErrorHandler.openFileOption(c.uri.fsPath)
+                    ]
+                }, ErrorSeverity.Error);
+                throw error;
+            }
+        }
+        return null;
     }
     private async exportFile(item: ExportItem) {
         const document = await vscode.workspace.openTextDocument(item.uri);

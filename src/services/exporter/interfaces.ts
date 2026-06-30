@@ -9,12 +9,6 @@ export enum ExportFormat {
     PNG = "png",
 }
 
-export enum ExporterType {
-    HTML,
-    Phantom,
-    Puppeteer,
-}
-
 export interface FormatQuickPickItem extends vscode.QuickPickItem {
     format: ExportFormat;
 }
@@ -40,7 +34,7 @@ export interface ExportOption {
     format: ExportFormat
 }
 
-export interface ExportRport {
+export interface ExportReport {
     duration: number,
     files: string[],
 }

@@ -1,5 +1,19 @@
 # Change Log
 
+## v2.9.0 - Friendlier Exports
+
+### ✨ New Features / Improvements
+
+- **Open or reveal your file right after export.** The post-export notification now offers **Open** (opens the exported file in the OS default app — browser, PDF viewer, image viewer) and **Reveal in Finder / File Explorer**, alongside the existing report. No more digging through folders for the artifact you just made.
+- **First-time PDF/PNG/JPG export now asks before downloading Chromium.** Previously the first image/PDF export silently pulled ~170 MB. You now get a clear one-time consent prompt explaining what the download is for; declining cancels cleanly without surfacing an error.
+
+### 🧹 Internal / Code Quality
+
+- Removed the unused `ExporterType` enum (dead PhantomJS-era code).
+- Refactored the HTML and Puppeteer export loops from a `reduce`-over-promises chain to straightforward `for…await`, for readability.
+- Fixed identifier typos (`getSciprts` → `getScripts`, `ExportRport` → `ExportReport`).
+- User-initiated cancellations are now recognized centrally by the error handler and never reported as errors.
+
 ## v2.8.0 - Dark Exports & Global Asset De-duplication
 
 ### ✨ New Features
