@@ -496,12 +496,13 @@ export function MarkdownItContainer(md: MarkdownIt): void {
 
 ### 7. De-duplicated Inlined Preview Assets
 
-**Decision:** De-duplicate contributed preview style/script files by base name before inlining them.
+**Decision:** De-duplicate contributed preview style/script files by **content**, keeping the **last** occurrence, before inlining them.
 
 **Rationale:**
 
 - ✅ Multiple extensions ship the same asset (e.g. `katex.min.css` from both `vscode.markdown-math` and `markdown-all-in-one`), which was inlined twice as base64 — ~370 KB of duplicated font data per export.
-- ✅ `dedupeContributeFiles()` in `contributorService.ts` keeps the first occurrence of each base name, preserving order.
+- ✅ `dedupeContributeFiles()` in `contributorService.ts` compares files by a hash of their bytes, so distinct files that merely share a base name (e.g. two different `markdown.css`) are **all** kept — no extension's styling is silently dropped.
+- ✅ It keeps the **last** occurrence in place. Later styles win the CSS cascade, so collapsing an earlier identical copy leaves the final appearance unchanged. (v2.7.0 keyed on base name and kept the *first* copy, which dropped distinct same-named stylesheets and flipped the cascade — e.g. blockquote padding regressions in exports with a user CSS attached.)
 
 ---
 

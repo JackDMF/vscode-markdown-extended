@@ -1,5 +1,17 @@
 # Change Log
 
+## v2.7.2 - Export Style Regression Fix
+
+### 🐛 Bug Fixes
+
+- **Fixed contributed styles being dropped from exports, which shifted layout (e.g. narrower blockquote padding).** The 2.7.0 asset de-duplication keyed on the **file name** and kept the **first** copy. Generic names like `markdown.css` are shipped by several extensions, so a *different* stylesheet could be discarded purely because it shared a name, and keeping the first (rather than last) copy of a duplicate changed the CSS cascade. De-duplication is now **content-based** (a hash of the file bytes) and keeps the **last** occurrence:
+  - Distinct files that merely share a base name are **all** kept — no extension's styling is silently dropped.
+  - Identical assets (e.g. `katex.min.css`) are still collapsed to one copy, preserving the ~370 KB export-size win, and keeping the last copy leaves the CSS cascade unchanged.
+
+### 🧪 Tests
+
+- Reworked the `dedupeContributeFiles` unit tests for content-based, keep-last behavior, including a regression guard that two different same-named `markdown.css` files both survive.
+
 ## v2.7.1 - Maintenance
 
 ### 🐛 Bug Fixes / Improvements

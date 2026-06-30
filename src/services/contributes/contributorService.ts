@@ -167,36 +167,74 @@ export class ContributorService implements IContributorService {
             .filter(c => filterFn(c))
             .forEach(c => files.push(...(isStyle ? c.styles : c.scripts)));
             
-        // De-duplicate by file name. Several extensions ship the same asset (most
-        // notably `katex.min.css`, contributed by both vscode.markdown-math and
-        // markdown-all-in-one), and inlining it twice can add ~370 KB of duplicated
-        // font data URIs to every export. Keep the first occurrence.
+        // De-duplicate by *content*. Several extensions ship a byte-for-byte
+        // identical asset (most notably `katex.min.css`), and inlining it twice can
+        // add ~370 KB of duplicated font data URIs to every export. Distinct files
+        // that merely share a base name are all kept, so no extension's styling is
+        // silently dropped.
         return dedupeContributeFiles(files);
     }
 }
 
 /**
- * De-duplicate a list of contributed file paths by their (case-insensitive) base
- * name, preserving the first occurrence and the original order.
+ * De-duplicate contributed file paths by *content*, in a way that preserves the
+ * CSS cascade.
  *
- * Markdown preview contributions from different extensions frequently include the
- * exact same asset (e.g. `katex.min.css`). Inlining each copy as a base64 data URI
- * bloats the export, so we keep only the first file with a given base name.
+ * Markdown preview contributions from different extensions frequently include a
+ * byte-for-byte identical asset (e.g. `katex.min.css`). Inlining each copy as a
+ * base64 data URI bloats the export, so identical copies are collapsed to one.
+ *
+ * Two rules keep this safe:
+ *  - Files are compared by *content* (a hash of their bytes), never by file name.
+ *    Distinct files that merely share a base name (e.g. two different
+ *    `markdown.css`) are all kept, so no extension's styling is silently dropped.
+ *  - The *last* occurrence is kept in its original position. Later styles win the
+ *    CSS cascade, so dropping an earlier identical copy leaves the final
+ *    appearance unchanged.
+ *
+ * Files that cannot be read are keyed by their absolute path, so each survives.
  *
  * @param files Absolute file paths to de-duplicate.
+ * @param keyOf Maps a file to its de-dup key (defaults to a content hash). Exposed
+ *              for testing.
  */
-export function dedupeContributeFiles(files: string[]): string[] {
-    const seen = new Set<string>();
-    const result: string[] = [];
-    for (const file of files) {
-        const key = path.basename(file).toLowerCase();
-        if (seen.has(key)) {
-            continue;
-        }
-        seen.add(key);
-        result.push(file);
+export function dedupeContributeFiles(
+    files: string[],
+    keyOf: (file: string) => string = contentKey,
+): string[] {
+    const keys = files.map(keyOf);
+    const lastIndex = new Map<string, number>();
+    keys.forEach((key, i) => lastIndex.set(key, i));
+    return files.filter((_file, i) => lastIndex.get(keys[i]) === i);
+}
+
+/**
+ * Compute a content-based de-dup key for a file. Unreadable or missing files are
+ * keyed by their absolute path so they are treated as unique (never collapsed).
+ *
+ * Uses a pure-JS FNV-1a hash (no Node `crypto`) so the function also bundles for
+ * the browser/web build, combined with the byte length to make collisions between
+ * distinct files effectively impossible.
+ */
+function contentKey(file: string): string {
+    try {
+        const buf = fs.readFileSync(file);
+        return 'h:' + buf.length.toString(16) + ':' + fnv1a(buf);
+    } catch {
+        return 'p:' + file;
     }
-    return result;
+}
+
+/**
+ * 32-bit FNV-1a hash of a byte buffer, returned as a hex string.
+ */
+function fnv1a(buf: Buffer | Uint8Array): string {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < buf.length; i++) {
+        hash ^= buf[i];
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16);
 }
 
 /**

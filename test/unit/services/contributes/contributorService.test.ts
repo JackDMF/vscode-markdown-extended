@@ -1,5 +1,8 @@
 import * as assert from 'assert';
 import * as sinon from 'sinon';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { ContributorService, ContributorType, IContributor, dedupeContributeFiles } from '../../../../src/services/contributes/contributorService';
 
 suite('ContributorService Tests', () => {
@@ -111,38 +114,79 @@ suite('ContributorService Tests', () => {
         assert.ok(Array.isArray(scripts), 'Scripts should be array');
     });
 
-    test('dedupeContributeFiles removes duplicate basenames, keeping the first occurrence', () => {
-        // e.g. KaTeX is contributed by both vscode.markdown-math and yzhang.markdown-all-in-one
+    test('dedupeContributeFiles collapses identical content, keeping the last occurrence', () => {
+        // KaTeX is shipped byte-for-byte identical by more than one extension.
+        // Keeping the *last* copy preserves the CSS cascade (later styles win).
         const input = [
             '/ext-a/node_modules/katex/dist/katex.min.css',
-            '/ext-b/notebook-out/katex.min.css',
             '/ext-c/media/markdown.css',
+            '/ext-b/notebook-out/katex.min.css',
         ];
+        // Stub the key fn to simulate identical content for the two katex files.
+        const keyOf = (f: string) => path.basename(f).toLowerCase();
         assert.deepStrictEqual(
-            dedupeContributeFiles(input),
+            dedupeContributeFiles(input, keyOf),
             [
-                '/ext-a/node_modules/katex/dist/katex.min.css',
                 '/ext-c/media/markdown.css',
+                '/ext-b/notebook-out/katex.min.css',
             ],
-            'second katex.min.css should be dropped'
+            'the earlier identical katex.min.css should be dropped, last kept'
         );
     });
 
-    test('dedupeContributeFiles is case-insensitive on the basename', () => {
-        const input = ['/a/Style.CSS', '/b/style.css'];
-        assert.deepStrictEqual(dedupeContributeFiles(input), ['/a/Style.CSS']);
+    test('dedupeContributeFiles keeps distinct files that share a base name', () => {
+        // Two extensions each ship their own `markdown.css` with different content,
+        // so *both* must survive. Regression test for 2.7.0, where blockquote
+        // padding vanished because one was dropped purely by name.
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mte-dedupe-'));
+        try {
+            const fileA = path.join(dir, 'a', 'markdown.css');
+            const fileB = path.join(dir, 'b', 'markdown.css');
+            fs.mkdirSync(path.dirname(fileA));
+            fs.mkdirSync(path.dirname(fileB));
+            fs.writeFileSync(fileA, 'blockquote{padding:0 16px}');
+            fs.writeFileSync(fileB, 'blockquote{padding:0 1em}');
+            assert.deepStrictEqual(
+                dedupeContributeFiles([fileA, fileB]),
+                [fileA, fileB],
+                'distinct same-named files must both be kept'
+            );
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 
-    test('dedupeContributeFiles keeps distinct basenames and preserves order', () => {
+    test('dedupeContributeFiles collapses identical content regardless of file name', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mte-dedupe-'));
+        try {
+            const fileA = path.join(dir, 'one.css');
+            const fileB = path.join(dir, 'two.css');
+            fs.writeFileSync(fileA, 'body{color:red}');
+            fs.writeFileSync(fileB, 'body{color:red}');
+            assert.deepStrictEqual(
+                dedupeContributeFiles([fileA, fileB]),
+                [fileB],
+                'identical content collapses to the last occurrence'
+            );
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('dedupeContributeFiles preserves the order of distinct content', () => {
+        const keyOf = (f: string) => f; // treat every path as unique content
         const input = ['/a/x.css', '/b/y.css', '/c/z.js'];
-        assert.deepStrictEqual(dedupeContributeFiles(input), input);
+        assert.deepStrictEqual(dedupeContributeFiles(input, keyOf), input);
     });
 
-    test('getStyles result has no duplicate basenames', () => {
+    test('getStyles result has no exact duplicate entries', () => {
         const instance = ContributorService.instance;
         const styles = instance.getStyles();
-        // Map each rendered style back is not possible here, but getStyles should
-        // already be de-duplicated at the file level; assert it is an array.
         assert.ok(Array.isArray(styles), 'Styles should be array');
+        assert.strictEqual(
+            new Set(styles).size,
+            styles.length,
+            'identical contributed styles should be de-duplicated'
+        );
     });
 });
