@@ -12,6 +12,7 @@ Markdown Extended Pro is a comprehensive extension that extends syntaxes and abi
 - 🎨 **Extended Syntax Support** - 17 integrated markdown-it plugins plus built-in syntaxes
 - 📝 **Advanced Note Types** - Sidenotes, marginal notes, and sidebar annotations
 - 📤 **WYSIWYG Exporter** - Export to HTML, PDF, PNG, JPEG matching the preview
+- 🧜 **Mermaid in Exports** - Diagrams shown in VS Code's preview are rendered to inline SVG in exported files
 - ✏️ **Editing Helpers** - Table formatting, text formatting toggles, and more
 - 🌐 **Web Extension** - Works in [vscode.dev](https://vscode.dev) and [github.dev](https://github.dev) (preview & editing; export requires desktop)
 - 🏗️ **TypeScript Codebase** - Built with TypeScript, unit tests, and error recovery
@@ -29,6 +30,7 @@ Export to Self Contained HTML / PDF / PNG / JPEG with perfect preview fidelity:
 - Export current document / workspace
 - Copy exported HTML to clipboard
 - WYSIWYG export matches preview exactly
+- Mermaid diagrams are rendered to inline SVG in the exported file (the Mermaid library is never embedded in the output)
 
 Find commands in the command palette or right-click on an editor / workspace folder:
 

@@ -167,8 +167,36 @@ export class ContributorService implements IContributorService {
             .filter(c => filterFn(c))
             .forEach(c => files.push(...(isStyle ? c.styles : c.scripts)));
             
-        return files;
+        // De-duplicate by file name. Several extensions ship the same asset (most
+        // notably `katex.min.css`, contributed by both vscode.markdown-math and
+        // markdown-all-in-one), and inlining it twice can add ~370 KB of duplicated
+        // font data URIs to every export. Keep the first occurrence.
+        return dedupeContributeFiles(files);
     }
+}
+
+/**
+ * De-duplicate a list of contributed file paths by their (case-insensitive) base
+ * name, preserving the first occurrence and the original order.
+ *
+ * Markdown preview contributions from different extensions frequently include the
+ * exact same asset (e.g. `katex.min.css`). Inlining each copy as a base64 data URI
+ * bloats the export, so we keep only the first file with a given base name.
+ *
+ * @param files Absolute file paths to de-duplicate.
+ */
+export function dedupeContributeFiles(files: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const file of files) {
+        const key = path.basename(file).toLowerCase();
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        result.push(file);
+    }
+    return result;
 }
 
 /**

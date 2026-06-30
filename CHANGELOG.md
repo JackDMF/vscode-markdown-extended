@@ -1,5 +1,23 @@
 # Change Log
 
+## v2.7.0 - Mermaid Diagrams in Exports & Smaller HTML
+
+### ✨ New Features
+
+- **Mermaid diagrams now render in exports (HTML/PDF/PNG).** Previously a ` ```mermaid ` block showed in the VS Code preview but exported as an unrendered code block, because the diagram is drawn by a client-side script that the export did not include.
+  - Diagrams are now **pre-rendered to inline `<svg>`** at export time, so the output is self-contained, needs no JavaScript, and stays small.
+  - Rendering runs the bundled mermaid library inside the bundled headless Chromium (the same browser used for PDF/PNG export). The mermaid library is **never written into the exported file** — only the resulting SVG is kept.
+  - The browser is launched **only when a document actually contains a mermaid diagram**; non-mermaid HTML export stays browser-free. If Chromium is unavailable or a diagram fails to parse, the export degrades gracefully and keeps the diagram source instead of failing.
+
+### 🐛 Bug Fixes / Improvements
+
+- **Smaller exports: de-duplicated inlined preview assets.** Several extensions contribute the same asset (most notably `katex.min.css`, shipped by both `vscode.markdown-math` and `markdown-all-in-one`), which was inlined twice as base64 — adding ~370 KB of duplicated font data to every export. Contributed style/script files are now de-duplicated by file name, keeping the first occurrence.
+
+### 🧪 Tests
+
+- Added unit tests for mermaid detection and the render-orchestration/fallback logic (`test/unit/services/exporter/mermaidRenderer.test.ts`).
+- Added unit tests for contributed-file de-duplication (`dedupeContributeFiles`).
+
 ## v2.6.0 - Attributes on Sidebars & Notes
 
 ### ✨ New Features

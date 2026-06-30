@@ -3,6 +3,7 @@ import { promises as fsPromises } from 'fs';
 import { mkdirsAsync } from '../common/tools';
 import * as path from 'path';
 import { renderPage } from './shared';
+import { MermaidRenderer } from './mermaidRenderer';
 import { MarkdownExporter, ExportFormat, Progress, ExportItem } from './interfaces';
 import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
 
@@ -83,7 +84,8 @@ export class HtmlExporter implements MarkdownExporter {
     }
     private async exportFile(item: ExportItem) {
         const document = await vscode.workspace.openTextDocument(item.uri);
-        const html = renderPage(document);
+        // Render mermaid diagrams (if any) to inline SVG before writing the file.
+        const html = await MermaidRenderer.instance.process(renderPage(document));
         
         // Use async directory creation
         await mkdirsAsync(path.dirname(item.fileName));

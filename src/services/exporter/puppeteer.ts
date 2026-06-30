@@ -4,6 +4,7 @@ import * as path from 'path';
 import { MarkdownDocument } from '../common/markdownDocument';
 import { mkdirsAsync, mergeSettings } from '../common/tools';
 import { renderPage } from './shared';
+import { MermaidRenderer } from './mermaidRenderer';
 import { MarkdownExporter, ExportFormat, Progress, ExportItem } from './interfaces';
 import { Config } from '../common/config';
 import { BrowserManager } from '../browser/browserManager';
@@ -142,7 +143,8 @@ export class PuppeteerExporter implements MarkdownExporter {
     private async exportFile(item: ExportItem, page: puppeteer.Page) {
         const document = new MarkdownDocument(await vscode.workspace.openTextDocument(item.uri));
         const inject = getInjectStyle(item.format);
-        const html = renderPage(document, inject);
+        // Render mermaid diagrams (if any) to inline SVG before capture.
+        const html = await MermaidRenderer.instance.process(renderPage(document, inject));
         let ptConf: any = {};
         await mkdirsAsync(path.dirname(item.fileName));
 

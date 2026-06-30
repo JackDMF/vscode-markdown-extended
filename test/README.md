@@ -39,7 +39,26 @@ npm run watch
 
 Or use the keyboard shortcut assigned to test tasks.
 
+### End-to-end mermaid export test
+
+`unit/services/exporter/mermaidExport.e2e.test.ts` exercises the real export
+pipeline by launching headless Chromium and rendering a mermaid diagram to inline
+SVG. It is **skipped by default** (and in CI) because it requires a Chrome binary.
+
+To actually run it, point the `MTE_E2E_CHROME` env var at an existing Chrome /
+Chrome for Testing executable (for example the one your normal VS Code profile
+already downloaded for PDF export) — the test never downloads a browser itself:
+
+```bash
+export MTE_E2E_CHROME="/path/to/Google Chrome for Testing"
+npm run test:unit
+```
+
+When the variable is unset and no browser is found, the test reports as
+`pending` rather than failing.
+
 ## Writing Tests
+
 
 ### Unit Test Example
 

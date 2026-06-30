@@ -170,12 +170,31 @@ async function main() {
         }
     });
 
+    // Mermaid browser harness — a self-contained IIFE that exposes the mermaid
+    // library on `globalThis.__mteMermaid`. It is loaded into the bundled headless
+    // Chromium at export time to render mermaid diagrams to inline SVG. It is NOT
+    // part of the Node extension bundle and is never written into exported files.
+    const mermaidCtx = await esbuild.context({
+        entryPoints: ['src/services/exporter/mermaidBrowserEntry.ts'],
+        bundle: true,
+        format: 'iife',
+        minify: production,
+        sourcemap: false,
+        platform: 'browser',
+        outfile: 'dist/mermaid-browser.js',
+        logLevel: 'silent',
+        plugins: sharedPlugins,
+        define: {
+            'process.env.NODE_ENV': production ? '"production"' : '"development"',
+        },
+    });
+
     if (watch) {
-        await Promise.all([desktopCtx.watch(), webCtx.watch()]);
+        await Promise.all([desktopCtx.watch(), webCtx.watch(), mermaidCtx.watch()]);
         console.log('Watching for changes...');
     } else {
-        await Promise.all([desktopCtx.rebuild(), webCtx.rebuild()]);
-        await Promise.all([desktopCtx.dispose(), webCtx.dispose()]);
+        await Promise.all([desktopCtx.rebuild(), webCtx.rebuild(), mermaidCtx.rebuild()]);
+        await Promise.all([desktopCtx.dispose(), webCtx.dispose(), mermaidCtx.dispose()]);
     }
 }
 

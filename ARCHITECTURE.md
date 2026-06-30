@@ -83,6 +83,8 @@ vscode-markdown-extended/
 │   │   ├── exporter/            # Export engines
 │   │   │   ├── html.ts          # HTML exporter
 │   │   │   ├── puppeteer.ts     # PDF/Image exporter
+│   │   │   ├── mermaidRenderer.ts      # Mermaid → inline SVG (headless Chromium)
+│   │   │   ├── mermaidBrowserEntry.ts  # Browser harness exposing mermaid (bundled separately)
 │   │   │   └── export.ts        # Export orchestration
 │   │   └── contributes/
 │   │       ├── contributorService.ts   # Plugin contributions
@@ -310,6 +312,8 @@ test/
     │   └── contributes/
     │       ├── contributorService.test.ts (10 tests)
     │       └── contributesService.test.ts (15 tests)
+    └── exporter/
+        └── mermaidRenderer.test.ts        (mermaid detection + fallback)
 ```
 
 ### Testing Patterns
@@ -467,6 +471,37 @@ export function MarkdownItContainer(md: MarkdownIt): void {
 - 0 → 65 unit tests
 - Full service coverage
 - Regression prevention
+
+---
+
+### 6. Mermaid Export Rendering (inline SVG)
+
+**Decision:** Pre-render mermaid diagrams to inline `<svg>` at export time using a separately-bundled mermaid library, executed inside the bundled headless Chromium.
+
+**Problem:** A ` ```mermaid ` block renders in the VS Code preview because the built-in `vscode.mermaid-markdown-features` extension contributes (a) a markdown-it plugin that emits `<pre class="mermaid">…</pre>` and (b) a ~25 MB client-side preview script that draws the SVG. The export reuses the shared markdown-it instance, so it produces the placeholder, but it deliberately excludes that (official) preview script — so diagrams exported as unrendered source. VS Code's bundle exposes no callable render API.
+
+**Rationale:**
+
+- ✅ Output stays small and self-contained — only inline SVG, **no JavaScript and no mermaid library in the exported file**.
+- ✅ Uses mermaid's public `mermaid.render()` API (stable, version-controlled) instead of scraping VS Code's private webview bundle (fragile, version-pinned).
+- ✅ Reuses the Chromium already required for PDF/PNG export; the browser is launched **only when a document contains a mermaid diagram**.
+- ✅ Fails safe: missing browser or an unparseable diagram leaves the original `<pre class="mermaid">` source rather than aborting the export.
+
+**Implementation:**
+
+- `src/services/exporter/mermaidBrowserEntry.ts` is bundled by esbuild as a standalone browser IIFE (`dist/mermaid-browser.js`) exposing `globalThis.__mteMermaid`.
+- `src/services/exporter/mermaidRenderer.ts` (`MermaidRenderer`) detects mermaid via `hasMermaid()`, loads the export HTML into Chromium, evals the harness to define the global, swaps each `pre.mermaid` for its rendered SVG, and serializes the DOM back. Both `HtmlExporter` and `PuppeteerExporter` call `MermaidRenderer.instance.process(html)`.
+
+---
+
+### 7. De-duplicated Inlined Preview Assets
+
+**Decision:** De-duplicate contributed preview style/script files by base name before inlining them.
+
+**Rationale:**
+
+- ✅ Multiple extensions ship the same asset (e.g. `katex.min.css` from both `vscode.markdown-math` and `markdown-all-in-one`), which was inlined twice as base64 — ~370 KB of duplicated font data per export.
+- ✅ `dedupeContributeFiles()` in `contributorService.ts` keeps the first occurrence of each base name, preserving order.
 
 ---
 

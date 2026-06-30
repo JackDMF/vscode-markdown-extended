@@ -50,6 +50,18 @@ This VS Code extension is now bundled using **esbuild** to significantly improve
 - **Development**: `dist/extension.js` + `dist/extension.js.map` (~6 MB total)
 - **Production**: `dist/extension.js` (minified, ~4 MB, no source map)
 
+### Build Targets
+
+`esbuild.js` builds three independent bundles:
+
+| Output | Entry | Platform/Format | Purpose |
+| --- | --- | --- | --- |
+| `dist/extension.js` | `src/extension.ts` | node / cjs | Desktop extension (full Node + export/puppeteer). |
+| `dist/extension.web.js` | `src/extension.web.ts` | browser / cjs | Web extension (vscode.dev); excludes Node-only deps. |
+| `dist/mermaid-browser.js` | `src/services/exporter/mermaidBrowserEntry.ts` | browser / iife | Self-contained mermaid library exposed on `globalThis.__mteMermaid`. |
+
+> **Why mermaid is a separate target:** the mermaid library (~3.5 MB) must **not** be part of the Node extension bundle. It is only ever loaded into the bundled headless Chromium at export time to render `<pre class="mermaid">` placeholders to inline SVG. Keeping it in its own asset keeps `dist/extension.js` lean and the exported HTML small (the library is never serialized into output — only the SVG is). The asset is read at runtime from `dist/mermaid-browser.js` via the extension path, so it is shipped in the VSIX (not excluded by `.vscodeignore`).
+
 ## Development Workflow
 
 ### Running in Development

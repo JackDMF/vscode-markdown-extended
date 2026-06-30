@@ -56,6 +56,8 @@ async Export(items: ExportItem[], progress: Progress) {
 - Nested try-catch in finally to handle cleanup errors
 - Cleanup errors logged but don't mask original errors
 
+> **Mermaid rendering applies the same pattern.** `MermaidRenderer` (`src/services/exporter/mermaidRenderer.ts`) launches its own short-lived headless Chromium to render diagrams to inline SVG, and always closes it in a `finally` block. The browser is launched lazily — only when the document actually contains a `<pre class="mermaid">` block — and any failure is swallowed so the export falls back to the diagram source instead of leaking a browser or aborting.
+
 ### 2. ConfigReader Folder Cache Memory Leak (MINOR)
 
 **Problem:**
