@@ -48,20 +48,40 @@ export class Config extends ConfigReader {
     onChange(_e?: vscode.ConfigurationChangeEvent): void {
         // Configuration change handling can be added here if needed
     }
-    
+
+    /**
+     * Read a setting that was renamed in v3.0, preferring the new (grouped) key
+     * but falling back to the deprecated flat key when only the old one is set.
+     * This keeps existing user settings working across the rename.
+     *
+     * @param newKey grouped key, e.g. `pdf.format`
+     * @param oldKey legacy flat key, e.g. `pdfFormat`
+     * @param uri optional resource scope
+     */
+    private migrated<T>(newKey: string, oldKey: string, uri?: vscode.Uri): T {
+        const conf = uri
+            ? vscode.workspace.getConfiguration('markdownExtended', uri)
+            : vscode.workspace.getConfiguration('markdownExtended');
+        const explicit = (info?: { globalValue?: T; workspaceValue?: T; workspaceFolderValue?: T }): T | undefined =>
+            info ? (info.workspaceFolderValue ?? info.workspaceValue ?? info.globalValue) : undefined;
+        const newInfo = conf.inspect<T>(newKey);
+        const newVal = explicit(newInfo);
+        if (newVal !== undefined) { return newVal; }
+        const oldVal = explicit(conf.inspect<T>(oldKey));
+        if (oldVal !== undefined) { return oldVal; }
+        return (newInfo && newInfo.defaultValue !== undefined)
+            ? newInfo.defaultValue as T
+            : conf.get<T>(newKey);
+    }
+
     /**
      * Get list of disabled markdown-it plugins.
      * Plugin names should be provided without the 'markdown-it-' prefix.
      * 
      * @returns Array of disabled plugin names (e.g., ['toc', 'container'])
-     * @example
-     * ```typescript
-     * // In settings.json: "markdownExtended.disabledPlugins": "toc, container"
-     * const disabled = config.disabledPlugins; // ['toc', 'container']
-     * ```
      */
     get disabledPlugins(): string[] {
-        const conf = this.read<string>('disabledPlugins').trim();
+        const conf = (this.migrated<string>('plugins.disabled', 'disabledPlugins') || '').trim();
         if (!conf) {return [];}
         return conf.toLowerCase().split(',').map(p => p.trim());
     }
@@ -70,14 +90,9 @@ export class Config extends ConfigReader {
      * Get heading levels to include in table of contents.
      * 
      * @returns Array of heading levels (1-6), defaults to [1, 2, 3]
-     * @example
-     * ```typescript
-     * // In settings.json: "markdownExtended.tocLevels": [1, 2, 3, 4]
-     * const levels = config.tocLevels; // [1, 2, 3, 4]
-     * ```
      */
     get tocLevels(): number[] {
-        let conf = this.read<number[]>('tocLevels');
+        let conf = this.migrated<number[]>('toc.levels', 'tocLevels');
         if (!(conf instanceof Array)) {conf = [];}
         if (conf.length) {conf = conf.filter(c => typeof c === "number");}
         if (!conf.length) {return [1, 2, 3];}
@@ -90,15 +105,15 @@ export class Config extends ConfigReader {
      * @returns Directory name relative to workspace root
      */
     get exportOutDirName(): string {
-        return this.read<string>('exportOutDirName');
+        return this.migrated<string>('export.outDirName', 'exportOutDirName');
     }
 
     /**
      * Get the color theme to apply to exported HTML/PDF/PNG output.
      *
      * Drives the preview body class (`vscode-light` / `vscode-dark`) so that
-     * theme-aware stylesheets render in the chosen mode. `auto` follows the active
-     * VS Code color theme at export time. Defaults to `light`.
+     * theme-aware stylesheets render in the chosen mode. `auto` (the default)
+     * follows the active VS Code color theme at export time.
      *
      * @returns `'light'` or `'dark'` (the resolved value, never `'auto'`)
      */
@@ -106,23 +121,18 @@ export class Config extends ConfigReader {
         const kind = vscode.window.activeColorTheme && vscode.window.activeColorTheme.kind;
         const isDark = kind === vscode.ColorThemeKind.Dark
             || kind === vscode.ColorThemeKind.HighContrast;
-        return resolveExportTheme(this.read<string>('exportTheme'), isDark);
+        return resolveExportTheme(this.migrated<string>('export.theme', 'exportTheme'), isDark);
     }
     
     /**
      * Get path to custom Puppeteer/Chrome executable.
      * Validates that the path exists before returning.
-     * 
+     *
      * @returns Path to executable, or empty string if not configured or doesn't exist
-     * @example
-     * ```typescript
-     * // In settings.json: "markdownExtended.puppeteerExecutable": "/path/to/chrome"
-     * const exe = config.puppeteerExecutable; // "/path/to/chrome" or ""
-     * ```
      */
     get puppeteerExecutable(): string {
-        const exe = this.read<string>('puppeteerExecutable');
-        return fs.existsSync(exe) ? exe : "";
+        const exe = this.migrated<string>('export.puppeteerExecutable', 'puppeteerExecutable');
+        return exe && fs.existsSync(exe) ? exe : "";
     }
     
     /**
@@ -130,7 +140,7 @@ export class Config extends ConfigReader {
      * @returns PDF format string
      */
     get pdfFormat(): string {
-        return this.read<string>('pdfFormat');
+        return this.migrated<string>('pdf.format', 'pdfFormat');
     }
     
     /**
@@ -139,7 +149,7 @@ export class Config extends ConfigReader {
      * @returns PDF width string
      */
     get pdfWidth(): string {
-        return this.read<string>('pdfWidth');
+        return this.migrated<string>('pdf.width', 'pdfWidth');
     }
     
     /**
@@ -148,7 +158,7 @@ export class Config extends ConfigReader {
      * @returns PDF height string
      */
     get pdfHeight(): string {
-        return this.read<string>('pdfHeight');
+        return this.migrated<string>('pdf.height', 'pdfHeight');
     }
     
     /**
@@ -156,37 +166,37 @@ export class Config extends ConfigReader {
      * @returns true for landscape, false for portrait
      */
     get pdfLandscape(): boolean {
-        return this.read<boolean>('pdfLandscape');
+        return this.migrated<boolean>('pdf.landscape', 'pdfLandscape');
     }
     get pdfMarginTop(): string {
-        return this.read<string>('pdfMarginTop');
+        return this.migrated<string>('pdf.margin.top', 'pdfMarginTop');
     }
     get pdfMarginRight(): string {
-        return this.read<string>('pdfMarginRight');
+        return this.migrated<string>('pdf.margin.right', 'pdfMarginRight');
     }
     get pdfMarginBottom(): string {
-        return this.read<string>('pdfMarginBottom');
+        return this.migrated<string>('pdf.margin.bottom', 'pdfMarginBottom');
     }
     get pdfMarginLeft(): string {
-        return this.read<string>('pdfMarginLeft');
+        return this.migrated<string>('pdf.margin.left', 'pdfMarginLeft');
     }
     get pdfDisplayHeaderFooter(): boolean {
-        return this.read<boolean>('pdfDisplayHeaderFooter');
+        return this.migrated<boolean>('pdf.displayHeaderFooter', 'pdfDisplayHeaderFooter');
     }
     get pdfPageRanges(): string {
-        return this.read<string>('pdfPageRanges');
+        return this.migrated<string>('pdf.pageRanges', 'pdfPageRanges');
     }
     get pdfHeaderTemplate(): string {
-        return this.read<string>('pdfHeaderTemplate');
+        return this.migrated<string>('pdf.headerTemplate', 'pdfHeaderTemplate');
     }
     get pdfFooterTemplate(): string {
-        return this.read<string>('pdfFooterTemplate');
+        return this.migrated<string>('pdf.footerTemplate', 'pdfFooterTemplate');
     }
     get imageQuality(): number {
-        return this.read<number>('imageQuality') || 100;
+        return this.migrated<number>('image.quality', 'imageQuality') || 100;
     }
     get imageOmitBackground(): boolean {
-        return this.read<boolean>('imageOmitBackground');
+        return this.migrated<boolean>('image.omitBackground', 'imageOmitBackground');
     }
 
     get puppeteerDefaultSetting(): any {

@@ -3,6 +3,19 @@ import * as vscode from 'vscode';
 import * as sinon from 'sinon';
 import { Config, resolveExportTheme } from '../../../../src/services/common/config';
 
+/**
+ * Build a mock WorkspaceConfiguration backed by a value map, supporting the
+ * `get` and `inspect` calls that Config uses. Values are keyed by setting name
+ * (e.g. the legacy `pdfFormat`); `inspect` reports them as an explicit
+ * `globalValue`, which is how Config.migrated() detects a user-set value.
+ */
+function mockConf(values: Record<string, any>) {
+    return {
+        get: (key: string) => values[key],
+        inspect: (key: string) => ({ globalValue: values[key] }),
+    } as any;
+}
+
 suite('Config Tests', () => {
     let sandbox: sinon.SinonSandbox;
     let getConfigurationStub: sinon.SinonStub;
@@ -11,6 +24,7 @@ suite('Config Tests', () => {
     setup(() => {
         sandbox = sinon.createSandbox();
         getConfigurationStub = sandbox.stub(vscode.workspace, 'getConfiguration');
+        getConfigurationStub.returns(mockConf({}));
         
         // Get the singleton instance
         config = Config.instance;
@@ -31,12 +45,7 @@ suite('Config Tests', () => {
     });
 
     test('should read exportOutDirName configuration', () => {
-        const mockConfig = {
-            get: sandbox.stub().callsFake((key: string) => {
-                if (key === 'exportOutDirName') return 'custom-out';
-                return undefined;
-            })
-        };
+        const mockConfig = mockConf({ exportOutDirName: 'custom-out' });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);
         
         const result = config.exportOutDirName;
@@ -46,12 +55,7 @@ suite('Config Tests', () => {
     });
 
     test('should read pdfFormat configuration', () => {
-        const mockConfig = {
-            get: sandbox.stub().callsFake((key: string) => {
-                if (key === 'pdfFormat') return 'Letter';
-                return undefined;
-            })
-        };
+        const mockConfig = mockConf({ pdfFormat: 'Letter' });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);
         
         const result = config.pdfFormat;
@@ -62,12 +66,7 @@ suite('Config Tests', () => {
     });
 
     test('should read tocLevels as array', () => {
-        const mockConfig = {
-            get: sandbox.stub().callsFake((key: string) => {
-                if (key === 'tocLevels') return [1, 2, 3, 4];
-                return undefined;
-            })
-        };
+        const mockConfig = mockConf({ tocLevels: [1, 2, 3, 4] });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);
         
         const result = config.tocLevels;
@@ -79,9 +78,7 @@ suite('Config Tests', () => {
     });
 
     test('should return default tocLevels when empty', () => {
-        const mockConfig = {
-            get: sandbox.stub().withArgs('tocLevels').returns([])
-        };
+        const mockConfig = mockConf({ tocLevels: [] });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);
         
         const result = config.tocLevels;
@@ -90,9 +87,7 @@ suite('Config Tests', () => {
     });
 
     test('should filter non-number values from tocLevels', () => {
-        const mockConfig = {
-            get: sandbox.stub().withArgs('tocLevels').returns([1, 'invalid', 2, null, 3])
-        };
+        const mockConfig = mockConf({ tocLevels: [1, 'invalid', 2, null, 3] });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);
         
         const result = config.tocLevels;
@@ -101,12 +96,7 @@ suite('Config Tests', () => {
     });
 
     test('should read disabledPlugins as comma-separated string', () => {
-        const mockConfig = {
-            get: sandbox.stub().callsFake((key: string) => {
-                if (key === 'disabledPlugins') return 'plugin1, Plugin2, PLUGIN3';
-                return '';
-            })
-        };
+        const mockConfig = mockConf({ disabledPlugins: 'plugin1, Plugin2, PLUGIN3' });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);
         
         const result = config.disabledPlugins;
@@ -116,9 +106,7 @@ suite('Config Tests', () => {
     });
 
     test('should return empty array for empty disabledPlugins', () => {
-        const mockConfig = {
-            get: sandbox.stub().withArgs('disabledPlugins').returns('')
-        };
+        const mockConfig = mockConf({ disabledPlugins: '' });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);
         
         const result = config.disabledPlugins;
@@ -127,9 +115,7 @@ suite('Config Tests', () => {
     });
 
     test('should validate puppeteerExecutable exists', () => {
-        const mockConfig = {
-            get: sandbox.stub().withArgs('puppeteerExecutable').returns('/nonexistent/path')
-        };
+        const mockConfig = mockConf({ puppeteerExecutable: '/nonexistent/path' });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);
         
         const result = config.puppeteerExecutable;
@@ -154,5 +140,16 @@ suite('Config Tests', () => {
 
     test('exportTheme getter returns light or dark', () => {
         assert.ok(['light', 'dark'].includes(config.exportTheme));
+    });
+
+    test('migrated() prefers new grouped key, falls back to legacy key', () => {
+        // Only the legacy key is set -> it is used.
+        getConfigurationStub.withArgs('markdownExtended').returns(mockConf({ pdfFormat: 'Legal' }));
+        assert.strictEqual(config.pdfFormat, 'Legal', 'legacy key used when new key unset');
+
+        // Both set -> the new grouped key wins.
+        getConfigurationStub.withArgs('markdownExtended')
+            .returns(mockConf({ 'pdf.format': 'Ledger', pdfFormat: 'Legal' }));
+        assert.strictEqual(config.pdfFormat, 'Ledger', 'new grouped key wins over legacy');
     });
 });

@@ -264,24 +264,9 @@
       "type": "object",
       "title": "Markdown Extended Configuration",
       "properties": {
-        "markdownExtended.disabledPlugins": {
+        "markdownExtended.export.theme": {
           "type": "string",
-          "default": "",
-          "description": "%markdownExtended.configuration.disabledPlugins%"
-        },
-        "markdownExtended.puppeteerExecutable": {
-          "type": "string",
-          "default": "",
-          "description": "%markdownExtended.configuration.puppeteerExecutable%"
-        },
-        "markdownExtended.exportOutDirName": {
-          "type": "string",
-          "default": "out",
-          "description": "%markdownExtended.configuration.exportOutDirName%"
-        },
-        "markdownExtended.exportTheme": {
-          "type": "string",
-          "default": "light",
+          "default": "auto",
           "enum": [
             "light",
             "dark",
@@ -292,9 +277,22 @@
             "%markdownExtended.configuration.exportTheme.dark%",
             "%markdownExtended.configuration.exportTheme.auto%"
           ],
-          "description": "%markdownExtended.configuration.exportTheme%"
+          "description": "%markdownExtended.configuration.exportTheme%",
+          "order": 1
         },
-        "markdownExtended.pdfFormat": {
+        "markdownExtended.export.outDirName": {
+          "type": "string",
+          "default": "out",
+          "description": "%markdownExtended.configuration.exportOutDirName%",
+          "order": 2
+        },
+        "markdownExtended.export.puppeteerExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "%markdownExtended.configuration.puppeteerExecutable%",
+          "order": 3
+        },
+        "markdownExtended.pdf.format": {
           "type": "string",
           "default": "A4",
           "enum": [
@@ -310,72 +308,206 @@
             "A5",
             "A6"
           ],
-          "description": "%markdownExtended.configuration.pdfFormat%"
+          "description": "%markdownExtended.configuration.pdfFormat%",
+          "order": 10
+        },
+        "markdownExtended.pdf.width": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^[0-9]+(\\.[0-9]+)?(mm|cm|in|px|pt|pc)$",
+          "patternErrorMessage": "%markdownExtended.configuration.lengthError%",
+          "description": "%markdownExtended.configuration.pdfWidth%",
+          "order": 11
+        },
+        "markdownExtended.pdf.height": {
+          "type": "string",
+          "default": "",
+          "pattern": "^$|^[0-9]+(\\.[0-9]+)?(mm|cm|in|px|pt|pc)$",
+          "patternErrorMessage": "%markdownExtended.configuration.lengthError%",
+          "description": "%markdownExtended.configuration.pdfHeight%",
+          "order": 12
+        },
+        "markdownExtended.pdf.landscape": {
+          "type": "boolean",
+          "default": false,
+          "description": "%markdownExtended.configuration.pdfLandscape%",
+          "order": 13
+        },
+        "markdownExtended.pdf.margin.top": {
+          "type": "string",
+          "default": "1.5cm",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(mm|cm|in|px|pt|pc)$",
+          "patternErrorMessage": "%markdownExtended.configuration.lengthError%",
+          "description": "%markdownExtended.configuration.pdfMarginTop%",
+          "order": 14
+        },
+        "markdownExtended.pdf.margin.right": {
+          "type": "string",
+          "default": "1cm",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(mm|cm|in|px|pt|pc)$",
+          "patternErrorMessage": "%markdownExtended.configuration.lengthError%",
+          "description": "%markdownExtended.configuration.pdfMarginRight%",
+          "order": 15
+        },
+        "markdownExtended.pdf.margin.bottom": {
+          "type": "string",
+          "default": "1cm",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(mm|cm|in|px|pt|pc)$",
+          "patternErrorMessage": "%markdownExtended.configuration.lengthError%",
+          "description": "%markdownExtended.configuration.pdfMarginBottom%",
+          "order": 16
+        },
+        "markdownExtended.pdf.margin.left": {
+          "type": "string",
+          "default": "1cm",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(mm|cm|in|px|pt|pc)$",
+          "patternErrorMessage": "%markdownExtended.configuration.lengthError%",
+          "description": "%markdownExtended.configuration.pdfMarginLeft%",
+          "order": 17
+        },
+        "markdownExtended.pdf.displayHeaderFooter": {
+          "type": "boolean",
+          "default": true,
+          "description": "%markdownExtended.configuration.pdfDisplayHeaderFooter%",
+          "order": 18
+        },
+        "markdownExtended.pdf.pageRanges": {
+          "type": "string",
+          "default": "",
+          "description": "%markdownExtended.configuration.pdfPageRanges%",
+          "order": 19
+        },
+        "markdownExtended.pdf.headerTemplate": {
+          "type": "string",
+          "default": "<div style=\"font-size: 9px; margin-left: 1cm;\"> <span class='title'></span></div> <div style=\"font-size: 9px; margin-left: auto; margin-right: 1cm; \"> <span class='date'></span></div>",
+          "description": "%markdownExtended.configuration.pdfHeaderTemplate%",
+          "order": 20
+        },
+        "markdownExtended.pdf.footerTemplate": {
+          "type": "string",
+          "default": "<div style=\"font-size: 9px; margin: 0 auto;\"> <span class='pageNumber'></span> / <span class='totalPages'></span></div>",
+          "description": "%markdownExtended.configuration.pdfFooterTemplate%",
+          "order": 21
+        },
+        "markdownExtended.image.quality": {
+          "type": "integer",
+          "default": 100,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "%markdownExtended.configuration.imageQuality%",
+          "order": 30
+        },
+        "markdownExtended.image.omitBackground": {
+          "type": "boolean",
+          "default": false,
+          "description": "%markdownExtended.configuration.imageOmitBackground%",
+          "order": 31
+        },
+        "markdownExtended.plugins.disabled": {
+          "type": "string",
+          "default": "",
+          "description": "%markdownExtended.configuration.disabledPlugins%",
+          "order": 40
+        },
+        "markdownExtended.toc.levels": {
+          "type": "array",
+          "default": [
+            1,
+            2,
+            3
+          ],
+          "description": "%markdownExtended.configuration.tocLevels%",
+          "order": 41
+        },
+        "markdownExtended.exportTheme": {
+          "type": "string",
+          "default": "light",
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
+        },
+        "markdownExtended.exportOutDirName": {
+          "type": "string",
+          "default": "out",
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
+        },
+        "markdownExtended.puppeteerExecutable": {
+          "type": "string",
+          "default": "",
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
+        },
+        "markdownExtended.pdfFormat": {
+          "type": "string",
+          "default": "A4",
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfWidth": {
           "type": "string",
           "default": "",
-          "description": "%markdownExtended.configuration.pdfWidth%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfHeight": {
           "type": "string",
           "default": "",
-          "description": "%markdownExtended.configuration.pdfHeight%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfLandscape": {
           "type": "boolean",
           "default": false,
-          "description": "%markdownExtended.configuration.pdfLandscape%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfMarginTop": {
           "type": "string",
           "default": "1.5cm",
-          "description": "%markdownExtended.configuration.pdfMarginTop%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfMarginRight": {
           "type": "string",
           "default": "1cm",
-          "description": "%markdownExtended.configuration.pdfMarginRight%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfMarginBottom": {
           "type": "string",
           "default": "1cm",
-          "description": "%markdownExtended.configuration.pdfMarginBottom%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfMarginLeft": {
           "type": "string",
           "default": "1cm",
-          "description": "%markdownExtended.configuration.pdfMarginLeft%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfDisplayHeaderFooter": {
           "type": "boolean",
           "default": true,
-          "description": "%markdownExtended.configuration.pdfDisplayHeaderFooter%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfPageRanges": {
           "type": "string",
           "default": "",
-          "description": "%markdownExtended.configuration.pdfPageRanges%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfHeaderTemplate": {
           "type": "string",
-          "default": "<div style=\"font-size: 9px; margin-left: 1cm;\"> <span class='title'></span></div> <div style=\"font-size: 9px; margin-left: auto; margin-right: 1cm; \"> <span class='date'></span></div>",
-          "description": "%markdownExtended.configuration.pdfHeaderTemplate%"
+          "default": "",
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.pdfFooterTemplate": {
           "type": "string",
-          "default": "<div style=\"font-size: 9px; margin: 0 auto;\"> <span class='pageNumber'></span> / <span class='totalPages'></span></div>",
-          "description": "%markdownExtended.configuration.pdfFooterTemplate%"
+          "default": "",
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.imageQuality": {
           "type": "integer",
           "default": 100,
-          "description": "%markdownExtended.configuration.imageQuality%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.imageOmitBackground": {
           "type": "boolean",
           "default": false,
-          "description": "%markdownExtended.configuration.imageOmitBackground%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
+        },
+        "markdownExtended.disabledPlugins": {
+          "type": "string",
+          "default": "",
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },
         "markdownExtended.tocLevels": {
           "type": "array",
@@ -384,7 +516,7 @@
             2,
             3
           ],
-          "description": "%markdownExtended.configuration.tocLevels%"
+          "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         }
       }
     },
