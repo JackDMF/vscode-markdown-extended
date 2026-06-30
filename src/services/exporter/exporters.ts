@@ -45,22 +45,26 @@ export async function pickExporter(format: ExportFormat): Promise<MarkdownExport
     return pick.exporter;
 }
 
-function getAvailableExporters(format: ExportFormat): ExporterQuickPickItem[] {
-    const items: ExporterQuickPickItem[] = [];
-
-    if (HtmlExporter.instance.FormatAvailable(format)) {items.push(
+/**
+ * Registry of available exporters. To add a new exporter, implement
+ * `MarkdownExporter` and add an entry here — `pickExporter`/`getAvailableExporters`
+ * need no further changes (Open–Closed).
+ */
+function exporterRegistry(): ExporterQuickPickItem[] {
+    return [
         <ExporterQuickPickItem>{
             label: "HTML Exporter",
             description: "export to html.",
             exporter: HtmlExporter.instance,
-        }
-    );}
-    if (PuppeteerExporter.instance.FormatAvailable(format)) {items.push(
+        },
         <ExporterQuickPickItem>{
             label: "Puppeteer Exporter",
             description: "export to pdf/png/jpg.",
             exporter: PuppeteerExporter.instance,
-        }
-    );}
-    return items;
+        },
+    ];
+}
+
+function getAvailableExporters(format: ExportFormat): ExporterQuickPickItem[] {
+    return exporterRegistry().filter(item => item.exporter.FormatAvailable(format));
 }

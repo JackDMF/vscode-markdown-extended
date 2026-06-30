@@ -6,7 +6,7 @@ import { MarkdownDocument } from '../services/common/markdownDocument';
 export class CommandCopy extends Command {
     async execute() {
         vscode.env.clipboard.writeText(await renderMarkdown(false))
-            .then(() => vscode.window.showInformationMessage("Copy success."));
+            .then(() => vscode.window.showInformationMessage("Copied as HTML — paste anywhere."));
     }
     constructor() {
         super("markdownExtended.copy");
@@ -16,7 +16,7 @@ export class CommandCopy extends Command {
 export class CommandCopyWithStyles extends Command {
     async execute() {
         vscode.env.clipboard.writeText(await renderMarkdown(true))
-            .then(() => vscode.window.showInformationMessage("Copy success."));
+            .then(() => vscode.window.showInformationMessage("Copied as styled HTML — paste anywhere."));
     }
     constructor() {
         super("markdownExtended.copyWithStyle");
