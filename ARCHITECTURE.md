@@ -503,6 +503,7 @@ export function MarkdownItContainer(md: MarkdownIt): void {
 - ✅ Multiple extensions ship the same asset (e.g. `katex.min.css` from both `vscode.markdown-math` and `markdown-all-in-one`), which was inlined twice as base64 — ~370 KB of duplicated font data per export.
 - ✅ `dedupeContributeFiles()` in `contributorService.ts` compares files by a hash of their bytes, so distinct files that merely share a base name (e.g. two different `markdown.css`) are **all** kept — no extension's styling is silently dropped.
 - ✅ It keeps the **last** occurrence in place. Later styles win the CSS cascade, so collapsing an earlier identical copy leaves the final appearance unchanged. (v2.7.0 keyed on base name and kept the *first* copy, which dropped distinct same-named stylesheets and flipped the cascade — e.g. blockquote padding regressions in exports with a user CSS attached.)
+- ✅ De-duplication is **global** across official and third-party extensions: `partitionDedupedStyleFiles()` concatenates both groups (official → third-party), de-duplicates them together, then sorts survivors back into their group. So an asset shipped by both kinds of extension (e.g. `katex.min.css`) is inlined once, in the later (third-party) position. (v2.7.0 de-duplicated each group separately, so such cross-group duplicates survived.)
 
 ---
 

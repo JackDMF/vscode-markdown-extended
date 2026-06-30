@@ -17,6 +17,13 @@ export interface IContributesService {
         thirdParty(): string;
         /** Get user-configured styles for a document */
         user(uri: vscode.Uri): string;
+        /**
+         * Get official and third-party contributed styles as one combined set,
+         * globally de-duplicated across both groups (an asset shipped by both an
+         * official and a third-party extension is inlined only once), grouped for
+         * rendering.
+         */
+        contributed(): { official: string; thirdParty: string };
     };
     
     /** Script contribution methods */
@@ -109,6 +116,21 @@ export class ContributesService implements IContributesService {
             const conf = mdConfig.styles(uri);
             return conf.embedded.concat(conf.linked)
                 .join("\n").trim();
+        },
+
+        /**
+         * Get official and third-party contributed styles, globally de-duplicated
+         * across both groups and grouped for rendering. Unlike calling official()
+         * and thirdParty() separately (which de-duplicate within each group only),
+         * this inlines an asset shipped by both an official and a third-party
+         * extension just once.
+         */
+        contributed: (): { official: string; thirdParty: string } => {
+            const grouped = this._contributorService.getGroupedStyles();
+            return {
+                official: grouped.official.join("\n").trim(),
+                thirdParty: grouped.thirdParty.join("\n").trim(),
+            };
         }
     };
     
@@ -173,6 +195,7 @@ export const Contributes = {
         official: () => ContributesService.instance.styles.official(),
         thirdParty: () => ContributesService.instance.styles.thirdParty(),
         user: (uri: vscode.Uri) => ContributesService.instance.styles.user(uri),
+        contributed: () => ContributesService.instance.styles.contributed(),
     },
     Scripts: {
         all: () => ContributesService.instance.scripts.all(),

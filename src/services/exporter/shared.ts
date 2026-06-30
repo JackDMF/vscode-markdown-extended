@@ -4,6 +4,7 @@ import { ExtensionContext } from '../common/extensionContext';
 import { MarkdownDocument } from '../common/markdownDocument';
 import { Contributes } from '../contributes/contributes';
 import { MarkdownItEnv } from '../common/interfaces';
+import { config } from '../common/config';
 
 /**
  * Escape HTML special characters to prevent XSS
@@ -31,8 +32,10 @@ export function renderPage(
     const styles = getStyles(doc.document.uri, injectStyle);
     const scripts = getSciprts();
     const html = renderHTML(doc);
-    //should put both classes, because we cannot determine if a user style URL is a theme or not
-    const mdClass = "markdown-body vscode-body vscode-light";
+    // Set the preview body theme class so theme-aware stylesheets render in the
+    // chosen mode (markdownExtended.exportTheme: light | dark | auto). Keep
+    // `vscode-body` too, as we cannot tell whether a user style URL is a theme.
+    const mdClass = `markdown-body vscode-body vscode-${config.exportTheme}`;
     
     // Use template literal directly instead of eval()
     return `<!DOCTYPE html>
@@ -80,8 +83,11 @@ function getVsUri(uri: vscode.Uri): string {
 function getStyles(uri: vscode.Uri, injectStyle?: string): string {
     const styles: string[] = [];
 
-    const official = Contributes.Styles.official();
-    const thirdParty = Contributes.Styles.thirdParty();
+    // official + third-party are de-duplicated together (globally) so an asset
+    // shipped by both kinds of extension is inlined once; user styles stay last.
+    const contributed = Contributes.Styles.contributed();
+    const official = contributed.official;
+    const thirdParty = contributed.thirdParty;
     const user = Contributes.Styles.user(uri);
 
     if (injectStyle) {

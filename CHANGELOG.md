@@ -1,5 +1,21 @@
 # Change Log
 
+## v2.8.0 - Dark Exports & Global Asset De-duplication
+
+### ✨ New Features
+
+- **Export in dark (or auto) theme.** New `markdownExtended.exportTheme` setting controls the body theme class applied to exported HTML/PDF/PNG, so theme-aware stylesheets render in the chosen mode:
+  - `light` (default, unchanged behavior), `dark`, or `auto` (follows the active VS Code color theme at export time).
+  - Previously every export was hard-coded to `vscode-light`, so stylesheets that key off `body.vscode-dark` could never be exported in dark mode.
+
+### 🐛 Bug Fixes / Improvements
+
+- **Contributed assets are now de-duplicated *globally*, across official and third-party extensions.** The 2.7.0 de-duplication ran on the official and third-party groups separately, so an asset shipped by both — e.g. `katex.min.css` from `vscode.markdown-math` (official) and `markdown-all-in-one` (third-party) — was still inlined twice. The two groups are now de-duplicated together (content-based, keep-last, cascade order official → third-party), so the shared asset is inlined once while each group is still rendered in its own section.
+
+### 🧪 Tests
+
+- Added unit tests for cross-group de-duplication (`partitionDedupedStyleFiles`) and export-theme resolution (`resolveExportTheme`).
+
 ## v2.7.2 - Export Style Regression Fix
 
 ### 🐛 Bug Fixes

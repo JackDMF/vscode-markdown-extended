@@ -3,7 +3,7 @@ import * as sinon from 'sinon';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { ContributorService, ContributorType, IContributor, dedupeContributeFiles } from '../../../../src/services/contributes/contributorService';
+import { ContributorService, ContributorType, IContributor, dedupeContributeFiles, partitionDedupedStyleFiles } from '../../../../src/services/contributes/contributorService';
 
 suite('ContributorService Tests', () => {
     let sandbox: sinon.SinonSandbox;
@@ -177,6 +177,42 @@ suite('ContributorService Tests', () => {
         const keyOf = (f: string) => f; // treat every path as unique content
         const input = ['/a/x.css', '/b/y.css', '/c/z.js'];
         assert.deepStrictEqual(dedupeContributeFiles(input, keyOf), input);
+    });
+
+    test('partitionDedupedStyleFiles dedupes across groups, keeping the third-party copy', () => {
+        // KaTeX is shipped by both an official (vscode.markdown-math) and a
+        // third-party (markdown-all-in-one) extension. It must be inlined once.
+        const official = ['/o/node_modules/katex/katex.min.css', '/o/media/markdown.css'];
+        const thirdParty = ['/tp/katex/katex.min.css', '/tp/extra.css'];
+        const keyOf = (f: string) => path.basename(f).toLowerCase();
+        assert.deepStrictEqual(
+            partitionDedupedStyleFiles(official, thirdParty, keyOf),
+            {
+                official: ['/o/media/markdown.css'],
+                thirdParty: ['/tp/katex/katex.min.css', '/tp/extra.css'],
+            },
+            'the shared asset should survive once, in the later (third-party) group'
+        );
+    });
+
+    test('partitionDedupedStyleFiles keeps distinct same-named files in both groups', () => {
+        // An official and a third-party extension each ship a different markdown.css;
+        // both must survive in their own group (content-based comparison).
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mte-partition-'));
+        try {
+            const off = path.join(dir, 'o', 'markdown.css');
+            const tp = path.join(dir, 'tp', 'markdown.css');
+            fs.mkdirSync(path.dirname(off));
+            fs.mkdirSync(path.dirname(tp));
+            fs.writeFileSync(off, 'blockquote{padding:0 16px}');
+            fs.writeFileSync(tp, 'blockquote{padding:0 1em}');
+            assert.deepStrictEqual(
+                partitionDedupedStyleFiles([off], [tp]),
+                { official: [off], thirdParty: [tp] }
+            );
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     test('getStyles result has no exact duplicate entries', () => {

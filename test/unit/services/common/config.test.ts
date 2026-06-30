@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as sinon from 'sinon';
-import { Config } from '../../../../src/services/common/config';
+import { Config, resolveExportTheme } from '../../../../src/services/common/config';
 
 suite('Config Tests', () => {
     let sandbox: sinon.SinonSandbox;
@@ -135,5 +135,24 @@ suite('Config Tests', () => {
         const result = config.puppeteerExecutable;
         
         assert.strictEqual(result, '', 'Should return empty string if path does not exist');
+    });
+
+    test('resolveExportTheme resolves light, dark and auto', () => {
+        // Explicit values win, regardless of the active theme.
+        assert.strictEqual(resolveExportTheme('light', false), 'light');
+        assert.strictEqual(resolveExportTheme('light', true), 'light');
+        assert.strictEqual(resolveExportTheme('dark', false), 'dark');
+        assert.strictEqual(resolveExportTheme('DARK', false), 'dark', 'case-insensitive');
+        // auto follows the active theme.
+        assert.strictEqual(resolveExportTheme('auto', true), 'dark');
+        assert.strictEqual(resolveExportTheme('auto', false), 'light');
+        // Missing / unknown values default to light (preserves prior behavior).
+        assert.strictEqual(resolveExportTheme(undefined, true), 'light');
+        assert.strictEqual(resolveExportTheme('', true), 'light');
+        assert.strictEqual(resolveExportTheme('nonsense', true), 'light');
+    });
+
+    test('exportTheme getter returns light or dark', () => {
+        assert.ok(['light', 'dark'].includes(config.exportTheme));
     });
 });

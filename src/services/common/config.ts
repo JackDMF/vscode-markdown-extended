@@ -92,6 +92,22 @@ export class Config extends ConfigReader {
     get exportOutDirName(): string {
         return this.read<string>('exportOutDirName');
     }
+
+    /**
+     * Get the color theme to apply to exported HTML/PDF/PNG output.
+     *
+     * Drives the preview body class (`vscode-light` / `vscode-dark`) so that
+     * theme-aware stylesheets render in the chosen mode. `auto` follows the active
+     * VS Code color theme at export time. Defaults to `light`.
+     *
+     * @returns `'light'` or `'dark'` (the resolved value, never `'auto'`)
+     */
+    get exportTheme(): 'light' | 'dark' {
+        const kind = vscode.window.activeColorTheme && vscode.window.activeColorTheme.kind;
+        const isDark = kind === vscode.ColorThemeKind.Dark
+            || kind === vscode.ColorThemeKind.HighContrast;
+        return resolveExportTheme(this.read<string>('exportTheme'), isDark);
+    }
     
     /**
      * Get path to custom Puppeteer/Chrome executable.
@@ -209,6 +225,24 @@ export class Config extends ConfigReader {
                 omitBackground: this.imageOmitBackground,
             }
         }
+    }
+}
+
+/**
+ * Resolve the configured export theme to a concrete `'light'` or `'dark'` value.
+ *
+ * @param value Raw `markdownExtended.exportTheme` setting (`light` | `dark` | `auto`).
+ * @param isDark Whether the active VS Code color theme is dark (used for `auto`).
+ * @returns `'dark'` for `dark`, the active theme for `auto`, otherwise `'light'`.
+ */
+export function resolveExportTheme(value: string | undefined, isDark: boolean): 'light' | 'dark' {
+    switch ((value || 'light').toLowerCase()) {
+        case 'dark':
+            return 'dark';
+        case 'auto':
+            return isDark ? 'dark' : 'light';
+        default:
+            return 'light';
     }
 }
 

@@ -42,5 +42,9 @@
     "markdownExtended.configuration.imageQuality": "The quality of the image, between 0-100. Not applicable to png images.",
     "markdownExtended.configuration.imageOmitBackground": "Hides default white background and allows capturing screenshots with transparency.",
     "markdownExtended.configuration.tocLevels": "Headings levels to use when generating TOC (2 for h2, etc)\n* Restart VSCode required.",
-    "markdownExtended.configuration.disabledPlugins": "Disable some plugins intergrated by this extension. E.g.: 'underline, toc'. \n* Restart VSCode required."
+    "markdownExtended.configuration.disabledPlugins": "Disable some plugins intergrated by this extension. E.g.: 'underline, toc'. \n* Restart VSCode required.",
+    "markdownExtended.configuration.exportTheme": "Color theme applied to exported HTML/PDF/PNG. Sets the preview body class (vscode-light / vscode-dark) so theme-aware stylesheets render in the chosen mode.",
+    "markdownExtended.configuration.exportTheme.light": "Always export with the light theme (default).",
+    "markdownExtended.configuration.exportTheme.dark": "Always export with the dark theme.",
+    "markdownExtended.configuration.exportTheme.auto": "Follow the active VS Code color theme at export time."
 }

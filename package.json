@@ -3,7 +3,7 @@
   "displayName": "Markdown Extended Pro",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo-small.png",
-  "version": "2.7.2",
+  "version": "2.8.0",
   "publisher": "jackdmf",
   "engines": {
     "vscode": "^1.80.0"
@@ -278,6 +278,21 @@
           "type": "string",
           "default": "out",
           "description": "%markdownExtended.configuration.exportOutDirName%"
+        },
+        "markdownExtended.exportTheme": {
+          "type": "string",
+          "default": "light",
+          "enum": [
+            "light",
+            "dark",
+            "auto"
+          ],
+          "enumDescriptions": [
+            "%markdownExtended.configuration.exportTheme.light%",
+            "%markdownExtended.configuration.exportTheme.dark%",
+            "%markdownExtended.configuration.exportTheme.auto%"
+          ],
+          "description": "%markdownExtended.configuration.exportTheme%"
         },
         "markdownExtended.pdfFormat": {
           "type": "string",
