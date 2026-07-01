@@ -507,6 +507,19 @@ export function MarkdownItContainer(md: MarkdownIt): void {
 
 ---
 
+### 8. Service Access: Composition-Root Singletons + Injected Collaborators
+
+**Decision (v3.0):** Keep one canonical singleton accessor per service, wired at a composition root, and inject collaborators via constructors where it aids testing. Remove the deprecated parallel access shims.
+
+**Rationale:**
+
+- ✅ The extension is activated once; long-lived services (`ExtensionContext`, `Config`, `ContributorService`, `ContributesService`, `BrowserManager`, exporters, `MermaidRenderer`) are naturally singletons. `extension.ts` is the composition root: it initializes `ExtensionContext` and `BrowserManager` with the VS Code context and registers the commands.
+- ✅ **Deprecated shims removed** — the parallel `config`, `Contributes`, `Contributors`, and `htmlExporter` exports and their barrel files are gone; call sites use the canonical `Config.instance` / `ContributesService.instance` / etc. One access path, less confusion (finishes the migration tracked in `docs/DEPRECATED_MIGRATION.md`).
+- ✅ **Constructor injection where it pays off** — `ContributesService` depends on the `IContributorService` *abstraction* and accepts it via its constructor (defaulting to the shared singleton), so tests inject a fake without static seams (Dependency Inversion).
+- ⚖️ **Full DI container intentionally avoided** — rewriting every runtime singleton (exporters/browser/context) into threaded constructor injection would be high-churn and high-risk for the export/preview paths, which lack integration tests, with little practical payoff. The composition-root-singleton pattern is idiomatic for VS Code extensions and is retained deliberately.
+
+---
+
 ## Migration Guide
 
 ### For Contributors

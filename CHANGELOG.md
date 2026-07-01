@@ -18,6 +18,12 @@
 - Setting keys renamed (old keys deprecated but still honored): `pdfFormat` → `pdf.format`, `pdfMarginTop/Right/Bottom/Left` → `pdf.margin.*`, `pdfHeaderTemplate`/`pdfFooterTemplate` → `pdf.headerTemplate`/`pdf.footerTemplate`, `imageQuality`/`imageOmitBackground` → `image.*`, `exportTheme` → `export.theme`, `exportOutDirName` → `export.outDirName`, `puppeteerExecutable` → `export.puppeteerExecutable`, `disabledPlugins` → `plugins.disabled`, `tocLevels` → `toc.levels`.
 - `markdownExtended.export.theme` now defaults to `auto` instead of `light`.
 
+### 🧹 Internal
+
+- Exporter selection refactored to an extensible registry (Open–Closed).
+- Removed the deprecated `config` / `Contributes` / `Contributors` / `htmlExporter` compatibility shims and barrel files; the codebase now uses one canonical `.instance` access path per service.
+- `ContributesService` takes its `IContributorService` collaborator via constructor injection (defaulting to the shared singleton) for easier testing.
+
 ## v2.9.0 - Friendlier Exports
 
 ### ✨ New Features / Improvements
