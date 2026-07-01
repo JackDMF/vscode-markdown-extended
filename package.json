@@ -292,6 +292,12 @@
           "description": "%markdownExtended.configuration.puppeteerExecutable%",
           "order": 3
         },
+        "markdownExtended.export.defaultStyles": {
+          "type": "boolean",
+          "default": true,
+          "description": "%markdownExtended.configuration.exportDefaultStyles%",
+          "order": 4
+        },
         "markdownExtended.pdf.format": {
           "type": "string",
           "default": "A4",

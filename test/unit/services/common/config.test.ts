@@ -152,4 +152,13 @@ suite('Config Tests', () => {
             .returns(mockConf({ 'pdf.format': 'Ledger', pdfFormat: 'Legal' }));
         assert.strictEqual(config.pdfFormat, 'Ledger', 'new grouped key wins over legacy');
     });
+
+    test('exportDefaultStyles is on by default and can be disabled', () => {
+        getConfigurationStub.withArgs('markdownExtended').returns(mockConf({}));
+        assert.strictEqual(config.exportDefaultStyles, true, 'defaults on when unset');
+
+        getConfigurationStub.withArgs('markdownExtended')
+            .returns(mockConf({ 'export.defaultStyles': false }));
+        assert.strictEqual(config.exportDefaultStyles, false, 'can be turned off');
+    });
 });

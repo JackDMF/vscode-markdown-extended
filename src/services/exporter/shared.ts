@@ -5,6 +5,7 @@ import { MarkdownDocument } from '../common/markdownDocument';
 import { Contributes } from '../contributes/contributes';
 import { MarkdownItEnv } from '../common/interfaces';
 import { config } from '../common/config';
+import { readContributeFile } from '../contributes/tools';
 
 /**
  * Escape HTML special characters to prevent XSS
@@ -105,6 +106,20 @@ function getStyles(uri: vscode.Uri, injectStyle?: string): string {
         styles.push("<!-- third party styles start -->");
         styles.push(thirdParty);
         styles.push("<!-- third party styles end -->");
+    }
+    // Built-in accessible base stylesheet (export only), layered AFTER contributed
+    // styles and BEFORE user styles, so `markdown.styles` overrides it. Toggle via
+    // `markdownExtended.export.defaultStyles`.
+    if (config.exportDefaultStyles) {
+        const cssPath = ExtensionContext.current.vsContext
+            .asAbsolutePath('styles/markdown-extended-default.css');
+        const defaultStyles = readContributeFile(cssPath, true);
+        if (defaultStyles) {
+            styles.push("");
+            styles.push("<!-- markdown-extended default styles start -->");
+            styles.push(defaultStyles);
+            styles.push("<!-- markdown-extended default styles end -->");
+        }
     }
     if (user) {
         styles.push("");

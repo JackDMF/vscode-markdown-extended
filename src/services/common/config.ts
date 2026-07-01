@@ -109,6 +109,17 @@ export class Config extends ConfigReader {
     }
 
     /**
+     * Whether to apply the built-in accessible base stylesheet to exports.
+     * Layered beneath the user's own `markdown.styles`, so user CSS wins.
+     *
+     * @returns true unless explicitly disabled
+     */
+    get exportDefaultStyles(): boolean {
+        const conf = vscode.workspace.getConfiguration('markdownExtended');
+        return conf.get<boolean>('export.defaultStyles') !== false;
+    }
+
+    /**
      * Get the color theme to apply to exported HTML/PDF/PNG output.
      *
      * Drives the preview body class (`vscode-light` / `vscode-dark`) so that
