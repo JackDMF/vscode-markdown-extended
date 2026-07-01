@@ -183,27 +183,3 @@ export class ContributesService implements IContributesService {
         return createContributeItem(content, false, comment);
     }
 }
-
-/**
- * Namespace export for backward compatibility
- * @deprecated Use ContributesService.instance instead
- */
-// eslint-disable-next-line @typescript-eslint/naming-convention
-export const Contributes = {
-    Styles: {
-        all: () => ContributesService.instance.styles.all(),
-        official: () => ContributesService.instance.styles.official(),
-        thirdParty: () => ContributesService.instance.styles.thirdParty(),
-        user: (uri: vscode.Uri) => ContributesService.instance.styles.user(uri),
-        contributed: () => ContributesService.instance.styles.contributed(),
-    },
-    Scripts: {
-        all: () => ContributesService.instance.scripts.all(),
-        official: () => ContributesService.instance.scripts.official(),
-        thirdParty: () => ContributesService.instance.scripts.thirdParty(),
-    },
-    createStyle: (content: string | Buffer, comment: string) => 
-        ContributesService.instance.createStyle(content, comment),
-    createScript: (content: string | Buffer, comment: string) => 
-        ContributesService.instance.createScript(content, comment),
-};

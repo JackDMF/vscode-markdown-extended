@@ -306,16 +306,3 @@ export function partitionDedupedStyleFiles(
         thirdParty: deduped.filter(f => !officialSet.has(f)),
     };
 }
-
-/**
- * Singleton instance for backward compatibility
- * @deprecated Use ContributorService.instance instead
- */
-// eslint-disable-next-line @typescript-eslint/naming-convention
-export const Contributors = {
-    Type: ContributorType,
-    getStyles: (filter?: (contributor: IContributor) => boolean) => 
-        ContributorService.instance.getStyles(filter),
-    getScripts: (filter?: (contributor: IContributor) => boolean) => 
-        ContributorService.instance.getScripts(filter),
-};

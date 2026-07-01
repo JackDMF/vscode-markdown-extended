@@ -266,9 +266,3 @@ export function resolveExportTheme(value: string | undefined, isDark: boolean): 
             return 'light';
     }
 }
-
-/**
- * Singleton instance of Config for backward compatibility.
- * @deprecated Use Config.instance instead
- */
-export const config = Config.instance;

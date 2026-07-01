@@ -96,9 +96,3 @@ export class HtmlExporter implements MarkdownExporter {
         return ExportFormat.HTML === format;
     }
 }
-
-/**
- * Singleton instance of HtmlExporter for backward compatibility.
- * @deprecated Use HtmlExporter.instance instead
- */
-export const htmlExporter = HtmlExporter.instance;
