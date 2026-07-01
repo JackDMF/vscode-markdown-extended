@@ -1,4 +1,4 @@
-import { ContributorService, ContributorType } from './contributorService';
+import { ContributorService, ContributorType, IContributorService } from './contributorService';
 import { createContributeItem } from './tools';
 import { mdConfig } from './mdConfig';
 import * as vscode from 'vscode';
@@ -50,13 +50,17 @@ export interface IContributesService {
  */
 export class ContributesService implements IContributesService {
     private static _instance?: ContributesService;
-    private readonly _contributorService: ContributorService;
+    private readonly _contributorService: IContributorService;
     
     /**
-     * Private constructor to enforce singleton pattern
+     * Create a ContributesService.
+     *
+     * The `ContributorService` dependency is injected (defaulting to the shared
+     * singleton), so tests can supply a fake without static seams. Prefer
+     * {@link ContributesService.instance} for the shared composition-root instance.
      */
-    private constructor() {
-        this._contributorService = ContributorService.instance;
+    constructor(contributorService: IContributorService = ContributorService.instance) {
+        this._contributorService = contributorService;
     }
     
     /**

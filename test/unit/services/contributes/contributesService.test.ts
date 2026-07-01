@@ -26,6 +26,18 @@ suite('ContributesService Tests', () => {
         assert.strictEqual(instance1, instance2, 'Should return same instance');
     });
 
+    test('injects a custom ContributorService (dependency injection)', () => {
+        const fake = {
+            getStyles: () => ['<style>x</style>'],
+            getScripts: () => [] as string[],
+            getGroupedStyles: () => ({ official: ['<official>'], thirdParty: ['<thirdParty>'] }),
+        };
+        const service = new ContributesService(fake);
+        const contributed = service.styles.contributed();
+        assert.strictEqual(contributed.official, '<official>', 'uses injected official styles');
+        assert.strictEqual(contributed.thirdParty, '<thirdParty>', 'uses injected third-party styles');
+    });
+
     test('should have styles object with all methods', () => {
         const instance = ContributesService.instance;
         
