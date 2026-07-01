@@ -1,6 +1,6 @@
 # Change Log
 
-## v3.0.0 (unreleased) — Onboarding, Accessible Exports & Settings Overhaul
+## v3.0.0 — Onboarding, Accessible Exports & Settings Overhaul
 
 > **Breaking changes.** Existing settings keep working through deprecated aliases; please migrate to the new grouped keys.
 

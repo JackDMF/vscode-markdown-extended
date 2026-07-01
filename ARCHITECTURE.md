@@ -262,7 +262,7 @@ export function MyPlugin(md: MarkdownIt): void {
 ```typescript
 // src/plugin/plugins.ts
 export var plugins: markdownItPlugin[] = [
-    $('markdown-it-table-of-contents', { includeLevel: config.tocLevels }),
+    $('markdown-it-table-of-contents', { includeLevel: Config.instance.tocLevels }),
     $('markdown-it-container'),
     $('markdown-it-admonition'),
     // ...
@@ -270,7 +270,7 @@ export var plugins: markdownItPlugin[] = [
 
 // Helper function that loads plugins
 function $(name: string, ...args: any[]): markdownItPlugin | undefined {
-    if (config.disabledPlugins.some(d => `markdown-it-${d}` === name)) return;
+    if (Config.instance.disabledPlugins.some(d => `markdown-it-${d}` === name)) return;
     const plugin = myPlugins[name] || require(name);
     return plugin ? { plugin, args } : undefined;
 }
@@ -282,7 +282,7 @@ Users can disable plugins via settings:
 
 ```json
 {
-    "markdownExtended.disabledPlugins": "toc, container, emoji"
+    "markdownExtended.plugins.disabled": "toc, container, emoji"
 }
 ```
 

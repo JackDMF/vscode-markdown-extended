@@ -13,6 +13,7 @@ Markdown Extended Pro is a comprehensive extension that extends syntaxes and abi
 - 🎨 **Extended Syntax Support** - 17 integrated markdown-it plugins plus built-in syntaxes
 - 📝 **Advanced Note Types** - Sidenotes, marginal notes, and sidebar annotations
 - 📤 **WYSIWYG Exporter** - Export to HTML, PDF, PNG, JPEG matching the preview
+- 🌗 **Theme-Aware & Accessible Exports** - Light / dark / auto export theme with a built-in, accessible base stylesheet (overridable by your own CSS)
 - 🧜 **Mermaid in Exports** - Diagrams shown in VS Code's preview are rendered to inline SVG in exported files
 - ✏️ **Editing Helpers** - Table formatting, text formatting toggles, and more
 - 🌐 **Web Extension** - Works in [vscode.dev](https://vscode.dev) and [github.dev](https://github.dev) (preview & editing; export requires desktop)
@@ -21,6 +22,8 @@ Markdown Extended Pro is a comprehensive extension that extends syntaxes and abi
 Export files aim to match the markdown preview, including syntaxes and styles contributed by other plugins.
 
 > **Note:** Export to file (PDF, PNG, HTML) requires the desktop version of VS Code. In [vscode.dev](https://vscode.dev), all syntax highlighting, preview plugins, and editing helpers are available — only file export is unavailable.
+
+> **New here?** Run **Welcome: Open Walkthrough…** from the command palette and pick **Get Started with Markdown Extended** for a guided tour of the syntax and export.
 
 ## Features
 
@@ -106,8 +109,10 @@ Integrated markdown-it plugins:
 To disable integrated plugins, add their names (comma-separated, without `markdown-it-` prefix) to settings:
 
 ```json
-"markdownExtended.disabledPlugins": "ib, emoji, bracketed-spans"
+"markdownExtended.plugins.disabled": "ib, emoji, bracketed-spans"
 ```
+
+> The pre-3.0 key `markdownExtended.disabledPlugins` still works but is deprecated.
 
 **Available plugin names:** `table-of-contents`, `container`, `admonition`, `footnote`, `abbr`, `sup-alt`, `sub-alt`, `checkbox`, `attrs`, `kbd`, `ib`, `mark`, `deflist`, `emoji`, `multimd-table`, `html5-embed`, `sidenote`, `bracketed-spans`, `cjk-friendly`, `helper`
 
@@ -144,9 +149,17 @@ The export files are organized in `out` directory in the root of workspace folde
 
 ### Export Configurations
 
-You can configure exporting for multiple documents with user settings.
+Configure exports in **Settings** (search "Markdown Extended"). Settings are grouped under **pdf**, **image**, **export**, **plugins**, and **toc**. Highlights:
 
-Further, you can add per-file settings inside markdown to override user settings (highest priority):
+- `markdownExtended.export.theme` — `light`, `dark`, or `auto` (follows your VS Code theme; default)
+- `markdownExtended.export.defaultStyles` — apply a built-in accessible base stylesheet to exports (on by default; your own `markdown.styles` CSS overrides it)
+- `markdownExtended.pdf.*` / `markdownExtended.image.*` — page format, margins, image quality, and more
+
+> **v3.0:** settings were regrouped. Old flat keys (e.g. `markdownExtended.pdfFormat`) still work but are deprecated — please migrate to the grouped names.
+
+After an export, use **Open** or **Reveal** in the notification to jump to the file. The first PDF/PNG/JPG export downloads a bundled Chromium once, with your consent.
+
+You can also add per-file settings inside markdown front matter to override user settings (highest priority):
 
 ```markdown
 ---

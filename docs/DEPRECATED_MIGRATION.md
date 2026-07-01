@@ -2,7 +2,9 @@
 
 ## Summary
 
-Successfully migrated **ALL** internal code from deprecated singleton exports to the new `.instance` pattern for consistency and clarity.
+Successfully migrated **ALL** internal code from deprecated singleton exports to the canonical `.instance` pattern for consistency and clarity.
+
+> **Update (v3.0):** the migration is complete — the deprecated compatibility exports (`config`, `Contributes`, `Contributors`, `htmlExporter`) and their barrel files were **removed**. Each service now exposes a single canonical `.instance` accessor.
 
 ## Changes Made
 
@@ -42,18 +44,17 @@ if (HtmlExporter.instance.FormatAvailable(format)) { ... }
 if (PuppeteerExporter.instance.FormatAvailable(format)) { ... }
 ```
 
-## Deprecated Exports Status
+## Removed Exports (v3.0)
 
-These exports remain for **backward compatibility ONLY** but are **NO LONGER used internally**:
+These compatibility exports were **removed** in v3.0. Use the canonical accessor instead:
 
-| Export | File | Status | Migration Path |
-|--------|------|--------|----------------|
-| `export const config` | config.ts | @deprecated | Use `Config.instance` |
-| `export const htmlExporter` | html.ts | @deprecated | Use `HtmlExporter.instance` |
-| `export const puppeteerExporter` | puppeteer.ts | @deprecated | Use `PuppeteerExporter.instance` |
-| `export var markdown` | extension.ts | @deprecated | Use `ExtensionContext.current.markdown` |
-| `export var context` | extension.ts | @deprecated | Use `ExtensionContext.current.vsContext` |
-| `export var outputPanel` | extension.ts | @deprecated | Use `ExtensionContext.current.outputPanel` |
+| Removed export | File | Replacement |
+|--------|------|----------------|
+| `config` | config.ts | `Config.instance` |
+| `Contributes` | contributesService.ts | `ContributesService.instance` |
+| `Contributors` | contributorService.ts | `ContributorService.instance` |
+| `htmlExporter` | html.ts | `HtmlExporter.instance` |
+| `markdown` / `context` / `outputPanel` | extension.ts | `ExtensionContext.current.*` |
 
 ## Current Usage Pattern (Consistent Across Codebase)
 
@@ -71,10 +72,10 @@ const html = HtmlExporter.instance;
 const puppeteer = PuppeteerExporter.instance;
 ```
 
-### ❌ DEPRECATED (Only for External Backward Compatibility)
+### ❌ REMOVED in v3.0 (no longer available)
 
 ```typescript
-// Old pattern - deprecated but kept for external code compatibility
+// These deprecated exports were removed in v3.0 — do not use
 import { config } from '../common/config';
 import { htmlExporter } from './html';
 import { puppeteerExporter } from './puppeteer';
@@ -102,7 +103,7 @@ All internal code has been migrated to use the `.instance` pattern:
 ✅ **Zero compilation errors**
 ✅ **Zero TypeScript warnings**
 ✅ **100% internal migration to .instance pattern**
-✅ **Backward compatibility maintained for external code**
+✅ **Deprecated shims fully removed in v3.0**
 
 ## Rationale
 
@@ -114,17 +115,14 @@ All internal code has been migrated to use the `.instance` pattern:
 4. **Technical Debt**: Contradictory guidance creates confusion and debt
 5. **Best Practice**: Explicit is better than implicit
 
-The lowercase exports (`config`, `htmlExporter`, `puppeteerExporter`) are retained solely for backward compatibility with external code that may depend on them.
+The lowercase exports (`config`, `htmlExporter`) and namespace shims (`Contributes`, `Contributors`) were removed in v3.0; use the `.instance` accessors.
 
 ## Recommendations
 
-1. **Internal code**: Always use `ClassName.instance` pattern
-2. **External consumers**: Can continue using deprecated exports (backward compatible)
-3. **Future development**: Follow `.instance` pattern for new singletons
-4. **Documentation**: Clearly mark deprecated exports in JSDoc
+1. **All code**: Use the `ClassName.instance` accessor (the deprecated shims were removed in v3.0)
+2. **Future development**: Follow the `.instance` pattern for new singletons; inject collaborators via constructors where it aids testing
+3. **Documentation**: Keep the service-access decision in `ARCHITECTURE.md` in sync
 
 ---
 
-**Date:** November 11, 2025  
-**Status:** ✅ Complete - Full Migration  
-**Test Coverage:** 40/40 passing
+**Status:** ✅ Complete — deprecated shims removed in v3.0
