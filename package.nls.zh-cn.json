@@ -45,9 +45,9 @@
     "markdownExtended.configuration.disabledPlugins": "停用此扩展集成的某些插件。如: 'underline, toc'。 \n* 需重启 VSCode 生效。",
     "markdownExtended.configuration.exportDefaultStyles": "仅当你未设置自己的 `markdown.styles` 时，才将 Markdown Extended 内置的、无障碍的基础样式表应用到导出（HTML/PDF/PNG）。若你提供了 `markdown.styles`，则完全由你的 CSS 控制导出，内置样式表将被跳过。关闭则从不添加。",
     "markdownExtended.configuration.exportTheme": "导出 HTML/PDF/PNG 时应用的颜色主题。设置预览的 body 类名 (vscode-light / vscode-dark)，使支持主题的样式表按所选模式渲染。",
-    "markdownExtended.configuration.exportTheme.light": "始终以浅色主题导出。",
+    "markdownExtended.configuration.exportTheme.light": "始终以浅色主题导出（默认）。",
     "markdownExtended.configuration.exportTheme.dark": "始终以深色主题导出。",
-    "markdownExtended.configuration.exportTheme.auto": "导出时跟随当前 VS Code 的颜色主题（默认）。",
+    "markdownExtended.configuration.exportTheme.auto": "导出时跟随当前 VS Code 的颜色主题。",
     "markdownExtended.configuration.lengthError": "请输入 CSS 长度，例如 1cm、210mm、8.5in 或 96px（留空则使用页面格式）。",
     "markdownExtended.configuration.deprecated": "已在 v3.0 重命名——设置现按 pdf.*、image.*、export.*、plugins.*、toc.* 分组。当前值仍然有效；请改用分组后的设置。"
 }

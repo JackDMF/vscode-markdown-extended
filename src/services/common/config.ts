@@ -123,8 +123,8 @@ export class Config extends ConfigReader {
      * Get the color theme to apply to exported HTML/PDF/PNG output.
      *
      * Drives the preview body class (`vscode-light` / `vscode-dark`) so that
-     * theme-aware stylesheets render in the chosen mode. `auto` (the default)
-     * follows the active VS Code color theme at export time.
+     * theme-aware stylesheets render in the chosen mode. Defaults to `light`;
+     * `auto` follows the active VS Code color theme at export time.
      *
      * @returns `'light'` or `'dark'` (the resolved value, never `'auto'`)
      */

@@ -1,6 +1,6 @@
-## Extended syntax cheat‑sheet
+## Extended syntax cheat-sheet
 
-| Write this | To get |
+| Write | Result |
 |---|---|
 | `==highlight==` | highlighted / marked text |
 | `_underline_` | underlined text |
@@ -9,21 +9,28 @@
 | `[[toc]]` | a table of contents |
 | `[^1]` … `[^1]: note` | a footnote |
 | `*[HTML]: HyperText…` | an abbreviation tooltip |
-| `**text**{style="color:red"}` | inline attributes |
+| `**text**{style="color:red"}` | inline attributes, also `{.class #id}` |
 
-**Admonition**
-
-```
-!!! tip
-    A helpful aside.
-```
-
-**Container**
+**Admonitions** — `!!! type` (types include note, tip, info, success, question, warning, danger, example, quote):
 
 ```
-::: warning
-Boxed content.
+!!! warning
+    Watch your step.
+```
+
+**Containers** — fenced blocks with a class:
+
+```
+::: tip
+Boxed, styled content.
 :::
 ```
 
-Tip: type `admonition`, `container`, `kbd`, `footnote`, `table`, or `attr` and press <kbd>Tab</kbd> to expand a snippet. Toggle commands like **Markdown: Toggle Bold** also work on a selection.
+**Definition lists**:
+
+```
+Term
+: Definition of the term
+```
+
+Type `admonition`, `container`, `kbd`, `footnote`, `abbr`, `table`, or `attr` and press <kbd>Tab</kbd> to expand a snippet. Prefer to disable a plugin? See `markdownExtended.plugins.disabled`.

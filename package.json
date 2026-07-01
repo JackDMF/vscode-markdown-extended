@@ -266,7 +266,7 @@
       "properties": {
         "markdownExtended.export.theme": {
           "type": "string",
-          "default": "auto",
+          "default": "light",
           "enum": [
             "light",
             "dark",
@@ -535,23 +535,40 @@
           {
             "id": "mdext.welcome",
             "title": "Welcome",
-            "description": "What Markdown Extended Pro adds to your Markdown.",
+            "description": "What Markdown Extended Pro adds, and how to preview it live.\n[Open Preview to the Side](command:markdown.showPreviewToSide)",
             "media": {
               "markdown": "media/walkthrough/welcome.md"
             }
           },
           {
+            "id": "mdext.annotations",
+            "title": "Sidenotes & annotations",
+            "description": "The signature feature — floating sidenotes, marginal notes, and sidebars, with Markdown inside the note.\n[New Markdown file](command:workbench.action.files.newUntitledFile?%7B%22languageId%22%3A%22markdown%22%7D)",
+            "media": {
+              "markdown": "media/walkthrough/annotations.md"
+            }
+          },
+          {
             "id": "mdext.syntax",
             "title": "Extended syntax",
-            "description": "Admonitions, containers, marks, footnotes, and more.\n[Open a new Markdown file](command:workbench.action.files.newUntitledFile?%7B%22languageId%22%3A%22markdown%22%7D)",
+            "description": "Admonitions, containers, marks, footnotes, TOC, attributes, and more.",
             "media": {
               "markdown": "media/walkthrough/syntax.md"
             }
           },
           {
+            "id": "mdext.editing",
+            "title": "Editing helpers & tables",
+            "description": "Toggle formatting, build and reshape tables, and paste CSV straight in as a Markdown table.\n[Paste as Markdown Table](command:markdownExtended.pasteAsTable)",
+            "media": {
+              "image": "images/pasteTable.gif",
+              "altText": "Pasting CSV data as a formatted Markdown table"
+            }
+          },
+          {
             "id": "mdext.export",
             "title": "Export anywhere",
-            "description": "Self-contained HTML, PDF, PNG, or JPG.\n[Run Export](command:markdownExtended.export)",
+            "description": "Self-contained HTML, PDF, PNG, or JPEG — then Open or Reveal the result.\n[Run Export](command:markdownExtended.export)",
             "media": {
               "markdown": "media/walkthrough/export.md"
             },
@@ -561,8 +578,8 @@
           },
           {
             "id": "mdext.theme",
-            "title": "Themes & CSS",
-            "description": "Light, dark, or auto export, plus your own stylesheet.\n[Open settings](command:workbench.action.openSettings?%22markdownExtended.export%22)",
+            "title": "Themes & styling",
+            "description": "Light/dark/auto export, a built-in accessible stylesheet, your own CSS, and editor color themes.\n[Open settings](command:workbench.action.openSettings?%22markdownExtended%22)",
             "media": {
               "markdown": "media/walkthrough/theme.md"
             }

@@ -45,9 +45,9 @@
     "markdownExtended.configuration.disabledPlugins": "Disable some plugins intergrated by this extension. E.g.: 'underline, toc'. \n* Restart VSCode required.",
     "markdownExtended.configuration.exportDefaultStyles": "Apply Markdown Extended's built-in, accessible base stylesheet to exports (HTML/PDF/PNG) — but only when you have not set your own `markdown.styles`. If you provide `markdown.styles`, your CSS fully controls the export and the built-in stylesheet is skipped. Turn off to never add it.",
     "markdownExtended.configuration.exportTheme": "Color theme applied to exported HTML/PDF/PNG. Sets the preview body class (vscode-light / vscode-dark) so theme-aware stylesheets render in the chosen mode.",
-    "markdownExtended.configuration.exportTheme.light": "Always export with the light theme.",
+    "markdownExtended.configuration.exportTheme.light": "Always export with the light theme (default).",
     "markdownExtended.configuration.exportTheme.dark": "Always export with the dark theme.",
-    "markdownExtended.configuration.exportTheme.auto": "Follow the active VS Code color theme at export time (default).",
+    "markdownExtended.configuration.exportTheme.auto": "Follow the active VS Code color theme at export time.",
     "markdownExtended.configuration.lengthError": "Enter a CSS length such as 1cm, 210mm, 8.5in, or 96px (or leave empty to use the page format).",
     "markdownExtended.configuration.deprecated": "Renamed in v3.0 — settings are now grouped under pdf.*, image.*, export.*, plugins.*, and toc.*. Your current value still applies; please move to the grouped setting."
 }

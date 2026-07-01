@@ -9,14 +9,14 @@
 - **Getting Started walkthrough** that teaches the extended syntax and the export flow (Help → Get Started → *Get Started with Markdown Extended*).
 - **Accessible default export stylesheet.** Exports now ship with a self-contained, WCAG-AA base theme (light & dark) so HTML/PDF/PNG look good as standalone files. It applies **only when you haven't set your own `markdown.styles`** (your CSS otherwise fully controls the export), and can be turned off with `markdownExtended.export.defaultStyles: false`.
 - **Grouped settings IA.** Settings are reorganized under `pdf.*`, `image.*`, `export.*`, `plugins.*`, and `toc.*`. Old flat keys (e.g. `markdownExtended.pdfFormat`) still work but are deprecated and read as a fallback.
-- **Export theme defaults to `auto`** — exports follow your active VS Code theme unless you pick `light`/`dark` (previously always light).
+- **Export theme control** — `markdownExtended.export.theme` sets exports to `light` (default), `dark`, or `auto` (follow your active VS Code theme).
 - **Validated inputs** — PDF size/margins accept CSS lengths only; image quality is 0–100.
 - Exporter selection is now an extensible **registry** (Open–Closed), and export command copy is clearer.
 
 ### ⚠️ Breaking Changes
 
 - Setting keys renamed (old keys deprecated but still honored): `pdfFormat` → `pdf.format`, `pdfMarginTop/Right/Bottom/Left` → `pdf.margin.*`, `pdfHeaderTemplate`/`pdfFooterTemplate` → `pdf.headerTemplate`/`pdf.footerTemplate`, `imageQuality`/`imageOmitBackground` → `image.*`, `exportTheme` → `export.theme`, `exportOutDirName` → `export.outDirName`, `puppeteerExecutable` → `export.puppeteerExecutable`, `disabledPlugins` → `plugins.disabled`, `tocLevels` → `toc.levels`.
-- `markdownExtended.export.theme` now defaults to `auto` instead of `light`.
+- Exports **without** a custom `markdown.styles` now use the built-in accessible base stylesheet (light, centered content) instead of the previous unstyled output. Set `markdownExtended.export.defaultStyles: false` to opt out; if you attach your own `markdown.styles`, it is used unchanged.
 
 ### 🧹 Internal
 
