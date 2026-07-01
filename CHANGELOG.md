@@ -7,7 +7,7 @@
 ### ✨ New Features
 
 - **Getting Started walkthrough** that teaches the extended syntax and the export flow (Help → Get Started → *Get Started with Markdown Extended*).
-- **Accessible default export stylesheet.** Exports now ship with a self-contained, WCAG-AA base theme (light & dark) so HTML/PDF/PNG look good as standalone files. It is layered beneath your own `markdown.styles`, so your CSS still wins, and can be turned off with `markdownExtended.export.defaultStyles: false`.
+- **Accessible default export stylesheet.** Exports now ship with a self-contained, WCAG-AA base theme (light & dark) so HTML/PDF/PNG look good as standalone files. It applies **only when you haven't set your own `markdown.styles`** (your CSS otherwise fully controls the export), and can be turned off with `markdownExtended.export.defaultStyles: false`.
 - **Grouped settings IA.** Settings are reorganized under `pdf.*`, `image.*`, `export.*`, `plugins.*`, and `toc.*`. Old flat keys (e.g. `markdownExtended.pdfFormat`) still work but are deprecated and read as a fallback.
 - **Export theme defaults to `auto`** — exports follow your active VS Code theme unless you pick `light`/`dark` (previously always light).
 - **Validated inputs** — PDF size/margins accept CSS lengths only; image quality is 0–100.

@@ -43,7 +43,7 @@
     "markdownExtended.configuration.imageOmitBackground": "隐藏默认的白色背景，生成透明背景的图片。",
     "markdownExtended.configuration.tocLevels": "生成目录(TOC)时采用的标题层级 (例如，2 表示 h2)。\n* 需重启 VSCode 生效。",
     "markdownExtended.configuration.disabledPlugins": "停用此扩展集成的某些插件。如: 'underline, toc'。 \n* 需重启 VSCode 生效。",
-    "markdownExtended.configuration.exportDefaultStyles": "将 Markdown Extended 内置的、无障碍的基础样式表应用到导出（HTML/PDF/PNG）。它位于你自己的 markdown.styles CSS 之下，因此你的样式仍然优先。关闭后仅使用默认预览样式导出。",
+    "markdownExtended.configuration.exportDefaultStyles": "仅当你未设置自己的 `markdown.styles` 时，才将 Markdown Extended 内置的、无障碍的基础样式表应用到导出（HTML/PDF/PNG）。若你提供了 `markdown.styles`，则完全由你的 CSS 控制导出，内置样式表将被跳过。关闭则从不添加。",
     "markdownExtended.configuration.exportTheme": "导出 HTML/PDF/PNG 时应用的颜色主题。设置预览的 body 类名 (vscode-light / vscode-dark)，使支持主题的样式表按所选模式渲染。",
     "markdownExtended.configuration.exportTheme.light": "始终以浅色主题导出。",
     "markdownExtended.configuration.exportTheme.dark": "始终以深色主题导出。",

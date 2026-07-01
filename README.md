@@ -152,7 +152,7 @@ The export files are organized in `out` directory in the root of workspace folde
 Configure exports in **Settings** (search "Markdown Extended"). Settings are grouped under **pdf**, **image**, **export**, **plugins**, and **toc**. Highlights:
 
 - `markdownExtended.export.theme` — `light`, `dark`, or `auto` (follows your VS Code theme; default)
-- `markdownExtended.export.defaultStyles` — apply a built-in accessible base stylesheet to exports (on by default; your own `markdown.styles` CSS overrides it)
+- `markdownExtended.export.defaultStyles` — apply a built-in accessible base stylesheet to exports (on by default; **skipped when you set your own `markdown.styles`**)
 - `markdownExtended.pdf.*` / `markdownExtended.image.*` — page format, margins, image quality, and more
 
 > **v3.0:** settings were regrouped. Old flat keys (e.g. `markdownExtended.pdfFormat`) still work but are deprecated — please migrate to the grouped names.

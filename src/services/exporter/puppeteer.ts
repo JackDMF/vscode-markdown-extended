@@ -191,12 +191,6 @@ export class PuppeteerExporter implements MarkdownExporter {
     }
 }
 
-/**
- * Singleton instance of PuppeteerExporter for backward compatibility.
- * @deprecated Use PuppeteerExporter.instance instead
- */
-export const puppeteerExporter = PuppeteerExporter.instance;
-
 function getInjectStyle(formate: ExportFormat): string {
     switch (formate) {
         case ExportFormat.JPG:

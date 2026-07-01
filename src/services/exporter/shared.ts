@@ -108,10 +108,12 @@ function getStyles(uri: vscode.Uri, injectStyle?: string): string {
         styles.push(thirdParty);
         styles.push("<!-- third party styles end -->");
     }
-    // Built-in accessible base stylesheet (export only), layered AFTER contributed
-    // styles and BEFORE user styles, so `markdown.styles` overrides it. Toggle via
+    // Built-in accessible base stylesheet (export only) — a *fallback* used only
+    // when the user has NOT provided their own `markdown.styles`. If they have,
+    // their CSS fully controls the export and we stay out of the way (otherwise our
+    // body layout/theme rules would fight a custom stylesheet). Toggle via
     // `markdownExtended.export.defaultStyles`.
-    if (Config.instance.exportDefaultStyles) {
+    if (Config.instance.exportDefaultStyles && !user) {
         const cssPath = ExtensionContext.current.vsContext
             .asAbsolutePath('styles/markdown-extended-default.css');
         const defaultStyles = readContributeFile(cssPath, true);
