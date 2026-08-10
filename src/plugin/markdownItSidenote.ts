@@ -247,7 +247,9 @@ function registerRendererRules(md: MarkdownIt, config: RenderConfig): void {
     // Type guard: Check if this is a NoteConfig (has refClass)
     if ('refClass' in config) {
         // Note type (sidenote or marginal_note)
-        // Structure: <span class="ref"><ref text></span><span class="note"><note content></span>
+        // Structure: <span class="ref"><ref text><span class="note"><note content></span></span>
+        // The note span is nested INSIDE the reference span, not a sibling of it — CSS should
+        // target it as a descendant (e.g. `.sn-ref .sidenote`), never as `.sn-ref + .sidenote`.
         // The reference (outer) span carries any markdown-it-attrs attributes added via {.class}
         md.renderer.rules[`${type}_open`] = (tokens, idx) => `<span${renderOpenTagAttrs(tokens[idx], config.refClass)}>`;
         md.renderer.rules[`${type}_ref_open`] = () => ''; // No additional wrapper
