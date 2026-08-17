@@ -152,7 +152,14 @@ export class PuppeteerExporter implements MarkdownExporter {
         let ptConf: any = {};
         await mkdirsAsync(path.dirname(item.fileName));
 
-        await page.setContent(html, { waitUntil: 'networkidle0' });
+        // `setContent` no longer accepts the network-idle lifecycle events. `load`
+        // already covers images and stylesheets, and the page arrives with mermaid
+        // pre-rendered and images embedded, so there is normally no traffic left.
+        // Give third-party preview scripts a brief, bounded window anyway.
+        await page.setContent(html, { waitUntil: 'load' });
+        await page.waitForNetworkIdle({ idleTime: 100, timeout: 5000 }).catch(() => {
+            // Best effort: a slow remote resource must not fail the export.
+        });
         switch (item.format) {
             case ExportFormat.PDF:
                 ptConf = mergeSettings(

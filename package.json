@@ -3,7 +3,7 @@
   "displayName": "Markdown Extended Pro",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo-small.png",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "publisher": "jackdmf",
   "engines": {
     "vscode": "^1.80.0"
@@ -602,8 +602,8 @@
     "compile-tests": "tsc -p ./",
     "watch-tests": "tsc -watch -p ./",
     "pretest": "npm run compile-tests",
-    "test": "npm run compile-tests && node ./out/test/index.js",
-    "test:unit": "npm run compile-tests && node ./out/test/runTest.js",
+    "test": "npm run compile-tests && node ./out/test/runTest.js",
+    "test:unit": "npm run test",
     "lint": "eslint src --ext ts",
     "lint:fix": "eslint src --ext ts --fix"
   },

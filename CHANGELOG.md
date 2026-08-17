@@ -1,5 +1,18 @@
 # Change Log
 
+## v3.0.1 — Maintenance
+
+### 🐛 Fixes
+
+- **Export page-load wait corrected for Puppeteer 24.43+.** `setContent` no longer accepts the `networkidle0` lifecycle event; exports now wait for `load` plus a short, bounded network settle. A slow remote resource can no longer stall or fail an export.
+
+### 🧹 Internal
+
+- Dependencies refreshed within their existing ranges (Puppeteer 24.43, mermaid 11.16.1, TypeScript 5.9.3, esbuild 0.27.7, highlight.js 11.12, and others).
+- `npm test` now runs the real suite. It previously pointed at a legacy runner requiring the long-deprecated `vscode` package, which was never installed — the script had been broken since the initial commit.
+- The test runner clears `ELECTRON_RUN_AS_NODE`, so the suite can be run from VS Code's integrated terminal instead of failing to launch.
+- Removed the dead `test/index.ts` runner and the placeholder `test/extension.test.ts`, which sat outside the test glob and never ran.
+
 ## v3.0.0 — Onboarding, Accessible Exports & Settings Overhaul
 
 > **Breaking changes.** Existing settings keep working through deprecated aliases; please migrate to the new grouped keys.
