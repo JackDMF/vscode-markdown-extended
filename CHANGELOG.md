@@ -4,7 +4,7 @@
 
 ### 🐛 Fixes
 
-- **`export.outDirName` now honours the folder's own `.vscode/settings.json` in a multi-root workspace.** The setting was read without a resource scope, so VS Code answered from user and workspace level only and the folder value was silently ignored — a folder exporting to a synced iCloud directory kept writing into the repository because the `.code-workspace` file said `Output`. The export path is now resolved against the document being exported.
+- **`export.outDirName` now honours the folder's own `.vscode/settings.json` in a multi-root workspace.** The setting was read without a resource scope, so VS Code answered from user and workspace level only and the folder value was silently ignored — a folder exporting to a synced iCloud directory kept writing into the repository because the `.code-workspace` file said `Output`. Two things had to change: the export settings are now **declared with `scope: resource`** (VS Code refused folder-level values outright — "This setting cannot be applied in this workspace"), and every export setting — output directory, theme, default stylesheet, PDF page and margins, image quality — is **read with the document as resource scope** via `Config.scoped(uri)`. `export.puppeteerExecutable` is declared `machine-overridable`, since it names a binary on this machine.
 
 ### 🧹 Internal
 

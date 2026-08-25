@@ -150,6 +150,8 @@ export class PuppeteerExporter implements MarkdownExporter {
         // Render mermaid diagrams (if any) to inline SVG before capture.
         const html = await MermaidRenderer.instance.process(renderPage(document, inject));
         let ptConf: any = {};
+        // Folder-level settings only arrive when the read names the document
+        const scoped = Config.instance.scoped(item.uri);
         await mkdirsAsync(path.dirname(item.fileName));
 
         // `setContent` no longer accepts the network-idle lifecycle events. `load`
@@ -164,7 +166,7 @@ export class PuppeteerExporter implements MarkdownExporter {
             case ExportFormat.PDF:
                 ptConf = mergeSettings(
                     Config.instance.puppeteerDefaultSetting.pdf,
-                    Config.instance.puppeteerUserSetting.pdf,
+                    scoped.puppeteerUserSetting.pdf,
                     document.meta.puppeteerPDF
                 );
                 if (typeof ptConf.preferCSSPageSize === 'undefined') {
@@ -177,7 +179,7 @@ export class PuppeteerExporter implements MarkdownExporter {
             case ExportFormat.PNG:
                 ptConf = mergeSettings(
                     Config.instance.puppeteerDefaultSetting.image,
-                    Config.instance.puppeteerUserSetting.image,
+                    scoped.puppeteerUserSetting.image,
                     document.meta.puppeteerImage
                 );
                 ptConf = Object.assign(ptConf, { path: item.fileName, type: item.format === ExportFormat.JPG ? "jpeg" : "png" });

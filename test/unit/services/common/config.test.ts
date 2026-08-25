@@ -16,6 +16,34 @@ function mockConf(values: Record<string, any>) {
     } as any;
 }
 
+suite('Config.scoped', () => {
+    let sandbox: sinon.SinonSandbox;
+    let getConfigurationStub: sinon.SinonStub;
+
+    setup(() => {
+        sandbox = sinon.createSandbox();
+        getConfigurationStub = sandbox.stub(vscode.workspace, 'getConfiguration');
+        getConfigurationStub.returns(mockConf({ 'export.outDirName': '/synced/Output', 'pdf.margin.left': '5mm' }));
+    });
+    teardown(() => sandbox.restore());
+
+    test('reads every export setting with the document as resource scope', () => {
+        // In a multi-root workspace an unscoped read never sees the folder's own
+        // .vscode/settings.json — the whole point of scoped() is to name the document.
+        const uri = vscode.Uri.file('/repo/archive/Aufgaben/Vorsitz.md');
+        const view = Config.instance.scoped(uri);
+        assert.strictEqual(view.exportOutDirName, '/synced/Output');
+        assert.strictEqual((view.puppeteerUserSetting.pdf as any).margin.left, '5mm');
+        assert.ok(getConfigurationStub.alwaysCalledWith('markdownExtended', uri),
+            'every configuration read must carry the resource scope');
+    });
+
+    test('without a document it falls back to the window-level read', () => {
+        Config.instance.scoped();
+        assert.ok(getConfigurationStub.alwaysCalledWithExactly('markdownExtended'));
+    });
+});
+
 suite('Config Tests', () => {
     let sandbox: sinon.SinonSandbox;
     let getConfigurationStub: sinon.SinonStub;

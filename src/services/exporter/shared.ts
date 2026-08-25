@@ -36,7 +36,7 @@ export function renderPage(
     // Set the preview body theme class so theme-aware stylesheets render in the
     // chosen mode (markdownExtended.exportTheme: light | dark | auto). Keep
     // `vscode-body` too, as we cannot tell whether a user style URL is a theme.
-    const mdClass = `markdown-body vscode-body vscode-${Config.instance.exportTheme}`;
+    const mdClass = `markdown-body vscode-body vscode-${Config.instance.scoped(doc.document.uri).exportTheme}`;
     
     // Use template literal directly instead of eval()
     return `<!DOCTYPE html>
@@ -113,7 +113,7 @@ function getStyles(uri: vscode.Uri, injectStyle?: string): string {
     // their CSS fully controls the export and we stay out of the way (otherwise our
     // body layout/theme rules would fight a custom stylesheet). Toggle via
     // `markdownExtended.export.defaultStyles`.
-    if (Config.instance.exportDefaultStyles && !user) {
+    if (Config.instance.scoped(uri).exportDefaultStyles && !user) {
         const cssPath = ExtensionContext.current.vsContext
             .asAbsolutePath('styles/markdown-extended-default.css');
         const defaultStyles = readContributeFile(cssPath, true);

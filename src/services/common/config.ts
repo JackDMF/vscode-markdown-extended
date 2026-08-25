@@ -6,6 +6,14 @@ import * as fs from 'fs';
  * Configuration reader for markdown-extended settings.
  * Implements singleton pattern for consistent configuration access.
  */
+/** Export settings resolved for one document — see Config.scoped(). */
+export interface ScopedExportConfig {
+    exportOutDirName: string;
+    exportDefaultStyles: boolean;
+    exportTheme: 'light' | 'dark';
+    puppeteerUserSetting: { pdf: Record<string, unknown>; image: Record<string, unknown> };
+}
+
 export class Config extends ConfigReader {
     private static _instance?: Config;
     
@@ -118,7 +126,7 @@ export class Config extends ConfigReader {
      * said `Output`. Resolve against the document, so the folder wins.
      */
     exportOutDirNameFor(uri: vscode.Uri): string {
-        return this.migrated<string>('export.outDirName', 'exportOutDirName', uri);
+        return this.scoped(uri).exportOutDirName;
     }
 
     /**
@@ -128,8 +136,54 @@ export class Config extends ConfigReader {
      * @returns true unless explicitly disabled
      */
     get exportDefaultStyles(): boolean {
-        const conf = vscode.workspace.getConfiguration('markdownExtended');
-        return conf.get<boolean>('export.defaultStyles') !== false;
+        return this.scoped().exportDefaultStyles;
+    }
+
+    /**
+     * Export settings as they apply to ONE document.
+     *
+     * Every export setting is declared with `scope: resource`, so a folder in a
+     * multi-root workspace may set its own export directory, PDF margins or
+     * theme in its `.vscode/settings.json`. Those values only reach us when the
+     * read carries the document as resource scope — an unscoped read answers
+     * from user and workspace level and silently drops the folder's value.
+     * Exporters therefore read through this view, never the bare getters.
+     */
+    scoped(uri?: vscode.Uri): ScopedExportConfig {
+        const read = <T>(newKey: string, oldKey: string): T => this.migrated<T>(newKey, oldKey, uri);
+        const conf = uri
+            ? vscode.workspace.getConfiguration('markdownExtended', uri)
+            : vscode.workspace.getConfiguration('markdownExtended');
+        const kind = vscode.window.activeColorTheme && vscode.window.activeColorTheme.kind;
+        const isDark = kind === vscode.ColorThemeKind.Dark
+            || kind === vscode.ColorThemeKind.HighContrast;
+        return {
+            exportOutDirName: read<string>('export.outDirName', 'exportOutDirName'),
+            exportDefaultStyles: conf.get<boolean>('export.defaultStyles') !== false,
+            exportTheme: resolveExportTheme(read<string>('export.theme', 'exportTheme'), isDark),
+            puppeteerUserSetting: {
+                pdf: {
+                    format: read<string>('pdf.format', 'pdfFormat'),
+                    width: read<string>('pdf.width', 'pdfWidth'),
+                    height: read<string>('pdf.height', 'pdfHeight'),
+                    landscape: read<boolean>('pdf.landscape', 'pdfLandscape'),
+                    margin: {
+                        top: read<string>('pdf.margin.top', 'pdfMarginTop'),
+                        right: read<string>('pdf.margin.right', 'pdfMarginRight'),
+                        bottom: read<string>('pdf.margin.bottom', 'pdfMarginBottom'),
+                        left: read<string>('pdf.margin.left', 'pdfMarginLeft'),
+                    },
+                    displayHeaderFooter: read<boolean>('pdf.displayHeaderFooter', 'pdfDisplayHeaderFooter'),
+                    pageRanges: read<string>('pdf.pageRanges', 'pdfPageRanges'),
+                    headerTemplate: read<string>('pdf.headerTemplate', 'pdfHeaderTemplate'),
+                    footerTemplate: read<string>('pdf.footerTemplate', 'pdfFooterTemplate'),
+                },
+                image: {
+                    quality: read<number>('image.quality', 'imageQuality') || 100,
+                    omitBackground: read<boolean>('image.omitBackground', 'imageOmitBackground'),
+                },
+            },
+        };
     }
 
     /**
