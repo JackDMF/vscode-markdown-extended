@@ -14,6 +14,7 @@
 
 - `@vscode/test-electron` upgraded to 3.x. On VS Code 1.134 the macOS stable bundle ships its binary as `Code`, which 2.5.2 could not find (`spawn … /MacOS/Electron ENOENT`) — the suite downloaded VS Code and then failed to launch it.
 - Unit tests for `calculateExportPath` covering a plain directory name, an absolute one, and a document outside the workspace.
+- **`npm run release`** guards the release path: clean tree, up to date with the remote, version committed, CHANGELOG section present, tag free, then lint, the full suite, and a single `.vsix`. `npm run release:publish` adds tag, push and publishes *that* file — `vsce publish` without `--packagePath` would repackage and ship something the tests never saw. See [ARCHITECTURE.md](ARCHITECTURE.md#releasing).
 
 ## v3.0.1 — Maintenance
 

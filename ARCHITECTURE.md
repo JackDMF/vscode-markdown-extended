@@ -627,3 +627,24 @@ For questions or suggestions, please open an issue on GitHub.
 **Document Version:** 1.0  
 **Last Updated:** November 7, 2025  
 **Extension Version:** 2.0.0
+
+## Releasing
+
+```bash
+npm run release          # checks + lint + tests + .vsix, nothing leaves the machine
+npm run release:publish  # the same, then tag, push, and publish that .vsix
+```
+
+`scripts/release.mjs` checks, in this order: working tree clean · branch not behind
+`origin` · the version in `package.json` is committed (not merely on disk) ·
+`CHANGELOG.md` has a `## vX.Y.Z` section · that tag does not exist yet. Then lint
+and the full test suite run, and the package is built **once**.
+
+Each check comes from a mistake that actually happened. v3.0.2 was first built
+from a tree two commits behind the remote, so the Puppeteer `setContent` fix
+released in v3.0.1 silently vanished from the artefact; and v3.0.1's version bump
+had never been committed — `package.json` said 3.0.0 while the Marketplace served
+3.0.1, which is what made building from a stale base so easy.
+
+Publishing uses `--packagePath` deliberately: `vsce publish` would otherwise
+repackage and ship a different artefact than the one the tests ran against.
