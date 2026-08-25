@@ -25,8 +25,12 @@ suite('calculateExportPath', () => {
 
     teardown(() => sandbox.restore());
 
+    /** Stub both accessors; `exportOutDirNameFor` must be the one consulted. */
     function withOutDir(wert: string) {
-        sandbox.stub(Config, 'instance').value({ exportOutDirName: wert });
+        sandbox.stub(Config, 'instance').value({
+            exportOutDirName: 'WRONG-workspace-level',
+            exportOutDirNameFor: (_uri: vscode.Uri) => wert,
+        });
     }
 
     test('a plain name lands under the workspace root', () => {

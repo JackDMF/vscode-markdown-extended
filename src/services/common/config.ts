@@ -109,6 +109,19 @@ export class Config extends ConfigReader {
     }
 
     /**
+     * Export directory as configured for the folder that holds `uri`.
+     *
+     * Without a resource scope, VS Code answers from user + workspace level
+     * only. In a multi-root workspace that silently ignores the folder's own
+     * `.vscode/settings.json`: a folder pointing its exports at a synced iCloud
+     * directory kept exporting into the repository, because the workspace file
+     * said `Output`. Resolve against the document, so the folder wins.
+     */
+    exportOutDirNameFor(uri: vscode.Uri): string {
+        return this.migrated<string>('export.outDirName', 'exportOutDirName', uri);
+    }
+
+    /**
      * Whether to apply the built-in accessible base stylesheet to exports.
      * Layered beneath the user's own `markdown.styles`, so user CSS wins.
      *

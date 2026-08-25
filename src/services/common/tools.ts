@@ -7,7 +7,8 @@ import { ExtensionContext } from './extensionContext';
 import { Config } from './config';
 
 export function calculateExportPath(uri: vscode.Uri, format: string): string {
-    const outDirName = Config.instance.exportOutDirName;
+    // Folder-scoped: the folder's .vscode/settings.json must beat the workspace file
+    const outDirName = Config.instance.exportOutDirNameFor(uri);
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     const wkdir = folder ? folder.uri.fsPath : "";
     let exportDir: string;

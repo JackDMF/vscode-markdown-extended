@@ -1,5 +1,11 @@
 # Change Log
 
+## v3.0.3 — Folder Settings in Multi-Root Workspaces
+
+### 🐛 Fixes
+
+- **`export.outDirName` now honours the folder's own `.vscode/settings.json` in a multi-root workspace.** The setting was read without a resource scope, so VS Code answered from user and workspace level only and the folder value was silently ignored — a folder exporting to a synced iCloud directory kept writing into the repository because the `.code-workspace` file said `Output`. The export path is now resolved against the document being exported.
+
 ## v3.0.2 — Export Location
 
 ### ✨ New Features
