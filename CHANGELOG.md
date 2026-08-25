@@ -1,5 +1,20 @@
 # Change Log
 
+## v3.0.2 — Export Location
+
+### ✨ New Features
+
+- **`markdownExtended.export.outDirName` accepts an absolute path.** Keep the workspace in a repository and write exports somewhere else — a synced folder (iCloud, Dropbox) you can open on a tablet, for instance. A plain name such as `out` behaves exactly as before, relative to the workspace root.
+
+### 🐛 Fixes
+
+- An absolute export directory used to be **appended** to the workspace root (`path.join`), so `/Users/me/iCloud/Output` silently became `<workspace>/Users/me/iCloud/Output` and the files landed inside the repository after all. Resolved with `path.resolve`.
+
+### 🧹 Internal
+
+- `@vscode/test-electron` upgraded to 3.x. On VS Code 1.134 the macOS stable bundle ships its binary as `Code`, which 2.5.2 could not find (`spawn … /MacOS/Electron ENOENT`) — the suite downloaded VS Code and then failed to launch it.
+- Unit tests for `calculateExportPath` covering a plain directory name, an absolute one, and a document outside the workspace.
+
 ## v3.0.1 — Maintenance
 
 ### 🐛 Fixes

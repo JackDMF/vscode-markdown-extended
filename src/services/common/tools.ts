@@ -22,7 +22,12 @@ export function calculateExportPath(uri: vscode.Uri, format: string): string {
             // saved
             relDir = path.relative(wkdir, relDir)
         }
-        exportDir = path.join(path.join(wkdir, outDirName), relDir);
+        // resolve, not join: an ABSOLUTE outDirName must win. Users who keep the
+        // workspace in a git repo but need the exports elsewhere — a synced
+        // iCloud/Dropbox folder they can open on a tablet — set the full path
+        // here. path.join would have appended it to the workspace root and
+        // produced /repo/Users/name/…, silently exporting into the repo.
+        exportDir = path.join(path.resolve(wkdir, outDirName), relDir);
     } else {
         //if not, export beside the document.
         exportDir = path.dirname(uriPath);
