@@ -6,6 +6,10 @@
 
 - **`export.outDirName` now honours the folder's own `.vscode/settings.json` in a multi-root workspace.** The setting was read without a resource scope, so VS Code answered from user and workspace level only and the folder value was silently ignored — a folder exporting to a synced iCloud directory kept writing into the repository because the `.code-workspace` file said `Output`. The export path is now resolved against the document being exported.
 
+### 🧹 Internal
+
+- `dist/` is no longer committed. It is rebuilt from `src/` on every `vsce package` (via `vscode:prepublish`), so the committed copy was always some earlier build, never the shipped one — and every release left the working tree dirty, tripping the release guard's first check.
+
 ## v3.0.2 — Export Location
 
 ### ✨ New Features
