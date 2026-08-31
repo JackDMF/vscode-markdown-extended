@@ -3,7 +3,7 @@
   "displayName": "Markdown Extended Pro",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo-small.png",
-  "version": "3.0.3",
+  "version": "3.1.0",
   "publisher": "jackdmf",
   "engines": {
     "vscode": "^1.80.0"
@@ -48,6 +48,13 @@
       {
         "scopeName": "text.html.markdown.extended",
         "path": "./syntaxes/markdown-extended.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ]
+      },
+      {
+        "scopeName": "text.html.markdown.extended.inline",
+        "path": "./syntaxes/markdown-extended.inline.tmLanguage.json",
         "injectTo": [
           "text.html.markdown"
         ]

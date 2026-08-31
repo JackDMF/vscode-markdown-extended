@@ -195,6 +195,58 @@
         "foreground": "#00c76a",
         "fontStyle": "bold"
       }
+    },
+    {
+      "scope": "punctuation.definition.container.markdown",
+      "settings": {
+        "foreground": "#0d6efd",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "scope": "entity.name.container.qualifier.markdown",
+      "settings": {
+        "foreground": "#0d6efd",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "scope": "markup.footnote.definition.markdown",
+      "settings": {
+        "foreground": "#00c76a",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "scope": "punctuation.definition.attributes.begin.markdown, punctuation.definition.attributes.end.markdown",
+      "settings": {
+        "foreground": "#8a8a8a"
+      }
+    },
+    {
+      "scope": "entity.other.attribute-name.class.markdown, entity.other.attribute-name.markdown",
+      "settings": {
+        "foreground": "#267f99"
+      }
+    },
+    {
+      "scope": "string.quoted.attribute-value.markdown",
+      "settings": {
+        "foreground": "#a31515"
+      }
+    },
+    {
+      "scope": "punctuation.definition.abbr.markdown",
+      "settings": {
+        "foreground": "#6f4dff"
+      }
+    },
+    {
+      "scope": "entity.name.abbreviation.markdown",
+      "settings": {
+        "foreground": "#6f4dff",
+        "fontStyle": "bold"
+      }
     }
   ]
 }

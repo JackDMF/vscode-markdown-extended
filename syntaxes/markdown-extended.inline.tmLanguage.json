@@ -1,0 +1,248 @@
+{
+  "name": "Markdown Extended (Inline)",
+  "scopeName": "text.html.markdown.extended.inline",
+  "injectionSelector": "text.html.markdown -markup.fenced_code.block.markdown -markup.raw.block.markdown -markup.inline.raw.markdown -markup.math.block.markdown -markup.math.inline.markdown -meta.embedded.block",
+  "patterns": [
+    {
+      "include": "#extended_marks"
+    }
+  ],
+  "repository": {
+    "extended_marks": {
+      "patterns": [
+        {
+          "include": "#sidenote"
+        },
+        {
+          "include": "#marginal_note"
+        },
+        {
+          "include": "#left_sidebar"
+        },
+        {
+          "include": "#right_sidebar"
+        },
+        {
+          "include": "#highlight"
+        },
+        {
+          "include": "#toc"
+        },
+        {
+          "include": "#kbd"
+        },
+        {
+          "include": "#superscript"
+        },
+        {
+          "include": "#subscript"
+        },
+        {
+          "include": "#footnote_reference"
+        },
+        {
+          "include": "#attributes"
+        }
+      ]
+    },
+    "extended_inline": {
+      "patterns": [
+        {
+          "include": "#extended_marks"
+        },
+        {
+          "include": "text.html.markdown#inline"
+        }
+      ]
+    },
+    "sidenote": {
+      "name": "markup.sidenote.markdown",
+      "match": "\\+\\+(\\S.*?)\\|(.*?\\S?)\\+\\+",
+      "captures": {
+        "0": {
+          "name": "markup.sidenote.container.markdown"
+        },
+        "1": {
+          "name": "markup.sidenote.reference.markdown",
+          "patterns": [
+            {
+              "include": "#extended_inline"
+            }
+          ]
+        },
+        "2": {
+          "name": "markup.sidenote.content.markdown",
+          "patterns": [
+            {
+              "include": "#extended_inline"
+            }
+          ]
+        }
+      }
+    },
+    "marginal_note": {
+      "name": "markup.marginalnote.markdown",
+      "match": "(?<![^\\s])!!(\\S.*?)\\|(.*?\\S?)!!(?![^\\s])",
+      "captures": {
+        "0": {
+          "name": "markup.marginalnote.container.markdown"
+        },
+        "1": {
+          "name": "markup.marginalnote.reference.markdown",
+          "patterns": [
+            {
+              "include": "#extended_inline"
+            }
+          ]
+        },
+        "2": {
+          "name": "markup.marginalnote.content.markdown",
+          "patterns": [
+            {
+              "include": "#extended_inline"
+            }
+          ]
+        }
+      }
+    },
+    "left_sidebar": {
+      "name": "markup.leftsidebar.markdown",
+      "match": "\\$(\\S(?:.*?\\S)?)\\$",
+      "captures": {
+        "0": {
+          "name": "markup.leftsidebar.container.markdown"
+        },
+        "1": {
+          "name": "markup.leftsidebar.content.markdown",
+          "patterns": [
+            {
+              "include": "#extended_inline"
+            }
+          ]
+        }
+      }
+    },
+    "right_sidebar": {
+      "name": "markup.rightsidebar.markdown",
+      "match": "@(\\S(?:.*?\\S)?)@",
+      "captures": {
+        "0": {
+          "name": "markup.rightsidebar.container.markdown"
+        },
+        "1": {
+          "name": "markup.rightsidebar.content.markdown",
+          "patterns": [
+            {
+              "include": "#extended_inline"
+            }
+          ]
+        }
+      }
+    },
+    "highlight": {
+      "name": "markup.highlight.markdown",
+      "match": "(?<!=)==(?![\\s=])((?:[^=\\n]|=(?!=))+?)(?<![\\s=])==(?!=)",
+      "captures": {
+        "0": {
+          "name": "markup.highlight.container.markdown"
+        },
+        "1": {
+          "name": "markup.highlight.content.markdown",
+          "patterns": [
+            {
+              "include": "#extended_inline"
+            }
+          ]
+        }
+      }
+    },
+    "kbd": {
+      "name": "markup.kbd.markdown",
+      "match": "\\[\\[(\\S(?:.*?\\S)?)\\]\\]",
+      "captures": {
+        "0": {
+          "name": "markup.kbd.container.markdown"
+        },
+        "1": {
+          "name": "markup.kbd.content.markdown",
+          "patterns": [
+            {
+              "include": "text.html.markdown#inline"
+            }
+          ]
+        }
+      }
+    },
+    "subscript": {
+      "name": "markup.subscript.markdown",
+      "match": "(?<!~)~(?!~)((?:\\\\.|[^~\\n])+?)~(?!~)",
+      "captures": {
+        "0": {
+          "name": "markup.subscript.container.markdown"
+        },
+        "1": {
+          "name": "markup.subscript.content.markdown"
+        }
+      }
+    },
+    "superscript": {
+      "name": "markup.superscript.markdown",
+      "match": "\\^((?:\\\\.|[^\\^\\n])+?)\\^",
+      "captures": {
+        "0": {
+          "name": "markup.superscript.container.markdown"
+        },
+        "1": {
+          "name": "markup.superscript.content.markdown"
+        }
+      }
+    },
+    "toc": {
+      "name": "markup.toc.markdown",
+      "match": "\\[\\[(?i:TOC)\\]\\]"
+    },
+    "footnote_reference": {
+      "name": "markup.footnote.reference.markdown",
+      "match": "\\[\\^([0-9]+)\\](?!:)",
+      "captures": {
+        "1": {
+          "name": "constant.numeric.footnote.markdown"
+        }
+      }
+    },
+    "attributes": {
+      "name": "meta.attributes.markdown",
+      "match": "(\\{)\\s*((?:[.#][\\w-]+|[\\w-]+=(?:\"[^\"\\n]*\"|'[^'\\n]*'|[^\\s}]+))(?:\\s+(?:[.#][\\w-]+|[\\w-]+=(?:\"[^\"\\n]*\"|'[^'\\n]*'|[^\\s}]+)))*)\\s*(\\})",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.attributes.begin.markdown"
+        },
+        "2": {
+          "patterns": [
+            {
+              "match": "[.#][\\w-]+",
+              "name": "entity.other.attribute-name.class.markdown"
+            },
+            {
+              "match": "([\\w-]+)(=)(\"[^\"\\n]*\"|'[^'\\n]*'|[^\\s}]+)",
+              "captures": {
+                "1": {
+                  "name": "entity.other.attribute-name.markdown"
+                },
+                "2": {
+                  "name": "punctuation.separator.key-value.markdown"
+                },
+                "3": {
+                  "name": "string.quoted.attribute-value.markdown"
+                }
+              }
+            }
+          ]
+        },
+        "3": {
+          "name": "punctuation.definition.attributes.end.markdown"
+        }
+      }
+    }
+  }
+}

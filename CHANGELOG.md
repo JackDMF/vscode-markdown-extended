@@ -1,5 +1,27 @@
 # Change Log
 
+## v3.1.0 — Syntax Highlighting Rebuilt
+
+### 🐛 Fixes
+
+- **Single-character marks now highlight.** Every inline pattern demanded at least two characters of content (`\S.*?\S`), so `^4^`, `$Z$`, `@5@` or `==M==` never matched. Superscript and subscript now mirror the actual renderer plugins (`markdown-it-sup-alt`/`-sub-alt`): lazy up to the next marker, one character minimum, spaces allowed.
+- **Superscript no longer swallows half the line.** When the old two-character minimum failed on `^4^`, the regex skipped ahead to the next `^` further down the line and marked everything in between as superscript — taking the rest of the line's highlighting with it.
+- **An inline mark at the start of a paragraph no longer kills the paragraph.** The grammar was injected with `L:` priority, so `> ^31^ …` won the position tie against the host grammar's paragraph-begin rule; the paragraph never opened and bold/italic/strikethrough stayed dead for the whole line. The grammar is now split in two: block rules (admonitions & co.) keep `L:`, all inline marks run as a second injection (`text.html.markdown.extended.inline`) at normal priority.
+- **Admonition bodies are fully highlighted.** Two causes: the `end` regex fired on blank lines (vscode-textmate appends `\n` when tokenizing, which `(?=\s*[^ ])` happily matched), after which the host grammar rendered the indented body as a code block; and the body only ever applied the host's inline rules — none of the extension's own marks, no nested block quotes, no headings. Both fixed: quotes with headings, lists, checkboxes and every custom mark now work inside `!!!` blocks.
+- `==mark==` follows strong-style flanking rules like the renderer (`markdown-it-mark`): adjacent punctuation, line start/end and intra-word marking all work; `a == b == c` stays plain.
+- `[[toc]]` is recognized case-insensitively and no longer shadowed by the `[[kbd]]` rule.
+
+### ✨ New Features
+
+- **Attribute highlighting**: `{.class}`, `{#id}`, `{key=value}` (markdown-it-attrs) get scopes for braces, class/id names and key-value pairs.
+- **Container fences**: `::: name … :::` (markdown-it-container) lines are highlighted like admonition headers.
+- **Footnote definitions** (`[^1]: …`), **abbreviation definitions** (`*[ABBR]: …`) and **definition-list markers** (leading `: `) are recognized.
+- Both bundled themes color the new scopes.
+
+### 🧹 Internal
+
+- The injections exclude fenced code, raw blocks, math and front matter (`-markup.fenced_code.block.markdown -markup.raw.block.markdown -markup.math.* -meta.embedded.block`), so extension marks no longer fire inside them. Note: VS Code's built-in Markdown math also claims `$...$`, which collides with the `$sidebar$` syntax — set `"markdown.math.enabled": false` in workspaces that use it.
+
 ## v3.0.3 — Folder Settings in Multi-Root Workspaces
 
 ### 🐛 Fixes
