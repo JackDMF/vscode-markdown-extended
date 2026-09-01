@@ -35,6 +35,11 @@ const lauf = (befehl, argumente, still = false) =>
     cwd: wurzel,
     encoding: 'utf8',
     stdio: still ? 'pipe' : ['inherit', 'inherit', 'inherit'],
+    // npm/npx sind unter Windows .cmd-Wrapper: ohne Shell findet execFileSync
+    // sie nicht (ENOENT), und seit CVE-2024-27980 verweigert Node .cmd ohne
+    // shell ohnehin. git bleibt shell-frei — die Tag-Botschaft enthält
+    // Zeilenumbrüche, die eine Shell zerlegen würde.
+    shell: process.platform === 'win32' && befehl !== 'git',
   });
 const git = (...argumente) => lauf('git', argumente, true).trim();
 
