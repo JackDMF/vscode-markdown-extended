@@ -21,6 +21,11 @@ suite('Config.scoped', () => {
     let getConfigurationStub: sinon.SinonStub;
 
     setup(() => {
+        // Materialize the singleton BEFORE stubbing: the ConfigReader constructor
+        // reads the configuration unscoped (getConfObjects), and whether that
+        // first access happens here or in an earlier test file depends on test
+        // order — with the stub already in place those reads made this flaky.
+        void Config.instance;
         sandbox = sinon.createSandbox();
         getConfigurationStub = sandbox.stub(vscode.workspace, 'getConfiguration');
         getConfigurationStub.returns(mockConf({ 'export.outDirName': '/synced/Output', 'pdf.margin.left': '5mm' }));
@@ -30,17 +35,27 @@ suite('Config.scoped', () => {
     test('reads every export setting with the document as resource scope', () => {
         // In a multi-root workspace an unscoped read never sees the folder's own
         // .vscode/settings.json — the whole point of scoped() is to name the document.
+        // Assert only over the calls scoped() itself makes (it is synchronous, so
+        // this window is race-free): the tests run inside the live extension host,
+        // where unrelated extension code may hit the stubbed getConfiguration at
+        // any await point — alwaysCalledWith over the whole test was flaky.
         const uri = vscode.Uri.file('/repo/archive/Aufgaben/Vorsitz.md');
+        const before = getConfigurationStub.callCount;
         const view = Config.instance.scoped(uri);
+        const calls = getConfigurationStub.getCalls().slice(before);
         assert.strictEqual(view.exportOutDirName, '/synced/Output');
         assert.strictEqual((view.puppeteerUserSetting.pdf as any).margin.left, '5mm');
-        assert.ok(getConfigurationStub.alwaysCalledWith('markdownExtended', uri),
+        assert.ok(calls.length > 0, 'scoped() must read the configuration');
+        assert.ok(calls.every(c => c.args[0] === 'markdownExtended' && c.args[1] === uri),
             'every configuration read must carry the resource scope');
     });
 
     test('without a document it falls back to the window-level read', () => {
+        const before = getConfigurationStub.callCount;
         Config.instance.scoped();
-        assert.ok(getConfigurationStub.alwaysCalledWithExactly('markdownExtended'));
+        const calls = getConfigurationStub.getCalls().slice(before);
+        assert.ok(calls.length > 0, 'scoped() must read the configuration');
+        assert.ok(calls.every(c => c.args.length === 1 && c.args[0] === 'markdownExtended'));
     });
 });
 

@@ -13,7 +13,11 @@ import { Config } from '../../../../src/services/common/config';
  */
 suite('calculateExportPath', () => {
     let sandbox: sinon.SinonSandbox;
-    const wkdir = path.join(path.sep, 'repo', 'archive');
+    // path.resolve, not join: "\repo\archive" is only absolute on POSIX — on
+    // Windows path.resolve inside the implementation would prepend the current
+    // drive and the expectation would not. Round-tripping through Uri.file
+    // also normalizes the drive-letter case to what the code under test sees.
+    const wkdir = vscode.Uri.file(path.resolve(path.sep, 'repo', 'archive')).fsPath;
     const datei = vscode.Uri.file(path.join(wkdir, 'Aufgaben', '2026', 'Vorsitz.md'));
 
     setup(() => {
@@ -41,7 +45,7 @@ suite('calculateExportPath', () => {
     });
 
     test('an absolute path wins over the workspace root', () => {
-        const ziel = path.join(path.sep, 'Users', 'x', 'iCloud', 'Output');
+        const ziel = path.resolve(path.sep, 'Users', 'x', 'iCloud', 'Output');
         withOutDir(ziel);
         assert.strictEqual(
             calculateExportPath(datei, 'pdf'),
@@ -51,9 +55,9 @@ suite('calculateExportPath', () => {
     test('a document outside the workspace exports beside itself', () => {
         withOutDir('out');
         (vscode.workspace.getWorkspaceFolder as sinon.SinonStub).returns(undefined);
-        const fremd = vscode.Uri.file(path.join(path.sep, 'tmp', 'notiz.md'));
+        const fremd = vscode.Uri.file(path.resolve(path.sep, 'tmp', 'notiz.md'));
         assert.strictEqual(
             calculateExportPath(fremd, 'html'),
-            path.join(path.sep, 'tmp', 'notiz.html'));
+            fremd.fsPath.replace(/\.md$/, '.html'));
     });
 });
