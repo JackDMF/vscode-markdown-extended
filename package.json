@@ -3,7 +3,7 @@
   "displayName": "Markdown Extended Pro",
   "description": "Extended syntaxes to built-in markdown & What you see is what you get exporter.",
   "icon": "images/logo-small.png",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "publisher": "jackdmf",
   "engines": {
     "vscode": "^1.80.0"
@@ -668,7 +668,9 @@
     "path-browserify": "^1.0.1",
     "sinon": "^21.0.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.3"
+    "typescript": "^5.4.3",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
   },
   "dependencies": {
     "@puppeteer/browsers": "^2.10.13",

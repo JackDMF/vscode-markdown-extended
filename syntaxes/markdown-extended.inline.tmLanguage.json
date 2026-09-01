@@ -51,6 +51,12 @@
           "include": "#extended_marks"
         },
         {
+          "include": "#multiline_bold"
+        },
+        {
+          "include": "#multiline_italic"
+        },
+        {
           "include": "text.html.markdown#inline"
         }
       ]
@@ -243,6 +249,46 @@
           "name": "punctuation.definition.attributes.end.markdown"
         }
       }
+    },
+    "multiline_bold": {
+      "name": "markup.bold.markdown",
+      "begin": "((?<!\\w)\\*\\*(?=\\w)|(?<!\\w)\\b__(?=\\w))",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.bold.markdown"
+        }
+      },
+      "end": "(?<=\\S)(\\1)|^(?<!\\n)(?=\\s*$)|^(?=\\s{0,3}(?:#{1,6}[ \\t]|>|```|~~~|:::|!!![ \\t]|[-+*][ \\t]|\\d+[.)][ \\t]|\\|))",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.bold.markdown"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#extended_inline"
+        }
+      ]
+    },
+    "multiline_italic": {
+      "name": "markup.italic.markdown",
+      "begin": "((?<![\\w*])\\*(?!\\*)(?=\\w)|(?<!\\w)\\b_(?!_)(?=\\w))",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.italic.markdown"
+        }
+      },
+      "end": "(?<=\\S)(\\1)((?!\\1)|(?=\\1\\1))|^(?<!\\n)(?=\\s*$)|^(?=\\s{0,3}(?:#{1,6}[ \\t]|>|```|~~~|:::|!!![ \\t]|[-+*][ \\t]|\\d+[.)][ \\t]|\\|))",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.italic.markdown"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#extended_inline"
+        }
+      ]
     }
   }
 }

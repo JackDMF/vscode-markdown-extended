@@ -23,6 +23,9 @@
     },
     {
       "include": "#footnote_reference_midline"
+    },
+    {
+      "include": "#multiline_emphasis_paragraph"
     }
   ],
   "repository": {
@@ -163,6 +166,16 @@
           "name": "constant.numeric.footnote.markdown"
         }
       }
+    },
+    "multiline_emphasis_paragraph": {
+      "name": "meta.paragraph.markdown",
+      "begin": "^(?!\\G)[ ]{0,3}(?=\\S)(?!#{1,6}[ \\t]|>|[-+*][ \\t]|\\d+[.)][ \\t]|`{3,}|~{3,}|:{3,}|!!![ \\t]|\\||</?\\w|<!|\\*?\\[[^\\]]*\\]:)(?=.*(?<!\\w)\\*\\*(?=\\w)(?:(?!(?<=\\S)\\*\\*).)*$|.*(?<!\\w)\\b__(?=\\w)(?:(?!(?<=\\S)__).)*$|.*(?<![\\w*])\\*(?!\\*)(?=\\w)(?:(?!(?<=\\S)\\*).)*$|.*(?<!\\w)\\b_(?!_)(?=\\w)(?:(?!(?<=\\S)_).)*$)",
+      "while": "^(?=[ \\t]*\\S)(?![ \\t]*(?:#{1,6}[ \\t]|>|[-+*][ \\t]|\\d+[.)][ \\t]|`{3,}|~{3,}|:{3,}|!!![ \\t]|\\||</?\\w|<!|(?:[-=*_][ \\t]*){2,}$))",
+      "patterns": [
+        {
+          "include": "text.html.markdown.extended.inline#extended_inline"
+        }
+      ]
     },
     "checkbox": {
       "name": "markup.checkbox.markdown",

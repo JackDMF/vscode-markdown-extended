@@ -1,5 +1,18 @@
 # Change Log
 
+## v3.1.1 — Multiline Bold & Italic
+
+### ✨ New Features
+
+- **Bold and italic spanning soft line breaks now highlight.** Markdown treats a line break without a blank line as mere source formatting — `**bold\ntext**` renders bold in preview and export — but the editor never showed it (not in 3.1.0, and not before: VS Code's built-in grammar demands the closing marker on the same line, and TextMate grammars tokenize line by line). It also cannot be fixed by adding an ordinary inline rule: the host grammar's `meta.paragraph` region *pops at every line end* and re-opens on the next line, discarding any inline region nested inside it. The extension now claims the paragraph itself — only when a line contains an unpaired `**`/`__`/`*`/`_` opener, via the `L:` block injection — reproducing the host's paragraph scope (`meta.paragraph.markdown`) and full inline highlighting inside, plus new paragraph-bounded `multiline_bold`/`multiline_italic` rules. Multiline emphasis also works inside admonition bodies (stable region, no takeover needed).
+- Known limits, by construction: an *unpaired* opener (`**stray`, `_oops`) highlights to the end of the paragraph — the next blank line, heading, list, quote, fence, table or container stops it (the renderer shows it literal; TextMate cannot look ahead across lines). Openers require strict flanking (non-word before, word after), so `5*3`, `*.md`, `2 ** 8` and `snake_case` stay plain. Emphasis across lines inside block quotes, lists and tables is not supported; single-line emphasis there is unchanged.
+
+### 🧹 Internal
+
+- **Grammar regression tests.** `test/unit/syntaxes/grammar.test.ts` tokenizes with the real built-in markdown grammar of the VS Code build the suite runs in (via `vscode.env.appRoot`) plus both injection grammars — 24 cases pinning multiline emphasis, the paragraph takeover staying invisible (headings, quotes, tables, single-line emphasis), flanking rules and admonition bodies. `vscode-textmate`/`vscode-oniguruma` added as dev dependencies.
+- **The unit suite now passes on Windows.** `calculateExportPath` tests built "absolute" paths as `\repo\archive` — absolute only on POSIX; on Windows `path.resolve` in the implementation correctly prepends the drive and the expectation didn't (the suite had only ever been run on macOS). Paths are now built with `path.resolve` and round-tripped through `Uri.file` to normalize drive-letter case.
+- **`Config.scoped` test de-flaked.** It asserted `alwaysCalledWith` over the whole test lifetime, but the suite runs inside the live extension host where unrelated code may read configuration at any await point — and the `ConfigReader` constructor itself reads unscoped, so the test failed whenever it was the first to touch the singleton (test order decides). The singleton is now materialized before stubbing, and the assertion covers exactly the synchronous `scoped()` call.
+
 ## v3.1.0 — Syntax Highlighting Rebuilt
 
 ### 🐛 Fixes
