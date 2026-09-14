@@ -5,7 +5,7 @@
 | `==highlight==` | highlighted / marked text |
 | `_underline_` | underlined text |
 | `H~2~O` · `x^2^` | subscript / superscript |
-| `<kbd>Ctrl</kbd>` | a keyboard key |
+| `[[Ctrl+S]]` | a keyboard key |
 | `[[toc]]` | a table of contents |
 | `[^1]` … `[^1]: note` | a footnote |
 | `*[HTML]: HyperText…` | an abbreviation tooltip |

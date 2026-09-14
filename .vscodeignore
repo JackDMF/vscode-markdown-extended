@@ -31,3 +31,6 @@ dist/*.map
 
 # Keep only the bundled output
 !dist/extension.js
+
+# Development tooling (release guard, documentation screenshots)
+scripts/**

@@ -249,27 +249,96 @@ Default Keyboard Shortcut bindings are removed due to conflict issues on platfor
 
 ### Table Editing
 
-![tableEdit](./images/tableEdit.gif)
+**Format Table** rewrites a table so the pipes line up, padding every cell to the
+width of its column and preserving each column's alignment marker:
 
-![moveCols](./images/moveCols.gif)
+```markdown
+| Command | Shortcut | Notes |
+|---|:--:|--:|
+| Format Table | Ctrl+Shift+T | tidies alignment |
+| Move Columns | Ctrl+Shift+Left | keeps the header |
+```
 
-> Move columns key bindings has been changed to `ctrl+shift+t ctrl+shift+left/right`, due to [#57](https://github.com/JackDMF/vscode-markdown-extended/issues/57), [#68](https://github.com/JackDMF/vscode-markdown-extended/issues/68)
+becomes
+
+```markdown
+| Command      |    Shortcut     |            Notes |
+| ------------ | :-------------: | ---------------: |
+| Format Table |  Ctrl+Shift+T   | tidies alignment |
+| Move Columns | Ctrl+Shift+Left | keeps the header |
+```
+
+The remaining table commands act on the table under the cursor, and reformat it
+afterwards so it stays aligned:
+
+| Command                     | Effect                                              |
+| --------------------------- | --------------------------------------------------- |
+| Add Columns to Left / Right | Inserts a column beside the one holding the cursor  |
+| Add Rows Above / Below      | Inserts a row next to the current one               |
+| Move Columns Left / Right   | Swaps a whole column, header and alignment included |
+| Delete Rows / Delete Columns | Removes the current row or column                  |
+
+Every one is on the command palette. No keyboard shortcuts are bound by default -
+see [Editing Helpers and Keys](#editing-helpers-and-keys) for why, and for the
+bindings to copy if you want them back.
+
+> For `Move Rows Up / Down`, use VS Code's built-in `Move Line Up / Down`
+> (`alt+up` / `alt+down`).
 
 ### Paste as Markdown Table
 
-Copy a table from Excel, Web and other applications which support the format of Comma-Separated Values (CSV), then run the command `Paste as Markdown Table`, you will get the markdown table.
+Copy a table from Excel, a web page, or anything else that puts Comma-Separated
+Values on the clipboard, then run **Paste as Table**. This clipboard content:
 
-![pasteTable](./images/pasteTable.gif)
+```text
+Command,Shortcut,Notes
+Format Table,Ctrl+Shift+T,tidies alignment
+Move Columns,Ctrl+Shift+Left,keeps the header
+```
+
+is inserted as:
+
+```markdown
+| Command      | Shortcut        | Notes            |
+| ------------ | --------------- | ---------------- |
+| Format Table | Ctrl+Shift+T    | tidies alignment |
+| Move Columns | Ctrl+Shift+Left | keeps the header |
+```
+
+The first row becomes the header, and the table is aligned on insert.
 
 ### Export & Copy
 
-![command](./images/command-demo.png)
+| Command                            | What it does                                                     |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| Export to File                     | Exports the current document to HTML, PDF, PNG or JPG            |
+| Export Markdown to File            | Exports every Markdown file in the workspace                     |
+| Copy HTML                          | Puts the rendered HTML on the clipboard                          |
+| Copy HTML & Styles                 | The same, with the stylesheets inlined so it survives pasting    |
+| Install Chromium Browser for Export | Downloads the Chromium that PDF and image export need            |
+
+Search "Markdown" in the command palette (`Ctrl+Shift+P`) to reach them; export is
+also on the editor title menu and the explorer context menu.
 
 ## Syntax Documentation
 
 ### Sidenotes and Annotations
 
 This extension provides powerful annotation features with full markdown support:
+
+```markdown
+Sidenotes sit in the margin instead of breaking the line.++[1]|Notes carry
+**full markdown**: links, `code` and emphasis.++ On a narrow page they fall
+back to a readable block, so nothing is pushed off the edge.
+
+Marginal notes behave the same way but render bold.!![*]|Good for short asides.!!
+
+$A left sidebar, for context that runs alongside the text.$
+
+@A right sidebar, with `code` and [links](https://example.com).@
+```
+
+![sidenote-demo](./images/sidenote-demo.png)
 
 #### Sidenotes
 
@@ -350,6 +419,27 @@ ends up with a horizontal scrollbar. If you widen `--md-note-width`, raise the
 For advanced features (CSS counters, color cycling, `:has()` selectors), build on
 these classes and properties — see `styles/markdown-extended.css`.
 
+### Extended Inline Syntax
+
+Everything the extension adds to a line of text, in one place. Each mark has its
+own section further down; this is what they look like together.
+
+```markdown
+*[HTML]: HyperText Markup Language
+
+Highlight with ==mark==, strike through ~~del~~, mix *italic* and **bold**.
+Water is H~2~O and the answer is 2^10^ = 1024. Press [[Ctrl+S]] to save.
+An HTML abbreviation shows its meaning on hover, and emoji work too :rocket:
+
+- [x] checkbox lists render as real checkboxes
+- [ ] unchecked items too
+
+Term
+:   A definition list entry, for glossaries and option tables.
+```
+
+![inline-syntax-demo](./images/inline-syntax-demo.png)
+
 ### Admonition
 
 > Inspired by [MkDocs](https://squidfunk.github.io/mkdocs-material/extensions/admonition/)
@@ -397,9 +487,11 @@ Here is a footnote reference,[^1] and another.[^longnote]
 
 [^1]: Here is the footnote.
 [^longnote]: Here's one with multiple blocks.
+
+    Indented paragraphs belong to the same footnote.
 ```
 
-Example output: Here is a footnote reference with superscript links.
+![footnote-demo](./images/footnote-demo.png)
 
 ### markdown-it-abbr
 

@@ -603,8 +603,7 @@
             "title": "Editing helpers & tables",
             "description": "Toggle formatting, build and reshape tables, and paste CSV straight in as a Markdown table.\n[Paste as Markdown Table](command:markdownExtended.pasteAsTable)",
             "media": {
-              "image": "images/pasteTable.gif",
-              "altText": "Pasting CSV data as a formatted Markdown table"
+              "markdown": "media/walkthrough/editing.md"
             }
           },
           {
@@ -650,7 +649,8 @@
     "release:publish": "node scripts/release.mjs --publish",
     "test:unit": "npm run test",
     "lint": "eslint src --ext ts",
-    "lint:fix": "eslint src --ext ts --fix"
+    "lint:fix": "eslint src --ext ts --fix",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",
