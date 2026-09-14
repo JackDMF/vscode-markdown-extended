@@ -1,5 +1,27 @@
 # Change Log
 
+## v3.1.2 — Sidenote Styles Actually Ship
+
+### 🐛 Fixes
+
+- **The sidenote stylesheet was never loaded.** `styles/markdown-extended.css` has shipped in the package since sidenotes were introduced, but nothing ever referenced it — it was absent from `markdown.previewStyles` and from the exporter, so `.sn-ref`, `.sidenote`, `.mn-ref`, `.mnote`, `.left-sidebar` and `.right-sidebar` had no styling at all in preview or export. It is now contributed as a preview style, which also carries it into HTML, PDF and image export through `ContributesService`.
+- **Notes were invisible in dark-theme PDF export.** The print rules painted a hardcoded `#f5f5f5` surface with `opacity: 1`, while `markdownExtended.export.theme: dark` sets the body text to `#e6edf3` — about 1.1:1 contrast, with `printBackground` on so the grey really was painted. The note surface and border are now custom properties with a `body.vscode-dark` override, using the same palette as `markdown-extended-default.css` (`#f6f8fa`/`#d0d7de` light, `#161b22`/`#30363d` dark).
+- **Floated notes overflowed the page in HTML export.** Widths and offsets were percentages (`width: 50%`, `margin-right: -60%`), so the space a note demanded grew with the content column and could never fit beside it — against the centered 820px column of the built-in export theme a note ran roughly 300px past the viewport at 1200px, producing a horizontal scrollbar. Geometry is now absolute (`--md-note-width: 200px` plus `--md-note-gap: 24px`, offset via `calc()`), so a note needs a fixed 224px of gutter.
+
+### 🧹 Internal
+
+- **The layout is now built the other way round.** The stacked, in-flow block rendering is the base and the floated margin layout is a progressive enhancement inside `@media screen and (min-width: 1280px)` — the width at which an 820px column plus a note on either side fits (820 + 2 × 224 = 1268). Print never matches `screen`, so PDF export gets the block rendering for free, as do narrow preview panes and the 800px viewport Puppeteer uses for PNG/JPG. The separate `@media print` and `max-width: 800px` blocks that previously duplicated those rules are gone, and the old 800px breakpoint no longer coincides exactly with the image-export viewport.
+- Custom properties renamed for what they actually style: `--md-side-note-fs` → `--md-note-font-size`, `--md-sidebar-opacity` → `--md-note-opacity` (both applied to notes *and* sidebars under the old names), plus the new `--md-note-width`/`--md-note-gap`/`--md-sidebar-width`/`--md-sidebar-gap`/`--md-note-surface`/`--md-note-border`. Nothing depended on the old names, since the stylesheet had never been loaded.
+- `--vscode-*` variables are now only a first choice with a concrete fallback, matching the standalone-export rule stated in `markdown-extended-default.css`; exports have no `--vscode-*` values to read.
+- **Regression test for the combination.** `test/unit/services/exporter/noteStyles.e2e.test.ts` assembles the two stylesheets in the order `renderPage` emits them, renders in headless Chromium and measures computed styles: note contrast in print for both export themes, no horizontal overflow at 1280px, and stacking at the 800px image-export viewport. Against the previous stylesheet these report 1.08:1 and 262px of overflow. CI-safe in the same way as the mermaid e2e test — it skips unless a browser is already present and never triggers a download.
+
+### 📖 Documentation
+
+- README documents the note layout model, the breakpoint and every custom property.
+- **The `markdown-it-container` example could not produce its own screenshot.** It used Bootstrap 3 grid classes (`col-xs-6`) while linking Bootstrap 4.0.0, which dropped that name — so the two panels rendered full-width instead of side by side. The section is rewritten around a working Bootstrap 5 example that also demonstrates what the plugin is actually for: the fence's info string becomes the `class` attribute verbatim, markdown still renders inside, and putting the grid class and the panel class on separate nested fences is what gives the panels a gutter (a single `col-md-6 alert alert-success` makes them touch, which is what the old screenshot showed). A Bulma version and the nesting rule are documented alongside it, as is the fact that a script-only CDN such as Tailwind's cannot be used, since `markdown.styles` takes CSS.
+- **`images/container-demo.png` regenerated** (535×58 from 2022 → 1512×316 @2x). It is rendered from the README's own code block through the real container render rule and the linked Bootstrap 5 stylesheet, so the picture and the documented source cannot drift apart.
+- The Getting Started walkthrough said `markdown.styles` is "embedded into every export". That holds for a local file, but a URL is emitted as a `<link rel="stylesheet">`, so such an export needs the network at export time and stays tied to that URL. Both the walkthrough and the README now say so, along with the fact that setting `markdown.styles` at all switches off `markdownExtended.export.defaultStyles`.
+
 ## v3.1.1 — Multiline Bold & Italic
 
 ### ✨ New Features

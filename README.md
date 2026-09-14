@@ -309,6 +309,47 @@ $This appears in the left sidebar with [links](url) and other markdown$
 - Marginal notes: `.mn-ref` (reference), `.mnote` (content)
 - Sidebars: `.left-sidebar`, `.right-sidebar`
 
+**Layout:**
+
+Notes render as blocks in the text flow by default, and move into the margin only
+when the window is at least 1280px wide — the content column plus a full note on
+either side. Below that, and in PDF and image export, the block rendering is used,
+which keeps the notes readable instead of pushing them off the page.
+
+**Customizing Styles:**
+
+Add your own CSS file to VS Code settings:
+
+```json
+"markdown.styles": ["./path/to/your-custom-styles.css"]
+```
+
+Your styles load after the extension's and take precedence. Note that setting
+`markdown.styles` also switches off the built-in export theme (see
+`markdownExtended.export.defaultStyles`), so your file then owns the whole export
+appearance.
+
+Custom properties you can override:
+
+| Property | Default | Purpose |
+| --- | --- | --- |
+| `--md-note-width` | `200px` | Width of sidenotes and marginal notes in the margin |
+| `--md-note-gap` | `24px` | Space between the content column and the note |
+| `--md-sidebar-width` | `200px` | Width of `$left$` / `@right@` sidebars |
+| `--md-sidebar-gap` | `24px` | Space between the content column and the sidebar |
+| `--md-note-font-size` | `0.9em` | Font size for all notes and sidebars |
+| `--md-note-opacity` | `0.85` | Opacity in the margin layout |
+| `--md-note-surface` | `#f6f8fa` / `#161b22` | Background of the block rendering (light / dark) |
+| `--md-note-border` | `#d0d7de` / `#30363d` | Left border of the block rendering (light / dark) |
+
+Widths are absolute rather than percentages on purpose: a percentage offset grows
+with the content column, so the note can never fit the gutter and exported HTML
+ends up with a horizontal scrollbar. If you widen `--md-note-width`, raise the
+`min-width: 1280px` breakpoint in your own CSS to match.
+
+For advanced features (CSS counters, color cycling, `:has()` selectors), build on
+these classes and properties — see `styles/markdown-extended.css`.
+
 ### Admonition
 
 > Inspired by [MkDocs](https://squidfunk.github.io/mkdocs-material/extensions/admonition/)
@@ -432,28 +473,102 @@ Provides italic-bold support with underline rendering.
 
 ### markdown-it-container
 
+A `:::` fence becomes a `<div>` whose `class` attribute is the fence's info string,
+copied verbatim. The class names therefore come from whatever CSS framework you
+load — the extension supplies none of them. Nest by giving the outer fence *more*
+colons than the inner one; three is the minimum, so the four-level example below
+(container › row › column › panel) starts at six.
+
 ```markdown
-::::: container
-:::: row
-::: col-xs-6 alert alert-success
-success text
+:::::: container
+::::: row g-3
+:::: col-md-6
+::: alert alert-success h-100 mb-0
+**Markdown still works inside a container:**
+
+- `inline code`, **bold**, *italic*
+- [links](https://example.com) and lists
 :::
-::: col-xs-6 alert alert-warning
-warning text
+::::
+:::: col-md-6
+::: alert alert-warning h-100 mb-0
+**The class names are yours.** The fence text is copied into
+`class` verbatim — the extension adds nothing of its own.
 :::
 ::::
 :::::
+::::::
 ```
 
 ![container-demo.png](./images/container-demo.png)
 
-_Rendered with Bootstrap styles. To see the same result, add this config:_
+_Rendered with Bootstrap 5._ To reproduce it:
 
 ```json
 "markdown.styles": [
-    "https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css"
+    "https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
 ]
 ```
+
+The panels sit side by side down to 768px and stack below it. `g-3` supplies the
+gutter between them, and `h-100 mb-0` keeps them equal height and flush with the
+row — put the grid class and the panel class on *separate* nested fences, because
+a single `::: col-md-6 alert alert-success` makes the alert fill the column's
+gutter and the two panels end up touching.
+
+<details>
+<summary>The same layout in Bulma</summary>
+
+```markdown
+:::::: container px-4
+::::: columns
+:::: column
+::: notification is-success
+success text
+:::
+::::
+:::: column
+::: notification is-warning
+warning text
+:::
+::::
+:::::
+::::::
+```
+
+```json
+"markdown.styles": [
+    "https://cdn.jsdelivr.net/npm/bulma@1.0.4/css/bulma.min.css"
+]
+```
+
+Bulma stacks at its own breakpoint, 769px. The `px-4` is not decoration: Bulma's
+`.columns` uses negative margins, and without horizontal padding on the container
+the row overhangs the page and adds a horizontal scrollbar on narrow screens.
+
+</details>
+
+Utility-first frameworks that ship as a script rather than a stylesheet — the
+Tailwind Play CDN, for instance — cannot be loaded this way, because
+`markdown.styles` only takes CSS.
+
+Two things to know before you set `markdown.styles`:
+
+- **Class names are version-specific.** `col-md-6` is Bootstrap 4/5 syntax;
+  Bootstrap 3 spells it `col-sm-6`/`col-xs-6`, and Bootstrap 4 removed the `-xs`
+  infix altogether. A snippet copied from the wrong major version silently
+  produces full-width rows instead of columns.
+- **Setting `markdown.styles` switches off the built-in export theme.**
+  `markdownExtended.export.defaultStyles` applies only when you have *not* set
+  your own styles, so your CSS then owns the entire export appearance — including
+  the base typography and light/dark colors the built-in sheet would otherwise
+  provide.
+
+A URL and a local file are also not equivalent in export: a local path is read and
+inlined into the exported HTML, while a URL is emitted as a `<link rel="stylesheet">`.
+Exporting with a CDN URL therefore needs network access at export time, and the
+exported HTML keeps depending on that CDN. Use a local `.css` file if the export
+has to stand on its own.
 
 ## Known Issues & Feedback
 

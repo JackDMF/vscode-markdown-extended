@@ -1,58 +1,153 @@
-/* Styling for sidenotes and margin notes */
-.sn-ref {
-  position: relative;
-  vertical-align: baseline;
+/**
+ * Markdown Extended - Sidenotes, Marginal Notes, and Sidebar Styling
+ *
+ * Minimal default formatting for the custom note syntax:
+ * - Sidenotes:      ++reference|note content++   -> .sn-ref > .sidenote
+ * - Marginal notes: !!reference|note content!!   -> .mn-ref > .mnote
+ * - Left sidebar:   $content$                    -> .left-sidebar
+ * - Right sidebar:  @content@                    -> .right-sidebar
+ *
+ * STRUCTURE
+ * The note span is nested INSIDE the reference span (see markdownItSidenote.ts),
+ * so target it as a descendant (`.sn-ref .sidenote`), never as a sibling.
+ *
+ * LAYOUT MODEL
+ * The stacked, in-flow presentation below is the BASE. The floated margin layout
+ * is layered on top only at screen widths that can actually hold it (>= 1280px).
+ * That ordering is deliberate: print (PDF export), image export and narrow
+ * preview panes all have no usable margin, and they get the readable block
+ * rendering without any per-medium duplication.
+ *
+ * CUSTOMIZATION
+ * Add your own CSS to the "markdown.styles" setting; it loads after this file
+ * and wins. Note that setting "markdown.styles" also disables the built-in
+ * export theme (see `markdownExtended.export.defaultStyles`), so your file then
+ * owns the whole export appearance.
+ *
+ *   "markdown.styles": ["./my-custom-styles.css"]
+ *
+ * For advanced styling (CSS counters, color cycling, relative color syntax),
+ * build on the classes above and the custom properties below.
+ */
+
+/* ============================================================================
+   Custom Properties
+   ============================================================================ */
+:root {
+  /* Margin geometry.
+     Widths are absolute, not percentages. A percentage offset scales with the
+     content column, so the note always pushed further out than the surrounding
+     gutter could ever grow - guaranteeing horizontal overflow in HTML export
+     against the centered 820px column of markdown-extended-default.css. With a
+     fixed width the note needs exactly `width + gap` of gutter, which is what
+     the 1280px breakpoint below is derived from (820 + 2 * 224 = 1268). */
+  --md-note-width: 200px;
+  --md-note-gap: 24px;
+  --md-note-offset: calc(-1 * (var(--md-note-width) + var(--md-note-gap)));
+
+  --md-sidebar-width: 200px;
+  --md-sidebar-gap: 24px;
+  --md-sidebar-offset: calc(-1 * (var(--md-sidebar-width) + var(--md-sidebar-gap)));
+
+  /* Typography */
+  --md-note-font-size: 0.9em;
+  --md-note-opacity: 0.85;
+
+  /* Surface colors for the stacked presentation. Concrete values, because
+     exported HTML/PDF is a standalone file with no --vscode-* variables. These
+     mirror styles/markdown-extended-default.css so a document using the built-in
+     export theme reads as one system. Light values here, dark overrides below. */
+  --md-note-surface: #f6f8fa;
+  --md-note-border: #d0d7de;
+  --md-note-text: inherit;
 }
 
-.sidenote {
-  float: right;
-  clear: right;
-  margin-right: -60%;
-  width: 50%;
-  margin-top: 0;
-  margin-bottom: 0;
-  font-size: 0.9em;
-  opacity: 0.8;
-  padding-left: 1em;
+/* Export carries `vscode-light` / `vscode-dark` on the body (exportTheme is
+   resolved before it is written, so it is never `auto`); the preview carries the
+   same classes. Without this, a dark-theme export painted near-white note text
+   on a hardcoded light-grey surface - about 1.1:1 contrast, i.e. invisible. */
+body.vscode-dark {
+  --md-note-surface: #161b22;
+  --md-note-border: #30363d;
 }
 
+/* ============================================================================
+   Base presentation - notes as blocks in the text flow
+   Applies to print/PDF, image export and any screen narrower than the margin
+   layout needs.
+   ============================================================================ */
+.sidenote,
+.mnote,
+.left-sidebar,
+.right-sidebar {
+  display: block;
+  box-sizing: border-box;
+  margin: 0.5em 0;
+  padding: 0.5em 1em;
+  font-size: var(--md-note-font-size);
+  color: var(--md-note-text);
+  background-color: var(--vscode-textBlockQuote-background, var(--md-note-surface));
+  border-left: 3px solid var(--vscode-textBlockQuote-border, var(--md-note-border));
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+/* References stay inline in both layouts. */
+.sn-ref,
 .mn-ref {
   position: relative;
   vertical-align: baseline;
 }
 
 .mnote {
-  float: right;
-  clear: right;
-  margin-right: -60%;
-  width: 50%;
-  margin-top: 0;
-  margin-bottom: 0;
-  font-size: 0.9em;
   font-weight: bold;
-  opacity: 0.8;
-  padding-left: 1em;
 }
 
-/* Styling for sidebars */
-.left-sidebar {
-  float: left;
-  clear: left;
-  margin-left: -40%;
-  width: 35%;
-  font-size: 0.9em;
-  font-style: italic;
-  opacity: 0.8;
-  padding-right: 1em;
-}
-
+.left-sidebar,
 .right-sidebar {
-  float: right;
-  clear: right;
-  margin-right: -40%;
-  width: 35%;
-  font-size: 0.9em;
   font-style: italic;
-  opacity: 0.8;
-  padding-left: 1em;
+}
+
+/* ============================================================================
+   Margin layout - floated notes
+   Engaged only when the viewport can hold the content column plus a full note
+   on either side. Print never matches `screen`, so PDF export keeps the base.
+   ============================================================================ */
+@media screen and (min-width: 1280px) {
+  .sidenote,
+  .mnote,
+  .left-sidebar,
+  .right-sidebar {
+    margin-top: 0;
+    margin-bottom: 0;
+    padding: 0;
+    background-color: transparent;
+    border-left: 0;
+    opacity: var(--md-note-opacity);
+  }
+
+  .sidenote,
+  .mnote {
+    float: right;
+    clear: right;
+    width: var(--md-note-width);
+    margin-right: var(--md-note-offset);
+    margin-left: 0;
+  }
+
+  .left-sidebar {
+    float: left;
+    clear: left;
+    width: var(--md-sidebar-width);
+    margin-left: var(--md-sidebar-offset);
+    margin-right: 0;
+  }
+
+  .right-sidebar {
+    float: right;
+    clear: right;
+    width: var(--md-sidebar-width);
+    margin-right: var(--md-sidebar-offset);
+    margin-left: 0;
+  }
 }
