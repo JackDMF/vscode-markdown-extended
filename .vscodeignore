@@ -1,36 +1,44 @@
-# Build outputs and sources
+# Sources, tests and build inputs
 .vscode/**
 .vscode-test/**
+.idea/**
 src/**
 out/**
 test/**
+docs/**
+**/*.ts
 **/*.map
 
-# Configuration and development files
+# Project configuration
 .gitignore
+.mocharc.json
 tsconfig.json
 esbuild.js
 eslint.config.js
 vsc-extension-quickstart.md
-.idea/**
-.mocharc.json
-**/*.ts
 
-# Documentation and test files
-docs/**
-sublime/TEST.md
-sublime/TESTS.md
-sublime/TEXTASTIC_INSTALL.md
-sublime/TEXTASTIC_QUICK_REF.md
+# Development tooling: the release guard and the documentation screenshot
+# generator. Neither is reachable from the extension at runtime.
+scripts/**
+
+# Contributor documentation and test fixtures. ARCHITECTURE.md is written for
+# people working ON the extension, not with it; the README links to it on GitHub
+# with an absolute URL so the link survives its absence here.
+ARCHITECTURE.md
+COMPREHENSIVE_PLUGIN_TEST.md
+test-bundled.md
+
+# Sublime Text / Textastic color schemes, syntax definitions and a PowerShell
+# installer. A different editor's files, previously shipped to every VS Code
+# user; only four of the markdown files here had been excluded.
+sublime/**
 
 # Build artifacts
 *.vsix
 node_modules/**
 dist/bundle-stats.html
-dist/*.map
 
-# Keep only the bundled output
-!dist/extension.js
-
-# Development tooling (release guard, documentation screenshots)
-scripts/**
+# Everything remaining in dist/ is required and must NOT be excluded:
+#   extension.js       - "main" entry point
+#   extension.web.js   - "browser" entry point, for vscode.dev
+#   mermaid-browser.js - read at runtime by MermaidRenderer during export

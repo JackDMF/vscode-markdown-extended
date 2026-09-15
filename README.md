@@ -126,7 +126,9 @@ This extension is built with:
 - **Resource Management**: Cleanup, async operations, disposal of resources
 - **Tests**: Unit tests with VS Code integration
 
-For detailed architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For detailed architecture documentation, see
+[ARCHITECTURE.md](https://github.com/JackDMF/vscode-markdown-extended/blob/master/ARCHITECTURE.md)
+in the repository.
 
 ## Works Well With Other Extensions
 

@@ -8,6 +8,11 @@
 - **Those properties could not be overridden at all.** They were declared on `:root` for light and `body.vscode-dark` for dark. Custom properties inherit from the *nearest* ancestor that sets them, so a `body` rule always beat a reader's `:root` rule no matter how specific, while `body.vscode-dark` outranked any plain `body` rule in dark themes. Both defaults now sit on `body`, the dark variant wrapped in `:where()` to hold the same specificity, so a reader's `body` block - loaded after this stylesheet - wins in both themes. Verified across light/dark, preview/export and both sides of the breakpoint.
 - `--md-note-border-width` and `--md-note-padding` added, so the block rendering can be neutralised entirely from custom properties rather than by re-declaring rules.
 
+### 📦 Packaging
+
+- **The `.vsix` shipped files no VS Code user needs.** `sublime/` - Sublime Text and Textastic color schemes, a syntax definition and a PowerShell installer, 117 KB of another editor's files - went to every user; only four of its markdown files had ever been excluded. So did `ARCHITECTURE.md` (22 KB of contributor documentation), `COMPREHENSIVE_PLUGIN_TEST.md` and `test-bundled.md`. All are excluded now, and the README's link to ARCHITECTURE.md points at GitHub so it survives. 45 files / 2.24 MB becomes 35 files / 2.21 MB.
+- `.vscodeignore` is regrouped and commented, including why the three files in `dist/` must stay: `extension.js` is `main`, `extension.web.js` is the `browser` entry for vscode.dev, and `mermaid-browser.js` is read at runtime during export. A stray `!dist/extension.js` negation that re-included a file nothing had excluded is gone.
+
 ### 📖 Documentation
 
 - **The admonition "Removing Admonition Title" section described something that does not exist.** A bare `!!! type` has no title bar - that is the default, and `!!! danger ""` produces identical markup. The section is now "Admonition Without a Title" and says how to *add* one instead.
