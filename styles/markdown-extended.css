@@ -53,20 +53,37 @@
   --md-note-font-size: 0.9em;
   --md-note-opacity: 0.85;
 
-  /* Surface colors for the stacked presentation. Concrete values, because
-     exported HTML/PDF is a standalone file with no --vscode-* variables. These
-     mirror styles/markdown-extended-default.css so a document using the built-in
-     export theme reads as one system. Light values here, dark overrides below. */
-  --md-note-surface: #f6f8fa;
-  --md-note-border: #d0d7de;
   --md-note-text: inherit;
+
+  /* Block-rendering box. Set the width to 0 to drop the rule entirely.
+     Colors live on `body` below, for the reason explained there. */
+  --md-note-border-width: 3px;
+  --md-note-padding: 0.5em 1em;
 }
 
-/* Export carries `vscode-light` / `vscode-dark` on the body (exportTheme is
-   resolved before it is written, so it is never `auto`); the preview carries the
-   same classes. Without this, a dark-theme export painted near-white note text
-   on a hardcoded light-grey surface - about 1.1:1 contrast, i.e. invisible. */
-body.vscode-dark {
+/* Surface colors for the stacked presentation.
+   Concrete values, because an exported HTML/PDF is a standalone file with no
+   --vscode-* variables to read; they mirror markdown-extended-default.css so a
+   document using the built-in export theme reads as one system. Without the dark
+   variant a dark-theme export painted near-white text on light grey - about
+   1.1:1 contrast, i.e. invisible.
+
+   These sit on `body`, not `:root`, and the dark variant uses :where() to stay
+   at the same specificity as the line above it. That is what makes them
+   overridable: custom properties inherit from the NEAREST ancestor that sets
+   them, so a `:root` rule in your own stylesheet could never beat a `body` rule
+   in this one, however specific. Override them on `body` and your declaration -
+   loaded after this file - wins in both themes:
+
+     body { --md-note-surface: transparent; --md-note-border: transparent; }
+
+   A `body` override also reaches the layout variables declared on :root above,
+   so one block is enough for all of them. */
+body {
+  --md-note-surface: #f6f8fa;
+  --md-note-border: #d0d7de;
+}
+body:where(.vscode-dark) {
   --md-note-surface: #161b22;
   --md-note-border: #30363d;
 }
@@ -83,11 +100,11 @@ body.vscode-dark {
   display: block;
   box-sizing: border-box;
   margin: 0.5em 0;
-  padding: 0.5em 1em;
+  padding: var(--md-note-padding);
   font-size: var(--md-note-font-size);
   color: var(--md-note-text);
-  background-color: var(--vscode-textBlockQuote-background, var(--md-note-surface));
-  border-left: 3px solid var(--vscode-textBlockQuote-border, var(--md-note-border));
+  background-color: var(--md-note-surface);
+  border-left: var(--md-note-border-width) solid var(--md-note-border);
   break-inside: avoid;
   page-break-inside: avoid;
 }

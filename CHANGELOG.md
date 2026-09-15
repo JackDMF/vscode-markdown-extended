@@ -1,5 +1,18 @@
 # Change Log
 
+## Unreleased
+
+### 🐛 Fixes
+
+- **`--md-note-surface` and `--md-note-border` were inert in the live preview.** They were written as a fallback - `var(--vscode-textBlockQuote-background, var(--md-note-surface))` - and in the preview the VS Code variable always exists, so the documented property was never consulted. The rule now reads the custom property directly, and the light/dark defaults carry the concrete colors, which also makes preview and export agree.
+- **Those properties could not be overridden at all.** They were declared on `:root` for light and `body.vscode-dark` for dark. Custom properties inherit from the *nearest* ancestor that sets them, so a `body` rule always beat a reader's `:root` rule no matter how specific, while `body.vscode-dark` outranked any plain `body` rule in dark themes. Both defaults now sit on `body`, the dark variant wrapped in `:where()` to hold the same specificity, so a reader's `body` block - loaded after this stylesheet - wins in both themes. Verified across light/dark, preview/export and both sides of the breakpoint.
+- `--md-note-border-width` and `--md-note-padding` added, so the block rendering can be neutralised entirely from custom properties rather than by re-declaring rules.
+
+### 📖 Documentation
+
+- **The admonition "Removing Admonition Title" section described something that does not exist.** A bare `!!! type` has no title bar - that is the default, and `!!! danger ""` produces identical markup. The section is now "Admonition Without a Title" and says how to *add* one instead.
+- README documents what a custom stylesheet inherits from the built-in one since 3.1.2, with the measured scope: only the block rendering's background, border and padding, and only below the 1280px breakpoint - above it the margin layout already clears all three, and anything you declare yourself wins regardless. Includes a copy-paste block for restoring the pre-3.1.2 blank slate, and spells out the `body`-not-`:root` rule.
+
 ## v3.1.2 — Sidenote Styles Actually Ship
 
 ### 🐛 Fixes

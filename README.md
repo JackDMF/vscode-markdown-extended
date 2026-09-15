@@ -398,7 +398,17 @@ Your styles load after the extension's and take precedence. Note that setting
 `markdownExtended.export.defaultStyles`), so your file then owns the whole export
 appearance.
 
-Custom properties you can override:
+Custom properties you can override. Declare them on `body`, **not** `:root` -
+custom properties inherit from the nearest ancestor that sets them, and the note
+colors below are set on `body`, so a `:root` rule in your stylesheet can never
+reach them however specific it is. A single `body` block reaches all of them:
+
+```css
+body {
+  --md-note-width: 260px;
+  --md-note-surface: transparent;
+}
+```
 
 | Property | Default | Purpose |
 | --- | --- | --- |
@@ -409,12 +419,43 @@ Custom properties you can override:
 | `--md-note-font-size` | `0.9em` | Font size for all notes and sidebars |
 | `--md-note-opacity` | `0.85` | Opacity in the margin layout |
 | `--md-note-surface` | `#f6f8fa` / `#161b22` | Background of the block rendering (light / dark) |
-| `--md-note-border` | `#d0d7de` / `#30363d` | Left border of the block rendering (light / dark) |
+| `--md-note-border` | `#d0d7de` / `#30363d` | Left border color of the block rendering |
+| `--md-note-border-width` | `3px` | Left border width; set to `0` to drop the rule |
+| `--md-note-padding` | `0.5em 1em` | Padding inside the block rendering |
 
 Widths are absolute rather than percentages on purpose: a percentage offset grows
 with the content column, so the note can never fit the gutter and exported HTML
 ends up with a horizontal scrollbar. If you widen `--md-note-width`, raise the
 `min-width: 1280px` breakpoint in your own CSS to match.
+
+**If you already style these classes yourself**, note what the built-in
+stylesheet contributes that it did not before 3.1.2 - it ships in
+`markdown.previewStyles` now, where previously nothing loaded it. Anything you
+declare still wins, because your styles load after the extension's. What reaches
+you is only what you never declared, and only *below* the 1280px breakpoint: the
+block rendering's background, left border and padding. Above it the margin layout
+already sets all three to nothing. To get the pre-3.1.2 blank slate back:
+
+```css
+body {
+  --md-note-surface: transparent;
+  --md-note-border-width: 0;
+  --md-note-padding: 0;
+}
+```
+
+That leaves the layout behaviour - block below 1280px, margin above - and removes
+every visual decoration. If you would rather keep your own layout too, set the
+properties directly instead:
+
+```css
+.sidenote, .mnote, .left-sidebar, .right-sidebar {
+  background: none;
+  border-left: 0;
+  padding: 0;
+  margin: 0;
+}
+```
 
 For advanced features (CSS counters, color cycling, `:has()` selectors), build on
 these classes and properties — see `styles/markdown-extended.css`.
@@ -457,14 +498,22 @@ Nesting supported (by indent) admonition, the following shows a danger admonitio
 
 ![admonition-demo](images/admonition-demo1.png)
 
-#### Removing Admonition Title
+#### Admonition Without a Title
+
+A bare `!!! type` renders just the box, with no title bar. This is the default -
+nothing needs removing:
 
 ```markdown
-!!! danger ""
+!!! danger
     This is the danger admonition body
 ```
 
 ![admonition-demo](images/admonition-demo2.png)
+
+A title bar appears only when you write one after the type, either bare
+(`!!! danger Danger Title`) or quoted (`!!! danger "Danger Title"`). An explicit
+empty title, `!!! danger ""`, is accepted and behaves exactly like leaving it
+out - both produce the same markup.
 
 #### Supported Qualifiers
 
