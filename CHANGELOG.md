@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v3.1.3 — Customisable Notes, Leaner Package
 
 ### 🐛 Fixes
 
