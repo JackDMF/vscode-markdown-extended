@@ -3,7 +3,13 @@
  *
  * It imports the schema, the fidelity plugin and the serializer directly, never
  * `../index.ts`: the barrel re-exports the parser and the engine, which would
- * bring the host's markdown-it composition into the browser for nothing.
+ * bring the host's markdown-it composition — this extension's plugins and
+ * everything they import — into the browser for nothing.
+ *
+ * That alone does not keep markdown-it itself out: the serializer comes from
+ * `prosemirror-markdown`, whose entry module constructs a default parser, and
+ * with it a markdown-it instance, as it loads. The bundle aliases `markdown-it`
+ * to a stub for that reason (`stubs/markdown-it.ts`).
  */
 import { Node } from 'prosemirror-model';
 import { EditorState, Transaction } from 'prosemirror-state';
