@@ -52,6 +52,25 @@ function headingDOM(node: Node): DOMOutputSpec {
     return ['h' + level, attrs, 0];
 }
 
+/**
+ * The element each emphasis delimiter renders as in the preview. `markdown-it-ib`,
+ * in this extension's registry, turns `*` into `<i>` and `**` into `<b>`; `_` and
+ * `__` keep CommonMark's `<em>` and `<strong>`. A stylesheet can style the four
+ * apart, so the editor draws each as the preview does — drawing all of them as
+ * `<em>`/`<strong>` showed `*x*` differently from the preview. The engine is the
+ * authority; `test/unit/editor/emphasis.test.ts` holds this table to it.
+ */
+export const EMPHASIS_TAGS: Readonly<Record<string, string>> = { '*': 'i', '_': 'em', '**': 'b', '__': 'strong' };
+
+function emphasisDOM(mark: Mark): DOMOutputSpec {
+    return [EMPHASIS_TAGS[mark.attrs.markup as string] ?? (mark.type.name === 'em' ? 'i' : 'b')];
+}
+
+/** Each delimiter's element read back as that delimiter, so a copied `<em>` pastes as `_`, not `*`. */
+function emphasisParseRules(markups: readonly string[]): { tag: string; attrs: { markup: string } }[] {
+    return markups.map(markup => ({ tag: EMPHASIS_TAGS[markup], attrs: { markup } }));
+}
+
 export const editorSchema = new Schema({
     nodes: {
         doc: {
@@ -297,16 +316,16 @@ export const editorSchema = new Schema({
                 /** `*` or `_`, as written. `markdown-it-ib` renders `*` as `<i>` and `_` as `<em>`, so the choice is visible. */
                 markup: { default: '*' },
             },
-            parseDOM: [{ tag: 'i' }, { tag: 'em' }],
-            toDOM(): DOMOutputSpec { return ['em']; },
+            parseDOM: emphasisParseRules(['*', '_']),
+            toDOM: emphasisDOM,
         },
         strong: {
             attrs: {
                 /** `**` or `__`, as written; `markdown-it-ib` renders them as `<b>` and `<strong>`. */
                 markup: { default: '**' },
             },
-            parseDOM: [{ tag: 'strong' }, { tag: 'b' }],
-            toDOM(): DOMOutputSpec { return ['strong']; },
+            parseDOM: emphasisParseRules(['**', '__']),
+            toDOM: emphasisDOM,
         },
         link: {
             inclusive: false,
