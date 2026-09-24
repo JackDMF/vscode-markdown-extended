@@ -110,7 +110,15 @@ export class EditorEngineHost implements vscode.Disposable {
 
     readonly onDidChange = this.changed.event;
 
-    constructor(private readonly selfId: string, private readonly log: Log) {
+    /**
+     * `build` makes one engine; the default composes it from the installed
+     * extensions. A test passes its own to decide when a build settles.
+     */
+    constructor(
+        selfId: string,
+        log: Log,
+        private readonly build: () => Promise<MarkdownIt> = () => buildEditorEngine(selfId, log),
+    ) {
         this.subscriptions = [
             this.changed,
             vscode.extensions.onDidChange(() => this.invalidate()),
@@ -124,10 +132,15 @@ export class EditorEngineHost implements vscode.Disposable {
 
     get(): Promise<MarkdownIt> {
         if (this.engine === undefined) {
-            this.engine = buildEditorEngine(this.selfId, this.log);
-            // A failed build is not cached: the next request tries again.
-            this.engine.catch(() => {
-                this.engine = undefined;
+            const engine = this.build();
+            this.engine = engine;
+            // A failed build is not cached: the next request tries again. Only
+            // this build is forgotten: when `invalidate()` has replaced it and a
+            // later `get()` started a newer one, that one outlives its failure.
+            engine.catch(() => {
+                if (this.engine === engine) {
+                    this.engine = undefined;
+                }
             });
         }
         return this.engine;

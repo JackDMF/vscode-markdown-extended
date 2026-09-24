@@ -3,7 +3,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { buildEditorEngine } from '../../../src/editor/host/engineHost';
+import { MarkdownIt } from '../../../src/@types/markdown-it';
+import { EditorEngineHost, buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { WYSIWYG_VIEW_TYPE } from '../../../src/editor/host/provider';
 import { SessionWebview, WysiwygSession } from '../../../src/editor/host/session';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
@@ -76,6 +77,34 @@ suite('Editor host: engine', () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         assert.ok(!md.render('see example.com', {}).includes('<a '));
         assert.ok(md.render('see https://example.com', {}).includes('<a '));
+    });
+});
+
+suite('Editor host: engine cache', () => {
+    test('a failed build forgets itself, never a newer build that replaced it', async () => {
+        const builds: { reject(error: Error): void }[] = [];
+        const host = new EditorEngineHost(EXTENSION_ID, () => undefined, () => new Promise<MarkdownIt>((_resolve, reject) => {
+            builds.push({ reject });
+        }));
+        try {
+            const first = host.get();
+            host.invalidate();
+            const second = host.get();
+            assert.notStrictEqual(second, first);
+
+            builds[0].reject(new Error('the superseded build failed'));
+            // The host's own handler was attached first, so it has run once this has.
+            await first.catch(() => undefined);
+            assert.strictEqual(host.get(), second, 'the newer build is still the one handed out');
+            assert.strictEqual(builds.length, 2);
+
+            builds[1].reject(new Error('the current build failed'));
+            await second.catch(() => undefined);
+            void host.get().catch(() => undefined);
+            assert.strictEqual(builds.length, 3, 'a failed current build is not cached');
+        } finally {
+            host.dispose();
+        }
     });
 });
 
