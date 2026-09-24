@@ -14,7 +14,10 @@ suite('Editor block classification (FR-CON.md)', () => {
 
     suiteSetup(() => {
         if (fixture.present) {
-            blocks = topChildren(parseDocument(hostEngine(), readText(fixture.file)).doc);
+            // A checkout may hold the file with CRLF; classification does not
+            // depend on it (the round-trip suite covers both), the slices below do.
+            const text = readText(fixture.file).replace(/\r\n/g, '\n');
+            blocks = topChildren(parseDocument(hostEngine(), text).doc);
         }
     });
 

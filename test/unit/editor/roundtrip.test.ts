@@ -21,11 +21,12 @@ suite('Editor round trip', () => {
     for (const c of cases) {
         const why = c.present ? '' : ` — skipped: not found at ${c.file} (set REQ_EXPLORER_ROOT)`;
 
-        test(`${c.name} round-trips byte for byte${why}`, function () {
+        test(`${c.name} round-trips byte for byte with LF line endings${why}`, function () {
             if (!c.present) {
                 this.skip();
             }
-            const text = readText(c.file);
+            // Explicitly LF: a checkout may hold the file with CRLF.
+            const text = readText(c.file).replace(/\r\n/g, '\n');
             assert.strictEqual(serializeDocument(parseDocument(md, text), options), text);
         });
 
