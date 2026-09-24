@@ -26,6 +26,6 @@ export type { EditorSchema } from './schema';
 export { parseDocument, parsedDocumentFromJSON, parsedDocumentToJSON } from './parse';
 export type { ParsedDocument, ParsedDocumentJSON } from './parse';
 export { serializeDocument, serializeNode } from './serialize';
-export { hasBreakOpportunity, measureWrapWidth, wrapInline } from './wrap';
+export { hasBreakOpportunity, measureLineWidth, measureWrapWidth, wrapInline } from './wrap';
 export type { SerializeOptions } from './serialize';
 export { PRESERVE_SOURCE_META, fidelityPlugin, fidelityPluginKey } from './fidelity';
