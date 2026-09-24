@@ -49,12 +49,29 @@
 /* Blocks shown, not edited as rich text                                     */
 /* ------------------------------------------------------------------------- */
 
+/*
+ * An atom is meant to look exactly as the preview renders it, so it takes no
+ * room of its own: the horizontal padding is cancelled by a negative margin,
+ * and the border is invisible until the pointer or the selection is on it.
+ */
 .mep-atom {
     position: relative;
-    margin: 0.5em -8px;
-    padding: 2px 8px;
+    margin: 0 -8px;
+    padding: 0 8px;
     border: 1px dashed transparent;
     border-radius: 4px;
+}
+
+/*
+ * The editing surface keeps `white-space: pre-wrap` because ProseMirror needs
+ * it for the text it manages. Rendered HTML set into an atom is not that text:
+ * the line breaks between its elements are markup, and under `pre-wrap` each
+ * one became a visible blank line — which is why an included snippet stood in
+ * a field of empty space and the summary table did not look like the preview's.
+ */
+.mep-atom-content,
+.mep-inline-atom {
+    white-space: normal;
 }
 
 .mep-atom:hover,
@@ -68,8 +85,15 @@
     outline-offset: -1px;
 }
 
-.mep-injected-block { border-left: 3px solid var(--vscode-textLink-foreground, #3794ff); }
-.mep-injected-block[data-kind="generated"] { border-left-color: var(--vscode-descriptionForeground, #888); }
+/* Injected content is marked only while it is pointed at or selected; at rest it is the preview. */
+.mep-injected-block:hover,
+.mep-injected-block.ProseMirror-selectednode {
+    border-left: 3px solid var(--vscode-textLink-foreground, #3794ff);
+}
+.mep-injected-block[data-kind="generated"]:hover,
+.mep-injected-block[data-kind="generated"].ProseMirror-selectednode {
+    border-left-color: var(--vscode-descriptionForeground, #888);
+}
 
 .mep-atom-toolbar {
     display: none;
@@ -81,11 +105,23 @@
     margin-bottom: 2px;
 }
 
+/*
+ * The toolbar — label, Open snippet, Edit source — is revealed by the pointer
+ * or the selection, for every kind of atom alike. It floats above the block
+ * rather than sitting in the flow, so revealing it moves nothing.
+ */
 .mep-atom:hover > .mep-atom-toolbar,
 .mep-atom.ProseMirror-selectednode > .mep-atom-toolbar,
-.mep-atom.mep-editing > .mep-atom-toolbar,
-.mep-injected-block[data-kind="expansion"] > .mep-atom-toolbar {
+.mep-atom.mep-editing > .mep-atom-toolbar {
     display: flex;
+    position: absolute;
+    top: -20px;
+    right: 8px;
+    z-index: 1;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background, #222));
+    border: 1px solid var(--vscode-editorWidget-border, transparent);
 }
 
 .mep-atom-toolbar[hidden] { display: none !important; }
