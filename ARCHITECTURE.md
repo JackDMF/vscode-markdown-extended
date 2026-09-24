@@ -370,7 +370,13 @@ priority `option`) over the file's own `TextDocument`, so Req Explorer's
 keeps dirty state, save and undo. Each open editor is a `WysiwygSession`
 (`host/session.ts`); the page is `webview/main.ts`, bundled on its own because it
 must not import the parser (it imports `schema.ts`, `fidelity.ts` and `serialize.ts`
-directly, never the barrel).
+directly, never the barrel). That keeps this extension's plugins out of the page but not
+markdown-it itself: `prosemirror-markdown`, which the serializer comes from, constructs a
+default parser when it loads. The page's esbuild context therefore aliases `markdown-it`
+to `webview/stubs/markdown-it.ts`, a callable that returns an empty object —
+`MarkdownParser`'s constructor only stores it, and the page never parses. Should
+`prosemirror-markdown` start using the tokenizer at load, the bundle throws as it loads
+and the headless page test, which loads the real bundle, fails.
 
 The protocol (`protocol.ts`) carries the parsed document one way and the finished
 text the other — never a diff:
@@ -381,7 +387,7 @@ text the other — never a diff:
 | host → page | `rendered { requestId, html }` | A raw block's new source, rendered by the host engine |
 | host → page | `error { message }` | The document cannot be shown without loss; offer the text editor |
 | page → host | `ready` | Loaded; send the document |
-| page → host | `edit { text, baseVersion }` | The whole text as the page would save it (250 ms after the last change) |
+| page → host | `edit { text, baseVersion, save? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it |
 | page → host | `render { requestId, src }` | Render this raw block source |
 | page → host | `openSnippet { path }` | Open an expansion's snippet file (only paths the document's own marks name are opened) |
 | page → host | `openSource { line }` | Open the text editor beside, at this line |
@@ -394,14 +400,45 @@ and the edit dropped. A document change that leaves the text equal to the page's
 the page's own edit and is not posted back; any other change is re-parsed and posted.
 In the error state nothing is written.
 
+**Saving.** Ctrl+S in the page is kept from VS Code (the page stops the keydown before
+the listener on its window that forwards keys to the workbench) and sent as an `edit`
+with `save`, even when nothing changed; the host applies the edit, or drops it as stale,
+and then saves the document. Letting VS Code save directly would race the edit still on
+its way: the save participant can wait for edits the host has received, not for one the
+page has yet to send, so the file would be written without the last keystrokes and turn
+dirty again when they landed. A save started elsewhere (menu, auto-save) still waits on
+the edits already received, and only on those.
+
+**A new document for a page that shows one** is taken in place, not by rebuilding the
+`EditorState`: `webview/resync.ts` replaces only the run of top-level blocks that differs,
+sets the attributes of the blocks kept around it with `setNodeMarkup` (the host's `src` on
+a block the page had edited), and marks the transaction `addToHistory: false` and
+`PRESERVE_SOURCE_META`. prosemirror-history maps its steps through it, so an edit made
+before a change elsewhere — a save that trims trailing whitespace is one — stays
+undoable; a whole-document replace would have deleted every position those steps name.
+An edit still waiting in the page's 250 ms delay at that moment was computed against the
+superseded text and is dropped.
+
 ### Where fidelity is enforced
 
 - **`parse.ts`** — refuses a document whose blocks do not rebuild it.
-- **`fidelity.ts`** — clears `src` on a top-level editable node a transaction
-  replaced (judged by node identity, so a moved node keeps it) and leaves undo/redo and
-  `PRESERVE_SOURCE_META` transactions alone.
-- **`webview/plugins.ts`** — `dropGapPlugin` clears the `gap` of a block moved by a
-  drop, since its old separator belonged to its old neighbour.
+- **`fidelity.ts`** — keeps the source-derived attributes true across every
+  transaction, whatever produced it. It follows each top-level node through the
+  transaction (by identity, else by where the mapping takes its start) and then:
+  clears `src` on an editable node that is not the same object as before (so a moved
+  node keeps it); clears `gap` — a fact about a node and its predecessor — on a node that
+  descends from none, changed type, or no longer follows what it followed (a split, a
+  deletion or a move in front of it), so a split paragraph is not written back as one;
+  and strips `reqPrefix`, `anchor` and `attrsSuffix` from a heading that newly carries an
+  id or anchor another heading has. `PRESERVE_SOURCE_META` (the re-sync) exempts all of
+  it. Undo and redo are exempt too, because the history restores `src` and `gap` with the
+  content — except that an undo changing a node's content under an unchanged `src` (one a
+  re-sync set, outside the history) clears that `src`.
+- **`webview/plugins.ts`** — `Enter` inside a heading with a requirement id or attribute
+  suffix starts a paragraph instead of a second heading; the fidelity rule is the guard
+  behind it.
+- **`webview/resync.ts`** — takes the host's document in place, so the page's own
+  history and the host's attributes both survive.
 - **`serialize.ts`** — emits `src` where it is set, and a stable rule-based form for
   a changed block; wrapping follows the paragraph's own width, else
   `markdownExtended.editor.wrapColumn`.

@@ -376,12 +376,15 @@ place — each for a reason:
   clicking away applies it, `Esc` cancels — or **Show in text editor** to jump to it.
 
 A requirement heading written as `## ID: Title {#anchor}` keeps the id and the anchor
-read-only; only the title is editable.
+read-only; only the title is editable. `Enter` inside its title starts a paragraph below
+rather than a second heading, so the id and the anchor are never written twice.
 
 ### The fidelity promise
 
 - A block you did not touch is written back **byte for byte** — its wrapping, its
-  markers, its escapes, the blank lines around it.
+  markers, its escapes, the blank lines around it. The one exception is the separator
+  above it when the block it followed is no longer there (you moved, deleted or split
+  it): the blank lines it had belonged to that neighbour, and one blank line is written.
 - A paragraph you changed is re-wrapped at the width it was written at. A paragraph
   that gives no width of its own (a new one, or one that was a single line) is wrapped
   at `markdownExtended.editor.wrapColumn` (default `90`).
@@ -396,10 +399,13 @@ read-only; only the title is editable.
   The file is unaffected.
 - **Desktop only.** In vscode.dev the command and menu entries are hidden; **Open With…**
   still lists the editor there, and choosing it fails.
-- A stylesheet listed in `markdown.styles` by `https://` URL is not loaded in the editor
-  (local files are).
-- While the WYSIWYG editor has unsent keystrokes (a quarter of a second), a change made
-  to the same file elsewhere wins, and those keystrokes are dropped.
+- There is no merge. The editor sends what you typed a quarter of a second after the
+  last keystroke; an edit typed in the quarter second before an external change (the text
+  editor beside it, another extension, a save that trims whitespace) is dropped, and the
+  editor shows the file as the change left it. Everything sent before stays, and so does
+  its undo history.
+- `Ctrl+S` in the editor sends the last keystrokes and saves once they are written; a save
+  started elsewhere (the File menu, auto-save) saves what has been sent.
 
 ## Syntax Documentation
 
