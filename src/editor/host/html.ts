@@ -59,8 +59,10 @@ export function editorPage(webview: vscode.Webview, extensionUri: vscode.Uri, do
     const csp = [
         `default-src 'none'`,
         `img-src ${webview.cspSource} https: data:`,
-        `style-src ${webview.cspSource} 'unsafe-inline' data:`,
-        `font-src ${webview.cspSource} data:`,
+        // `https:` for a `markdown.styles` entry given by URL, which the
+        // preview loads too, and for the fonts such a stylesheet pulls in.
+        `style-src ${webview.cspSource} 'unsafe-inline' https: data:`,
+        `font-src ${webview.cspSource} https: data:`,
         `script-src 'nonce-${nonce}'`,
     ].join('; ');
 

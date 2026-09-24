@@ -299,7 +299,7 @@
         },
         {
           "command": "markdownExtended.openWysiwyg",
-          "when": "resourceExtname == .md && !isWeb",
+          "when": "resourceLangId == markdown && !isWeb",
           "group": "markdown"
         }
       ]
