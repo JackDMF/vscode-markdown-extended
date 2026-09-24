@@ -87,7 +87,14 @@ export const INJECTION_META_KEY = 'reqExplorer';
  * share the contract, not the code.
  */
 export type InjectionMark =
-    | { rule: 'req-includes'; kind: 'expansion'; snippet: string; line: number; missing?: true }
+    /**
+     * `path` is the snippet file the body was read from (absolute, as Req
+     * Explorer's host loaded it) and `lang` the variant that answered; both are
+     * absent when `missing` is set, so nothing offers to open a file that is not
+     * there (SPEC §10.2, `CR-RXE-127`). Optional here because a Req Explorer
+     * older than that change marks expansions without them.
+     */
+    | { rule: 'req-includes'; kind: 'expansion'; snippet: string; line: number; path?: string; lang?: string; missing?: true }
     | { rule: 'req-status-badges'; kind: 'atom'; artifact: string }
     | { rule: 'req-status-badges'; kind: 'decoration'; text: string }
     | { rule: 'req-reading-styles'; kind: 'atom' };
