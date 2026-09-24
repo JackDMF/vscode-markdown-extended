@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { Config } from '../../services/common/config';
+import { escapeHtml } from '../../services/exporter/shared';
 import { parseDocument, parsedDocumentToJSON } from '../parse';
 import { HostMessage, WebviewMessage } from '../protocol';
+import { message } from './errors';
 import { minimalReplacement } from './minimalEdit';
 
 /** What a session needs from the extension, injected so a test can drive one without a webview. */
@@ -22,14 +24,6 @@ export interface SessionWebview {
 
 /** How long a burst of changes from another writer (typing in the text editor) is left to settle before re-parsing. */
 const RESYNC_DELAY_MS = 100;
-
-function message(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
-function escapeHtml(text: string): string {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 /**
  * One rich editor over one `TextDocument`: the host half of the protocol in

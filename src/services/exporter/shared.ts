@@ -8,9 +8,10 @@ import { Config } from '../common/config';
 import { readContributeFile } from '../contributes/tools';
 
 /**
- * Escape HTML special characters to prevent XSS
+ * Escape HTML special characters to prevent XSS. Safe in text and in quoted
+ * attribute values alike; the one copy for the extension host.
  */
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
     return text
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { MarkdownIt } from '../../@types/markdown-it';
 import { MarkdownItExtender, createEditorEngine } from '../engine';
 import { plugins } from '../../plugin/plugins';
+import { message } from './errors';
 
 /** VS Code's own Markdown extension. Its engine is the preview's, not a plugin to it. */
 export const BUILTIN_MARKDOWN_EXTENSION = 'vscode.markdown-language-features';
@@ -10,10 +11,6 @@ export const BUILTIN_MARKDOWN_EXTENSION = 'vscode.markdown-language-features';
 const PREVIEW_SETTINGS = ['markdown.preview.linkify', 'markdown.preview.typographer', 'markdown.preview.breaks'];
 
 type Log = (line: string) => void;
-
-function message(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Every other extension's `extendMarkdownIt`, in the order VS Code hands them
