@@ -1,0 +1,158 @@
+/**
+ * Markdown Extended - WYSIWYG editor chrome
+ *
+ * Loaded last in the editor's webview, after the preview's own stylesheets
+ * (markdown.css, highlight.css, every extension's markdown.previewStyles and
+ * the user's markdown.styles), so the document looks as it does in the preview.
+ * This file styles only what the preview does not have: the editing surface,
+ * the outline and toolbar of a block that is not edited as rich text, the
+ * front-matter panel and the error banner.
+ *
+ * It is NOT a preview style and is never contributed to markdown.previewStyles
+ * or to exports. Colors come from VS Code's --vscode-* variables, which every
+ * webview receives for the active theme, so light, dark and high contrast need
+ * no rules of their own.
+ */
+
+.mep-editor .ProseMirror {
+    outline: none;
+    min-height: 80vh;
+    padding-bottom: 40vh;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-variant-ligatures: none;
+}
+
+/* ProseMirror's own required rules (prosemirror-view/style/prosemirror.css). */
+.ProseMirror { position: relative; }
+.ProseMirror pre { white-space: pre-wrap; }
+.ProseMirror li { position: relative; }
+.ProseMirror-hideselection *::selection { background: transparent; }
+.ProseMirror-hideselection { caret-color: transparent; }
+.ProseMirror [draggable][contenteditable=false] { user-select: text; }
+.ProseMirror-separator { display: inline !important; border: none !important; margin: 0 !important; }
+
+.ProseMirror-gapcursor { display: none; pointer-events: none; position: absolute; }
+.ProseMirror-gapcursor:after {
+    content: "";
+    display: block;
+    position: absolute;
+    top: -2px;
+    width: 20px;
+    border-top: 1px solid var(--vscode-editorCursor-foreground, currentColor);
+    animation: mep-cursor-blink 1.1s steps(2, start) infinite;
+}
+@keyframes mep-cursor-blink { to { visibility: hidden; } }
+.ProseMirror-focused .ProseMirror-gapcursor { display: block; }
+
+/* ------------------------------------------------------------------------- */
+/* Blocks shown, not edited as rich text                                     */
+/* ------------------------------------------------------------------------- */
+
+.mep-atom {
+    position: relative;
+    margin: 0.5em -8px;
+    padding: 2px 8px;
+    border: 1px dashed transparent;
+    border-radius: 4px;
+}
+
+.mep-atom:hover,
+.mep-atom.ProseMirror-selectednode,
+.mep-atom.mep-editing {
+    border-color: var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+}
+
+.mep-atom.ProseMirror-selectednode {
+    outline: 1px solid var(--vscode-focusBorder, #0078d4);
+    outline-offset: -1px;
+}
+
+.mep-injected-block { border-left: 3px solid var(--vscode-textLink-foreground, #3794ff); }
+.mep-injected-block[data-kind="generated"] { border-left-color: var(--vscode-descriptionForeground, #888); }
+
+.mep-atom-toolbar {
+    display: none;
+    gap: 6px;
+    align-items: center;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, #888);
+    margin-bottom: 2px;
+}
+
+.mep-atom:hover > .mep-atom-toolbar,
+.mep-atom.ProseMirror-selectednode > .mep-atom-toolbar,
+.mep-atom.mep-editing > .mep-atom-toolbar,
+.mep-injected-block[data-kind="expansion"] > .mep-atom-toolbar {
+    display: flex;
+}
+
+.mep-atom-toolbar[hidden] { display: none !important; }
+
+.mep-atom-label { margin-right: auto; }
+
+.mep-atom-button {
+    font: inherit;
+    padding: 1px 8px;
+    border: 1px solid var(--vscode-button-border, transparent);
+    border-radius: 2px;
+    color: var(--vscode-button-secondaryForeground, inherit);
+    background: var(--vscode-button-secondaryBackground, transparent);
+    cursor: pointer;
+}
+
+.mep-atom-button:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.2)); }
+.mep-atom-button:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); }
+
+.mep-raw-source { margin: 0; opacity: 0.8; }
+
+.mep-raw-editor {
+    box-sizing: border-box;
+    width: 100%;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: var(--vscode-editor-font-size, 13px);
+    color: var(--vscode-input-foreground, inherit);
+    background: var(--vscode-input-background, transparent);
+    border: 1px solid var(--vscode-input-border, var(--vscode-focusBorder, #0078d4));
+    padding: 4px 6px;
+    resize: vertical;
+}
+
+.mep-inline-atom { display: inline; }
+
+/* ------------------------------------------------------------------------- */
+/* Requirement heading: the id is shown, not edited                          */
+/* ------------------------------------------------------------------------- */
+
+.mep-req-prefix {
+    color: var(--vscode-descriptionForeground, #888);
+    user-select: none;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Front matter                                                              */
+/* ------------------------------------------------------------------------- */
+
+.mep-front-matter { border-left: 3px solid var(--vscode-descriptionForeground, #888); }
+
+.mep-front-matter > summary {
+    cursor: pointer;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, #888);
+}
+
+.mep-front-matter-source { margin: 4px 0 0; }
+
+/* ------------------------------------------------------------------------- */
+/* The document cannot be shown without loss                                 */
+/* ------------------------------------------------------------------------- */
+
+.mep-error {
+    margin: 16px 0;
+    padding: 8px 12px;
+    border: 1px solid var(--vscode-inputValidation-warningBorder, #b89500);
+    background: var(--vscode-inputValidation-warningBackground, transparent);
+    font-family: var(--vscode-font-family, sans-serif);
+}

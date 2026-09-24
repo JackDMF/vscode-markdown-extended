@@ -108,6 +108,26 @@ export class Config extends ConfigReader {
     }
     
     /**
+     * The column the WYSIWYG editor re-wraps a changed paragraph at when the
+     * paragraph gives no width of its own. Untouched blocks are never re-wrapped.
+     *
+     * Read for the document, because a folder of a multi-root workspace may hold
+     * a corpus wrapped at its own width. A value below the declared minimum (a
+     * hand-edited settings file) is raised to it rather than trusted: a width of
+     * a few columns would put every word on a line of its own.
+     *
+     * @param uri the document being edited
+     * @returns an integer of at least 20, 90 by default
+     */
+    editorWrapColumn(uri?: vscode.Uri): number {
+        const value = uri ? this.read<number>('editor.wrapColumn', uri) : this.read<number>('editor.wrapColumn');
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+            return 90;
+        }
+        return Math.max(20, Math.floor(value));
+    }
+
+    /**
      * Get output directory name for exports.
      * 
      * @returns Directory name relative to workspace root
@@ -277,7 +297,7 @@ export class Config extends ConfigReader {
         return this.migrated<boolean>('image.omitBackground', 'imageOmitBackground');
     }
 
-    get puppeteerDefaultSetting(): any {
+    get puppeteerDefaultSetting(): ScopedExportConfig['puppeteerUserSetting'] {
         return {
             pdf: {
                 printBackground: true,
@@ -290,7 +310,7 @@ export class Config extends ConfigReader {
             }
         }
     }
-    get puppeteerUserSetting(): any {
+    get puppeteerUserSetting(): ScopedExportConfig['puppeteerUserSetting'] {
         return {
             pdf: {
                 format: this.pdfFormat,

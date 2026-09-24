@@ -42,3 +42,4 @@ dist/bundle-stats.html
 #   extension.js       - "main" entry point
 #   extension.web.js   - "browser" entry point, for vscode.dev
 #   mermaid-browser.js - read at runtime by MermaidRenderer during export
+#   editor-webview.js  - the WYSIWYG editor's page, loaded into its webview

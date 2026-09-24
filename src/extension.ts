@@ -16,6 +16,7 @@ import { commandTableEdits } from './commands/tableEdits';
 import { CommandExportWorkSpace } from './commands/exportWorkspace';
 import { ExtensionContext } from './services/common/extensionContext';
 import { BrowserManager } from './services/browser/browserManager';
+import { registerWysiwygEditor } from './editor/host/provider';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -39,6 +40,19 @@ export function activate(ctx: vscode.ExtensionContext) {
         new CommandPasteTable(),
         new CommandFormateTable(),
         new CommandInstallBrowser(),
+        // Desktop only for now, so extension.web.ts does not register it: the
+        // editor page inlines every contributed stylesheet by reading it from
+        // disk (ContributesService), which the web build has no file system for,
+        // and the editor is experimental enough to be tried where it can be
+        // debugged first.
+        registerWysiwygEditor(ctx, line => {
+            // The channel can be gone when a test has reset the context.
+            try {
+                extensionContext.outputPanel.appendLine(line);
+            } catch {
+                // Nothing left to report to.
+            }
+        }),
     ].filter(Boolean);
     
     ctx.subscriptions.push(...subscriptions);

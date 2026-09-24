@@ -49,5 +49,8 @@
     "markdownExtended.configuration.exportTheme.dark": "Always export with the dark theme.",
     "markdownExtended.configuration.exportTheme.auto": "Follow the active VS Code color theme at export time.",
     "markdownExtended.configuration.lengthError": "Enter a CSS length such as 1cm, 210mm, 8.5in, or 96px (or leave empty to use the page format).",
-    "markdownExtended.configuration.deprecated": "Renamed in v3.0 — settings are now grouped under pdf.*, image.*, export.*, plugins.*, and toc.*. Your current value still applies; please move to the grouped setting."
+    "markdownExtended.configuration.deprecated": "Renamed in v3.0 — settings are now grouped under pdf.*, image.*, export.*, plugins.*, and toc.*. Your current value still applies; please move to the grouped setting.",
+    "markdownExtended.openWysiwyg": "Open in WYSIWYG Editor",
+    "markdownExtended.wysiwyg.displayName": "Markdown WYSIWYG Editor",
+    "markdownExtended.configuration.editorWrapColumn": "WYSIWYG editor (experimental): the column a changed paragraph is re-wrapped at when the paragraph gives no width of its own. Untouched blocks are never re-wrapped."
 }

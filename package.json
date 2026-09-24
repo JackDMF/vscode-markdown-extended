@@ -21,7 +21,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:markdown",
+    "onCustomEditor:markdownExtended.wysiwyg"
   ],
   "main": "./dist/extension.js",
   "browser": "./dist/extension.web.js",
@@ -229,10 +230,41 @@
         "command": "markdownExtended.MoveColumnRight",
         "title": "%markdownExtended.MoveColumnRight%",
         "category": "Markdown"
+      },
+      {
+        "command": "markdownExtended.openWysiwyg",
+        "title": "%markdownExtended.openWysiwyg%",
+        "category": "Markdown"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "markdownExtended.wysiwyg",
+        "displayName": "%markdownExtended.wysiwyg.displayName%",
+        "priority": "option",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          },
+          {
+            "filenamePattern": "*.markdown"
+          }
+        ]
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "markdownExtended.openWysiwyg",
+          "when": "!isWeb"
+        }
+      ],
       "editor/context": [
+        {
+          "when": "editorLangId == markdown && !isWeb",
+          "command": "markdownExtended.openWysiwyg",
+          "group": "markdown"
+        },
         {
           "when": "editorLangId == markdown && !isWeb",
           "command": "markdownExtended.export",
@@ -263,6 +295,11 @@
         {
           "command": "markdownExtended.exportWorkspace",
           "when": "!isWeb",
+          "group": "markdown"
+        },
+        {
+          "command": "markdownExtended.openWysiwyg",
+          "when": "resourceExtname == .md && !isWeb",
           "group": "markdown"
         }
       ]
@@ -449,6 +486,14 @@
           ],
           "description": "%markdownExtended.configuration.tocLevels%",
           "order": 41
+        },
+        "markdownExtended.editor.wrapColumn": {
+          "type": "integer",
+          "default": 90,
+          "minimum": 20,
+          "description": "%markdownExtended.configuration.editorWrapColumn%",
+          "order": 50,
+          "scope": "resource"
         },
         "markdownExtended.exportTheme": {
           "type": "string",
@@ -643,7 +688,7 @@
     "analyze": "node esbuild.js --analyze",
     "compile-tests": "tsc -p ./",
     "watch-tests": "tsc -watch -p ./",
-    "pretest": "npm run compile-tests",
+    "pretest": "npm run compile",
     "test": "npm run compile-tests && node ./out/test/runTest.js",
     "release": "node scripts/release.mjs",
     "release:publish": "node scripts/release.mjs --publish",
@@ -698,10 +743,18 @@
     "markdown-it-table-of-contents": "^0.9.0",
     "mermaid": "^11.16.0",
     "papaparse": "^5.4.1",
+    "prosemirror-commands": "^1.7.2",
+    "prosemirror-dropcursor": "^1.8.3",
+    "prosemirror-gapcursor": "^1.4.1",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-inputrules": "^1.5.1",
+    "prosemirror-keymap": "^1.2.3",
     "prosemirror-markdown": "^1.13.8",
     "prosemirror-model": "^1.25.12",
+    "prosemirror-schema-list": "^1.5.1",
     "prosemirror-state": "^1.4.4",
     "prosemirror-transform": "^1.12.1",
+    "prosemirror-view": "^1.42.5",
     "puppeteer": "^24.3.1"
   }
 }

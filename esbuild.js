@@ -189,12 +189,34 @@ async function main() {
         },
     });
 
+    // The WYSIWYG editor's page — the ProseMirror view that runs inside the
+    // custom editor's webview. A browser IIFE loaded by a <script> tag; it talks
+    // to the extension host by postMessage only, so it shares no module
+    // instance with the desktop bundle.
+    const editorWebviewCtx = await esbuild.context({
+        entryPoints: ['src/editor/webview/main.ts'],
+        bundle: true,
+        format: 'iife',
+        minify: production,
+        sourcemap: !production,
+        sourcesContent: false,
+        platform: 'browser',
+        outfile: 'dist/editor-webview.js',
+        logLevel: 'silent',
+        metafile: analyze,
+        plugins: sharedPlugins,
+        define: {
+            'process.env.NODE_ENV': production ? '"production"' : '"development"',
+        },
+    });
+
+    const contexts = [desktopCtx, webCtx, mermaidCtx, editorWebviewCtx];
     if (watch) {
-        await Promise.all([desktopCtx.watch(), webCtx.watch(), mermaidCtx.watch()]);
+        await Promise.all(contexts.map(ctx => ctx.watch()));
         console.log('Watching for changes...');
     } else {
-        await Promise.all([desktopCtx.rebuild(), webCtx.rebuild(), mermaidCtx.rebuild()]);
-        await Promise.all([desktopCtx.dispose(), webCtx.dispose(), mermaidCtx.dispose()]);
+        await Promise.all(contexts.map(ctx => ctx.rebuild()));
+        await Promise.all(contexts.map(ctx => ctx.dispose()));
     }
 }
 
