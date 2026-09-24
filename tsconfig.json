@@ -13,6 +13,12 @@
             "node_modules/@types",
             "src/@types"
         ],
+        // prosemirror-markdown depends on @types/markdown-it, which would otherwise
+        // shadow the project's own declarations in src/@types for every
+        // `from 'markdown-it'` import and break the plugins and their tests.
+        "paths": {
+            "markdown-it": ["./src/@types/markdown-it"]
+        },
         
         // Gradual strict mode - enable more as code improves
         "strict": false,

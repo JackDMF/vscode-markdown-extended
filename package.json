@@ -677,6 +677,7 @@
     "@puppeteer/browsers": "^2.10.13",
     "highlight.js": "^11.9.0",
     "js-yaml": "^4.1.0",
+    "markdown-it": "^14.3.2",
     "markdown-it-abbr": "^2.0.0",
     "markdown-it-attrs": "^4.1.6",
     "markdown-it-bracketed-spans": "^1.0.1",
@@ -686,6 +687,7 @@
     "markdown-it-deflist": "^3.0.0",
     "markdown-it-emoji": "^3.0.0",
     "markdown-it-footnote": "^4.0.0",
+    "markdown-it-front-matter": "^0.2.4",
     "markdown-it-html5-embed": "^0.3.3",
     "markdown-it-ib": "^2.0.0",
     "markdown-it-kbd": "^2.2.2",
@@ -696,6 +698,10 @@
     "markdown-it-table-of-contents": "^0.9.0",
     "mermaid": "^11.16.0",
     "papaparse": "^5.4.1",
+    "prosemirror-markdown": "^1.13.8",
+    "prosemirror-model": "^1.25.12",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-transform": "^1.12.1",
     "puppeteer": "^24.3.1"
   }
 }
