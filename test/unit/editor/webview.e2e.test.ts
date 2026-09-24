@@ -190,8 +190,8 @@ suite('Editor webview (e2e)', () => {
         assert.strictEqual(last?.text, SOURCE);
     });
 
-    test('a new document from the host replaces the page\'s state', async function () {
-        this.timeout(10000);
+    test('a new document from the host is taken in place: edits go against its version, and undo still reaches earlier ones', async function () {
+        this.timeout(15000);
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const next = `${FRONT_AND_HEADING}Rewritten by another writer.\n`;
         await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, next, {})), version: 5, defaultWrap: 90 });
@@ -201,10 +201,30 @@ suite('Editor webview (e2e)', () => {
         await page.keyboard.press('End');
         await page.keyboard.type('!');
         await settle();
-        const all = await edits();
+        let all = await edits();
         assert.strictEqual(all.length, before + 1);
         assert.strictEqual(all[all.length - 1].baseVersion, 5);
-        assert.strictEqual(all[all.length - 1].text, `${FRONT_AND_HEADING}Rewritten by another writer.!\n`);
+        const typed = `${FRONT_AND_HEADING}Rewritten by another writer.!\n`;
+        assert.strictEqual(all[all.length - 1].text, typed);
+
+        // Another writer appends a paragraph (or a save trims the file): the
+        // host posts the text it now holds.
+        const appended = `${typed}\nAppended elsewhere.\n`;
+        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, appended, {})), version: 6, defaultWrap: 90 });
+        await page.waitForFunction(() => document.querySelectorAll('.ProseMirror p').length === 2);
+        await settle();
+        assert.strictEqual((await edits()).length, before + 1, 'taking the host\'s document wrote nothing back');
+
+        await page.focus('.ProseMirror');
+        await page.keyboard.down('Control');
+        await page.keyboard.press('z');
+        await page.keyboard.up('Control');
+        await settle();
+        all = await edits();
+        assert.strictEqual(all.length, before + 2);
+        assert.strictEqual(all[all.length - 1].baseVersion, 6);
+        assert.strictEqual(all[all.length - 1].text, `${FRONT_AND_HEADING}Rewritten by another writer.\n\nAppended elsewhere.\n`,
+            'the "!" typed before the host\'s document is undone; the other writer\'s paragraph stays');
     });
 
     test('an include expansion offers its snippet file; a missing one offers nothing', async function () {

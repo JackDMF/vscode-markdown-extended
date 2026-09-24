@@ -6,7 +6,7 @@
  * bring the host's markdown-it composition into the browser for nothing.
  */
 import { Node } from 'prosemirror-model';
-import { EditorState, Selection, TextSelection, Transaction } from 'prosemirror-state';
+import { EditorState, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import type { HostMessage, WebviewMessage } from '../protocol';
@@ -14,6 +14,7 @@ import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView } from './nodeViews';
 import { editorPlugins } from './plugins';
+import { resyncTransaction } from './resync';
 
 interface VsCodeApi {
     postMessage(message: WebviewMessage): void;
@@ -166,19 +167,11 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
     }
 }
 
-/** The previous selection, clamped into the new document. */
-function restoredSelection(doc: Node, previous: Selection | undefined): Selection | undefined {
-    if (!previous) {
-        return undefined;
-    }
-    const size = doc.content.size;
-    const clamp = (pos: number) => Math.max(0, Math.min(pos, size));
-    return TextSelection.between(doc.resolve(clamp(previous.anchor)), doc.resolve(clamp(previous.head)));
-}
-
 function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: number): void {
-    // The host's document supersedes whatever was still waiting to be sent: it
-    // is newer than the base that edit was computed from.
+    // An edit still waiting in the delay is dropped: it was computed against
+    // the document this one supersedes, and the host would refuse it for its
+    // stale base. The keystrokes it carried vanish with it — the price of never
+    // merging (README, "Limits").
     if (editTimer !== undefined) {
         clearTimeout(editTimer);
         editTimer = undefined;
@@ -187,12 +180,16 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     const doc = Node.fromJSON(editorSchema, json.doc);
     current = { eol: json.eol, tail: json.tail, version, defaultWrap };
     hostText = serialize(doc);
-    const selection = restoredSelection(doc, view?.state.selection);
-    const state = EditorState.create({ doc, plugins, selection });
     if (view) {
-        view.updateState(state);
+        // Changed in place rather than rebuilt, so the undo history survives a
+        // change made elsewhere (a save that trims whitespace is one). Applied
+        // past `dispatchTransaction`: it is not an edit to send back. The
+        // selection is mapped through the change, so a caret outside the
+        // replaced blocks stays where it was.
+        view.updateState(view.state.apply(resyncTransaction(view.state, doc)));
         return;
     }
+    const state = EditorState.create({ doc, plugins });
     view = new EditorView(mount, { state, nodeViews, dispatchTransaction });
     view.dom.addEventListener('keydown', onEditorKeydown);
 }
