@@ -454,14 +454,55 @@ superseded text and is dropped.
 
 ### The toolbar
 
-`webview/toolbar/` is the formatting toolbar at the top of the page and the bubble
-over a text selection, in three layers:
+`webview/toolbar/` is the formatting toolbar at the top of the page, its menus and
+preview card, and the bubble over a text selection.
 
-- **`actions.ts`** — one table, pure data, no DOM. Each action has an id, a group
-  (block type, inline, annotations, insert), an optional menu (block type, admonition),
-  a label, the **syntax** its tooltip names, a **sample** (tag, classes, text,
-  children: the element the parser makes from that syntax), an `apply` kind and an
-  **example** in which the construct renders as its sample.
+**Row, menu, card: the control is uniform, the fidelity lives where a choice is made.**
+A first version drew every button as its real sample in the row. It failed as a
+control: samples of wildly different sizes (a sidebar's box dwarfed the row, a table
+was a speck), two wrapping rows, content that did not read as a button, rare actions as
+heavy as frequent ones. So the surfaces now divide the work:
+
+- **The row** — `Block type ▾ | i em b strong code | Formatting ▾ Annotation ▾ Insert ▾`
+  (`ROW_LAYOUT`) — is one line of controls of one height; menus are a text label and a
+  chevron, hairlines separate the groups, and a narrow window scrolls the row rather than
+  wrapping it, so no control moves. Only the five native marks are in it, their glyph the
+  real element held to the button's height and minimum width, so a stylesheet can change
+  how the glyph looks but not the row's geometry. The bubble carries the same five.
+- **A menu entry** is where the fidelity lives: the entry is the element the parser makes
+  (`sample`), styled by the cascade, beside its syntax. Every entry has one height; a block
+  sample is scaled into it with `zoom`, measured when the menu opens (`fitSamples`), so the
+  fit holds for whatever the stylesheets make of the element. The admonition types are a
+  submenu of Insert.
+- **The preview card** shows the hovered or focused entry's `preview` — a sentence or a
+  two-row example — at natural size, 300 ms after the pointer or the focus rests on it,
+  beside the menu, with the Markdown beneath.
+
+Menus and the card are `position: fixed` in a layer outside the row: the row scrolls,
+and a scrolling box clips whatever hangs out of it.
+
+**Why a card needs the notes stylesheet's help.** The notes' margin layout in
+`styles/markdown-extended.css` is gated by `@media screen and (min-width: 1280px)`, and a
+media query reads the window, not the card: in a wide webview a 360px card's note would
+float out by its full offset, and the card's clipping would make it vanish. Restating the
+stacked rendering in `editor.css` would state that form twice. Instead the margin layout
+excludes descendants of the card (`:where(:not(.mep-preview-card *))`: `:where` keeps a bare
+class's specificity, so a reader's later `.sidenote` rule still wins), and the card keeps
+the base rendering — the one statement of the stacked form. The class occurs only in the
+editor's page, so the preview and exports are unaffected; `PREVIEW_CARD_CLASS` names it
+once, and a test holds both stylesheets to that name. `display: flow-root; contain: layout
+paint; overflow: hidden` on the card is the second line of defence. The page test runs at
+1400px and requires every element of each Annotation preview to lie inside the card and
+to be visibly in it; with the guard removed the sidenote floats out.
+
+The layers:
+
+- **`actions.ts`** — one table, pure data, no DOM. Each action has an id, a `place` (the
+  row, or a menu and submenu), a label, the **syntax** its tooltip and entry name, a
+  **sample** (tag, classes, attributes, content: the element the parser makes from that
+  syntax), an `apply` kind, an **example** in which the construct renders as its sample,
+  and a **preview** (Markdown and the elements it renders as) for the card. Row button,
+  menu entry and card are built from the same entry.
 - **`commands.ts`** — what each `apply` kind does to an `EditorState`, testable without
   a page. A `mark` button toggles a native mark *with its delimiter*
   (`toggleMarkup`): the mark type excludes itself, so `_` on `*` text replaces the `*`,
@@ -471,9 +512,10 @@ over a text selection, in three layers:
   lifts or converts a list or quote. `wrap-source` and `insert-source` are stage 1 for
   the constructs outside the editable core (below).
 - **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
-  active and disabled states per action, the block-type face, the menus, the bubble
-  (placed from `coordsAtPos` inside `.mep-editor`, above the selection, below it when
-  above would be under the sticky toolbar).
+  active and disabled states per action, the block-type face (the current type's name,
+  locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
+  `Enter`, `Esc`), the card, the bubble (placed from `coordsAtPos` inside `.mep-editor`,
+  above the selection, below it when above would be under the sticky toolbar).
 
 **The syntax is read from where it is true.** `src/syntax/markers.ts` states the
 inline markers, the note and sidebar markers with their classes, and the admonition
@@ -481,19 +523,20 @@ types. It imports nothing, so the page can load it, and `toggleFormats.ts` (thro
 `commands/inlineToggleArgs.ts`), `markdownItSidenote.ts`, `markdownItAdmonition.ts`
 and the action table all import it: the text editor's toggles, the parser and the
 toolbar cannot write one construct two ways. The block markers are the serializer's.
-`toolbarActions.test.ts` renders every action's example through the real engine and
-requires the sample's elements and classes in the HTML, and for every mark action
+`toolbarActions.test.ts` renders every action's example and every preview through the
+real engine and requires the drawn elements and classes in the HTML, and for every mark action
 the schema's element equals the engine's — "this button makes this element" is
 checked against the parser, not assumed.
 
-**The look is read from the cascade.** A button contains its sample element inside
-`body.markdown-body`, so the page's stylesheets — the preview's, every extension's,
-the user's — style it exactly as they style the construct in the document, and any
-change to them reaches the toolbar. Reading a colour out of a stylesheet's text would
-be a second answer to "what does a sidenote look like", and wrong the moment another
-rule in the cascade won. Tools are `role="button"` elements, not `<button>`s, whose
-user-agent font would stand between the cascade and the sample; `editor.css` styles
-only their frame. Block samples are scaled with `zoom` and lose their vertical margins.
+**The look is read from the cascade.** A mark glyph, a menu entry and the card contain
+their sample elements inside `body.markdown-body`, so the page's stylesheets — the
+preview's, every extension's, the user's — style them exactly as they style the construct
+in the document, and any change to them reaches the toolbar. Reading a colour out of a
+stylesheet's text would be a second answer to "what does a sidenote look like", and wrong
+the moment another rule in the cascade won. Tools are `role="button"` elements, not
+`<button>`s, whose user-agent font would stand between the cascade and the sample;
+`editor.css` styles only their frame, and a sample's box (the height it must fit, its
+margins), never its look.
 
 **Stage 1: source for what the core cannot edit.** `wrap-source` wraps the selection
 in its markers and replaces the top-level block by a `raw_block` whose `src` is the

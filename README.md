@@ -365,26 +365,42 @@ selected — and never above the first.
 
 ### Toolbar
 
-A toolbar stays at the top of the page, and a smaller bubble with its inline and
-annotation groups appears above any text you select. Every button **is** the construct it
-makes — the very element the preview renders from that syntax, with a short sample text —
-so it looks exactly like the construct in your document, drawn by the same stylesheets,
-and changes with them. The tooltip names the Markdown each button writes.
+A toolbar stays at the top of the page, one line of controls:
 
-- **Block type** — a menu whose face shows the block you are in: paragraph, heading 1–6,
-  quote, bullet list, numbered list, code block. Choosing the list or quote you are
-  already in takes the block out of it again.
-- **Inline** — italic, emphasis, bold, strong, inline code, highlight (`==mark==`),
-  superscript (`^sup^`), subscript (`~sub~`), strikethrough (`~~del~~`) and key
-  (`[[Ctrl]]`). A button is marked while the selection carries what it writes.
-- **Annotations** — sidenote (`++reference|note++`), marginal note (`!!reference|note!!`),
+`Block type ▾` | `i` `em` `b` `strong` `code` | `Formatting ▾` `Annotation ▾` `Insert ▾`
+
+Every control has the same height, and nothing wraps: in a narrow window the row scrolls
+sideways, so each control stays where you learned it. The five marks show their real
+element (the italic, emphasis, bold, strong and code your stylesheets draw) as their
+glyph; everything else is in a menu. Above any text you select, a small bubble offers the
+same five marks.
+
+In a menu, each entry **is** the construct it makes — the very element the preview renders
+from that syntax, drawn by the same stylesheets and scaled to one entry height — with its
+Markdown on the right. Rest the pointer on an entry, or move to it with the arrow keys, and
+a card beside the menu shows the construct at full size in a short example, with the
+Markdown beneath. Menus open with `↓`, `Enter` or a click, move with the arrow keys (`→`
+opens a submenu), choose with `Enter` and close with `Esc`.
+
+- **Block type** — paragraph, heading 1–6, quote, bullet list, numbered list, code block.
+  The face names the block you are in. Choosing the list or quote you are already in takes
+  the block out of it again.
+- **Italic, emphasis, bold, strong, code** — in the row. A button is marked while the
+  selection carries what it writes.
+- **Formatting** — highlight (`==mark==`), superscript (`^sup^`), subscript (`~sub~`),
+  strikethrough (`~~del~~`) and key (`[[Ctrl]]`).
+- **Annotation** — sidenote (`++reference|note++`), marginal note (`!!reference|note!!`),
   left and right sidebar (`$left$`, `@right@`) and footnote. A footnote is written after
   the selection with the first free number (`[^2]`), and its definition goes below the
   paragraph with its source open for the text.
-- **Insert** — horizontal rule, admonition (a menu of every type the admonition plugin
-  knows, each drawn as its box), table, container, task list, footnote definition,
-  definition list, abbreviation and table of contents, from the same templates as this
-  extension's snippets where one exists.
+- **Insert** — horizontal rule; admonition, a submenu of every type the admonition plugin
+  knows, each drawn as its box; table, container, task list, definition list, abbreviation
+  and table of contents, from the same templates as this extension's snippets where one
+  exists.
+
+In the card, notes and sidebars are shown stacked, as they render below the margin
+layout's 1280px breakpoint, however wide the window: a card is too narrow for a margin,
+so the notes stylesheet leaves its margin layout out of it.
 
 **Why emphasis is four buttons.** This extension renders `*a*` as `<i>`, `_b_` as `<em>`,
 `**c**` as `<b>` and `__d__` as `<strong>` (`markdown-it-ib`), so a stylesheet can give
