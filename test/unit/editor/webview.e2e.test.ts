@@ -227,6 +227,42 @@ suite('Editor webview (e2e)', () => {
             'the "!" typed before the host\'s document is undone; the other writer\'s paragraph stays');
     });
 
+    test('Ctrl+S is kept from VS Code and sent as an edit that asks the host to save', async function () {
+        this.timeout(10000);
+        const before = (await edits()).length;
+        await page.click('.ProseMirror p');
+        await page.keyboard.press('End');
+        await page.keyboard.type('?');
+        // Where a webview listens to forward keys to VS Code: on its window.
+        await page.evaluate(() => {
+            const w = window as unknown as { sawSave?: boolean };
+            w.sawSave = false;
+            window.addEventListener('keydown', e => {
+                if (e.key === 's' && e.ctrlKey) {
+                    w.sawSave = true;
+                }
+            });
+        });
+        await page.keyboard.down('Control');
+        await page.keyboard.press('s');
+        await page.keyboard.up('Control');
+        // No settle: the edit goes at once, not after the typing delay.
+        const all = await edits();
+        assert.strictEqual(all.length, before + 1);
+        assert.strictEqual(all[all.length - 1].save, true);
+        assert.ok(all[all.length - 1].text.includes('Rewritten by another writer.?'), all[all.length - 1].text);
+        assert.strictEqual(await page.evaluate(() => (window as unknown as { sawSave?: boolean }).sawSave), false,
+            'the keydown never reached the listener a webview forwards keys to VS Code from');
+
+        await page.keyboard.down('Control');
+        await page.keyboard.press('s');
+        await page.keyboard.up('Control');
+        const again = await edits();
+        assert.strictEqual(again.length, before + 2, 'a save with nothing new to send still asks for the save');
+        assert.strictEqual(again[again.length - 1].save, true);
+        assert.strictEqual(again[again.length - 1].text, all[all.length - 1].text);
+    });
+
     test('an include expansion offers its snippet file; a missing one offers nothing', async function () {
         this.timeout(10000);
         // Req Explorer is not installed in the test host, so the expansions are

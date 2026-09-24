@@ -53,6 +53,8 @@ export class WysiwygSession implements vscode.Disposable {
     /** The snippet files the current document's expansions name; `openSnippet` opens only these. */
     private snippetPaths = new Set<string>();
     private queue: Promise<void> = Promise.resolve();
+    /** The last save the page asked for; it runs after the queue, not in it. */
+    private saving: Promise<void> = Promise.resolve();
     private resyncTimer: ReturnType<typeof setTimeout> | undefined;
     private readonly subscriptions: vscode.Disposable[];
 
@@ -68,8 +70,10 @@ export class WysiwygSession implements vscode.Disposable {
                     this.documentChanged();
                 }
             }),
-            // A save arriving while an edit is being applied waits for it, so
-            // the file on disk holds what the webview showed.
+            // A save started elsewhere (the File menu, auto-save, Save All)
+            // waits for the edits already received to be applied. It cannot
+            // wait for one the page has not sent yet; Ctrl+S in the page does
+            // not come through here at all but as an edit with `save`.
             vscode.workspace.onWillSaveTextDocument(e => {
                 if (e.document.uri.toString() === this.document.uri.toString()) {
                     e.waitUntil(this.queue);
@@ -81,7 +85,7 @@ export class WysiwygSession implements vscode.Disposable {
 
     /** Resolves when every message received so far has been handled. For tests. */
     settled(): Promise<void> {
-        return this.queue;
+        return Promise.all([this.queue, this.saving]).then(() => undefined);
     }
 
     dispose(): void {
@@ -114,6 +118,14 @@ export class WysiwygSession implements vscode.Disposable {
                 break;
             case 'edit':
                 this.enqueue(() => this.applyEdit(msg.text, msg.baseVersion));
+                if (msg.save) {
+                    // After the edit, but outside the queue: the save runs the
+                    // will-save listener, which waits on the queue, and a save
+                    // queued behind itself would wait for itself.
+                    this.saving = this.queue.then(() => this.save()).catch(error => {
+                        this.host.log(`[ERROR] WYSIWYG editor: saving failed: ${message(error)}`);
+                    });
+                }
                 break;
             case 'render':
                 void this.render(msg.requestId, msg.src);
@@ -196,6 +208,21 @@ export class WysiwygSession implements vscode.Disposable {
             // Refused, or VS Code normalized the inserted line endings: show the
             // person what the document now holds.
             await this.post();
+        }
+    }
+
+    /**
+     * The save the person asked for with Ctrl+S in the page, after the edit it
+     * came with. A stale edit was dropped, and the document is saved as it
+     * stands — which is what Ctrl+S in the text editor would have saved.
+     */
+    private async save(): Promise<void> {
+        if (!this.document.isDirty) {
+            return;
+        }
+        const saved = await this.document.save();
+        if (!saved) {
+            this.host.log(`[WARN] WYSIWYG editor: saving ${this.document.uri.toString()} did not complete.`);
         }
     }
 

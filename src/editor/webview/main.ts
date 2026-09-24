@@ -53,8 +53,12 @@ function serialize(doc: Node): string {
     return serializeDocument({ doc, eol: meta.eol, tail: meta.tail }, { defaultWrap: meta.defaultWrap });
 }
 
-/** Send the document back now, if it differs from what the host holds. */
-function flush(): void {
+/**
+ * Send the document back now, if it differs from what the host holds — or, for
+ * a save, always: the host saves once it has applied the edit, so the file on
+ * disk holds the last keystroke (see `onEditorKeydown`).
+ */
+function flush(save = false): void {
     if (editTimer !== undefined) {
         clearTimeout(editTimer);
         editTimer = undefined;
@@ -63,11 +67,11 @@ function flush(): void {
         return;
     }
     const text = serialize(view.state.doc);
-    if (text === hostText) {
+    if (text === hostText && !save) {
         return;
     }
     hostText = text;
-    post({ type: 'edit', text, baseVersion: current.version });
+    post({ type: 'edit', text, baseVersion: current.version, ...(save ? { save: true as const } : {}) });
 }
 
 function scheduleFlush(): void {
@@ -198,7 +202,15 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
  * Runs after ProseMirror's own key handling. An undo or redo it performed is
  * kept from VS Code, whose undo would revert the document as well; one it had
  * nothing for goes through, so undoing past the editor's history reaches the
- * document's. A save sends the pending edit first.
+ * document's.
+ *
+ * A save is kept from VS Code altogether and sent as an edit that asks the host
+ * to save after applying it. Letting VS Code save while the edit is still on its
+ * way would write the file without the last keystrokes (its save participant
+ * cannot wait for a message that has not arrived yet), and the document would
+ * turn dirty again the moment the edit landed. Stopping propagation is what
+ * keeps the key from VS Code: a webview forwards a keydown to the workbench
+ * from a listener on its window, which a stopped event never reaches.
  */
 function onEditorKeydown(e: KeyboardEvent): void {
     const mod = e.ctrlKey || e.metaKey;
@@ -208,7 +220,12 @@ function onEditorKeydown(e: KeyboardEvent): void {
     const key = e.key.toLowerCase();
     if ((key === 'z' || key === 'y') && e.defaultPrevented) {
         e.stopPropagation();
+    } else if (key === 's' && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        flush(true);
     } else if (key === 's') {
+        // Save As and the like stay VS Code's; the pending edit is sent first.
         flush();
     }
 }
@@ -264,7 +281,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
 });
 
 // Leaving the page must not lose the last keystrokes still inside the delay.
-window.addEventListener('blur', flush);
-window.addEventListener('pagehide', flush);
+window.addEventListener('blur', () => flush());
+window.addEventListener('pagehide', () => flush());
 
 post({ type: 'ready' });

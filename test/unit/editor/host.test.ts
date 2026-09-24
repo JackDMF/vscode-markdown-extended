@@ -198,6 +198,33 @@ suite('Editor host: session protocol', () => {
         assert.strictEqual(rendered.requestId, 7);
         assert.ok(rendered.html.includes('<table'), rendered.html);
     });
+
+    test('an edit asking to save is applied, then saved', async function () {
+        this.timeout(10000);
+        const last = webview.documents().pop();
+        assert.ok(last);
+        assert.ok(document.isDirty, 'the earlier edits left the document dirty');
+        const changed = document.getText().replace('wrapped as it was written.', 'wrapped, then saved.');
+        webview.send({ type: 'edit', text: changed, baseVersion: last.version, save: true });
+        await session.settled();
+        assert.strictEqual(document.getText(), changed);
+        assert.strictEqual(document.isDirty, false, 'the save ran after the edit, not before it');
+        assert.strictEqual(fs.readFileSync(uri.fsPath, 'utf8'), changed);
+    });
+
+    test('a save with nothing left to send still saves what an earlier edit wrote', async function () {
+        this.timeout(10000);
+        const last = webview.documents().pop();
+        assert.ok(last);
+        const changed = document.getText().replace('wrapped, then saved.', 'wrapped, edited, saved later.');
+        webview.send({ type: 'edit', text: changed, baseVersion: last.version });
+        await session.settled();
+        assert.ok(document.isDirty);
+        webview.send({ type: 'edit', text: changed, baseVersion: last.version, save: true });
+        await session.settled();
+        assert.strictEqual(document.isDirty, false);
+        assert.strictEqual(fs.readFileSync(uri.fsPath, 'utf8'), changed);
+    });
 });
 
 suite('Editor host: provider smoke test', () => {
