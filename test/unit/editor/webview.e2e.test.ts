@@ -241,4 +241,40 @@ suite('Editor webview (e2e)', () => {
         const open = (await posted()).filter(m => m.type === 'openSource').pop();
         assert.deepStrictEqual(open, { type: 'openSource', line: 0 });
     });
+
+    test('Enter inside a requirement heading starts a paragraph, so the id is written once', async function () {
+        this.timeout(10000);
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const json = parsedDocumentToJSON(parseDocument(md, SOURCE, {}));
+        const heading = (json.doc.content as { type: string; attrs: Record<string, unknown>; content: { text: string }[] }[])
+            .find(n => n.type === 'heading');
+        assert.ok(heading);
+        heading.attrs.reqPrefix = 'FRS-TST-001: ';
+        heading.content = [{ ...heading.content[0], text: 'Page' }];
+        await send({ type: 'document', json, version: 11, defaultWrap: 90 });
+        await page.waitForSelector('.ProseMirror h2 .mep-heading-text');
+
+        const before = (await edits()).length;
+        // A click in the middle of the title puts the caret inside it, and
+        // ProseMirror takes it over on the selectionchange that follows, which
+        // is given time to arrive: a key pressed at once would act on the
+        // selection before the click. (Arrow keys are no use for placing the
+        // caret here: in headless Chromium their moves did not reach the state.)
+        await page.click('.ProseMirror h2 .mep-heading-text');
+        await new Promise(resolve => setTimeout(resolve, 150));
+        await page.keyboard.press('Enter');
+        await settle();
+        const all = await edits();
+        assert.strictEqual(all.length, before + 1);
+        const text = all[all.length - 1].text;
+        const lines = text.split('\n');
+        const at = lines.findIndex(l => l.startsWith('## FRS-TST-001: '));
+        const match = /^## FRS-TST-001: (.+) \{#frs-tst-001-1a2b3c4d\}$/.exec(lines[at]);
+        assert.ok(match, text);
+        assert.strictEqual(lines[at + 1], '', text);
+        assert.ok(match[1].length > 0 && match[1].length < 'Page'.length, 'the caret was inside the title');
+        assert.strictEqual(match[1] + lines[at + 2], 'Page', 'the text after the caret is the paragraph below');
+        assert.strictEqual(text.split('FRS-TST-001:').length, 2, 'the id is written once');
+        assert.strictEqual(text.split('{#frs-tst-001-1a2b3c4d}').length, 2, 'the anchor is written once');
+    });
 });

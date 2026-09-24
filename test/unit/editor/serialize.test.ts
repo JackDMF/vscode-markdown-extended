@@ -5,7 +5,9 @@ import {
     editorSchema,
     parseDocument,
     serializeDocument,
+    fidelityPlugin,
 } from '../../../src/editor';
+import { EditorState } from 'prosemirror-state';
 import { conformanceDocument, constructsFixture, hostEngine, readText, replaceChild, toCrlf, topChildren, touched } from './helpers';
 
 const schema = editorSchema;
@@ -171,5 +173,16 @@ suite('Editor serializer for changed blocks', () => {
     test('the options object is the only configuration: defaultWrap does not touch untouched blocks', () => {
         const source = 'A line that is much longer than ten characters stays as it is.\n';
         assert.strictEqual(serializeDocument(parseDocument(md, source), { ...options, defaultWrap: 10 }), source);
+    });
+
+    test('a paragraph split right under a heading is written as two paragraphs, and read back as two', () => {
+        const source = '# H\nAlpha beta\n';
+        const before = EditorState.create({ doc: parseDocument(md, source).doc, plugins: [fidelityPlugin()] });
+        const split = before.doc.child(0).nodeSize + 1 + 'Alpha '.length;
+        const after = before.apply(before.tr.split(split));
+        const out = serializeDocument({ doc: after.doc, eol: '\n', tail: '' }, options);
+        assert.strictEqual(out, '# H\nAlpha\n\nbeta\n');
+        const reread = topChildren(parseDocument(md, out).doc).map(n => `${n.type.name}:${n.textContent}`);
+        assert.deepStrictEqual(reread, ['heading:H', 'paragraph:Alpha', 'paragraph:beta']);
     });
 });

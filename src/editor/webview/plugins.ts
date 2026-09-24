@@ -1,12 +1,12 @@
-import { baseKeymap, toggleMark } from 'prosemirror-commands';
+import { baseKeymap, chainCommands, splitBlockAs, toggleMark } from 'prosemirror-commands';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
 import { history, redo, undo } from 'prosemirror-history';
 import { inputRules, textblockTypeInputRule, undoInputRule, wrappingInputRule } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
-import { Plugin, Transaction } from 'prosemirror-state';
-import { PRESERVE_SOURCE_META, fidelityPlugin } from '../fidelity';
+import { Command, Plugin } from 'prosemirror-state';
+import { fidelityPlugin } from '../fidelity';
 import { editorSchema } from '../schema';
 
 const nodes = editorSchema.nodes;
@@ -33,6 +33,29 @@ function markdownInputRules(): Plugin {
     });
 }
 
+/**
+ * Enter inside a heading that carries a requirement id or an attribute suffix
+ * (`## ID: Title {#anchor}`): the text after the caret becomes a paragraph, not
+ * a second heading. The default split copies every attribute to the new half,
+ * which would write the id and the anchor twice — the duplicate Req Explorer's
+ * checks refuse. At the end of the heading the default already starts a
+ * paragraph, and at its start it leaves the heading (with its id) under a new
+ * empty paragraph, so only a caret strictly inside the text is taken here.
+ * `fidelityPlugin` holds the same line for transactions that do not come from
+ * this key.
+ */
+export const splitRequirementHeading: Command = (state, dispatch) => {
+    const { $from } = state.selection;
+    const heading = $from.parent;
+    if (heading.type !== nodes.heading || (heading.attrs.reqPrefix === null && heading.attrs.attrsSuffix === null)) {
+        return false;
+    }
+    if ($from.parentOffset === 0) {
+        return false;
+    }
+    return splitBlockAs(() => ({ type: nodes.paragraph }))(state, dispatch);
+};
+
 function markdownKeymap(): Plugin {
     const item = nodes.list_item;
     return keymap({
@@ -44,58 +67,9 @@ function markdownKeymap(): Plugin {
         'Mod-b': toggleMark(marks.strong),
         'Mod-i': toggleMark(marks.em),
         'Mod-`': toggleMark(marks.code),
-        'Enter': splitListItem(item),
+        'Enter': chainCommands(splitListItem(item), splitRequirementHeading),
         'Tab': sinkListItem(item),
         'Shift-Tab': liftListItem(item),
-    });
-}
-
-/**
- * A top-level block moved by a drop keeps its `src` — its text did not change,
- * and the fidelity plugin keeps it by node identity — but it also keeps its
- * `gap`, the text that separated it from the block it used to follow. At the
- * new place that separator is a guess about somebody else's neighbour, so it is
- * cleared, and the serializer writes the default blank line.
- *
- * Only nodes the drop inserted whole are touched: a block a drop inserted text
- * into did not move, and its gap is still its own. The transaction carries
- * `PRESERVE_SOURCE_META`, because resetting an attribute is not an edit of the
- * block and the fidelity plugin must not clear `src` for it. It must run after
- * the fidelity plugin, which then has already judged the drop itself.
- */
-export function dropGapPlugin(): Plugin {
-    return new Plugin({
-        appendTransaction(transactions, _oldState, newState) {
-            const index = transactions.findIndex(tr => tr.docChanged && tr.getMeta('uiEvent') === 'drop');
-            if (index < 0) {
-                return null;
-            }
-            const drop = transactions[index];
-            const last = drop.mapping.maps[drop.mapping.maps.length - 1];
-            let from = -1;
-            let to = -1;
-            last?.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
-                from = newStart;
-                to = newEnd;
-            });
-            if (from < 0) {
-                return null;
-            }
-            for (const later of transactions.slice(index + 1)) {
-                from = later.mapping.map(from, 1);
-                to = later.mapping.map(to, -1);
-            }
-            let tr: Transaction | null = null;
-            newState.doc.forEach((child, offset) => {
-                const inside = offset >= from && offset + child.nodeSize <= to;
-                if (!inside || !('gap' in child.attrs) || child.attrs.gap === null) {
-                    return;
-                }
-                tr = tr ?? newState.tr.setMeta(PRESERVE_SOURCE_META, true);
-                tr.setNodeMarkup(offset, undefined, { ...child.attrs, gap: null });
-            });
-            return tr;
-        },
     });
 }
 
@@ -109,6 +83,5 @@ export function editorPlugins(): Plugin[] {
         dropCursor(),
         gapCursor(),
         fidelityPlugin(),
-        dropGapPlugin(),
     ];
 }
