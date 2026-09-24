@@ -1,4 +1,5 @@
 import { MarkdownIt } from 'markdown-it';
+import { NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
 
 /**
  * Markdown-it plugin for sidenotes, marginal notes, and sidebar annotations.
@@ -67,26 +68,30 @@ function decrementParseDepth(state: any): void {
 // Constants
 // ============================================================================
 
+// The markers and classes are stated in `src/syntax/markers.ts`, which the
+// WYSIWYG editor's toolbar reads too, so a toolbar button writes exactly what
+// this plugin parses.
+
 /** Sidenote marker character: ++ */
-const SN_TOKEN = '+';
+const SN_TOKEN = NOTE_SYNTAX.sidenote.marker.charAt(0);
 /** Sidenote marker character code */
 const SN_TOKEN_CODE = SN_TOKEN.charCodeAt(0);
 
 /** Marginal note marker character: !! */
-const MN_TOKEN = '!';
+const MN_TOKEN = NOTE_SYNTAX.marginalNote.marker.charAt(0);
 /** Marginal note marker character code */
 const MN_TOKEN_CODE = MN_TOKEN.charCodeAt(0);
 
 /** Separator between reference text and note content: | */
-const TOKEN_PIPE = '|';
+const TOKEN_PIPE = NOTE_SEPARATOR;
 
 /** Left sidebar marker character: $ */
-const LEFT_SIDEBAR_TOKEN = '$';
+const LEFT_SIDEBAR_TOKEN = NOTE_SYNTAX.leftSidebar.marker;
 /** Left sidebar marker character code */
 const LEFT_SIDEBAR_TOKEN_CODE = LEFT_SIDEBAR_TOKEN.charCodeAt(0);
 
 /** Right sidebar marker character: @ */
-const RIGHT_SIDEBAR_TOKEN = '@';
+const RIGHT_SIDEBAR_TOKEN = NOTE_SYNTAX.rightSidebar.marker;
 /** Right sidebar marker character code */
 const RIGHT_SIDEBAR_TOKEN_CODE = RIGHT_SIDEBAR_TOKEN.charCodeAt(0);
 
@@ -174,11 +179,11 @@ interface ValidatedNote {
  */
 const marginNoteConfig: NoteConfig = {
     type: 'marginal_note',
-    openMarker: MN_TOKEN + MN_TOKEN,
+    openMarker: NOTE_SYNTAX.marginalNote.marker,
     openMarkerCode: MN_TOKEN_CODE,
-    closeMarker: MN_TOKEN + MN_TOKEN,
-    cssClass: 'mnote',
-    refClass: 'mn-ref'
+    closeMarker: NOTE_SYNTAX.marginalNote.marker,
+    cssClass: NOTE_SYNTAX.marginalNote.noteClass,
+    refClass: NOTE_SYNTAX.marginalNote.refClass
 };
 
 /**
@@ -187,11 +192,11 @@ const marginNoteConfig: NoteConfig = {
  */
 const sideNoteConfig: NoteConfig = {
     type: 'sidenote',
-    openMarker: SN_TOKEN + SN_TOKEN,
+    openMarker: NOTE_SYNTAX.sidenote.marker,
     openMarkerCode: SN_TOKEN_CODE,
-    closeMarker: SN_TOKEN + SN_TOKEN,
-    cssClass: 'sidenote',
-    refClass: 'sn-ref'
+    closeMarker: NOTE_SYNTAX.sidenote.marker,
+    cssClass: NOTE_SYNTAX.sidenote.noteClass,
+    refClass: NOTE_SYNTAX.sidenote.refClass
 };
 
 /**
@@ -202,7 +207,7 @@ const leftSidebarConfig: SidebarConfig = {
     openMarker: LEFT_SIDEBAR_TOKEN,
     openMarkerCode: LEFT_SIDEBAR_TOKEN_CODE,
     closeMarker: LEFT_SIDEBAR_TOKEN,
-    cssClass: 'left-sidebar'
+    cssClass: NOTE_SYNTAX.leftSidebar.cssClass
 };
 
 /**
@@ -213,7 +218,7 @@ const rightSidebarConfig: SidebarConfig = {
     openMarker: RIGHT_SIDEBAR_TOKEN,
     openMarkerCode: RIGHT_SIDEBAR_TOKEN_CODE,
     closeMarker: RIGHT_SIDEBAR_TOKEN,
-    cssClass: 'right-sidebar'
+    cssClass: NOTE_SYNTAX.rightSidebar.cssClass
 };
 
 // ============================================================================

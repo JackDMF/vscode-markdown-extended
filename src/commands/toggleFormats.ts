@@ -1,80 +1,17 @@
 import * as vscode from 'vscode';
 import { toggleFormat } from '../services/helpers/toggleFormat';
 import { CommandConfig, Commands } from './commands';
+import { inlineToggleArgs } from './inlineToggleArgs';
 
 const togglers: CommandConfig[] = [
-    {
-        commandId: "markdownExtended.toggleBold",
-        worker: toggle,
-        args: [
-            /\*\*(\S.*?\S)\*\*/ig, false,
-            /(.+)/ig, "**$1**",
-            /\*\*(\S.*?\S)\*\*/ig, "$1"
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleItalics",
-        worker: toggle,
-        args: [
-            /\*(\S.*?\S)\*(?!=\*)/ig, false,
-            /(.+)/ig, "*$1*",
-            /\*(\S.*?\S)\*(?!=\*)/ig, "$1"
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleUnderLine",
-        worker: toggle,
-        args: [
-            /_(\S.*?\S)_/ig, false,
-            /(.+)/ig, "_$1_",
-            /_(\S.*?\S)_/ig, "$1"
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleMark",
-        worker: toggle,
-        args: [
-            /==(\S.*?\S)==/ig, false,
-            /(.+)/ig, "==$1==",
-            /==(\S.*?\S)==/ig, "$1"
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleSuperscript",
-        worker: toggle,
-        args: [
-            /\^(\S.*?\S)\^/ig, false,
-            /(.+)/ig, "^$1^",
-            /\^(\S.*?\S)\^/ig, "$1"
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleSubscript",
-        worker: toggle,
-        args: [
-            /~(\S.*?\S)~(?!=~)/ig, false,
-            /(.+)/ig, "~$1~",
-            /~(\S.*?\S)~(?!=~)/ig, "$1"
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleStrikethrough",
-        worker: toggle,
-        args: [
-            /~~(\S.*?\S)~~/ig, false,
-            /(.+)/ig, "~~$1~~",
-            /~~(\S.*?\S)~~/ig, "$1"
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleCodeInline",
-        worker: toggle,
-        args: [
-            /`(\S.*?\S)`/ig, false,
-            /(.+)/ig, "`$1`",
-            /`(\S.*?\S)`/ig, "$1"
-        ]
-    },
+    { commandId: "markdownExtended.toggleBold", worker: toggle, args: inlineToggleArgs('bold') },
+    { commandId: "markdownExtended.toggleItalics", worker: toggle, args: inlineToggleArgs('italics', true) },
+    { commandId: "markdownExtended.toggleUnderLine", worker: toggle, args: inlineToggleArgs('underline') },
+    { commandId: "markdownExtended.toggleMark", worker: toggle, args: inlineToggleArgs('mark') },
+    { commandId: "markdownExtended.toggleSuperscript", worker: toggle, args: inlineToggleArgs('superscript') },
+    { commandId: "markdownExtended.toggleSubscript", worker: toggle, args: inlineToggleArgs('subscript', true) },
+    { commandId: "markdownExtended.toggleStrikethrough", worker: toggle, args: inlineToggleArgs('strikethrough') },
+    { commandId: "markdownExtended.toggleCodeInline", worker: toggle, args: inlineToggleArgs('codeInline') },
     {
         commandId: "markdownExtended.toggleCodeBlock",
         worker: toggle,

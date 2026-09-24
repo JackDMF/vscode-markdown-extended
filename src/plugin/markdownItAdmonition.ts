@@ -1,21 +1,13 @@
 import { MarkdownIt, Token, Renderer } from "../@types/markdown-it";
+import { ADMONITION_MARKER, ADMONITION_TYPES } from "../syntax/markers";
 
+// The types and the marker live in `src/syntax/markers.ts`, which the WYSIWYG
+// editor's toolbar reads too: its admonition menu lists exactly these. Each
+// type's colour and icon are in `styles/markdown-it-admonition.css`.
 const
-    _marker = 33 /* '!' */,
-    _minMarkerLen = 3,
-    _types = [
-        "note",  //rgba(68,138,255,.1) "\E3C9"
-        "summary", "abstract", "tldr",  //rgba(0,176,255,.1) "\E8D2"
-        "info", "todo",   //rgba(0,184,212,.1) "\E88E"
-        "tip", "hint",   //rgba(0,191,165,.1) "\E80E"
-        "success", "check", "done",  //rgba(0,200,83,.1) "\E876"
-        "question", "help", "faq",  //rgba(100,221,23,.1) "\E887"
-        "warning", "attention", "caution", //rgba(255,145,0,.1) "\E002""\E417"
-        "failure", "fail", "missing",  //rgba(255,82,82,.1) "\E14C"
-        "danger", "error", "bug", //rgba(255,23,68,.1) "\E3E7""\E14C""\E868"
-        "example", "snippet", //rgba(101,31,255,.1) "\E242"
-        "quote", "cite",   //rgba(158, 158, 158, .1) "\E244"
-    ];
+    _marker = ADMONITION_MARKER.charCodeAt(0),
+    _minMarkerLen = ADMONITION_MARKER.length,
+    _types = ADMONITION_TYPES;
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItAdmonition(md: MarkdownIt) {
