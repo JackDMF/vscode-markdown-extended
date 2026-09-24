@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { TOOLBAR_ACTIONS } from '../../../src/editor/webview/toolbar/actions';
-import { REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/toolbar/commands';
+import { ALL_LOCK, REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
 
@@ -195,6 +195,44 @@ suite('Editor toolbar (e2e)', () => {
         await page.click('.mep-toolbar [data-menu="block-type"] .mep-menu-face');
         assert.strictEqual(await page.$('.mep-toolbar [data-menu="block-type"] .mep-menu:not([hidden])'), null, 'the menu does not open');
         assert.strictEqual(await page.$eval(toolbarTool('italic'), el => el.getAttribute('aria-disabled')), 'false', 'the title can still be formatted');
+    });
+
+    test('Ctrl+A then Horizontal rule puts the rule last, never first, and the face names why it is locked', async function () {
+        this.timeout(10000);
+        await showDocument(SOURCE);
+        await selectText('beta');
+        await page.keyboard.down('Control');
+        await page.keyboard.press('a');
+        await page.keyboard.up('Control');
+        await delay(100);
+        const face = await page.$eval('.mep-toolbar [data-menu="block-type"] .mep-menu-face', el => ({
+            disabled: el.getAttribute('aria-disabled'),
+            title: (el as HTMLElement).title,
+        }));
+        assert.strictEqual(face.disabled, 'true');
+        assert.ok(face.title.includes(ALL_LOCK), face.title);
+
+        await page.click(toolbarTool('horizontal-rule'));
+        await settle();
+        const edit = await lastEdit();
+        assert.strictEqual(edit?.text, `${SOURCE}\n---\n`, 'the document starts as before, and the rule is its last block');
+        assert.strictEqual(await page.$eval('.ProseMirror', el => el.lastElementChild?.querySelector('hr') !== null || el.lastElementChild?.tagName === 'HR'), true);
+    });
+
+    test('one Ctrl+B removes __strong__, and one Ctrl+I removes _em_', async function () {
+        this.timeout(10000);
+        const written = SOURCE.replace('Alpha beta gamma.', 'Alpha __beta__ _gamma_.');
+        await showDocument(written);
+        await selectText('beta');
+        await page.keyboard.down('Control');
+        await page.keyboard.press('b');
+        await page.keyboard.up('Control');
+        await selectText('gamma');
+        await page.keyboard.down('Control');
+        await page.keyboard.press('i');
+        await page.keyboard.up('Control');
+        await settle();
+        assert.ok((await lastEdit())?.text.includes('\nAlpha beta gamma.\n'), (await lastEdit())?.text);
     });
 
     test('the bubble appears above a selection, with the inline and annotation tools, and hides when it collapses', async function () {

@@ -358,7 +358,10 @@ knows:
 | `- ` or `* `, `1. `, `> ` at the start of a line | Bullet list, ordered list, quote |
 | ` ``` ` at the start of a line | Code block |
 
-`Ctrl+I` writes `*italic*` and `Ctrl+B` `**bold**`, the CommonMark defaults.
+`Ctrl+I` writes `*italic*` and `Ctrl+B` `**bold**`, the CommonMark defaults, and one press
+removes emphasis or bold whichever delimiter it was written with. Blocks the toolbar
+inserts go after the block you are in — after the last one when the whole document is
+selected — and never above the first.
 
 ### Toolbar
 

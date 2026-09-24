@@ -1,14 +1,15 @@
 import * as assert from 'assert';
 import { Fragment, Node, Slice } from 'prosemirror-model';
-import { Command, EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
+import { GapCursor } from 'prosemirror-gapcursor';
+import { AllSelection, Command, EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, tooltipOf } from '../../../src/editor/webview/toolbar/actions';
 import {
-    REQUIREMENT_HEADING_LOCK, blockCommand, blockLockReason, freeFootnoteLabel, insertSourceTransaction, markActive, toggleMarkup,
-    wrapSourceTransaction,
+    ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
+    insertSourceTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup, wrapSourceTransaction,
 } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { hostEngine } from './helpers';
@@ -226,5 +227,109 @@ suite('Editor toolbar: commands', () => {
         assert.strictEqual(blockLockReason(para), null);
         const heading2 = run(para, blockCommand('heading', 2));
         assert.ok(text(heading2).includes('\n## Alpha beta gamma.\n'), text(heading2));
+    });
+});
+
+suite('Editor toolbar: keys toggle by mark type, buttons by delimiter', () => {
+    const em = editorSchema.marks.em;
+    const strong = editorSchema.marks.strong;
+    const WRITTEN = 'Plain __strong__ and _em_ and **bold** and *it*.\n';
+
+    for (const [word, type, key, other] of [
+        ['strong', strong, '**', '__'], ['bold', strong, '**', '**'],
+        ['em', em, '*', '_'], ['it', em, '*', '*'],
+    ] as const) {
+        test(`one key press removes ${other}${word}${other}, whatever its delimiter`, () => {
+            const state = run(select(stateOf(WRITTEN), word), toggleMarkType(type, key));
+            assert.strictEqual(markActive(state, type, null), false);
+            assert.ok(text(state).includes(` ${word} `) || text(state).includes(` ${word}.`), text(state));
+        });
+    }
+
+    test('a key press on plain text adds the CommonMark delimiter', () => {
+        const bolded = run(select(stateOf(WRITTEN), 'Plain'), toggleMarkType(strong, '**'));
+        assert.ok(text(bolded).startsWith('**Plain** __strong__'), text(bolded));
+        const italic = run(select(stateOf(WRITTEN), 'Plain'), toggleMarkType(em, '*'));
+        assert.ok(text(italic).startsWith('*Plain* __strong__'), text(italic));
+    });
+
+    test('a button on another delimiter swaps it, and on its own delimiter removes it', () => {
+        const swapped = run(select(stateOf(WRITTEN), 'strong'), toggleMarkup(strong, '**'));
+        assert.ok(markActive(swapped, strong, '**'));
+        assert.ok(text(swapped).includes('Plain **strong** and'), text(swapped));
+        const removed = run(select(stateOf(WRITTEN), 'strong'), toggleMarkup(strong, '__'));
+        assert.strictEqual(markActive(removed, strong, null), false);
+        assert.ok(text(removed).includes('Plain strong and'), text(removed));
+    });
+
+    test('Mod-b and Mod-i in the keymap are the type toggles', () => {
+        const state = select(stateOf(WRITTEN), 'strong');
+        let next = state;
+        const handled = state.plugins.some(plugin => plugin.props.handleKeyDown?.call(plugin, {
+            state, dispatch: (tr: Transaction) => {
+                next = state.apply(tr);
+            },
+        } as never, { key: 'b', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, keyCode: 66, type: 'keydown' } as KeyboardEvent));
+        assert.ok(handled, 'the keymap takes Ctrl+B');
+        assert.strictEqual(markActive(next, strong, null), false, 'one press un-bolds __strong__');
+    });
+});
+
+suite('Editor toolbar: where a block is inserted, and why the block type is locked', () => {
+    const docOf = (state: EditorState) => state.doc;
+
+    test('Ctrl+A then a rule puts it after the last block; the document starts as before', () => {
+        let state = stateOf(SOURCE);
+        state = state.apply(state.tr.setSelection(new AllSelection(state.doc)));
+        assert.strictEqual(insertionPoint(state), state.doc.content.size);
+        const next = run(state, blockCommand('horizontal_rule'));
+        assert.strictEqual(docOf(next).lastChild?.type.name, 'horizontal_rule');
+        assert.strictEqual(text(next), `${SOURCE}\n---\n`);
+    });
+
+    test('Ctrl+A then an insert-source template puts it after the last block too', () => {
+        let state = stateOf(SOURCE);
+        state = state.apply(state.tr.setSelection(new AllSelection(state.doc)));
+        const { tr } = insertSourceTransaction(state, '[[TOC]]', CONTEXT);
+        const next = state.apply(tr);
+        assert.strictEqual(next.doc.lastChild?.attrs.src, '[[TOC]]\n');
+        assert.ok(text(next).startsWith(SOURCE), text(next));
+    });
+
+    test('a selection over several blocks inserts after the last of them', () => {
+        let state = stateOf(SOURCE);
+        const from = posOf(state.doc, 'beta');
+        const to = posOf(state.doc, 'Last') + 2;
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
+        assert.strictEqual(insertionPoint(state), state.doc.content.size);
+    });
+
+    test('nothing is inserted before the first block, whatever stands at position 0', () => {
+        const withAtom = `| a |\n| - |\n| 1 |\n\n${SOURCE}`;
+        let state = stateOf(withAtom);
+        assert.strictEqual(state.doc.firstChild?.type.name, 'raw_block');
+        state = state.apply(state.tr.setSelection(new GapCursor(state.doc.resolve(0))));
+        assert.strictEqual(insertionPoint(state), state.doc.child(0).nodeSize, 'a gap cursor before the first block inserts after it');
+        const next = run(state, blockCommand('horizontal_rule'));
+        assert.ok(!text(next).startsWith('---'), text(next));
+
+        const fm = stateOf(`---\ntitle: x\n---\n\n${SOURCE}`);
+        const all = fm.apply(fm.tr.setSelection(TextSelection.create(fm.doc, fm.doc.child(0).nodeSize + 1)));
+        assert.ok(insertionPoint(all) >= fm.doc.child(0).nodeSize, 'never before the front matter');
+    });
+
+    test('each kind of selection gets its own reason', () => {
+        const base = stateOf(`| a |\n| - |\n| 1 |\n\n${SOURCE}Tail.\n\n---\n`);
+        const at = (sel: Selection) => blockLockReason(base.apply(base.tr.setSelection(sel)));
+        assert.strictEqual(at(NodeSelection.create(base.doc, 0)), ATOM_LOCK, 'a source block is an atom');
+        const rulePos = base.doc.content.size - (base.doc.lastChild as Node).nodeSize;
+        assert.strictEqual(base.doc.lastChild?.type.name, 'horizontal_rule');
+        assert.strictEqual(at(NodeSelection.create(base.doc, rulePos)), NODE_LOCK, 'a rule is no atom, and no text block');
+        assert.strictEqual(at(new GapCursor(base.doc.resolve(0))), GAP_LOCK);
+        assert.strictEqual(at(new AllSelection(base.doc)), ALL_LOCK);
+        const single = stateOf('Only.\n');
+        assert.strictEqual(blockLockReason(single.apply(single.tr.setSelection(new AllSelection(single.doc)))), WHOLE_LOCK);
+        const caret = posOf(base.doc, 'beta');
+        assert.strictEqual(at(TextSelection.create(base.doc, caret)), null, 'text in a paragraph can be retyped');
     });
 });

@@ -5,7 +5,8 @@
 import { lift, setBlockType, toggleMark, wrapIn } from 'prosemirror-commands';
 import { Mark, MarkType, Node, NodeType, ResolvedPos } from 'prosemirror-model';
 import { liftListItem, wrapInList } from 'prosemirror-schema-list';
-import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
+import { GapCursor } from 'prosemirror-gapcursor';
+import { AllSelection, Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { PRESERVE_SOURCE_META } from '../../fidelity';
 import { editorSchema } from '../../schema';
 import { serializeNode } from '../../serialize';
@@ -42,13 +43,13 @@ export function markActive(state: EditorState, type: MarkType, markup: string | 
 }
 
 /**
- * Toggle a mark written with a particular delimiter. Off where the whole
- * selection already carries it with that delimiter; otherwise on — and since a
- * mark type excludes itself, putting `_` on text that is `*` **replaces** the
- * `*` rather than nesting a second emphasis inside it. `markup` is `null` for a
- * mark that has no delimiter attribute (`code`).
+ * The one toggle both policies below share: remove `type` when `removes` says
+ * the selection already has what the command is for, otherwise add it written
+ * with `markup` (`null` for a mark with no delimiter attribute, `code`). A mark
+ * type excludes itself, so adding replaces the same type with another
+ * delimiter rather than nesting a second one inside it.
  */
-export function toggleMarkup(type: MarkType, markup: string | null): Command {
+function toggleMarkWith(type: MarkType, markup: string | null, removes: (state: EditorState) => boolean): Command {
     return (state, dispatch) => {
         if (!toggleMark(type)(state)) {
             return false;
@@ -56,7 +57,7 @@ export function toggleMarkup(type: MarkType, markup: string | null): Command {
         if (!dispatch) {
             return true;
         }
-        const active = markActive(state, type, markup);
+        const active = removes(state);
         const mark = markup === null ? type.create() : type.create({ markup });
         const tr = state.tr;
         if (state.selection.empty) {
@@ -75,6 +76,27 @@ export function toggleMarkup(type: MarkType, markup: string | null): Command {
     };
 }
 
+/**
+ * A toolbar button: toggle a mark written with *its* delimiter. Off where the
+ * whole selection already carries it with that delimiter; on otherwise — so
+ * the `_` button on text that is `*` **swaps** the delimiter. Each button
+ * stands for one of the four elements `markdown-it-ib` renders, and pressing
+ * the one the text is not yet is asking for that element.
+ */
+export function toggleMarkup(type: MarkType, markup: string | null): Command {
+    return toggleMarkWith(type, markup, state => markActive(state, type, markup));
+}
+
+/**
+ * A key (`Mod-i`, `Mod-b`): toggle the mark by its **type**. Off where the whole
+ * selection carries it with any delimiter — `Ctrl+B` un-bolds `__strong__` in
+ * one press, as it always did — and on otherwise, written with `markup`, the
+ * CommonMark default (`*`, `**`). The key says "emphasis", not "this element".
+ */
+export function toggleMarkType(type: MarkType, markup: string): Command {
+    return toggleMarkWith(type, markup, state => markActive(state, type, null));
+}
+
 // ---------------------------------------------------------------------------
 // Block type
 // ---------------------------------------------------------------------------
@@ -91,20 +113,38 @@ function isRequirementHeading(node: Node): boolean {
 
 export const REQUIREMENT_HEADING_LOCK = 'A requirement heading keeps its type: changing it would lose its id and its anchor. Edit the title only.';
 export const ATOM_LOCK = 'A source block or content another extension shows is selected; it has no block type to change.';
+export const NODE_LOCK = 'A whole element is selected, not text in a block; put the caret in a paragraph or heading to change its type.';
+export const GAP_LOCK = 'The caret is between two blocks, where there is no block to retype. Insert adds a block here.';
+export const ALL_LOCK = 'The whole document is selected, several blocks at once; select one block to change its type.';
+export const WHOLE_LOCK = 'The whole document is selected; put the caret in the block to change its type.';
+export const NO_TEXT_LOCK = 'Put the caret in a paragraph or heading to change its type.';
 
 /**
- * Why the block type cannot be changed here, or `null` when it can. Not on a
- * requirement heading (`reqPrefix` or `attrsSuffix`): setting a type rebuilds
- * the heading's attributes, and the id and the anchor would be lost by one
- * click. Not on an atom, which has no type to change.
+ * Why the block type cannot be changed here, or `null` when it can — decided
+ * per kind of selection, so the tooltip says what is actually the matter:
+ *
+ * - text (`TextSelection`): locked only on a requirement heading (`reqPrefix`
+ *   or `attrsSuffix`), where setting a type rebuilds the heading's attributes
+ *   and one click would lose the id and the anchor;
+ * - a selected node: an atom (a source block, injected content, the front
+ *   matter, a badge) has no type; any other node (a rule, an image) is not a
+ *   text block the type applies to;
+ * - a gap cursor stands between blocks, in none;
+ * - Ctrl+A (`AllSelection`) selects the document, not a block.
  */
 export function blockLockReason(state: EditorState): string | null {
     const sel = state.selection;
     if (sel instanceof NodeSelection) {
-        return ATOM_LOCK;
+        return sel.node.type.spec.atom === true ? ATOM_LOCK : NODE_LOCK;
+    }
+    if (sel instanceof GapCursor) {
+        return GAP_LOCK;
+    }
+    if (sel instanceof AllSelection) {
+        return state.doc.childCount > 1 ? ALL_LOCK : WHOLE_LOCK;
     }
     if (!(sel instanceof TextSelection)) {
-        return ATOM_LOCK;
+        return NO_TEXT_LOCK;
     }
     let locked = isRequirementHeading(sel.$from.parent) || isRequirementHeading(sel.$to.parent);
     state.doc.nodesBetween(sel.from, sel.to, node => {
@@ -166,7 +206,7 @@ function convertList(target: NodeType): Command {
 
 /** A rule after the block the selection is in. */
 const insertRule: Command = (state, dispatch) => {
-    const pos = afterCurrentBlock(state);
+    const pos = insertionPoint(state);
     if (dispatch) {
         const tr = state.tr.insert(pos, nodes.horizontal_rule.create());
         dispatch(tr.setSelection(NodeSelection.create(tr.doc, pos)).scrollIntoView());
@@ -255,23 +295,26 @@ function sourceText(text: string, eol: '\n' | '\r\n'): string {
     return text.split(/\r?\n/).join(eol) + eol;
 }
 
-/** The position after the top-level block the selection is in (or after the selected top-level atom). */
-function afterCurrentBlock(state: EditorState): number {
+/**
+ * Where an inserted block goes: after the top-level block the selection ends
+ * in — read from `$to`, so a selection over several blocks inserts after the
+ * last of them. A selection that ends between top-level blocks (a selected
+ * top-level atom, `AllSelection`, a gap cursor) inserts at that boundary: after
+ * the atom, after the last block for Ctrl+A, where the gap cursor stands.
+ *
+ * Never before the first block. A block written first is the file's first
+ * line, and `---` there opens front matter: with another `---` lower down,
+ * the next parse folds everything between into YAML. Nothing goes before the
+ * front matter either, which the same rule covers. Only an empty document
+ * takes a block at 0, having nothing to follow.
+ */
+export function insertionPoint(state: EditorState): number {
     const sel = state.selection;
     const doc = state.doc;
-    let pos: number;
-    if (sel instanceof NodeSelection && sel.$from.depth === 0) {
-        pos = sel.to;
-    } else if (sel.$from.depth === 0) {
-        pos = sel.from;
-    } else {
-        pos = sel.$from.after(1);
-    }
-    // Nothing goes before the front matter.
-    if (pos === 0 && doc.firstChild?.type === nodes.front_matter) {
-        pos = doc.firstChild.nodeSize;
-    }
-    return pos;
+    const $to = sel.$to;
+    const pos = $to.depth === 0 ? $to.pos : $to.after(1);
+    const first = doc.firstChild;
+    return first !== null ? Math.max(pos, first.nodeSize) : pos;
 }
 
 /**
@@ -390,7 +433,7 @@ export function wrapSourceTransaction(state: EditorState, apply: Extract<ActionA
  * opens its **Edit source** box and asks the host to render it.
  */
 export function insertSourceTransaction(state: EditorState, template: string, context: SourceContext): { tr: Transaction; pos: number; src: string } {
-    const pos = afterCurrentBlock(state);
+    const pos = insertionPoint(state);
     const src = sourceText(label(template, freeFootnoteLabel(context.documentText)), context.eol);
     const tr = state.tr.insert(pos, nodes.raw_block.create({ src, gap: null, html: '' }));
     tr.setSelection(NodeSelection.create(tr.doc, pos));

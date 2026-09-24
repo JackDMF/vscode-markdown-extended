@@ -463,8 +463,11 @@ over a text selection, in three layers:
   children: the element the parser makes from that syntax), an `apply` kind and an
   **example** in which the construct renders as its sample.
 - **`commands.ts`** — what each `apply` kind does to an `EditorState`, testable without
-  a page. `mark` toggles a native mark *with its delimiter*: the mark type excludes
-  itself, so `_` on `*` text replaces the `*`. `block` sets the textblock type, or wraps,
+  a page. A `mark` button toggles a native mark *with its delimiter*
+  (`toggleMarkup`): the mark type excludes itself, so `_` on `*` text replaces the `*`,
+  and only the button of the delimiter the text has removes it. `Mod-i`/`Mod-b` toggle by
+  mark *type* (`toggleMarkType`, sharing the one helper): any delimiter is removed in one
+  press, and plain text gets `*`/`**`. `block` sets the textblock type, or wraps,
   lifts or converts a list or quote. `wrap-source` and `insert-source` are stage 1 for
   the constructs outside the editable core (below).
 - **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
@@ -503,14 +506,23 @@ the page then sends `edit` with `reparse`, and the host's parse comes back throu
 in-place re-sync, the block rendered as the preview renders it. The wrap is one history
 event and the re-sync is outside the history, so one undo returns the block exactly
 (the page test undoes across the re-sync). `insert-source` inserts a `raw_block` with a
-template after the current block, asks the host to render it and opens its **Edit
+template at `insertionPoint`, asks the host to render it and opens its **Edit
 source** box (`editRawSourceAt` in `nodeViews.ts`).
 
-**Requirement headings.** Block-type actions are disabled while the selection touches a
-heading with `reqPrefix` or `attrsSuffix`, and on an atom: `setBlockType` rebuilds a
-node's attributes, and one click would drop the id and the anchor — the same fact
-`splitRequirementHeading` and the fidelity plugin guard for Enter and for any
-transaction.
+**Where a block is inserted** (`insertionPoint`, for the rule and every template): after
+the top-level block the selection's `$to` is in, or at the top-level boundary it stands
+on — after a selected atom, after the last block for Ctrl+A (`AllSelection`), where a gap
+cursor is. Never before the first block: a `---` written as the file's first line opens
+front matter, and with another `---` lower down the next parse folds everything between
+into YAML. Only an empty document takes a block at position 0.
+
+**When the block type is locked** (`blockLockReason`), decided per kind of selection so
+the tooltip says what is the matter: text in a heading with `reqPrefix` or
+`attrsSuffix` — `setBlockType` rebuilds a node's attributes, and one click would drop
+the id and the anchor, the same fact `splitRequirementHeading` and the fidelity plugin
+guard for Enter and for any transaction; a selected atom (source block, injected
+content, front matter, badge); any other selected node (a rule, an image); a gap cursor,
+which is between blocks; Ctrl+A, which selects the document rather than a block.
 
 ### Styles
 
