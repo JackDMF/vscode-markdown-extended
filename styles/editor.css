@@ -159,48 +159,59 @@
 .mep-inline-atom { display: inline; }
 
 /* ------------------------------------------------------------------------- */
-/* Formatting toolbar and selection bubble                                   */
+/* Formatting toolbar, its menus and preview card, and the selection bubble   */
 /* ------------------------------------------------------------------------- */
 
 /*
- * Only the frame is styled here. What a tool shows is a sample element — <i>,
- * <mark>, <span class="sn-ref">, an admonition box — styled by the document's
- * own cascade, so nothing below sets a font, a colour or a decoration on it.
+ * Only the chrome is styled here. What a mark button, a menu entry or the
+ * preview card shows is a sample element — <i>, <mark>, <span class="sn-ref">,
+ * an admonition box — styled by the document's own cascade, so nothing below
+ * sets its colour or decoration. What is set on a sample is its box: a height
+ * it must fit, and margins taken off, so a stylesheet cannot break the row.
  */
 
 .mep-editor { position: relative; }
 
+/* The row: one line, every control the same height. Narrow, it scrolls sideways
+   rather than wrapping, so every control keeps its place. */
 .mep-toolbar {
     position: sticky;
     top: 0;
     z-index: 20;
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 4px 10px;
+    height: 34px;
+    box-sizing: border-box;
     margin: 0 -8px 8px;
-    padding: 4px 8px;
+    padding: 0 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
     background: var(--vscode-editor-background, Canvas);
     border-bottom: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #8884));
 }
 
-.mep-toolbar-group {
+.mep-row-group {
     display: flex;
-    flex-wrap: wrap;
+    flex: none;
     align-items: center;
     gap: 2px;
+    padding: 0 6px;
 }
 
-.mep-toolbar-group + .mep-toolbar-group {
-    padding-left: 10px;
+.mep-row-group + .mep-row-group {
     border-left: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #8884));
 }
 
 .mep-tool {
     display: inline-flex;
+    flex: none;
     align-items: center;
-    min-height: 24px;
+    box-sizing: border-box;
+    height: 26px;
     padding: 0 6px;
+    overflow: hidden;
     border: 1px solid transparent;
     border-radius: 3px;
     cursor: pointer;
@@ -208,64 +219,169 @@
     white-space: nowrap;
 }
 
-.mep-tool:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
-.mep-tool:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: -1px; }
+.mep-tool:hover,
+.mep-menu-item:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.mep-tool:focus-visible,
+.mep-menu-item:focus { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: -1px; }
 
-.mep-tool.mep-active {
+.mep-tool.mep-active,
+.mep-menu-item.mep-active {
     border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, #0078d4));
     background: var(--vscode-inputOption-activeBackground, rgba(0, 120, 212, 0.15));
 }
 
-.mep-tool.mep-disabled { opacity: 0.4; cursor: default; }
-.mep-tool.mep-disabled:hover { background: none; }
+.mep-tool.mep-disabled,
+.mep-menu-item.mep-disabled { opacity: 0.4; cursor: default; }
+.mep-tool.mep-disabled:hover,
+.mep-menu-item.mep-disabled:hover { background: none; }
 
-/* A sample is shown, never used: the tool takes every click (a sample checkbox does not toggle, a sample link does not open). */
+/* A mark's glyph is its real element, held to the button: centred in a fixed
+   minimum width, one line of the button's height, clipped. */
+.mep-mark-tool { justify-content: center; min-width: 32px; }
+.mep-mark-tool .mep-sample > * {
+    display: inline-block;
+    max-height: 22px;
+    margin: 0;
+    line-height: 22px;
+    white-space: nowrap;
+}
+
+/* A sample is shown, never used: its button takes every click (a sample
+   checkbox does not toggle, a sample link does not open). */
 .mep-sample { pointer-events: none; }
 
-/* A block sample keeps its look but not its spacing; its size comes from `zoom`, set per action. */
-/* The min-width gives a sample without content of its own (the rule's <hr>) a width to be drawn at. */
-.mep-sample-block { display: block; min-width: 2.5em; }
-.mep-sample-block > * { margin-top: 0 !important; margin-bottom: 0 !important; }
+/* A menu's face: a label and a chevron, in the workbench's font. */
+.mep-menu-face {
+    gap: 4px;
+    padding: 0 8px;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: var(--vscode-font-size, 13px);
+    color: var(--vscode-foreground, inherit);
+}
 
-.mep-dropdown { position: relative; }
+/* The block-type face names the current type; a width that fits the longest
+   keeps the controls after it from moving when the type changes. */
+.mep-menu-face[data-menu="block-type"] { min-width: 8.5em; justify-content: space-between; }
 
 .mep-menu-caret {
-    margin-left: 4px;
     font-family: var(--vscode-font-family, sans-serif);
     font-size: 10px;
     color: var(--vscode-descriptionForeground, #888);
 }
 
+/* Menus and the card sit outside the scrolling row, positioned from their face. */
 .mep-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
+    position: fixed;
     z-index: 30;
-    min-width: 180px;
-    max-height: 60vh;
+    box-sizing: border-box;
+    min-width: 240px;
+    max-width: 360px;
+    max-height: 70vh;
     overflow-y: auto;
     padding: 4px;
-    background: var(--vscode-editor-background, Canvas);
-    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    background: var(--vscode-menu-background, var(--vscode-editor-background, Canvas));
+    border: 1px solid var(--vscode-menu-border, var(--vscode-editorWidget-border, #8888));
     border-radius: 4px;
     box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
 }
 
 .mep-menu[hidden] { display: none; }
 
+/* Every entry one height: the sample left, the syntax right. */
 .mep-menu-item {
     display: flex;
-    width: 100%;
+    align-items: center;
+    gap: 12px;
     box-sizing: border-box;
-    padding: 2px 6px;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+    user-select: none;
 }
 
-/* Below the sticky toolbar (and its menus): the bubble belongs to the text, which scrolls under the toolbar. */
+.mep-entry-sample {
+    display: flex;
+    align-items: center;
+    flex: none;
+    width: 150px;
+    height: 24px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+/* The sample's box spans the entry's sample column, so a block sample without
+   content of its own (the rule's <hr>) has a width to be drawn at. A block
+   sample loses its margins; `fitSamples` scales it into the entry. */
+.mep-entry-sample .mep-sample { display: block; width: 100%; }
+.mep-entry-sample .mep-sample > * { margin: 0 !important; }
+
+.mep-entry-label {
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: var(--vscode-font-size, 13px);
+    color: var(--vscode-foreground, inherit);
+}
+
+.mep-entry-syntax {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, #888);
+}
+
+/*
+ * The preview card: the construct at its natural size, from the cascade.
+ * Its own formatting context, laid out and painted within its box: nothing in
+ * it can float out or paint past it. That is the second line of defence. The
+ * first is in markdown-extended.css, whose margin layout for notes and
+ * sidebars excludes this card: its media query reads the window, not the
+ * card, and would float a note out by its full offset in a wide window. The
+ * notes therefore render stacked here, as they do below the breakpoint.
+ */
+.mep-preview-card {
+    position: fixed;
+    z-index: 31;
+    display: flow-root;
+    contain: layout paint;
+    overflow: hidden;
+    box-sizing: border-box;
+    width: 360px;
+    padding: 8px 12px;
+    background: var(--vscode-editor-background, Canvas);
+    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    border-radius: 4px;
+    box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+    pointer-events: none;
+}
+
+.mep-preview-card[hidden] { display: none; }
+
+.mep-preview-body > :first-child { margin-top: 0; }
+.mep-preview-body > :last-child { margin-bottom: 0; }
+
+.mep-preview-syntax {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--vscode-editorWidget-border, #8884);
+    white-space: pre-wrap;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, #888);
+}
+
+/* The bubble: the five marks, below the sticky row — it belongs to the text,
+   which scrolls under the row. */
 .mep-bubble {
     position: absolute;
     z-index: 15;
     display: flex;
-    gap: 6px;
+    gap: 2px;
     padding: 2px 4px;
     background: var(--vscode-editorWidget-background, var(--vscode-editor-background, Canvas));
     border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));

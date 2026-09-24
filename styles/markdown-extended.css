@@ -129,12 +129,24 @@ body:where(.vscode-dark) {
    Margin layout - floated notes
    Engaged only when the viewport can hold the content column plus a full note
    on either side. Print never matches `screen`, so PDF export keeps the base.
+
+   Not inside `.mep-preview-card`. The WYSIWYG editor's toolbar shows each note
+   in a preview card about 360px wide, and a media query reads the viewport,
+   not the card: in a webview wider than 1280px the card's note would float
+   out of it by the full offset and vanish under its clipping. The card keeps
+   the base rendering above instead - the one statement of the stacked form,
+   not a copy of it in the editor's stylesheet. The class occurs only in the
+   editor's page (PREVIEW_CARD_CLASS in src/editor/webview/toolbar/actions.ts
+   names it, and a test holds this file to that name); the preview and every
+   export never carry it, so for them nothing changes. The guard is wrapped in
+   :where() so the rules keep the specificity of a bare class: a reader's own
+   `.sidenote { ... }` loaded later still wins, as it did before.
    ============================================================================ */
 @media screen and (min-width: 1280px) {
-  .sidenote,
-  .mnote,
-  .left-sidebar,
-  .right-sidebar {
+  .sidenote:where(:not(.mep-preview-card *)),
+  .mnote:where(:not(.mep-preview-card *)),
+  .left-sidebar:where(:not(.mep-preview-card *)),
+  .right-sidebar:where(:not(.mep-preview-card *)) {
     margin-top: 0;
     margin-bottom: 0;
     padding: 0;
@@ -143,8 +155,8 @@ body:where(.vscode-dark) {
     opacity: var(--md-note-opacity);
   }
 
-  .sidenote,
-  .mnote {
+  .sidenote:where(:not(.mep-preview-card *)),
+  .mnote:where(:not(.mep-preview-card *)) {
     float: right;
     clear: right;
     width: var(--md-note-width);
@@ -152,7 +164,7 @@ body:where(.vscode-dark) {
     margin-left: 0;
   }
 
-  .left-sidebar {
+  .left-sidebar:where(:not(.mep-preview-card *)) {
     float: left;
     clear: left;
     width: var(--md-sidebar-width);
@@ -160,7 +172,7 @@ body:where(.vscode-dark) {
     margin-right: 0;
   }
 
-  .right-sidebar {
+  .right-sidebar:where(:not(.mep-preview-card *)) {
     float: right;
     clear: right;
     width: var(--md-sidebar-width);

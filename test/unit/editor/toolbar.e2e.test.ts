@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { TOOLBAR_ACTIONS } from '../../../src/editor/webview/toolbar/actions';
+import { PREVIEW_CARD_CLASS, TOOLBAR_ACTIONS, inRow, menuOf } from '../../../src/editor/webview/toolbar/actions';
 import { ALL_LOCK, REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
@@ -16,11 +16,20 @@ const SOURCE = [
     '',
 ].join('\n');
 
+/**
+ * Wider than the 1280px breakpoint of the notes' margin layout
+ * (`styles/markdown-extended.css`), on purpose: the preview card must hold its
+ * notes where the page's own notes would float into the margin.
+ */
+const WIDE = 1400;
+
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * The formatting toolbar and the selection bubble in the real page bundle,
- * driven in headless Chromium (see `pageHarness.ts`). Each test starts from a
+ * The formatting toolbar — its row, menus, preview card — and the selection
+ * bubble in the real page bundle, driven in headless Chromium (see
+ * `pageHarness.ts`) with this extension's note, admonition and key stylesheets
+ * loaded as the preview's cascade would load them. Each test starts from a
  * fresh document the test posts as the host, so none depends on another.
  */
 suite('Editor toolbar (e2e)', () => {
@@ -31,20 +40,18 @@ suite('Editor toolbar (e2e)', () => {
     const lastEdit = async (): Promise<EditMessage | undefined> => (await (editor as EditorPage).edits()).pop();
 
     /** Post `text` parsed, as the host does; the requirement heading shaped as Req Explorer's badge leaves it. */
-    const showDocument = async (text: string, requirement = true) => {
+    const showDocument = async (text: string) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const json = parsedDocumentToJSON(parseDocument(md, text, {}));
-        if (requirement) {
-            const heading = (json.doc.content as { type: string; attrs: Record<string, unknown>; content: { text: string }[] }[])
-                .find(n => n.type === 'heading');
-            if (heading && heading.content[0].text.startsWith('FRS-TST-001: ')) {
-                heading.attrs.reqPrefix = 'FRS-TST-001: ';
-                heading.content = [{ ...heading.content[0], text: heading.content[0].text.slice('FRS-TST-001: '.length) }];
-            }
+        const heading = (json.doc.content as { type: string; attrs: Record<string, unknown>; content: { text: string }[] }[])
+            .find(n => n.type === 'heading');
+        if (heading && heading.content[0].text.startsWith('FRS-TST-001: ')) {
+            heading.attrs.reqPrefix = 'FRS-TST-001: ';
+            heading.content = [{ ...heading.content[0], text: heading.content[0].text.slice('FRS-TST-001: '.length) }];
         }
         version++;
         await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90 });
-        await page.waitForFunction(v => document.querySelector('.ProseMirror')?.textContent?.includes(v as string), {}, text.includes('Alpha') ? 'Alpha' : '');
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Alpha'));
         await delay(50);
     };
 
@@ -66,15 +73,23 @@ suite('Editor toolbar (e2e)', () => {
         await delay(150);
     };
 
-    const toolbarTool = (id: string) => `.mep-toolbar [data-action="${id}"]`;
+    const rowTool = (id: string) => `.mep-toolbar [data-action="${id}"]`;
+    const face = (menu: string) => `.mep-toolbar .mep-menu-face[data-menu="${menu}"]`;
+    const panel = (menu: string) => `.mep-menu[data-menu="${menu}"]`;
+    const entry = (id: string) => `.mep-menu [data-action="${id}"]`;
     const openMenu = async (menu: string) => {
-        await page.click(`.mep-toolbar [data-menu="${menu}"] .mep-menu-face`);
-        await page.waitForSelector(`.mep-toolbar [data-menu="${menu}"] .mep-menu:not([hidden])`);
+        await page.click(face(menu));
+        await page.waitForSelector(`${panel(menu)}:not([hidden])`);
+    };
+    const pressWith = async (modifier: puppeteer.KeyInput, key: puppeteer.KeyInput) => {
+        await page.keyboard.down(modifier);
+        await page.keyboard.press(key);
+        await page.keyboard.up(modifier);
     };
 
     suiteSetup(async function () {
         this.timeout(60000);
-        editor = await openEditorPage();
+        editor = await openEditorPage({ width: WIDE, styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'] });
         if (!editor) {
             this.skip();
         }
@@ -87,36 +102,98 @@ suite('Editor toolbar (e2e)', () => {
         await editor?.close();
     });
 
-    test('the toolbar has one tool per action, each drawn as its sample, its tooltip naming the syntax', async () => {
-        const tools = await page.$$eval('.mep-toolbar [data-action]', els => els.map(el => {
-            const sample = el.querySelector('.mep-sample > *') as HTMLElement;
-            return { id: (el as HTMLElement).dataset.action, tag: sample.tagName.toLowerCase(), className: sample.className, title: (el as HTMLElement).title };
-        }));
-        assert.deepStrictEqual(tools.map(t => t.id), TOOLBAR_ACTIONS.map(a => a.id));
-        for (const action of TOOLBAR_ACTIONS) {
-            const tool = tools.find(t => t.id === action.id);
-            assert.strictEqual(tool?.tag, action.sample.tag, action.id);
-            assert.strictEqual(tool?.className, action.sample.className ?? '', action.id);
-            assert.ok(tool?.title.includes(action.syntax.split('\n')[0]), `${action.id}: ${tool?.title}`);
-        }
-        const stickyAboveDocument = await page.evaluate(() => {
+    teardown(async () => {
+        // Leave no menu open for the next test.
+        await page.mouse.click(WIDE - 20, 880);
+    });
+
+    test('the row is one line: block type, the five marks, three menus, every control the same height', async () => {
+        await selectText('Second');
+        const row = await page.evaluate(() => {
             const bar = document.querySelector('.mep-toolbar') as HTMLElement;
-            return getComputedStyle(bar).position === 'sticky' && bar.nextElementSibling?.classList.contains('ProseMirror');
+            const controls = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool'));
+            return {
+                groups: Array.from(bar.children).map(g => Array.from(g.children).map(c => (c as HTMLElement).dataset.action ?? `menu:${(c as HTMLElement).dataset.menu}`)),
+                heights: [...new Set(controls.map(c => c.offsetHeight))],
+                tops: [...new Set(controls.map(c => Math.round(c.getBoundingClientRect().top)))],
+                faces: Array.from(bar.querySelectorAll('.mep-menu-face')).map(f => ({ text: f.textContent, samples: f.querySelectorAll('.mep-sample').length })),
+                sticky: getComputedStyle(bar).position === 'sticky' && bar.nextElementSibling?.classList.contains('ProseMirror'),
+            };
         });
-        assert.strictEqual(stickyAboveDocument, true);
+        assert.deepStrictEqual(row.groups, [
+            ['menu:block-type'],
+            ['italic', 'emphasis', 'bold', 'strong', 'code'],
+            ['menu:formatting', 'menu:annotation', 'menu:insert'],
+        ]);
+        assert.strictEqual(row.heights.length, 1, `one height: ${row.heights.join(', ')}`);
+        assert.strictEqual(row.tops.length, 1, 'one line');
+        assert.deepStrictEqual(row.faces, [
+            { text: 'Paragraph▾', samples: 0 }, { text: 'Formatting▾', samples: 0 }, { text: 'Annotation▾', samples: 0 }, { text: 'Insert▾', samples: 0 },
+        ]);
+        assert.strictEqual(row.sticky, true);
+
+        const marks = await page.$$eval('.mep-toolbar .mep-mark-tool', tools => tools.map(t => t.querySelector('.mep-sample > *')?.tagName.toLowerCase()));
+        assert.deepStrictEqual(marks, ['i', 'em', 'b', 'strong', 'code'], 'a mark\'s glyph is its real element');
+    });
+
+    test('narrow, the row scrolls sideways instead of wrapping, and keeps its height', async function () {
+        this.timeout(10000);
+        try {
+            await page.setViewport({ width: 420, height: 900 });
+            await delay(100);
+            const narrow = await page.evaluate(() => {
+                const bar = document.querySelector('.mep-toolbar') as HTMLElement;
+                const tops = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool')).map(c => Math.round(c.offsetTop));
+                return { height: bar.offsetHeight, scrolls: bar.scrollWidth > bar.clientWidth, lines: new Set(tops).size };
+            });
+            assert.deepStrictEqual(narrow, { height: 34, scrolls: true, lines: 1 });
+        } finally {
+            await page.setViewport({ width: WIDE, height: 900 });
+        }
+    });
+
+    test('every action is in its place once; menu entries are one height, samples fitted into them', async function () {
+        this.timeout(15000);
+        const inMenus = await page.$$eval('.mep-menu [data-action]', els => els.map(e => (e as HTMLElement).dataset.action));
+        assert.deepStrictEqual([...inMenus].sort(), TOOLBAR_ACTIONS.filter(a => !inRow(a)).map(a => a.id).sort());
+        for (const menu of ['block-type', 'formatting', 'annotation', 'insert']) {
+            await openMenu(menu);
+            const entries = await page.$$eval(`${panel(menu)} .mep-menu-item`, items => items.map(item => {
+                const holder = item.querySelector('.mep-entry-sample') as HTMLElement;
+                const sample = holder.querySelector('.mep-sample > *') as HTMLElement | null;
+                const h = holder.getBoundingClientRect();
+                const s = sample?.getBoundingClientRect();
+                const block = sample !== null && !getComputedStyle(sample).display.startsWith('inline');
+                return {
+                    height: (item as HTMLElement).offsetHeight,
+                    fits: !block || !s || (s.top >= h.top - 0.5 && s.bottom <= h.bottom + 0.5 && s.right <= h.right + 0.5),
+                    syntax: item.querySelector('.mep-entry-syntax')?.textContent ?? '',
+                    id: (item as HTMLElement).dataset.action ?? (item as HTMLElement).dataset.submenu,
+                };
+            }));
+            assert.strictEqual(new Set(entries.map(e => e.height)).size, 1, `${menu}: ${JSON.stringify(entries.map(e => e.height))}`);
+            for (const e of entries) {
+                assert.ok(e.fits, `${menu}/${e.id}: a block sample is scaled into its entry`);
+                assert.ok(e.syntax.length > 0, `${menu}/${e.id} names its syntax`);
+            }
+            await page.keyboard.press('Escape');
+            await page.mouse.click(WIDE - 20, 880);
+        }
+        const expected = TOOLBAR_ACTIONS.filter(a => menuOf(a) === 'formatting').map(a => a.id);
+        assert.deepStrictEqual(await page.$$eval(`${panel('formatting')} [data-action]`, els => els.map(e => (e as HTMLElement).dataset.action)), expected);
     });
 
     test('*i* marks the selection with *, and _em_ on it swaps the delimiter', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('beta');
-        await page.click(toolbarTool('italic'));
+        await page.click(rowTool('italic'));
         await settle();
         assert.ok((await lastEdit())?.text.includes('Alpha *beta* gamma.'), (await lastEdit())?.text);
         assert.strictEqual(await page.$eval('.ProseMirror p i', el => el.textContent), 'beta');
-        assert.strictEqual(await page.$eval(toolbarTool('italic'), el => el.classList.contains('mep-active')), true);
+        assert.strictEqual(await page.$eval(rowTool('italic'), el => el.classList.contains('mep-active')), true);
 
-        await page.click(toolbarTool('emphasis'));
+        await page.click(rowTool('emphasis'));
         await settle();
         const edit = await lastEdit();
         assert.ok(edit?.text.includes('Alpha _beta_ gamma.'), edit?.text);
@@ -126,14 +203,32 @@ suite('Editor toolbar (e2e)', () => {
         assert.deepStrictEqual(active.filter(id => id === 'italic' || id === 'emphasis'), ['emphasis']);
     });
 
-    test('a tool is reachable by keyboard and acts on Enter', async function () {
+    test('a row button acts on Enter; a menu opens on ArrowDown, moves with the arrows, acts on Enter, closes on Esc', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('gamma');
-        await page.focus(toolbarTool('bold'));
+        await page.focus(rowTool('bold'));
         await page.keyboard.press('Enter');
         await settle();
         assert.ok((await lastEdit())?.text.includes('Alpha beta **gamma**.'), (await lastEdit())?.text);
+
+        await selectText('Second');
+        await page.focus(face('block-type'));
+        await page.keyboard.press('ArrowDown');
+        await page.waitForSelector(`${panel('block-type')}:not([hidden])`);
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.action), 'paragraph');
+        await page.keyboard.press('Escape');
+        assert.strictEqual(await page.$eval(panel('block-type'), el => (el as HTMLElement).hidden), true);
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.menu), 'block-type', 'the focus is back on the face');
+
+        await page.keyboard.press('Enter');
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('ArrowDown');
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.action), 'heading-3');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.ok((await lastEdit())?.text.includes('\n### Second paragraph here.\n'), (await lastEdit())?.text);
     });
 
     test('the sidenote posts its source with reparse, the host\'s parse shows it rendered, and one undo takes it back', async function () {
@@ -141,22 +236,22 @@ suite('Editor toolbar (e2e)', () => {
         await showDocument(SOURCE);
         const before = (await (editor as EditorPage).edits()).length;
         await selectText('beta');
-        await page.click(toolbarTool('sidenote'));
+        await openMenu('annotation');
+        await page.click(entry('sidenote'));
         // No settle: the edit goes at once, asking to be parsed again.
         const all = await (editor as EditorPage).edits();
         assert.strictEqual(all.length, before + 1);
         const edit = all[all.length - 1];
         assert.strictEqual(edit.reparse, true);
         assert.strictEqual(edit.text, SOURCE.replace('beta', '++beta|note++'));
+        assert.strictEqual(await page.$eval(panel('annotation'), el => (el as HTMLElement).hidden), true, 'choosing closes the menu');
 
         // The host's half: the edit lands, and the document comes back parsed.
         await showDocument(edit.text);
         await page.waitForSelector('.ProseMirror .mep-raw-block .sn-ref');
 
         await page.focus('.ProseMirror');
-        await page.keyboard.down('Control');
-        await page.keyboard.press('z');
-        await page.keyboard.up('Control');
+        await pressWith('Control', 'z');
         await settle();
         const undone = await lastEdit();
         assert.strictEqual(undone?.text, SOURCE, 'the wrap and the host\'s re-sync after it are undone as one step');
@@ -164,78 +259,63 @@ suite('Editor toolbar (e2e)', () => {
         assert.strictEqual(await page.$('.ProseMirror .mep-raw-block .sn-ref'), null);
     });
 
-    test('the block-type menu turns a paragraph into a heading, and its face shows the type', async function () {
+    test('the block-type menu turns a paragraph into a heading, and its face names the type as text', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('Second');
-        assert.strictEqual(await page.$eval('.mep-toolbar [data-menu="block-type"] .mep-menu-face', el => (el as HTMLElement).dataset.shows), 'paragraph');
+        assert.strictEqual(await page.$eval(face('block-type'), el => el.textContent), 'Paragraph▾');
         await openMenu('block-type');
-        await page.click(toolbarTool('heading-2'));
+        assert.strictEqual(await page.$eval(entry('paragraph'), el => el.classList.contains('mep-active')), true);
+        await page.click(entry('heading-2'));
         await settle();
         const edit = await lastEdit();
         assert.ok(edit?.text.includes('\n## Second paragraph here.\n'), edit?.text);
-        const face = await page.$eval('.mep-toolbar [data-menu="block-type"] .mep-menu-face', el => ({
-            shows: (el as HTMLElement).dataset.shows,
-            sample: el.querySelector('.mep-sample > *')?.tagName.toLowerCase(),
-        }));
-        assert.deepStrictEqual(face, { shows: 'heading-2', sample: 'h2' });
-        assert.strictEqual(await page.$('.mep-toolbar [data-menu="block-type"] .mep-menu:not([hidden])'), null, 'the menu closed');
+        const shown = await page.$eval(face('block-type'), el => ({ text: el.textContent, shows: (el as HTMLElement).dataset.shows, samples: el.querySelectorAll('.mep-sample').length }));
+        assert.deepStrictEqual(shown, { text: 'Heading 2▾', shows: 'heading-2', samples: 0 });
+        assert.strictEqual(await page.$eval(panel('block-type'), el => (el as HTMLElement).hidden), true, 'the menu closed');
     });
 
     test('on a requirement heading the block-type menu is disabled and says why', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('Page');
-        const face = await page.$eval('.mep-toolbar [data-menu="block-type"] .mep-menu-face', el => ({
-            disabled: el.getAttribute('aria-disabled'),
-            title: (el as HTMLElement).title,
-        }));
-        assert.strictEqual(face.disabled, 'true');
-        assert.ok(face.title.includes(REQUIREMENT_HEADING_LOCK), face.title);
-        await page.click('.mep-toolbar [data-menu="block-type"] .mep-menu-face');
-        assert.strictEqual(await page.$('.mep-toolbar [data-menu="block-type"] .mep-menu:not([hidden])'), null, 'the menu does not open');
-        assert.strictEqual(await page.$eval(toolbarTool('italic'), el => el.getAttribute('aria-disabled')), 'false', 'the title can still be formatted');
+        const locked = await page.$eval(face('block-type'), el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title, text: el.textContent }));
+        assert.strictEqual(locked.disabled, 'true');
+        assert.ok(locked.title.includes(REQUIREMENT_HEADING_LOCK), locked.title);
+        assert.strictEqual(locked.text, 'Heading 2▾', 'still named while locked');
+        await page.click(face('block-type'));
+        assert.strictEqual(await page.$eval(panel('block-type'), el => (el as HTMLElement).hidden), true, 'the menu does not open');
+        assert.strictEqual(await page.$eval(rowTool('italic'), el => el.getAttribute('aria-disabled')), 'false', 'the title can still be formatted');
     });
 
     test('Ctrl+A then Horizontal rule puts the rule last, never first, and the face names why it is locked', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('beta');
-        await page.keyboard.down('Control');
-        await page.keyboard.press('a');
-        await page.keyboard.up('Control');
+        await pressWith('Control', 'a');
         await delay(100);
-        const face = await page.$eval('.mep-toolbar [data-menu="block-type"] .mep-menu-face', el => ({
-            disabled: el.getAttribute('aria-disabled'),
-            title: (el as HTMLElement).title,
-        }));
-        assert.strictEqual(face.disabled, 'true');
-        assert.ok(face.title.includes(ALL_LOCK), face.title);
+        const locked = await page.$eval(face('block-type'), el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        assert.strictEqual(locked.disabled, 'true');
+        assert.ok(locked.title.includes(ALL_LOCK), locked.title);
 
-        await page.click(toolbarTool('horizontal-rule'));
+        await openMenu('insert');
+        await page.click(entry('horizontal-rule'));
         await settle();
-        const edit = await lastEdit();
-        assert.strictEqual(edit?.text, `${SOURCE}\n---\n`, 'the document starts as before, and the rule is its last block');
-        assert.strictEqual(await page.$eval('.ProseMirror', el => el.lastElementChild?.querySelector('hr') !== null || el.lastElementChild?.tagName === 'HR'), true);
+        assert.strictEqual((await lastEdit())?.text, `${SOURCE}\n---\n`, 'the document starts as before, and the rule is its last block');
     });
 
     test('one Ctrl+B removes __strong__, and one Ctrl+I removes _em_', async function () {
         this.timeout(10000);
-        const written = SOURCE.replace('Alpha beta gamma.', 'Alpha __beta__ _gamma_.');
-        await showDocument(written);
+        await showDocument(SOURCE.replace('Alpha beta gamma.', 'Alpha __beta__ _gamma_.'));
         await selectText('beta');
-        await page.keyboard.down('Control');
-        await page.keyboard.press('b');
-        await page.keyboard.up('Control');
+        await pressWith('Control', 'b');
         await selectText('gamma');
-        await page.keyboard.down('Control');
-        await page.keyboard.press('i');
-        await page.keyboard.up('Control');
+        await pressWith('Control', 'i');
         await settle();
         assert.ok((await lastEdit())?.text.includes('\nAlpha beta gamma.\n'), (await lastEdit())?.text);
     });
 
-    test('the bubble appears above a selection, with the inline and annotation tools, and hides when it collapses', async function () {
+    test('the bubble holds the five marks, appears above a selection, and hides when it collapses or loses the focus', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('gamma');
@@ -247,10 +327,10 @@ suite('Editor toolbar (e2e)', () => {
                 hidden: bubble.hidden,
                 above: box.bottom <= range.top + 1,
                 overlapsHorizontally: box.left < range.right && box.right > range.left,
-                groups: Array.from(bubble.querySelectorAll('.mep-toolbar-group')).map(g => (g as HTMLElement).dataset.group),
+                tools: Array.from(bubble.querySelectorAll('[data-action]')).map(t => (t as HTMLElement).dataset.action),
             };
         });
-        assert.deepStrictEqual(placed, { hidden: false, above: true, overlapsHorizontally: true, groups: ['inline', 'annotation'] });
+        assert.deepStrictEqual(placed, { hidden: false, above: true, overlapsHorizontally: true, tools: ['italic', 'emphasis', 'bold', 'strong', 'code'] });
 
         await page.evaluate(() => (document.getSelection() as Selection).collapseToStart());
         await delay(150);
@@ -263,23 +343,93 @@ suite('Editor toolbar (e2e)', () => {
         assert.strictEqual(await page.$eval('.mep-bubble', el => (el as HTMLElement).hidden), true, 'nor does an editor without the focus');
     });
 
-    test('the admonition menu lists exactly the plugin\'s types, and one inserts its source with the box open', async function () {
+    test('Insert → Admonition lists exactly the plugin\'s types, and one inserts its source with the box open', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
-        const listed = await page.$$eval('.mep-toolbar [data-menu="admonition"] .mep-menu-item', els => els.map(el => (el as HTMLElement).dataset.action));
+        const listed = await page.$$eval(`${panel('admonition')} [data-action]`, els => els.map(el => (el as HTMLElement).dataset.action));
         assert.deepStrictEqual(listed, ADMONITION_TYPES.map(t => `admonition-${t}`));
 
         await selectText('beta');
-        await openMenu('admonition');
-        await page.click(toolbarTool('admonition-warning'));
+        await openMenu('insert');
+        await page.hover('.mep-menu [data-submenu="admonition"]');
+        await page.waitForSelector(`${panel('admonition')}:not([hidden])`);
+        await page.click(entry('admonition-warning'));
         await page.waitForSelector('.mep-raw-editor');
-        const value = await page.$eval('.mep-raw-editor', el => (el as HTMLTextAreaElement).value);
-        assert.strictEqual(value, '!!! warning Warning\n    Text');
+        assert.strictEqual(await page.$eval('.mep-raw-editor', el => (el as HTMLTextAreaElement).value), '!!! warning Warning\n    Text');
         const render = (await (editor as EditorPage).posted()).filter(m => m.type === 'render').pop();
-        assert.deepStrictEqual(render && { type: render.type, src: (render as { src: string }).src }, { type: 'render', src: '!!! warning Warning\n    Text\n' });
+        assert.strictEqual(render && (render as { src: string }).src, '!!! warning Warning\n    Text\n');
         await page.$eval('.mep-raw-editor', el => (el as HTMLTextAreaElement).blur());
         await settle();
         const edit = await lastEdit();
         assert.ok(edit?.text.includes('Alpha beta gamma.\n\n!!! warning Warning\n    Text\n\nSecond paragraph here.'), edit?.text);
+    });
+
+    test('the preview card shows after a pause, on hover and on focus, beside the menu', async function () {
+        this.timeout(10000);
+        await showDocument(SOURCE);
+        await openMenu('formatting');
+        await page.hover(entry('mark'));
+        await delay(100);
+        assert.strictEqual(await page.$eval(`.${PREVIEW_CARD_CLASS}`, el => (el as HTMLElement).hidden), true, 'not at once');
+        await page.waitForSelector(`.${PREVIEW_CARD_CLASS}[data-action="mark"]:not([hidden])`, { timeout: 2000 });
+        const card = await page.evaluate(cls => {
+            const c = document.querySelector(`.${cls}`) as HTMLElement;
+            const m = document.querySelector('.mep-menu[data-menu="formatting"]') as HTMLElement;
+            return {
+                besideMenu: c.getBoundingClientRect().left >= m.getBoundingClientRect().right,
+                mark: c.querySelector('.mep-preview-body mark')?.textContent,
+                syntax: c.querySelector('.mep-preview-syntax')?.textContent,
+            };
+        }, PREVIEW_CARD_CLASS);
+        assert.deepStrictEqual(card, { besideMenu: true, mark: 'the point', syntax: 'Highlight ==the point== of a sentence.' });
+
+        // The pointer out of the way, so the menu opening under it hovers nothing.
+        await page.mouse.click(WIDE - 20, 880);
+        await page.focus(face('insert'));
+        await page.keyboard.press('ArrowDown');
+        await page.waitForSelector(`.${PREVIEW_CARD_CLASS}[data-action="horizontal-rule"]:not([hidden])`, { timeout: 2000 });
+    });
+
+    test(`at ${WIDE}px, wider than the notes' breakpoint, every Annotation preview stays inside its card`, async function () {
+        this.timeout(20000);
+        assert.strictEqual(page.viewport()?.width, WIDE);
+        // The page is in the margin layout: a note outside the card floats.
+        const outside = await page.evaluate(() => {
+            const probe = document.createElement('span');
+            probe.className = 'sidenote';
+            document.body.append(probe);
+            const float = getComputedStyle(probe).float;
+            probe.remove();
+            return float;
+        });
+        assert.strictEqual(outside, 'right', 'outside the card a note would float into the margin');
+
+        await showDocument(SOURCE);
+        await openMenu('annotation');
+        const ids = TOOLBAR_ACTIONS.filter(a => menuOf(a) === 'annotation').map(a => a.id);
+        for (const id of ids) {
+            await page.hover(entry(id));
+            await page.waitForSelector(`.${PREVIEW_CARD_CLASS}[data-action="${id}"]:not([hidden])`, { timeout: 2000 });
+            const boxes = await page.evaluate(cls => {
+                const card = (document.querySelector(`.${cls}`) as HTMLElement).getBoundingClientRect();
+                return Array.from(document.querySelectorAll(`.${cls} *`)).map(node => {
+                    const r = node.getBoundingClientRect();
+                    const w = Math.min(r.right, card.right) - Math.max(r.left, card.left);
+                    const h = Math.min(r.bottom, card.bottom) - Math.max(r.top, card.top);
+                    return {
+                        what: `${node.tagName.toLowerCase()}.${(node as HTMLElement).className}`,
+                        inside: r.left >= card.left - 0.5 && r.right <= card.right + 0.5 && r.top >= card.top - 0.5 && r.bottom <= card.bottom + 0.5,
+                        visible: w > 0 && h > 0,
+                        float: getComputedStyle(node).float,
+                    };
+                });
+            }, PREVIEW_CARD_CLASS);
+            assert.ok(boxes.length > 2, `${id}: the card shows the construct`);
+            for (const b of boxes) {
+                assert.ok(b.inside, `${id}: ${b.what} lies inside the card`);
+                assert.ok(b.visible, `${id}: ${b.what} is visible in the card, not clipped away`);
+                assert.strictEqual(b.float, 'none', `${id}: ${b.what} renders stacked in the card`);
+            }
+        }
     });
 });

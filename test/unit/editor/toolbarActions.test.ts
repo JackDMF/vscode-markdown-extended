@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as path from 'path';
 import { Fragment, Node, Slice } from 'prosemirror-model';
 import { GapCursor } from 'prosemirror-gapcursor';
 import { AllSelection, Command, EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
@@ -6,13 +7,15 @@ import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
-import { SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, tooltipOf } from '../../../src/editor/webview/toolbar/actions';
+import {
+    PREVIEW_CARD_CLASS, ROW_LAYOUT, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, inRow, menuOf, submenuOf, tooltipOf,
+} from '../../../src/editor/webview/toolbar/actions';
 import {
     ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
     insertSourceTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup, wrapSourceTransaction,
 } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
-import { hostEngine } from './helpers';
+import { hostEngine, readText, repoRoot } from './helpers';
 
 /** The opening tags named `tag` in `html`, with their attributes. */
 function openingTags(html: string, tag: string): Record<string, string>[] {
@@ -39,7 +42,9 @@ function assertRendersSample(html: string, spec: SampleSpec, context: string): v
     });
     assert.ok(found, `${context}: no <${spec.tag}${classes.length ? ` class="${classes.join(' ')}"` : ''}> in ${html}`);
     for (const child of spec.children ?? []) {
-        assertRendersSample(html, child, context);
+        if (typeof child !== 'string') {
+            assertRendersSample(html, child, context);
+        }
     }
 }
 
@@ -79,6 +84,37 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         });
     }
 
+    for (const action of TOOLBAR_ACTIONS.filter(a => a.preview)) {
+        test(`${action.id}: its preview card shows what ${JSON.stringify(action.preview?.markdown)} renders`, () => {
+            const html = md.render(action.preview?.markdown ?? '');
+            for (const node of action.preview?.nodes ?? []) {
+                assertRendersSample(html, node, `${action.id} preview`);
+            }
+        });
+    }
+
+    test('the row holds the five native marks; every other action is a menu entry with a preview', () => {
+        assert.deepStrictEqual(TOOLBAR_ACTIONS.filter(inRow).map(a => a.id), ['italic', 'emphasis', 'bold', 'strong', 'code']);
+        assert.ok(TOOLBAR_ACTIONS.filter(inRow).every(a => a.apply.kind === 'mark'));
+        for (const action of TOOLBAR_ACTIONS.filter(a => !inRow(a))) {
+            assert.ok(menuOf(action) !== null, action.id);
+            assert.ok(action.preview && action.preview.nodes.length > 0, `${action.id} has a preview`);
+        }
+        assert.deepStrictEqual(ROW_LAYOUT, [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']]);
+        const byMenu = (menu: string) => TOOLBAR_ACTIONS.filter(a => menuOf(a) === menu && submenuOf(a) === null).map(a => a.id);
+        assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd']);
+        assert.deepStrictEqual(byMenu('annotation'), ['sidenote', 'marginal-note', 'left-sidebar', 'right-sidebar', 'footnote-reference']);
+        assert.deepStrictEqual(byMenu('insert'),
+            ['horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents']);
+    });
+
+    test('the preview card\'s class is the one both stylesheets name', () => {
+        const notes = readText(path.join(repoRoot, 'styles', 'markdown-extended.css'));
+        const guard = `:where(:not(.${PREVIEW_CARD_CLASS} *))`;
+        assert.strictEqual(notes.split(guard).length - 1, 8, 'every selector of the margin layout keeps out of the card');
+        assert.ok(readText(path.join(repoRoot, 'styles', 'editor.css')).includes(`.${PREVIEW_CARD_CLASS} {`));
+    });
+
     test('the four emphasis delimiters are four actions, drawn as four elements', () => {
         const emphasis = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'mark' && a.apply.mark !== 'code');
         assert.deepStrictEqual(emphasis.map(a => [a.apply.kind === 'mark' ? a.apply.markup : null, a.sample.tag]),
@@ -86,7 +122,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
     });
 
     test('the admonition menu lists exactly the plugin\'s types', () => {
-        const listed = TOOLBAR_ACTIONS.filter(a => a.menu === 'admonition').map(a => a.id.replace(/^admonition-/, ''));
+        const listed = TOOLBAR_ACTIONS.filter(a => submenuOf(a) === 'admonition').map(a => a.id.replace(/^admonition-/, ''));
         assert.deepStrictEqual(listed, [...ADMONITION_TYPES]);
     });
 

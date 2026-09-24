@@ -31,7 +31,14 @@ export const settle = () => new Promise(resolve => setTimeout(resolve, 500));
  * the other e2e tests do: a browser already available (`MTE_E2E_CHROME`, or
  * the one Puppeteer installed) is used, and nothing is downloaded.
  */
-export async function openEditorPage(): Promise<EditorPage | undefined> {
+export interface EditorPageOptions {
+    /** The viewport width; 1200 unless given. */
+    width?: number;
+    /** Stylesheets of this extension's `styles/` to load before `editor.css`, as the preview's cascade would. */
+    styles?: readonly string[];
+}
+
+export async function openEditorPage(options: EditorPageOptions = {}): Promise<EditorPage | undefined> {
     const extensionPath = vscode.extensions.getExtension(EXTENSION_ID)?.extensionPath;
     const bundle = extensionPath ? path.join(extensionPath, 'dist', 'editor-webview.js') : '';
     if (!bundle || !fs.existsSync(bundle)) {
@@ -55,7 +62,7 @@ export async function openEditorPage(): Promise<EditorPage | undefined> {
 
     const browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
     const page = await browser.newPage();
-    await page.setViewport({ width: 1200, height: 900 });
+    await page.setViewport({ width: options.width ?? 1200, height: 900 });
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(String(error)));
     await page.setContent(
@@ -65,7 +72,9 @@ export async function openEditorPage(): Promise<EditorPage | undefined> {
         + '</body></html>',
         { waitUntil: 'load' },
     );
-    await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', 'editor.css') });
+    for (const sheet of [...(options.styles ?? []), 'editor.css']) {
+        await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', sheet) });
+    }
     await page.addScriptTag({ path: bundle });
     assert.deepStrictEqual(errors, [], 'the bundle loads without a page error');
 

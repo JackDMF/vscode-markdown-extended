@@ -328,6 +328,8 @@ export function insertionPoint(state: EditorState): number {
 const OPEN_STAND_IN = String.fromCharCode(0xe002);
 const CLOSE_STAND_IN = String.fromCharCode(0xe003);
 
+export const WRAP_LOCK = 'Put the caret in, or select text within, one paragraph, heading or list item (not code) to add this.';
+
 /** Whether a `wrap-source` action can act on this selection: text inside one textblock that is not code. */
 export function canWrapSource(state: EditorState): boolean {
     const sel = state.selection;
