@@ -404,8 +404,9 @@ rather than a second heading, so the id and the anchor are never written twice.
   editor beside it, another extension, a save that trims whitespace) is dropped, and the
   editor shows the file as the change left it. Everything sent before stays, and so does
   its undo history.
-- `Ctrl+S` in the editor sends the last keystrokes and saves once they are written; a save
-  started elsewhere (the File menu, auto-save) saves what has been sent.
+- `Ctrl+S` in the editor sends the last keystrokes and saves once they are written — also
+  from a source block's open **Edit source** box, which stays open; a save started
+  elsewhere (the File menu, auto-save) saves what has been sent.
 
 ## Syntax Documentation
 

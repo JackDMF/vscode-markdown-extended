@@ -48,6 +48,40 @@ suite('Editor webview (e2e)', () => {
     const edits = async () => (await posted()).filter((m): m is Extract<WebviewMessage, { type: 'edit' }> => m.type === 'edit');
     const send = (message: HostMessage) => page.evaluate(m => window.postMessage(m, '*'), message as unknown as Record<string, unknown>);
     const settle = () => new Promise(resolve => setTimeout(resolve, 500));
+    const pressSave = async () => {
+        await page.keyboard.down('Control');
+        await page.keyboard.press('s');
+        await page.keyboard.up('Control');
+    };
+    /**
+     * Listen for Ctrl+S where a webview forwards keys to VS Code: on its window,
+     * in the bubble phase, registered after the page's own listeners.
+     */
+    const watchForwardedSave = () => page.evaluate(() => {
+        const w = window as unknown as { forwardedSave?: boolean };
+        w.forwardedSave = false;
+        window.addEventListener('keydown', e => {
+            if (e.key === 's' && e.ctrlKey) {
+                w.forwardedSave = true;
+            }
+        });
+    });
+    const saveWasForwarded = () => page.evaluate(() => (window as unknown as { forwardedSave?: boolean }).forwardedSave);
+    /**
+     * `SOURCE` parsed, with the heading given the shape the parser leaves it
+     * in when Req Explorer's badge names the artifact: the parser lifts the id
+     * into `reqPrefix` only then, and Req Explorer is not in the test host.
+     */
+    const requirementDocument = async (): Promise<ReturnType<typeof parsedDocumentToJSON>> => {
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const json = parsedDocumentToJSON(parseDocument(md, SOURCE, {}));
+        const heading = (json.doc.content as { type: string; attrs: Record<string, unknown>; content: { text: string }[] }[])
+            .find(n => n.type === 'heading');
+        assert.ok(heading);
+        heading.attrs.reqPrefix = 'FRS-TST-001: ';
+        heading.content = [{ ...heading.content[0], text: 'Page' }];
+        return json;
+    };
 
     suiteSetup(async function () {
         this.timeout(60000);
@@ -87,16 +121,7 @@ suite('Editor webview (e2e)', () => {
         await page.addScriptTag({ path: bundle });
         assert.deepStrictEqual(errors, []);
 
-        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-        const json = parsedDocumentToJSON(parseDocument(md, SOURCE, {}));
-        // The parser lifts the id into `reqPrefix` only when Req Explorer's
-        // badge names the artifact, and Req Explorer is not in the test host;
-        // the heading is given the shape the parser leaves with it.
-        const heading = (json.doc.content as { type: string; attrs: Record<string, unknown>; content: { text: string }[] }[])
-            .find(n => n.type === 'heading');
-        assert.ok(heading);
-        heading.attrs.reqPrefix = 'FRS-TST-001: ';
-        heading.content = [{ ...heading.content[0], text: 'Page' }];
+        const json = await requirementDocument();
         assert.deepStrictEqual((await posted()).map(m => m.type), ['ready']);
         await send({ type: 'document', json, version: 1, defaultWrap: 90 });
         await page.waitForSelector('.ProseMirror');
@@ -233,30 +258,17 @@ suite('Editor webview (e2e)', () => {
         await page.click('.ProseMirror p');
         await page.keyboard.press('End');
         await page.keyboard.type('?');
-        // Where a webview listens to forward keys to VS Code: on its window.
-        await page.evaluate(() => {
-            const w = window as unknown as { sawSave?: boolean };
-            w.sawSave = false;
-            window.addEventListener('keydown', e => {
-                if (e.key === 's' && e.ctrlKey) {
-                    w.sawSave = true;
-                }
-            });
-        });
-        await page.keyboard.down('Control');
-        await page.keyboard.press('s');
-        await page.keyboard.up('Control');
+        await watchForwardedSave();
+        await pressSave();
         // No settle: the edit goes at once, not after the typing delay.
         const all = await edits();
         assert.strictEqual(all.length, before + 1);
         assert.strictEqual(all[all.length - 1].save, true);
         assert.ok(all[all.length - 1].text.includes('Rewritten by another writer.?'), all[all.length - 1].text);
-        assert.strictEqual(await page.evaluate(() => (window as unknown as { sawSave?: boolean }).sawSave), false,
+        assert.strictEqual(await saveWasForwarded(), false,
             'the keydown never reached the listener a webview forwards keys to VS Code from');
 
-        await page.keyboard.down('Control');
-        await page.keyboard.press('s');
-        await page.keyboard.up('Control');
+        await pressSave();
         const again = await edits();
         assert.strictEqual(again.length, before + 2, 'a save with nothing new to send still asks for the save');
         assert.strictEqual(again[again.length - 1].save, true);
@@ -296,18 +308,18 @@ suite('Editor webview (e2e)', () => {
         await page.click('.mep-error .mep-atom-button');
         const open = (await posted()).filter(m => m.type === 'openSource').pop();
         assert.deepStrictEqual(open, { type: 'openSource', line: 0 });
+
+        // With no editor there is nothing to send: Ctrl+S stays VS Code's.
+        const before = (await edits()).length;
+        await watchForwardedSave();
+        await pressSave();
+        assert.strictEqual((await edits()).length, before);
+        assert.strictEqual(await saveWasForwarded(), true, 'the error state leaves Ctrl+S to VS Code');
     });
 
     test('Enter inside a requirement heading starts a paragraph, so the id is written once', async function () {
         this.timeout(10000);
-        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-        const json = parsedDocumentToJSON(parseDocument(md, SOURCE, {}));
-        const heading = (json.doc.content as { type: string; attrs: Record<string, unknown>; content: { text: string }[] }[])
-            .find(n => n.type === 'heading');
-        assert.ok(heading);
-        heading.attrs.reqPrefix = 'FRS-TST-001: ';
-        heading.content = [{ ...heading.content[0], text: 'Page' }];
-        await send({ type: 'document', json, version: 11, defaultWrap: 90 });
+        await send({ type: 'document', json: await requirementDocument(), version: 11, defaultWrap: 90 });
         await page.waitForSelector('.ProseMirror h2 .mep-heading-text');
 
         const before = (await edits()).length;
@@ -332,5 +344,67 @@ suite('Editor webview (e2e)', () => {
         assert.strictEqual(match[1] + lines[at + 2], 'Page', 'the text after the caret is the paragraph below');
         assert.strictEqual(text.split('FRS-TST-001:').length, 2, 'the id is written once');
         assert.strictEqual(text.split('{#frs-tst-001-1a2b3c4d}').length, 2, 'the anchor is written once');
+    });
+
+    test('Ctrl+S inside a raw block\'s open source saves that source, and closing it afterwards writes nothing more', async function () {
+        this.timeout(15000);
+        await send({ type: 'document', json: await requirementDocument(), version: 12, defaultWrap: 90 });
+        await page.waitForFunction(() => document.querySelectorAll('.mep-raw-block table td').length === 2);
+        await page.click('.mep-raw-block .mep-atom-content');
+        await page.click('.mep-raw-block .mep-atom-button');
+        await page.waitForSelector('.mep-raw-editor');
+        await page.$eval('.mep-raw-editor', el => {
+            const area = el as HTMLTextAreaElement;
+            area.setSelectionRange(area.value.length, area.value.length);
+        });
+        await page.keyboard.type('\n| 3 | 4 |');
+        const before = (await edits()).length;
+        await watchForwardedSave();
+        await pressSave();
+
+        const all = await edits();
+        assert.strictEqual(all.length, before + 1, 'one edit, sent at once');
+        const saved = all[all.length - 1];
+        assert.strictEqual(saved.save, true);
+        assert.strictEqual(saved.baseVersion, 12);
+        assert.strictEqual(saved.text, SOURCE.replace(TABLE, `${TABLE}| 3 | 4 |\n`), 'the save carries the source still in the textarea');
+        assert.strictEqual(await saveWasForwarded(), false, 'the key was kept from VS Code');
+        const open = await page.evaluate(() => ({
+            focused: document.activeElement?.classList.contains('mep-raw-editor'),
+            value: (document.querySelector('.mep-raw-editor') as HTMLTextAreaElement | null)?.value,
+        }));
+        assert.deepStrictEqual(open, { focused: true, value: '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |' }, 'the textarea stays open');
+
+        // Leaving it commits what the save already wrote: no second edit, so
+        // the document does not turn dirty again.
+        await page.$eval('.mep-raw-editor', el => (el as HTMLTextAreaElement).blur());
+        await settle();
+        assert.strictEqual((await edits()).length, before + 1);
+        assert.strictEqual(await page.$('.mep-raw-editor'), null);
+    });
+
+    test('Ctrl+S with the focus outside the editor still saves the last keystrokes', async function () {
+        this.timeout(10000);
+        await page.click('.ProseMirror p');
+        await page.keyboard.press('End');
+        await page.keyboard.type(' Moved.');
+        const before = (await edits()).length;
+        // What a click on the page background does: the editor loses the
+        // focus to the body, and the window keeps it.
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        assert.strictEqual(await page.evaluate(() => document.activeElement === document.body), true);
+        // No settle: leaving the editor sends the pending edit at once.
+        const left = await edits();
+        assert.strictEqual(left.length, before + 1, 'focus leaving the editor sends the pending edit');
+        assert.strictEqual(left[left.length - 1].save, undefined);
+        assert.ok(left[left.length - 1].text.replace(/\s+/g, ' ').includes('as it was written. Moved.'), left[left.length - 1].text);
+
+        await watchForwardedSave();
+        await pressSave();
+        const all = await edits();
+        assert.strictEqual(all.length, before + 2);
+        assert.strictEqual(all[all.length - 1].save, true, 'Ctrl+S on the body is the page\'s save too');
+        assert.strictEqual(all[all.length - 1].text, left[left.length - 1].text);
+        assert.strictEqual(await saveWasForwarded(), false, 'and is kept from VS Code');
     });
 });

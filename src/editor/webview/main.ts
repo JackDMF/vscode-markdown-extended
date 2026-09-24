@@ -18,7 +18,7 @@ import type { ParsedDocumentJSON } from '../parse';
 import type { HostMessage, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
-import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView } from './nodeViews';
+import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
 import { editorPlugins } from './plugins';
 import { resyncTransaction } from './resync';
 
@@ -49,6 +49,8 @@ let hostText: string | undefined;
 let editTimer: ReturnType<typeof setTimeout> | undefined;
 let renderSeq = 0;
 const pendingRenders = new Map<number, string>();
+/** The raw blocks whose source is open in a textarea, and not yet in the document. */
+const openSourceEditors = new Set<SourceEditor>();
 
 function post(message: WebviewMessage): void {
     vscodeApi.postMessage(message);
@@ -62,7 +64,7 @@ function serialize(doc: Node): string {
 /**
  * Send the document back now, if it differs from what the host holds — or, for
  * a save, always: the host saves once it has applied the edit, so the file on
- * disk holds the last keystroke (see `onEditorKeydown`).
+ * disk holds the last keystroke (see `onSaveKeydown`).
  */
 function flush(save = false): void {
     if (editTimer !== undefined) {
@@ -137,7 +139,20 @@ const port: EditorPort = {
         view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src }));
         port.requestRender(src);
     },
+    trackSourceEditor: editor => {
+        openSourceEditors.add(editor);
+        return () => {
+            openSourceEditors.delete(editor);
+        };
+    },
 };
+
+/** Put every open raw-source textarea's text into the document, so the next flush carries it. */
+function commitOpenSources(): void {
+    for (const editor of [...openSourceEditors]) {
+        editor.commitSource();
+    }
+}
 
 /** Put a rendering on every raw block that still has the source it was made from. */
 function applyRendered(requestId: number, html: string): void {
@@ -202,6 +217,10 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     const state = EditorState.create({ doc, plugins });
     view = new EditorView(mount, { state, nodeViews, dispatchTransaction });
     view.dom.addEventListener('keydown', onEditorKeydown);
+    // Focus leaving the editor for the page around it (a click on the
+    // background) does not blur the window; the pending edit goes now, not
+    // after the delay.
+    view.dom.addEventListener('focusout', () => flush());
 }
 
 /**
@@ -209,31 +228,44 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
  * kept from VS Code, whose undo would revert the document as well; one it had
  * nothing for goes through, so undoing past the editor's history reaches the
  * document's.
- *
+ */
+function onEditorKeydown(e: KeyboardEvent): void {
+    const key = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && (key === 'z' || key === 'y') && e.defaultPrevented) {
+        e.stopPropagation();
+    }
+}
+
+/**
  * A save is kept from VS Code altogether and sent as an edit that asks the host
  * to save after applying it. Letting VS Code save while the edit is still on its
  * way would write the file without the last keystrokes (its save participant
  * cannot wait for a message that has not arrived yet), and the document would
- * turn dirty again the moment the edit landed. Stopping propagation is what
- * keeps the key from VS Code: a webview forwards a keydown to the workbench
- * from a listener on its window, which a stopped event never reaches.
+ * turn dirty again the moment the edit landed.
+ *
+ * Bound on the window in the capture phase, so it holds wherever the focus is
+ * in the page — the editor, a raw block's textarea, the page background — and
+ * runs before anything below it sees the key. Stopping propagation is what keeps
+ * the key from VS Code: a webview forwards a keydown to the workbench from a
+ * bubble-phase listener on its window, which a stopped event never reaches.
+ *
+ * An open raw-source textarea is committed first; its text is otherwise not in
+ * the document the edit is serialized from. Without an editor (the error
+ * state, or before the first document) the key stays VS Code's.
  */
-function onEditorKeydown(e: KeyboardEvent): void {
-    const mod = e.ctrlKey || e.metaKey;
-    if (!mod) {
+function onSaveKeydown(e: KeyboardEvent): void {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's' || !view) {
         return;
     }
-    const key = e.key.toLowerCase();
-    if ((key === 'z' || key === 'y') && e.defaultPrevented) {
-        e.stopPropagation();
-    } else if (key === 's' && !e.altKey && !e.shiftKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        flush(true);
-    } else if (key === 's') {
+    commitOpenSources();
+    if (e.altKey || e.shiftKey) {
         // Save As and the like stay VS Code's; the pending edit is sent first.
         flush();
+        return;
     }
+    e.preventDefault();
+    e.stopPropagation();
+    flush(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +317,8 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
     }
 });
+
+window.addEventListener('keydown', onSaveKeydown, true);
 
 // Leaving the page must not lose the last keystrokes still inside the delay.
 window.addEventListener('blur', () => flush());

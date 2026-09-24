@@ -400,14 +400,18 @@ and the edit dropped. A document change that leaves the text equal to the page's
 the page's own edit and is not posted back; any other change is re-parsed and posted.
 In the error state nothing is written.
 
-**Saving.** Ctrl+S in the page is kept from VS Code (the page stops the keydown before
-the listener on its window that forwards keys to the workbench) and sent as an `edit`
-with `save`, even when nothing changed; the host applies the edit, or drops it as stale,
-and then saves the document. Letting VS Code save directly would race the edit still on
-its way: the save participant can wait for edits the host has received, not for one the
-page has yet to send, so the file would be written without the last keystrokes and turn
-dirty again when they landed. A save started elsewhere (menu, auto-save) still waits on
-the edits already received, and only on those.
+**Saving.** Ctrl+S anywhere in the page — the editor, a raw block's source textarea, the
+page background — is kept from VS Code: a capture-phase listener on the page's window
+stops the keydown before the bubble-phase listener there that forwards keys to the
+workbench. It commits every open raw-source textarea (each registers with the page while
+open, and stays open), then sends an `edit` with `save`, even when nothing changed; the
+host applies the edit, or drops it as stale, and then saves the document. Letting VS Code
+save directly would race the edit still on its way: the save participant can wait for
+edits the host has received, not for one the page has yet to send, so the file would be
+written without the last keystrokes and turn dirty again when they landed. Focus leaving
+the editor for the page flushes the pending edit, as leaving the window does. In the
+error state the key stays VS Code's. A save started elsewhere (menu, auto-save) still
+waits on the edits already received, and only on those.
 
 **A new document for a page that shows one** is taken in place, not by rebuilding the
 `EditorState`: `webview/resync.ts` replaces only the run of top-level blocks that differs,

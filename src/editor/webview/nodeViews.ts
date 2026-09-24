@@ -12,6 +12,17 @@ export interface EditorPort {
     eol(): '\n' | '\r\n';
     /** Replace the source of the raw block at `pos`; `''` removes the block. */
     commitRawSource(pos: number, src: string): void;
+    /**
+     * A raw block's source editor has opened; the returned function is called
+     * when it closes. The page asks every open one to commit before it saves.
+     */
+    trackSourceEditor(editor: SourceEditor): () => void;
+}
+
+/** A raw block's open source editor, as the page sees it. */
+export interface SourceEditor {
+    /** Write what the textarea holds into the document now, leaving it open. */
+    commitSource(): void;
 }
 
 type GetPos = () => number | undefined;
@@ -89,10 +100,16 @@ abstract class AtomView implements NodeView {
  * (or the source itself, for lines no token covers), and its source can be
  * edited in place: **Edit source** opens a textarea, `Ctrl+Enter` or leaving it
  * commits, `Esc` cancels.
+ *
+ * What the textarea holds is not in the document until it commits, so a save
+ * would miss it. The view registers itself with the page while it is open, and
+ * the page commits it (`commitSource`) before any save; the textarea stays open,
+ * and `Esc` afterwards returns to the source that save wrote.
  */
-export class RawBlockView extends AtomView {
+export class RawBlockView extends AtomView implements SourceEditor {
     private readonly content: HTMLElement;
     private editor: HTMLTextAreaElement | null = null;
+    private untrack: (() => void) | null = null;
     private readonly toolbar: HTMLElement;
 
     constructor(node: Node, private readonly getPos: GetPos, private readonly port: EditorPort) {
@@ -158,9 +175,30 @@ export class RawBlockView extends AtomView {
         });
         area.addEventListener('blur', () => this.stopEditing(true));
         this.editor = area;
+        this.untrack = this.port.trackSourceEditor(this);
         this.dom.classList.add('mep-editing');
         this.content.replaceChildren(area);
         area.focus();
+    }
+
+    commitSource(): void {
+        const area = this.editor;
+        if (!area) {
+            return;
+        }
+        if (area.value.trim() === '') {
+            // Committing an emptied block removes it, textarea and all.
+            this.stopEditing(true);
+            return;
+        }
+        // The node's new `src` comes back through `update`, which leaves an
+        // open textarea alone (`render`).
+        this.commit(area.value);
+    }
+
+    destroy(): void {
+        this.untrack?.();
+        this.untrack = null;
     }
 
     private stopEditing(commit: boolean): void {
@@ -169,12 +207,17 @@ export class RawBlockView extends AtomView {
             return;
         }
         this.editor = null;
+        this.untrack?.();
+        this.untrack = null;
         this.dom.classList.remove('mep-editing');
         const value = area.value;
         this.render();
-        if (!commit) {
-            return;
+        if (commit) {
+            this.commit(value);
         }
+    }
+
+    private commit(value: string): void {
         const pos = this.getPos();
         const src = this.node.attrs.src as string;
         const next = withSourceTerminators(value, src, this.port.eol());
