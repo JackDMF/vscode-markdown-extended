@@ -346,7 +346,8 @@ side on one file, each following the other's changes.
 
 Paragraphs, headings, bullet and ordered lists, block quotes, fenced and indented code
 blocks and horizontal rules, with bold, italic, inline code, links and images inside
-them. The keyboard does the formatting:
+them. Format them from the toolbar (below) or with the keys a Markdown author already
+knows:
 
 | Keys | Does |
 | ---- | ---- |
@@ -356,6 +357,48 @@ them. The keyboard does the formatting:
 | `# ` … `###### ` at the start of a line | Heading of that level |
 | `- ` or `* `, `1. `, `> ` at the start of a line | Bullet list, ordered list, quote |
 | ` ``` ` at the start of a line | Code block |
+
+`Ctrl+I` writes `*italic*` and `Ctrl+B` `**bold**`, the CommonMark defaults.
+
+### Toolbar
+
+A toolbar stays at the top of the page, and a smaller bubble with its inline and
+annotation groups appears above any text you select. Every button **is** the construct it
+makes — the very element the preview renders from that syntax, with a short sample text —
+so it looks exactly like the construct in your document, drawn by the same stylesheets,
+and changes with them. The tooltip names the Markdown each button writes.
+
+- **Block type** — a menu whose face shows the block you are in: paragraph, heading 1–6,
+  quote, bullet list, numbered list, code block. Choosing the list or quote you are
+  already in takes the block out of it again.
+- **Inline** — italic, emphasis, bold, strong, inline code, highlight (`==mark==`),
+  superscript (`^sup^`), subscript (`~sub~`), strikethrough (`~~del~~`) and key
+  (`[[Ctrl]]`). A button is marked while the selection carries what it writes.
+- **Annotations** — sidenote (`++reference|note++`), marginal note (`!!reference|note!!`),
+  left and right sidebar (`$left$`, `@right@`) and footnote. A footnote is written after
+  the selection with the first free number (`[^2]`), and its definition goes below the
+  paragraph with its source open for the text.
+- **Insert** — horizontal rule, admonition (a menu of every type the admonition plugin
+  knows, each drawn as its box), table, container, task list, footnote definition,
+  definition list, abbreviation and table of contents, from the same templates as this
+  extension's snippets where one exists.
+
+**Why emphasis is four buttons.** This extension renders `*a*` as `<i>`, `_b_` as `<em>`,
+`**c**` as `<b>` and `__d__` as `<strong>` (`markdown-it-ib`), so a stylesheet can give
+each its own look — underlining `_b_`, say, while `*a*` stays italic. The editor keeps the
+delimiter you wrote and draws it as the preview does; choosing emphasis on italic text
+swaps `*` for `_` rather than nesting one inside the other.
+
+**Stage 1: the extended syntax goes in as source.** Highlight, super- and subscript,
+strikethrough, keys, the annotations and every insert except the rule are not yet edited as
+rich text. An inline one wraps the selected text in its markers and the paragraph becomes
+a source block, rendered as the preview renders it; a block one is inserted after the
+current block as a source block with its **Edit source** box open. The tooltip of each such
+button says *edits as source until stage 2*. One `Ctrl+Z` takes the wrap back.
+
+**A requirement heading keeps its type.** On a heading written `## ID: Title {#anchor}`
+the block-type menu is disabled, and its tooltip says why: changing the type would rebuild
+the heading and lose the id and the anchor. Its title can still be formatted.
 
 ### What is shown, not edited as rich text
 
@@ -394,7 +437,10 @@ rather than a second heading, so the id and the anchor are never written twice.
 ### Limits
 
 - **Experimental.** Try it on files under version control.
-- **Tables are edited as source**, not cell by cell.
+- **Tables are edited as source**, not cell by cell, and so is the rest of the extended
+  syntax the toolbar inserts (stage 1).
+- **Links and images have no toolbar button yet.** Existing ones are kept and edited as
+  text; a new one is written in the text editor.
 - **Relative images are not resolved** in the editor yet; they show as broken images.
   The file is unaffected.
 - **Desktop only.** In vscode.dev the command and menu entries are hidden; **Open With…**

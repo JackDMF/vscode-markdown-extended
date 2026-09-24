@@ -95,6 +95,9 @@ vscode-markdown-extended/
 │   │   ├── protocol.ts          # Host ↔ webview messages (types only)
 │   │   ├── host/                # Extension host: engine, session, page, provider
 │   │   └── webview/             # The ProseMirror page (bundled to dist/editor-webview.js)
+│   │       └── toolbar/         # Formatting toolbar: action table, commands, DOM
+│   ├── syntax/
+│   │   └── markers.ts           # The extension's markers, stated once (toggles, plugins, toolbar)
 │   └── plugin/                   # Markdown-it plugins
 │       ├── markdownItTOC.ts
 │       ├── markdownItContainer.ts
@@ -387,7 +390,7 @@ text the other — never a diff:
 | host → page | `rendered { requestId, html }` | A raw block's new source, rendered by the host engine |
 | host → page | `error { message }` | The document cannot be shown without loss; offer the text editor |
 | page → host | `ready` | Loaded; send the document |
-| page → host | `edit { text, baseVersion, save? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it |
+| page → host | `edit { text, baseVersion, save?, reparse? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it; with `reparse`, the host posts the document back after applying it, although it is the page's own text (the toolbar wrote syntax as source) |
 | page → host | `render { requestId, src }` | Render this raw block source |
 | page → host | `openSnippet { path }` | Open an expansion's snippet file (only paths the document's own marks name are opened) |
 | page → host | `openSource { line }` | Open the text editor beside, at this line |
@@ -449,6 +452,66 @@ superseded text and is dropped.
 - **`host/session.ts`** — writes only the differing span, and never against a
   document the page did not see.
 
+### The toolbar
+
+`webview/toolbar/` is the formatting toolbar at the top of the page and the bubble
+over a text selection, in three layers:
+
+- **`actions.ts`** — one table, pure data, no DOM. Each action has an id, a group
+  (block type, inline, annotations, insert), an optional menu (block type, admonition),
+  a label, the **syntax** its tooltip names, a **sample** (tag, classes, text,
+  children: the element the parser makes from that syntax), an `apply` kind and an
+  **example** in which the construct renders as its sample.
+- **`commands.ts`** — what each `apply` kind does to an `EditorState`, testable without
+  a page. `mark` toggles a native mark *with its delimiter*: the mark type excludes
+  itself, so `_` on `*` text replaces the `*`. `block` sets the textblock type, or wraps,
+  lifts or converts a list or quote. `wrap-source` and `insert-source` are stage 1 for
+  the constructs outside the editable core (below).
+- **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
+  active and disabled states per action, the block-type face, the menus, the bubble
+  (placed from `coordsAtPos` inside `.mep-editor`, above the selection, below it when
+  above would be under the sticky toolbar).
+
+**The syntax is read from where it is true.** `src/syntax/markers.ts` states the
+inline markers, the note and sidebar markers with their classes, and the admonition
+types. It imports nothing, so the page can load it, and `toggleFormats.ts` (through
+`commands/inlineToggleArgs.ts`), `markdownItSidenote.ts`, `markdownItAdmonition.ts`
+and the action table all import it: the text editor's toggles, the parser and the
+toolbar cannot write one construct two ways. The block markers are the serializer's.
+`toolbarActions.test.ts` renders every action's example through the real engine and
+requires the sample's elements and classes in the HTML, and for every mark action
+the schema's element equals the engine's — "this button makes this element" is
+checked against the parser, not assumed.
+
+**The look is read from the cascade.** A button contains its sample element inside
+`body.markdown-body`, so the page's stylesheets — the preview's, every extension's,
+the user's — style it exactly as they style the construct in the document, and any
+change to them reaches the toolbar. Reading a colour out of a stylesheet's text would
+be a second answer to "what does a sidenote look like", and wrong the moment another
+rule in the cascade won. Tools are `role="button"` elements, not `<button>`s, whose
+user-agent font would stand between the cascade and the sample; `editor.css` styles
+only their frame. Block samples are scaled with `zoom` and lose their vertical margins.
+
+**Stage 1: source for what the core cannot edit.** `wrap-source` wraps the selection
+in its markers and replaces the top-level block by a `raw_block` whose `src` is the
+block serialized by rule with the markers in place. The serializer would escape them
+(`ESCAPE_EXTRA` exists to stop `==`, `++`, `$` … being read as syntax), so the block is
+serialized with private-use stand-ins of the markers' length (U+E002/U+E003 — not
+U+E000/U+E001, the wrapper's hold markers) that are replaced afterwards. The block keeps
+its `gap` and the transaction carries `PRESERVE_SOURCE_META`, so every other byte stays;
+the page then sends `edit` with `reparse`, and the host's parse comes back through the
+in-place re-sync, the block rendered as the preview renders it. The wrap is one history
+event and the re-sync is outside the history, so one undo returns the block exactly
+(the page test undoes across the re-sync). `insert-source` inserts a `raw_block` with a
+template after the current block, asks the host to render it and opens its **Edit
+source** box (`editRawSourceAt` in `nodeViews.ts`).
+
+**Requirement headings.** Block-type actions are disabled while the selection touches a
+heading with `reqPrefix` or `attrsSuffix`, and on an atom: `setBlockType` rebuilds a
+node's attributes, and one click would drop the id and the anchor — the same fact
+`splitRequirementHeading` and the fidelity plugin guard for Enter and for any
+transaction.
+
 ### Styles
 
 The page loads the preview's cascade — the built-in `markdown.css` and
@@ -456,6 +519,7 @@ The page loads the preview's cascade — the built-in `markdown.css` and
 third-party), the user's `markdown.styles` — and `styles/editor.css` last, for the
 editor chrome only. `<body>` is `markdown-body vscode-body`; VS Code adds the theme
 class that theme-aware stylesheets such as Req Explorer's `req-status.css` key on.
+The toolbar's samples are drawn inside that body for the same reason (see above).
 
 ---
 
