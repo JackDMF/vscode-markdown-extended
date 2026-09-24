@@ -7,6 +7,7 @@
 - [Core Architecture](#core-architecture)
 - [Service Layer](#service-layer)
 - [Plugin System](#plugin-system)
+- [WYSIWYG Editor](#wysiwyg-editor)
 - [Testing Strategy](#testing-strategy)
 - [Key Design Decisions](#key-design-decisions)
 
@@ -89,6 +90,11 @@ vscode-markdown-extended/
 │   │   └── contributes/
 │   │       ├── contributorService.ts   # Plugin contributions
 │   │       └── contributesService.ts   # Config contributions
+│   ├── editor/                   # WYSIWYG editor (see its own section)
+│   │   ├── engine.ts, blocks.ts, schema.ts, parse.ts, serialize.ts, wrap.ts, fidelity.ts  # UI-free core
+│   │   ├── protocol.ts          # Host ↔ webview messages (types only)
+│   │   ├── host/                # Extension host: engine, session, page, provider
+│   │   └── webview/             # The ProseMirror page (bundled to dist/editor-webview.js)
 │   └── plugin/                   # Markdown-it plugins
 │       ├── markdownItTOC.ts
 │       ├── markdownItContainer.ts
@@ -285,6 +291,130 @@ Users can disable plugins via settings:
     "markdownExtended.plugins.disabled": "toc, container, emoji"
 }
 ```
+
+---
+
+## WYSIWYG Editor
+
+`src/editor/` is an experimental rich editor for Markdown files, whose one hard
+promise is that a block nobody touched is saved byte for byte. Its contract with Req Explorer is
+written down in that repository
+(`requirements/workshops/2026-09-21-workshop-editor-integration-contract.md`, and
+`packages/core/SPEC.md` §10.2–10.3).
+
+### One parser, two renderers
+
+The editor does not parse Markdown itself. `createEditorEngine` (`engine.ts`)
+builds a markdown-it instance composed the way VS Code composes its preview
+engine — raw HTML on, linkify and typographer from `markdown.preview.*`, this
+extension's registry from `src/plugin/plugins.ts`, then every other extension's
+`extendMarkdownIt` — and `host/engineHost.ts` feeds it the extenders of every
+installed extension whose manifest sets `markdown.markdownItPlugins`, and repeats
+the two things the preview does to its engine afterwards (linkify without fuzzy
+links, `breaks`). The preview renders those tokens to HTML; the editor turns the
+same tokens into a ProseMirror document. Two parsers would be two answers to
+"what does this file contain", and the first construct they disagreed on would be
+edited as something it is not.
+
+markdown-it is pinned to major 14, which is what VS Code's preview bundles, so the
+two engines tokenize alike. The engine is built once per provider and rebuilt when
+the set of extensions or one of those preview settings changes.
+
+**Why the front-matter rule is on the editor engine only.** VS Code's preview
+registers its own front-matter rule on the engine it hands to `extendMarkdownIt`,
+and a second one from this extension conflicts with it (see the comment on
+`plugins`). The editor engine is built from scratch, so nothing registers one for
+it: without `markdown-it-front-matter` the YAML block would tokenize as a thematic
+break and a setext heading — and front matter is the one block Req Explorer
+requires to leave the editor exactly as it entered.
+
+### The block model
+
+`blocks.ts` groups the top-level tokens into **source blocks**, each with the exact
+slice of the file it stands for (`src`) and the text between it and the previous
+block (`gap`). Every block is one of four kinds:
+
+| Kind | What | Node | Written back as |
+| --- | --- | --- | --- |
+| `front_matter` | The YAML block at the top | `front_matter` (atom) | Its `src`, always |
+| `editable` | The stage-1 core: paragraph, heading, lists, blockquote, code, rule | The matching node, with `src` and `gap` | Its `src` while untouched; serialized by rule once changed |
+| `raw` | Anything else — tables, HTML, this extension's syntax, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
+| `injected` | Content the file does not hold at this place | `injected_block` (atom) | An expansion's directive line, or nothing |
+
+`parse.ts` rebuilds the text from the blocks and **throws** when it does not match,
+so a document the model cannot represent is never opened for editing.
+
+### Injected content
+
+Req Explorer marks every token its preview plugin injects under
+`token.meta.reqExplorer` (SPEC §10.2). The editor reads the mark and treats each kind
+differently:
+
+| Mark | Example | Editor treatment |
+| --- | --- | --- |
+| `atom` | Status badge, `table.req-summary` | A read-only block or inline atom showing the rendering; nothing is written |
+| `expansion` | A snippet expanded from `<!-- include: id -->` | One read-only block; the directive line is written back. With `path`, an **Open snippet** button; a `missing` expansion has no path and offers nothing |
+| `decoration` | `span.req-ref` around a bare id | Not a node: the id stays editable text, carrying a `req_ref` mark that is never serialized |
+
+Token ranges nobody marked and no source line accounts for (the footnote list
+`markdown-it-footnote` appends) become `injected_block`s of kind `generated`. A
+requirement heading's `ID: ` prefix, recognised through the badge naming that id, is
+lifted into `reqPrefix` and rendered non-editable; the `{#anchor}` suffix is kept
+verbatim in `attrsSuffix`.
+
+### Host and page
+
+`host/provider.ts` registers a `CustomTextEditorProvider` (`markdownExtended.wysiwyg`,
+priority `option`) over the file's own `TextDocument`, so Req Explorer's
+`WorkspaceEdit`s, the text editor and the rich editor meet in one buffer and VS Code
+keeps dirty state, save and undo. Each open editor is a `WysiwygSession`
+(`host/session.ts`); the page is `webview/main.ts`, bundled on its own because it
+must not import the parser (it imports `schema.ts`, `fidelity.ts` and `serialize.ts`
+directly, never the barrel).
+
+The protocol (`protocol.ts`) carries the parsed document one way and the finished
+text the other — never a diff:
+
+| Direction | Message | Meaning |
+| --- | --- | --- |
+| host → page | `document { json, version, defaultWrap }` | Show this parse of document `version` |
+| host → page | `rendered { requestId, html }` | A raw block's new source, rendered by the host engine |
+| host → page | `error { message }` | The document cannot be shown without loss; offer the text editor |
+| page → host | `ready` | Loaded; send the document |
+| page → host | `edit { text, baseVersion }` | The whole text as the page would save it (250 ms after the last change) |
+| page → host | `render { requestId, src }` | Render this raw block source |
+| page → host | `openSnippet { path }` | Open an expansion's snippet file (only paths the document's own marks name are opened) |
+| page → host | `openSource { line }` | Open the text editor beside, at this line |
+
+The session remembers the text it believes the page holds. An `edit` is written only
+when its `baseVersion` is the last posted version and the document still holds that
+text — then as **one minimal replacement** (`host/minimalEdit.ts`: common prefix and
+suffix, never splitting `\r\n` or a surrogate pair); otherwise the page is re-synced
+and the edit dropped. A document change that leaves the text equal to the page's is
+the page's own edit and is not posted back; any other change is re-parsed and posted.
+In the error state nothing is written.
+
+### Where fidelity is enforced
+
+- **`parse.ts`** — refuses a document whose blocks do not rebuild it.
+- **`fidelity.ts`** — clears `src` on a top-level editable node a transaction
+  replaced (judged by node identity, so a moved node keeps it) and leaves undo/redo and
+  `PRESERVE_SOURCE_META` transactions alone.
+- **`webview/plugins.ts`** — `dropGapPlugin` clears the `gap` of a block moved by a
+  drop, since its old separator belonged to its old neighbour.
+- **`serialize.ts`** — emits `src` where it is set, and a stable rule-based form for
+  a changed block; wrapping follows the paragraph's own width, else
+  `markdownExtended.editor.wrapColumn`.
+- **`host/session.ts`** — writes only the differing span, and never against a
+  document the page did not see.
+
+### Styles
+
+The page loads the preview's cascade — the built-in `markdown.css` and
+`highlight.css`, every extension's `markdown.previewStyles` (official, then
+third-party), the user's `markdown.styles` — and `styles/editor.css` last, for the
+editor chrome only. `<body>` is `markdown-body vscode-body`; VS Code adds the theme
+class that theme-aware stylesheets such as Req Explorer's `req-status.css` key on.
 
 ---
 

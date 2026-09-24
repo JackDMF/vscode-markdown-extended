@@ -16,6 +16,7 @@ Markdown Extended Pro is a comprehensive extension that extends syntaxes and abi
 - 🌗 **Theme-Aware & Accessible Exports** - Light / dark / auto export theme with a built-in, accessible base stylesheet (overridable by your own CSS)
 - 🧜 **Mermaid in Exports** - Diagrams shown in VS Code's preview are rendered to inline SVG in exported files
 - ✏️ **Editing Helpers** - Table formatting, text formatting toggles, and more
+- 🖋️ **WYSIWYG Editor (experimental)** - Edit as rendered text; untouched blocks are saved byte for byte ([details](#wysiwyg-editor-experimental))
 - 🌐 **Web Extension** - Works in [vscode.dev](https://vscode.dev) and [github.dev](https://github.dev) (preview & editing; export requires desktop)
 - 🏗️ **TypeScript Codebase** - Built with TypeScript, unit tests, and error recovery
 
@@ -321,6 +322,84 @@ The first row becomes the header, and the table is aligned on insert.
 
 Search "Markdown" in the command palette (`Ctrl+Shift+P`) to reach them; export is
 also on the editor title menu and the explorer context menu.
+
+## WYSIWYG Editor (experimental)
+
+Edit a Markdown file as rendered text — headings, paragraphs, lists, quotes and code
+typed in place — and save a file that differs from the original **only where you
+changed it**. The text editor stays the default; the WYSIWYG editor is chosen per file.
+
+### Opening it
+
+- **Command palette:** `Markdown: Open in WYSIWYG Editor` on the active Markdown file.
+- **Context menu:** right-click a `.md` file in the explorer, or inside a Markdown
+  editor, and choose **Open in WYSIWYG Editor**.
+- **Open With…:** on any `.md` or `.markdown` tab or file, **Open With…** →
+  **Markdown WYSIWYG Editor**. The same menu can make it the default for `*.md` if you
+  want that.
+
+It edits the same document as the text editor: dirty state, save and the file's undo
+history are VS Code's, and the text editor and the WYSIWYG editor can be open side by
+side on one file, each following the other's changes.
+
+### What is edited in place
+
+Paragraphs, headings, bullet and ordered lists, block quotes, fenced and indented code
+blocks and horizontal rules, with bold, italic, inline code, links and images inside
+them. The keyboard does the formatting:
+
+| Keys | Does |
+| ---- | ---- |
+| `Ctrl+B` / `Ctrl+I` / ``Ctrl+` `` | Bold / italic / inline code |
+| `Enter`, `Tab`, `Shift+Tab` in a list | New item / indent / outdent |
+| `Ctrl+Z`, `Ctrl+Y` or `Ctrl+Shift+Z` | Undo / redo |
+| `# ` … `###### ` at the start of a line | Heading of that level |
+| `- ` or `* `, `1. `, `> ` at the start of a line | Bullet list, ordered list, quote |
+| ` ``` ` at the start of a line | Code block |
+
+### What is shown, not edited as rich text
+
+Some blocks appear as they do in the preview, outlined, and are not edited as text in
+place — each for a reason:
+
+- **Front matter** is a collapsed, read-only panel with the YAML exactly as written. It
+  is written back byte for byte, line endings included: tools such as Req Explorer own
+  it and edit it with their own commands, and a rich editor that re-wrote the YAML
+  would reorder keys and lose comments.
+- **Content another extension injects** — Req Explorer's status badges and summary
+  tables, a snippet expanded from `<!-- include: … -->` — is not in the file at that
+  place, so it cannot be edited there. An expanded snippet shows an **Open snippet**
+  button that opens the file it came from; the file itself keeps the one directive line.
+- **Tables, raw HTML and this extension's extended syntax** (admonitions, containers,
+  the table of contents, footnotes, definition lists, …) are *source blocks*. Hover or
+  select one and choose **Edit source** to edit its Markdown in place — `Ctrl+Enter` or
+  clicking away applies it, `Esc` cancels — or **Show in text editor** to jump to it.
+
+A requirement heading written as `## ID: Title {#anchor}` keeps the id and the anchor
+read-only; only the title is editable.
+
+### The fidelity promise
+
+- A block you did not touch is written back **byte for byte** — its wrapping, its
+  markers, its escapes, the blank lines around it.
+- A paragraph you changed is re-wrapped at the width it was written at. A paragraph
+  that gives no width of its own (a new one, or one that was a single line) is wrapped
+  at `markdownExtended.editor.wrapColumn` (default `90`).
+- If a document cannot be shown without changing it, the editor says so and offers the
+  text editor instead; it never writes to such a document.
+
+### Limits
+
+- **Experimental.** Try it on files under version control.
+- **Tables are edited as source**, not cell by cell.
+- **Relative images are not resolved** in the editor yet; they show as broken images.
+  The file is unaffected.
+- **Desktop only.** In vscode.dev the command and menu entries are hidden; **Open With…**
+  still lists the editor there, and choosing it fails.
+- A stylesheet listed in `markdown.styles` by `https://` URL is not loaded in the editor
+  (local files are).
+- While the WYSIWYG editor has unsent keystrokes (a quarter of a second), a change made
+  to the same file elsewhere wins, and those keystrokes are dropped.
 
 ## Syntax Documentation
 

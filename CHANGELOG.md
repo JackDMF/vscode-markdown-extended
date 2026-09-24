@@ -1,5 +1,31 @@
 # Change Log
 
+## Unreleased — WYSIWYG Editor (experimental)
+
+### ✨ New Features
+
+- **A WYSIWYG editor for Markdown files, which saves an untouched block byte for byte.** Open a `.md` file with **Markdown: Open in WYSIWYG Editor**, from the explorer or editor context menu, or through **Open With… → Markdown WYSIWYG Editor**. Paragraphs, headings, lists, quotes, code blocks and rules are edited in place, with `Ctrl+B`/`Ctrl+I`/``Ctrl+` `` and the usual Markdown shortcuts typed at the start of a line (`# `, `- `, `1. `, `> `, ` ``` `). It is opt-in: the text editor stays the default.
+- **Why fidelity is per block.** A rich editor that re-serialized the whole file on save would re-wrap every hand-wrapped paragraph, normalize every marker and rewrite the front matter — every save a diff. Here each top-level block keeps the exact slice of the file it was read from and is written back from it unless you changed it; a changed paragraph is re-wrapped at the width it was written at, and one with no width of its own at the new setting `markdownExtended.editor.wrapColumn` (default `90`). The serializer's form for a changed block is stable, so saving it again is not a second diff.
+- **It edits the file's own document.** The editor is a custom *text* editor over the same `TextDocument` the text editor shows, so dirty state, save and the document's undo history stay VS Code's, and a change made anywhere else — the text editor beside it, another extension's command — appears in the editor. Its own edits are written as one minimal replacement, so other views keep their cursors and decorations.
+- **One parser for preview and editor.** The editor parses with an engine composed like the preview's: this extension's plugins, then every other extension's `markdown.markdownItPlugins`, linkify and typographer from the preview's settings. What another extension injects into the preview is recognised by the mark it carries (Req Explorer's status badges, summary tables and snippet expansions) and shown as a read-only block; an expanded snippet offers **Open snippet**, which opens the file the body came from.
+- **Blocks outside the editable core stay editable as source.** Tables, raw HTML and the extended syntax (admonitions, containers, table of contents, footnotes, …) render as in the preview; **Edit source** edits their Markdown in place, **Show in text editor** jumps to them. Front matter is a collapsed, read-only panel, written back exactly. A requirement heading `## ID: Title {#anchor}` keeps its id and anchor read-only.
+- **A document that cannot be shown without loss is not edited.** The editor says so and offers the text editor; it writes nothing to such a document.
+
+### ⚠️ Limits
+
+- Experimental: try it on files under version control.
+- Tables are edited as source, not cell by cell.
+- Relative image paths are not resolved in the editor yet; images show as broken there, the file is unaffected.
+- Desktop only — the page inlines contributed stylesheets read from disk. In vscode.dev the command is hidden, but **Open With…** still lists the editor.
+- `markdown.styles` entries given as `https://` URLs are not loaded in the editor (its content security policy admits local and data stylesheets).
+- Keystrokes still inside the quarter-second before they are sent are dropped when the same file changes elsewhere in that moment; there is no merge.
+
+### 🧹 Internal
+
+- `src/editor/host/` (extension host: engine composition, the per-document session, the page, the provider) and `src/editor/webview/` (the ProseMirror page, bundled by a fourth esbuild context to `dist/editor-webview.js`) on top of the UI-free core in `src/editor/`. The protocol between them is typed in `src/editor/protocol.ts`; ARCHITECTURE.md describes it.
+- Tests: the minimal-replacement function, the host engine, the session protocol against a stand-in webview and a real `TextDocument` (an edit lands as one replacement and is not echoed; another writer's change is posted; a stale edit is refused), a smoke test that opening the editor writes nothing, the drop rule for moved blocks, and the page itself driven in headless Chromium — rendering, typing, a raw block's source edit, undo back to the exact bytes, snippet buttons and the error state. The Chromium test skips without a browser, as the other e2e tests do.
+- `npm test` now builds the bundles first (`pretest`), because the smoke test and the page test run what `dist/` holds.
+
 ## v3.1.3 — Customisable Notes, Leaner Package
 
 ### 🐛 Fixes
