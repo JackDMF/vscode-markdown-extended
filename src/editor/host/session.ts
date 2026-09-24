@@ -111,7 +111,7 @@ export class WysiwygSession implements vscode.Disposable {
                 this.enqueue(() => this.post());
                 break;
             case 'edit':
-                this.enqueue(() => this.applyEdit(msg.text, msg.baseVersion));
+                this.enqueue(() => this.applyEdit(msg.text, msg.baseVersion, msg.reparse === true));
                 if (msg.save) {
                     // After the edit, but outside the queue: the save runs the
                     // will-save listener, which waits on the queue, and a save
@@ -173,7 +173,14 @@ export class WysiwygSession implements vscode.Disposable {
         void this.webview.postMessage({ type: 'error', message: reason });
     }
 
-    private async applyEdit(text: string, baseVersion: number): Promise<void> {
+    /**
+     * Write an edit from the page. With `reparse` the page asked to see its own
+     * text parsed again — it inserted a construct it can only show once the host
+     * has classified and rendered it — so the document is posted after the edit
+     * lands, although it equals what the page holds. A stale edit is dropped with
+     * or without it: the document on its way is parsed afresh anyway.
+     */
+    private async applyEdit(text: string, baseVersion: number, reparse = false): Promise<void> {
         if (this.broken || baseVersion !== this.postedVersion) {
             // Broken: never write. Stale base: a newer document is on its way,
             // and the webview rebuilds from it.
@@ -186,6 +193,9 @@ export class WysiwygSession implements vscode.Disposable {
         }
         const replacement = minimalReplacement(current, text);
         if (replacement === null) {
+            if (reparse) {
+                await this.post();
+            }
             return;
         }
         // Set before applying: the change event fires while the edit applies,
@@ -198,9 +208,9 @@ export class WysiwygSession implements vscode.Disposable {
             replacement.text,
         );
         const applied = await vscode.workspace.applyEdit(edit);
-        if (!applied || this.document.getText() !== text) {
+        if (!applied || this.document.getText() !== text || reparse) {
             // Refused, or VS Code normalized the inserted line endings: show the
-            // person what the document now holds.
+            // person what the document now holds. Or the page asked to see it.
             await this.post();
         }
     }

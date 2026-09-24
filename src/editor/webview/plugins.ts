@@ -8,6 +8,7 @@ import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-li
 import { Command, Plugin } from 'prosemirror-state';
 import { fidelityPlugin } from '../fidelity';
 import { editorSchema } from '../schema';
+import { toggleMarkup } from './toolbar/commands';
 
 const nodes = editorSchema.nodes;
 const marks = editorSchema.marks;
@@ -64,8 +65,9 @@ function markdownKeymap(): Plugin {
         'Mod-Shift-z': redo,
         // Backspace right after an input rule fired gives back what was typed.
         'Backspace': undoInputRule,
-        'Mod-b': toggleMark(marks.strong),
-        'Mod-i': toggleMark(marks.em),
+        // The CommonMark delimiters; the toolbar offers `__` and `_` beside them.
+        'Mod-b': toggleMarkup(marks.strong, '**'),
+        'Mod-i': toggleMarkup(marks.em, '*'),
         'Mod-`': toggleMark(marks.code),
         'Enter': chainCommands(splitListItem(item), splitRequirementHeading),
         'Tab': sinkListItem(item),

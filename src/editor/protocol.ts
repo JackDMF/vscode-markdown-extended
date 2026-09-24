@@ -36,8 +36,12 @@ export type WebviewMessage =
      * version `baseVersion`. With `save`, the person pressed Ctrl+S (which the
      * webview kept from VS Code): the host saves the document once the edit is
      * applied — or dropped as stale — and the text is sent even when unchanged.
+     * With `reparse`, the page wrote syntax it cannot show as rich text (a
+     * toolbar construct outside the editable core, inserted as source): the host
+     * applies the edit and then posts the document parsed afresh, although its
+     * text is the page's own — the one case the page asks to see its edit again.
      */
-    | { type: 'edit'; text: string; baseVersion: number; save?: true }
+    | { type: 'edit'; text: string; baseVersion: number; save?: true; reparse?: true }
     /** Render a raw block's source after the person edited it. */
     | { type: 'render'; requestId: number; src: string }
     /** Open the snippet file an include expansion was read from (`mark.path`). */

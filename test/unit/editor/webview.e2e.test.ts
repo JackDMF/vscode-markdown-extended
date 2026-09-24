@@ -1,13 +1,9 @@
 import * as assert from 'assert';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as puppeteer from 'puppeteer';
-import * as vscode from 'vscode';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
-
-const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
+import { EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
 
 const FRONT_AND_HEADING = [
     '---',
@@ -38,16 +34,12 @@ const SOURCE = `${FRONT_AND_HEADING}${PARAGRAPH}\n${TABLE}`;
  * never triggers a download.
  */
 suite('Editor webview (e2e)', () => {
-    let executablePath: string | undefined;
-    let bundle: string;
-    let browser: puppeteer.Browser | undefined;
+    let editor: EditorPage | undefined;
     let page: puppeteer.Page;
 
-    const posted = async (): Promise<WebviewMessage[]> =>
-        page.evaluate(() => (window as unknown as { posted: WebviewMessage[] }).posted.slice());
-    const edits = async () => (await posted()).filter((m): m is Extract<WebviewMessage, { type: 'edit' }> => m.type === 'edit');
-    const send = (message: HostMessage) => page.evaluate(m => window.postMessage(m, '*'), message as unknown as Record<string, unknown>);
-    const settle = () => new Promise(resolve => setTimeout(resolve, 500));
+    const posted = (): Promise<WebviewMessage[]> => (editor as EditorPage).posted();
+    const edits = () => (editor as EditorPage).edits();
+    const send = (message: HostMessage) => (editor as EditorPage).send(message);
     const pressSave = async () => {
         await page.keyboard.down('Control');
         await page.keyboard.press('s');
@@ -85,41 +77,11 @@ suite('Editor webview (e2e)', () => {
 
     suiteSetup(async function () {
         this.timeout(60000);
-        const extensionPath = vscode.extensions.getExtension(EXTENSION_ID)?.extensionPath;
-        bundle = extensionPath ? path.join(extensionPath, 'dist', 'editor-webview.js') : '';
-        if (!bundle || !fs.existsSync(bundle)) {
+        editor = await openEditorPage();
+        if (!editor) {
             this.skip();
         }
-        const envChrome = process.env.MTE_E2E_CHROME;
-        if (envChrome && fs.existsSync(envChrome)) {
-            executablePath = envChrome;
-        } else {
-            try {
-                const bundled = puppeteer.executablePath();
-                executablePath = bundled && fs.existsSync(bundled) ? bundled : undefined;
-            } catch {
-                executablePath = undefined;
-            }
-        }
-        if (!executablePath) {
-            this.skip();
-        }
-
-        browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-        page = await browser.newPage();
-        await page.setViewport({ width: 1200, height: 900 });
-        const errors: string[] = [];
-        page.on('pageerror', error => errors.push(String(error)));
-        await page.setContent(
-            '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-            + '<body class="markdown-body vscode-body vscode-light"><div id="mep-editor" class="mep-editor"></div>'
-            + '<script>window.posted = []; window.acquireVsCodeApi = () => ({ postMessage: m => window.posted.push(m) });</script>'
-            + '</body></html>',
-            { waitUntil: 'load' },
-        );
-        await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', 'editor.css') });
-        await page.addScriptTag({ path: bundle });
-        assert.deepStrictEqual(errors, []);
+        page = editor.page;
 
         const json = await requirementDocument();
         assert.deepStrictEqual((await posted()).map(m => m.type), ['ready']);
@@ -128,7 +90,7 @@ suite('Editor webview (e2e)', () => {
     });
 
     suiteTeardown(async () => {
-        await browser?.close();
+        await editor?.close();
     });
 
     test('the document renders: front matter folded, the id read-only, the table as a raw block', async () => {
@@ -137,7 +99,8 @@ suite('Editor webview (e2e)', () => {
             prefix: document.querySelector('h2 .mep-req-prefix')?.textContent,
             prefixEditable: document.querySelector('h2 .mep-req-prefix')?.getAttribute('contenteditable'),
             title: document.querySelector('h2 .mep-heading-text')?.textContent,
-            anchor: document.querySelector('h2')?.id,
+            // In the document, not the toolbar's heading sample.
+            anchor: document.querySelector('.ProseMirror h2')?.id,
             table: document.querySelectorAll('.mep-raw-block table td').length,
         }));
         // The block exactly as the file holds it, fences included.

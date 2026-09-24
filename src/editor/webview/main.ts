@@ -21,6 +21,7 @@ import { serializeDocument } from '../serialize';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
 import { editorPlugins } from './plugins';
 import { resyncTransaction } from './resync';
+import { toolbarPlugin } from './toolbar/toolbar';
 
 interface VsCodeApi {
     postMessage(message: WebviewMessage): void;
@@ -64,9 +65,11 @@ function serialize(doc: Node): string {
 /**
  * Send the document back now, if it differs from what the host holds — or, for
  * a save, always: the host saves once it has applied the edit, so the file on
- * disk holds the last keystroke (see `onSaveKeydown`).
+ * disk holds the last keystroke (see `onSaveKeydown`). With `reparse` the host
+ * posts the document back parsed afresh: the toolbar wrote a construct as
+ * source, which only the host can classify and render.
  */
-function flush(save = false): void {
+function flush(save = false, reparse = false): void {
     if (editTimer !== undefined) {
         clearTimeout(editTimer);
         editTimer = undefined;
@@ -75,11 +78,17 @@ function flush(save = false): void {
         return;
     }
     const text = serialize(view.state.doc);
-    if (text === hostText && !save) {
+    if (text === hostText && !save && !reparse) {
         return;
     }
     hostText = text;
-    post({ type: 'edit', text, baseVersion: current.version, ...(save ? { save: true as const } : {}) });
+    post({
+        type: 'edit',
+        text,
+        baseVersion: current.version,
+        ...(save ? { save: true as const } : {}),
+        ...(reparse ? { reparse: true as const } : {}),
+    });
 }
 
 function scheduleFlush(): void {
@@ -183,7 +192,21 @@ const nodeViews: Record<string, NodeViewConstructor> = {
 };
 /* eslint-enable @typescript-eslint/naming-convention */
 
-const plugins = editorPlugins();
+const plugins = [
+    ...editorPlugins(),
+    toolbarPlugin({
+        sourceContext: () => ({
+            eol: current?.eol ?? '\n',
+            defaultWrap: current?.defaultWrap ?? 90,
+            documentText: view ? serialize(view.state.doc) : '',
+        }),
+        flushReparse: () => flush(false, true),
+        requestRender: src => port.requestRender(src),
+    }),
+];
+
+/** Room above the caret for the sticky toolbar when ProseMirror scrolls the selection into view. */
+const SCROLL_MARGIN = { top: 64, bottom: 8, left: 8, right: 8 };
 
 function dispatchTransaction(this: EditorView, tr: Transaction): void {
     this.updateState(this.state.apply(tr));
@@ -215,7 +238,7 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         return;
     }
     const state = EditorState.create({ doc, plugins });
-    view = new EditorView(mount, { state, nodeViews, dispatchTransaction });
+    view = new EditorView(mount, { state, nodeViews, dispatchTransaction, scrollMargin: SCROLL_MARGIN });
     view.dom.addEventListener('keydown', onEditorKeydown);
     // Focus leaving the editor for the page around it (a click on the
     // background) does not blur the window; the pending edit goes now, not

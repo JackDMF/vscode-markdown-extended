@@ -254,6 +254,36 @@ suite('Editor host: session protocol', () => {
         assert.strictEqual(document.isDirty, false);
         assert.strictEqual(fs.readFileSync(uri.fsPath, 'utf8'), changed);
     });
+
+    test('an edit asking to reparse is applied, then posted back parsed afresh, once', async function () {
+        this.timeout(10000);
+        const last = webview.documents().pop();
+        assert.ok(last);
+        const before = webview.documents().length;
+        // What the toolbar sends for ==mark==: syntax outside the editable core,
+        // written as source into the paragraph.
+        const changed = document.getText().replace('wrapped, edited, saved later.', 'wrapped, ==marked== later.');
+        webview.send({ type: 'edit', text: changed, baseVersion: last.version, reparse: true });
+        await session.settled();
+        await delay(300);
+        await session.settled();
+        assert.strictEqual(document.getText(), changed);
+        const docs = webview.documents();
+        assert.strictEqual(docs.length, before + 1, 'the page\'s own edit is posted back once, and only because it asked');
+        const posted = docs[docs.length - 1];
+        assert.strictEqual(posted.version, document.version);
+        const marked = (posted.json.doc.content as { type: string; attrs?: { src?: string; html?: string } }[])
+            .find(n => n.attrs?.src?.includes('==marked=='));
+        assert.strictEqual(marked?.type, 'raw_block', 'the paragraph comes back as a source block');
+        assert.ok(marked?.attrs?.html?.includes('<mark>marked</mark>'), marked?.attrs?.html);
+
+        // Without `reparse`, the same kind of edit is not echoed.
+        const plain = changed.replace('==marked==', '==marked twice==');
+        webview.send({ type: 'edit', text: plain, baseVersion: posted.version });
+        await session.settled();
+        assert.strictEqual(document.getText(), plain);
+        assert.strictEqual(webview.documents().length, before + 1);
+    });
 });
 
 suite('Editor host: provider smoke test', () => {

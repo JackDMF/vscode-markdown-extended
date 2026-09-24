@@ -1,5 +1,5 @@
 import { DOMOutputSpec, DOMSerializer, Node } from 'prosemirror-model';
-import { NodeView, ViewMutationRecord } from 'prosemirror-view';
+import { EditorView, NodeView, ViewMutationRecord } from 'prosemirror-view';
 
 /** What the node views need from the page around them. */
 export interface EditorPort {
@@ -117,7 +117,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
         this.toolbar = element('div', 'mep-atom-toolbar');
         this.toolbar.append(
             element('span', 'mep-atom-label', 'Source block'),
-            button('Edit source', 'Edit this block as Markdown (Ctrl+Enter to apply, Esc to cancel)', () => this.startEditing()),
+            button('Edit source', 'Edit this block as Markdown (Ctrl+Enter to apply, Esc to cancel)', () => this.editSource()),
             button('Show in text editor', 'Open the text editor beside, at this block', () => {
                 const pos = this.getPos();
                 if (pos !== undefined) {
@@ -127,6 +127,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
         );
         this.content = element('div', 'mep-atom-content');
         this.dom.append(this.toolbar, this.content);
+        rawBlockViews.set(this.dom, this);
         this.render();
     }
 
@@ -147,7 +148,8 @@ export class RawBlockView extends AtomView implements SourceEditor {
         return target !== null && (this.toolbar.contains(target) || (this.editor?.contains(target) ?? false));
     }
 
-    private startEditing(): void {
+    /** Open the block's source in a textarea, as **Edit source** does; the toolbar calls it for a block it inserted. */
+    editSource(): void {
         if (this.editor) {
             return;
         }
@@ -226,6 +228,20 @@ export class RawBlockView extends AtomView implements SourceEditor {
         }
         this.port.commitRawSource(pos, next);
     }
+}
+
+/** Each raw block's view by its DOM, so the page can reach the view ProseMirror made for a block. */
+const rawBlockViews = new WeakMap<globalThis.Node, RawBlockView>();
+
+/** Open the **Edit source** box of the raw block at `pos`. False when there is no raw block there. */
+export function editRawSourceAt(view: EditorView, pos: number): boolean {
+    const dom = view.nodeDOM(pos);
+    const rawView = dom ? rawBlockViews.get(dom) : undefined;
+    if (!rawView) {
+        return false;
+    }
+    rawView.editSource();
+    return true;
 }
 
 /**
