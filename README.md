@@ -434,6 +434,11 @@ never covers the line you are typing on.
 | Source block — a table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
 | Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Show in text editor** · **Delete directive** |
 | Front matter, a status badge, a summary table | as above | its name only |
+| Heading | while the caret is in it, after a moment — only when another extension offers actions for it | the actions alone; a requirement heading is named by its id |
+
+A block's bar — a source block, a snippet, the front matter, a heading, a container, an
+admonition, a block with attributes — also offers the **code actions other extensions
+have for that block**, after its own verbs (see below).
 
 - **A verb says what remains.** *Remove note, keep text* leaves the note's reference in
   the sentence, with its formatting (a sidebar leaves its text); the note's own text goes.
@@ -460,6 +465,35 @@ never covers the line you are typing on.
 | `←` / `→` | Moves between the verbs |
 | `Enter` | Chooses the verb; in a field, applies it |
 | `Esc` | Back to the text; in a field, cancels
+
+### Lenses and actions from other extensions
+
+Extensions attach things to the text editor: Req Explorer puts a row of *code lenses* on
+every requirement heading — its status, priority, links, evidence, **+ ref** — and offers
+*code actions* (quick fixes) where its checks find something. The Visual Editor shows
+both, without any arrangement between the extensions: it asks VS Code for them, the same
+way the text editor does, so what one shows the other shows.
+
+- **Lenses** stand as a row above the block they belong to — small, dimmed,
+  `Implemented | Must | depends on 2 | + ref`, as in the text editor — and a click runs the
+  lens, as a click there does. `Tab` reaches them from the text, `Enter` runs the focused
+  one. A lens on a line inside a block belongs to that block (a front-matter line to the
+  front matter); a lens on a blank line belongs to the block after it. The lenses of all
+  extensions are shown, as the text editor shows them. They are asked again after every
+  change, and when you come back to the tab: a lens can count things in other files.
+  Product icons in a title (`$(check)`) are drawn as simple characters, or left out — the
+  editor has no access to VS Code's icon font.
+- **Code actions** of a block are verbs in its bar, after a separator: the quick fixes for
+  the problems on its lines, and the refactorings an extension offers there. A heading
+  has a bar for them alone, so a requirement heading gets its actions; it shows none when
+  there are none. Actions for the whole file (the Source Action menu's), VS Code's
+  *Surround With* snippets and *Modify* with inline chat are left out: they act on a text
+  editor's selection. Inline objects — a link, a note — have no actions here yet.
+- **`markdownExtended.editor.codeLenses`** (default `true`) turns the lens rows off; so
+  does VS Code's own `editor.codeLens`, as it does in the text editor.
+- A lens or an action whose command needs the text editor to be active may do nothing
+  here, or act on another text editor: the command, not the Visual Editor, decides what
+  it works on.
 
 ### Links
 

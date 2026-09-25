@@ -576,12 +576,18 @@ text the other — never a diff:
 | host → page | `document { json, version, defaultWrap }` | Show this parse of document `version` |
 | host → page | `rendered { requestId, html }` | A raw block's new source, rendered by the host engine |
 | host → page | `error { message }` | The document cannot be shown without loss; offer the text editor |
+| host → page | `lenses { version, blocks, rows }` | Other extensions' code lenses, one row of `{ id?, title, tooltip? }` per top-level block index (below) |
+| host → page | `actions { requestId, blockIndex, items }` | The code actions for one block, `{ id, title, kind, refusal? }` each (below) |
 | page → host | `ready` | Loaded; send the document |
 | page → host | `edit { text, baseVersion, save?, reparse? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it; with `reparse`, the host posts the document back after applying it, although it is the page's own text (the toolbar wrote syntax as source) |
 | page → host | `render { requestId, src }` | Render this raw block source |
 | page → host | `openSnippet { path }` | Open an expansion's snippet file (only paths the document's own marks name are opened) |
 | page → host | `openSource { line }` | Open the text editor beside, at this line |
 | page → host | `openLink { href }` | Follow a Ctrl/Cmd+clicked link; the host resolves it against the document (`host/links.ts`) |
+| page → host | `refreshLenses` | Ask VS Code for the lenses again (the page took the focus or came back into view) |
+| page → host | `runLens { id }` | Run the command of a lens from the last `lenses` |
+| page → host | `actionsFor { requestId, blockIndex, blocks }` | The object toolbar opened for this top-level block of a page holding `blocks` |
+| page → host | `runAction { id }` | Apply a code action from an `actions` answer: its edit, then its command |
 
 A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
 save's own edit when Ctrl+S commits it): what the source now says may no longer be a
@@ -817,12 +823,14 @@ as opposed to text, which is typed:
 | `badge` | an `inline_atom` | the node |
 | `container`, `admonition` | the node | the node |
 | `block_attrs` | a block carrying `attrsSuffix` — not a requirement heading, whose anchor is Req Explorer's | the node |
+| `heading` | a top-level heading that is no `block_attrs` (a requirement heading is one) | the node |
 | `raw_block`, `injected_block`, `front_matter` | the node | the node |
 
 `objectAtSelection` finds the selection's object: a node selected as a whole, else,
 innermost first, the link the selection is in (a caret inside its text or at either end),
 the attribute span, the note both ends of the selection are in, the innermost container or
-admonition holding both ends, and last the top-level block with an attribute literal. A link
+admonition holding both ends, the top-level block with an attribute literal, and last the
+top-level heading. A link
 in a note's body is the link; text beside a span in an admonition is the admonition. A verb never acts on the object it was drawn for: it looks it
 up again (`currentObject` — the same kind at the same position, still there), so an edit
 arriving from the host between drawing and clicking cannot make a verb act on something
@@ -832,7 +840,7 @@ else.
 pointer is on them or they are selected, at once — as the source block's toolbar did. The
 others are *caret* objects and show it once the caret or the selection has rested in
 them for `INLINE_DELAY_MS` (400 ms), hiding it the moment the caret leaves — a container,
-an admonition and a block with attributes too, which hold the text being typed and whose bar
+an admonition, a block with attributes and a heading too, which hold the text being typed and whose bar
 would otherwise flash on every click into them; their bar is placed like a block's
 (`isBlockPlaced`); the pointer does
 not show them, because an inline bar that followed the pointer across a paragraph would
@@ -885,7 +893,13 @@ scrolls with the text; it is placed again on scroll and resize.
 - source block — *Edit source* (`editRawSourceAt`), *Show in text editor*, *Delete block*;
 - expansion — *Open snippet* (only with `mark.path`), *Show in text editor*, *Delete
   directive* (the node deleted, and with it the one line it writes);
-- badge, other injected content, front matter — the label alone.
+- badge, other injected content, front matter — the label alone;
+- heading — the label alone (*Requirement FRS-…* for a requirement heading), and so no bar
+  at all unless another extension offers code actions for it (below).
+
+Every object that is a whole top-level block (`isTopLevelBlock`) carries, after its own
+verbs and a separator, the code actions other extensions offer for its lines — see the next
+section.
 
 A verb whose result is a disappearance — a removal, a deletion — announces it in the caret
 hint (`webview/hint.ts`: *Note removed — Ctrl+Z*, `Cmd+Z` on macOS), in a neutral tone, for
@@ -923,6 +937,103 @@ The page has no parser; recognising the typed Markdown there would be a second p
 the first construct the two disagreed on would be shown as something the preview does not
 render. A note holding a hard break has no *Edit source* (a one-line field cannot show
 it); the text editor is the way.
+
+### Other extensions' lenses and actions
+
+Extensions attach code lenses, code actions, hovers and completions to the text editor
+through `languages.register*Provider`, and a custom editor gets none of them. Req Explorer
+puts eight kinds of lens on a requirement heading and quick fixes on what its checks find;
+with the Visual Editor as a corpus's default, all of it was gone. The decision (Daniel,
+2026-09-25): the editor shows other extensions' lenses where the text editor shows them,
+**with no new API between the extensions** — it asks VS Code, which runs every registered
+provider — and code actions become object verbs the same way. Hovers and completions are
+not carried over.
+
+**Lenses** (`host/lenses.ts`). `LensController` calls
+`vscode.executeCodeLensProvider(uri, 500)` — resolved, since the page has no viewport VS
+Code knows of to resolve lazily in — 300 ms after every document the session posts and every
+edit it applies, and on the page's `refreshLenses`: the page sends it on window focus and
+when it becomes visible, because a lens can depend on other files (Req Explorer's coverage
+counts) and no provider's `onDidChangeCodeLenses` reaches another extension. A refresh is
+dropped when the page does not hold the document's text (a re-sync is on its way, and posts
+its own), when the document changed while VS Code computed, or when a newer refresh began.
+`markdownExtended.editor.codeLenses` and VS Code's `editor.codeLens` (for markdown) turn
+it off; the page is then sent empty rows once.
+
+**The mapping rule, line → block.** A lens's `range.start.line` is placed by
+`blockIndexForLine` over `blockLineRanges(md, text)` — the `lineRange` of every top-level
+source block, from `groupSourceBlocks`, the same grouping `parseDocument` builds the
+document from (it refuses a document whose block and node counts differ, so index *i* is
+child *i*). The block is the first whose lines end after the line: the block covering it, a
+front-matter line the front matter's; a line no block covers — a blank line between blocks,
+one before the first — the next block; a line after the last block (the tail's blank lines)
+the last block with lines. A block standing for no lines (generated content, a range
+overlapping an earlier block) is never chosen. Lenses are ordered by line and column, a
+provider's own order among equals, and all of a block's lenses form one row — a list with a
+lens on each item shows them in one row above the list. A lens VS Code could not resolve has
+no command and shows nothing, as in the text editor; one whose command has no command id is
+a title, drawn as text.
+
+**The registry.** The resolved `Command`s stay in the host, in a map from a fresh id per
+refresh (`<refresh>.<n>`) replaced on every refresh: `arguments` may hold a `Uri` or any
+object the provider made, which `postMessage` would flatten or refuse. The page gets titles,
+tooltips and ids; `runLens` runs `executeCommand(command, ...arguments)` with the originals,
+and an id of an earlier refresh is refused and logged. The same holds for code actions below.
+
+**Rows follow nodes** (`webview/lenses.ts`). `lenses` carries `blocks`, the parse's block
+count; the page takes the rows only while it holds as many top-level nodes (a page that split
+or joined blocks since is ahead, and the refresh after its edit lands is the one to take),
+and drops rows for a version older than its document; empty rows always clear. On arrival
+each row is put on the node at its index. From then on the plugin state is an array parallel
+to the top-level children, carried through each transaction by `descent` — the rule
+`fidelityPlugin` follows a node by for `src` and `gap`, exported for this: the same object,
+else the old node whose start the mapping takes to the new one's. So typing in a heading
+keeps its row, a paragraph inserted above does not shift rows onto the wrong heading, the
+second half of a split has no row until the refresh, and a node that disappears takes its
+row with it. The rows are `Decoration.widget`s at their block's start (`side: -1`,
+`ignoreSelection`, `stopEvent` → every event inside is theirs), a `contenteditable=false`
+`div` of buttons: `Tab` reaches them in DOM order, `Enter` or a click posts `runLens`, and
+`mousedown` is prevented so no caret moves. The row stands in the block's top margin
+(`editor.css`: the block after a row has none), in the editor font at 90 %,
+`--vscode-editorCodeLens-foreground`, as the text editor draws lenses. `$(icon)` references
+in titles are drawn as characters for the common codicons and otherwise left out: the page
+cannot reach the workbench's icon font.
+
+The object toolbar keeps off the rows: `place` treats every row's rectangle as occupied and
+moves a bar that would cover one past it — above it going up, below it going down — so a
+block's bar sits above the block's row. The pointer on a row counts as on the block below it,
+so crossing the row towards the bar does not hide the bar.
+
+**Code actions as object verbs** (`host/codeActions.ts`). When the object toolbar presents
+an object that is a whole top-level block, the page's `codeActionsAt` answers from what it
+knows and asks once per node and epoch: `actionsFor { requestId, blockIndex, blocks }`.
+The request waits for the page's pending edit (`askActions` defers it while an edit is in
+the delay, the doc differs from what the host holds, or a save is committing, and `flush`
+sends it after the edit) — it is not sent by flushing from the toolbar's redraw, which can
+run inside a save's commit and sent the save's text twice. The session answers from its
+queue, behind that edit, so the host maps the index through its own parse of the page's text
+(`blockLineRanges`; a count that differs, or a text the page does not hold, is answered with
+nothing). It calls `vscode.executeCodeActionProvider(uri, range, undefined, 50)` with the
+range from the block's first line's start to its last line's end — what the light bulb
+would offer with those lines selected, quick fixes for the diagnostics on them included —
+and leaves out what does not belong on a block (`belongsOnBlock`): source actions, which act
+on the file and which the light bulb leaves out too; VS Code's *Surround With* snippet
+actions (`refactor.surround`), which core offers for every range from every extension's
+snippets, around a text selection; and actions whose command works on the active text
+editor (`editor.action.*`, `inlineChat.*` — *Modify* with inline chat), of which there is
+none. `runAction` applies the action's `WorkspaceEdit` with `workspace.applyEdit`, which
+reaches the page as another writer's change, then runs its command; a `Command` returned in
+place of an action is run as it is. The registry keeps only the actions of the current
+document version.
+
+On the page the answer is kept per node (a `WeakMap`: an edit to the block makes a new node,
+asked about afresh) and per epoch — the epoch moves on with every `document` and `lenses`
+message, after which a diagnostic behind a quick fix may have come or gone; a stale answer is
+shown while it is asked again, so the bar does not blink. The answer's arrival dispatches an
+empty transaction, and the toolbar redraws with the verbs. A heading is an object for this
+alone: its presentation has no verbs of its own, and the selection's bar is hidden while it
+has none. Inline objects carry no actions — the host knows no range for a note or a link,
+and computing one would be a second answer to where the page's text is in the file.
 
 ### Styles
 
