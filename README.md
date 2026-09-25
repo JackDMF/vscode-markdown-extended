@@ -434,8 +434,12 @@ place — each for a reason:
   button that opens the file it came from; the file itself keeps the one directive line.
 - **Tables, raw HTML and this extension's extended syntax** (admonitions, containers,
   the table of contents, footnotes, definition lists, …) are *source blocks*. Hover or
-  select one and choose **Edit source** to edit its Markdown in place — `Ctrl+Enter` or
-  clicking away applies it, `Esc` cancels — or **Show in text editor** to jump to it.
+  select one and choose **Edit source** — or double-click it — to edit its Markdown in
+  place: `Ctrl+Enter` or clicking away applies it, `Esc` cancels. Or choose **Show in text
+  editor** to jump to it. A source block that you edit back into plain Markdown (the
+  markers of a sidenote removed, say) becomes an ordinary paragraph again once applied.
+  Checkboxes and other controls in a rendered block are shown, not clicked: the file is
+  what changes them.
 
 A requirement heading written as `## ID: Title {#anchor}` keeps the id and the anchor
 read-only; only the title is editable. `Enter` inside its title starts a paragraph below

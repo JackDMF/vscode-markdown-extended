@@ -28,8 +28,17 @@
 .ProseMirror { position: relative; }
 .ProseMirror pre { white-space: pre-wrap; }
 .ProseMirror li { position: relative; }
-.ProseMirror-hideselection *::selection { background: transparent; }
+/*
+ * ProseMirror hides the document's own selection while a node is selected (the
+ * class stays on the root until its selection changes). A raw block's source
+ * textarea sits inside that root, is opened on a selected block, and would
+ * inherit both rules: its caret and its text selection would be painted
+ * transparent — there, but invisible, so a click seemed to place no caret and a
+ * drag to select nothing. The textarea keeps its own.
+ */
+.ProseMirror-hideselection *:not(.mep-raw-editor)::selection { background: transparent; }
 .ProseMirror-hideselection { caret-color: transparent; }
+.ProseMirror-hideselection .mep-raw-editor { caret-color: auto; }
 .ProseMirror [draggable][contenteditable=false] { user-select: text; }
 .ProseMirror-separator { display: inline !important; border: none !important; margin: 0 !important; }
 

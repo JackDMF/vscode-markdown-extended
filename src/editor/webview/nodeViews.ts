@@ -127,8 +127,30 @@ export class RawBlockView extends AtomView implements SourceEditor {
         );
         this.content = element('div', 'mep-atom-content');
         this.dom.append(this.toolbar, this.content);
+        inertControls(this.content);
+        // A double click on the rendering opens the source, as a double click on
+        // text would start editing it.
+        this.content.addEventListener('dblclick', e => {
+            if (!this.editor) {
+                e.preventDefault();
+                this.editSource();
+            }
+        });
         rawBlockViews.set(this.dom, this);
         this.render();
+    }
+
+    /** The node's selection outline is not redrawn under an open source box; the box is the edit. */
+    selectNode(): void {
+        if (!this.editor) {
+            super.selectNode();
+        }
+    }
+
+    deselectNode(): void {
+        if (!this.editor) {
+            super.deselectNode();
+        }
     }
 
     protected render(): void {
@@ -143,6 +165,13 @@ export class RawBlockView extends AtomView implements SourceEditor {
         }
     }
 
+    /**
+     * Every event inside the toolbar or the open source box is theirs, of any
+     * type — pointer, keyboard, input, clipboard, focus, selection, drag.
+     * ProseMirror taking a mousedown in the textarea would make a node selection
+     * of the block and move the caret out of the box. (Selection changes inside
+     * the view are not ProseMirror's either: `ignoreMutation` answers true.)
+     */
     stopEvent(event: Event): boolean {
         const target = event.target as globalThis.Node | null;
         return target !== null && (this.toolbar.contains(target) || (this.editor?.contains(target) ?? false));
@@ -176,11 +205,16 @@ export class RawBlockView extends AtomView implements SourceEditor {
             }
         });
         area.addEventListener('blur', () => this.stopEditing(true));
+        this.dom.classList.remove('ProseMirror-selectednode');
         this.editor = area;
         this.untrack = this.port.trackSourceEditor(this);
         this.dom.classList.add('mep-editing');
         this.content.replaceChildren(area);
         area.focus();
+        // At the end, where a person adding to the block starts; the source
+        // lines do not map to points of the rendering, so a double click cannot
+        // say where in the source it meant.
+        area.setSelectionRange(area.value.length, area.value.length);
     }
 
     commitSource(): void {
@@ -230,6 +264,20 @@ export class RawBlockView extends AtomView implements SourceEditor {
     }
 }
 
+/**
+ * Form controls in a rendering are shown, not used: a task list's checkbox
+ * would toggle on a click while the file kept `[ ]`. Only the controls the
+ * rendering holds — an open source textarea is never a checkbox or a select.
+ */
+function inertControls(content: HTMLElement): void {
+    content.addEventListener('click', e => {
+        const target = e.target as Element | null;
+        if (target && target.closest('input[type="checkbox"], input[type="radio"], select, option')) {
+            e.preventDefault();
+        }
+    });
+}
+
 /** Each raw block's view by its DOM, so the page can reach the view ProseMirror made for a block. */
 const rawBlockViews = new WeakMap<globalThis.Node, RawBlockView>();
 
@@ -274,6 +322,7 @@ export class InjectedBlockView extends AtomView {
         this.toolbar = element('div', 'mep-atom-toolbar');
         this.content = element('div', 'mep-atom-content');
         this.dom.append(this.toolbar, this.content);
+        inertControls(this.content);
         this.render();
     }
 

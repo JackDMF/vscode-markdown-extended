@@ -50,6 +50,10 @@ let hostText: string | undefined;
 let editTimer: ReturnType<typeof setTimeout> | undefined;
 let renderSeq = 0;
 const pendingRenders = new Map<number, string>();
+/** A raw block's source was committed: the next edit asks the host to parse the document again. */
+let reparseWanted = false;
+/** A save is committing the open source boxes; its own edit goes right after. */
+let committingForSave = false;
 /** The raw blocks whose source is open in a textarea, and not yet in the document. */
 const openSourceEditors = new Set<SourceEditor>();
 
@@ -77,10 +81,12 @@ function flush(save = false, reparse = false): void {
     if (!view || !current) {
         return;
     }
+    reparse = reparse || reparseWanted;
     const text = serialize(view.state.doc);
     if (text === hostText && !save && !reparse) {
         return;
     }
+    reparseWanted = false;
     hostText = text;
     post({
         type: 'edit',
@@ -147,6 +153,15 @@ const port: EditorPort = {
         // not flash empty; `html` is not written to the file.
         view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src }));
         port.requestRender(src);
+        // What the source now says may not be a source block any more — the
+        // markers of a sidenote deleted, a paragraph is left — and only the
+        // host's parse can tell. The edit asks for it (`reparse`), and the
+        // re-sync puts in whatever the block now is. Sent at once, unless a
+        // save is committing: its own edit then carries the request.
+        reparseWanted = true;
+        if (!committingForSave) {
+            flush();
+        }
     },
     trackSourceEditor: editor => {
         openSourceEditors.add(editor);
@@ -224,6 +239,8 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         clearTimeout(editTimer);
         editTimer = undefined;
     }
+    // A parse is what a pending reparse asked for, and this is one.
+    reparseWanted = false;
     hideError();
     const doc = Node.fromJSON(editorSchema, json.doc);
     current = { eol: json.eol, tail: json.tail, version, defaultWrap };
@@ -280,7 +297,12 @@ function onSaveKeydown(e: KeyboardEvent): void {
     if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's' || !view) {
         return;
     }
-    commitOpenSources();
+    committingForSave = true;
+    try {
+        commitOpenSources();
+    } finally {
+        committingForSave = false;
+    }
     if (e.altKey || e.shiftKey) {
         // Save As and the like stay VS Code's; the pending edit is sent first.
         flush();

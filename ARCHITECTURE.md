@@ -392,6 +392,24 @@ text the other — never a diff:
 | page → host | `ready` | Loaded; send the document |
 | page → host | `edit { text, baseVersion, save?, reparse? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it; with `reparse`, the host posts the document back after applying it, although it is the page's own text (the toolbar wrote syntax as source) |
 | page → host | `render { requestId, src }` | Render this raw block source |
+
+A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
+save's own edit when Ctrl+S commits it): what the source now says may no longer be a
+source block — a sidenote's markers deleted leave a paragraph — and only the host's
+parse can say. The re-sync then puts in whatever the block is; a block still raw is kept
+in place with its node view, so a source box left open by a save stays open, focused,
+with its text.
+
+**The source box and the mouse.** The textarea lives in a `contenteditable=false` node
+view inside ProseMirror's root. `RawBlockView.stopEvent` gives it every event of any type,
+and `ignoreMutation` keeps selection changes inside it from ProseMirror. What the event
+path did not cover was paint: a click on a block makes a node selection, ProseMirror
+hides its own selection with `ProseMirror-hideselection` on the root (transparent caret,
+transparent `::selection`) and removes the class only when a later `selectionchange`
+moves the DOM selection's anchor. Until then the textarea inherited both, so its caret
+and selection were there but invisible. `editor.css` exempts the textarea from both
+rules; the real-mouse page test (`rawBlock.e2e.test.ts`) checks the caret colour and
+the `::selection` rules with the class in place.
 | page → host | `openSnippet { path }` | Open an expansion's snippet file (only paths the document's own marks name are opened) |
 | page → host | `openSource { line }` | Open the text editor beside, at this line |
 

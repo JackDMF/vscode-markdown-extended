@@ -16,6 +16,9 @@
 ### 🐛 Fixes
 
 - **`*x*` and `**x**` looked different in the editor than in the preview.** This extension renders `*x*` as `<i>` and `**x**` as `<b>` (`markdown-it-ib`), `_x_` and `__x__` as `<em>` and `<strong>`; the editor drew every emphasis as `<em>` and `<strong>`, so a stylesheet that styles them apart showed the wrong one. It now draws each as the preview does, and a pasted `<em>` comes in as `_x_`.
+- **A source block's Edit source box showed no caret and no selection.** A click on a block selects it, and the editor then paints its own selection transparent until the next selection change; the box inherited that, so the caret and a dragged selection were there but invisible. The box now keeps its own. A double click on a source block opens the box too, with the caret at the end.
+- **A source block edited back into plain Markdown stayed a source block.** Removing a sidenote's markers in the box left the paragraph as an atom, edited only as a whole. Applying a source edit now asks for the document to be parsed again, and the block comes back as whatever it now is.
+- **A checkbox in a rendered block no longer toggles on a click**, which changed nothing in the file.
 
 ### ⚠️ Limits
 
