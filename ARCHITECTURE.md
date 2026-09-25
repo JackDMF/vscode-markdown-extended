@@ -340,8 +340,8 @@ block (`gap`). Every block is one of four kinds:
 | Kind | What | Node | Written back as |
 | --- | --- | --- | --- |
 | `front_matter` | The YAML block at the top | `front_matter` (atom) | Its `src`, always |
-| `editable` | The core: paragraph, heading, lists, blockquote, code, rule — with the inline constructs below | The matching node, with `src` and `gap` | Its `src` while untouched; serialized by rule once changed |
-| `raw` | Anything else — tables, HTML, this extension's block syntax, a note inside a note, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
+| `editable` | The core: paragraph, heading, lists, blockquote, code, rule, container, admonition — with the inline constructs and the attribute literals below | The matching node, with `src` and `gap` | Its `src` while untouched; serialized by rule once changed |
+| `raw` | Anything else — tables, HTML, the TOC, footnotes, definition and task lists, abbreviations, reference definitions, a setext heading, a note inside a note, an attribute literal the editor cannot write back where it stands, a container or admonition nested past one level, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
 | `injected` | Content the file does not hold at this place | `injected_block` (atom) | An expansion's directive line, or nothing |
 
 `parse.ts` rebuilds the text from the blocks and **throws** when it does not match,
@@ -432,6 +432,97 @@ note node replaced, in one step, by its reference's inline content or a sidebar'
 note's own marks added to it, the caret at its end — and they show as active there. The
 same `unwrapNote` is the object toolbar's **Remove note, keep text** (below): two paths to
 one verb, one transaction.
+
+### Attributes, containers and admonitions
+
+Stage 3 makes three more of the extension's constructs rich text instead of source blocks.
+Each node and mark mirrors the DOM its plugin renders, as the notes do, so the page's
+stylesheets style what is edited exactly as they style the preview; `blockConstructs.test.ts`
+and `attrs.test.ts` draw each through `DOMSerializer` and require the engine's HTML, the
+editor's `data-mep-*` bookkeeping apart.
+
+| Construct | Schema | Drawn as | Written back |
+| --- | --- | --- | --- |
+| `[text]{…}` (markdown-it-bracketed-spans + markdown-it-attrs) | mark `attr_span`, attr `literal` | `span` with the literal's attributes (`domAttrsOf`) | `[` … `]` + the literal, held so no line break falls inside |
+| `{…}` on a top-level paragraph, list, fence or rule | `attrsSuffix` + `attrsPlacement` on the node | the node's element with the literal's attributes (a fence's on its `<code>`) | where it stood (below) |
+| `::: name info` … `:::` (markdown-it-container) | node `container` (`block+`), attrs `name`, `info`, `markup` | `div` whose `class` is the trimmed info, as `markdownItContainer.ts` renders it | fence, name, info verbatim, body, fence |
+| `!!! type "Title"` (`markdownItAdmonition.ts`) | node `admonition` (`block+`), attrs `type`, `title`, `markup`, `header` | `div.admonition.<type>`, first child `p.admonition-title` | the header as written, else `!!! type "Title"`; body indented by four |
+
+**Reading a literal without the engine.** The page draws a span or a block from its literal
+and checks a literal typed into a field, where no parser is. `attrs.ts` is a port of
+markdown-it-attrs' literal reader (`getAttrs`, its delimiter search, `addAttrs`' class
+joining) and nothing more — where a literal stands and what it attaches to is the host's
+parse. The port is held to the plugin by rendering every literal its test lists through
+the real engine. Event handlers and the three attributes that would change how an element
+is edited (`contenteditable`, `draggable`, `tabindex`) are not drawn.
+
+**The span's literal is recovered from the source.** markdown-it-attrs consumes the `{…}`
+into `span_open.attrs`, and inline tokens carry no line map, so the literal as written
+(`{ .a  #x }`, `{class="a b"}`) is not in the tokens. `recoverSpanLiterals` in `blocks.ts`
+walks the block's slice for `]{…}` and gives each `span_open`, in order, the next
+occurrence whose literal reads as exactly that token's attributes; one that reads otherwise
+(a `]{.y}` inside a code span) is passed over. Recovery fails only where the source spells
+the literal differently from what the token shows — in practice never, since an entity or
+a backslash escape inside a literal stops the plugin reading it as one at all — and then
+the span is written in a normalized form (`{#id .a .b key=v}`) that reads the same. A span
+inside a note may not hold the characters the notes plugin searches the raw source for
+(`|`, `+`, `!`, `$`, `@`); such a paragraph stays a source block, and the page refuses to
+make one (`noteUnwritable`).
+
+**A block's literal carries where it stood** (`attrsPlacement`, `AttrsPlacement` in
+`blocks.ts`): `end` — after a space at the end of the last line (a paragraph's
+`text {.a}`, a fence's opening line, a rule's `--- {#id}`); `line` — a line of its own
+under the block, which the plugin reads through the soft break before it (a paragraph, a
+list); `blank` — under a blank line, which the plugin gives a list only. The literal must
+read as the token's attributes, or the block stays raw: the plugin merges a second literal
+into the same token, and hands a list's literal to a nested list when one precedes it, and
+guessing which the author meant is how a save would move an id. A `blank` literal is in no
+token's map — the plugin removes the paragraph it was — so `groupSourceBlocks` extends the
+list's lines over it, as it extends a container's over its closing fence, which
+markdown-it-container leaves out of its map. A changed block is serialized without the
+literal and the literal added where it stood (`withBlockSuffix`); a list whose last item
+the `line` form would no longer reach through a lazy line (a second block in that item, or
+a nested list anywhere the plugin could give it to) is written in the `blank` form. The
+paragraph's wrap width is measured without the literal, since the literal is not wrapped.
+Only a top-level block's literal is written: the fidelity plugin drops the literal a split
+copies into the second half and the one a block wrapped inside another carries, so the
+page never draws a class the file will not hold; a block-type change carries it over
+(`keepingLiterals`). A requirement heading keeps its existing rule — any trailing `{…}` on
+its line is its `attrsSuffix`, the id its `anchor`.
+
+**Containers and admonitions.** Both are one top-level block: untouched, their slice;
+changed, the wrapper is written by rule around its blocks, which carry no `src`. A
+container's `info` is the rest of its opening line after the name, verbatim; the fence is
+written as it was unless something inside would close it early — markdown-it-container ends
+a container at the first line of colons at least as long as its fence — so a nested
+container, or a line of colons in a code block, lengthens it (`containerFence`). Most class
+names draw nothing, so `editor.css` outlines a container — an outline, which takes no room,
+so the preview's layout holds. An
+admonition's `header` is its opening line as written, emitted while type and title are what
+it says (`!!! note Some title` stays unquoted when only the body changed); the verbs that
+change type or title clear it, and the line is then `!!! type "Title"`, the quoted form the
+plugin reads for any title. The title bar is `p.admonition-title`, the first child of
+`div.admonition`, which the stylesheet targets as a child (`.admonition > .admonition-title`).
+A content hole must be the only child of its element, so the schema cannot draw it; the page
+draws it as a raw widget at the start of the admonition's content (`webview/wrappers.ts`),
+and the pinning test puts it there the same way (`fakeDom.ts`). A title is a string: one
+holding Markdown renders styled in the preview and shows its markers in the editor.
+
+**One level of nesting.** A top-level container or admonition may hold one more
+(`MAX_WRAPPER_DEPTH`); a third level stays raw. So does a nested container its own fence
+does not close: with equal fences the first `:::` closes the outer one, the inner is closed
+by its parent, and the lines after it are no longer what they look like. An admonition with
+a second class (`!!! warning big "T"`), and attributes on either wrapper or on an admonition
+title, have no slot and stay raw too.
+
+**In the page** (`webview/wrappers.ts`): `Enter` in an empty last paragraph of a wrapper
+leaves it (the paragraph moves after it; a wrapper's only paragraph stays, since `block+`
+cannot be empty), and in an empty paragraph elsewhere in it inserts a paragraph rather than
+splitting the wrapper in two, as ProseMirror's `liftEmptyBlock` would; `Backspace` at the
+start of an empty first paragraph lifts the wrapper's blocks out (`unwrapTransaction`, the
+same transaction as the bars' *Remove …, keep content*). The toolbar inserts both natively
+(`insertWrapperTransaction`, `insert-wrapper`), and **Span with class** (`attr-span`) asks
+for the literal in the inline field, prefilled `{.}` with the caret after the dot.
 
 ### Injected content
 
@@ -554,7 +645,9 @@ superseded text and is dropped.
   descends from none, changed type, or no longer follows what it followed (a split, a
   deletion or a move in front of it), so a split paragraph is not written back as one;
   and strips `reqPrefix`, `anchor` and `attrsSuffix` from a heading that newly carries an
-  id or anchor another heading has. `PRESERVE_SOURCE_META` (the re-sync) exempts all of
+  id or anchor another heading has, and any other block's `attrsSuffix` from a top-level
+  block that descends from none (a split's second half) or from a block nested in a
+  changed one (only a top-level block's literal is written). `PRESERVE_SOURCE_META` (the re-sync) exempts all of
   it. Undo and redo are exempt too, because the history restores `src` and `gap` with the
   content — except that an undo changing a node's content under an unchanged `src` (one a
   re-sync set, outside the history) clears that `src`.
@@ -630,8 +723,10 @@ The layers:
   their one delimiter. `wrap-node` makes a note or sidebar of the selection in place
   (`wrapInNote` in `notes.ts`: the selection is the reference, the body a selected
   placeholder). `block` sets the textblock type, or wraps, lifts or converts a list or
-  quote. `wrap-source` and `insert-source` are for what the core does not edit — the
-  footnote and the block constructs (below).
+  quote. `insert-wrapper` inserts a container or an admonition, `attr-span` makes an
+  attribute span (both above, "Attributes, containers and admonitions"). `wrap-source` and
+  `insert-source` are for what the core does not edit — the footnote, tables and the other
+  block constructs (below).
 - **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
   active and disabled states per action, the block-type face (the current type's name,
   locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
@@ -707,22 +802,29 @@ as opposed to text, which is typed:
 | --- | --- | --- |
 | `note` | a `sidenote`, `marginal_note`, `left_sidebar` or `right_sidebar` node | the node |
 | `link` | a run of text under one `link` mark (equal attributes) | the run in its textblock, found from the caret by `markRunAt` |
+| `span` | a run of text under one `attr_span` mark (equal literal) | the run, as for a link |
 | `image` | an `image` node | the node |
 | `badge` | an `inline_atom` | the node |
+| `container`, `admonition` | the node | the node |
+| `block_attrs` | a block carrying `attrsSuffix` — not a requirement heading, whose anchor is Req Explorer's | the node |
 | `raw_block`, `injected_block`, `front_matter` | the node | the node |
 
-`objectAtSelection` finds the selection's object: a node selected as a whole, else the
-link the selection is in (a caret inside its text or at either end), else the note both
-ends of the selection are in. The link comes first because it is the innermost: a link in
-a note's body is the link. A verb never acts on the object it was drawn for: it looks it
+`objectAtSelection` finds the selection's object: a node selected as a whole, else,
+innermost first, the link the selection is in (a caret inside its text or at either end),
+the attribute span, the note both ends of the selection are in, the innermost container or
+admonition holding both ends, and last the top-level block with an attribute literal. A link
+in a note's body is the link; text beside a span in an admonition is the admonition. A verb never acts on the object it was drawn for: it looks it
 up again (`currentObject` — the same kind at the same position, still there), so an edit
 arriving from the host between drawing and clicking cannot make a verb act on something
 else.
 
 **The triggers.** The last three objects are *block* objects and show their bar while the
 pointer is on them or they are selected, at once — as the source block's toolbar did. The
-first four are *inline* objects and show it once the caret or the selection has rested in
-them for `INLINE_DELAY_MS` (400 ms), hiding it the moment the caret leaves; the pointer does
+others are *caret* objects and show it once the caret or the selection has rested in
+them for `INLINE_DELAY_MS` (400 ms), hiding it the moment the caret leaves — a container,
+an admonition and a block with attributes too, which hold the text being typed and whose bar
+would otherwise flash on every click into them; their bar is placed like a block's
+(`isBlockPlaced`); the pointer does
 not show them, because an inline bar that followed the pointer across a paragraph would
 jump from word to word. There are two bar instances, one following the selection and one
 the pointer, so the two triggers never fight over one element: typing in a note with the
@@ -760,6 +862,16 @@ scrolls with the text; it is placed again on scroll and resize.
   old address, which the bare form would write as the link), *Remove link* (the mark
   removed, the text kept);
 - image — *Change source* (`setNodeMarkup`, alt and title kept), *Remove image*;
+- span — *Edit attributes* (the mark replaced over its run with the new literal),
+  *Remove attributes, keep text*;
+- container — *Change name/info* (first word the name, the rest the info, verbatim; a
+  trailing `{…}` refused, since markdown-it-attrs would take it off the info),
+  *Remove container, keep content* (`unwrapTransaction`: the blocks lifted, the caret kept);
+- admonition — *Change type* (the inline choice, a `<select>` of `ADMONITION_TYPES`),
+  *Edit title* (empty: no title bar), *Remove admonition, keep content*; both changes clear
+  `header`;
+- block with attributes — *Edit block attributes* (the literal replaced in place, its
+  placement kept; empty removes it; a heading's anchor follows the literal's id);
 - source block — *Edit source* (`editRawSourceAt`), *Show in text editor*, *Delete block*;
 - expansion — *Open snippet* (only with `mark.path`), *Show in text editor*, *Delete
   directive* (the node deleted, and with it the one line it writes);
@@ -770,9 +882,12 @@ hint (`webview/hint.ts`: *Note removed — Ctrl+Z*, `Cmd+Z` on macOS), in a neut
 3 s. The hint is the one the notes plugin shows a refusal in; one element, two tones
 (`data-tone`), so the page has one place beside the caret where it speaks.
 
-**The inline field** (`webview/inlineField.ts`) is one reusable component, exported for the
-next place a value is asked for where it is used (stage 3's classes and attributes): a
-one-line `<input>` opened prefilled with the value selected; `Enter` commits, `Esc`
+**The inline field** (`webview/inlineField.ts`) is one reusable component for every place a
+value is asked for where it is used — the verbs' fields, and the toolbar's **Span with
+class**, which opens it prefilled `{.}` with the caret after the dot (`caret`) in a bar of
+the same kind under the selection. `InlineChoice` is its counterpart for a value out of a
+list (an admonition's type): a `<select>` with the same contract, picking a value commits
+it. The field is a one-line `<input>` opened prefilled with the value selected; `Enter` commits, `Esc`
 cancels, the focus moving elsewhere in the page cancels — a click elsewhere never applies a
 half-typed value — and exactly one of `onCommit` and `onCancel` is called, once. A blur
 while `document.hasFocus()` is false is the window going away (Alt+Tab to copy a URL), not

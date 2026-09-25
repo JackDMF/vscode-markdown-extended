@@ -145,6 +145,11 @@ function sameBody(a: Node, b: Node): boolean {
  * A node whose predecessor is unchanged keeps its gap even when its own content
  * changed: typing in a paragraph does not touch the blank lines around it.
  *
+ * **Attribute literals** (`attrsSuffix`) are a top-level block's own: the second
+ * half of a split paragraph does not carry `{#id}` again, and a block wrapped
+ * inside another loses the literal only a top-level block writes
+ * (`stripCopiedSuffixes`, `nestedSuffixes`).
+ *
  * **Requirement ids** must not be written twice. A top-level heading that did
  * not carry its `reqPrefix`, `anchor` and `attrsSuffix` before this transaction
  * (a split, a paste) loses all three when another top-level heading carries the

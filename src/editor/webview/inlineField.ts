@@ -1,7 +1,9 @@
 /**
  * A one-line input that edits one value in place — a link's URL, an image's
  * source, a note's Markdown — inside the object toolbar, and anywhere else a
- * value is asked for where it is used (a class or an attribute, later).
+ * value is asked for where it is used (a span's or a block's `{…}`, an admonition's title,
+ * the toolbar's Span with class). `InlineChoice`, below, is the same for a value out of a
+ * list (an admonition's type).
  *
  * The contract is small on purpose: it opens prefilled with the value selected;
  * `Enter` commits, `Esc` cancels, and the focus moving elsewhere in the page

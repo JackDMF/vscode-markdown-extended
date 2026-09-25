@@ -356,7 +356,23 @@ blocks and horizontal rules, and inside them:
 - sidenotes (`++reference|note++`), marginal notes (`!!reference|note!!`) and left and
   right sidebars (`$left$`, `@right@`), drawn exactly as the preview draws them — in the
   margin in a wide window — with the reference and the note each edited as rich text. A
-  heading may hold a note too.
+  heading may hold a note too;
+- attribute spans (`[text]{.class}`, `[text]{#id style="…"}`), drawn with exactly the
+  attributes the preview gives them, so your stylesheets style them for real; the `{…}`
+  is kept as you wrote it.
+
+And these blocks, edited in place with their content as rich text:
+
+- **Admonitions** (`!!! warning "Title"` with an indented body), drawn as the preview
+  draws them — the coloured box, the title bar, the icon. The body is edited like any
+  text; the type and the title are changed from its bar (below).
+- **Containers** (`::: name info` … `:::`), a block with the classes its opening line
+  names, outlined in the editor since most class names draw nothing. A container may hold
+  another, one level deep; the outer fence is lengthened when it has to be.
+- **Block attributes** — `{.class}` or `{#id}` at the end of a paragraph's last line or on
+  a line of its own under it, under a list, on a fence's opening line, after a rule — are
+  kept verbatim and written back where they stood; the block is drawn with them. A
+  heading's `{#anchor}` stays as it always was.
 
 Format them from the toolbar (below) or with the keys a Markdown author already knows:
 
@@ -391,6 +407,13 @@ and pasting into a note pastes its text.
 
 To remove, convert or edit a note as a whole, use its bar (below).
 
+**Inside an admonition or a container:**
+
+| Keys | Does |
+| ---- | ---- |
+| `Enter` in an empty last paragraph | Leaves it: the caret goes to a new paragraph after it |
+| `Backspace` at the start of an empty first paragraph | Removes the admonition or container, keeping its content |
+
 ### Every object carries its verbs
 
 A note, a link, an image, a source block, an included snippet: each is an *object*, and
@@ -403,8 +426,12 @@ never covers the line you are typing on.
 | Sidenote, marginal note | while the caret is inside, after a moment | **Remove note, keep text** · **Convert to marginal note** / **Convert to sidenote** · **Edit source** |
 | Left or right sidebar | while the caret is inside, after a moment | **Remove sidebar, keep text** · **Move to right** / **Move to left** · **Edit source** |
 | Link | while the caret is in its text, after a moment | **Open** · **Change URL** · **Remove link** |
+| Span (`[text]{…}`) | while the caret is in its text, after a moment | **Edit attributes** · **Remove attributes, keep text** |
 | Image | when you click it, after a moment | **Change source** · **Remove image** |
-| Source block — a table, raw HTML, an admonition, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
+| Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Remove admonition, keep content** |
+| Container | while the caret is in it, after a moment | **Change name/info** · **Remove container, keep content** |
+| A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Edit block attributes** (empty removes them) |
+| Source block — a table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
 | Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Show in text editor** · **Delete directive** |
 | Front matter, a status badge, a summary table | as above | its name only |
 
@@ -415,8 +442,11 @@ never covers the line you are typing on.
 - **A removal says so.** Something disappearing is easy to miss, so a removal or deletion
   is announced beside the caret for a moment — *Note removed — Ctrl+Z* — and one `Ctrl+Z`
   brings it back.
-- **Edit source, Change URL and Change source** open a one-line field in the bar, filled
-  in: `Enter` applies, `Esc` or clicking away cancels. A note's field holds its Markdown
+- **Edit source, Change URL, Change source, Edit attributes, Edit title, Change
+  name/info** open a one-line field in the bar, filled in: `Enter` applies, `Esc` or
+  clicking away cancels. An attribute field takes a `{…}` as markdown-it-attrs reads it
+  (`{.a .b}`, `{#id}`, `{key="value"}`) and refuses anything else, saying why beside the
+  caret. **Change type** opens a list of the admonition types instead. A note's field holds its Markdown
   (`++reference|note++`); what you type is read by the same parser as the preview, so it
   comes back as a note — of whichever kind its markers now say — or, if it no longer is
   one, as the text you typed. A source block's **Edit source** opens its Markdown in the
@@ -466,7 +496,10 @@ opens a submenu), choose with `Enter` and close with `Esc`.
 - **Italic, emphasis, bold, strong, code** — in the row. A button is marked while the
   selection carries what it writes.
 - **Formatting** — highlight (`==mark==`), superscript (`^sup^`), subscript (`~sub~`),
-  strikethrough (`~~del~~`) and key (`[[Ctrl]]`), each toggled on the selection like bold.
+  strikethrough (`~~del~~`) and key (`[[Ctrl]]`), each toggled on the selection like bold;
+  and **Span with class**, which asks for the attributes in a field under the selection —
+  filled in as `{.}` with the caret after the dot, so you type the class name and `Enter` —
+  and makes the selection `[text]{.class}`.
 - **Annotation** — sidenote (`++reference|note++`), marginal note (`!!reference|note!!`),
   left and right sidebar (`$left$`, `@right@`) and footnote. A note is made in place: the
   selected text becomes its reference and the note starts as `note`, selected, so what you
@@ -475,9 +508,10 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   is written after the selection with the first free number (`[^2]`), and its definition
   goes below the paragraph with its source open for the text.
 - **Insert** — horizontal rule; admonition, a submenu of every type the admonition plugin
-  knows, each drawn as its box; table, container, task list, definition list, abbreviation
+  knows, each drawn as its box; container; table, task list, definition list, abbreviation
   and table of contents, from the same templates as this extension's snippets where one
-  exists.
+  exists. An admonition (titled with its type's name) and a container (`::: container`)
+  go in as rich text with the caret in their body: type, and it is the body.
 
 In the card, notes and sidebars are shown stacked, as they render below the margin
 layout's 1280px breakpoint, however wide the window: a card is too narrow for a margin,
@@ -489,11 +523,12 @@ each its own look — underlining `_b_`, say, while `*a*` stays italic. The edit
 delimiter you wrote and draws it as the preview does; choosing emphasis on italic text
 swaps `*` for `_` rather than nesting one inside the other.
 
-**The block constructs go in as source.** Every insert except the rule, and the footnote,
-are edited as Markdown: a block one is inserted after the current block as a source block
-with its **Edit source** box open, and the footnote's paragraph becomes a source block
-rendered as the preview renders it. The tooltip of each such entry says *edited as source,
-in a source block*. One `Ctrl+Z` takes it back.
+**The other block constructs go in as source.** A table, a task list, a definition list,
+an abbreviation, the table of contents and the footnote are edited as Markdown: a block one
+is inserted after the current block as a source block with its **Edit source** box open,
+and the footnote's paragraph becomes a source block rendered as the preview renders it.
+The tooltip of each such entry says *edited as source, in a source block*. One `Ctrl+Z`
+takes it back.
 
 **A requirement heading keeps its type.** On a heading written `## ID: Title {#anchor}`
 the block-type menu is disabled, and its tooltip says why: changing the type would rebuild
@@ -512,8 +547,13 @@ place — each for a reason:
   tables, a snippet expanded from `<!-- include: … -->` — is not in the file at that
   place, so it cannot be edited there. An expanded snippet's bar offers **Open snippet**,
   which opens the file it came from; the file itself keeps the one directive line.
-- **Tables, raw HTML and this extension's extended syntax** (admonitions, containers,
-  the table of contents, footnotes, definition lists, …) are *source blocks*. Hover or
+- **Tables, raw HTML and the rest of the extended syntax** — the table of contents,
+  footnotes and their definitions, definition lists, task lists, abbreviations, reference
+  definitions, setext headings — are *source blocks*, and so is a block whose attributes
+  the editor could not write back where they stand: on a list item, a link, emphasis, an
+  image, inline code, a quote, a block inside another, a container, or an admonition's
+  title; a container or admonition nested more than one level deep, or closed by its
+  parent's fence rather than its own. Hover or
   select one and choose **Edit source** in its bar — or double-click it — to edit its
   Markdown in place: `Ctrl+Enter` or clicking away applies it, `Esc` cancels. Or choose
   **Show in text editor** to jump to it. A source block that you edit back into plain Markdown (the
@@ -542,8 +582,19 @@ rather than a second heading, so the id and the anchor are never written twice.
 ### Limits
 
 - **Experimental.** Try it on files under version control.
-- **Tables are edited as source**, not cell by cell, and so are the block constructs the
-  toolbar inserts (admonitions, containers, …).
+- **Tables are edited as source**, not cell by cell, and so are the other block
+  constructs listed above.
+- **Containers and admonitions nest one level deep.** A container in a container, or an
+  admonition in one, is edited in place; a third level stays a source block. Nested
+  containers need a longer outer fence (`::::` around `:::`) — with equal fences the
+  first `:::` closes the outer one, as it does in the preview.
+- **An admonition's title is plain text in the editor.** A title holding Markdown
+  (`"A *styled* title"`) renders styled in the preview and shows its markers in the
+  editor; it is written back as you typed it.
+- **A block's attributes are written where they stood**, and a changed list whose last
+  item the `{…}` line could no longer reach is written with the `{…}` after a blank line,
+  which markdown-it-attrs also gives the list. Changing a block's type keeps its
+  attributes; splitting it leaves them on the first half.
 - **A note holds no note.** The notes plugin allows a note of another kind inside one
   (`++a|see !!b|c!!++`); a paragraph written so stays a source block.
 - **Some characters cannot be in inline code inside a note.** The notes plugin finds a

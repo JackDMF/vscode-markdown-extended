@@ -10,7 +10,7 @@ import { domAttrsOf } from './attrs';
  * Two families of top-level node:
  *
  * - **Editable** (`paragraph`, `heading`, the lists, `blockquote`, `code_block`,
- *   `horizontal_rule`): the editable core. Each top-level one carries
+ *   `horizontal_rule`, `container`, `admonition`): the editable core. Each top-level one carries
  *   `src`, the exact slice of the file it was parsed from, and `gap`, the text
  *   between the previous block and itself. `src` stays set while the node is
  *   untouched and the serializer emits it verbatim; `fidelityPlugin` clears it

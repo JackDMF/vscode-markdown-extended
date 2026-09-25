@@ -82,7 +82,7 @@ abstract class AtomView implements NodeView {
 
 /**
  * A block the editor does not edit as rich text — a table, raw HTML, a
- * container, anything outside the editable core. It shows the host's rendering
+ * definition list, anything outside the editable core. It shows the host's rendering
  * (or the source itself, for lines no token covers), and its source can be
  * edited in place: **Edit source** in its object toolbar (`objectToolbar.ts`),
  * or a double click, opens a textarea; `Ctrl+Enter` or leaving it commits,

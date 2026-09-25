@@ -335,7 +335,7 @@ const annotations: ToolbarAction[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Insert — new blocks, as source except the rule
+// Insert — new blocks: the rule, admonitions and the container in place, the rest as source
 // ---------------------------------------------------------------------------
 
 function insertAction(id: string, label: string, template: string, sample: SampleSpec, preview: ActionPreview, example = template): ToolbarAction {

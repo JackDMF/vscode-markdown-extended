@@ -7,8 +7,9 @@
  * note or a link showed nothing.
  *
  * **The triggers.** A block object (a source block, injected content, the front
- * matter) shows its bar while the pointer is on it or it is selected. An inline
- * object (a note, a link, an image, a badge) shows its bar once the caret or the
+ * matter) shows its bar while the pointer is on it or it is selected. A caret
+ * object (a note, a link, a span, an image, a badge, a container, an admonition,
+ * a block with attributes) shows its bar once the caret or the
  * selection has rested inside it for `INLINE_DELAY_MS`, and hides it the moment
  * the caret leaves; the pointer does not show it — an inline bar following the
  * pointer across a paragraph jumps. Two bars exist so the two triggers never
