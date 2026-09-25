@@ -20,7 +20,7 @@ const TABLE = '| a | b |\n| - | - |\n| 1 | 2 |\n';
 const SOURCE = `${FRONT_AND_HEADING}${PARAGRAPH}\n${TABLE}`;
 
 /**
- * The WYSIWYG editor's page (`dist/editor-webview.js`) driven in headless
+ * The Visual Editor's page (`dist/editor-webview.js`) driven in headless
  * Chromium, with `acquireVsCodeApi` replaced by a recorder: the host's half of
  * the protocol is played by the test.
  *

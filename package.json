@@ -22,7 +22,7 @@
   ],
   "activationEvents": [
     "onLanguage:markdown",
-    "onCustomEditor:markdownExtended.wysiwyg"
+    "onCustomEditor:markdownExtended.visualEditor"
   ],
   "main": "./dist/extension.js",
   "browser": "./dist/extension.web.js",
@@ -232,15 +232,15 @@
         "category": "Markdown"
       },
       {
-        "command": "markdownExtended.openWysiwyg",
-        "title": "%markdownExtended.openWysiwyg%",
+        "command": "markdownExtended.openVisualEditor",
+        "title": "%markdownExtended.openVisualEditor%",
         "category": "Markdown"
       }
     ],
     "customEditors": [
       {
-        "viewType": "markdownExtended.wysiwyg",
-        "displayName": "%markdownExtended.wysiwyg.displayName%",
+        "viewType": "markdownExtended.visualEditor",
+        "displayName": "%markdownExtended.visualEditor.displayName%",
         "priority": "option",
         "selector": [
           {
@@ -255,14 +255,14 @@
     "menus": {
       "commandPalette": [
         {
-          "command": "markdownExtended.openWysiwyg",
+          "command": "markdownExtended.openVisualEditor",
           "when": "!isWeb"
         }
       ],
       "editor/context": [
         {
           "when": "editorLangId == markdown && !isWeb",
-          "command": "markdownExtended.openWysiwyg",
+          "command": "markdownExtended.openVisualEditor",
           "group": "markdown"
         },
         {
@@ -298,7 +298,7 @@
           "group": "markdown"
         },
         {
-          "command": "markdownExtended.openWysiwyg",
+          "command": "markdownExtended.openVisualEditor",
           "when": "resourceLangId == markdown && !isWeb",
           "group": "markdown"
         }

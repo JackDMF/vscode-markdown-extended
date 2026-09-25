@@ -130,7 +130,7 @@ body:where(.vscode-dark) {
    Engaged only when the viewport can hold the content column plus a full note
    on either side. Print never matches `screen`, so PDF export keeps the base.
 
-   Not inside `.mep-preview-card`. The WYSIWYG editor's toolbar shows each note
+   Not inside `.mep-preview-card`. The Visual Editor's toolbar shows each note
    in a preview card about 360px wide, and a media query reads the viewport,
    not the card: in a webview wider than 1280px the card's note would float
    out of it by the full offset and vanish under its clipping. The card keeps

@@ -108,7 +108,7 @@ export class Config extends ConfigReader {
     }
     
     /**
-     * The column the WYSIWYG editor re-wraps a changed paragraph at when the
+     * The column the Visual Editor re-wraps a changed paragraph at when the
      * paragraph gives no width of its own. Untouched blocks are never re-wrapped.
      *
      * Read for the document, because a folder of a multi-root workspace may hold

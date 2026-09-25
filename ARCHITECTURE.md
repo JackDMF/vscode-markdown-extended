@@ -7,7 +7,7 @@
 - [Core Architecture](#core-architecture)
 - [Service Layer](#service-layer)
 - [Plugin System](#plugin-system)
-- [WYSIWYG Editor](#wysiwyg-editor)
+- [Visual Editor](#visual-editor)
 - [Testing Strategy](#testing-strategy)
 - [Key Design Decisions](#key-design-decisions)
 
@@ -90,7 +90,7 @@ vscode-markdown-extended/
 │   │   └── contributes/
 │   │       ├── contributorService.ts   # Plugin contributions
 │   │       └── contributesService.ts   # Config contributions
-│   ├── editor/                   # WYSIWYG editor (see its own section)
+│   ├── editor/                   # Visual Editor (see its own section)
 │   │   ├── engine.ts, blocks.ts, schema.ts, parse.ts, serialize.ts, wrap.ts, fidelity.ts  # UI-free core
 │   │   ├── protocol.ts          # Host ↔ webview messages (types only)
 │   │   ├── host/                # Extension host: engine, session, page, provider
@@ -297,7 +297,7 @@ Users can disable plugins via settings:
 
 ---
 
-## WYSIWYG Editor
+## Visual Editor
 
 `src/editor/` is an experimental rich editor for Markdown files, whose one hard
 promise is that a block nobody touched is saved byte for byte. Its contract with Req Explorer is
@@ -431,10 +431,10 @@ verbatim in `attrsSuffix`.
 
 ### Host and page
 
-`host/provider.ts` registers a `CustomTextEditorProvider` (`markdownExtended.wysiwyg`,
+`host/provider.ts` registers a `CustomTextEditorProvider` (`markdownExtended.visualEditor`,
 priority `option`) over the file's own `TextDocument`, so Req Explorer's
 `WorkspaceEdit`s, the text editor and the rich editor meet in one buffer and VS Code
-keeps dirty state, save and undo. Each open editor is a `WysiwygSession`
+keeps dirty state, save and undo. Each open editor is a `VisualEditorSession`
 (`host/session.ts`); the page is `webview/main.ts`, bundled on its own because it
 must not import the parser (it imports `schema.ts`, `fidelity.ts` and `serialize.ts`
 directly, never the barrel). That keeps this extension's plugins out of the page but not

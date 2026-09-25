@@ -9,7 +9,7 @@ export type ToggleArgs = [RegExp, boolean, RegExp, string, RegExp, string];
 
 /**
  * The arguments of an inline toggle command, built from its marker in the
- * shared table (`src/syntax/markers.ts`) — the table the WYSIWYG editor's
+ * shared table (`src/syntax/markers.ts`) — the table the Visual Editor's
  * toolbar reads too, so the text editor's toggles and the toolbar cannot write
  * a construct differently.
  *

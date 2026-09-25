@@ -3,7 +3,7 @@
  *
  * Three places write or read them: the text editor's toggle commands
  * (`src/commands/toggleFormats.ts`), the markdown-it plugins that parse them
- * (`src/plugin/`), and the WYSIWYG editor's toolbar
+ * (`src/plugin/`), and the Visual Editor's toolbar
  * (`src/editor/webview/toolbar/actions.ts`). Each of them imports this module,
  * so a toggle, the parser and a toolbar button cannot disagree about what a
  * construct is written as.
@@ -33,8 +33,8 @@ export type InlineMarkerName = keyof typeof INLINE_MARKERS;
 
 /**
  * `markdown-it-kbd`'s delimiters, `[[Ctrl+S]]`. The package states them, not
- * this extension; they are written down here so the toolbar and the WYSIWYG
- * editor's serializer take them from one place.
+ * this extension; they are written down here so the toolbar and the Visual
+ * Editor's serializer take them from one place.
  */
 export const KBD_MARKERS = { open: '[[', close: ']]' } as const;
 

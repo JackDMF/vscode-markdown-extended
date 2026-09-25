@@ -189,7 +189,7 @@ async function main() {
         },
     });
 
-    // The WYSIWYG editor's page — the ProseMirror view that runs inside the
+    // The Visual Editor's page — the ProseMirror view that runs inside the
     // custom editor's webview. A browser IIFE loaded by a <script> tag; it talks
     // to the extension host by postMessage only, so it shares no module
     // instance with the desktop bundle.

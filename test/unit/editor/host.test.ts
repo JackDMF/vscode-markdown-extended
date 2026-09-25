@@ -5,8 +5,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { EditorEngineHost, buildEditorEngine } from '../../../src/editor/host/engineHost';
-import { WYSIWYG_VIEW_TYPE } from '../../../src/editor/host/provider';
-import { SessionWebview, WysiwygSession } from '../../../src/editor/host/session';
+import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
+import { SessionWebview, VisualEditorSession } from '../../../src/editor/host/session';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 
 const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
@@ -30,7 +30,7 @@ const SOURCE = [
 ].join('\n');
 
 function tempMarkdown(text: string): vscode.Uri {
-    const file = path.join(os.tmpdir(), `mep-wysiwyg-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.md`);
+    const file = path.join(os.tmpdir(), `mep-visual-editor-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.md`);
     fs.writeFileSync(file, text, 'utf8');
     return vscode.Uri.file(file);
 }
@@ -54,7 +54,7 @@ function customTab(uri: vscode.Uri): vscode.Tab | undefined {
     for (const group of vscode.window.tabGroups.all) {
         for (const tab of group.tabs) {
             const input = tab.input;
-            if (input instanceof vscode.TabInputCustom && input.viewType === WYSIWYG_VIEW_TYPE
+            if (input instanceof vscode.TabInputCustom && input.viewType === VISUAL_EDITOR_VIEW_TYPE
                 && input.uri.toString() === uri.toString()) {
                 return tab;
             }
@@ -132,7 +132,7 @@ suite('Editor host: session protocol', () => {
     let uri: vscode.Uri;
     let document: vscode.TextDocument;
     let webview: FakeWebview;
-    let session: WysiwygSession;
+    let session: VisualEditorSession;
     const engineChanged = new vscode.EventEmitter<void>();
 
     suiteSetup(async function () {
@@ -141,7 +141,7 @@ suite('Editor host: session protocol', () => {
         document = await vscode.workspace.openTextDocument(uri);
         const engine = buildEditorEngine(EXTENSION_ID, () => undefined);
         webview = new FakeWebview();
-        session = new WysiwygSession(document, webview, {
+        session = new VisualEditorSession(document, webview, {
             engine: () => engine,
             onDidChangeEngine: engineChanged.event,
             log: () => undefined,
@@ -287,13 +287,13 @@ suite('Editor host: session protocol', () => {
 });
 
 suite('Editor host: provider smoke test', () => {
-    test('opening a file in the WYSIWYG editor shows it in a custom tab and writes nothing', async function () {
+    test('opening a file in the Visual Editor shows it in a custom tab and writes nothing', async function () {
         this.timeout(30000);
         const uri = tempMarkdown(SOURCE);
         try {
-            await vscode.commands.executeCommand('vscode.openWith', uri, WYSIWYG_VIEW_TYPE);
+            await vscode.commands.executeCommand('vscode.openWith', uri, VISUAL_EDITOR_VIEW_TYPE);
             const tab = await until(() => customTab(uri), 10000);
-            assert.ok(tab, 'no tab with the WYSIWYG editor\'s view type');
+            assert.ok(tab, 'no tab with the Visual Editor\'s view type');
 
             // Give the page time to load, say ready and receive the document —
             // the moment a careless host would write something back.

@@ -1,8 +1,8 @@
 import { MarkdownIt, Token, Renderer } from "../@types/markdown-it";
 import { ADMONITION_MARKER, ADMONITION_TYPES } from "../syntax/markers";
 
-// The types and the marker live in `src/syntax/markers.ts`, which the WYSIWYG
-// editor's toolbar reads too: its admonition menu lists exactly these. Each
+// The types and the marker live in `src/syntax/markers.ts`, which the Visual
+// Editor's toolbar reads too: its admonition menu lists exactly these. Each
 // type's colour and icon are in `styles/markdown-it-admonition.css`.
 const
     _marker = ADMONITION_MARKER.charCodeAt(0),

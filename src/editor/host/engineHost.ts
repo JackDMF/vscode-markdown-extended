@@ -40,7 +40,7 @@ export async function collectMarkdownItExtenders(selfId: string, log: Log): Prom
         try {
             exported = await ext.activate();
         } catch (error) {
-            log(`[ERROR] WYSIWYG editor: could not activate ${ext.id} for its markdown-it plugin: ${message(error)}`);
+            log(`[ERROR] Visual Editor: could not activate ${ext.id} for its markdown-it plugin: ${message(error)}`);
             continue;
         }
         const extend = (exported as { extendMarkdownIt?: unknown } | undefined)?.extendMarkdownIt;
@@ -51,7 +51,7 @@ export async function collectMarkdownItExtenders(selfId: string, log: Log): Prom
             try {
                 return (extend as MarkdownItExtender).call(exported, md) || md;
             } catch (error) {
-                log(`[ERROR] WYSIWYG editor: the markdown-it plugin of ${ext.id} failed: ${message(error)}`);
+                log(`[ERROR] Visual Editor: the markdown-it plugin of ${ext.id} failed: ${message(error)}`);
                 return md;
             }
         });

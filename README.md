@@ -12,11 +12,11 @@ Markdown Extended Pro is a comprehensive extension that extends syntaxes and abi
 
 - 🎨 **Extended Syntax Support** - 17 integrated markdown-it plugins plus built-in syntaxes
 - 📝 **Advanced Note Types** - Sidenotes, marginal notes, and sidebar annotations
-- 📤 **WYSIWYG Exporter** - Export to HTML, PDF, PNG, JPEG matching the preview
+- 📤 **Pixel-Perfect Exporter** - Export to HTML, PDF, PNG, JPEG matching the preview
 - 🌗 **Theme-Aware & Accessible Exports** - Light / dark / auto export theme with a built-in, accessible base stylesheet (overridable by your own CSS)
 - 🧜 **Mermaid in Exports** - Diagrams shown in VS Code's preview are rendered to inline SVG in exported files
 - ✏️ **Editing Helpers** - Table formatting, text formatting toggles, and more
-- 🖋️ **WYSIWYG Editor (experimental)** - Edit as rendered text; untouched blocks are saved byte for byte ([details](#wysiwyg-editor-experimental))
+- 🖋️ **Visual Editor (experimental)** - Edit as rendered text; untouched blocks are saved byte for byte ([details](#visual-editor-experimental))
 - 🌐 **Web Extension** - Works in [vscode.dev](https://vscode.dev) and [github.dev](https://github.dev) (preview & editing; export requires desktop)
 - 🏗️ **TypeScript Codebase** - Built with TypeScript, unit tests, and error recovery
 
@@ -34,7 +34,7 @@ Export to Self Contained HTML / PDF / PNG / JPEG with perfect preview fidelity:
 
 - Export current document / workspace
 - Copy exported HTML to clipboard
-- WYSIWYG export matches preview exactly
+- Export matches the preview exactly, pixel for pixel
 - Mermaid diagrams are rendered to inline SVG in the exported file (the Mermaid library is never embedded in the output)
 
 Find commands in the command palette or right-click on an editor / workspace folder:
@@ -323,23 +323,26 @@ The first row becomes the header, and the table is aligned on insert.
 Search "Markdown" in the command palette (`Ctrl+Shift+P`) to reach them; export is
 also on the editor title menu and the explorer context menu.
 
-## WYSIWYG Editor (experimental)
+## Visual Editor (experimental)
+
+Visual Editor: you edit the document as it reads; the technique is a rich-text editor
+over the file's own text.
 
 Edit a Markdown file as rendered text — headings, paragraphs, lists, quotes and code
 typed in place — and save a file that differs from the original **only where you
-changed it**. The text editor stays the default; the WYSIWYG editor is chosen per file.
+changed it**. The text editor stays the default; the Visual Editor is chosen per file.
 
 ### Opening it
 
-- **Command palette:** `Markdown: Open in WYSIWYG Editor` on the active Markdown file.
+- **Command palette:** `Markdown: Open in Visual Editor` on the active Markdown file.
 - **Context menu:** right-click a `.md` file in the explorer, or inside a Markdown
-  editor, and choose **Open in WYSIWYG Editor**.
+  editor, and choose **Open in Visual Editor**.
 - **Open With…:** on any `.md` or `.markdown` tab or file, **Open With…** →
-  **Markdown WYSIWYG Editor**. The same menu can make it the default for `*.md` if you
+  **Markdown Visual Editor**. The same menu can make it the default for `*.md` if you
   want that.
 
 It edits the same document as the text editor: dirty state, save and the file's undo
-history are VS Code's, and the text editor and the WYSIWYG editor can be open side by
+history are VS Code's, and the text editor and the Visual Editor can be open side by
 side on one file, each following the other's changes.
 
 ### What is edited in place

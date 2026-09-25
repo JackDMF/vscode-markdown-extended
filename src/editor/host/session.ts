@@ -40,7 +40,7 @@ const RESYNC_DELAY_MS = 100;
  * engine, the text editor beside). In that case the webview is re-synced and
  * the edit is dropped; merging is not attempted in stage 1.
  */
-export class WysiwygSession implements vscode.Disposable {
+export class VisualEditorSession implements vscode.Disposable {
     private webviewText: string | undefined;
     private postedVersion = -1;
     /** The document could not be parsed without loss; nothing is written until it can. */
@@ -92,7 +92,7 @@ export class WysiwygSession implements vscode.Disposable {
 
     private enqueue(work: () => Promise<void>): void {
         this.queue = this.queue.then(work).catch(error => {
-            this.host.log(`[ERROR] WYSIWYG editor: ${message(error)}`);
+            this.host.log(`[ERROR] Visual Editor: ${message(error)}`);
         });
     }
 
@@ -118,7 +118,7 @@ export class WysiwygSession implements vscode.Disposable {
                     // will-save listener, which waits on the queue, and a save
                     // queued behind itself would wait for itself.
                     this.saving = this.queue.then(() => this.save()).catch(error => {
-                        this.host.log(`[ERROR] WYSIWYG editor: saving failed: ${message(error)}`);
+                        this.host.log(`[ERROR] Visual Editor: saving failed: ${message(error)}`);
                     });
                 }
                 break;
@@ -147,10 +147,10 @@ export class WysiwygSession implements vscode.Disposable {
             } else if (target.kind === 'open') {
                 await vscode.commands.executeCommand('vscode.open', target.uri);
             } else {
-                this.host.log(`[WARN] WYSIWYG editor: did not follow ${href}: ${target.reason}.`);
+                this.host.log(`[WARN] Visual Editor: did not follow ${href}: ${target.reason}.`);
             }
         } catch (error) {
-            this.host.log(`[WARN] WYSIWYG editor: opening ${href} failed: ${message(error)}`);
+            this.host.log(`[WARN] Visual Editor: opening ${href} failed: ${message(error)}`);
         }
     }
 
@@ -190,7 +190,7 @@ export class WysiwygSession implements vscode.Disposable {
     private fail(reason: string): void {
         this.broken = true;
         this.webviewText = undefined;
-        this.host.log(`[WARN] WYSIWYG editor: ${this.document.uri.toString()} stays in the text editor: ${reason}`);
+        this.host.log(`[WARN] Visual Editor: ${this.document.uri.toString()} stays in the text editor: ${reason}`);
         void this.webview.postMessage({ type: 'error', message: reason });
     }
 
@@ -247,7 +247,7 @@ export class WysiwygSession implements vscode.Disposable {
         }
         const saved = await this.document.save();
         if (!saved) {
-            this.host.log(`[WARN] WYSIWYG editor: saving ${this.document.uri.toString()} did not complete.`);
+            this.host.log(`[WARN] Visual Editor: saving ${this.document.uri.toString()} did not complete.`);
         }
     }
 
@@ -274,7 +274,7 @@ export class WysiwygSession implements vscode.Disposable {
             const md = await this.host.engine();
             html = md.render(src, this.env());
         } catch (error) {
-            this.host.log(`[ERROR] WYSIWYG editor: rendering a raw block failed: ${message(error)}`);
+            this.host.log(`[ERROR] Visual Editor: rendering a raw block failed: ${message(error)}`);
             html = `<pre>${escapeHtml(src)}</pre>`;
         }
         await this.webview.postMessage({ type: 'rendered', requestId, html });
@@ -284,7 +284,7 @@ export class WysiwygSession implements vscode.Disposable {
         // The path comes back from the webview; open only one this document's
         // own expansions named, never an arbitrary file a page asked for.
         if (!this.snippetPaths.has(path)) {
-            this.host.log(`[WARN] WYSIWYG editor: refused to open ${path}, which no expansion in this document names.`);
+            this.host.log(`[WARN] Visual Editor: refused to open ${path}, which no expansion in this document names.`);
             return;
         }
         await vscode.window.showTextDocument(vscode.Uri.file(path), { viewColumn: vscode.ViewColumn.Beside, preview: false });

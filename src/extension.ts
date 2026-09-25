@@ -16,7 +16,7 @@ import { commandTableEdits } from './commands/tableEdits';
 import { CommandExportWorkSpace } from './commands/exportWorkspace';
 import { ExtensionContext } from './services/common/extensionContext';
 import { BrowserManager } from './services/browser/browserManager';
-import { registerWysiwygEditor } from './editor/host/provider';
+import { registerVisualEditor } from './editor/host/provider';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -45,7 +45,7 @@ export function activate(ctx: vscode.ExtensionContext) {
         // disk (ContributesService), which the web build has no file system for,
         // and the editor is experimental enough to be tried where it can be
         // debugged first.
-        registerWysiwygEditor(ctx, line => {
+        registerVisualEditor(ctx, line => {
             // The channel can be gone when a test has reset the context.
             try {
                 extensionContext.outputPanel.appendLine(line);

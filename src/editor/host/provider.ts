@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import { Command } from '../../commands/command';
 import { EditorEngineHost } from './engineHost';
 import { editorPage, localResourceRoots } from './html';
-import { WysiwygSession } from './session';
+import { VisualEditorSession } from './session';
 
-export const WYSIWYG_VIEW_TYPE = 'markdownExtended.wysiwyg';
+export const VISUAL_EDITOR_VIEW_TYPE = 'markdownExtended.visualEditor';
 
 /**
  * The rich editor as a `CustomTextEditorProvider` over the file's own
@@ -17,7 +17,7 @@ export const WYSIWYG_VIEW_TYPE = 'markdownExtended.wysiwyg';
  * saved over. Over the shared document, VS Code keeps dirty state, save and the
  * document's undo stack, and the editor is one more view of the file.
  */
-export class WysiwygEditorProvider implements vscode.CustomTextEditorProvider {
+export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
     constructor(
         private readonly extensionUri: vscode.Uri,
         private readonly engines: EditorEngineHost,
@@ -31,7 +31,7 @@ export class WysiwygEditorProvider implements vscode.CustomTextEditorProvider {
             localResourceRoots: localResourceRoots(this.extensionUri),
         };
         webview.html = editorPage(webview, this.extensionUri, document.uri);
-        const session = new WysiwygSession(document, webview, {
+        const session = new VisualEditorSession(document, webview, {
             engine: () => this.engines.get(),
             onDidChangeEngine: this.engines.onDidChange,
             log: this.log,
@@ -41,12 +41,12 @@ export class WysiwygEditorProvider implements vscode.CustomTextEditorProvider {
 }
 
 /**
- * `markdownExtended.openWysiwyg`: open a Markdown file in the rich editor —
+ * `markdownExtended.openVisualEditor`: open a Markdown file in the rich editor —
  * the file the explorer or editor context menu passed, else the active one.
  */
-export class CommandOpenWysiwyg extends Command {
+export class CommandOpenVisualEditor extends Command {
     constructor() {
-        super('markdownExtended.openWysiwyg');
+        super('markdownExtended.openVisualEditor');
     }
 
     async execute(target?: unknown): Promise<void> {
@@ -56,10 +56,10 @@ export class CommandOpenWysiwyg extends Command {
                 ? vscode.window.activeTextEditor.document.uri
                 : undefined;
         if (uri === undefined) {
-            vscode.window.showInformationMessage('Open a Markdown file first, then run "Open in WYSIWYG Editor".');
+            vscode.window.showInformationMessage('Open a Markdown file first, then run "Open in Visual Editor".');
             return;
         }
-        await vscode.commands.executeCommand('vscode.openWith', uri, WYSIWYG_VIEW_TYPE);
+        await vscode.commands.executeCommand('vscode.openWith', uri, VISUAL_EDITOR_VIEW_TYPE);
     }
 }
 
@@ -71,14 +71,14 @@ export class CommandOpenWysiwyg extends Command {
  * debounce, and both would be lost if VS Code tore the page down on every tab
  * switch.
  */
-export function registerWysiwygEditor(context: vscode.ExtensionContext, log: (line: string) => void): vscode.Disposable {
+export function registerVisualEditor(context: vscode.ExtensionContext, log: (line: string) => void): vscode.Disposable {
     const engines = new EditorEngineHost(context.extension.id, log);
-    const provider = new WysiwygEditorProvider(context.extensionUri, engines, log);
+    const provider = new VisualEditorProvider(context.extensionUri, engines, log);
     return vscode.Disposable.from(
         engines,
-        vscode.window.registerCustomEditorProvider(WYSIWYG_VIEW_TYPE, provider, {
+        vscode.window.registerCustomEditorProvider(VISUAL_EDITOR_VIEW_TYPE, provider, {
             webviewOptions: { retainContextWhenHidden: true },
         }),
-        new CommandOpenWysiwyg(),
+        new CommandOpenVisualEditor(),
     );
 }

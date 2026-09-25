@@ -69,7 +69,7 @@ function decrementParseDepth(state: any): void {
 // ============================================================================
 
 // The markers and classes are stated in `src/syntax/markers.ts`, which the
-// WYSIWYG editor's toolbar reads too, so a toolbar button writes exactly what
+// Visual Editor's toolbar reads too, so a toolbar button writes exactly what
 // this plugin parses.
 
 /** Sidenote marker character: ++ */
