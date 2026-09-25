@@ -503,6 +503,13 @@ rather than a second heading, so the id and the anchor are never written twice.
   toolbar inserts (admonitions, containers, …).
 - **A note holds no note.** The notes plugin allows a note of another kind inside one
   (`++a|see !!b|c!!++`); a paragraph written so stays a source block.
+- **Some characters cannot be in inline code inside a note.** The notes plugin finds a
+  note's end and its `|` before anything else is read, and a code span has no escapes: so
+  inline code in a note cannot hold the note's marker pair (`++`, `!!`), in a reference
+  not `|`, in a sidebar not its `$` or `@` (superscript and subscript not these last three
+  either). The editor refuses such an edit and says why beside the caret, and the Code,
+  Superscript and Subscript buttons are disabled with the reason in their tooltip — also
+  over a selection that holds a note, which those three cannot hold at all.
 - **`$…$` is a formula where VS Code's math is on.** VS Code's built-in math extension
   (`markdown.math.enabled`, on by default) reads `$…$` before the sidebar rule does, in the
   preview and so in the editor; a left sidebar then shows as a formula in a source block.

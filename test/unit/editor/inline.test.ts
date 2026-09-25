@@ -186,6 +186,52 @@ suite('Editor inline constructs: written back by rule', () => {
         assert.strictEqual(assertRoundTrip([t('x '), marginal([t('!r')], [t('b')])]), 'x !!&#33;r|b!!\n');
     });
 
+    /** Written, the note reads back as one note with the same text, links to the same place, and is written the same again. */
+    function assertNoteSurvives(content: Node[], noteType: string): string {
+        const out = written(content);
+        const [p] = topChildren(parseDocument(md, out).doc);
+        assert.strictEqual(p.type.name, 'paragraph', out);
+        const notes: Node[] = [];
+        p.forEach(child => {
+            if (child.type.name === noteType) {
+                notes.push(child);
+            }
+        });
+        assert.strictEqual(notes.length, 1, `one ${noteType}: ${out}`);
+        const expected = schema.nodes.paragraph.create(null, content);
+        assert.strictEqual(p.textContent, expected.textContent, out);
+        const hrefs = (n: Node) => {
+            const found: string[] = [];
+            n.descendants(d => {
+                d.marks.filter(m => m.type.name === 'link').forEach(m => found.push(decodeURIComponent(m.attrs.href as string)));
+            });
+            return found;
+        };
+        assert.deepStrictEqual(hrefs(p), hrefs(expected), 'the links go where they went');
+        assert.strictEqual(serializeDocument(allTouched(parseDocument(md, out)), options), out, 'stable');
+        return out;
+    }
+
+    test('a link in a note whose href holds the marker pair (C++) is percent-encoded there, so the note does not close inside the URL', () => {
+        const cpp = 'https://en.wikipedia.org/wiki/C++';
+        const link = schema.marks.link.create({ href: cpp });
+        assert.strictEqual(assertNoteSurvives([t('See '), sidenote([t('the language')], [t('C++', link), t(' on Wikipedia')]), t(' end.')], 'sidenote'),
+            'See ++the language|[C\\+\\+](https://en.wikipedia.org/wiki/C%2B%2B) on Wikipedia++ end.\n');
+        const wow = schema.marks.link.create({ href: 'https://example.com/wow!!', title: 'so!! good' });
+        assert.strictEqual(assertNoteSurvives([t('A '), marginal([t('shout', wow)], [t('body')]), t(' end.')], 'marginal_note'),
+            'A !![shout](https://example.com/wow%21%21 "so&#33;&#33; good")|body!! end.\n');
+    });
+
+    test('a bare URL in a note body holding the marker character is written inline, not bare', () => {
+        const cpp = 'https://en.wikipedia.org/wiki/C++';
+        const bare = schema.marks.link.create({ href: cpp, markup: 'linkify' });
+        assert.strictEqual(assertNoteSurvives([t('A '), sidenote([t('i')], [t(cpp, bare)]), t('.')], 'sidenote'),
+            'A ++i|[https://en.wikipedia.org/wiki/C\\+\\+](https://en.wikipedia.org/wiki/C%2B%2B)++.\n');
+        const plain = schema.marks.link.create({ href: 'https://example.com/a', markup: 'linkify' });
+        assert.strictEqual(written([t('See '), sidenote([t('it')], [t('https://example.com/a', plain)]), t(' end.')]),
+            'See ++it|https://example.com/a++ end.\n', 'one without it stays bare');
+    });
+
     test('a marginal note whose reference is a link keeps its !! (no \\! for an image)', () => {
         const link = schema.marks.link.create({ href: 'x.md' });
         assert.strictEqual(assertRoundTrip([t('see '), marginal([t('there', link)], [t('b')]), t(' '), t('next', link)]), 'see !![there](x.md)|b!! [next](x.md)\n');

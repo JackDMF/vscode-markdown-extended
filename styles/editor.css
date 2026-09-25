@@ -400,6 +400,21 @@
 
 .mep-bubble[hidden] { display: none; }
 
+/* Why an edit inside a note was refused, beside the caret for a moment. */
+.mep-hint {
+    position: absolute;
+    z-index: 20;
+    max-width: 36em;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: var(--vscode-editorHoverWidget-foreground, inherit);
+    background: var(--vscode-editorHoverWidget-background, #f3f3f3);
+    border: 1px solid var(--vscode-editorHoverWidget-border, #c8c8c8);
+    border-radius: 3px;
+    pointer-events: none;
+}
+.mep-hint[hidden] { display: none; }
+
 /* ------------------------------------------------------------------------- */
 /* Requirement heading: the id is shown, not edited                          */
 /* ------------------------------------------------------------------------- */

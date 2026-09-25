@@ -27,9 +27,11 @@
  *   of a part does nothing: parts are not joined.
  */
 import { Fragment, Mark, Node, ResolvedPos } from 'prosemirror-model';
-import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection } from 'prosemirror-state';
+import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { keymap } from 'prosemirror-keymap';
+import { PRESERVE_SOURCE_META } from '../fidelity';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
+import { RAW_TEXT_MARKS, unwritableInNote } from '../serialize';
 
 const nodes = editorSchema.nodes;
 
@@ -314,6 +316,38 @@ function typingAtNoteEdge(state: EditorState): boolean {
     return around.some(n => n !== null && NOTE_NODES.has(n.type.name));
 }
 
+/** How long the hint for a refused edit stays. */
+const HINT_MS = 3500;
+
+/** prosemirror-history's meta key; an undo restores a state that was allowed. */
+const HISTORY_META = 'history$';
+
+/**
+ * Why the transaction must not be applied: it leaves a note in the range it
+ * changed that the serializer cannot write back (`unwritableInNote`). A
+ * re-sync from the host and an undo are never refused; each puts back a
+ * document that was written or allowed.
+ */
+export function noteRefusal(tr: Transaction): string | null {
+    if (!tr.docChanged || tr.getMeta(PRESERVE_SOURCE_META) === true || tr.getMeta(HISTORY_META) !== undefined) {
+        return null;
+    }
+    let from = Infinity;
+    let to = -Infinity;
+    tr.steps.forEach((step, i) => {
+        const range = step as unknown as { from?: unknown; to?: unknown };
+        if (typeof range.from !== 'number' || typeof range.to !== 'number') {
+            from = 0;
+            to = tr.doc.content.size;
+            return;
+        }
+        const after = tr.mapping.slice(i);
+        from = Math.min(from, after.map(range.from, -1));
+        to = Math.max(to, after.map(range.to, 1));
+    });
+    return from > to ? null : unwritableInNote(tr.doc, from, to);
+}
+
 /**
  * The plugin that keeps the caret out of the places between a note's parts,
  * inserts typed text itself inside and next to a note (the DOM has no caret
@@ -322,7 +356,46 @@ function typingAtNoteEdge(state: EditorState): boolean {
  * part as text — a slice of paragraphs would split the note in two.
  */
 export function notesPlugin(): Plugin {
+    let hint: ((reason: string) => void) | null = null;
     return new Plugin({
+        // The one edit the serializer cannot write back is refused here,
+        // whatever made it — a key, the toolbar, a paste, typing into a code
+        // span — with the reason shown beside the caret (`noteRefusal`).
+        filterTransaction(tr) {
+            const reason = noteRefusal(tr);
+            if (reason !== null) {
+                hint?.(reason);
+                return false;
+            }
+            return true;
+        },
+        view(editorView) {
+            const el = document.createElement('div');
+            el.className = 'mep-hint';
+            el.setAttribute('role', 'status');
+            el.hidden = true;
+            editorView.dom.parentElement?.append(el);
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            hint = reason => {
+                const base = (el.offsetParent ?? document.body).getBoundingClientRect();
+                const at = editorView.coordsAtPos(editorView.state.selection.head);
+                el.textContent = reason;
+                el.hidden = false;
+                el.style.left = `${Math.max(0, at.left - base.left)}px`;
+                el.style.top = `${at.bottom - base.top + 4}px`;
+                clearTimeout(timer);
+                timer = setTimeout(() => {
+                    el.hidden = true;
+                }, HINT_MS);
+            };
+            return {
+                destroy() {
+                    clearTimeout(timer);
+                    hint = null;
+                    el.remove();
+                },
+            };
+        },
         appendTransaction(transactions, oldState, newState) {
             if (!transactions.some(tr => tr.selectionSet)) {
                 return null;
@@ -382,20 +455,35 @@ export type NoteNodeName = 'sidenote' | 'marginal_note' | 'left_sidebar' | 'righ
 export const NOTE_LOCK = 'Select text in a paragraph or heading, outside any note, to add this.';
 export const NESTED_NOTE_LOCK = 'A note cannot hold another note: the text is already in one.';
 
-/** The marks both ends of the selection share: they go on the note node, not inside it. */
-function sharedMarks(state: EditorState, from: number, to: number) {
+/**
+ * The marks a note may carry from around it. Not code, superscript or
+ * subscript: their text is written as it is, so a note inside one is written
+ * as its literal syntax and the next parse has no note (`^a ++b|c++ d^`). Not
+ * a link: the selection is the link's text, which stays linked inside the
+ * reference.
+ */
+function carriesOnNote(mark: Mark): boolean {
+    return !RAW_TEXT_MARKS.has(mark.type.name) && mark.type !== editorSchema.marks.link;
+}
+
+/** The marks both ends of the selection share that a note may carry: they go on the note node, not inside it. */
+function sharedMarks(state: EditorState, from: number, to: number): readonly Mark[] {
     const $from = state.doc.resolve(from);
     const $to = state.doc.resolve(to);
     if (from === to) {
-        return state.storedMarks ?? $from.marks();
+        return (state.storedMarks ?? $from.marks()).filter(carriesOnNote);
     }
     const first = $from.nodeAfter?.marks ?? [];
     const last = $to.nodeBefore?.marks ?? [];
-    return first.filter(m => m.isInSet(last) && m.type !== editorSchema.marks.code && m.type !== editorSchema.marks.link);
+    return first.filter(m => m.isInSet(last) && carriesOnNote(m));
 }
 
-/** Why a note cannot be made at the selection, or `null` when it can. */
-export function wrapNodeLockReason(state: EditorState): string | null {
+/**
+ * Why a note cannot be made at the selection, or `null` when it can. With
+ * `name`, also why that kind of note, made of this selection, could not be
+ * written back (`unwritableInNote`: selected inline code holding `|`, say).
+ */
+export function wrapNodeLockReason(state: EditorState, name?: NoteNodeName): string | null {
     const sel = state.selection;
     if (!(sel instanceof TextSelection)) {
         return NOTE_LOCK;
@@ -411,7 +499,11 @@ export function wrapNodeLockReason(state: EditorState): string | null {
     state.doc.nodesBetween(sel.from, sel.to, node => {
         crossesNote = crossesNote || NOTE_NODES.has(node.type.name);
     });
-    return crossesNote ? NESTED_NOTE_LOCK : null;
+    if (crossesNote) {
+        return NESTED_NOTE_LOCK;
+    }
+    const tr = name === undefined ? null : wrapTransaction(state, name);
+    return tr === null ? null : unwritableInNote(tr.doc, tr.selection.from, tr.selection.to);
 }
 
 /** Whether the selection is inside a note of this kind. */
@@ -432,51 +524,52 @@ export function inNoteOf(state: EditorState, name: NoteNodeName): boolean {
  */
 export function wrapInNote(name: NoteNodeName): Command {
     return (state, dispatch) => {
-        if (wrapNodeLockReason(state) !== null) {
+        if (wrapNodeLockReason(state, name) !== null) {
             return false;
         }
-        if (!dispatch) {
-            return true;
-        }
-        let { from, to } = state.selection;
-        if (from !== to) {
-            const selected = state.doc.textBetween(from, to, undefined, '￼');
-            const lead = selected.length - selected.trimStart().length;
-            const trail = selected.length - selected.trimEnd().length;
-            if (lead + trail < selected.length) {
-                from += lead;
-                to -= trail;
-            }
-        }
-        const marks = sharedMarks(state, from, to);
-        const inner = from === to ? Fragment.empty : stripMarks(state.doc.slice(from, to).content, marks);
-        const text = (s: string) => editorSchema.text(s);
-        let note: Node;
-        let select: (start: number) => { from: number; to: number };
-        if (name === 'sidenote' || name === 'marginal_note') {
-            const refContent = inner.size > 0 ? inner : Fragment.from(text(NOTE_REF_PLACEHOLDER));
-            const body = (name === 'sidenote' ? nodes.sidenote_body : nodes.marginal_note_body).create(null, text(NOTE_BODY_PLACEHOLDER));
-            note = nodes[name].create(null, [nodes.note_ref.create(null, refContent), body], marks);
-            select = start => {
-                if (inner.size === 0) {
-                    return { from: start + 2, to: start + 2 + refContent.size };
-                }
-                const bodyFrom = start + 1 + note.child(0).nodeSize + 1;
-                return { from: bodyFrom, to: bodyFrom + NOTE_BODY_PLACEHOLDER.length };
-            };
-        } else {
-            const content = inner.size > 0 ? inner : Fragment.from(text(SIDEBAR_PLACEHOLDER));
-            note = nodes[name].create(null, content, marks);
-            select = start => (inner.size === 0
-                ? { from: start + 1, to: start + 1 + content.size }
-                : { from: start + 1 + content.size, to: start + 1 + content.size });
-        }
-        const tr = state.tr.replaceWith(from, to, note);
-        const range = select(from);
-        tr.setSelection(TextSelection.create(tr.doc, range.from, range.to));
-        dispatch(tr.scrollIntoView());
+        dispatch?.(wrapTransaction(state, name).scrollIntoView());
         return true;
     };
+}
+
+/** The transaction `wrapInNote` dispatches, for a selection `wrapNodeLockReason` allows. */
+function wrapTransaction(state: EditorState, name: NoteNodeName): Transaction {
+    let { from, to } = state.selection;
+    if (from !== to) {
+        const selected = state.doc.textBetween(from, to, undefined, '￼');
+        const lead = selected.length - selected.trimStart().length;
+        const trail = selected.length - selected.trimEnd().length;
+        if (lead + trail < selected.length) {
+            from += lead;
+            to -= trail;
+        }
+    }
+    const marks = sharedMarks(state, from, to);
+    const inner = from === to ? Fragment.empty : stripMarks(state.doc.slice(from, to).content, marks);
+    const text = (s: string) => editorSchema.text(s);
+    let note: Node;
+    let select: (start: number) => { from: number; to: number };
+    if (name === 'sidenote' || name === 'marginal_note') {
+        const refContent = inner.size > 0 ? inner : Fragment.from(text(NOTE_REF_PLACEHOLDER));
+        const body = (name === 'sidenote' ? nodes.sidenote_body : nodes.marginal_note_body).create(null, text(NOTE_BODY_PLACEHOLDER));
+        note = nodes[name].create(null, [nodes.note_ref.create(null, refContent), body], marks);
+        select = start => {
+            if (inner.size === 0) {
+                return { from: start + 2, to: start + 2 + refContent.size };
+            }
+            const bodyFrom = start + 1 + note.child(0).nodeSize + 1;
+            return { from: bodyFrom, to: bodyFrom + NOTE_BODY_PLACEHOLDER.length };
+        };
+    } else {
+        const content = inner.size > 0 ? inner : Fragment.from(text(SIDEBAR_PLACEHOLDER));
+        note = nodes[name].create(null, content, marks);
+        select = start => (inner.size === 0
+            ? { from: start + 1, to: start + 1 + content.size }
+            : { from: start + 1 + content.size, to: start + 1 + content.size });
+    }
+    const tr = state.tr.replaceWith(from, to, note);
+    const range = select(from);
+    return tr.setSelection(TextSelection.create(tr.doc, range.from, range.to));
 }
 
 /** The content with `marks` taken off every node, since the note carries them. */

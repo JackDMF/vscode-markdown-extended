@@ -35,7 +35,7 @@ import {
 } from './actions';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertSourceTransaction, isCurrent,
-    markActive, toggleMarkup, wrapSourceTransaction,
+    markActive, markRefusal, toggleMarkup, wrapSourceTransaction,
 } from './commands';
 
 /** What the toolbar needs from the page. */
@@ -99,10 +99,11 @@ function evaluate(action: ToolbarAction, state: EditorState): ActionState {
     switch (apply.kind) {
         case 'mark': {
             const type = editorSchema.marks[apply.mark];
-            return { enabled: toggleMarkup(type, apply.markup)(state), active: markActive(state, type, apply.markup), reason: null };
+            const reason = markRefusal(state, type, apply.markup);
+            return { enabled: reason === null && toggleMarkup(type, apply.markup)(state), active: markActive(state, type, apply.markup), reason };
         }
         case 'wrap-node': {
-            const reason = wrapNodeLockReason(state);
+            const reason = wrapNodeLockReason(state, apply.node);
             return { enabled: reason === null, active: inNoteOf(state, apply.node), reason };
         }
         case 'block': {

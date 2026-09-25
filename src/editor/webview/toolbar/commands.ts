@@ -9,7 +9,7 @@ import { GapCursor } from 'prosemirror-gapcursor';
 import { AllSelection, Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { PRESERVE_SOURCE_META } from '../../fidelity';
 import { editorSchema } from '../../schema';
-import { serializeNode } from '../../serialize';
+import { RAW_TEXT_MARKS, serializeNode, unwritableInNote } from '../../serialize';
 import { ActionApply, BlockTarget, FOOTNOTE_LABEL } from './actions';
 
 const nodes = editorSchema.nodes;
@@ -49,31 +49,53 @@ export function markActive(state: EditorState, type: MarkType, markup: string | 
  * type excludes itself, so adding replaces the same type with another
  * delimiter rather than nesting a second one inside it.
  */
+function markTransaction(state: EditorState, type: MarkType, markup: string | null, removes: (state: EditorState) => boolean): Transaction | null {
+    if (!toggleMark(type)(state)) {
+        return null;
+    }
+    const active = removes(state);
+    const mark = markup === null ? type.create() : type.create({ markup });
+    const tr = state.tr;
+    if (state.selection.empty) {
+        return active ? tr.removeStoredMark(type) : tr.addStoredMark(mark);
+    }
+    for (const range of state.selection.ranges) {
+        if (active) {
+            tr.removeMark(range.$from.pos, range.$to.pos, type);
+        } else {
+            tr.addMark(range.$from.pos, range.$to.pos, mark);
+        }
+    }
+    return tr.scrollIntoView();
+}
+
+/**
+ * Why toggling `type` here would make a note the serializer cannot write back
+ * (`unwritableInNote`), or `null`. Only code, superscript and subscript can:
+ * their text is written as it is, so over a note (`^a ++b|c++ d^`) or over a
+ * note part's terminator the next parse would read another document.
+ */
+function markRefusalOf(state: EditorState, type: MarkType, tr: Transaction | null): string | null {
+    if (!RAW_TEXT_MARKS.has(type.name) || tr === null || !tr.docChanged) {
+        return null;
+    }
+    return unwritableInNote(tr.doc, state.selection.from, state.selection.to);
+}
+
 function toggleMarkWith(type: MarkType, markup: string | null, removes: (state: EditorState) => boolean): Command {
     return (state, dispatch) => {
-        if (!toggleMark(type)(state)) {
+        const tr = markTransaction(state, type, markup, removes);
+        if (tr === null || markRefusalOf(state, type, tr) !== null) {
             return false;
         }
-        if (!dispatch) {
-            return true;
-        }
-        const active = removes(state);
-        const mark = markup === null ? type.create() : type.create({ markup });
-        const tr = state.tr;
-        if (state.selection.empty) {
-            dispatch(active ? tr.removeStoredMark(type) : tr.addStoredMark(mark));
-            return true;
-        }
-        for (const range of state.selection.ranges) {
-            if (active) {
-                tr.removeMark(range.$from.pos, range.$to.pos, type);
-            } else {
-                tr.addMark(range.$from.pos, range.$to.pos, mark);
-            }
-        }
-        dispatch(tr.scrollIntoView());
+        dispatch?.(tr);
         return true;
     };
+}
+
+/** Why a toolbar button's mark cannot be toggled here, for its tooltip; `null` when nothing refuses it. */
+export function markRefusal(state: EditorState, type: MarkType, markup: string | null): string | null {
+    return markRefusalOf(state, type, markTransaction(state, type, markup, s => markActive(s, type, markup)));
 }
 
 /**

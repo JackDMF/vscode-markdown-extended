@@ -389,6 +389,23 @@ URL), which the part's own inline parse turns back; `ESCAPE_EXTRA` already break
 into `\+\+`, and a marker character that would touch a marker — last in a body, first
 in a reference, last before the note — is `&#43;` or `&#33;`, since a backslash does not
 stop a raw search. A reference with no text, which the plugin refuses, is `&nbsp;`.
+A link's destination and title take no backslash escape either: there a run of the
+marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
+angle link holding the marker character is written inline.
+
+**What cannot be written is not made.** A code span has no escape at all, and `^sup^`
+and `~sub~` decode backslashes but no character references, so inside a note some text
+has no representation: code holding the note's marker pair, code, sup or sub holding the
+part's terminator, and a note node carrying one of those marks (a paste can make one; a
+toggle cannot — `AddMarkStep` marks text and atoms, never an inline node with content,
+so sup over a note marks the reference's and the body's text, which is written inside
+the note and reads back). `unwritableInNote` in `serialize.ts` states the rule beside the
+escaping it follows from. The page refuses any transaction that would leave such a note
+in the range it changed (`noteRefusal`, a `filterTransaction` in `webview/notes.ts`) and
+says why beside the caret; the toolbar's Code, Superscript and Subscript buttons, and a
+note action whose result would break the rule, are disabled with that reason. A re-sync
+and an undo are never refused. Refusing is the least bad answer: saving would write a
+document the next parse restructures, silently.
 
 **Wrapping.** The plugin reads a note across line breaks (the corpus wraps inside
 them), so a note is wrapped like the prose around it. `^sup^`, `~sub~` and `[[kbd]]`

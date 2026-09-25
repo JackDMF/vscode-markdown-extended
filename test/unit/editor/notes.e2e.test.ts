@@ -166,6 +166,38 @@ suite('Editor notes and links (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'End with a note ++ref|bodyX++Y\n');
     });
 
+    test('a | typed into inline code in a reference is refused, the hint says why, and the Code button over it is disabled', async function () {
+        this.timeout(15000);
+        await showDocument('Alpha ++the `ab` ref|body++ gamma.\n', 'Alpha');
+        const before = (await (editor as EditorPage).edits()).length;
+        await clickBefore('ab', 1);
+        await page.keyboard.type('|');
+        await page.waitForSelector('.mep-hint:not([hidden])', { timeout: 2000 });
+        assert.ok((await page.$eval('.mep-hint', el => el.textContent ?? '')).includes('"|"'));
+        await page.keyboard.type('x');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Alpha ++the `axb` ref|body++ gamma.\n', 'the | was not typed; the x was');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before + 1);
+
+        await showDocument('Mail @ write user&#64;host now @ end.\n', 'Mail');
+        await page.focus('.ProseMirror');
+        await page.evaluate(() => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const at = (node.textContent ?? '').indexOf('user@host');
+                if (at >= 0) {
+                    (document.getSelection() as Selection).setBaseAndExtent(node, at, node, at + 'user@host'.length);
+                    return;
+                }
+            }
+        });
+        await delay(150);
+        const button = await page.$eval('.mep-toolbar [data-action="code"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        assert.strictEqual(button.disabled, 'true');
+        assert.ok(button.title.includes('"@"'), button.title);
+    });
+
     test('Backspace through an emptied reference removes the whole note', async function () {
         this.timeout(15000);
         await showDocument('Keep ++ab|body++ this.\n', 'Keep');

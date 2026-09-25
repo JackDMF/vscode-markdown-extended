@@ -2,7 +2,7 @@
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
-import { SOURCE_NODES, editorSchema } from './schema';
+import { NOTE_NODES, SOURCE_NODES, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
 
 /**
@@ -34,6 +34,22 @@ interface StateInternals {
     linkForm?: LinkForm;
     /** Which part of a note is being written, when one is; this module's own field (see `writeNote`). */
     notePart?: NotePart;
+    /** The marker character of the note being written (`+`, `!`), when one is; this module's own field. */
+    noteMarker?: string;
+}
+
+/**
+ * `text` with every marker character that stands in a run of two or more
+ * replaced — each run would be the note's closing marker to the plugin's raw
+ * search, escaped or not. A single one pairs with nothing: a destination ends
+ * at `)`, a title at `"`.
+ */
+function breakMarkerRuns(text: string, ch: string | undefined, replace: (ch: string) => string): string {
+    if (ch === undefined) {
+        return text;
+    }
+    const run = new RegExp(`\\${ch}{2,}`, 'g');
+    return text.replace(run, found => Array.from(found, replace).join(''));
 }
 
 /**
@@ -42,8 +58,13 @@ interface StateInternals {
  * backslash escape is read: a reference ends at the first `|`, a left
  * sidebar at the next `$`, a right one at the next `@`. Those characters are
  * written as numeric character references there, which the inline parser of
- * the part turns back into the character. A note's body ends at its marker
- * pair, which the escape of `ESCAPE_EXTRA` already breaks up (`\+\+`).
+ * the part turns back into the character. A note ends at its marker pair,
+ * which the escape of `ESCAPE_EXTRA` breaks up in text (`\+\+`); in a link's
+ * destination and title, which take no backslash escape, a run of the marker
+ * character is percent-encoded or a character reference (`breakMarkerRuns`),
+ * and a bare or angle link holding it is written inline. Text under the
+ * raw marks — code, and the terminator under sup and sub — has no escape at
+ * all; the editor refuses to make it (`unwritableInNote`).
  */
 type NotePart = 'ref' | 'body' | 'left' | 'right';
 
@@ -130,7 +151,7 @@ function emphasisDelimiter(mark: Mark, parent: Node, index: number, opening: boo
 }
 
 /** The destination as markdown-it read it, with non-ASCII percent escapes (which it added) decoded back to what the author wrote. */
-function destination(href: string, part?: NotePart): string {
+function destination(href: string, part?: NotePart, noteMarker?: string): string {
     const decoded = href.replace(/(?:%[89A-Fa-f][0-9A-Fa-f])+/g, seq => {
         try {
             return decodeURIComponent(seq);
@@ -143,9 +164,17 @@ function destination(href: string, part?: NotePart): string {
     const written = decoded
         .replace(/[\x00-\x20\x7f]/g, percent)
         .replace(/[()]/g, '\\$&');
-    // Inside a note part its terminator is percent-encoded: a URL takes no character reference.
+    // Inside a note part its terminator, and a run of the note's marker
+    // character (`C++`), are percent-encoded: a URL takes no character reference.
     const terminator = part === undefined ? null : PART_TERMINATORS[part];
-    return terminator === null ? written : written.split(terminator.raw).join(percent(terminator.raw));
+    const safe = terminator === null ? written : written.split(terminator.raw).join(percent(terminator.raw));
+    return breakMarkerRuns(safe, noteMarker, percent);
+}
+
+/** A link's or image's `(destination "title")` content, as a note part can hold it. */
+function target(st: StateInternals, href: string, title: string | null): string {
+    const titled = breakMarkerRuns(partText(st.notePart, titlePart(title)), st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
+    return destination(href, st.notePart, st.noteMarker) + titled;
 }
 
 function percent(ch: string): string {
@@ -174,9 +203,11 @@ function titlePart(title: string | null): string {
 function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, index: number): LinkForm {
     const node = parent.child(index);
     const markup = mark.attrs.markup as string | null;
-    const part = internals(state).notePart;
-    // Bare and angle forms are written unescaped, which a note part cannot take.
-    if (markup === null || !node.isText || mark.attrs.title || (part !== undefined && PART_TERMINATORS[part] !== null)) {
+    const { notePart: part, noteMarker } = internals(state);
+    // Bare and angle forms are written unescaped, which a note part cannot
+    // take when the URL holds its terminator or the note's marker character.
+    if (markup === null || !node.isText || mark.attrs.title || (part !== undefined && PART_TERMINATORS[part] !== null)
+        || (noteMarker !== undefined && ((node.text ?? '') + (mark.attrs.href as string)).includes(noteMarker))) {
         return 'inline';
     }
     if (node.marks[node.marks.length - 1] !== mark) {
@@ -255,8 +286,7 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
             if (form === 'angle') {
                 return '>' + HOLD_CLOSE;
             }
-            const target = destination(mark.attrs.href as string, st.notePart) + partText(st.notePart, titlePart(mark.attrs.title as string | null));
-            return '](' + target + ')' + HOLD_CLOSE;
+            return '](' + target(st, mark.attrs.href as string, mark.attrs.title as string | null) + ')' + HOLD_CLOSE;
         },
         mixable: true,
     },
@@ -297,9 +327,8 @@ const inlineNodes: NodeSerializers = {
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
-        const part = internals(state).notePart;
-        const target = destination(src, part) + partText(part, titlePart(title));
-        state.write(HOLD_OPEN + '![' + partText(part, state.esc(alt ?? '')) + '](' + target + ')' + HOLD_CLOSE);
+        const st = internals(state);
+        state.write(HOLD_OPEN + '![' + partText(st.notePart, state.esc(alt ?? '')) + '](' + target(st, src, title) + ')' + HOLD_CLOSE);
     },
     hard_break(state, node, parent, index) {
         // As prosemirror-markdown does: a trailing hard break has no line to break to.
@@ -345,6 +374,79 @@ const MARKER_REFERENCES: Readonly<Record<string, string>> = { '+': '&#43;', '!':
  * and the wrapper strips it with the other hold markers.
  */
 const MARKER_GUARD = HOLD_OPEN + HOLD_CLOSE;
+
+/**
+ * The marks whose text is written as it is: a code span unescaped, `^sup^` and
+ * `~sub~` as plain text their plugins read with backslash escapes only (no
+ * character references).
+ */
+export const RAW_TEXT_MARKS: ReadonlySet<string> = new Set(['code', 'sup', 'sub']);
+
+/** The terminator each note part must not hold raw (`PART_TERMINATORS`), by the node holding the part's text. */
+const TERMINATOR_OF_PART: Readonly<Record<string, string>> = {
+    note_ref: PART_TERMINATORS.ref?.raw ?? '|',
+    left_sidebar: PART_TERMINATORS.left?.raw ?? '$',
+    right_sidebar: PART_TERMINATORS.right?.raw ?? '@',
+};
+
+/** Why `note` cannot be written so that it reads back as itself, or `null`. */
+function noteUnwritable(note: Node): string | null {
+    if (note.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
+        return 'Superscript, subscript and inline code cannot hold a note: their text is written as it is, and the note would not survive a save.';
+    }
+    const name = note.type.name;
+    const marker = name === 'sidenote' ? NOTE_SYNTAX.sidenote.marker : name === 'marginal_note' ? NOTE_SYNTAX.marginalNote.marker : null;
+    const parts: Node[] = [];
+    note.forEach(child => {
+        parts.push(child);
+    });
+    for (const part of marker === null ? [note] : parts) {
+        const terminator = TERMINATOR_OF_PART[part.type.name] ?? null;
+        let reason: string | null = null;
+        part.forEach(child => {
+            if (reason !== null || !child.isText) {
+                return;
+            }
+            const text = child.text ?? '';
+            const code = child.marks.some(m => m.type.name === 'code');
+            const raw = code || child.marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
+            if (raw && terminator !== null && text.includes(terminator)) {
+                reason = `Inline code, superscript and subscript in this part of a note cannot hold "${terminator}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
+            } else if (code && marker !== null && text.includes(marker)) {
+                reason = `Inline code in a note cannot hold "${marker}": the notes plugin reads it as the note's end, and nothing escapes it there.`;
+            }
+        });
+        if (reason !== null) {
+            return reason;
+        }
+    }
+    return null;
+}
+
+/**
+ * Why a note or sidebar between `from` and `to` cannot be written so that it
+ * reads back as itself, or `null` — the one thing the serializer cannot do,
+ * so the editor refuses the edit that would make it (`webview/notes.ts`)
+ * rather than save a document the next parse restructures: a raw mark over a
+ * note, or text under a raw mark that holds the part's terminator or the
+ * note's marker pair.
+ */
+export function unwritableInNote(doc: Node, from = 0, to = doc.content.size): string | null {
+    let reason: string | null = null;
+    const start = Math.max(0, Math.min(from, to));
+    const end = Math.min(doc.content.size, Math.max(from, to));
+    doc.nodesBetween(start, end, node => {
+        if (reason !== null) {
+            return false;
+        }
+        if (NOTE_NODES.has(node.type.name)) {
+            reason = noteUnwritable(node);
+            return false;
+        }
+        return true;
+    });
+    return reason;
+}
 
 /** A part's inline content, written by the same rules as a paragraph's, with the part's own terminator (`PART_TERMINATORS`). */
 function renderPart(state: MarkdownSerializerState, parent: Node, part: NotePart): void {
@@ -397,16 +499,22 @@ function writeNote(state: MarkdownSerializerState, node: Node, marker: string): 
     referenceMarkerAt(st, st.out.length - 1, ch, 0);
     state.text(marker + MARKER_GUARD, false);
     const refStart = st.out.length;
-    if (writableReference(node.child(0))) {
-        renderPart(state, node.child(0), 'ref');
-    } else {
-        state.text('&nbsp;', false);
+    const outerMarker = st.noteMarker;
+    st.noteMarker = ch;
+    try {
+        if (writableReference(node.child(0))) {
+            renderPart(state, node.child(0), 'ref');
+        } else {
+            state.text('&nbsp;', false);
+        }
+        referenceMarkerAt(st, refStart, ch, refStart);
+        state.text(NOTE_SEPARATOR, false);
+        const bodyStart = st.out.length;
+        renderPart(state, node.child(1), 'body');
+        referenceMarkerAt(st, st.out.length - 1, ch, bodyStart);
+    } finally {
+        st.noteMarker = outerMarker;
     }
-    referenceMarkerAt(st, refStart, ch, refStart);
-    state.text(NOTE_SEPARATOR, false);
-    const bodyStart = st.out.length;
-    renderPart(state, node.child(1), 'body');
-    referenceMarkerAt(st, st.out.length - 1, ch, bodyStart);
     state.text(marker + MARKER_GUARD, false);
 }
 

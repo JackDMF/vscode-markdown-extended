@@ -2,11 +2,14 @@ import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
+import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
+import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import {
-    NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, leaveNote, nextNotePart, noteContextAt, previousNotePart,
+    NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, leaveNote, nextNotePart, noteContextAt, noteRefusal, previousNotePart,
     wrapInNote, wrapNodeLockReason,
 } from '../../../src/editor/webview/notes';
+import { markRefusal, toggleMarkup } from '../../../src/editor/webview/toolbar/commands';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine } from './helpers';
 
@@ -58,9 +61,9 @@ function run(state: EditorState, command: Command): EditorState {
 }
 
 /** Press a key through the page's keymaps, as ProseMirror would. */
-function press(state: EditorState, key: string, shift = false): EditorState {
+function press(state: EditorState, key: string, shift = false, ctrl = false): EditorState {
     let next = state;
-    const event = { key, shiftKey: shift, ctrlKey: false, metaKey: false, altKey: false, keyCode: 0, type: 'keydown', preventDefault() { /* */ } };
+    const event = { key, shiftKey: shift, ctrlKey: ctrl, metaKey: false, altKey: false, keyCode: 0, type: 'keydown', preventDefault() { /* */ } };
     const view = {
         state,
         dispatch: (tr: Transaction) => {
@@ -68,7 +71,7 @@ function press(state: EditorState, key: string, shift = false): EditorState {
         },
     };
     const handled = state.plugins.some(plugin => plugin.props.handleKeyDown?.call(plugin, view as never, event as unknown as KeyboardEvent));
-    assert.ok(handled, `${shift ? 'Shift+' : ''}${key} is handled`);
+    assert.ok(handled, `${ctrl ? 'Ctrl+' : ''}${shift ? 'Shift+' : ''}${key} is handled`);
     return next;
 }
 
@@ -196,5 +199,116 @@ suite('Editor notes: the keys inside one', () => {
         assert.strictEqual(base.doc.resolve(between).parent.type.name, 'sidenote');
         const state = base.apply(base.tr.setSelection(TextSelection.create(base.doc, between)));
         assert.notStrictEqual(noteContextAt(state.selection.$from), null);
+    });
+});
+
+/** The kinds of note node in the document's text, as the next parse reads it. */
+function notesAfterSave(state: EditorState): string[] {
+    const found: string[] = [];
+    parseDocument(hostEngine(), text(state), {}).doc.descendants(node => {
+        if (['sidenote', 'marginal_note', 'left_sidebar', 'right_sidebar'].includes(node.type.name)) {
+            found.push(node.type.name);
+        }
+    });
+    return found;
+}
+
+suite('Editor notes: what the serializer cannot write back is not made', () => {
+    const sup = editorSchema.marks.sup;
+    const sub = editorSchema.marks.sub;
+    const code = editorSchema.marks.code;
+
+    test('a note made inside ^sup^, ~sub~ or `code` does not carry that mark, so it survives a save', () => {
+        let state = run(select(stateOf('A ^a raised run^ b.\n'), 'raised'), wrapInNote('sidenote'));
+        assert.deepStrictEqual(notesAfterSave(state), ['sidenote'], text(state));
+        state.doc.descendants(node => {
+            if (node.type.name === 'sidenote') {
+                assert.deepStrictEqual(node.marks.map(m => m.type.name), []);
+            }
+        });
+        const coded = stateOf('A `code span` b.\n');
+        state = run(caretAt(coded, posOf(coded.doc, 'span')), wrapInNote('sidenote'));
+        assert.deepStrictEqual(notesAfterSave(state), ['sidenote'], text(state));
+        const low = stateOf('A ~low text~ b.\n');
+        state = run(caretAt(low, posOf(low.doc, 'text')), wrapInNote('marginal_note'));
+        assert.deepStrictEqual(notesAfterSave(state), ['marginal_note'], text(state));
+    });
+
+    test('superscript, subscript and code toggled over a note mark its text, never the note, and the note survives a save', () => {
+        // prosemirror-transform's AddMarkStep marks inline atoms and text, not
+        // an inline node with content: the note is left bare, its reference
+        // and body take the mark as text, and each is written inside the note.
+        const base = stateOf('Alpha ++beta|body++ gamma.\n');
+        const across = base.apply(base.tr.setSelection(TextSelection.create(base.doc, posOf(base.doc, 'Alpha'), posOf(base.doc, 'gamma') + 5)));
+        const written: Record<string, string> = { sup: '^Alpha ^++^beta^|^body^++^ gamma^.\n', sub: '~Alpha ~++~beta~|~body~++~ gamma~.\n', code: '`Alpha `++`beta`|`body`++` gamma`.\n' };
+        for (const type of [sup, sub, code]) {
+            assert.strictEqual(markRefusal(across, type, null), null, type.name);
+            const marked = run(across, toggleMarkup(type, null));
+            marked.doc.descendants(node => {
+                if (node.type.name === 'sidenote') {
+                    assert.deepStrictEqual(node.marks, [], `${type.name}: the note node carries no mark`);
+                }
+            });
+            assert.strictEqual(text(marked), written[type.name]);
+            assert.deepStrictEqual(notesAfterSave(marked), ['sidenote'], text(marked));
+            const reread = parseDocument(hostEngine(), text(marked), {}).doc;
+            assert.strictEqual(serializeDocument({ doc: reread.type.create(null, [reread.child(0).type.create({ ...reread.child(0).attrs, src: null }, reread.child(0).content)]), eol: '\n', tail: '' }, { defaultWrap: 90 }),
+                text(marked), `${type.name}: written the same again`);
+        }
+    });
+
+    test('a note node carrying superscript, subscript or code — a paste can make one — is refused with the reason', () => {
+        const base = stateOf('Alpha ++beta|body++ gamma.\n');
+        let notePos = -1;
+        base.doc.descendants((node, pos) => {
+            if (node.type.name === 'sidenote') {
+                notePos = pos;
+            }
+        });
+        const note = base.doc.nodeAt(notePos) as Node;
+        for (const type of [sup, sub, code]) {
+            const tr = base.tr.replaceWith(notePos, notePos + note.nodeSize, note.mark([type.create()]));
+            assert.ok(noteRefusal(tr)?.includes('cannot hold a note'), type.name);
+            assert.strictEqual(base.apply(tr).doc, base.doc, `${type.name}: the edit is not applied`);
+        }
+        const bold = base.tr.replaceWith(notePos, notePos + note.nodeSize, note.mark([editorSchema.marks.strong.create()]));
+        assert.strictEqual(noteRefusal(bold), null, 'bold can hold a note');
+    });
+
+    test('inside a note part, code is fine where it holds no terminator', () => {
+        const coded = run(select(stateOf('Alpha ++beta ref|the body++ gamma.\n'), 'body'), toggleMarkup(code, null));
+        assert.strictEqual(text(coded), 'Alpha ++beta ref|the `body`++ gamma.\n');
+        assert.deepStrictEqual(notesAfterSave(coded), ['sidenote']);
+    });
+
+    test('code holding the part\'s terminator or the marker pair is refused, whether typed, toggled or made', () => {
+        // Typing | into a code span in a reference.
+        const ref = stateOf('Alpha ++the `ab` ref|body++ gamma.\n');
+        const inCode = caretAt(ref, posOf(ref.doc, 'ab') + 1);
+        assert.strictEqual(inCode.apply(inCode.tr.insertText('|')).doc, inCode.doc, '| in code in a reference');
+        assert.ok(noteRefusal(inCode.tr.insertText('|'))?.includes('"|"'));
+        assert.notStrictEqual(inCode.apply(inCode.tr.insertText('x')).doc, inCode.doc, 'other characters type');
+        // ++ in a code span in a body: the first + is fine, the second would close the note.
+        const bodyDoc = stateOf('Alpha ++ref|see `i` here++ gamma.\n');
+        let body = caretAt(bodyDoc, posOf(bodyDoc.doc, 'i') + 1);
+        body = body.apply(body.tr.insertText('+'));
+        assert.strictEqual(text(body), 'Alpha ++ref|see `i+` here++ gamma.\n');
+        assert.strictEqual(body.apply(body.tr.insertText('+')).doc, body.doc, '++ in code in a body');
+        // Code or superscript over text in a right sidebar holding its @.
+        const sidebar = select(stateOf('Mail @ write user&#64;host now @ end.\n'), 'user@host');
+        assert.strictEqual(toggleMarkup(code, null)(sidebar), false);
+        assert.ok(markRefusal(sidebar, code, null)?.includes('"@"'));
+        assert.ok(markRefusal(sidebar, sup, null)?.includes('"@"'), 'superscript cannot hold it either');
+        // A note made of a code span that holds |: its reference would.
+        const made = select(stateOf('A `a|b` c.\n'), 'a|b');
+        assert.ok(wrapNodeLockReason(made, 'sidenote')?.includes('"|"'));
+        assert.strictEqual(wrapInNote('sidenote')(made), false);
+        assert.strictEqual(wrapNodeLockReason(made, 'right_sidebar'), null, 'a sidebar may hold | in code');
+    });
+
+    test('the host\'s re-sync is never refused', () => {
+        const state = stateOf('Alpha ++the `ab` ref|body++ gamma.\n');
+        const tr = state.tr.insertText('|', posOf(state.doc, 'ab') + 1).setMeta(PRESERVE_SOURCE_META, true);
+        assert.strictEqual(noteRefusal(tr), null);
     });
 });

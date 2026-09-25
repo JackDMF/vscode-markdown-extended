@@ -24,12 +24,16 @@
 - **A checkbox in a rendered block no longer toggles on a click**, which changed nothing in the file.
 - **A paragraph with a link on a line of its own was re-wrapped at the link's width.** A hand-wrapped paragraph whose longest line was one link (105 characters, in Req Explorer's release notes) came back from one changed word wrapped at 105 throughout: the wrapper could break inside the link's text, so that line counted as evidence of the width. A link is now one unbreakable run, for the wrapper and for the width it reads, so the width is the widest line that could have been broken (91 there), the link keeps a line of its own, and the lines after it are written as they were.
 - **A plain click on a link in the editor followed it**, VS Code's webview resolving the href against the page rather than the document; see Ctrl+click above.
+- **A link in a note whose address holds the note's marker closed the note inside the URL.** `[C++](https://en.wikipedia.org/wiki/C++)` in a sidenote was written with the raw `++`, which the notes plugin read as the note's end. A run of the marker character is now percent-encoded in a destination and a character reference in a title, and a bare link holding it is written as `[…](…)`.
+- **A note made inside superscript, subscript or inline code disappeared on save**: it took the surrounding mark, whose text is written as it is. It no longer does.
+- **A Ctrl+click on a malformed link (`http:////x`) was an unhandled error** instead of a warning in the log.
 
 ### ⚠️ Limits
 
 - Experimental: try it on files under version control.
 - Tables are edited as source, not cell by cell.
 - A note holds no note: the notes plugin allows one of another kind inside a note (`++a|see !!b|c!!++`), and such a paragraph stays a source block.
+- Inline code in a note cannot hold the note's `++` or `!!`, and inline code, superscript or subscript cannot hold a reference's `|` or a sidebar's `$` or `@`: the notes plugin finds those before anything else is read, and nothing escapes them there. The editor refuses such an edit and says why beside the caret; the Code, Superscript and Subscript buttons are disabled with the reason.
 - With VS Code's built-in math on (`markdown.math.enabled`, the default), `$…$` is a formula in the preview and so in the editor, never a left sidebar.
 - Relative image paths are not resolved in the editor yet; images show as broken there, the file is unaffected.
 - Desktop only — the page inlines contributed stylesheets read from disk. In vscode.dev the command is hidden, but **Open With…** still lists the editor.
