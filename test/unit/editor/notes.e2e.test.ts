@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
+import { WebviewMessage } from '../../../src/editor/protocol';
 import { hostEngine } from './helpers';
 import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
 
@@ -12,17 +13,21 @@ const NARROW = 1000;
 /** Wider than it: the notes float into the margin, as in a wide preview. */
 const WIDE = 1400;
 
+type OpenLink = Extract<WebviewMessage, { type: 'openLink' }>;
+
 /**
- * Notes and sidebars in the real page, with the real mouse and keyboard
+ * Notes, sidebars and links in the real page, with the real mouse and keyboard
  * and this extension's note stylesheet loaded, as the preview's cascade would
  * load it. Each test posts its own document as the host.
  */
-suite('Editor notes (e2e)', () => {
+suite('Editor notes and links (e2e)', () => {
     let editor: EditorPage | undefined;
     let page: puppeteer.Page;
     let version = 0;
 
     const lastEdit = async (): Promise<EditMessage | undefined> => (await (editor as EditorPage).edits()).pop();
+    const openLinks = async (): Promise<OpenLink[]> =>
+        (await (editor as EditorPage).posted()).filter((m): m is OpenLink => m.type === 'openLink');
 
     /** Post `text` parsed by the host's engine — or by this extension's alone, where VS Code's math would claim `$…$`. */
     const showDocument = async (text: string, marker: string, extensionOnly = false) => {
@@ -74,6 +79,18 @@ suite('Editor notes (e2e)', () => {
         await delay(150);
     };
 
+    /** Count clicks on links that reach the window, where VS Code's webview follows them. */
+    const watchWindowClicks = () => page.evaluate(() => {
+        const w = window as unknown as { linkClicks: number };
+        w.linkClicks = 0;
+        window.addEventListener('click', e => {
+            if ((e.target as Element).closest?.('a[href]')) {
+                w.linkClicks++;
+            }
+        });
+    });
+    const windowClicks = () => page.evaluate(() => (window as unknown as { linkClicks: number }).linkClicks);
+
     suiteSetup(async function () {
         this.timeout(60000);
         editor = await openEditorPage({ width: NARROW, styles: ['markdown-extended.css'] });
@@ -81,6 +98,7 @@ suite('Editor notes (e2e)', () => {
             this.skip();
         }
         page = editor.page;
+        await watchWindowClicks();
     });
 
     suiteTeardown(async () => {
@@ -201,5 +219,68 @@ suite('Editor notes (e2e)', () => {
         } finally {
             await page.setViewport({ width: NARROW, height: 900 });
         }
+    });
+
+    test('in a rendered table a plain click on a link selects the block; Ctrl+click posts openLink; VS Code\'s listener sees neither', async function () {
+        this.timeout(15000);
+        const source = 'Before.\n\n| Doc | b |\n| - | - |\n| [the spec](spec.md#part) | 2 |\n';
+        await showDocument(source, 'Before');
+        await page.waitForSelector('.mep-raw-block table a');
+        const clicksBefore = await windowClicks();
+        const linksBefore = (await openLinks()).length;
+        const editsBefore = (await (editor as EditorPage).edits()).length;
+
+        await page.click('.mep-raw-block table a');
+        await delay(150);
+        assert.ok(await page.$('.mep-raw-block.ProseMirror-selectednode'), 'the block is selected');
+        assert.strictEqual((await openLinks()).length, linksBefore, 'a plain click follows nothing');
+
+        await page.keyboard.down('Control');
+        await page.click('.mep-raw-block table a');
+        await page.keyboard.up('Control');
+        await delay(100);
+        const posted = await openLinks();
+        assert.deepStrictEqual(posted.slice(linksBefore), [{ type: 'openLink', href: 'spec.md#part' }], 'as written, for the host to resolve');
+        assert.strictEqual(await windowClicks(), clicksBefore, 'no click reached the window, where VS Code would resolve the href against the page');
+        await settle();
+        assert.strictEqual((await (editor as EditorPage).edits()).length, editsBefore, 'nothing was edited');
+    });
+
+    test('in rich text a plain click on a link places the caret; Ctrl+click posts openLink; hovering names the target', async function () {
+        this.timeout(15000);
+        const source = 'See [the spec](spec.md) here.\n';
+        await showDocument(source, 'See');
+        const clicksBefore = await windowClicks();
+        const linksBefore = (await openLinks()).length;
+        assert.strictEqual(await page.$eval('.ProseMirror p a', el => el.getAttribute('title')), 'spec.md');
+
+        await clickBefore('spec', 0);
+        await page.keyboard.type('X');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'See [the Xspec](spec.md) here.\n', 'the click placed the caret in the link text');
+        assert.strictEqual((await openLinks()).length, linksBefore);
+
+        const p = await pointAt('Xspec', 2);
+        await page.keyboard.down('Control');
+        await page.mouse.click(p.x, p.y);
+        await page.keyboard.up('Control');
+        await delay(100);
+        assert.deepStrictEqual((await openLinks()).slice(linksBefore), [{ type: 'openLink', href: 'spec.md' }]);
+        assert.strictEqual(await windowClicks(), clicksBefore, 'no click reached VS Code\'s listener');
+    });
+
+    test('Ctrl+click on a link to a heading of the document scrolls to it, and asks the host for nothing', async function () {
+        this.timeout(15000);
+        const filler = Array.from({ length: 60 }, (_, i) => `Filler paragraph ${i}.`).join('\n\n');
+        await showDocument(`Jump to [the end](#the-end).\n\n${filler}\n\n## The end {#the-end}\n`, 'Jump');
+        const linksBefore = (await openLinks()).length;
+        await page.evaluate(() => window.scrollTo(0, 0));
+        const p = await pointAt('the end', 1);
+        await page.keyboard.down('Control');
+        await page.mouse.click(p.x, p.y);
+        await page.keyboard.up('Control');
+        await delay(150);
+        assert.strictEqual((await openLinks()).length, linksBefore);
+        assert.ok(await page.evaluate(() => window.scrollY > 0), 'the page scrolled');
     });
 });

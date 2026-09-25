@@ -5,6 +5,7 @@ import { escapeHtml } from '../../services/exporter/shared';
 import { parseDocument, parsedDocumentToJSON } from '../parse';
 import { HostMessage, WebviewMessage } from '../protocol';
 import { message } from './errors';
+import { resolveLinkTarget } from './links';
 import { minimalReplacement } from './minimalEdit';
 
 /** What a session needs from the extension, injected so a test can drive one without a webview. */
@@ -130,6 +131,26 @@ export class WysiwygSession implements vscode.Disposable {
             case 'openSource':
                 void this.openSource(msg.line);
                 break;
+            case 'openLink':
+                void this.openLink(msg.href);
+                break;
+        }
+    }
+
+    /** A Ctrl/Cmd+clicked link: resolved against this document, opened by VS Code or the system. */
+    private async openLink(href: string): Promise<void> {
+        const folder = vscode.workspace.getWorkspaceFolder(this.document.uri)?.uri;
+        const target = resolveLinkTarget(href, this.document.uri, folder);
+        try {
+            if (target.kind === 'external') {
+                await vscode.env.openExternal(target.uri);
+            } else if (target.kind === 'open') {
+                await vscode.commands.executeCommand('vscode.open', target.uri);
+            } else {
+                this.host.log(`[WARN] WYSIWYG editor: did not follow ${href}: ${target.reason}.`);
+            }
+        } catch (error) {
+            this.host.log(`[WARN] WYSIWYG editor: opening ${href} failed: ${message(error)}`);
         }
     }
 

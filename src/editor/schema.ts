@@ -117,6 +117,9 @@ export const NOTE_PART_NODES: ReadonlySet<string> = new Set(['note_ref', 'sideno
 
 const NOTE_REF_ATTR = 'data-mep-note-ref';
 
+/** Where a link's own title is kept in the editor's DOM, its `title` showing the href instead. */
+const LINK_TITLE_ATTR = 'data-mep-title';
+
 /**
  * A pasted note (the preview's HTML, or the editor's own copy): its `.sidenote`
  * or `.mnote` child is the body, everything else the reference — unwrapped
@@ -459,10 +462,18 @@ export const editorSchema = new Schema({
             },
             parseDOM: [{
                 tag: 'a[href]',
-                getAttrs: (dom: HTMLElement) => ({ href: dom.getAttribute('href'), title: dom.getAttribute('title') }),
+                // The editor's own `title` shows the href (see `toDOM`); the
+                // link's title, if it has one, travels in `data-mep-title`.
+                getAttrs: (dom: HTMLElement) => ({
+                    href: dom.getAttribute('href'),
+                    title: dom.hasAttribute(LINK_TITLE_ATTR) ? dom.getAttribute(LINK_TITLE_ATTR) || null : dom.getAttribute('title'),
+                }),
             }],
             toDOM(mark: Mark): DOMOutputSpec {
-                return ['a', { href: mark.attrs.href as string, title: mark.attrs.title as string | null }];
+                const href = mark.attrs.href as string;
+                const title = mark.attrs.title as string | null;
+                // Hovering says where a Ctrl+click goes (README, "Links").
+                return ['a', { href, title: title ? `${title}\n${href}` : href, [LINK_TITLE_ATTR]: title ?? '' }];
             },
         },
         // Inside a link, not around one: `[[[x]]](url)` is a link holding a

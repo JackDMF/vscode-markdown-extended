@@ -46,5 +46,12 @@ export type WebviewMessage =
     | { type: 'render'; requestId: number; src: string }
     /** Open the snippet file an include expansion was read from (`mark.path`). */
     | { type: 'openSnippet'; path: string }
+    /**
+     * Follow a link the person Ctrl/Cmd+clicked — in rich text or in a rendered
+     * block — with its `href` exactly as the element carries it. The host
+     * resolves a relative one against the document (`host/links.ts`); a link
+     * to a heading of this very document never comes here, the page scrolls.
+     */
+    | { type: 'openLink'; href: string }
     /** Open the text editor beside this one, revealing a 0-based line. */
     | { type: 'openSource'; line: number };

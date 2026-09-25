@@ -19,6 +19,7 @@ import type { HostMessage, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
+import { linkClickPlugin } from './links';
 import { editorPlugins } from './plugins';
 import { resyncTransaction } from './resync';
 import { toolbarPlugin } from './toolbar/toolbar';
@@ -131,6 +132,13 @@ function lineAt(pos: number): number {
 const port: EditorPort = {
     openSourceAt: pos => post({ type: 'openSource', line: lineAt(pos) }),
     openSnippet: path => post({ type: 'openSnippet', path }),
+    openLink: href => {
+        // A heading or footnote of this document is in the page: scrolled to, not opened.
+        if (href.startsWith('#') && followFragment(href.slice(1))) {
+            return;
+        }
+        post({ type: 'openLink', href });
+    },
     requestRender: src => {
         const requestId = ++renderSeq;
         pendingRenders.set(requestId, src);
@@ -171,6 +179,22 @@ const port: EditorPort = {
     },
 };
 
+/** Scroll to the element of the document with this id; false when the page has none. */
+function followFragment(fragment: string): boolean {
+    let id = fragment;
+    try {
+        id = decodeURIComponent(fragment);
+    } catch {
+        // As written.
+    }
+    const target = id === '' ? null : document.getElementById(id);
+    if (!target || !mount.contains(target)) {
+        return false;
+    }
+    target.scrollIntoView({ block: 'start' });
+    return true;
+}
+
 /** Put every open raw-source textarea's text into the document, so the next flush carries it. */
 function commitOpenSources(): void {
     for (const editor of [...openSourceEditors]) {
@@ -201,7 +225,7 @@ function applyRendered(requestId: number, html: string): void {
 const nodeViews: Record<string, NodeViewConstructor> = {
     raw_block: (node, _view, getPos) => new RawBlockView(node, getPos, port),
     injected_block: node => new InjectedBlockView(node, port),
-    inline_atom: node => new InlineAtomView(node),
+    inline_atom: node => new InlineAtomView(node, port),
     front_matter: node => new FrontMatterView(node),
     heading: node => new HeadingView(node),
 };
@@ -209,6 +233,7 @@ const nodeViews: Record<string, NodeViewConstructor> = {
 
 const plugins = [
     ...editorPlugins(),
+    linkClickPlugin(href => port.openLink(href)),
     toolbarPlugin({
         sourceContext: () => ({
             eol: current?.eol ?? '\n',

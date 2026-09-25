@@ -1,11 +1,14 @@
 import { DOMOutputSpec, DOMSerializer, Node } from 'prosemirror-model';
 import { EditorView, NodeView, ViewMutationRecord } from 'prosemirror-view';
+import { followLinksIn } from './links';
 
 /** What the node views need from the page around them. */
 export interface EditorPort {
     /** Open the text editor beside, at the line the top-level node at `pos` starts on. */
     openSourceAt(pos: number): void;
     openSnippet(path: string): void;
+    /** Follow a Ctrl/Cmd+clicked link, its href as the element carries it (`links.ts`). */
+    openLink(href: string): void;
     /** Ask the host to render a raw block's new source; the page puts the HTML on every block that still has that source. */
     requestRender(src: string): void;
     /** The document's line ending, which an edited raw block's source is written with. */
@@ -128,6 +131,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
         this.content = element('div', 'mep-atom-content');
         this.dom.append(this.toolbar, this.content);
         inertControls(this.content);
+        followLinksIn(this.content, href => this.port.openLink(href));
         // A double click on the rendering opens the source, as a double click on
         // text would start editing it.
         this.content.addEventListener('dblclick', e => {
@@ -323,6 +327,7 @@ export class InjectedBlockView extends AtomView {
         this.content = element('div', 'mep-atom-content');
         this.dom.append(this.toolbar, this.content);
         inertControls(this.content);
+        followLinksIn(this.content, href => this.port.openLink(href));
         this.render();
     }
 
@@ -351,8 +356,9 @@ export class InjectedBlockView extends AtomView {
 
 /** An inline injected atom — Req Explorer's status badge on a heading. */
 export class InlineAtomView extends AtomView {
-    constructor(node: Node) {
+    constructor(node: Node, port: EditorPort) {
         super(node, 'span', 'mep-inline-atom');
+        followLinksIn(this.dom, href => port.openLink(href));
         this.render();
     }
 
