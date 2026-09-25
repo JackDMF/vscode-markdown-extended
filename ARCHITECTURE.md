@@ -340,12 +340,76 @@ block (`gap`). Every block is one of four kinds:
 | Kind | What | Node | Written back as |
 | --- | --- | --- | --- |
 | `front_matter` | The YAML block at the top | `front_matter` (atom) | Its `src`, always |
-| `editable` | The stage-1 core: paragraph, heading, lists, blockquote, code, rule | The matching node, with `src` and `gap` | Its `src` while untouched; serialized by rule once changed |
-| `raw` | Anything else — tables, HTML, this extension's syntax, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
+| `editable` | The core: paragraph, heading, lists, blockquote, code, rule — with the inline constructs below | The matching node, with `src` and `gap` | Its `src` while untouched; serialized by rule once changed |
+| `raw` | Anything else — tables, HTML, this extension's block syntax, a note inside a note, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
 | `injected` | Content the file does not hold at this place | `injected_block` (atom) | An expansion's directive line, or nothing |
 
 `parse.ts` rebuilds the text from the blocks and **throws** when it does not match,
 so a document the model cannot represent is never opened for editing.
+
+### Inline constructs and the note nodes
+
+Inside an editable block the extension's own inline syntax is rich text (stage 2):
+`==mark==`, `^sup^`, `~sub~`, `~~strike~~` and `[[kbd]]` are marks (`mark`, `sup`,
+`sub`, `strike`, `kbd`, drawn as `<mark>`, `<sup>`, `<sub>`, `<s>`, `<kbd>`), and the note
+family — `++ref|note++`, `!!ref|note!!`, `$body$`, `@body@` — are inline nodes with
+content. `blocks.ts` lists their tokens as editable, `parse.ts` maps them, `serialize.ts`
+writes them with the delimiters from `src/syntax/markers.ts`.
+
+**A note mirrors the plugin's DOM.** `markdownItSidenote.ts` renders a sidenote as
+`span.sn-ref`, holding the reference's text and then `span.sidenote` — the note nested in
+its reference, which `markdown-extended.css` targets as a descendant. The schema draws
+exactly that: `sidenote` is the `span.sn-ref`, its content `note_ref sidenote_body`, the
+body the `span.sidenote` (`marginal_note` likewise, with `span.mn-ref` and
+`marginal_note_body` as `span.mnote`); `left_sidebar` and `right_sidebar` are the one
+span each. The plugin emits no element for the reference, and ProseMirror needs one to
+hold content, so `note_ref` is a span with no class — only `data-mep-note-ref`, which no
+stylesheet of the preview names. Mirroring the DOM is what lets every stylesheet written
+for the preview style the note being edited unchanged, the margin layout included; a
+page test at 1400px compares the computed style of each note in the editor with the
+engine's own rendering, and `inline.test.ts` draws the schema through `DOMSerializer`
+and requires the engine's HTML, the reference's span apart. The two bodies are two types
+because their class is part of what they are.
+
+**What a note holds** is decided by the plugin: it parses a reference and a body with
+the full inline parser, so every mark may be inside (`note_inline*`: text, images, hard
+breaks, badges). It cannot hold a note of its own kind — the first closing marker ends
+the outer one — but can hold one of another kind; a content expression cannot say "any
+note but my own kind, at any depth", so the editor holds notes one level deep and
+`blocks.ts` leaves a paragraph that nests them raw. A mark around a note is a mark on the
+note node. `parse.ts` counts the notes the tokens open against the note nodes it made
+and throws on a difference: MarkdownParser drops an inline node whose content does not
+fit as silently as a block.
+
+**Writing a note.** The plugin finds a note's ends in the raw source, before any
+backslash escape is read: a reference ends at the first `|`, a left sidebar at the next
+`$`, a right one at the next `@`, and a body at the first `++`/`!!`. Inside each part its
+terminator is written as a character reference (`&#124;`, `&#36;`, `&#64;`; `%7C`… in a
+URL), which the part's own inline parse turns back; `ESCAPE_EXTRA` already breaks `++`
+into `\+\+`, and a marker character that would touch a marker — last in a body, first
+in a reference, last before the note — is `&#43;` or `&#33;`, since a backslash does not
+stop a raw search. A reference with no text, which the plugin refuses, is `&nbsp;`.
+
+**Wrapping.** The plugin reads a note across line breaks (the corpus wraps inside
+them), so a note is wrapped like the prose around it. `^sup^`, `~sub~` and `[[kbd]]`
+refuse a line break and are held runs, as a code span is; so is a whole inline link or
+image — the corpus keeps a link on one line, and a link longer than the room is a line
+of its own. `measureWrapWidth` holds the same runs, so the width read off a paragraph is
+its widest line that could have been broken: the line of one long link, and the short
+line an author cut before it, are no evidence (Req Explorer's `REL-RXE-135` paragraph,
+whose 105-character link line had become its width, is the test).
+
+**Editing inside a note** (`webview/notes.ts`). ProseMirror edits an inline node with
+content well inside and the browser handles its edges badly: a caret right after a
+note's span, or in an empty part, has no DOM position of its own, and a deletion that
+empties a part lets the browser drop the span, after which the note read back from the
+DOM has lost a part. So the edges are ProseMirror's: typed text next to or inside a note
+is inserted by a `beforeinput` handler, a character deleted inside a part by the keymap,
+any other deletion there by its `getTargetRanges` clamped to the part, a paste as text; a
+caret put between a note's two parts is moved into one. The keys: `Tab`/`Enter` go from
+the reference to the body and out, `Shift+Tab` back, `Esc` out, `→`/`←` across the parts'
+ends and into a note from outside, `Backspace` at the start of an empty reference removes
+the note (no husk), at the start of one with text selects it.
 
 ### Injected content
 
@@ -392,10 +456,13 @@ text the other — never a diff:
 | page → host | `ready` | Loaded; send the document |
 | page → host | `edit { text, baseVersion, save?, reparse? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it; with `reparse`, the host posts the document back after applying it, although it is the page's own text (the toolbar wrote syntax as source) |
 | page → host | `render { requestId, src }` | Render this raw block source |
+| page → host | `openSnippet { path }` | Open an expansion's snippet file (only paths the document's own marks name are opened) |
+| page → host | `openSource { line }` | Open the text editor beside, at this line |
+| page → host | `openLink { href }` | Follow a Ctrl/Cmd+clicked link; the host resolves it against the document (`host/links.ts`) |
 
 A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
 save's own edit when Ctrl+S commits it): what the source now says may no longer be a
-source block — a sidenote's markers deleted leave a paragraph — and only the host's
+source block — inline HTML deleted leaves a paragraph — and only the host's
 parse can say. The re-sync then puts in whatever the block is; a block still raw is kept
 in place with its node view, so a source box left open by a save stays open, focused,
 with its text.
@@ -410,8 +477,18 @@ moves the DOM selection's anchor. Until then the textarea inherited both, so its
 and selection were there but invisible. `editor.css` exempts the textarea from both
 rules; the real-mouse page test (`rawBlock.e2e.test.ts`) checks the caret colour and
 the `::selection` rules with the class in place.
-| page → host | `openSnippet { path }` | Open an expansion's snippet file (only paths the document's own marks name are opened) |
-| page → host | `openSource { line }` | Open the text editor beside, at this line |
+
+**Links: a plain click does not follow one, a Ctrl/Cmd+click does.** Two paths hold the
+one rule (`webview/links.ts`). In rich text a plain click is ProseMirror's and places the
+caret; in a rendered block it selects the block. A modified click is taken by the page in
+both, and in both the click stops there: VS Code's webview follows every clicked `<a>`
+from a listener on its window, with the href resolved against the page's own origin, so a
+relative link would lead nowhere. The page posts `openLink` with the href as the element
+carries it — a same-document `#fragment` it scrolls to itself — and the host resolves it
+against the document and the workspace folder (`resolveLinkTarget`): `http(s)`/`mailto`
+to `env.openExternal`, a file to `vscode.open` with its fragment kept, any other scheme
+(`command:`, `vscode:`, `javascript:`) refused. A link's `title` shows its href; the
+link's own title travels in `data-mep-title`, so copy and paste inside the editor keep it.
 
 The session remembers the text it believes the page holds. An `edit` is written only
 when its `baseVersion` is the last posted version and the document still holds that
@@ -486,7 +563,8 @@ heavy as frequent ones. So the surfaces now divide the work:
   chevron, hairlines separate the groups, and a narrow window scrolls the row rather than
   wrapping it, so no control moves. Only the five native marks are in it, their glyph the
   real element held to the button's height and minimum width, so a stylesheet can change
-  how the glyph looks but not the row's geometry. The bubble carries the same five.
+  how the glyph looks but not the row's geometry. The bubble carries the same five, the
+  extension's five marks and the two notes (`inBubble`).
 - **A menu entry** is where the fidelity lives: the entry is the element the parser makes
   (`sample`), styled by the cascade, beside its syntax. Every entry has one height; a block
   sample is scaled into it with `zoom`, measured when the menu opens (`fitSamples`), so the
@@ -526,9 +604,12 @@ The layers:
   (`toggleMarkup`): the mark type excludes itself, so `_` on `*` text replaces the `*`,
   and only the button of the delimiter the text has removes it. `Mod-i`/`Mod-b` toggle by
   mark *type* (`toggleMarkType`, sharing the one helper): any delimiter is removed in one
-  press, and plain text gets `*`/`**`. `block` sets the textblock type, or wraps,
-  lifts or converts a list or quote. `wrap-source` and `insert-source` are stage 1 for
-  the constructs outside the editable core (below).
+  press, and plain text gets `*`/`**`. The extension's marks toggle the same way, with
+  their one delimiter. `wrap-node` makes a note or sidebar of the selection in place
+  (`wrapInNote` in `notes.ts`: the selection is the reference, the body a selected
+  placeholder). `block` sets the textblock type, or wraps, lifts or converts a list or
+  quote. `wrap-source` and `insert-source` are for what the core does not edit — the
+  footnote and the block constructs (below).
 - **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
   active and disabled states per action, the block-type face (the current type's name,
   locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
@@ -542,9 +623,10 @@ types. It imports nothing, so the page can load it, and `toggleFormats.ts` (thro
 and the action table all import it: the text editor's toggles, the parser and the
 toolbar cannot write one construct two ways. The block markers are the serializer's.
 `toolbarActions.test.ts` renders every action's example and every preview through the
-real engine and requires the drawn elements and classes in the HTML, and for every mark action
-the schema's element equals the engine's — "this button makes this element" is
-checked against the parser, not assumed.
+real engine and requires the drawn elements and classes in the HTML; for every mark action
+the schema's element equals the engine's, and for every note action the node's element
+and class are the sample's and the example parses into that node — "this button makes
+this element" is checked against the parser, not assumed.
 
 **The look is read from the cascade.** A mark glyph, a menu entry and the card contain
 their sample elements inside `body.markdown-body`, so the page's stylesheets — the
@@ -556,7 +638,7 @@ the moment another rule in the cascade won. Tools are `role="button"` elements, 
 `editor.css` styles only their frame, and a sample's box (the height it must fit, its
 margins), never its look.
 
-**Stage 1: source for what the core cannot edit.** `wrap-source` wraps the selection
+**Source for what the core cannot edit.** `wrap-source` (the footnote) wraps the selection
 in its markers and replaces the top-level block by a `raw_block` whose `src` is the
 block serialized by rule with the markers in place. The serializer would escape them
 (`ESCAPE_EXTRA` exists to stop `==`, `++`, `$` … being read as syntax), so the block is

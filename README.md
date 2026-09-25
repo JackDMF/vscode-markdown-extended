@@ -345,9 +345,17 @@ side on one file, each following the other's changes.
 ### What is edited in place
 
 Paragraphs, headings, bullet and ordered lists, block quotes, fenced and indented code
-blocks and horizontal rules, with bold, italic, inline code, links and images inside
-them. Format them from the toolbar (below) or with the keys a Markdown author already
-knows:
+blocks and horizontal rules, and inside them:
+
+- bold, italic, emphasis, strong, inline code, links and images;
+- this extension's inline syntax — highlight (`==mark==`), superscript (`^sup^`),
+  subscript (`~sub~`), strikethrough (`~~del~~`) and keys (`[[Ctrl+S]]`);
+- sidenotes (`++reference|note++`), marginal notes (`!!reference|note!!`) and left and
+  right sidebars (`$left$`, `@right@`), drawn exactly as the preview draws them — in the
+  margin in a wide window — with the reference and the note each edited as rich text. A
+  heading may hold a note too.
+
+Format them from the toolbar (below) or with the keys a Markdown author already knows:
 
 | Keys | Does |
 | ---- | ---- |
@@ -363,6 +371,29 @@ removes emphasis or bold whichever delimiter it was written with. Blocks the too
 inserts go after the block you are in — after the last one when the whole document is
 selected — and never above the first.
 
+**Inside a note or a sidebar:**
+
+| Keys | Does |
+| ---- | ---- |
+| `Tab` or `Enter` in the reference | To the note's text |
+| `Tab` or `Enter` in the note, or a sidebar | Out of it, the caret after it |
+| `Shift+Tab` | Back: note to reference, reference to before the note |
+| `Esc` | Out of it, the caret after it |
+| `→` at the end, `←` at the start | On to the next part, or out; from outside, `→`/`←` go in |
+| `Backspace` at the start of an empty reference or sidebar | Removes the whole note |
+| `Backspace` at the start of a reference with text | Selects the note; a second press removes it |
+
+The reference and the note stay two parts: `Delete` at the end of one does not join them,
+and pasting into a note pastes its text.
+
+### Links
+
+**A click on a link does not follow it; `Ctrl+click` (`Cmd+click` on macOS) does.** In text
+a click puts the caret in the link, to edit it; on a rendered block (a table, say) it
+selects the block. Hovering a link shows where it goes. A relative link opens the file it
+names (resolved against the document's folder), a link to a heading of the same document
+scrolls to it, and a web or mail address opens outside VS Code.
+
 ### Toolbar
 
 A toolbar stays at the top of the page, one line of controls:
@@ -373,7 +404,8 @@ Every control has the same height, and nothing wraps: in a narrow window the row
 sideways, so each control stays where you learned it. The five marks show their real
 element (the italic, emphasis, bold, strong and code your stylesheets draw) as their
 glyph; everything else is in a menu. Above any text you select, a small bubble offers the
-same five marks.
+same five marks, the extension's five (highlight, superscript, subscript, strikethrough,
+key) and the two notes.
 
 In a menu, each entry **is** the construct it makes — the very element the preview renders
 from that syntax, drawn by the same stylesheets and scaled to one entry height — with its
@@ -388,11 +420,14 @@ opens a submenu), choose with `Enter` and close with `Esc`.
 - **Italic, emphasis, bold, strong, code** — in the row. A button is marked while the
   selection carries what it writes.
 - **Formatting** — highlight (`==mark==`), superscript (`^sup^`), subscript (`~sub~`),
-  strikethrough (`~~del~~`) and key (`[[Ctrl]]`).
+  strikethrough (`~~del~~`) and key (`[[Ctrl]]`), each toggled on the selection like bold.
 - **Annotation** — sidenote (`++reference|note++`), marginal note (`!!reference|note!!`),
-  left and right sidebar (`$left$`, `@right@`) and footnote. A footnote is written after
-  the selection with the first free number (`[^2]`), and its definition goes below the
-  paragraph with its source open for the text.
+  left and right sidebar (`$left$`, `@right@`) and footnote. A note is made in place: the
+  selected text becomes its reference and the note starts as `note`, selected, so what you
+  type next is the note (with nothing selected, the reference starts as `reference`,
+  selected — a note needs one). A sidebar takes the selected text as its own. A footnote
+  is written after the selection with the first free number (`[^2]`), and its definition
+  goes below the paragraph with its source open for the text.
 - **Insert** — horizontal rule; admonition, a submenu of every type the admonition plugin
   knows, each drawn as its box; table, container, task list, definition list, abbreviation
   and table of contents, from the same templates as this extension's snippets where one
@@ -408,12 +443,11 @@ each its own look — underlining `_b_`, say, while `*a*` stays italic. The edit
 delimiter you wrote and draws it as the preview does; choosing emphasis on italic text
 swaps `*` for `_` rather than nesting one inside the other.
 
-**Stage 1: the extended syntax goes in as source.** Highlight, super- and subscript,
-strikethrough, keys, the annotations and every insert except the rule are not yet edited as
-rich text. An inline one wraps the selected text in its markers and the paragraph becomes
-a source block, rendered as the preview renders it; a block one is inserted after the
-current block as a source block with its **Edit source** box open. The tooltip of each such
-button says *edits as source until stage 2*. One `Ctrl+Z` takes the wrap back.
+**The block constructs go in as source.** Every insert except the rule, and the footnote,
+are edited as Markdown: a block one is inserted after the current block as a source block
+with its **Edit source** box open, and the footnote's paragraph becomes a source block
+rendered as the preview renders it. The tooltip of each such entry says *edited as source,
+in a source block*. One `Ctrl+Z` takes it back.
 
 **A requirement heading keeps its type.** On a heading written `## ID: Title {#anchor}`
 the block-type menu is disabled, and its tooltip says why: changing the type would rebuild
@@ -437,7 +471,7 @@ place — each for a reason:
   select one and choose **Edit source** — or double-click it — to edit its Markdown in
   place: `Ctrl+Enter` or clicking away applies it, `Esc` cancels. Or choose **Show in text
   editor** to jump to it. A source block that you edit back into plain Markdown (the
-  markers of a sidenote removed, say) becomes an ordinary paragraph again once applied.
+  inline HTML removed, say) becomes an ordinary paragraph again once applied.
   Checkboxes and other controls in a rendered block are shown, not clicked: the file is
   what changes them.
 
@@ -451,17 +485,25 @@ rather than a second heading, so the id and the anchor are never written twice.
   markers, its escapes, the blank lines around it. The one exception is the separator
   above it when the block it followed is no longer there (you moved, deleted or split
   it): the blank lines it had belonged to that neighbour, and one blank line is written.
-- A paragraph you changed is re-wrapped at the width it was written at. A paragraph
-  that gives no width of its own (a new one, or one that was a single line) is wrapped
-  at `markdownExtended.editor.wrapColumn` (default `90`).
+- A paragraph you changed is re-wrapped at the width it was written at: its widest line
+  that could have been broken. A line holding only a link too long to fit is not counted
+  — a link is never broken across lines, and one that does not fit keeps a line of its
+  own. A paragraph that gives no width of its own (a new one, or one that was a single
+  line) is wrapped at `markdownExtended.editor.wrapColumn` (default `90`).
 - If a document cannot be shown without changing it, the editor says so and offers the
   text editor instead; it never writes to such a document.
 
 ### Limits
 
 - **Experimental.** Try it on files under version control.
-- **Tables are edited as source**, not cell by cell, and so is the rest of the extended
-  syntax the toolbar inserts (stage 1).
+- **Tables are edited as source**, not cell by cell, and so are the block constructs the
+  toolbar inserts (admonitions, containers, …).
+- **A note holds no note.** The notes plugin allows a note of another kind inside one
+  (`++a|see !!b|c!!++`); a paragraph written so stays a source block.
+- **`$…$` is a formula where VS Code's math is on.** VS Code's built-in math extension
+  (`markdown.math.enabled`, on by default) reads `$…$` before the sidebar rule does, in the
+  preview and so in the editor; a left sidebar then shows as a formula in a source block.
+  Right sidebars (`@…@`) are not affected.
 - **Links and images have no toolbar button yet.** Existing ones are kept and edited as
   text; a new one is written in the text editor.
 - **Relative images are not resolved** in the editor yet; they show as broken images.
