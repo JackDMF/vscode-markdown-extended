@@ -35,7 +35,7 @@
 - Tables are edited as source, not cell by cell.
 - A note holds no note: the notes plugin allows one of another kind inside a note (`++a|see !!b|c!!++`), and such a paragraph stays a source block.
 - Inline code in a note cannot hold the note's `++` or `!!`, and inline code, superscript or subscript cannot hold a reference's `|` or a sidebar's `$` or `@`: the notes plugin finds those before anything else is read, and nothing escapes them there. The editor refuses such an edit and says why beside the caret; the Code, Superscript and Subscript buttons are disabled with the reason.
-- With VS Code's built-in math on (`markdown.math.enabled`, the default), `$…$` is a formula in the preview and so in the editor, never a left sidebar.
+- With VS Code's built-in math on (`markdown.math.enabled`, the default), `$…$` is a formula in the preview, the export and the editor, never a left sidebar. The documented way to use left sidebars is now `"markdown.math.enabled": false` in the workspace that uses them, at the cost of `$…$`/`$$…$$` math there (README, "Sidebars"); the editor rebuilds its engine when the setting changes.
 - Relative image paths are not resolved in the editor yet; images show as broken there, the file is unaffected.
 - Desktop only — the page inlines contributed stylesheets read from disk. In vscode.dev the command is hidden, but **Open With…** still lists the editor.
 - Keystrokes still inside the quarter-second before they are sent are dropped when the same file changes elsewhere in that moment; there is no merge. What was sent stays, and the editor's undo history survives the change.

@@ -516,10 +516,12 @@ rather than a second heading, so the id and the anchor are never written twice.
   either). The editor refuses such an edit and says why beside the caret, and the Code,
   Superscript and Subscript buttons are disabled with the reason in their tooltip — also
   over a selection that holds a note, which those three cannot hold at all.
-- **`$…$` is a formula where VS Code's math is on.** VS Code's built-in math extension
-  (`markdown.math.enabled`, on by default) reads `$…$` before the sidebar rule does, in the
-  preview and so in the editor; a left sidebar then shows as a formula in a source block.
-  Right sidebars (`@…@`) are not affected.
+- **Left sidebars need `"markdown.math.enabled": false`.** VS Code's built-in math
+  extension (on by default) claims `$…$` before the sidebar rule runs, in the preview, the
+  export and this editor alike, so a left sidebar shows as a formula in a source block.
+  Set `"markdown.math.enabled": false` in a workspace that uses sidebars (see
+  [Sidebars](#sidebars)); you lose `$…$` and `$$…$$` math there. The editor follows the
+  setting without reopening. Right sidebars (`@…@`) are not affected.
 - **Links and images have no toolbar button yet.** Existing ones are kept and edited as
   text; a new one is written in the text editor.
 - **Relative images are not resolved** in the editor yet; they show as broken images.
@@ -580,6 +582,19 @@ $This appears in the left sidebar with [links](url) and other markdown$
 
 @This appears in the right sidebar with `code` and formatting@
 ```
+
+**Using left sidebars: turn VS Code's math off in that workspace.** VS Code's built-in
+math extension claims `$…$` before this extension's sidebar rule runs — in the preview,
+in the export and in the Visual Editor alike — so with math on (the default) a left
+sidebar renders as a formula. In a workspace that uses sidebars, set this in its
+`.vscode/settings.json`:
+
+```json
+"markdown.math.enabled": false
+```
+
+What you give up: inline `$…$` and block `$$…$$` math in that workspace's Markdown. Right
+sidebars (`@…@`) work either way.
 
 **Features:**
 

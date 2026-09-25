@@ -7,8 +7,13 @@ import { message } from './errors';
 /** VS Code's own Markdown extension. Its engine is the preview's, not a plugin to it. */
 export const BUILTIN_MARKDOWN_EXTENSION = 'vscode.markdown-language-features';
 
-/** The preview settings that change how the engine tokenizes or renders. */
-const PREVIEW_SETTINGS = ['markdown.preview.linkify', 'markdown.preview.typographer', 'markdown.preview.breaks'];
+/**
+ * The preview settings that change how the engine tokenizes or renders.
+ * `markdown.math.enabled` is read by VS Code's math extension inside its own
+ * `extendMarkdownIt`; turned off (README: the way to use left sidebars) it
+ * leaves `$…$` to the sidebar rule, and an open editor must see that at once.
+ */
+const PREVIEW_SETTINGS = ['markdown.preview.linkify', 'markdown.preview.typographer', 'markdown.preview.breaks', 'markdown.math.enabled'];
 
 type Log = (line: string) => void;
 
