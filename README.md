@@ -389,15 +389,52 @@ selected — and never above the first.
 The reference and the note stay two parts: `Delete` at the end of one does not join them,
 and pasting into a note pastes its text.
 
-**Remove note:** with the caret or a selection in a note, choose its button again — in
-the Annotation menu or the bubble, where it shows as active. The note goes and its text
-stays in the sentence: a sidenote or marginal note leaves its reference (the note's own
-text is dropped), a sidebar its text, with their formatting. One `Ctrl+Z` brings the
-note back. There is no key for it.
+To remove, convert or edit a note as a whole, use its bar (below).
+
+### Every object carries its verbs
+
+A note, a link, an image, a source block, an included snippet: each is an *object*, and
+each shows the same small bar — its name on the left, then what can be done with it. The
+bar sits above the object's first line (below its last when there is no room above) and
+never covers the line you are typing on.
+
+| Object | Its bar shows | Verbs |
+| ------ | ------------- | ----- |
+| Sidenote, marginal note | while the caret is inside, after a moment | **Remove note, keep text** · **Convert to marginal note** / **Convert to sidenote** · **Edit source** |
+| Left or right sidebar | while the caret is inside, after a moment | **Remove sidebar, keep text** · **Move to right** / **Move to left** · **Edit source** |
+| Link | while the caret is in its text, after a moment | **Open** · **Change URL** · **Remove link** |
+| Image | when you click it, after a moment | **Change source** · **Remove image** |
+| Source block — a table, raw HTML, an admonition, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
+| Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Show in text editor** · **Delete directive** |
+| Front matter, a status badge, a summary table | as above | its name only |
+
+- **A verb says what remains.** *Remove note, keep text* leaves the note's reference in
+  the sentence, with its formatting (a sidebar leaves its text); the note's own text goes.
+  *Remove link* keeps the linked text. *Delete directive* removes the
+  `<!-- include: … -->` line from the file; the snippet's own file stays.
+- **A removal says so.** Something disappearing is easy to miss, so a removal or deletion
+  is announced beside the caret for a moment — *Note removed — Ctrl+Z* — and one `Ctrl+Z`
+  brings it back.
+- **Edit source, Change URL and Change source** open a one-line field in the bar, filled
+  in: `Enter` applies, `Esc` or clicking away cancels. A note's field holds its Markdown
+  (`++reference|note++`); what you type is read by the same parser as the preview, so it
+  comes back as a note — of whichever kind its markers now say — or, if it no longer is
+  one, as the text you typed. A source block's **Edit source** opens its Markdown in the
+  block itself, as before (below).
+- The note buttons in the Annotation menu and the bubble still remove a note too: inside
+  one they show as active, and choosing one removes it, text kept.
+
+| Keys | Does |
+| ---- | ---- |
+| `Alt+Enter` | Opens the bar of the object at the caret, the focus on its first verb |
+| `←` / `→` | Moves between the verbs |
+| `Enter` | Chooses the verb; in a field, applies it |
+| `Esc` | Back to the text; in a field, cancels
 
 ### Links
 
-**A click on a link does not follow it; `Ctrl+click` (`Cmd+click` on macOS) does.** In text
+**A click on a link does not follow it; `Ctrl+click` (`Cmd+click` on macOS) does**, and so
+does **Open** in the link's bar. In text
 a click puts the caret in the link, to edit it; on a rendered block (a table, say) it
 selects the block. Hovering a link shows where it goes. A relative link opens the file it
 names (resolved against the document's folder), a link to a heading of the same document
@@ -473,13 +510,13 @@ place — each for a reason:
   would reorder keys and lose comments.
 - **Content another extension injects** — Req Explorer's status badges and summary
   tables, a snippet expanded from `<!-- include: … -->` — is not in the file at that
-  place, so it cannot be edited there. An expanded snippet shows an **Open snippet**
-  button that opens the file it came from; the file itself keeps the one directive line.
+  place, so it cannot be edited there. An expanded snippet's bar offers **Open snippet**,
+  which opens the file it came from; the file itself keeps the one directive line.
 - **Tables, raw HTML and this extension's extended syntax** (admonitions, containers,
   the table of contents, footnotes, definition lists, …) are *source blocks*. Hover or
-  select one and choose **Edit source** — or double-click it — to edit its Markdown in
-  place: `Ctrl+Enter` or clicking away applies it, `Esc` cancels. Or choose **Show in text
-  editor** to jump to it. A source block that you edit back into plain Markdown (the
+  select one and choose **Edit source** in its bar — or double-click it — to edit its
+  Markdown in place: `Ctrl+Enter` or clicking away applies it, `Esc` cancels. Or choose
+  **Show in text editor** to jump to it. A source block that you edit back into plain Markdown (the
   inline HTML removed, say) becomes an ordinary paragraph again once applied.
   Checkboxes and other controls in a rendered block are shown, not clicked: the file is
   what changes them.
@@ -522,8 +559,8 @@ rather than a second heading, so the id and the anchor are never written twice.
   Set `"markdown.math.enabled": false` in a workspace that uses sidebars (see
   [Sidebars](#sidebars)); you lose `$…$` and `$$…$$` math there. The editor follows the
   setting without reopening. Right sidebars (`@…@`) are not affected.
-- **Links and images have no toolbar button yet.** Existing ones are kept and edited as
-  text; a new one is written in the text editor.
+- **No button makes a new link or image yet.** Write one in the text editor; an existing
+  one's bar changes where it points, or removes it.
 - **Relative images are not resolved** in the editor yet; they show as broken images.
   The file is unaffected.
 - **Desktop only.** In vscode.dev the command and menu entries are hidden; **Open With…**

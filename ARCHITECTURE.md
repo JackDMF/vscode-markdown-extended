@@ -429,7 +429,9 @@ ends and into a note from outside, `Backspace` at the start of an empty referenc
 the note (no husk), at the start of one with text selects it. The toolbar's note actions
 are toggles (`toggleNote`): inside a note of their kind they unwrap it (`unwrapNote`) — the
 note node replaced, in one step, by its reference's inline content or a sidebar's, the
-note's own marks added to it, the caret at its end — and they show as active there.
+note's own marks added to it, the caret at its end — and they show as active there. The
+same `unwrapNote` is the object toolbar's **Remove note, keep text** (below): two paths to
+one verb, one transaction.
 
 ### Injected content
 
@@ -440,7 +442,7 @@ differently:
 | Mark | Example | Editor treatment |
 | --- | --- | --- |
 | `atom` | Status badge, `table.req-summary` | A read-only block or inline atom showing the rendering; nothing is written |
-| `expansion` | A snippet expanded from `<!-- include: id -->` | One read-only block; the directive line is written back. With `path`, an **Open snippet** button; a `missing` expansion has no path and offers nothing |
+| `expansion` | A snippet expanded from `<!-- include: id -->` | One read-only block; the directive line is written back. Its object toolbar offers **Open snippet** only with `path` — a `missing` expansion has none — and **Show in text editor** and **Delete directive** always |
 | `decoration` | `span.req-ref` around a bare id | Not a node: the id stays editable text, carrying a `req_ref` mark that is never serialized |
 
 Token ranges nobody marked and no source line accounts for (the footnote list
@@ -686,6 +688,110 @@ the id and the anchor, the same fact `splitRequirementHeading` and the fidelity 
 guard for Enter and for any transaction; a selected atom (source block, injected
 content, front matter, badge); any other selected node (a rule, an image); a gap cursor,
 which is between blocks; Ctrl+A, which selects the document rather than a block.
+
+### The object toolbar
+
+Every object carries its verbs visibly, and every object does it the same way (Daniel,
+2026-09-25). Before, a source block showed a hover toolbar with its verbs, an expansion an
+**Open snippet** button, and a note or a link nothing: removing a note was knowledge in the
+head — two `Backspace`s at one spot. Now one component, `webview/objectToolbar.ts`, draws
+one bar for every object, and the source block's hover toolbar and the snippet button are
+migrated into it rather than kept beside it; `editor.css` has one `.mep-object-toolbar`
+family.
+
+**The object model** (`webview/objects.ts`, no DOM). An object is a range of the document
+that has verbs of its own — removed, converted, opened or edited as source as a whole —
+as opposed to text, which is typed:
+
+| Object | Counts as one | Its range |
+| --- | --- | --- |
+| `note` | a `sidenote`, `marginal_note`, `left_sidebar` or `right_sidebar` node | the node |
+| `link` | a run of text under one `link` mark (equal attributes) | the run in its textblock, found from the caret by `markRunAt` |
+| `image` | an `image` node | the node |
+| `badge` | an `inline_atom` | the node |
+| `raw_block`, `injected_block`, `front_matter` | the node | the node |
+
+`objectAtSelection` finds the selection's object: a node selected as a whole, else the
+link the selection is in (a caret inside its text or at either end), else the note both
+ends of the selection are in. The link comes first because it is the innermost: a link in
+a note's body is the link. A verb never acts on the object it was drawn for: it looks it
+up again (`currentObject` — the same kind at the same position, still there), so an edit
+arriving from the host between drawing and clicking cannot make a verb act on something
+else.
+
+**The triggers.** The last three objects are *block* objects and show their bar while the
+pointer is on them or they are selected, at once — as the source block's toolbar did. The
+first four are *inline* objects and show it once the caret or the selection has rested in
+them for `INLINE_DELAY_MS` (400 ms), hiding it the moment the caret leaves; the pointer does
+not show them, because an inline bar that followed the pointer across a paragraph would
+jump from word to word. There are two bar instances, one following the selection and one
+the pointer, so the two triggers never fight over one element: typing in a note with the
+pointer resting on a table shows both, and the pointer's bar hides while it would show
+what the selection's already shows. The selection's bar shows only while the focus is in
+the editor or in a bar. `Alt+Enter` (a `handleKeyDown` prop, which no other keymap
+binds) skips the delay and focuses the first verb; the arrow keys move between verbs
+(wrapping), `Enter` chooses, `Esc` returns the focus to the text.
+
+**Where it sits** (`place`). Above the object's first line: an inline object's start, found
+from its element's own line boxes (`getClientRects` of the note's `span.sn-ref` — a body
+floated into the margin is no line box of the reference, so the bar keeps to the reference)
+or, for a link, from `coordsAtPos` of its range; a block's right edge, where the source
+block's toolbar always sat — blocks are mostly left-aligned, and a bar hanging over the
+block above at its left sat on exactly what the next click there was aimed at (the real-mouse
+test caught it: a click on a table landed on the task list's bar). When the room above is
+under the sticky formatting row, below the object's last line. Then the caret's line is
+checked: a bar that would cover it goes to the other side, so the line being typed is never
+under it. While text is selected the bar prefers below, the selection bubble having the
+room above. The bar is `position: absolute` inside `.mep-editor`, as the bubble is, so it
+scrolls with the text; it is placed again on scroll and resize.
+
+**The verbs** say what remains (*Remove note, keep text*), and are each one transaction in
+`objects.ts` (or `notes.ts`), one history event:
+
+- note — *Remove note, keep text* (`unwrapNote`); *Convert to marginal note* / *Convert to
+  sidenote*, *Move to right* / *Move to left* (`convertNoteTransaction`: the counterpart
+  node built from the same reference, body content and marks; the two have the same
+  structure, so the selection is put back at the same positions); *Edit source*. A
+  conversion whose result the serializer could not write back (`noteRefusal` — code in a
+  left sidebar holding `@`, moved right) is disabled with the reason, as the notes
+  plugin's filter would refuse it anyway;
+- link — *Open* (`openLink`, the Ctrl+click path), *Change URL* (the mark replaced over
+  its run with the new `href`, the title kept, `markup` cleared: a bare URL's text is the
+  old address, which the bare form would write as the link), *Remove link* (the mark
+  removed, the text kept);
+- image — *Change source* (`setNodeMarkup`, alt and title kept), *Remove image*;
+- source block — *Edit source* (`editRawSourceAt`), *Show in text editor*, *Delete block*;
+- expansion — *Open snippet* (only with `mark.path`), *Show in text editor*, *Delete
+  directive* (the node deleted, and with it the one line it writes);
+- badge, other injected content, front matter — the label alone.
+
+A verb whose result is a disappearance — a removal, a deletion — announces it in the caret
+hint (`webview/hint.ts`: *Note removed — Ctrl+Z*, `Cmd+Z` on macOS), in a neutral tone, for
+3 s. The hint is the one the notes plugin shows a refusal in; one element, two tones
+(`data-tone`), so the page has one place beside the caret where it speaks.
+
+**The inline field** (`webview/inlineField.ts`) is one reusable component, exported for the
+next place a value is asked for where it is used (stage 3's classes and attributes): a
+one-line `<input>` opened prefilled with the value selected; `Enter` commits, `Esc`
+cancels, the focus leaving cancels — a click elsewhere never applies a half-typed value —
+and exactly one of `onCommit` and `onCancel` is called, once. Its keys are its own (`Ctrl+Z`
+undoes the typing, not the document); `Ctrl+S` stays the page's save, which saves the
+document without the field's value. The bar shows it in place of its verbs, beside the
+label. *Change URL* and *Change source* set the mark's or the node's attribute: nothing
+needs parsing.
+
+**A note's source goes through the host.** A note's *Edit source* field holds the note as
+the serializer writes it for that node alone (`serializeInline`, the note's own marks left
+out: they stay on the text around it). On commit the note node is replaced by the literal
+text — the top-level block becomes a source block whose text is the block serialized with
+a stand-in run where the note was, then the run replaced by the typed text, unescaped
+(`inlineSourceTransaction`, the stand-in technique of `wrap-source`) — and the edit is
+posted with `reparse`. The host's parser, the preview's engine, decides what the text is:
+a note again, of whichever kind the markers now say, or literal text if it is malformed.
+The page has no parser; recognising the typed Markdown there would be a second parser, and
+the first construct the two disagreed on would be shown as something the preview does not
+render. A note holding a hard break has no *Edit source* (a one-line field cannot show
+it); the text editor is the way.
 
 ### Styles
 
