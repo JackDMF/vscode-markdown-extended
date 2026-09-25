@@ -4,8 +4,9 @@ import { Config } from '../../services/common/config';
 import { escapeHtml } from '../../services/exporter/shared';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
 import { HostMessage, WebviewMessage } from '../protocol';
+import { CodeActionController } from './codeActions';
 import { message } from './errors';
-import { LensController } from './lenses';
+import { LensController, SessionPort } from './lenses';
 import { resolveLinkTarget } from './links';
 import { minimalReplacement } from './minimalEdit';
 
@@ -54,6 +55,8 @@ export class VisualEditorSession implements vscode.Disposable {
     private resyncTimer: ReturnType<typeof setTimeout> | undefined;
     /** Other extensions' code lenses, asked of VS Code after every post and every applied edit. */
     private readonly lenses: LensController;
+    /** Other extensions' code actions on a block, asked of VS Code when the page's object toolbar opens for it. */
+    private readonly codeActions: CodeActionController;
     private readonly subscriptions: vscode.Disposable[];
 
     constructor(
@@ -61,15 +64,18 @@ export class VisualEditorSession implements vscode.Disposable {
         private readonly webview: SessionWebview,
         private readonly host: SessionHost,
     ) {
-        this.lenses = new LensController({
+        const port: SessionPort = {
             document,
             pageHolds: text => !this.broken && text === this.webviewText,
             lineRanges: async text => blockLineRanges(await this.host.engine(), text, this.env()),
             post: msg => this.webview.postMessage(msg),
             log: line => this.host.log(line),
-        });
+        };
+        this.lenses = new LensController(port);
+        this.codeActions = new CodeActionController(port);
         this.subscriptions = [
             this.lenses,
+            this.codeActions,
             webview.onDidReceiveMessage(msg => this.receive(msg)),
             vscode.workspace.onDidChangeTextDocument(e => {
                 if (e.document.uri.toString() === this.document.uri.toString()) {
@@ -150,6 +156,18 @@ export class VisualEditorSession implements vscode.Disposable {
                 break;
             case 'runLens':
                 void this.lenses.run(msg.id);
+                break;
+            case 'actionsFor':
+                // In the queue, behind the edit the page sent before asking, so
+                // the block is looked up in the text the page holds; the answer
+                // itself is not waited for there, or a slow provider would hold
+                // up the edits behind it.
+                this.enqueue(async () => {
+                    void this.codeActions.answer(msg.requestId, msg.blockIndex, msg.blocks);
+                });
+                break;
+            case 'runAction':
+                void this.codeActions.run(msg.id);
                 break;
         }
     }

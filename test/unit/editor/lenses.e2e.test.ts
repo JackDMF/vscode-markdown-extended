@@ -2,7 +2,8 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { LensRow } from '../../../src/editor/protocol';
+import { LensRow, WebviewMessage } from '../../../src/editor/protocol';
+import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -172,5 +173,133 @@ suite('Editor lens rows (e2e)', () => {
         await page.mouse.move(box.x + box.width / 2, rowBox.top + 2);
         await delay(400);
         assert.ok(await page.$('.mep-object-toolbar[data-trigger="hover"]:not([hidden])'), 'the row is the block\'s, for the pointer');
+    });
+});
+
+/** The selection's object toolbar, shown. */
+const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
+
+/**
+ * Other extensions' code actions as object verbs: the object toolbar of a whole
+ * top-level block asks the host for them, and draws them after its own verbs.
+ * A heading is an object for that alone, and shows a bar only with actions.
+ */
+suite('Editor code actions as object verbs (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    let version = 10;
+
+    const actionRequests = async () => (await (editor as EditorPage).posted())
+        .filter((m): m is Extract<WebviewMessage, { type: 'actionsFor' }> => m.type === 'actionsFor');
+
+    const barState = () => page.$eval(BAR, bar => ({
+        object: (bar as HTMLElement).dataset.object,
+        label: bar.querySelector('.mep-object-label')?.textContent,
+        children: Array.from(bar.children).map(c => (c as HTMLElement).dataset.verb ?? c.className),
+    }));
+
+    const clickText = async (needle: string) => {
+        const p = await page.evaluate(n => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const at = (node.textContent ?? '').indexOf(n);
+                if (at >= 0) {
+                    const range = document.createRange();
+                    range.setStart(node, at + 1);
+                    range.setEnd(node, at + 2);
+                    const r = range.getBoundingClientRect();
+                    return { x: r.left + 1, y: r.top + r.height / 2 };
+                }
+            }
+            throw new Error(`no "${n}"`);
+        }, needle);
+        await page.mouse.click(p.x, p.y);
+    };
+
+    const showDocument = async () => {
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const json = parsedDocumentToJSON(parseDocument(md, '# FRS-TST-001: Page\n\nText.\n\n## Plain heading\n\n| a |\n| - |\n| 1 |\n', {}));
+        // The shape the parser gives it when Req Explorer's badge names the id; Req Explorer is not in the test host.
+        const heading = (json.doc.content as { attrs: Record<string, unknown>; content: { text: string }[] }[])[0];
+        heading.attrs.reqPrefix = 'FRS-TST-001: ';
+        heading.content = [{ ...heading.content[0], text: 'Page' }];
+        version++;
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90 });
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Plain heading'));
+        await page.mouse.move(2, 2);
+        await delay(100);
+    };
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 1000 });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+        await showDocument();
+    });
+
+    suiteTeardown(async () => {
+        await editor?.close();
+    });
+
+    test('the caret resting in a requirement heading asks for its actions; the bar shows them, labelled with the id, and runs one', async function () {
+        this.timeout(10000);
+        await clickText('Page');
+        await delay(INLINE_DELAY_MS + 150);
+        const [request] = await actionRequests();
+        assert.deepStrictEqual(request && { blockIndex: request.blockIndex, blocks: request.blocks }, { blockIndex: 0, blocks: 4 });
+        assert.strictEqual(await page.$(BAR), null, 'no bar while the heading has no verbs');
+
+        await (editor as EditorPage).send({
+            type: 'actions', requestId: request.requestId, blockIndex: 0,
+            items: [{ id: 'a.0', title: 'Add reference', kind: 'quickfix' }, { id: 'a.1', title: 'Not here', kind: '', refusal: 'Nothing to fix' }],
+        });
+        await page.waitForSelector(BAR, { visible: true, timeout: 2000 });
+        assert.deepStrictEqual(await barState(), {
+            object: 'heading',
+            label: 'Requirement FRS-TST-001',
+            // No own verbs, so no separator before the first action.
+            children: ['mep-object-label', 'code-action:a.0', 'code-action:a.1'],
+        });
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="code-action:a.1"]`, el => el.getAttribute('aria-disabled')), 'true');
+
+        const button = await page.$(`${BAR} [data-verb="code-action:a.0"]`);
+        const box = await button?.boundingBox();
+        assert.ok(box);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await delay(80);
+        const runs = (await (editor as EditorPage).posted()).filter(m => m.type === 'runAction');
+        assert.deepStrictEqual(runs, [{ type: 'runAction', id: 'a.0' }]);
+        assert.strictEqual((await actionRequests()).length, 1, 'the answer is kept for the node: not asked again');
+    });
+
+    test('a heading without actions shows no bar', async function () {
+        this.timeout(10000);
+        await clickText('Plain heading');
+        await delay(INLINE_DELAY_MS + 150);
+        const request = (await actionRequests()).pop();
+        assert.strictEqual(request?.blockIndex, 2);
+        await (editor as EditorPage).send({ type: 'actions', requestId: (request as { requestId: number }).requestId, blockIndex: 2, items: [] });
+        await delay(100);
+        assert.strictEqual(await page.$(BAR), null);
+    });
+
+    test('a source block\'s bar has its own verbs, a separator, then the actions', async function () {
+        this.timeout(10000);
+        const table = await page.$('.ProseMirror > .mep-raw-block');
+        const box = await table?.boundingBox();
+        assert.ok(box);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await delay(150);
+        const request = (await actionRequests()).pop();
+        assert.strictEqual(request?.blockIndex, 3);
+        await (editor as EditorPage).send({ type: 'actions', requestId: (request as { requestId: number }).requestId, blockIndex: 3, items: [{ id: 'b.0', title: 'Fix table', kind: 'quickfix' }] });
+        await page.waitForSelector(`${BAR} [data-verb="code-action:b.0"]`, { visible: true, timeout: 2000 });
+        assert.deepStrictEqual((await barState()).children, [
+            'mep-object-label', 'edit-source', 'show-in-text-editor', 'delete-block', 'mep-object-separator', 'code-action:b.0',
+        ]);
     });
 });

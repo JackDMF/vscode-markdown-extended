@@ -33,6 +33,20 @@ export interface LensRow {
     items: LensItem[];
 }
 
+/**
+ * One code action another extension offers for a block, as the object toolbar
+ * draws it: a verb after the object's own. `id` names it in the host's
+ * registry, where the action (its `WorkspaceEdit`, its command) stays; `kind`
+ * is its `CodeActionKind` (`quickfix`, `refactor.rewrite`, …) or `''`;
+ * `refusal` is why a disabled one cannot be chosen.
+ */
+export interface CodeActionItem {
+    id: string;
+    title: string;
+    kind: string;
+    refusal?: string;
+}
+
 /** Host → webview. */
 export type HostMessage =
     /**
@@ -53,7 +67,9 @@ export type HostMessage =
      * page takes the rows only while it holds as many, and otherwise waits for
      * the refresh that follows its own edit. Empty `rows` clear the page's.
      */
-    | { type: 'lenses'; version: number; blocks: number; rows: LensRow[] };
+    | { type: 'lenses'; version: number; blocks: number; rows: LensRow[] }
+    /** The answer to `actionsFor`: the code actions for that block's lines, empty when there are none or the page's text is not the document's. */
+    | { type: 'actions'; requestId: number; blockIndex: number; items: CodeActionItem[] };
 
 /** Webview → host. */
 export type WebviewMessage =
@@ -92,4 +108,12 @@ export type WebviewMessage =
      */
     | { type: 'refreshLenses' }
     /** Run the command of the lens `id` from the last `lenses` message. */
-    | { type: 'runLens'; id: string };
+    | { type: 'runLens'; id: string }
+    /**
+     * The object toolbar opened for the top-level block `blockIndex` of a page
+     * holding `blocks` of them: ask VS Code for the code actions on its lines.
+     * Sent after any pending edit, so the host answers for the page's text.
+     */
+    | { type: 'actionsFor'; requestId: number; blockIndex: number; blocks: number }
+    /** Apply the code action `id` from an `actions` answer: its edit, then its command. */
+    | { type: 'runAction'; id: string };

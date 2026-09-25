@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import {
     EditorObject, changeImageTransaction, changeLinkTransaction, convertNoteRefusal, convertNoteTransaction, currentObject, deleteObjectTransaction,
-    noteSource, objectAtSelection, removeLinkTransaction,
+    isTopLevelBlock, noteSource, objectAtSelection, removeLinkTransaction,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { inlineSourceTransaction } from '../../../src/editor/webview/toolbar/commands';
@@ -59,6 +59,18 @@ function objectHere(state: EditorState): EditorObject {
 }
 
 suite('Editor objects: which object the selection is on', () => {
+    test('a caret in a top-level heading is its heading object, a whole top-level block; a note in it is the note', () => {
+        const base = stateOf('# Title with ++a ref|body++ in it\n\nText.\n');
+        const heading = objectHere(caretAt(base, 'Title'));
+        assert.strictEqual(heading.kind, 'heading');
+        assert.strictEqual(heading.from, 0);
+        assert.ok(isTopLevelBlock(base, heading), 'a heading carries other extensions\' code actions');
+        const note = objectHere(caretAt(base, 'a ref'));
+        assert.strictEqual(note.kind, 'note');
+        assert.ok(!isTopLevelBlock(base, note), 'a note does not: the host knows no range of it');
+        assert.strictEqual(objectAtSelection(caretAt(base, 'Text')), null, 'a paragraph is still text');
+    });
+
     test('a caret in a note, in a link, in a link inside a note, and in plain text', () => {
         const base = stateOf('Plain ++the ref|see [spec](s.md) here++ and [a link](a.md) end.\n');
         assert.strictEqual(objectAtSelection(caretAt(base, 'Plain')), null, 'plain text is no object');

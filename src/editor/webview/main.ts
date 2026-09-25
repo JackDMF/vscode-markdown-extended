@@ -15,7 +15,7 @@ import { Node } from 'prosemirror-model';
 import { EditorState, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
-import type { HostMessage, LensRow, WebviewMessage } from '../protocol';
+import type { CodeActionItem, HostMessage, LensRow, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
@@ -86,18 +86,19 @@ function flush(save = false, reparse = false): void {
     }
     reparse = reparse || reparseWanted;
     const text = serialize(view.state.doc);
-    if (text === hostText && !save && !reparse) {
-        return;
+    if (text !== hostText || save || reparse) {
+        reparseWanted = false;
+        hostText = text;
+        post({
+            type: 'edit',
+            text,
+            baseVersion: current.version,
+            ...(save ? { save: true as const } : {}),
+            ...(reparse ? { reparse: true as const } : {}),
+        });
     }
-    reparseWanted = false;
-    hostText = text;
-    post({
-        type: 'edit',
-        text,
-        baseVersion: current.version,
-        ...(save ? { save: true as const } : {}),
-        ...(reparse ? { reparse: true as const } : {}),
-    });
+    // Behind the edit, so the host looks the blocks up in this text.
+    sendDeferredActions();
 }
 
 function scheduleFlush(): void {
@@ -179,6 +180,101 @@ const port: EditorPort = {
     },
 };
 
+/**
+ * Other extensions' code actions per top-level block, as the host last answered
+ * for it. Keyed by the node: an edit to the block makes a new node, which is
+ * asked about afresh. An answer is good for one `epoch` — until the next
+ * document or lens refresh from the host, after which a diagnostic behind a
+ * quick fix may have come or gone — and is shown while it is asked again.
+ */
+interface KnownActions {
+    items: readonly CodeActionItem[];
+    epoch: number;
+    asking: boolean;
+}
+
+const knownActions = new WeakMap<Node, KnownActions>();
+const pendingActions = new Map<number, { node: Node; epoch: number }>();
+/** Blocks whose actions are asked once the page's pending edit has gone (`flush`). */
+const deferredActions = new Set<Node>();
+let actionSeq = 0;
+let actionEpoch = 0;
+
+/**
+ * Ask the host for the actions of the top-level `node`, by its index now. The
+ * host maps the index to lines in the text it holds, so while the page holds
+ * another — an edit waiting in the delay, a change this very transaction made,
+ * a save committing its source boxes — the question waits for the edit that
+ * carries it. Not sent from here by flushing: this runs while the toolbar
+ * redraws, inside a transaction a save may be in the middle of.
+ */
+function askActions(node: Node): void {
+    if (!view || !current) {
+        return;
+    }
+    if (editTimer !== undefined || committingForSave || serialize(view.state.doc) !== hostText) {
+        deferredActions.add(node);
+        return;
+    }
+    sendActionsFor(node);
+}
+
+function sendActionsFor(node: Node): void {
+    if (!view) {
+        return;
+    }
+    const doc = view.state.doc;
+    let blockIndex = -1;
+    doc.forEach((child, _offset, i) => {
+        if (child === node) {
+            blockIndex = i;
+        }
+    });
+    if (blockIndex < 0) {
+        // Edited or gone since: the node now there is asked about when its bar shows.
+        return;
+    }
+    const requestId = ++actionSeq;
+    pendingActions.set(requestId, { node, epoch: actionEpoch });
+    post({ type: 'actionsFor', requestId, blockIndex, blocks: doc.childCount });
+}
+
+function sendDeferredActions(): void {
+    const nodes = [...deferredActions];
+    deferredActions.clear();
+    nodes.forEach(sendActionsFor);
+}
+
+/** A meta that only makes the plugin views look again: the object toolbar redraws with the answer. */
+const ACTIONS_ARRIVED_META = 'mepActionsArrived';
+
+function codeActionsAt(pos: number): readonly CodeActionItem[] {
+    if (!view) {
+        return [];
+    }
+    const doc = view.state.doc;
+    if (pos < 0 || pos >= doc.content.size || doc.resolve(pos).depth !== 0) {
+        return [];
+    }
+    const node = doc.child(doc.resolve(pos).index(0));
+    const known = knownActions.get(node);
+    if (!known || (known.epoch !== actionEpoch && !known.asking)) {
+        knownActions.set(node, { items: known?.items ?? [], epoch: actionEpoch, asking: true });
+        askActions(node);
+    }
+    return known?.items ?? [];
+}
+
+function applyActions(requestId: number, items: CodeActionItem[]): void {
+    const asked = pendingActions.get(requestId);
+    pendingActions.delete(requestId);
+    if (!asked || !view) {
+        return;
+    }
+    knownActions.set(asked.node, { items, epoch: asked.epoch, asking: false });
+    view.dispatch(view.state.tr.setMeta(ACTIONS_ARRIVED_META, true).setMeta('addToHistory', false));
+}
+
 /** Scroll to the element of the document with this id; false when the page has none. */
 function followFragment(fragment: string): boolean {
     let id = fragment;
@@ -251,6 +347,8 @@ const plugins = [
         openLink: href => port.openLink(href),
         sourceContext,
         flushReparse: () => flush(false, true),
+        codeActionsAt,
+        runCodeAction: id => post({ type: 'runAction', id }),
     }),
     lensPlugin(id => post({ type: 'runLens', id })),
 ];
@@ -276,6 +374,7 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     }
     // A parse is what a pending reparse asked for, and this is one.
     reparseWanted = false;
+    actionEpoch++;
     hideError();
     const doc = Node.fromJSON(editorSchema, json.doc);
     current = { eol: json.eol, tail: json.tail, version, defaultWrap };
@@ -287,6 +386,7 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         // selection is mapped through the change, so a caret outside the
         // replaced blocks stays where it was.
         view.updateState(view.state.apply(resyncTransaction(view.state, doc)));
+        sendDeferredActions();
         return;
     }
     const state = EditorState.create({ doc, plugins });
@@ -394,6 +494,8 @@ function showLenses(version: number, blocks: number, rows: LensRow[]): void {
     if (!view || !current || version < current.version) {
         return;
     }
+    // The host has looked at the document again: the code actions are asked again too.
+    actionEpoch++;
     if (rows.length > 0 && blocks !== view.state.doc.childCount) {
         return;
     }
@@ -421,6 +523,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'lenses':
             showLenses(msg.version, msg.blocks, msg.rows);
+            break;
+        case 'actions':
+            applyActions(msg.requestId, msg.items);
             break;
     }
 });

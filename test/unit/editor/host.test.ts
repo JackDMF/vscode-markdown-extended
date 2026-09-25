@@ -454,6 +454,126 @@ suite('Editor host: lens placement', () => {
     });
 });
 
+const ACTION_SOURCE = [
+    '# Heading',        // 0
+    '',                 // 1
+    'A paragraph',      // 2
+    'over two lines.',  // 3
+    '',
+].join('\n');
+
+const ACTION_COMMAND = 'markdownExtended.test.actionCommand';
+
+type ActionsMessage = Extract<HostMessage, { type: 'actions' }>;
+
+suite('Editor host: code actions', () => {
+    let uri: vscode.Uri;
+    let document: vscode.TextDocument;
+    let webview: FakeWebview;
+    let session: VisualEditorSession;
+    const engineChanged = new vscode.EventEmitter<void>();
+    const subscriptions: vscode.Disposable[] = [];
+    const ran: unknown[][] = [];
+    const asked: vscode.Range[] = [];
+    const handle = { kind: 'handle', call: () => 'called' };
+
+    const answer = (requestId: number) => until(
+        () => webview.posted.find((m): m is ActionsMessage => m.type === 'actions' && m.requestId === requestId), 5000,
+    );
+
+    suiteSetup(async function () {
+        this.timeout(20000);
+        uri = tempMarkdown(ACTION_SOURCE);
+        subscriptions.push(
+            vscode.commands.registerCommand(ACTION_COMMAND, (...args: unknown[]) => {
+                ran.push(args);
+            }),
+            vscode.languages.registerCodeActionsProvider({ language: 'markdown' }, {
+                provideCodeActions: (d, range) => {
+                    if (d.uri.toString() !== uri.toString()) {
+                        return [];
+                    }
+                    asked.push(range);
+                    const insert = new vscode.CodeAction('Insert marker', vscode.CodeActionKind.QuickFix);
+                    insert.edit = new vscode.WorkspaceEdit();
+                    insert.edit.insert(d.uri, new vscode.Position(range.start.line, 0), 'X');
+                    const withCommand = new vscode.CodeAction('With command', vscode.CodeActionKind.RefactorRewrite);
+                    withCommand.command = { title: 'With command', command: ACTION_COMMAND, arguments: [handle] };
+                    const organize = new vscode.CodeAction('Organize', vscode.CodeActionKind.SourceOrganizeImports);
+                    organize.command = { title: 'Organize', command: ACTION_COMMAND, arguments: ['organize'] };
+                    return [insert, withCommand, { title: 'Plain command', command: ACTION_COMMAND, arguments: ['plain'] }, organize];
+                },
+            }),
+        );
+        document = await vscode.workspace.openTextDocument(uri);
+        const engine = buildEditorEngine(EXTENSION_ID, () => undefined);
+        webview = new FakeWebview();
+        session = new VisualEditorSession(document, webview, {
+            engine: () => engine,
+            onDidChangeEngine: engineChanged.event,
+            log: () => undefined,
+        });
+        webview.send({ type: 'ready' });
+        await session.settled();
+    });
+
+    suiteTeardown(async () => {
+        session.dispose();
+        engineChanged.dispose();
+        subscriptions.forEach(d => d.dispose());
+        fs.rmSync(uri.fsPath, { force: true });
+    });
+
+    test('actionsFor asks VS Code for the actions on the block\'s lines, and answers with titles and kinds, none acting on the file or on a text editor', async function () {
+        this.timeout(10000);
+        webview.send({ type: 'actionsFor', requestId: 1, blockIndex: 1, blocks: 2 });
+        const msg = await answer(1);
+        assert.ok(msg, `expected actions, got ${JSON.stringify(webview.posted.map(m => m.type))}`);
+        assert.strictEqual(msg.blockIndex, 1);
+        const range = asked[asked.length - 1];
+        assert.deepStrictEqual([range.start.line, range.start.character, range.end.line, range.end.character], [2, 0, 3, 'over two lines.'.length],
+            'the paragraph\'s two lines, whole');
+        assert.deepStrictEqual(msg.items.map(i => [i.title, i.kind]), [
+            ['Insert marker', 'quickfix'],
+            ['With command', 'refactor.rewrite'],
+            ['Plain command', ''],
+        ], 'no source action (the file\'s), no Surround With snippet, no inline chat (a text editor\'s selection): VS Code core offers those for any range');
+        assert.ok(msg.items.every(i => i.id.length > 0));
+        assert.ok(!JSON.stringify(msg).includes('handle'), 'the actions stay in the host');
+    });
+
+    test('a block count the page no longer shares is answered with nothing', async function () {
+        this.timeout(10000);
+        webview.send({ type: 'actionsFor', requestId: 2, blockIndex: 1, blocks: 3 });
+        const msg = await answer(2);
+        assert.ok(msg);
+        assert.deepStrictEqual(msg.items, []);
+    });
+
+    test('runAction runs a command action with its own arguments, and a plain command', async function () {
+        this.timeout(10000);
+        const msg = await answer(1);
+        assert.ok(msg);
+        webview.send({ type: 'runAction', id: msg.items[1].id });
+        webview.send({ type: 'runAction', id: msg.items[2].id });
+        const done = await until(() => (ran.length >= 2 ? ran : undefined), 5000);
+        assert.ok(done, 'both ran');
+        assert.strictEqual(ran[0][0], handle, 'the very object the provider gave');
+        assert.deepStrictEqual(ran[1], ['plain']);
+    });
+
+    test('runAction applies an action\'s edit to the document, which reaches the page as a new document', async function () {
+        this.timeout(10000);
+        const msg = await answer(1);
+        assert.ok(msg);
+        const before = webview.documents().length;
+        webview.send({ type: 'runAction', id: msg.items[0].id });
+        const posted = await until(() => webview.documents()[before], 5000);
+        assert.strictEqual(document.getText(), ACTION_SOURCE.replace('A paragraph', 'XA paragraph'));
+        assert.ok(posted, 'the change is posted like any other writer\'s');
+    });
+});
+
 suite('Editor host: provider smoke test', () => {
     test('opening a file in the Visual Editor shows it in a custom tab and writes nothing', async function () {
         this.timeout(30000);

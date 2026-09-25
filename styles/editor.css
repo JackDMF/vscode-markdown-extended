@@ -394,6 +394,14 @@
     text-overflow: ellipsis;
 }
 
+/* Between an object's own verbs and the code actions other extensions offer for it. */
+.mep-object-separator {
+    align-self: stretch;
+    width: 1px;
+    margin: 2px 2px;
+    background: var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+}
+
 /* A verb, and the error banner's one button, which is the same kind of control. */
 .mep-object-verb,
 .mep-error-button {

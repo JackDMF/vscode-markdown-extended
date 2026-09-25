@@ -85,8 +85,8 @@ export function lensesEnabled(uri: vscode.Uri): boolean {
     return editor !== false && Config.instance.editorCodeLenses(uri);
 }
 
-/** What the lens rows need from the session. */
-export interface LensHost {
+/** What the lens rows and the code actions (`codeActions.ts`) need from the session. */
+export interface SessionPort {
     readonly document: vscode.TextDocument;
     /** Whether the page holds `text`: the text the session last posted to it or applied for it, and not the error state. */
     pageHolds(text: string): boolean;
@@ -121,7 +121,7 @@ export class LensController implements vscode.Disposable {
     private disposed = false;
     private readonly subscriptions: vscode.Disposable[];
 
-    constructor(private readonly host: LensHost) {
+    constructor(private readonly host: SessionPort) {
         this.subscriptions = [
             vscode.workspace.onDidChangeConfiguration(e => {
                 const uri = this.host.document.uri;

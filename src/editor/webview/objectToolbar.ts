@@ -43,10 +43,11 @@ import { NoteNodeName, unwrapNote } from './notes';
 import {
     EditorObject, NOTE_CONVERSION, blockAttrsRefusal, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction,
     changeImageTransaction, changeLinkTransaction, changeSpanTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectTransaction, isBlockObject, isBlockPlaced, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
+    deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
+import type { CodeActionItem } from '../protocol';
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -58,6 +59,13 @@ export interface ObjectToolbarHost {
     sourceContext(): SourceContext;
     /** Send the document now and ask the host to parse it again (`edit.reparse`). */
     flushReparse(): void;
+    /**
+     * The code actions other extensions offer for the top-level block at `pos`,
+     * as far as the page knows them: asked of the host the first time, the bar
+     * redrawn when the answer arrives (`main.ts`).
+     */
+    codeActionsAt(pos: number): readonly CodeActionItem[];
+    runCodeAction(id: string): void;
 }
 
 /** How long the caret rests in an inline object before its toolbar shows. */
@@ -83,6 +91,8 @@ interface Verb {
     field?: { value: string; label: string; commit(value: string): void };
     /** A verb that asks for one of a list of values, in the inline choice. */
     choice?: { value: string; label: string; options: readonly { value: string; label: string }[]; commit(value: string): void };
+    /** Drawn after a separator: the first of another extension's code actions. */
+    separated?: boolean;
 }
 
 interface Presentation {
@@ -159,7 +169,7 @@ class ObjectBar {
         // an undo would otherwise offer the undone source.
         const signature = JSON.stringify([
             object.kind, object.from, presentation.label, presentation.title,
-            presentation.verbs.map(v => [v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? v.choice?.value ?? null]),
+            presentation.verbs.map(v => [v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? v.choice?.value ?? null, v.separated ?? false]),
         ]);
         if (!this.field && signature !== this.signature) {
             this.signature = signature;
@@ -204,7 +214,15 @@ class ObjectBar {
             });
             return { verb, el };
         });
-        this.el.replaceChildren(label, ...this.buttons.map(b => b.el));
+        this.el.replaceChildren(label, ...this.buttons.flatMap(b => {
+            if (!b.verb.separated) {
+                return [b.el];
+            }
+            const separator = document.createElement('span');
+            separator.className = 'mep-object-separator';
+            separator.setAttribute('role', 'separator');
+            return [separator, b.el];
+        }));
     }
 
     private choose(verb: Verb): void {
@@ -412,8 +430,14 @@ class ObjectToolbarView implements PluginView {
         } else if (isBlockObject(object) || sameObject(object, this.matured)) {
             this.cancelPending();
             this.matured = isBlockObject(object) ? null : object;
-            this.selectionBar.show(object, this.present(object));
-            this.place(this.selectionBar, object);
+            const presentation = this.present(object);
+            if (presentation.verbs.length === 0 && object.kind === 'heading') {
+                // A heading's verbs are other extensions' actions; with none, no bar.
+                this.selectionBar.hide();
+            } else {
+                this.selectionBar.show(object, presentation);
+                this.place(this.selectionBar, object);
+            }
         } else if (!sameObject(object, this.pending?.object ?? null)) {
             // A new inline object: nothing until the caret has rested in it.
             this.cancelPending();
@@ -596,7 +620,31 @@ class ObjectToolbarView implements PluginView {
         showHint(this.view, text, tone);
     }
 
+    /**
+     * The object's own verbs, then — for a whole top-level block — the code
+     * actions other extensions offer for its lines, after a separator, as the
+     * text editor's light bulb would offer them there.
+     */
     private present(object: EditorObject): Presentation {
+        const own = this.ownPresentation(object);
+        if (!isTopLevelBlock(this.view.state, object)) {
+            return own;
+        }
+        const actions = this.host.codeActionsAt(object.from).map((item, k): Verb => ({
+            id: `code-action:${item.id}`,
+            label: item.title,
+            title: item.kind ? `${item.title} (${item.kind}, from another extension)` : `${item.title} (from another extension)`,
+            refusal: item.refusal ?? null,
+            separated: k === 0 && own.verbs.length > 0,
+            run: () => {
+                this.view.focus();
+                this.host.runCodeAction(item.id);
+            },
+        }));
+        return actions.length === 0 ? own : { ...own, verbs: [...own.verbs, ...actions] };
+    }
+
+    private ownPresentation(object: EditorObject): Presentation {
         const view = this.view;
         const host = this.host;
         const dispatch = view.dispatch.bind(view);
@@ -881,6 +929,15 @@ class ObjectToolbarView implements PluginView {
             }
             case 'front_matter':
                 return { label: 'Front matter', title: 'Written back exactly as it is; tools such as Req Explorer edit it.', verbs: [] };
+            case 'heading': {
+                const prefix = object.node.attrs.reqPrefix as string | null;
+                const id = prefix?.replace(/:\s*$/, '') ?? '';
+                return {
+                    label: id ? `Requirement ${id}` : `Heading ${object.node.attrs.level as number}`,
+                    title: id ? 'A requirement heading: its id and anchor are Req Explorer\'s.' : 'A heading.',
+                    verbs: [],
+                };
+            }
         }
     }
 

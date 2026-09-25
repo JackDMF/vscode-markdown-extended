@@ -208,12 +208,13 @@ suite('Editor block attributes: the object and its verb', () => {
         assert.strictEqual(objectHere(caretAt(state, 'here')).kind, 'block_attrs');
     });
 
-    test('a requirement heading\'s anchor is no block-attributes object: it is Req Explorer\'s', () => {
+    test('a requirement heading\'s anchor is no block-attributes object: it is Req Explorer\'s, and the heading is a heading object', () => {
         const parsed = parseDocument(hostEngine(), '## FR-X-001: Title {#fr-x-001}\n');
         const heading = parsed.doc.child(0);
         const req = heading.type.create({ ...heading.attrs, reqPrefix: 'FR-X-001: ' }, editorSchema.text('Title'));
         const state = EditorState.create({ doc: editorSchema.topNodeType.create(null, [req]) });
-        assert.strictEqual(objectAtSelection(caretAt(state, 'Title', 2)), null);
+        // Its bar carries only the code actions other extensions offer for it (objectToolbar.ts).
+        assert.strictEqual(objectAtSelection(caretAt(state, 'Title', 2))?.kind, 'heading');
     });
 
     test('a selected rule with attributes is its block-attributes object', () => {

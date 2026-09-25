@@ -18,6 +18,7 @@
  * | `container` | A `container` node (`::: name`) | The node |
  * | `admonition` | An `admonition` node (`!!! type "Title"`) | The node |
  * | `block_attrs` | A top-level block carrying an attribute literal (`attrsSuffix`) | The node |
+ * | `heading` | A top-level heading that is no `block_attrs` — a requirement heading is one | The node |
  * | `raw_block` | A source block | The node |
  * | `injected_block` | Injected content: an expansion, an atom, generated content | The node |
  * | `front_matter` | The front matter | The node |
@@ -25,7 +26,9 @@
  * The last three are **block objects**, the rest **caret objects**; the toolbar
  * shows them on different triggers (`objectToolbar.ts`). Of the caret objects,
  * a container, an admonition and a block with attributes are placed like a
- * block, at its right edge (`isBlockPlaced`).
+ * block, at its right edge (`isBlockPlaced`), and so is a heading, which has no
+ * verbs of its own: its bar carries only the code actions other extensions
+ * offer for it (`isTopLevelBlock`), and shows only when there are some.
  */
 import { liftTarget } from 'prosemirror-transform';
 import { Mark, Node, ResolvedPos } from 'prosemirror-model';
@@ -37,7 +40,7 @@ import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 
 const nodes = editorSchema.nodes;
 
-export type NodeObjectKind = 'note' | 'image' | 'badge' | 'container' | 'admonition' | 'block_attrs' | 'raw_block' | 'injected_block' | 'front_matter';
+export type NodeObjectKind = 'note' | 'image' | 'badge' | 'container' | 'admonition' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
 
 export type EditorObject =
     | { kind: 'link'; from: number; to: number; mark: Mark }
@@ -48,7 +51,7 @@ export type EditorObject =
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
 
 /** The caret objects that are blocks: their bar sits at the block's right edge, as a block object's does. */
-const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'block_attrs']);
+const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'block_attrs', 'heading']);
 
 export function isBlockObject(object: EditorObject): boolean {
     return BLOCK_OBJECTS.has(object.kind);
@@ -56,6 +59,17 @@ export function isBlockObject(object: EditorObject): boolean {
 
 export function isBlockPlaced(object: EditorObject): boolean {
     return BLOCK_OBJECTS.has(object.kind) || BLOCK_PLACED.has(object.kind);
+}
+
+/**
+ * Whether the object is a whole top-level block — a source block, injected
+ * content, the front matter, a heading, a container, an admonition, a block
+ * with attributes at the top: the objects the host can name a range of the file
+ * for, and so the ones that carry other extensions' code actions.
+ */
+export function isTopLevelBlock(state: EditorState, object: EditorObject): boolean {
+    return object.kind !== 'link' && object.kind !== 'span' && object.from < state.doc.content.size
+        && state.doc.resolve(object.from).depth === 0 && state.doc.nodeAt(object.from) === object.node;
 }
 
 /** Whether two objects are the same one: the same kind at the same place. */
@@ -91,7 +105,8 @@ function carriesBlockAttrs(node: Node): boolean {
 
 /** The object `node` at `pos` is, or `null` for a node that is none. */
 export function objectOfNode(node: Node, pos: number): EditorObject | null {
-    const kind = NODE_KINDS[node.type.name] ?? (carriesBlockAttrs(node) ? 'block_attrs' : undefined);
+    const kind = NODE_KINDS[node.type.name]
+        ?? (carriesBlockAttrs(node) ? 'block_attrs' : node.type === nodes.heading ? 'heading' : undefined);
     return kind === undefined ? null : { kind, from: pos, to: pos + node.nodeSize, node };
 }
 
@@ -166,12 +181,21 @@ function blockAttrsAt(state: EditorState): EditorObject | null {
     return carriesBlockAttrs(node) ? objectOfNode(node, $from.before(1)) : null;
 }
 
+/** The top-level heading holding both ends of the selection that is no block with attributes. */
+function headingAt(state: EditorState): EditorObject | null {
+    const { $from, $to } = state.selection;
+    if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1) || $from.node(1).type !== nodes.heading) {
+        return null;
+    }
+    return objectOfNode($from.node(1), $from.before(1));
+}
+
 /**
  * The object the selection is on: a node selected as a whole, else — innermost
  * first, so a link inside a note inside an admonition is the link — the link
  * the selection is in, the attribute span, the note both its ends are in, the
- * container or admonition, and last the top-level block with an attribute
- * literal. `null` in plain text.
+ * container or admonition, the top-level block with an attribute literal, and
+ * last the top-level heading. `null` in plain text.
  */
 export function objectAtSelection(state: EditorState): EditorObject | null {
     const sel = state.selection;
@@ -190,7 +214,7 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     if (from !== null && to !== null && from.noteBefore === to.noteBefore) {
         return objectOfNode(from.note, from.noteBefore);
     }
-    return wrapperAt(state) ?? blockAttrsAt(state);
+    return wrapperAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
 }
 
 /** The object at the same place in `state`, if it is still there and still the same kind; verbs act on this, never on a stale one. */
