@@ -4,9 +4,6 @@ import { followLinksIn } from './links';
 
 /** What the node views need from the page around them. */
 export interface EditorPort {
-    /** Open the text editor beside, at the line the top-level node at `pos` starts on. */
-    openSourceAt(pos: number): void;
-    openSnippet(path: string): void;
     /** Follow a Ctrl/Cmd+clicked link, its href as the element carries it (`links.ts`). */
     openLink(href: string): void;
     /** Ask the host to render a raw block's new source; the page puts the HTML on every block that still has that source. */
@@ -38,20 +35,6 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: stri
     if (text !== undefined) {
         el.textContent = text;
     }
-    return el;
-}
-
-function button(label: string, title: string, onClick: () => void): HTMLButtonElement {
-    const el = element('button', 'mep-atom-button', label);
-    el.type = 'button';
-    el.title = title;
-    // mousedown, not only click: ProseMirror would otherwise take the press as
-    // the start of a node selection and move the focus away first.
-    el.addEventListener('mousedown', e => e.preventDefault());
-    el.addEventListener('click', e => {
-        e.preventDefault();
-        onClick();
-    });
     return el;
 }
 
@@ -101,8 +84,9 @@ abstract class AtomView implements NodeView {
  * A block the editor does not edit as rich text — a table, raw HTML, a
  * container, anything outside the editable core. It shows the host's rendering
  * (or the source itself, for lines no token covers), and its source can be
- * edited in place: **Edit source** opens a textarea, `Ctrl+Enter` or leaving it
- * commits, `Esc` cancels.
+ * edited in place: **Edit source** in its object toolbar (`objectToolbar.ts`),
+ * or a double click, opens a textarea; `Ctrl+Enter` or leaving it commits,
+ * `Esc` cancels.
  *
  * What the textarea holds is not in the document until it commits, so a save
  * would miss it. The view registers itself with the page while it is open, and
@@ -113,23 +97,11 @@ export class RawBlockView extends AtomView implements SourceEditor {
     private readonly content: HTMLElement;
     private editor: HTMLTextAreaElement | null = null;
     private untrack: (() => void) | null = null;
-    private readonly toolbar: HTMLElement;
 
     constructor(node: Node, private readonly getPos: GetPos, private readonly port: EditorPort) {
         super(node, 'div', 'mep-raw-block');
-        this.toolbar = element('div', 'mep-atom-toolbar');
-        this.toolbar.append(
-            element('span', 'mep-atom-label', 'Source block'),
-            button('Edit source', 'Edit this block as Markdown (Ctrl+Enter to apply, Esc to cancel)', () => this.editSource()),
-            button('Show in text editor', 'Open the text editor beside, at this block', () => {
-                const pos = this.getPos();
-                if (pos !== undefined) {
-                    this.port.openSourceAt(pos);
-                }
-            }),
-        );
         this.content = element('div', 'mep-atom-content');
-        this.dom.append(this.toolbar, this.content);
+        this.dom.append(this.content);
         inertControls(this.content);
         followLinksIn(this.content, href => this.port.openLink(href));
         // A double click on the rendering opens the source, as a double click on
@@ -170,18 +142,19 @@ export class RawBlockView extends AtomView implements SourceEditor {
     }
 
     /**
-     * Every event inside the toolbar or the open source box is theirs, of any
-     * type — pointer, keyboard, input, clipboard, focus, selection, drag.
-     * ProseMirror taking a mousedown in the textarea would make a node selection
-     * of the block and move the caret out of the box. (Selection changes inside
-     * the view are not ProseMirror's either: `ignoreMutation` answers true.)
+     * Every event inside the open source box is its own, of any type — pointer,
+     * keyboard, input, clipboard, focus, selection, drag. ProseMirror taking a
+     * mousedown in the textarea would make a node selection of the block and
+     * move the caret out of the box. (Selection changes inside the view are not
+     * ProseMirror's either: `ignoreMutation` answers true.) The block's verbs
+     * are in the object toolbar, outside the editor's DOM.
      */
     stopEvent(event: Event): boolean {
         const target = event.target as globalThis.Node | null;
-        return target !== null && (this.toolbar.contains(target) || (this.editor?.contains(target) ?? false));
+        return target !== null && (this.editor?.contains(target) ?? false);
     }
 
-    /** Open the block's source in a textarea, as **Edit source** does; the toolbar calls it for a block it inserted. */
+    /** Open the block's source in a textarea; the object toolbar's **Edit source** calls it, and the formatting toolbar for a block it inserted. */
     editSource(): void {
         if (this.editor) {
             return;
@@ -312,45 +285,26 @@ export function withSourceTerminators(value: string, original: string, eol: '\n'
 
 /**
  * Content the file does not hold at this place (Req Explorer SPEC §10.2):
- * shown, never edited. An include expansion that resolved names its snippet
- * file and offers to open it; a `missing` one carries no path and offers
- * nothing, and an atom (a summary table, generated footnotes) is its rendering
- * alone.
+ * shown, never edited. Its verbs — an expansion's **Open snippet** when its
+ * mark names the file, **Show in text editor**, **Delete directive** — are in
+ * the object toolbar (`objectToolbar.ts`); an atom (a summary table,
+ * generated footnotes) is its rendering alone.
  */
 export class InjectedBlockView extends AtomView {
-    private readonly toolbar: HTMLElement;
     private readonly content: HTMLElement;
 
-    constructor(node: Node, private readonly port: EditorPort) {
+    constructor(node: Node, port: EditorPort) {
         super(node, 'div', 'mep-injected-block');
-        this.toolbar = element('div', 'mep-atom-toolbar');
         this.content = element('div', 'mep-atom-content');
-        this.dom.append(this.toolbar, this.content);
+        this.dom.append(this.content);
         inertControls(this.content);
-        followLinksIn(this.content, href => this.port.openLink(href));
+        followLinksIn(this.content, href => port.openLink(href));
         this.render();
     }
 
     protected render(): void {
-        const kind = this.node.attrs.kind as string;
-        const mark = this.node.attrs.mark as { snippet?: unknown; path?: unknown; missing?: unknown } | null;
-        this.dom.dataset.kind = kind;
-        this.toolbar.replaceChildren();
-        if (kind === 'expansion') {
-            const snippet = typeof mark?.snippet === 'string' ? mark.snippet : '';
-            this.toolbar.append(element('span', 'mep-atom-label', mark?.missing ? `Snippet ${snippet} (not found)` : `Included snippet ${snippet}`));
-            const path = mark?.path;
-            if (typeof path === 'string' && !mark?.missing) {
-                this.toolbar.append(button('Open snippet', path, () => this.port.openSnippet(path)));
-            }
-        }
-        this.toolbar.hidden = this.toolbar.childElementCount === 0;
+        this.dom.dataset.kind = this.node.attrs.kind as string;
         this.content.innerHTML = this.node.attrs.html as string;
-    }
-
-    stopEvent(event: Event): boolean {
-        const target = event.target as globalThis.Node | null;
-        return target !== null && this.toolbar.contains(target);
     }
 }
 

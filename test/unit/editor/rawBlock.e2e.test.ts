@@ -19,6 +19,9 @@ const SOURCE = [
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/** The object toolbar showing the selected source block's verbs. */
+const SELECTED_BLOCK_BAR = '.mep-object-toolbar[data-trigger="selection"][data-object="raw_block"]:not([hidden])';
+
 /**
  * The atoms — a raw block with its source editor, the front matter — driven
  * with the real mouse in headless Chromium: press, move and release at page
@@ -58,7 +61,7 @@ suite('Editor atoms with the real mouse (e2e)', () => {
     const openTableSource = async () => {
         await page.mouse.move(...Object.values(await centre('.mep-raw-block .mep-atom-content table')) as [number, number]);
         await clickAt(await centre('.mep-raw-block .mep-atom-content table'));
-        const button = await page.waitForSelector('.mep-raw-block .mep-atom-toolbar .mep-atom-button', { visible: true });
+        const button = await page.waitForSelector(`${SELECTED_BLOCK_BAR} [data-verb="edit-source"]`, { visible: true });
         const box = await button?.boundingBox();
         assert.ok(box);
         await clickAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
@@ -181,8 +184,8 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         assert.strictEqual(await page.$eval('details.mep-front-matter', el => (el as HTMLDetailsElement).open), false);
 
         await clickAt(await centre('.mep-raw-block .mep-atom-content table'));
-        const [, show] = await page.$$('.mep-raw-block .mep-atom-toolbar .mep-atom-button');
-        const box = await show.boundingBox();
+        const show = await page.waitForSelector(`${SELECTED_BLOCK_BAR} [data-verb="show-in-text-editor"]`, { visible: true });
+        const box = await show?.boundingBox();
         assert.ok(box);
         await clickAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
         const open = (await (editor as EditorPage).posted()).filter(m => m.type === 'openSource').pop();
@@ -197,7 +200,8 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await page.waitForSelector('.mep-raw-block kbd');
         await page.mouse.move(...Object.values(await centre('.mep-raw-block kbd')) as [number, number]);
         await clickAt(await centre('.mep-raw-block kbd'));
-        const button = await page.waitForSelector('.ProseMirror-selectednode .mep-atom-toolbar .mep-atom-button', { visible: true });
+        assert.ok(await page.$('.mep-raw-block.ProseMirror-selectednode'), 'the click selected the block');
+        const button = await page.waitForSelector(`${SELECTED_BLOCK_BAR} [data-verb="edit-source"]`, { visible: true });
         const box = await button?.boundingBox();
         assert.ok(box);
         await clickAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });

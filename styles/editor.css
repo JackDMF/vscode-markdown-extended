@@ -5,9 +5,9 @@
  * (markdown.css, highlight.css, every extension's markdown.previewStyles and
  * the user's markdown.styles), so the document looks as it does in the preview.
  * This file styles only what the preview does not have: the editing surface,
- * the outline and toolbar of a block that is not edited as rich text, the
- * formatting toolbar and selection bubble (their frame, not their samples),
- * the front-matter panel and the error banner.
+ * the outline of a block that is not edited as rich text, the object toolbar,
+ * the formatting toolbar and selection bubble (their frame, not their samples),
+ * the caret hint, the front-matter panel and the error banner.
  *
  * It is NOT a preview style and is never contributed to markdown.previewStyles
  * or to exports. Colors come from VS Code's --vscode-* variables, which every
@@ -104,52 +104,6 @@
 .mep-injected-block[data-kind="generated"].ProseMirror-selectednode {
     border-left-color: var(--vscode-descriptionForeground, #888);
 }
-
-.mep-atom-toolbar {
-    display: none;
-    gap: 6px;
-    align-items: center;
-    font-family: var(--vscode-font-family, sans-serif);
-    font-size: 11px;
-    color: var(--vscode-descriptionForeground, #888);
-    margin-bottom: 2px;
-}
-
-/*
- * The toolbar — label, Open snippet, Edit source — is revealed by the pointer
- * or the selection, for every kind of atom alike. It floats above the block
- * rather than sitting in the flow, so revealing it moves nothing.
- */
-.mep-atom:hover > .mep-atom-toolbar,
-.mep-atom.ProseMirror-selectednode > .mep-atom-toolbar,
-.mep-atom.mep-editing > .mep-atom-toolbar {
-    display: flex;
-    position: absolute;
-    top: -20px;
-    right: 8px;
-    z-index: 1;
-    padding: 1px 6px;
-    border-radius: 3px;
-    background: var(--vscode-editorWidget-background, var(--vscode-editor-background, #222));
-    border: 1px solid var(--vscode-editorWidget-border, transparent);
-}
-
-.mep-atom-toolbar[hidden] { display: none !important; }
-
-.mep-atom-label { margin-right: auto; }
-
-.mep-atom-button {
-    font: inherit;
-    padding: 1px 8px;
-    border: 1px solid var(--vscode-button-border, transparent);
-    border-radius: 2px;
-    color: var(--vscode-button-secondaryForeground, inherit);
-    background: var(--vscode-button-secondaryBackground, transparent);
-    cursor: pointer;
-}
-
-.mep-atom-button:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.2)); }
-.mep-atom-button:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); }
 
 .mep-raw-source { margin: 0; opacity: 0.8; }
 
@@ -400,7 +354,85 @@
 
 .mep-bubble[hidden] { display: none; }
 
-/* Why an edit inside a note was refused, beside the caret for a moment. */
+/* ------------------------------------------------------------------------- */
+/* The object toolbar: one bar for every object's verbs                      */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * A note, a link, an image, a source block, injected content: each shows the
+ * same small bar above its first line (below its last when there is no room),
+ * a label naming it and then its verbs. Positioned by objectToolbar.ts inside
+ * .mep-editor, as the bubble is, so it scrolls with the text; under the bubble,
+ * which belongs to the selection being formatted.
+ */
+.mep-object-toolbar {
+    position: absolute;
+    z-index: 14;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+    max-width: 100%;
+    padding: 2px 4px;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: 11px;
+    line-height: 18px;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, #888);
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background, Canvas));
+    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    border-radius: 4px;
+    box-shadow: 0 1px 4px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+}
+
+.mep-object-toolbar[hidden] { display: none; }
+.mep-object-toolbar:focus { outline: 1px solid var(--vscode-focusBorder, #0078d4); }
+
+.mep-object-label {
+    padding: 0 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* A verb, and the error banner's one button, which is the same kind of control. */
+.mep-object-verb,
+.mep-error-button {
+    font: inherit;
+    padding: 0 8px;
+    border: 1px solid var(--vscode-button-border, transparent);
+    border-radius: 2px;
+    color: var(--vscode-button-secondaryForeground, inherit);
+    background: var(--vscode-button-secondaryBackground, transparent);
+    cursor: pointer;
+}
+
+.mep-object-verb:hover,
+.mep-error-button:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.2)); }
+.mep-object-verb:focus,
+.mep-error-button:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: -1px; }
+.mep-object-verb[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+.mep-object-verb[aria-disabled="true"]:hover { background: var(--vscode-button-secondaryBackground, transparent); }
+
+/* The inline field: one line, prefilled, in the bar in place of the verbs. */
+.mep-inline-field {
+    box-sizing: border-box;
+    min-width: 12em;
+    max-width: 60ch;
+    padding: 0 4px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--vscode-input-foreground, inherit);
+    background: var(--vscode-input-background, transparent);
+    border: 1px solid var(--vscode-focusBorder, #0078d4);
+    border-radius: 2px;
+    outline: none;
+}
+
+/*
+ * The caret hint: why an edit was refused (a warning's accent), or what a verb
+ * did ("Note removed — Ctrl+Z", neutral), beside the caret for a moment.
+ */
 .mep-hint {
     position: absolute;
     z-index: 20;
@@ -414,6 +446,7 @@
     pointer-events: none;
 }
 .mep-hint[hidden] { display: none; }
+.mep-hint[data-tone="refusal"] { border-left: 3px solid var(--vscode-editorWarning-foreground, #bf8803); }
 
 /* ------------------------------------------------------------------------- */
 /* Requirement heading: the id is shown, not edited                          */

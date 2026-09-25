@@ -628,6 +628,16 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
     }, marks, { escapeExtraCharacters: ESCAPE_EXTRA });
 }
 
+/**
+ * One inline node written on its own, as in the middle of a line — a note's
+ * `++reference|note++`, say — by the same rules a paragraph holding it is
+ * written with, the node's own marks included. Hold markers are stripped; a
+ * hard break inside is `\` + newline.
+ */
+export function serializeInline(node: Node): string {
+    return inlineMarkdown(editorSchema.nodes.paragraph.create(null, node), false).replace(HOLD_RE, '');
+}
+
 /** One editable node written by rule, with `\n` line breaks and no trailing newline. */
 export function serializeNode(node: Node, options: SerializeOptions): string {
     const doc = editorSchema.topNodeType.create(null, [node]);

@@ -20,6 +20,7 @@ import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
 import { linkClickPlugin } from './links';
+import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
 import { resyncTransaction } from './resync';
 import { toolbarPlugin } from './toolbar/toolbar';
@@ -130,8 +131,6 @@ function lineAt(pos: number): number {
 }
 
 const port: EditorPort = {
-    openSourceAt: pos => post({ type: 'openSource', line: lineAt(pos) }),
-    openSnippet: path => post({ type: 'openSnippet', path }),
     openLink: href => {
         // A heading or footnote of this document is in the page: scrolled to, not opened.
         if (href.startsWith('#') && followFragment(href.slice(1))) {
@@ -231,17 +230,26 @@ const nodeViews: Record<string, NodeViewConstructor> = {
 };
 /* eslint-enable @typescript-eslint/naming-convention */
 
+const sourceContext = () => ({
+    eol: current?.eol ?? '\n',
+    defaultWrap: current?.defaultWrap ?? 90,
+    documentText: view ? serialize(view.state.doc) : '',
+});
+
 const plugins = [
     ...editorPlugins(),
     linkClickPlugin(href => port.openLink(href)),
     toolbarPlugin({
-        sourceContext: () => ({
-            eol: current?.eol ?? '\n',
-            defaultWrap: current?.defaultWrap ?? 90,
-            documentText: view ? serialize(view.state.doc) : '',
-        }),
+        sourceContext,
         flushReparse: () => flush(false, true),
         requestRender: src => port.requestRender(src),
+    }),
+    objectToolbarPlugin({
+        openSourceAt: pos => post({ type: 'openSource', line: lineAt(pos) }),
+        openSnippet: path => post({ type: 'openSnippet', path }),
+        openLink: href => port.openLink(href),
+        sourceContext,
+        flushReparse: () => flush(false, true),
     }),
 ];
 
@@ -361,7 +369,7 @@ function showError(message: string): void {
     text.textContent = `This document cannot be edited here without changing it: ${message}`;
     const open = document.createElement('button');
     open.type = 'button';
-    open.className = 'mep-atom-button';
+    open.className = 'mep-error-button';
     open.textContent = 'Open in text editor';
     open.addEventListener('click', () => post({ type: 'openSource', line: 0 }));
     banner.append(text, open);

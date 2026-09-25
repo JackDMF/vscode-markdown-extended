@@ -379,6 +379,26 @@ function count(haystack: string, needle: string): number {
 }
 
 /**
+ * `block` (a top-level node holding stand-in runs) as a source block: serialized
+ * by rule, as any edited block is, then each run replaced by the literal it
+ * stands for, so the literal is written unescaped. `null` when a run is not in
+ * the text exactly once.
+ */
+function asSourceBlock(block: Node, runs: readonly (readonly [string, string])[], context: SourceContext, gap: string | null): Node | null {
+    let written = serializeNode(block.type.create({ ...block.attrs, src: null }, block.content, block.marks), { defaultWrap: context.defaultWrap });
+    for (const [run, literal] of runs) {
+        if (run === '') {
+            continue;
+        }
+        if (count(written, run) !== 1) {
+            return null;
+        }
+        written = written.split(run).join(literal);
+    }
+    return nodes.raw_block.create({ src: sourceText(written, context.eol), gap, html: '' });
+}
+
+/**
  * The transaction a `wrap-source` action makes: the selection's text wrapped
  * in `open` … `close` as literal Markdown, and the top-level block holding it
  * replaced by a source block with that text.
@@ -435,18 +455,49 @@ export function wrapSourceTransaction(state: EditorState, apply: Extract<ActionA
             scratch.insert(from, editorSchema.text(openRun, marks));
         }
     }
-    const marked = scratch.doc.child(index);
-    const text = serializeNode(marked.type.create({ ...marked.attrs, src: null }, marked.content, marked.marks), { defaultWrap: context.defaultWrap });
-    if (count(text, openRun) !== 1 || count(text, closeRun) !== 1) {
+    const block = asSourceBlock(scratch.doc.child(index), [[openRun, open], [closeRun, close]], context, top.attrs.gap ?? null);
+    if (block === null) {
         return null;
     }
-    const written = text.split(openRun).join(open).split(closeRun).join(close);
-
-    const block = nodes.raw_block.create({ src: sourceText(written, context.eol), gap: top.attrs.gap ?? null, html: '' });
     const tr = state.tr.replaceWith(topPos, topPos + top.nodeSize, block);
     if (apply.definition !== undefined) {
         tr.insert(topPos + block.nodeSize, nodes.raw_block.create({ src: sourceText(label(apply.definition, value), context.eol), gap: null, html: '' }));
     }
+    tr.setSelection(NodeSelection.create(tr.doc, topPos));
+    return tr.setMeta(PRESERVE_SOURCE_META, true).scrollIntoView();
+}
+
+/**
+ * The transaction that writes `literal` in place of the inline range
+ * `from`–`to` as literal source — a note's **Edit source** in the object
+ * toolbar. The top-level block holding the range is replaced by a source block
+ * whose text is the block serialized by rule with `literal` where the range was,
+ * unescaped: the range's place is held by a stand-in run of the literal's
+ * length, carrying `marks` (those the replaced node carried), so the marks
+ * around it are written around the literal and the wrapper measures the line
+ * as it will be. As for `wrap-source`, the block keeps its `gap`, the
+ * transaction carries `PRESERVE_SOURCE_META` and is one history event, and the
+ * page then sends `edit` with `reparse`: the host's parser decides what the text
+ * now is. `null` when the range is not inside one textblock, the literal is
+ * empty, or the document already holds a stand-in character.
+ */
+export function inlineSourceTransaction(
+    state: EditorState, from: number, to: number, literal: string, marks: readonly Mark[], context: SourceContext,
+): Transaction | null {
+    const $from = state.doc.resolve(from);
+    if (literal === '' || $from.depth < 1 || !$from.parent.inlineContent || !$from.sameParent(state.doc.resolve(to))) {
+        return null;
+    }
+    const index = $from.index(0);
+    const topPos = $from.before(1);
+    const top = state.doc.child(index);
+    const run = OPEN_STAND_IN.repeat(literal.length);
+    const scratch = state.tr.replaceWith(from, to, editorSchema.text(run, marks));
+    const block = asSourceBlock(scratch.doc.child(index), [[run, literal]], context, top.attrs.gap ?? null);
+    if (block === null) {
+        return null;
+    }
+    const tr = state.tr.replaceWith(topPos, topPos + top.nodeSize, block);
     tr.setSelection(NodeSelection.create(tr.doc, topPos));
     return tr.setMeta(PRESERVE_SOURCE_META, true).scrollIntoView();
 }

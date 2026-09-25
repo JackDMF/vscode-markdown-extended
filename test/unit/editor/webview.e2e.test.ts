@@ -19,6 +19,9 @@ const PARAGRAPH = 'A paragraph that stays\nwrapped as it was written.\n';
 const TABLE = '| a | b |\n| - | - |\n| 1 | 2 |\n';
 const SOURCE = `${FRONT_AND_HEADING}${PARAGRAPH}\n${TABLE}`;
 
+/** The object toolbar of the selected object, shown. */
+const SELECTED_BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
+
 /**
  * The Visual Editor's page (`dist/editor-webview.js`) driven in headless
  * Chromium, with `acquireVsCodeApi` replaced by a recorder: the host's half of
@@ -116,8 +119,7 @@ suite('Editor webview (e2e)', () => {
     test('"Show in text editor" names the line the raw block starts on', async function () {
         this.timeout(10000);
         await page.click('.mep-raw-block .mep-atom-content');
-        const [, show] = await page.$$('.mep-raw-block .mep-atom-button');
-        await show.click();
+        await page.click(`${SELECTED_BAR} [data-verb="show-in-text-editor"]`);
         const open = (await posted()).filter(m => m.type === 'openSource').pop();
         assert.deepStrictEqual(open, { type: 'openSource', line: SOURCE.split('\n').indexOf('| a | b |') });
         assert.deepStrictEqual(await edits(), [], 'selecting a block wrote nothing');
@@ -142,7 +144,7 @@ suite('Editor webview (e2e)', () => {
     test('a raw block\'s source edit asks the host to render it and writes the new source', async function () {
         this.timeout(10000);
         await page.click('.mep-raw-block .mep-atom-content');
-        await page.click('.mep-raw-block .mep-atom-button');
+        await page.click(`${SELECTED_BAR} [data-verb="edit-source"]`);
         await page.waitForSelector('.mep-raw-editor');
         const value = await page.$eval('.mep-raw-editor', el => (el as HTMLTextAreaElement).value);
         assert.strictEqual(value, TABLE.replace(/\n$/, ''));
@@ -256,9 +258,19 @@ suite('Editor webview (e2e)', () => {
         };
         await send({ type: 'document', json: { doc, eol: '\n', tail: '' }, version: 9, defaultWrap: 90 });
         await page.waitForFunction(() => document.querySelectorAll('.mep-injected-block').length === 2);
-        const buttons = await page.$$eval('.mep-injected-block', blocks => blocks.map(b => b.querySelectorAll('.mep-atom-button').length));
-        assert.deepStrictEqual(buttons, [1, 0]);
-        await page.click('.mep-injected-block .mep-atom-button');
+        // Each expansion selected in turn: its bar names it and lists its verbs.
+        const barOf = async (index: number) => {
+            const blocks = await page.$$('.mep-injected-block .mep-atom-content');
+            await blocks[index].click();
+            await page.waitForSelector(`${SELECTED_BAR}[data-object="injected_block"]`);
+            return page.$eval(SELECTED_BAR, bar => ({
+                label: bar.querySelector('.mep-object-label')?.textContent,
+                verbs: Array.from(bar.querySelectorAll('[data-verb]')).map(v => (v as HTMLElement).dataset.verb),
+            }));
+        };
+        assert.deepStrictEqual(await barOf(1), { label: 'Snippet gone (not found)', verbs: ['show-in-text-editor', 'delete-directive'] });
+        assert.deepStrictEqual(await barOf(0), { label: 'Included snippet legal-notice', verbs: ['open-snippet', 'show-in-text-editor', 'delete-directive'] });
+        await page.click(`${SELECTED_BAR} [data-verb="open-snippet"]`);
         const open = (await posted()).find((m): m is Extract<WebviewMessage, { type: 'openSnippet' }> => m.type === 'openSnippet');
         assert.strictEqual(open?.path, 'C:\\corpus\\snippets\\legal-notice.md');
     });
@@ -268,7 +280,7 @@ suite('Editor webview (e2e)', () => {
         await send({ type: 'error', message: 'the source blocks do not account for every line' });
         await page.waitForSelector('.mep-error');
         assert.strictEqual(await page.$('.ProseMirror'), null);
-        await page.click('.mep-error .mep-atom-button');
+        await page.click('.mep-error .mep-error-button');
         const open = (await posted()).filter(m => m.type === 'openSource').pop();
         assert.deepStrictEqual(open, { type: 'openSource', line: 0 });
 
@@ -314,7 +326,7 @@ suite('Editor webview (e2e)', () => {
         await send({ type: 'document', json: await requirementDocument(), version: 12, defaultWrap: 90 });
         await page.waitForFunction(() => document.querySelectorAll('.mep-raw-block table td').length === 2);
         await page.click('.mep-raw-block .mep-atom-content');
-        await page.click('.mep-raw-block .mep-atom-button');
+        await page.click(`${SELECTED_BAR} [data-verb="edit-source"]`);
         await page.waitForSelector('.mep-raw-editor');
         await page.$eval('.mep-raw-editor', el => {
             const area = el as HTMLTextAreaElement;
