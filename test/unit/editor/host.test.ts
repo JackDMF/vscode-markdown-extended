@@ -309,3 +309,33 @@ suite('Editor host: provider smoke test', () => {
         }
     });
 });
+
+suite('Editor host: following a link', () => {
+    test('an href a strict parse refuses (http:////x) is logged as a warning, not thrown past the session', async function () {
+        this.timeout(10000);
+        const uri = tempMarkdown(SOURCE);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const logged: string[] = [];
+        const rejections: unknown[] = [];
+        const onRejection = (reason: unknown) => rejections.push(reason);
+        process.on('unhandledRejection', onRejection);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const webview = new FakeWebview();
+        const session = new VisualEditorSession(document, webview, {
+            engine: () => buildEditorEngine(EXTENSION_ID, () => undefined),
+            onDidChangeEngine: engineChanged.event,
+            log: line => logged.push(line),
+        });
+        try {
+            webview.send({ type: 'openLink', href: 'http:////x' });
+            await delay(300);
+            assert.deepStrictEqual(rejections, [], 'no unhandled rejection');
+            assert.ok(logged.some(l => l.startsWith('[WARN]') && l.includes('http:////x')), JSON.stringify(logged));
+        } finally {
+            process.off('unhandledRejection', onRejection);
+            session.dispose();
+            engineChanged.dispose();
+            fs.rmSync(uri.fsPath, { force: true });
+        }
+    });
+});

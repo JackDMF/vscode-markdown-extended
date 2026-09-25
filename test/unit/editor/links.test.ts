@@ -52,6 +52,10 @@ suite('Editor links: resolving a followed href', () => {
         }
     });
 
+    test('an href the strict uri parse rejects throws here, which is why the session resolves inside its try', () => {
+        assert.throws(() => resolveLinkTarget('http:////x', doc));
+    });
+
     test('a scheme that runs something is refused, and so is an empty href', () => {
         for (const href of ['command:workbench.action.quit', 'vscode:extension/x.y', 'javascript:alert(1)', '  ']) {
             assert.strictEqual(resolveLinkTarget(href, doc).kind, 'refused', href);

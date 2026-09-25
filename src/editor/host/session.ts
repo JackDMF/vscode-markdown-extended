@@ -139,9 +139,12 @@ export class VisualEditorSession implements vscode.Disposable {
 
     /** A Ctrl/Cmd+clicked link: resolved against this document, opened by VS Code or the system. */
     private async openLink(href: string): Promise<void> {
-        const folder = vscode.workspace.getWorkspaceFolder(this.document.uri)?.uri;
-        const target = resolveLinkTarget(href, this.document.uri, folder);
         try {
+            // Inside the try: a strict parse throws on an href such as
+            // `http:////x`, which a raw HTML block can carry, and the call site
+            // does not await this.
+            const folder = vscode.workspace.getWorkspaceFolder(this.document.uri)?.uri;
+            const target = resolveLinkTarget(href, this.document.uri, folder);
             if (target.kind === 'external') {
                 await vscode.env.openExternal(target.uri);
             } else if (target.kind === 'open') {
