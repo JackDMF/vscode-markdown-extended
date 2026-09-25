@@ -30,7 +30,7 @@
 import { liftTarget } from 'prosemirror-transform';
 import { Mark, Node, ResolvedPos } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
-import { endsWithAttrsLiteral, parseAttrsLiteral } from '../attrs';
+import { endsWithAttrsLiteral, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
@@ -328,11 +328,32 @@ export function deleteObjectTransaction(state: EditorState, object: EditorObject
 // Attribute spans
 // ---------------------------------------------------------------------------
 
-/** Why `literal` cannot be an attribute span's or a block's literal, or `null`: the plugin must read it as attributes. */
-export function literalRefusal(literal: string): string | null {
-    return parseAttrsLiteral(literal.trim()) === null
-        ? `${literal.trim() || 'An empty value'} is no attribute list: write it as {.class}, {#id} or {key="value"}, as markdown-it-attrs reads it.`
-        : null;
+/**
+ * Where a literal goes, which decides what the plugin reads of it: after a span
+ * markdown-it-attrs cuts at the first `}`, quoted or not (`hasInnerBrace`);
+ * after a rule's `---` it starts at the last `{` (`readsAsRuleLiteral`); after
+ * any other block it reads the whole literal, quotes respected.
+ */
+export type LiteralPlace = 'span' | 'rule' | 'block';
+
+/** The place a block's literal goes: a rule's is read from its last `{`. */
+export function literalPlaceOf(node: Node): LiteralPlace {
+    return node.type === nodes.horizontal_rule ? 'rule' : 'block';
+}
+
+/** Why `literal` cannot be an attribute span's or a block's literal at `place`, or `null`: the plugin must read it as attributes, all of it. */
+export function literalRefusal(literal: string, place: LiteralPlace = 'block'): string | null {
+    const value = literal.trim();
+    if (parseAttrsLiteral(value) === null) {
+        return `${value || 'An empty value'} is no attribute list: write it as {.class}, {#id} or {key="value"}, as markdown-it-attrs reads it.`;
+    }
+    if (place === 'span' && hasInnerBrace(value)) {
+        return `${value} holds a } inside a value: after a span markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
+    }
+    if (place === 'rule' && !readsAsRuleLiteral(value)) {
+        return `${value} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
+    }
+    return null;
 }
 
 /** Why an attribute span cannot be made of the selection, or `null`: it needs selected text in one textblock that is not code. */
@@ -350,7 +371,7 @@ export function spanLockReason(state: EditorState): string | null {
  */
 export function applySpanTransaction(state: EditorState, literal: string): Transaction | null {
     const value = literal.trim();
-    if (spanLockReason(state) !== null || literalRefusal(value) !== null) {
+    if (spanLockReason(state) !== null || literalRefusal(value, 'span') !== null) {
         return null;
     }
     const { from, to } = state.selection;
@@ -361,7 +382,7 @@ export function applySpanTransaction(state: EditorState, literal: string): Trans
 /** The span's run given `literal` instead. `null` for an unchanged or unreadable literal, or one a note around it could not hold. */
 export function changeSpanTransaction(state: EditorState, span: Extract<EditorObject, { kind: 'span' }>, literal: string): Transaction | null {
     const value = literal.trim();
-    if (value === span.mark.attrs.literal || literalRefusal(value) !== null) {
+    if (value === span.mark.attrs.literal || literalRefusal(value, 'span') !== null) {
         return null;
     }
     const type = editorSchema.marks.attr_span;
@@ -461,7 +482,7 @@ export function changeBlockAttrsTransaction(state: EditorState, pos: number, lit
     const node = state.doc.nodeAt(pos);
     const value = literal.trim();
     if (!node || !SUFFIX_NODES.has(node.type.name) || blockAttrsRefusal(node) !== null
-        || value === (node.attrs.attrsSuffix ?? '') || (value !== '' && literalRefusal(value) !== null)) {
+        || value === (node.attrs.attrsSuffix ?? '') || (value !== '' && literalRefusal(value, literalPlaceOf(node)) !== null)) {
         return null;
     }
     const attrs: Record<string, unknown> = { ...node.attrs, attrsSuffix: value === '' ? null : value };

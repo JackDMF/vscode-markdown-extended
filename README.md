@@ -552,8 +552,9 @@ place — each for a reason:
   definitions, setext headings — are *source blocks*, and so is a block whose attributes
   the editor could not write back where they stand: on a list item, a link, emphasis, an
   image, inline code, a quote, a block inside another, a container, or an admonition's
-  title; a container or admonition nested more than one level deep, or closed by its
-  parent's fence rather than its own. Hover or
+  title; a span whose `{…}` holds a quoted `}`, which the plugin cuts short; a container
+  or admonition nested more than one level deep, or closed by its parent's fence rather
+  than its own. Hover or
   select one and choose **Edit source** in its bar — or double-click it — to edit its
   Markdown in place: `Ctrl+Enter` or clicking away applies it, `Esc` cancels. Or choose
   **Show in text editor** to jump to it. A source block that you edit back into plain Markdown (the

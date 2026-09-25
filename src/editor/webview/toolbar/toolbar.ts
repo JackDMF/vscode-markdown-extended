@@ -759,7 +759,7 @@ class ToolbarView implements PluginView {
             onCommit: value => {
                 close();
                 view.focus();
-                const refusal = literalRefusal(value);
+                const refusal = literalRefusal(value, 'span');
                 const tr = refusal === null ? applySpanTransaction(view.state, value) : null;
                 if (tr === null) {
                     showHint(view, refusal ?? 'These attributes cannot be given to this text here.', 'refusal');

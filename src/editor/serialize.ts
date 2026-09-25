@@ -248,9 +248,12 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     req_ref: { open: '', close: '', mixable: true },
     // `[text]{literal}`, the literal as it was read (`blocks.ts`). No line break
     // may fall between `]` and `{`, nor inside the literal: they are held.
+    // Mixable, as a link is: a span in a link's text and a link in a span's are
+    // written nested (`[see [term]{.x}](url)`), not as the one closed to open the other.
     attr_span: {
         open: '[',
         close: (_state, mark) => HOLD_OPEN + ']' + (mark.attrs.literal as string) + HOLD_CLOSE,
+        mixable: true,
     },
     em: {
         open: (_state, mark, parent, index) => emphasisDelimiter(mark, parent, index, true, '*'),
@@ -641,14 +644,24 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
         },
         container(state, node) {
             // `::: name info`, the body at the container's own indentation, and the fence again.
-            const fence = containerFence(node);
+            // The body is written first with the fence as it was, and the fence
+            // lengthened afterwards if a line of it would close the container.
+            const st = internals(state);
+            const markup = String(node.attrs.markup || ':::');
             const name = node.attrs.name as string;
-            state.write(fence + (name === '' ? '' : ` ${name}`) + (node.attrs.info as string));
+            state.write();
+            const openAt = st.out.length;
+            state.write(markup + (name === '' ? '' : ` ${name}`) + (node.attrs.info as string));
             state.ensureNewLine();
+            const bodyAt = st.out.length;
             if (!onlyEmptyParagraph(node)) {
                 state.renderContent(node);
             }
-            internals(state).flushClose(1);
+            st.flushClose(1);
+            const fence = containerFence(markup, st.out.slice(bodyAt), st.delim);
+            if (fence !== markup) {
+                st.out = st.out.slice(0, openAt) + fence + st.out.slice(openAt + markup.length);
+            }
             state.write(fence);
             state.closeBlock(node);
         },
@@ -690,28 +703,24 @@ export function admonitionHeader(node: Node): string {
 }
 
 /**
- * The fence a container is written with: as written, unless something inside
- * would close it early — markdown-it-container ends a container at the first
- * line of colons at least as long as its own fence, whatever it is nested in
- * but an indented block. A container inside it (its own fence, as this
- * function writes it) or a line of colons in a code block inside it make the
- * fence one colon longer than the longest of them.
+ * The fence a container is written with: `markup`, as written, unless a line of
+ * its written `body` would close it early — markdown-it-container ends a
+ * container at the first line of colons at least as long as its fence, less
+ * than four columns in, whatever block the line belongs to: a nested
+ * container's fence, a line of colons in a code block, a paragraph's. Then one
+ * colon longer than the longest such line. `delim` is the prefix every body
+ * line carries from the blocks around the container (`> ` in a quote).
  */
-export function containerFence(node: Node): string {
+export function containerFence(markup: string, body: string, delim = ''): string {
+    const bare = delim.replace(/\s+$/, '');
     let longest = 0;
-    node.descendants(inner => {
-        if (inner.type.name === 'container') {
-            longest = Math.max(longest, containerFence(inner).length);
-            return false;
+    for (const line of body.replace(HOLD_RE, '').split('\n')) {
+        const own = line.startsWith(delim) ? line.slice(delim.length) : line.startsWith(bare) ? line.slice(bare.length) : line;
+        const m = /^ {0,3}(:+)[ \t]*$/.exec(own);
+        if (m) {
+            longest = Math.max(longest, m[1].length);
         }
-        if (inner.type.name === 'code_block') {
-            for (const m of inner.textContent.matchAll(/^ {0,3}(:{3,})[ \t]*$/gm)) {
-                longest = Math.max(longest, m[1].length);
-            }
-        }
-        return true;
-    });
-    const markup = String(node.attrs.markup || ':::');
+    }
     return longest >= markup.length ? ':'.repeat(longest + 1) : markup;
 }
 
@@ -723,7 +732,8 @@ function listTakesLineLiteral(list: Node): boolean {
         return !nested;
     });
     const last = list.lastChild;
-    return !nested && last !== null && last.childCount === 1 && last.child(0).type.name === 'paragraph';
+    // An empty last item is no paragraph the `{…}` line could continue: it would be one of its own.
+    return !nested && last !== null && last.childCount === 1 && last.child(0).type.name === 'paragraph' && last.child(0).content.size > 0;
 }
 
 /**

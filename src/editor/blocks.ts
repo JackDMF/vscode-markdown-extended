@@ -1,5 +1,5 @@
 import { Token } from '../@types/markdown-it';
-import { AttrPair, NOTE_SYNTAX_CHARS, findLeftDelimiter, findRightDelimiter, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
+import { AttrPair, NOTE_SYNTAX_CHARS, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
 
 /**
  * The token stream → top-level source blocks step of the rich editor.
@@ -440,55 +440,64 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
         if (t.type !== 'inline') {
             continue;
         }
-        if (tokens[i - 1]?.type === 'admonition_title_open') {
-            // The title is written back as the string it is; only content
-            // another extension put there would be lost.
-            if ((t.children ?? []).some(c => injectionMarkOf(c) !== undefined)) {
-                return 'injected content in an admonition title';
+        const inTitle = tokens[i - 1]?.type === 'admonition_title_open';
+        // The title is written back as the string it is, so content another
+        // extension put there would be lost; and it is held to the same rules
+        // as any inline content, so a title the editor could not edit as text
+        // does not ride along in an editable block.
+        if (inTitle && (t.children ?? []).some(c => injectionMarkOf(c) !== undefined)) {
+            return 'injected content in an admonition title';
+        }
+        const because = inlineNotEditable(t.children ?? []);
+        if (because !== null) {
+            return inTitle ? `${because} in an admonition title` : because;
+        }
+    }
+    return null;
+}
+
+/** Why an inline token's children cannot be edited in place, or `null` when they can. */
+function inlineNotEditable(children: readonly Token[]): string | null {
+    let noteDepth = 0;
+    let spanDepth = 0;
+    for (const child of children) {
+        if (NOTE_OPEN_TOKENS.has(child.type)) {
+            if (noteDepth > 0) {
+                // The plugin allows a note of another kind inside a note; the
+                // schema keeps notes one level deep (see schema.ts).
+                return `${child.type} inside another note`;
             }
+            noteDepth++;
+        } else if (NOTE_CLOSE_TOKENS.has(child.type)) {
+            noteDepth--;
+        }
+        const mark = injectionMarkOf(child);
+        if (mark !== undefined) {
+            if (mark.kind === 'atom' || (mark.kind === 'decoration' && child.type === 'html_inline')) {
+                continue;
+            }
+            return `injected inline ${child.type} of kind ${mark.kind}`;
+        }
+        if (!EDITABLE_INLINE_TOKENS.has(child.type)) {
+            return `inline ${child.type}`;
+        }
+        if (child.type === 'span_open') {
+            if (spanDepth > 0) {
+                // One mark type cannot hold itself: a span in a span has no place.
+                return 'attribute span inside another';
+            }
+            if (!child.attrs || child.attrs.length === 0) {
+                return 'bracketed span with no attributes';
+            }
+            spanDepth++;
             continue;
         }
-        let noteDepth = 0;
-        let spanDepth = 0;
-        for (const child of t.children ?? []) {
-            if (NOTE_OPEN_TOKENS.has(child.type)) {
-                if (noteDepth > 0) {
-                    // The plugin allows a note of another kind inside a note; the
-                    // schema keeps notes one level deep (see schema.ts).
-                    return `${child.type} inside another note`;
-                }
-                noteDepth++;
-            } else if (NOTE_CLOSE_TOKENS.has(child.type)) {
-                noteDepth--;
-            }
-            const mark = injectionMarkOf(child);
-            if (mark !== undefined) {
-                if (mark.kind === 'atom' || (mark.kind === 'decoration' && child.type === 'html_inline')) {
-                    continue;
-                }
-                return `injected inline ${child.type} of kind ${mark.kind}`;
-            }
-            if (!EDITABLE_INLINE_TOKENS.has(child.type)) {
-                return `inline ${child.type}`;
-            }
-            if (child.type === 'span_open') {
-                if (spanDepth > 0) {
-                    // One mark type cannot hold itself: a span in a span has no place.
-                    return 'attribute span inside another';
-                }
-                if (!child.attrs || child.attrs.length === 0) {
-                    return 'bracketed span with no attributes';
-                }
-                spanDepth++;
-                continue;
-            }
-            if (child.type === 'span_close') {
-                spanDepth--;
-                continue;
-            }
-            if (!attrsAllowed(child)) {
-                return `attributes on ${child.type}`;
-            }
+        if (child.type === 'span_close') {
+            spanDepth--;
+            continue;
+        }
+        if (!attrsAllowed(child)) {
+            return `attributes on ${child.type}`;
         }
     }
     return null;
@@ -583,7 +592,16 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
  */
 function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], endLine: number): string[] | string {
     const spans: { token: Token; inNote: boolean }[] = [];
+    /** The lines of admonition titles: a title is its node's string, and a span in it is no mark (`parse.ts` skips its tokens). */
+    const titleLines = new Set<number>();
     for (let i = group.start; i < group.end; i++) {
+        if (tokens[i - 1]?.type === 'admonition_title_open') {
+            const map = tokens[i].map;
+            for (let l = map ? map[0] : 0; map && l < map[1]; l++) {
+                titleLines.add(l);
+            }
+            continue;
+        }
         let noteDepth = 0;
         for (const child of tokens[i].type === 'inline' ? tokens[i].children ?? [] : []) {
             if (NOTE_OPEN_TOKENS.has(child.type)) {
@@ -598,7 +616,9 @@ function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines:
     if (spans.length === 0 || group.map === null) {
         return [];
     }
-    const src = sliceLines(lines, group.map[0], endLine);
+    const firstLine = group.map[0];
+    const lineRange = Array.from({ length: Math.max(0, endLine - firstLine) }, (_, k) => firstLine + k);
+    const src = lineRange.map(l => (titleLines.has(l) ? '' : (lines[l]?.text ?? '')) + (lines[l]?.eol ?? '')).join('');
     const out: string[] = [];
     let from = 0;
     for (const { token, inNote } of spans) {
@@ -614,6 +634,12 @@ function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines:
             }
         }
         const written = literal ?? normalizedLiteral(joinAttrs(wanted));
+        if (hasInnerBrace(written)) {
+            // markdown-it-attrs reads a quoted `}` into the value but cuts the
+            // text after the span at the first `}`: what follows it stays in
+            // the paragraph as text, and every save would write it again.
+            return 'attribute span whose literal holds a quoted }';
+        }
         if (inNote && NOTE_SYNTAX_CHARS.test(written)) {
             return 'attribute span in a note whose literal holds a note marker';
         }

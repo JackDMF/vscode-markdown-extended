@@ -172,6 +172,27 @@ export function parseAttrsLiteral(literal: string): AttrPair[] | null {
     return pairs.length > 0 ? pairs : null;
 }
 
+/**
+ * Whether a `}` stands inside the literal, in a quoted value (`{title="a}b"}`).
+ * markdown-it-attrs reads such a value whole but, after a span, cuts the text
+ * at the first `}` (`indexOf`, quotes or not): the rest of the literal stays
+ * behind in the paragraph as text, and every save would write it again. The
+ * editor neither keeps nor makes such a span.
+ */
+export function hasInnerBrace(literal: string): boolean {
+    return literal.indexOf('}') !== literal.length - 1;
+}
+
+/**
+ * Whether markdown-it-attrs reads `literal` whole after a rule's `---`: it
+ * starts reading at the line's **last** `{`, quoted or not, so a `{` inside a
+ * value (`{title="x{y"}`) leaves the rule with no attributes at all. A quoted
+ * `}` is read correctly there (`--- {title="a}b"}`).
+ */
+export function readsAsRuleLiteral(literal: string): boolean {
+    return literal.lastIndexOf('{') === 0;
+}
+
 /** Whether two attribute lists are the same attributes, in any order. */
 export function sameAttrs(a: readonly AttrPair[], b: readonly AttrPair[]): boolean {
     const key = (list: readonly AttrPair[]) => JSON.stringify([...list].map(([n, v]) => [n, v]).sort());

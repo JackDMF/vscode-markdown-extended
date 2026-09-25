@@ -43,7 +43,7 @@ import { NoteNodeName, unwrapNote } from './notes';
 import {
     EditorObject, NOTE_CONVERSION, blockAttrsRefusal, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction,
     changeImageTransaction, changeLinkTransaction, changeSpanTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectTransaction, isBlockObject, isBlockPlaced, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
+    deleteObjectTransaction, isBlockObject, isBlockPlaced, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
@@ -889,7 +889,8 @@ class ObjectToolbarView implements PluginView {
      * where it means "none"); applied otherwise.
      */
     private commitLiteral(object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): void {
-        const refusal = hint !== undefined && value.trim() === '' ? null : literalRefusal(value);
+        const place = object.kind === 'span' ? 'span' : object.kind === 'block_attrs' ? literalPlaceOf(object.node) : 'block';
+        const refusal = hint !== undefined && value.trim() === '' ? null : literalRefusal(value, place);
         if (refusal !== null) {
             this.view.focus();
             this.say(refusal, 'refusal');

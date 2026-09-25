@@ -467,7 +467,14 @@ a backslash escape inside a literal stops the plugin reading it as one at all �
 the span is written in a normalized form (`{#id .a .b key=v}`) that reads the same. A span
 inside a note may not hold the characters the notes plugin searches the raw source for
 (`|`, `+`, `!`, `$`, `@`); such a paragraph stays a source block, and the page refuses to
-make one (`noteUnwritable`).
+make one (`noteUnwritable`). Nor may a span's literal hold a quoted `}` (`{title="a}b"}`):
+the plugin reads the value whole but cuts the text after the span at the first `}`, so the
+rest of the literal stays in the paragraph as text and every save would write it again —
+the block stays raw and the field refuses it (`hasInnerBrace`). A rule's literal has the
+opposite hazard: the plugin reads it from the line's last `{`, so a quoted `{` there loses
+every attribute (`readsAsRuleLiteral`). A span in an admonition's title is part of the
+title's string, not a mark: recovery skips the title's lines, as the parse skips its tokens,
+and the title's inline content is held to the same editability rules as any other.
 
 **A block's literal carries where it stood** (`attrsPlacement`, `AttrsPlacement` in
 `blocks.ts`): `end` — after a space at the end of the last line (a paragraph's
@@ -481,8 +488,9 @@ token's map — the plugin removes the paragraph it was — so `groupSourceBlock
 list's lines over it, as it extends a container's over its closing fence, which
 markdown-it-container leaves out of its map. A changed block is serialized without the
 literal and the literal added where it stood (`withBlockSuffix`); a list whose last item
-the `line` form would no longer reach through a lazy line (a second block in that item, or
-a nested list anywhere the plugin could give it to) is written in the `blank` form. The
+the `line` form would no longer reach through a lazy line (a second block in that item, an
+empty item — the `{…}` line would be a paragraph of its own — or a nested list anywhere
+the plugin could give it to) is written in the `blank` form. The
 paragraph's wrap width is measured without the literal, since the literal is not wrapped.
 Only a top-level block's literal is written: the fidelity plugin drops the literal a split
 copies into the second half and the one a block wrapped inside another carries, so the
@@ -494,8 +502,10 @@ its line is its `attrsSuffix`, the id its `anchor`.
 changed, the wrapper is written by rule around its blocks, which carry no `src`. A
 container's `info` is the rest of its opening line after the name, verbatim; the fence is
 written as it was unless something inside would close it early — markdown-it-container ends
-a container at the first line of colons at least as long as its fence — so a nested
-container, or a line of colons in a code block, lengthens it (`containerFence`). Most class
+a container at the first line of colons at least as long as its fence, whatever block
+the line belongs to — so the body is written first and any such line of it (a nested
+container's fence, a line of colons in code or in a paragraph) lengthens the fence
+afterwards (`containerFence`, on the written text, not the node kinds). Most class
 names draw nothing, so `editor.css` outlines a container — an outline, which takes no room,
 so the preview's layout holds. An
 admonition's `header` is its opening line as written, emitted while type and title are what

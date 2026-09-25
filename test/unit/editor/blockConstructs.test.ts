@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { EditorState, TextSelection } from 'prosemirror-state';
-import { EDITABLE_TOP_NODES, ParsedDocument, fidelityPlugin, parseDocument, serializeDocument } from '../../../src/editor';
+import { EDITABLE_TOP_NODES, ParsedDocument, fidelityPlugin, groupSourceBlocks, parseDocument, serializeDocument, splitLines } from '../../../src/editor';
 import { editorSchema } from '../../../src/editor/schema';
 import { drawBlock, editorOnly, engineHtml } from './fakeDom';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -193,5 +193,95 @@ suite('Editor block attributes: kept verbatim, written where they stood', () => 
             }
         });
         assert.strictEqual(nested, null, 'the page shows what the file will hold');
+    });
+});
+
+/** Review findings on stage 3, each pinned where it was found. */
+suite('Editor stage 3: review findings', () => {
+    const md = hostEngine();
+    const blocks = (source: string) => topChildren(parseDocument(md, source).doc);
+    const literals = (node: Node) => {
+        const found: string[] = [];
+        node.descendants(child => {
+            for (const mark of child.marks) {
+                if (mark.type.name === 'attr_span') {
+                    found.push(mark.attrs.literal as string);
+                }
+            }
+        });
+        return found;
+    };
+
+    test('1. a span in an admonition title is the title\'s text: the body\'s spans keep their own literals', () => {
+        const source = '!!! note "A [t]{.a}"\n    Body [y]{.b} here and [z]{.c}.\n';
+        const [admonition] = blocks(source);
+        assert.strictEqual(admonition.type.name, 'admonition');
+        assert.strictEqual(admonition.attrs.title, 'A [t]{.a}');
+        assert.deepStrictEqual(literals(admonition), ['{.b}', '{.c}']);
+        assert.strictEqual(byRule(parseDocument(md, source)), source, 'written back with {.b}, not the title\'s {.a}');
+    });
+
+    test('1. an admonition title is held to the inline rules: inline HTML in it keeps the block a source block', () => {
+        const source = '!!! note "A <b>bold</b> title"\n    Body.\n';
+        const reason = groupSourceBlocks(md.parse(source, {}), splitLines(source)).blocks[0].reason;
+        assert.strictEqual(blocks(source)[0].type.name, 'raw_block');
+        assert.strictEqual(reason, 'inline html_inline in an admonition title');
+    });
+
+    for (const source of ['A [see [term]{.x}](https://e.org/a) here.\n', 'A [[see](https://e.org/a) more]{.x} here.\n']) {
+        test(`2. a span and a link nested either way round-trip as one of each: ${JSON.stringify(source)}`, () => {
+            const parsed = parseDocument(md, source);
+            const once = byRule(parsed);
+            assert.strictEqual(once, source);
+            const links = new Set<string>();
+            topChildren(parseDocument(md, once).doc)[0].descendants(child => {
+                child.marks.filter(m => m.type.name === 'link').forEach(m => links.add(JSON.stringify(m.attrs)));
+            });
+            assert.strictEqual(links.size, 1, 'one link');
+        });
+    }
+
+    test('3. a line of colons anywhere in a container\'s body lengthens its fence: a paragraph\'s too', () => {
+        const para = (...content: Node[]) => editorSchema.nodes.paragraph.create(null, content);
+        const container = editorSchema.nodes.container.create({ name: 'box', markup: ':::' }, [
+            para(editorSchema.text('Before')),
+            para(editorSchema.text('a'), editorSchema.nodes.hard_break.create(), editorSchema.text(':::')),
+            para(editorSchema.text(':::')),
+        ]);
+        const written = serializeDocument({ doc: editorSchema.topNodeType.create(null, [container]), eol: '\n', tail: '' }, options);
+        const reread = blocks(written);
+        assert.deepStrictEqual(reread.map(n => n.type.name), ['container'], written);
+        assert.deepStrictEqual(reread[0].content.content.map(n => n.textContent), ['Before', 'a:::', ':::'], written);
+    });
+
+    test('3. a nested container, and a line of colons in code, lengthen the fence', () => {
+        const outer = editorSchema.nodes.container.create({ name: 'outer', markup: ':::' }, [
+            editorSchema.nodes.container.create({ name: 'inner', markup: ':::' }, editorSchema.nodes.paragraph.create(null, editorSchema.text('x'))),
+        ]);
+        assert.strictEqual(serializeDocument({ doc: editorSchema.topNodeType.create(null, [outer]), eol: '\n', tail: '' }, options), ':::: outer\n::: inner\nx\n:::\n::::\n');
+        const code = editorSchema.nodes.container.create({ name: 'c' }, editorSchema.nodes.code_block.create({ markup: '```' }, editorSchema.text('::::')));
+        assert.strictEqual(serializeDocument({ doc: editorSchema.topNodeType.create(null, [code]), eol: '\n', tail: '' }, options), '::::: c\n```\n::::\n```\n:::::\n');
+    });
+
+    test('4. a list whose last item is empty keeps its literal: it is written under a blank line', () => {
+        let state = stateOf('- one\n- two\n{.checklist}\n');
+        const at = posOf(state.doc, 'two');
+        state = state.apply(state.tr.delete(at, at + 3));
+        const once = text(state);
+        assert.ok(once.endsWith('\n\n{.checklist}\n'), once);
+        const [list] = blocks(once);
+        assert.deepStrictEqual([list.type.name, list.attrs.attrsSuffix, list.childCount], ['bullet_list', '{.checklist}', 2], once);
+    });
+
+    test('5. a span whose literal holds a quoted } stays a source block: the plugin leaves the rest of it behind as text', () => {
+        const source = 'A [t]{title="a}b"} c.\n';
+        assert.ok(md.renderInline(source.trim()).includes('</span>b&quot;} c.'), 'what the plugin does with it');
+        assert.strictEqual(blocks(source)[0].type.name, 'raw_block');
+        assert.strictEqual(groupSourceBlocks(md.parse(source, {}), splitLines(source)).blocks[0].reason, 'attribute span whose literal holds a quoted }');
+    });
+
+    test('6. what the plugin reads of a rule\'s literal: from its last {, a quoted } read correctly', () => {
+        assert.ok(md.render('Text.\n\n--- {title="a}b"}\n').includes('<hr title="a}b">'));
+        assert.ok(md.render('Text.\n\n--- {.a title="x{y"}\n').includes('<hr>'), 'a quoted { loses every attribute');
     });
 });

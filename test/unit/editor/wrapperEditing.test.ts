@@ -5,7 +5,7 @@ import { parseDocument, serializeDocument } from '../../../src/editor';
 import { editorSchema } from '../../../src/editor/schema';
 import {
     EditorObject, applySpanTransaction, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction, changeSpanTransaction,
-    objectAtSelection, removeSpanTransaction, unwrapTransaction,
+    literalPlaceOf, literalRefusal, objectAtSelection, removeSpanTransaction, unwrapTransaction,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { blockCommand, insertWrapperTransaction } from '../../../src/editor/webview/toolbar/commands';
@@ -221,5 +221,28 @@ suite('Editor block attributes: the object and its verb', () => {
         const at = state.doc.child(0).nodeSize;
         const selected = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, at)));
         assert.strictEqual(objectHere(selected).kind, 'block_attrs');
+    });
+});
+
+suite('Editor stage 3: review findings, in the page', () => {
+    test('5. a span literal with a quoted } is refused, with the reason', () => {
+        const state = select(stateOf('Alpha beta gamma.\n'), 'beta');
+        assert.strictEqual(applySpanTransaction(state, '{title="a}b"}'), null);
+        assert.match(literalRefusal('{title="a}b"}', 'span') ?? '', /cuts the literal at its first \}/);
+        const made = apply(state, applySpanTransaction(state, '{.ok}'));
+        const span = objectHere(caretAt(made, 'beta', 2));
+        assert.strictEqual(span.kind === 'span' ? changeSpanTransaction(made, span, '{title="a}b"}') : 'not a span', null);
+    });
+
+    test('6. a rule\'s literal is refused when the plugin would not read it whole: a { inside a value', () => {
+        const state = stateOf('Text.\n\n--- {#cut}\n');
+        const at = state.doc.child(0).nodeSize;
+        assert.strictEqual(state.doc.nodeAt(at)?.type.name, 'horizontal_rule');
+        assert.strictEqual(changeBlockAttrsTransaction(state, at, '{.a title="x{y"}'), null);
+        assert.match(literalRefusal('{.a title="x{y"}', literalPlaceOf(state.doc.nodeAt(at) as Node)) ?? '', /from its last \{/);
+        const quotedClose = apply(state, changeBlockAttrsTransaction(state, at, '{title="a}b"}'));
+        assert.strictEqual(text(quotedClose), 'Text.\n\n--- {title="a}b"}\n', 'a quoted } the plugin reads correctly after a rule');
+        const paragraph = stateOf('Some text. {.lead}\n');
+        assert.ok(changeBlockAttrsTransaction(paragraph, 0, '{.a title="x{y"}'), 'after a paragraph the plugin reads the whole literal');
     });
 });
