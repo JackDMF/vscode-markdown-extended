@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
+import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
 import { SOURCE_NODES, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
 
@@ -31,7 +32,28 @@ interface StateInternals {
     inAutolink: boolean | undefined;
     /** Which form the link being written takes; this module's own field. */
     linkForm?: LinkForm;
+    /** Which part of a note is being written, when one is; this module's own field (see `writeNote`). */
+    notePart?: NotePart;
 }
+
+/**
+ * The parts of a note whose text needs more than CommonMark escaping, because
+ * `markdownItSidenote.ts` finds their ends in the raw source, before any
+ * backslash escape is read: a reference ends at the first `|`, a left
+ * sidebar at the next `$`, a right one at the next `@`. Those characters are
+ * written as numeric character references there, which the inline parser of
+ * the part turns back into the character. A note's body ends at its marker
+ * pair, which the escape of `ESCAPE_EXTRA` already breaks up (`\+\+`).
+ */
+type NotePart = 'ref' | 'body' | 'left' | 'right';
+
+/** The character each part must not hold raw, as the escaped form `esc` gives it, and what it is written as instead. */
+const PART_TERMINATORS: Readonly<Record<NotePart, { escaped: RegExp; raw: string; entity: string } | null>> = {
+    ref: { escaped: /\|/g, raw: '|', entity: '&#124;' },
+    body: null,
+    left: { escaped: /\\\$/g, raw: '$', entity: '&#36;' },
+    right: { escaped: /\\@/g, raw: '@', entity: '&#64;' },
+};
 
 function internals(state: MarkdownSerializerState): StateInternals {
     return state as unknown as StateInternals;
@@ -108,7 +130,7 @@ function emphasisDelimiter(mark: Mark, parent: Node, index: number, opening: boo
 }
 
 /** The destination as markdown-it read it, with non-ASCII percent escapes (which it added) decoded back to what the author wrote. */
-function destination(href: string): string {
+function destination(href: string, part?: NotePart): string {
     const decoded = href.replace(/(?:%[89A-Fa-f][0-9A-Fa-f])+/g, seq => {
         try {
             return decodeURIComponent(seq);
@@ -118,9 +140,26 @@ function destination(href: string): string {
     });
     // A space or control character ends a destination; markdown-it never
     // produces one, but a link the UI set can hold one.
-    return decoded
-        .replace(/[\x00-\x20\x7f]/g, ch => '%' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'))
+    const written = decoded
+        .replace(/[\x00-\x20\x7f]/g, percent)
         .replace(/[()]/g, '\\$&');
+    // Inside a note part its terminator is percent-encoded: a URL takes no character reference.
+    const terminator = part === undefined ? null : PART_TERMINATORS[part];
+    return terminator === null ? written : written.split(terminator.raw).join(percent(terminator.raw));
+}
+
+function percent(ch: string): string {
+    return '%' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0');
+}
+
+/**
+ * Text as a note part can hold it: its terminator as a character reference
+ * (`PART_TERMINATORS`) — the backslash escape `esc` wrote for it, or the raw
+ * character where nothing escaped it (a link title).
+ */
+function partText(part: NotePart | undefined, escaped: string): string {
+    const terminator = part === undefined ? null : PART_TERMINATORS[part];
+    return terminator === null ? escaped : escaped.replace(terminator.escaped, terminator.entity).split(terminator.raw).join(terminator.entity);
 }
 
 function titlePart(title: string | null): string {
@@ -132,10 +171,12 @@ function titlePart(title: string | null): string {
  * as long as the link is still one unmarked text node that can be written that
  * way; otherwise `[text](destination)`.
  */
-function linkForm(mark: Mark, parent: Node, index: number): LinkForm {
+function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, index: number): LinkForm {
     const node = parent.child(index);
     const markup = mark.attrs.markup as string | null;
-    if (markup === null || !node.isText || mark.attrs.title) {
+    const part = internals(state).notePart;
+    // Bare and angle forms are written unescaped, which a note part cannot take.
+    if (markup === null || !node.isText || mark.attrs.title || (part !== undefined && PART_TERMINATORS[part] !== null)) {
         return 'inline';
     }
     if (node.marks[node.marks.length - 1] !== mark) {
@@ -185,11 +226,19 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     },
     link: {
         open(state, mark, parent, index) {
-            const form = linkForm(mark, parent, index);
+            const form = linkForm(state, mark, parent, index);
             const st = internals(state);
             st.linkForm = form;
             if (form === 'inline') {
-                return '[';
+                // The whole link is one run: the corpus keeps a link on one line,
+                // and one that cannot fit is no evidence of the paragraph's width
+                // (`measureWrapWidth` holds it the same way). With the hold marker
+                // first, prosemirror-markdown no longer sees the `[` after a `!`
+                // that would make it an image, so that `!` is escaped here.
+                if (/(^|[^\\])!$/.test(st.out)) {
+                    st.out = st.out.slice(0, -1) + '\\!';
+                }
+                return HOLD_OPEN + '[';
             }
             // Written unescaped: a backslash inside a URL is part of the URL.
             st.inAutolink = true;
@@ -206,10 +255,21 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
             if (form === 'angle') {
                 return '>' + HOLD_CLOSE;
             }
-            return HOLD_OPEN + '](' + destination(mark.attrs.href as string) + titlePart(mark.attrs.title as string | null) + ')' + HOLD_CLOSE;
+            const target = destination(mark.attrs.href as string, st.notePart) + partText(st.notePart, titlePart(mark.attrs.title as string | null));
+            return '](' + target + ')' + HOLD_CLOSE;
         },
         mixable: true,
     },
+    // Delimiter runs like emphasis, with the same flanking rules.
+    strike: { open: INLINE_MARKERS.strikethrough, close: INLINE_MARKERS.strikethrough, mixable: true, expelEnclosingWhitespace: true },
+    mark: { open: INLINE_MARKERS.mark, close: INLINE_MARKERS.mark, mixable: true, expelEnclosingWhitespace: true },
+    // No line break inside any of these three (the plugins refuse one), so
+    // each is a held run the wrapper keeps on one line, as a code span is.
+    // Mixable, so emphasis inside a key is written inside it (`[[a *b*]]`),
+    // not as a second key inside the emphasis.
+    kbd: { open: HOLD_OPEN + KBD_MARKERS.open, close: KBD_MARKERS.close + HOLD_CLOSE, mixable: true },
+    sup: { open: HOLD_OPEN + INLINE_MARKERS.superscript, close: INLINE_MARKERS.superscript + HOLD_CLOSE },
+    sub: { open: HOLD_OPEN + INLINE_MARKERS.subscript, close: INLINE_MARKERS.subscript + HOLD_CLOSE },
     code: {
         open: (_state, _mark, parent, index) => HOLD_OPEN + backtickFence(parent.child(index).text ?? '').open,
         close: (_state, _mark, parent, index) => backtickFence(parent.child(index - 1).text ?? '').close + HOLD_CLOSE,
@@ -227,11 +287,19 @@ type NodeSerializers = ConstructorParameters<typeof MarkdownSerializer>[0];
 const inlineNodes: NodeSerializers = {
     text(state, node) {
         const text = (node.text ?? '').replace(HOLD_RE, '');
-        state.text(text, !internals(state).inAutolink);
+        const st = internals(state);
+        if (st.notePart === undefined || st.inAutolink) {
+            state.text(text, !st.inAutolink);
+            return;
+        }
+        // Never at a line start: the note's opening marker is before it.
+        state.text(partText(st.notePart, state.esc(text, false)), false);
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
-        state.write('![' + state.esc(alt ?? '') + ']' + HOLD_OPEN + '(' + destination(src) + titlePart(title) + ')' + HOLD_CLOSE);
+        const part = internals(state).notePart;
+        const target = destination(src, part) + partText(part, titlePart(title));
+        state.write(HOLD_OPEN + '![' + partText(part, state.esc(alt ?? '')) + '](' + target + ')' + HOLD_CLOSE);
     },
     hard_break(state, node, parent, index) {
         // As prosemirror-markdown does: a trailing hard break has no line to break to.
@@ -244,7 +312,114 @@ const inlineNodes: NodeSerializers = {
     },
     // The badge is Req Explorer's; the file holds nothing for it.
     inline_atom() { /* writes nothing */ },
+    sidenote(state, node) {
+        writeNote(state, node, NOTE_SYNTAX.sidenote.marker);
+    },
+    marginal_note(state, node) {
+        writeNote(state, node, NOTE_SYNTAX.marginalNote.marker);
+    },
+    left_sidebar(state, node) {
+        writeSidebar(state, node, NOTE_SYNTAX.leftSidebar.marker, 'left');
+    },
+    right_sidebar(state, node) {
+        writeSidebar(state, node, NOTE_SYNTAX.rightSidebar.marker, 'right');
+    },
 };
+
+// ---------------------------------------------------------------------------
+// Notes and sidebars
+// ---------------------------------------------------------------------------
+
+/**
+ * The character reference a note's marker character is written as where it
+ * would touch the closing marker. The plugin finds that marker by searching
+ * the raw source for the pair (`++`, `!!`), so a body ending in `+` closes the
+ * note one character early — escaped with a backslash as much as without.
+ */
+const MARKER_REFERENCES: Readonly<Record<string, string>> = { '+': '&#43;', '!': '&#33;' };
+
+/**
+ * Written right after a marker. prosemirror-markdown escapes a `!` that ends
+ * the output when a `[` follows (`![` would be an image), which turns the
+ * second `!` of `!!` into `\!`; an empty held run ends the output instead,
+ * and the wrapper strips it with the other hold markers.
+ */
+const MARKER_GUARD = HOLD_OPEN + HOLD_CLOSE;
+
+/** A part's inline content, written by the same rules as a paragraph's, with the part's own terminator (`PART_TERMINATORS`). */
+function renderPart(state: MarkdownSerializerState, parent: Node, part: NotePart): void {
+    const st = internals(state);
+    const outer = st.notePart;
+    st.notePart = part;
+    try {
+        state.renderInline(parent, false);
+    } finally {
+        st.notePart = outer;
+    }
+}
+
+/** The plugin refuses a reference with no text (`++ |note++` is prose); an image counts, as its source is not blank. */
+function writableReference(ref: Node): boolean {
+    let writable = ref.textContent.trim() !== '';
+    ref.forEach(child => {
+        writable = writable || child.type.name === 'image';
+    });
+    return writable;
+}
+
+/** Replace the marker character at `at` in the output — and the backslash escaping it, if one does — by its character reference. */
+function referenceMarkerAt(st: StateInternals, at: number, ch: string, from: number): void {
+    if (at < from || st.out.charAt(at) !== ch) {
+        return;
+    }
+    let backslashes = 0;
+    while (at - 1 - backslashes >= from && st.out.charAt(at - 1 - backslashes) === '\\') {
+        backslashes++;
+    }
+    const start = at - (backslashes % 2);
+    st.out = st.out.slice(0, start) + MARKER_REFERENCES[ch] + st.out.slice(at + 1);
+}
+
+/**
+ * `++reference|note++` or `!!reference|note!!`. The reference and the body are
+ * written by the paragraph's rules, each as a part (`renderPart`); a reference
+ * with nothing the plugin would accept is written as `&nbsp;`, so the note
+ * stays a note. A marker character right before the note, at the start of the
+ * reference (where `!!!` could open an admonition) or at the end of the body
+ * (where it would pair with the closing marker) is written as a character
+ * reference.
+ */
+function writeNote(state: MarkdownSerializerState, node: Node, marker: string): void {
+    const st = internals(state);
+    const ch = marker.charAt(0);
+    // Text ending in the marker character would open the note one character early (`Wow!!!a|b!!`).
+    state.write();
+    referenceMarkerAt(st, st.out.length - 1, ch, 0);
+    state.text(marker + MARKER_GUARD, false);
+    const refStart = st.out.length;
+    if (writableReference(node.child(0))) {
+        renderPart(state, node.child(0), 'ref');
+    } else {
+        state.text('&nbsp;', false);
+    }
+    referenceMarkerAt(st, refStart, ch, refStart);
+    state.text(NOTE_SEPARATOR, false);
+    const bodyStart = st.out.length;
+    renderPart(state, node.child(1), 'body');
+    referenceMarkerAt(st, st.out.length - 1, ch, bodyStart);
+    state.text(marker + MARKER_GUARD, false);
+}
+
+/**
+ * `$body$` or `@body@`: the body a part whose marker is a character reference
+ * inside it. The spaces the corpus writes inside the markers (`$ … $`) are the
+ * body's own text and are written as they are read, so `$x$` stays `$x$`.
+ */
+function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string, part: NotePart): void {
+    state.text(marker, false);
+    renderPart(state, node, part);
+    state.text(marker, false);
+}
 
 function inlineSerializer(fromBlockStart: boolean): MarkdownSerializer {
     return new MarkdownSerializer({
@@ -283,7 +458,8 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
         },
         heading(state, node) {
             const suffix = node.attrs.attrsSuffix as string | null;
-            let text = inlineMarkdown(node, false).replace(HOLD_RE, '').replace(/\s+$/, '');
+            // A heading is one line; a hard break a note inside it holds is a space here.
+            let text = inlineMarkdown(node, false).replace(HOLD_RE, '').replace(/\\\n/g, ' ').replace(/\s+$/, '');
             if (suffix === null && /(^| )#+$/.test(text)) {
                 // A trailing ` #` run is an ATX closing sequence and would be dropped.
                 text = text.replace(/#+$/, run => '\\' + run);

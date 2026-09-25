@@ -156,7 +156,19 @@ export const EDITABLE_INLINE_TOKENS: ReadonlySet<string> = new Set([
     'text', 'softbreak', 'hardbreak',
     'em_open', 'em_close', 'strong_open', 'strong_close',
     'code_inline', 'link_open', 'link_close', 'image',
+    // The extension's inline syntax: `==`, `^`, `~`, `~~`, `[[…]]` …
+    'mark_open', 'mark_close', 'sup_open', 'sup_close', 'sub_open', 'sub_close',
+    's_open', 's_close', 'kbd_open', 'kbd_close',
+    // … and the note family (`markdownItSidenote.ts`), whose reference and body are inline content.
+    'sidenote_open', 'sidenote_ref_open', 'sidenote_ref_close', 'sidenote_content_open', 'sidenote_content_close', 'sidenote_close',
+    'marginal_note_open', 'marginal_note_ref_open', 'marginal_note_ref_close',
+    'marginal_note_content_open', 'marginal_note_content_close', 'marginal_note_close',
+    'left_sidebar_open', 'left_sidebar_close', 'right_sidebar_open', 'right_sidebar_close',
 ]);
+
+/** The tokens that open and close a note or a sidebar, which the schema holds one level deep. */
+export const NOTE_OPEN_TOKENS: ReadonlySet<string> = new Set(['sidenote_open', 'marginal_note_open', 'left_sidebar_open', 'right_sidebar_open']);
+const NOTE_CLOSE_TOKENS: ReadonlySet<string> = new Set(['sidenote_close', 'marginal_note_close', 'left_sidebar_close', 'right_sidebar_close']);
 
 /**
  * The attributes a token may carry and still be editable. The schema has a slot
@@ -289,7 +301,18 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
         if (t.type !== 'inline') {
             continue;
         }
+        let noteDepth = 0;
         for (const child of t.children ?? []) {
+            if (NOTE_OPEN_TOKENS.has(child.type)) {
+                if (noteDepth > 0) {
+                    // The plugin allows a note of another kind inside a note; the
+                    // schema keeps notes one level deep (see schema.ts).
+                    return `${child.type} inside another note`;
+                }
+                noteDepth++;
+            } else if (NOTE_CLOSE_TOKENS.has(child.type)) {
+                noteDepth--;
+            }
             const mark = injectionMarkOf(child);
             if (mark !== undefined) {
                 if (mark.kind === 'atom' || (mark.kind === 'decoration' && child.type === 'html_inline')) {

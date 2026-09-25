@@ -84,10 +84,26 @@ suite('Editor block classification (FR-CON.md)', () => {
         assert.strictEqual(block('Its body is ordinary Markdown').type.name, 'paragraph');
     });
 
-    check('the sidenote, marginal-note and both sidebar paragraphs are raw: their inline tokens are MEP extensions', () => {
-        for (const prefix of ['Fidelity is ++a property', 'The serializer !!lives', '@ **STATUS**', '$ **BETRIFFT**']) {
-            assert.strictEqual(block(prefix).type.name, 'raw_block', prefix);
+    check('the sidenote, marginal-note and both sidebar paragraphs (SPEC §6.2) are editable: the note family is rich text', () => {
+        const expected: Record<string, string> = {
+            'Fidelity is ++a property': 'sidenote',
+            'The serializer !!lives': 'marginal_note',
+            '@ **STATUS**': 'right_sidebar',
+            '$ **BETRIFFT**': 'left_sidebar',
+        };
+        for (const [prefix, note] of Object.entries(expected)) {
+            const paragraph = block(prefix);
+            assert.strictEqual(paragraph.type.name, 'paragraph', prefix);
+            const kinds: string[] = [];
+            paragraph.forEach(child => kinds.push(child.type.name));
+            assert.ok(kinds.includes(note), `${prefix}: ${kinds.join(', ')}`);
         }
+    });
+
+    check('the marginal note that spans a line break keeps its paragraph\'s width', () => {
+        const paragraph = block('The serializer !!lives');
+        assert.ok((paragraph.attrs.src as string).includes('\n'), 'two source lines');
+        assert.strictEqual(typeof paragraph.attrs.wrapWidth, 'number');
     });
 
     check('fences, the blockquote, both lists and the rule are editable, with their written form in attrs', () => {

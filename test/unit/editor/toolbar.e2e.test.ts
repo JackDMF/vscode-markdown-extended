@@ -248,7 +248,8 @@ suite('Editor toolbar (e2e)', () => {
 
         // The host's half: the edit lands, and the document comes back parsed.
         await showDocument(edit.text);
-        await page.waitForSelector('.ProseMirror .mep-raw-block .sn-ref');
+        // Rich text now: the sidenote is a node of the paragraph, not a source block.
+        await page.waitForSelector('.ProseMirror p .sn-ref');
 
         await page.focus('.ProseMirror');
         await pressWith('Control', 'z');
@@ -256,7 +257,7 @@ suite('Editor toolbar (e2e)', () => {
         const undone = await lastEdit();
         assert.strictEqual(undone?.text, SOURCE, 'the wrap and the host\'s re-sync after it are undone as one step');
         assert.strictEqual(undone?.reparse, undefined);
-        assert.strictEqual(await page.$('.ProseMirror .mep-raw-block .sn-ref'), null);
+        assert.strictEqual(await page.$('.ProseMirror .sn-ref'), null);
     });
 
     test('the block-type menu turns a paragraph into a heading, and its face names the type as text', async function () {

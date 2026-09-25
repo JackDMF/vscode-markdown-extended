@@ -6,6 +6,7 @@ import { Attrs, Node } from 'prosemirror-model';
 import { Environment, MarkdownIt, Options, Token } from '../@types/markdown-it';
 import {
     InjectionMark,
+    NOTE_OPEN_TOKENS,
     SourceBlock,
     detectEol,
     findAttrsSuffix,
@@ -13,7 +14,7 @@ import {
     injectionMarkOf,
     splitLines,
 } from './blocks';
-import { editorSchema } from './schema';
+import { NOTE_NODES, editorSchema } from './schema';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
 /**
@@ -323,6 +324,21 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             },
         },
         code_inline: { mark: 'code', noCloseToken: true },
+        // The extension's inline syntax, each delimiter pair a mark.
+        mark: { mark: 'mark' },
+        s: { mark: 'strike' },
+        sup: { mark: 'sup' },
+        sub: { mark: 'sub' },
+        kbd: { mark: 'kbd' },
+        // A note's `_ref_` and `_content_` pairs are its two child nodes.
+        sidenote: { block: 'sidenote' },
+        sidenote_ref: { block: 'note_ref' },
+        sidenote_content: { block: 'sidenote_body' },
+        marginal_note: { block: 'marginal_note' },
+        marginal_note_ref: { block: 'note_ref' },
+        marginal_note_content: { block: 'marginal_note_body' },
+        left_sidebar: { block: 'left_sidebar' },
+        right_sidebar: { block: 'right_sidebar' },
     };
 
     // The tokenizer MarkdownParser is given is a stand-in returning the
@@ -337,6 +353,17 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     // the schema; that would be every byte of the file, silently.
     if (doc.childCount !== blocks.length) {
         throw new Error(`Rich editor: ${blocks.length} source blocks became ${doc.childCount} document nodes.`);
+    }
+    // An inline node whose content does not fit the schema is dropped by
+    // MarkdownParser just as silently; the notes are the inline nodes that
+    // have content, so each one the stream opened must be in the document.
+    const opened = stream.reduce((n, t) => n + (t.children ?? []).filter(c => NOTE_OPEN_TOKENS.has(c.type)).length, 0);
+    let made = 0;
+    doc.descendants(node => {
+        made += NOTE_NODES.has(node.type.name) ? 1 : 0;
+    });
+    if (opened !== made) {
+        throw new Error(`Rich editor: ${opened} notes became ${made} note nodes.`);
     }
     return { doc, eol: detectEol(text), tail };
 }

@@ -189,19 +189,20 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         assert.deepStrictEqual(open, { type: 'openSource', line: SOURCE.split('\n').indexOf('| a | b |') });
     });
 
-    test('a source commit asks to be parsed again: markers removed, the block comes back as a paragraph with a caret', async function () {
+    test('a source commit asks to be parsed again: markup removed, the block comes back as a paragraph with a caret', async function () {
         this.timeout(15000);
-        const wrapped = SOURCE.replace('Alpha beta gamma.', 'Alpha ++beta|note++ gamma.');
+        // Authored inline HTML: what still makes a paragraph a source block.
+        const wrapped = SOURCE.replace('Alpha beta gamma.', 'Alpha <kbd>beta</kbd> gamma.');
         await showDocument(wrapped);
-        await page.waitForSelector('.mep-raw-block .sn-ref');
-        await page.mouse.move(...Object.values(await centre('.mep-raw-block .sn-ref')) as [number, number]);
-        await clickAt(await centre('.mep-raw-block .sn-ref'));
+        await page.waitForSelector('.mep-raw-block kbd');
+        await page.mouse.move(...Object.values(await centre('.mep-raw-block kbd')) as [number, number]);
+        await clickAt(await centre('.mep-raw-block kbd'));
         const button = await page.waitForSelector('.ProseMirror-selectednode .mep-atom-toolbar .mep-atom-button', { visible: true });
         const box = await button?.boundingBox();
         assert.ok(box);
         await clickAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
         await page.waitForSelector('.mep-raw-editor');
-        assert.strictEqual((await area()).value, 'Alpha ++beta|note++ gamma.');
+        assert.strictEqual((await area()).value, 'Alpha <kbd>beta</kbd> gamma.');
 
         await page.keyboard.down('Control');
         await page.keyboard.press('a');
@@ -218,7 +219,7 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         // The host's half: it applies the edit and posts its parse.
         await showDocument(edit.text);
         await page.waitForFunction(() => Array.from(document.querySelectorAll('.ProseMirror > p')).some(p => p.textContent === 'Alpha beta gamma.'));
-        assert.strictEqual(await page.$('.ProseMirror .sn-ref'), null);
+        assert.strictEqual(await page.$('.ProseMirror kbd'), null);
         const paragraph = await page.evaluateHandle(() => Array.from(document.querySelectorAll('.ProseMirror > p')).find(p => p.textContent === 'Alpha beta gamma.'));
         const p = await (paragraph as puppeteer.ElementHandle<Element>).boundingBox();
         assert.ok(p);

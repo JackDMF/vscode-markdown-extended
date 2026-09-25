@@ -31,6 +31,13 @@ export const INLINE_MARKERS = {
 
 export type InlineMarkerName = keyof typeof INLINE_MARKERS;
 
+/**
+ * `markdown-it-kbd`'s delimiters, `[[Ctrl+S]]`. The package states them, not
+ * this extension; they are written down here so the toolbar and the WYSIWYG
+ * editor's serializer take them from one place.
+ */
+export const KBD_MARKERS = { open: '[[', close: ']]' } as const;
+
 /** Between a note's reference text and its content: `++reference|note++`. */
 export const NOTE_SEPARATOR = '|';
 

@@ -7,9 +7,14 @@
 
 /**
  * Private-use characters bracketing text a line break must not fall inside: a
- * code span (a newline there becomes a space in the rendered code) and a link's
- * `](destination "title")`, image included (a newline between `]` and `(` ends
- * the link). They exist only between the inline serializer and the wrapper.
+ * code span (a newline there becomes a space in the rendered code), a whole
+ * inline link `[text](destination "title")`, image included (a newline between
+ * `]` and `(` ends the link, and the corpus keeps link text on one line too —
+ * so a link longer than the room is a line of its own, and no evidence of the
+ * paragraph's width), and `^sup^`, `~sub~` and `[[kbd]]`, whose plugins refuse a line
+ * break inside. A note or a sidebar is not held: `markdownItSidenote.ts`
+ * finds its closing marker across line breaks, and the corpus wraps inside
+ * notes. They exist only between the inline serializer and the wrapper.
  */
 export const HOLD_OPEN = String.fromCharCode(0xe000);
 export const HOLD_CLOSE = String.fromCharCode(0xe001);
@@ -29,9 +34,10 @@ export function width(s: string): number {
 export function isLineStartSyntax(word: string): boolean {
     const w = word.replace(HOLD_RE, '');
     // Whole-word markers: a bullet, a setext underline (any run of `-` or `=`),
-    // a thematic break, an ATX opener, an ordered-list marker. `*emphasis*` or
-    // `-foo` at a line start is none of these.
-    return /^(?:[*+]|-+|=+|\*{3,}|_{3,}|#{1,6}|\d{1,9}[.)])$/.test(w) || /^(?:[>|<:~]|`{3,})/.test(w);
+    // a thematic break, an ATX opener, an ordered-list marker, a definition's
+    // `~`. `*emphasis*` or `-foo` at a line start is none of these, and nor is
+    // `~sub~` or `~~strike~~`: only three tildes open a fence.
+    return /^(?:[*+~]|-+|=+|\*{3,}|_{3,}|#{1,6}|\d{1,9}[.)])$/.test(w) || /^(?:[>|<:]|`{3,}|~{3,})/.test(w);
 }
 
 /** Escape a word that has to begin a line anyway (the first of the paragraph, or after a hard break). */
@@ -136,6 +142,48 @@ export function wrapInline(inline: string, first: number, rest: number): string[
     return out.map(l => l.replace(HOLD_RE, ''));
 }
 
+/** The end of the `^…^`, `~…~` or `[[…]]` run opening at `i`, past its closing marker; `-1` when the line does not close it. */
+function heldRunEnd(line: string, i: number): number {
+    const close = line.startsWith('[[', i) ? ']]' : line[i];
+    for (let j = i + (close === ']]' ? 2 : 1); j < line.length; j++) {
+        if (line[j] === '\\') {
+            j++;
+        } else if (line.startsWith(close, j)) {
+            return j + close.length;
+        }
+    }
+    return -1;
+}
+
+/** The end of the `[text](destination)` opening with the `[` at `i`, past its `)`; `-1` when the line holds no such link there. */
+function inlineLinkEnd(line: string, i: number): number {
+    let depth = 0;
+    let j = i;
+    for (; j < line.length; j++) {
+        if (line[j] === '\\') {
+            j++;
+        } else if (line[j] === '[') {
+            depth++;
+        } else if (line[j] === ']' && --depth === 0) {
+            break;
+        }
+    }
+    if (j >= line.length || line[j + 1] !== '(') {
+        return -1;
+    }
+    depth = 0;
+    for (let k = j + 1; k < line.length; k++) {
+        if (line[k] === '\\') {
+            k++;
+        } else if (line[k] === '(') {
+            depth++;
+        } else if (line[k] === ')' && --depth === 0) {
+            return k + 1;
+        }
+    }
+    return -1;
+}
+
 /**
  * Whether a line of a paragraph's content (container prefixes removed) holds a
  * place `wrapInline` could have broken it: a space outside a code span, a link
@@ -176,6 +224,21 @@ export function hasBreakOpportunity(content: string): boolean {
             i += autolink[0].length;
             continue;
         }
+        // Superscript, subscript and a key hold no line break either (the
+        // serializer holds them as runs); `~~` is strikethrough, which may break.
+        const held = ch === '^' || (ch === '~' && line[i + 1] !== '~' && line[i - 1] !== '~') || line.startsWith('[[', i)
+            ? heldRunEnd(line, i) : -1;
+        if (held > i) {
+            i = held;
+            continue;
+        }
+        // A whole inline link, text included, as the serializer holds it. A
+        // link whose text this line does not close is prose here.
+        const link = ch === '[' || line.startsWith('![', i) ? inlineLinkEnd(line, ch === '[' ? i : i + 1) : -1;
+        if (link > i) {
+            i = link;
+            continue;
+        }
         if (ch === ' ') {
             let j = i;
             while (line[j] === ' ') {
@@ -198,10 +261,16 @@ export function hasBreakOpportunity(content: string): boolean {
  * source lines (prefixes included, since the serializer measures the same way),
  * `content` the same lines as markdown-it's inline content has them.
  *
- * The widest line that could have been broken — a line of one unbreakable
- * chunk overruns any width and is no evidence of it. That is the smallest width
- * at which greedy wrapping reproduces the lines, so a paragraph this serializer
- * wrote is written the same way again. When no line could have been broken,
+ * The widest line that could have been broken — the width the author evidently
+ * used. A line of one unbreakable chunk (a link longer than the room, which is
+ * a held run like a code span) overruns any width and is no evidence of it;
+ * nor is the short line an author cut before such a link, which is short and so
+ * never the widest. A hand-wrapped paragraph is not the output of greedy
+ * wrapping at any one width, so this does not reproduce it: a changed one is
+ * re-wrapped at that width. It does reproduce what this serializer wrote — at
+ * the widest line greedy wrapping made, every line fits and no following chunk
+ * fits after it, as at the width it wrote with — so a paragraph saved twice is
+ * written the same way again. When no line could have been broken,
  * the narrowest line: every chunk then stays on a line of its own. A paragraph
  * of one line carries no evidence of a width and gets `null`; see
  * `measureLineWidth` for what the serializer uses instead.

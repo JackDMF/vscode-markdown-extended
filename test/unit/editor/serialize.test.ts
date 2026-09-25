@@ -79,6 +79,42 @@ suite('Editor serializer for changed blocks', () => {
         assert.deepStrictEqual(topChildren(parseDocument(md, out).doc).map(n => n.type.name), ['paragraph']);
     });
 
+    test('a hand-wrapped paragraph with a link on a line of its own is re-wrapped at its widest breakable line, not the link (REL-RXE-135)', () => {
+        // Req Explorer's requirements/releases/REL-REQEXPLORER.md, as written by
+        // hand: lines of 86, 89, 24, 105, 86, 90, 91, 91 and 46 characters (93
+        // bytes for the seventh, whose dash is three). The 105 is one link,
+        // which the 24 was cut short before.
+        const lines = [
+            'Three changes, one of them the reason for the release. A rich Markdown editor for this',
+            'corpus is built in Markdown Extended Pro over the same markdown-it instance VS Code hands',
+            'both extensions, and the',
+            '[2026-09-21 editor-integration contract](../workshops/2026-09-21-workshop-editor-integration-contract.md)',
+            'settled what Req Explorer owes it. `CR-RXE-124` ships the first piece: every token the',
+            'preview plugin injects carries a mark naming the rule that made it, one of three kinds and',
+            'what it stands for, so the editor can refuse the edit that cannot be saved — and it reaches',
+            'the editor only through an installed extension, which is why this release is cut before the',
+            'neighbouring gaps of the same note are closed.',
+        ];
+        assert.deepStrictEqual(lines.map(l => Array.from(l).length), [86, 89, 24, 105, 86, 90, 91, 91, 46]);
+        const parsed = parseDocument(md, `${lines.join('\n')}\n`);
+        const [paragraph] = topChildren(parsed.doc);
+        assert.strictEqual(paragraph.attrs.wrapWidth, 91, 'the widest line that could have been broken');
+
+        // One word changed, as Daniel did.
+        const edited = paragraph.content.replaceChild(0, text('Three changes, one of them the whole reason for the release. A rich Markdown editor for this corpus is built in Markdown Extended Pro over the same markdown-it instance VS Code hands both extensions, and the '));
+        const out = serialize({ ...parsed, doc: replaceChild(parsed.doc, 0, touched(paragraph, edited)) });
+        const link = lines[3];
+        for (const line of out.trimEnd().split('\n')) {
+            if (line === link) {
+                continue;
+            }
+            assert.ok(Array.from(line).length <= 91, `${JSON.stringify(line)} fits 91:\n${out}`);
+        }
+        assert.ok(out.split('\n').includes(link), `the link keeps a line of its own:\n${out}`);
+        assert.ok(out.includes('the whole reason'), out);
+        assert.strictEqual(assertStable(out), out, 'and a second save writes it the same');
+    });
+
     test('a changed list keeps its bullet character, and an ordered list its start and delimiter', () => {
         const parsed = parseDocument(md, '* one\n* two\n\n3) three\n4) four\n');
         const [bullets, ordered] = topChildren(parsed.doc);

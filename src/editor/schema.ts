@@ -1,4 +1,5 @@
-import { DOMOutputSpec, Mark, Node, Schema } from 'prosemirror-model';
+import { DOMOutputSpec, DOMParser, Fragment, Mark, Node, NodeSpec, Schema } from 'prosemirror-model';
+import { NOTE_SYNTAX } from '../syntax/markers';
 
 /**
  * The rich editor's document model, shared by the extension host (which parses
@@ -8,7 +9,7 @@ import { DOMOutputSpec, Mark, Node, Schema } from 'prosemirror-model';
  * Two families of top-level node:
  *
  * - **Editable** (`paragraph`, `heading`, the lists, `blockquote`, `code_block`,
- *   `horizontal_rule`): the stage-1 editable core. Each top-level one carries
+ *   `horizontal_rule`): the editable core. Each top-level one carries
  *   `src`, the exact slice of the file it was parsed from, and `gap`, the text
  *   between the previous block and itself. `src` stays set while the node is
  *   untouched and the serializer emits it verbatim; `fidelityPlugin` clears it
@@ -21,6 +22,11 @@ import { DOMOutputSpec, Mark, Node, Schema } from 'prosemirror-model';
  *
  * `toDOM` renders placeholders for the atoms: their HTML comes from the host
  * and is attached by a node view, not by the schema.
+ *
+ * Inline, a textblock holds text under the marks at the end of this file —
+ * CommonMark's and this extension's own (`==`, `^`, `~`, `~~`, `[[…]]`) —
+ * images, hard breaks, Req Explorer's badges, and the note family (sidenotes,
+ * marginal notes, sidebars), each drawn as the element the engine renders.
  */
 
 /** The top-level editable node types, whose `src` the fidelity plugin clears on change. */
@@ -71,6 +77,104 @@ function emphasisParseRules(markups: readonly string[]): { tag: string; attrs: {
     return markups.map(markup => ({ tag: EMPHASIS_TAGS[markup], attrs: { markup } }));
 }
 
+// ---------------------------------------------------------------------------
+// The note family: sidenotes, marginal notes, sidebars
+// ---------------------------------------------------------------------------
+
+/*
+ * `markdownItSidenote.ts` renders a note as its reference with the note nested
+ * inside it — `<span class="sn-ref">reference<span class="sidenote">note</span></span>`
+ * — and a sidebar as one span. The editor draws exactly that DOM, so every
+ * stylesheet written for the preview (the margin layout, a reader's own
+ * `.sidenote` rules) applies to the note being edited, unchanged:
+ *
+ * - `sidenote` is the `span.sn-ref`, holding two inline nodes: `note_ref`, the
+ *   reference, and `sidenote_body`, the `span.sidenote`. The plugin emits no
+ *   element for the reference; ProseMirror needs one to hold its content, so
+ *   it is a span with no class (only `data-mep-note-ref`, which no stylesheet
+ *   of the preview names) and the reference's text sits where the plugin puts
+ *   it — first inside the `.sn-ref`, before the note.
+ * - `marginal_note` likewise: `span.mn-ref` > `note_ref` + `marginal_note_body`
+ *   (`span.mnote`). The two bodies are two types because their class is part
+ *   of what they are; the reference is drawn the same in both and is one type.
+ * - `left_sidebar` and `right_sidebar` are one span each with the content in it.
+ *
+ * What a note may hold is the plugin's answer. It parses a reference and a
+ * body with the full inline parser, so every mark may be inside. It cannot
+ * hold a note of its own kind — the first closing marker ends the outer one —
+ * but it can hold one of another kind (`++a|see !!b|c!!++`), and a sidebar the
+ * other sidebar. The editor keeps the family out of note content altogether
+ * (`note_inline` has no note in it): one level is what the corpus writes, and
+ * a content expression cannot say "any note but my own kind, at any depth".
+ * A paragraph whose file nests notes stays a source block (`blocks.ts`).
+ */
+
+/** The note and sidebar nodes, the ones the toolbar wraps a selection in. */
+export const NOTE_NODES: ReadonlySet<string> = new Set(['sidenote', 'marginal_note', 'left_sidebar', 'right_sidebar']);
+
+/** The nodes that hold a note's text: a reference, a body, or a sidebar (which is its own body). */
+export const NOTE_PART_NODES: ReadonlySet<string> = new Set(['note_ref', 'sidenote_body', 'marginal_note_body', 'left_sidebar', 'right_sidebar']);
+
+const NOTE_REF_ATTR = 'data-mep-note-ref';
+
+/**
+ * A pasted note (the preview's HTML, or the editor's own copy): its `.sidenote`
+ * or `.mnote` child is the body, everything else the reference — unwrapped
+ * from the editor's own reference span when the copy came from here.
+ */
+function noteContent(bodyType: string, bodyClass: string) {
+    return (dom: globalThis.Node, schema: Schema): Fragment => {
+        const element = dom as HTMLElement;
+        const doc = element.ownerDocument;
+        const refHolder = doc.createElement('span');
+        const bodyHolder = doc.createElement('span');
+        for (const child of Array.from(element.childNodes)) {
+            const el = child.nodeType === 1 ? child as HTMLElement : null;
+            if (el?.classList.contains(bodyClass)) {
+                bodyHolder.append(...Array.from(el.cloneNode(true).childNodes));
+            } else if (el?.hasAttribute(NOTE_REF_ATTR)) {
+                refHolder.append(...Array.from(el.cloneNode(true).childNodes));
+            } else {
+                refHolder.append(child.cloneNode(true));
+            }
+        }
+        const parser = DOMParser.fromSchema(schema);
+        return Fragment.from([
+            parser.parse(refHolder, { topNode: schema.nodes.note_ref.create() }),
+            parser.parse(bodyHolder, { topNode: schema.nodes[bodyType].create() }),
+        ]);
+    };
+}
+
+/** Inline nodes that hold inline content and must not be crossed by joining or lifting. */
+function notePart(className: string | null, extra: Partial<NodeSpec> = {}): NodeSpec {
+    return {
+        inline: true,
+        content: 'note_inline*',
+        isolating: true,
+        ...extra,
+        toDOM(): DOMOutputSpec {
+            return ['span', className === null ? { [NOTE_REF_ATTR]: '' } : { class: className }, 0];
+        },
+    };
+}
+
+function noteNode(refClass: string, bodyType: string, bodyClass: string): NodeSpec {
+    return {
+        inline: true,
+        group: 'inline',
+        content: `note_ref ${bodyType}`,
+        isolating: true,
+        parseDOM: [{ tag: `span.${refClass}`, getContent: noteContent(bodyType, bodyClass) }],
+        toDOM(): DOMOutputSpec { return ['span', { class: refClass }, 0]; },
+    };
+}
+
+const SN = NOTE_SYNTAX.sidenote;
+const MN = NOTE_SYNTAX.marginalNote;
+const LS = NOTE_SYNTAX.leftSidebar;
+const RS = NOTE_SYNTAX.rightSidebar;
+
 export const editorSchema = new Schema({
     nodes: {
         doc: {
@@ -93,7 +197,8 @@ export const editorSchema = new Schema({
             toDOM(): DOMOutputSpec { return ['p', 0]; },
         },
         heading: {
-            content: '(text | image | inline_atom)*',
+            // A note is written inside the heading's one line; a hard break is not.
+            content: '(text | image | inline_atom | sidenote | marginal_note | left_sidebar | right_sidebar)*',
             group: 'block',
             defining: true,
             attrs: {
@@ -250,11 +355,11 @@ export const editorSchema = new Schema({
             },
         },
         text: {
-            group: 'inline',
+            group: 'inline note_inline',
         },
         image: {
             inline: true,
-            group: 'inline',
+            group: 'inline note_inline',
             draggable: true,
             attrs: {
                 src: {},
@@ -276,14 +381,14 @@ export const editorSchema = new Schema({
         },
         hard_break: {
             inline: true,
-            group: 'inline',
+            group: 'inline note_inline',
             selectable: false,
             parseDOM: [{ tag: 'br' }],
             toDOM(): DOMOutputSpec { return ['br']; },
         },
         inline_atom: {
             inline: true,
-            group: 'inline',
+            group: 'inline note_inline',
             atom: true,
             selectable: true,
             attrs: {
@@ -295,6 +400,13 @@ export const editorSchema = new Schema({
                 return ['span', { class: 'mep-inline-atom', 'data-mep-inline-atom': '' }];
             },
         },
+        sidenote: noteNode(SN.refClass, 'sidenote_body', SN.noteClass),
+        marginal_note: noteNode(MN.refClass, 'marginal_note_body', MN.noteClass),
+        note_ref: notePart(null),
+        sidenote_body: notePart(SN.noteClass),
+        marginal_note_body: notePart(MN.noteClass),
+        left_sidebar: notePart(LS.cssClass, { group: 'inline', parseDOM: [{ tag: `span.${LS.cssClass}` }] }),
+        right_sidebar: notePart(RS.cssClass, { group: 'inline', parseDOM: [{ tag: `span.${RS.cssClass}` }] }),
     },
     marks: {
         // Req Explorer's decoration: outermost, so it never splits the marks
@@ -327,6 +439,16 @@ export const editorSchema = new Schema({
             parseDOM: emphasisParseRules(['**', '__']),
             toDOM: emphasisDOM,
         },
+        // `~~x~~` and `==x==` are delimiter runs like emphasis: any mark may be
+        // inside them, and they may span a line break.
+        strike: {
+            parseDOM: [{ tag: 's' }, { tag: 'del' }, { tag: 'strike' }],
+            toDOM(): DOMOutputSpec { return ['s']; },
+        },
+        mark: {
+            parseDOM: [{ tag: 'mark' }],
+            toDOM(): DOMOutputSpec { return ['mark']; },
+        },
         link: {
             inclusive: false,
             attrs: {
@@ -342,6 +464,25 @@ export const editorSchema = new Schema({
             toDOM(mark: Mark): DOMOutputSpec {
                 return ['a', { href: mark.attrs.href as string, title: mark.attrs.title as string | null }];
             },
+        },
+        // Inside a link, not around one: `[[[x]]](url)` is a link holding a
+        // key, while a key holding a link does not parse. No line break inside.
+        kbd: {
+            parseDOM: [{ tag: 'kbd' }],
+            toDOM(): DOMOutputSpec { return ['kbd']; },
+        },
+        // `markdown-it-sup-alt` and `-sub-alt` read their content as plain text,
+        // so they sit innermost but for code, and exclude code and each other:
+        // `^`x`^` is the text `` `x` `` raised, not code.
+        sup: {
+            excludes: 'sup sub code',
+            parseDOM: [{ tag: 'sup' }],
+            toDOM(): DOMOutputSpec { return ['sup']; },
+        },
+        sub: {
+            excludes: 'sub sup code',
+            parseDOM: [{ tag: 'sub' }],
+            toDOM(): DOMOutputSpec { return ['sub']; },
         },
         // Last, so it is the innermost mark: the serializer writes code spans unescaped.
         code: {

@@ -260,9 +260,9 @@ suite('Editor host: session protocol', () => {
         const last = webview.documents().pop();
         assert.ok(last);
         const before = webview.documents().length;
-        // What the toolbar sends for ==mark==: syntax outside the editable core,
-        // written as source into the paragraph.
-        const changed = document.getText().replace('wrapped, edited, saved later.', 'wrapped, ==marked== later.');
+        // What a raw block's source commit sends: syntax outside the editable
+        // core (authored inline HTML), written as source into the paragraph.
+        const changed = document.getText().replace('wrapped, edited, saved later.', 'wrapped, <kbd>marked</kbd> later.');
         webview.send({ type: 'edit', text: changed, baseVersion: last.version, reparse: true });
         await session.settled();
         await delay(300);
@@ -273,12 +273,12 @@ suite('Editor host: session protocol', () => {
         const posted = docs[docs.length - 1];
         assert.strictEqual(posted.version, document.version);
         const marked = (posted.json.doc.content as { type: string; attrs?: { src?: string; html?: string } }[])
-            .find(n => n.attrs?.src?.includes('==marked=='));
+            .find(n => n.attrs?.src?.includes('<kbd>marked</kbd>'));
         assert.strictEqual(marked?.type, 'raw_block', 'the paragraph comes back as a source block');
-        assert.ok(marked?.attrs?.html?.includes('<mark>marked</mark>'), marked?.attrs?.html);
+        assert.ok(marked?.attrs?.html?.includes('<kbd>marked</kbd>'), marked?.attrs?.html);
 
         // Without `reparse`, the same kind of edit is not echoed.
-        const plain = changed.replace('==marked==', '==marked twice==');
+        const plain = changed.replace('<kbd>marked</kbd>', '<kbd>marked twice</kbd>');
         webview.send({ type: 'edit', text: plain, baseVersion: posted.version });
         await session.settled();
         assert.strictEqual(document.getText(), plain);
