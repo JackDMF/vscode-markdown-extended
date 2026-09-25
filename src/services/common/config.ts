@@ -128,6 +128,19 @@ export class Config extends ConfigReader {
     }
 
     /**
+     * Whether the Visual Editor draws other extensions' code lenses above the
+     * blocks they belong to (`src/editor/host/lenses.ts`). On unless set to
+     * `false`; VS Code's own `editor.codeLens` turns them off too, as it does in
+     * the text editor.
+     *
+     * @param uri the document being edited
+     */
+    editorCodeLenses(uri?: vscode.Uri): boolean {
+        const value = uri ? this.read<boolean>('editor.codeLenses', uri) : this.read<boolean>('editor.codeLenses');
+        return value !== false;
+    }
+
+    /**
      * Get output directory name for exports.
      * 
      * @returns Directory name relative to workspace root

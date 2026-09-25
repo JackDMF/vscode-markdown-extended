@@ -33,13 +33,13 @@ function isHistory(tr: Transaction): boolean {
     return tr.getMeta(HISTORY_META) !== undefined;
 }
 
-interface Child {
+export interface TopLevelChild {
     node: Node;
     offset: number;
 }
 
-function children(doc: Node): Child[] {
-    const out: Child[] = [];
+export function topLevelChildren(doc: Node): TopLevelChild[] {
+    const out: TopLevelChild[] = [];
     doc.forEach((node, offset) => {
         out.push({ node, offset });
     });
@@ -62,7 +62,7 @@ function children(doc: Node): Child[] {
  * bias, for content inserted exactly at an old start that took that node's
  * place (typing `- ` wraps a paragraph in a list that starts where it did).
  */
-function descent(transactions: readonly Transaction[], before: Child[], after: Child[]): number[] {
+export function descent(transactions: readonly Transaction[], before: readonly TopLevelChild[], after: readonly TopLevelChild[]): number[] {
     const result = after.map(() => -1);
     const claimed = new Set<number>();
 
@@ -179,8 +179,8 @@ export function fidelityPlugin(): Plugin {
             if (!transactions.some(tr => tr.docChanged) || transactions.some(isPreserving)) {
                 return null;
             }
-            const before = children(oldState.doc);
-            const after = children(newState.doc);
+            const before = topLevelChildren(oldState.doc);
+            const after = topLevelChildren(newState.doc);
             const from = descent(transactions, before, after);
             const ancestor = (j: number): Node | null => (from[j] < 0 ? null : before[from[j]].node);
             const undo = transactions.some(isHistory);
@@ -260,7 +260,7 @@ export function fidelityPlugin(): Plugin {
  * its attributes into the second half, and `{#id}` written twice is two elements
  * with one id; the half that stands where the paragraph stood keeps it.
  */
-function stripCopiedSuffixes(after: Child[], from: number[], set: (j: number, key: string, value: unknown) => void): void {
+function stripCopiedSuffixes(after: TopLevelChild[], from: number[], set: (j: number, key: string, value: unknown) => void): void {
     after.forEach((c, j) => {
         if (from[j] < 0 && c.node.type.name !== 'heading' && (c.node.attrs.attrsSuffix ?? null) !== null) {
             set(j, 'attrsSuffix', null);
@@ -275,7 +275,7 @@ function stripCopiedSuffixes(after: Child[], from: number[], set: (j: number, ke
  * paragraph wrapped into a quote or a list would keep drawing a class the file
  * no longer holds, so it loses it — the page shows what will be saved.
  */
-function nestedSuffixes(after: Child[], present: ReadonlySet<Node>): number[] {
+function nestedSuffixes(after: TopLevelChild[], present: ReadonlySet<Node>): number[] {
     const out: number[] = [];
     for (const c of after) {
         if (present.has(c.node) || c.node.isTextblock || c.node.isAtom) {
@@ -293,7 +293,7 @@ function nestedSuffixes(after: Child[], present: ReadonlySet<Node>): number[] {
 
 /** The heading rule of `fidelityPlugin`: a heading that newly carries a duplicated id loses it. */
 function stripDuplicatedIds(
-    after: Child[],
+    after: TopLevelChild[],
     ancestor: (j: number) => Node | null,
     set: (j: number, key: string, value: unknown) => void,
 ): void {

@@ -26,7 +26,7 @@ export type { AttrsPlacement, BlockAttrs, BlockKind, GroupedBlocks, InjectedKind
 export { EDITABLE_TOP_NODES, SOURCE_NODES, SUFFIX_NODES, WRAPPER_NODES, editorSchema } from './schema';
 export { domAttrsOf, normalizedLiteral, parseAttrsLiteral } from './attrs';
 export type { EditorSchema } from './schema';
-export { parseDocument, parsedDocumentFromJSON, parsedDocumentToJSON } from './parse';
+export { blockLineRanges, parseDocument, parsedDocumentFromJSON, parsedDocumentToJSON } from './parse';
 export type { ParsedDocument, ParsedDocumentJSON } from './parse';
 export { serializeDocument, serializeNode } from './serialize';
 export { hasBreakOpportunity, measureLineWidth, measureWrapWidth, wrapInline } from './wrap';

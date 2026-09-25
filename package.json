@@ -495,6 +495,13 @@
           "order": 50,
           "scope": "resource"
         },
+        "markdownExtended.editor.codeLenses": {
+          "type": "boolean",
+          "default": true,
+          "description": "%markdownExtended.configuration.editorCodeLenses%",
+          "order": 51,
+          "scope": "resource"
+        },
         "markdownExtended.exportTheme": {
           "type": "string",
           "default": "light",

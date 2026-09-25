@@ -442,7 +442,11 @@ class ObjectToolbarView implements PluginView {
             this.hoverTimer = undefined;
             return;
         }
-        const atom = target.closest<HTMLElement>('.mep-atom');
+        // A block's lens row is the block's, for the pointer: crossing it on the
+        // way to the bar above must not hide the bar.
+        const lensRow = target.closest<HTMLElement>('.mep-lens-row');
+        const below = lensRow?.parentElement === this.view.dom ? lensRow.nextElementSibling : null;
+        const atom = below instanceof HTMLElement && below.classList.contains('mep-atom') ? below : target.closest<HTMLElement>('.mep-atom');
         if (atom && atom.parentElement === this.view.dom) {
             clearTimeout(this.hoverTimer);
             this.hoverTimer = undefined;
@@ -546,8 +550,20 @@ class ObjectToolbarView implements PluginView {
         const caret = typing ? this.view.coordsAtPos(sel.head) : null;
         const covers = (y: number) => caret !== null && y < caret.bottom && y + height > caret.top;
         const fits = (y: number) => y >= ceiling && !covers(y);
-        const above = anchor.top - GAP - height;
-        const below = anchor.bottom + GAP;
+        // Another extension's lens row (`lenses.ts`) sits right above a block's
+        // first line, which is where the bar goes too: a bar that would cover a
+        // row is moved past it, above it when going up and below it when going
+        // down, so the two never overlap.
+        const lensRows = Array.from(this.view.dom.querySelectorAll(':scope > .mep-lens-row'), r => r.getBoundingClientRect());
+        const clear = (y: number, up: boolean): number => {
+            let at = y;
+            for (let hit = lensRows.find(r => at < r.bottom && at + height > r.top); hit; hit = lensRows.find(r => at < r.bottom && at + height > r.top)) {
+                at = up ? hit.top - GAP - height : hit.bottom + GAP;
+            }
+            return at;
+        };
+        const above = clear(anchor.top - GAP - height, true);
+        const below = clear(anchor.bottom + GAP, false);
         const order = typing && !sel.empty ? [below, above] : [above, below];
         let y = order.find(fits) ?? order[1];
         if (covers(y) && caret !== null) {

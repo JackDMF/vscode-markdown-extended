@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { EditorEngineHost, buildEditorEngine } from '../../../src/editor/host/engineHost';
+import { blockIndexForLine } from '../../../src/editor/host/lenses';
 import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
 import { SessionWebview, VisualEditorSession } from '../../../src/editor/host/session';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
@@ -283,6 +284,173 @@ suite('Editor host: session protocol', () => {
         await session.settled();
         assert.strictEqual(document.getText(), plain);
         assert.strictEqual(webview.documents().length, before + 1);
+    });
+});
+
+/** The text the lens suite opens: front matter, a heading, a blank line, a paragraph. */
+const LENS_SOURCE = [
+    '---',            // 0
+    'id: LENS-001',   // 1
+    '---',            // 2
+    '',               // 3
+    '# Heading',      // 4
+    '',               // 5
+    'A paragraph.',   // 6
+    '',
+].join('\n');
+
+const LENS_COMMAND = 'markdownExtended.test.lensCommand';
+
+type LensesMessage = Extract<HostMessage, { type: 'lenses' }>;
+
+suite('Editor host: code lenses', () => {
+    let uri: vscode.Uri;
+    let document: vscode.TextDocument;
+    let webview: FakeWebview;
+    let session: VisualEditorSession;
+    const engineChanged = new vscode.EventEmitter<void>();
+    const subscriptions: vscode.Disposable[] = [];
+    const ran: unknown[][] = [];
+    /** An argument no `postMessage` could carry: it must reach the command as this very object. */
+    const handle = { kind: 'handle', call: () => 'called' };
+    let resolved = 0;
+
+    const lensMessages = () => webview.posted.filter((m): m is LensesMessage => m.type === 'lenses');
+    /** The next `lenses` message after the `count`th. */
+    const nextLenses = (count: number) => until(() => lensMessages()[count], 5000);
+    const titlesOf = (msg: LensesMessage) => msg.rows.map(r => ({ blockIndex: r.blockIndex, titles: r.items.map(i => i.title) }));
+
+    suiteSetup(async function () {
+        this.timeout(20000);
+        uri = tempMarkdown(LENS_SOURCE);
+        const lens = (line: number, title: string, command: string, args: unknown[] = []) => ({
+            lens: new vscode.CodeLens(new vscode.Range(line, 0, line, 1)),
+            command: { title, command, arguments: args, tooltip: `${title} tooltip` },
+        });
+        const lenses = [
+            lens(1, 'Front lens', LENS_COMMAND, ['front']),
+            lens(4, 'Heading lens', LENS_COMMAND, [uri, handle]),
+            lens(4, 'Second on heading', LENS_COMMAND, ['second']),
+            lens(5, 'Blank-line lens', LENS_COMMAND, ['blank']),
+            lens(6, 'Text only', ''),
+        ];
+        subscriptions.push(
+            vscode.commands.registerCommand(LENS_COMMAND, (...args: unknown[]) => {
+                ran.push(args);
+            }),
+            vscode.languages.registerCodeLensProvider({ language: 'markdown' }, {
+                // Unresolved: the command comes from resolveCodeLens, as Req Explorer's does.
+                provideCodeLenses: d => (d.uri.toString() === uri.toString() ? lenses.map(l => l.lens) : []),
+                resolveCodeLens: codeLens => {
+                    resolved++;
+                    const found = lenses.find(l => l.lens === codeLens);
+                    if (found) {
+                        codeLens.command = found.command;
+                    }
+                    return codeLens;
+                },
+            }),
+        );
+        document = await vscode.workspace.openTextDocument(uri);
+        const engine = buildEditorEngine(EXTENSION_ID, () => undefined);
+        webview = new FakeWebview();
+        session = new VisualEditorSession(document, webview, {
+            engine: () => engine,
+            onDidChangeEngine: engineChanged.event,
+            log: () => undefined,
+        });
+    });
+
+    suiteTeardown(async () => {
+        session.dispose();
+        engineChanged.dispose();
+        subscriptions.forEach(d => d.dispose());
+        await vscode.workspace.getConfiguration('markdownExtended').update('editor.codeLenses', undefined, vscode.ConfigurationTarget.Global);
+        fs.rmSync(uri.fsPath, { force: true });
+    });
+
+    test('after the document, each lens is posted resolved, in a row for the block its line is in', async function () {
+        this.timeout(10000);
+        webview.send({ type: 'ready' });
+        const msg = await nextLenses(0);
+        assert.ok(msg, `expected lenses, got ${JSON.stringify(webview.posted.map(m => m.type))}`);
+        assert.ok(resolved >= 5, 'VS Code resolved the lenses before handing them over');
+        assert.strictEqual(msg.version, document.version);
+        assert.strictEqual(msg.blocks, 3, 'front matter, heading, paragraph');
+        assert.deepStrictEqual(titlesOf(msg), [
+            // A front-matter line is the front matter's.
+            { blockIndex: 0, titles: ['Front lens'] },
+            // A heading line is the heading's, every lens on it in one row.
+            { blockIndex: 1, titles: ['Heading lens', 'Second on heading'] },
+            // A blank line belongs to the block after it.
+            { blockIndex: 2, titles: ['Blank-line lens', 'Text only'] },
+        ]);
+        const heading = msg.rows[1].items[0];
+        assert.strictEqual(heading.tooltip, 'Heading lens tooltip');
+        assert.ok(heading.id, 'a lens with a command is clickable');
+        assert.strictEqual(msg.rows[2].items[1].id, undefined, 'a lens whose command has no id is text only');
+        // What crosses is titles and ids; the arguments stay in the host.
+        assert.ok(!JSON.stringify(msg).includes('handle'));
+    });
+
+    test('runLens runs the lens\'s command with its own arguments, objects included', async function () {
+        this.timeout(10000);
+        const msg = lensMessages()[lensMessages().length - 1];
+        webview.send({ type: 'runLens', id: msg.rows[1].items[0].id as string });
+        const args = await until(() => ran[0], 5000);
+        assert.ok(args, 'the command ran');
+        assert.strictEqual((args[0] as vscode.Uri).toString(), uri.toString());
+        assert.strictEqual(args[1], handle, 'the very object the provider gave');
+
+        ran.length = 0;
+        webview.send({ type: 'runLens', id: 'no-such-lens' });
+        await delay(200);
+        assert.deepStrictEqual(ran, [], 'an id of no current lens runs nothing');
+    });
+
+    test('an applied edit is followed by lenses for the text the page now holds', async function () {
+        this.timeout(10000);
+        const [doc] = webview.documents();
+        const before = lensMessages().length;
+        webview.send({ type: 'edit', text: LENS_SOURCE.replace('A paragraph.', 'A changed paragraph.'), baseVersion: doc.version });
+        const msg = await nextLenses(before);
+        assert.ok(msg, 'lenses after the edit');
+        assert.strictEqual(msg.version, document.version);
+        assert.strictEqual(webview.documents().length, 1, 'the edit itself is not echoed');
+    });
+
+    test('with markdownExtended.editor.codeLenses off, the rows are cleared and none are sent', async function () {
+        this.timeout(15000);
+        const before = lensMessages().length;
+        await vscode.workspace.getConfiguration('markdownExtended').update('editor.codeLenses', false, vscode.ConfigurationTarget.Global);
+        const cleared = await nextLenses(before);
+        assert.ok(cleared, 'the page is told');
+        assert.deepStrictEqual(cleared.rows, []);
+
+        webview.send({ type: 'refreshLenses' });
+        await delay(800);
+        assert.strictEqual(lensMessages().length, before + 1, 'nothing more while off');
+
+        await vscode.workspace.getConfiguration('markdownExtended').update('editor.codeLenses', undefined, vscode.ConfigurationTarget.Global);
+        const back = await nextLenses(before + 1);
+        assert.ok(back);
+        assert.strictEqual(back.rows.length, 3, 'the rows come back when it is on again');
+    });
+});
+
+suite('Editor host: lens placement', () => {
+    const ranges: ([number, number] | null)[] = [[0, 3], [4, 5], null, [6, 9], [11, 12]];
+
+    test('a line maps to the block covering it, a gap line to the next block, the tail to the last', () => {
+        assert.strictEqual(blockIndexForLine(ranges, 0), 0);
+        assert.strictEqual(blockIndexForLine(ranges, 2), 0);
+        assert.strictEqual(blockIndexForLine(ranges, 3), 1, 'a blank line before a block');
+        assert.strictEqual(blockIndexForLine(ranges, 4), 1);
+        assert.strictEqual(blockIndexForLine(ranges, 5), 3, 'past a block that stands for no lines');
+        assert.strictEqual(blockIndexForLine(ranges, 10), 4);
+        assert.strictEqual(blockIndexForLine(ranges, 12), 4, 'after the last block');
+        assert.strictEqual(blockIndexForLine([], 0), null);
+        assert.strictEqual(blockIndexForLine([null], 0), null);
     });
 });
 

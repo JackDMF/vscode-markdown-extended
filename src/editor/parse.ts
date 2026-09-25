@@ -47,6 +47,17 @@ export function parsedDocumentFromJSON(json: ParsedDocumentJSON): ParsedDocument
 }
 
 /**
+ * The source lines `[start, end)` each top-level block of `text` stands for,
+ * in document order, `null` for a block that stands for none (generated
+ * content): entry `i` is the document's child `i`, because `parseDocument`
+ * builds its children from the same grouping and refuses a document whose
+ * counts disagree. What the lens rows are placed by (`host/lenses.ts`).
+ */
+export function blockLineRanges(md: MarkdownIt, text: string, env: Environment = {}): ([number, number] | null)[] {
+    return groupSourceBlocks(md.parse(text, env), splitLines(text)).blocks.map(b => b.lineRange);
+}
+
+/**
  * What MarkdownParser reads of a token. The real markdown-it tokens satisfy it;
  * the synthetic ones this module makes for raw, injected and pre-processed
  * content are plain objects that carry their node attributes in `pmAttrs`.

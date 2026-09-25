@@ -14,6 +14,25 @@ import type { ParsedDocumentJSON } from './parse';
  * wrong place.
  */
 
+/**
+ * One code lens as the page draws it. `id` names the lens in the host's
+ * registry, where its command stays — a command's `arguments` may hold objects
+ * that do not survive `postMessage` — and is absent for a lens whose command
+ * has no command id: its title is shown as text, as the text editor shows it.
+ */
+export interface LensItem {
+    id?: string;
+    title: string;
+    tooltip?: string;
+}
+
+/** The lenses of one top-level block, in line order, drawn as one row above it. */
+export interface LensRow {
+    /** The index of the top-level block, in the parse of the document version the rows are for. */
+    blockIndex: number;
+    items: LensItem[];
+}
+
 /** Host → webview. */
 export type HostMessage =
     /**
@@ -25,7 +44,16 @@ export type HostMessage =
     /** The answer to a `render` request: the raw block's source rendered by the host's engine. */
     | { type: 'rendered'; requestId: number; html: string }
     /** The document cannot be shown without losing a byte; the webview offers the text editor instead. */
-    | { type: 'error'; message: string };
+    | { type: 'error'; message: string }
+    /**
+     * Every other extension's code lenses on the document, as VS Code hands
+     * them to the text editor, grouped by the top-level block each one's line
+     * is in (`host/lenses.ts`). `version` is the document version they were
+     * asked for and `blocks` the number of top-level blocks of its parse: the
+     * page takes the rows only while it holds as many, and otherwise waits for
+     * the refresh that follows its own edit. Empty `rows` clear the page's.
+     */
+    | { type: 'lenses'; version: number; blocks: number; rows: LensRow[] };
 
 /** Webview → host. */
 export type WebviewMessage =
@@ -54,4 +82,14 @@ export type WebviewMessage =
      */
     | { type: 'openLink'; href: string }
     /** Open the text editor beside this one, revealing a 0-based line. */
-    | { type: 'openSource'; line: number };
+    | { type: 'openSource'; line: number }
+    /**
+     * Ask VS Code for the lenses again. The host refreshes by itself after
+     * every document it posts and every edit it applies; the page asks when
+     * it comes back into view or takes the focus, since a lens can depend on
+     * other files (Req Explorer's coverage counts do) and no provider's
+     * change event reaches another extension.
+     */
+    | { type: 'refreshLenses' }
+    /** Run the command of the lens `id` from the last `lenses` message. */
+    | { type: 'runLens'; id: string };

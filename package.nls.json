@@ -52,5 +52,6 @@
     "markdownExtended.configuration.deprecated": "Renamed in v3.0 — settings are now grouped under pdf.*, image.*, export.*, plugins.*, and toc.*. Your current value still applies; please move to the grouped setting.",
     "markdownExtended.openVisualEditor": "Open in Visual Editor",
     "markdownExtended.visualEditor.displayName": "Markdown Visual Editor",
-    "markdownExtended.configuration.editorWrapColumn": "Visual Editor (experimental): the column a changed paragraph is re-wrapped at when the paragraph gives no width of its own. Untouched blocks are never re-wrapped."
+    "markdownExtended.configuration.editorWrapColumn": "Visual Editor (experimental): the column a changed paragraph is re-wrapped at when the paragraph gives no width of its own. Untouched blocks are never re-wrapped.",
+    "markdownExtended.configuration.editorCodeLenses": "Visual Editor (experimental): show the code lenses other extensions attach to a Markdown file above the blocks they belong to, as the text editor shows them. `editor.codeLens` turns them off as well."
 }

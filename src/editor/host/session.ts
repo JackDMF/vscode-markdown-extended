@@ -2,9 +2,10 @@ import * as vscode from 'vscode';
 import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { Config } from '../../services/common/config';
 import { escapeHtml } from '../../services/exporter/shared';
-import { parseDocument, parsedDocumentToJSON } from '../parse';
+import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
 import { HostMessage, WebviewMessage } from '../protocol';
 import { message } from './errors';
+import { LensController } from './lenses';
 import { resolveLinkTarget } from './links';
 import { minimalReplacement } from './minimalEdit';
 
@@ -51,6 +52,8 @@ export class VisualEditorSession implements vscode.Disposable {
     /** The last save the page asked for; it runs after the queue, not in it. */
     private saving: Promise<void> = Promise.resolve();
     private resyncTimer: ReturnType<typeof setTimeout> | undefined;
+    /** Other extensions' code lenses, asked of VS Code after every post and every applied edit. */
+    private readonly lenses: LensController;
     private readonly subscriptions: vscode.Disposable[];
 
     constructor(
@@ -58,7 +61,15 @@ export class VisualEditorSession implements vscode.Disposable {
         private readonly webview: SessionWebview,
         private readonly host: SessionHost,
     ) {
+        this.lenses = new LensController({
+            document,
+            pageHolds: text => !this.broken && text === this.webviewText,
+            lineRanges: async text => blockLineRanges(await this.host.engine(), text, this.env()),
+            post: msg => this.webview.postMessage(msg),
+            log: line => this.host.log(line),
+        });
         this.subscriptions = [
+            this.lenses,
             webview.onDidReceiveMessage(msg => this.receive(msg)),
             vscode.workspace.onDidChangeTextDocument(e => {
                 if (e.document.uri.toString() === this.document.uri.toString()) {
@@ -134,6 +145,12 @@ export class VisualEditorSession implements vscode.Disposable {
             case 'openLink':
                 void this.openLink(msg.href);
                 break;
+            case 'refreshLenses':
+                this.lenses.schedule();
+                break;
+            case 'runLens':
+                void this.lenses.run(msg.id);
+                break;
         }
     }
 
@@ -188,6 +205,7 @@ export class VisualEditorSession implements vscode.Disposable {
             version,
             defaultWrap: Config.instance.editorWrapColumn(this.document.uri),
         });
+        this.lenses.schedule();
     }
 
     private fail(reason: string): void {
@@ -236,7 +254,10 @@ export class VisualEditorSession implements vscode.Disposable {
             // Refused, or VS Code normalized the inserted line endings: show the
             // person what the document now holds. Or the page asked to see it.
             await this.post();
+            return;
         }
+        // The lenses of the text the page now holds: a provider's lines moved with the edit.
+        this.lenses.schedule();
     }
 
     /**

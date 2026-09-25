@@ -15,10 +15,11 @@ import { Node } from 'prosemirror-model';
 import { EditorState, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
-import type { HostMessage, WebviewMessage } from '../protocol';
+import type { HostMessage, LensRow, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
+import { lensPlugin, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
 import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
@@ -251,6 +252,7 @@ const plugins = [
         sourceContext,
         flushReparse: () => flush(false, true),
     }),
+    lensPlugin(id => post({ type: 'runLens', id })),
 ];
 
 /** Room above the caret for the sticky toolbar when ProseMirror scrolls the selection into view. */
@@ -381,6 +383,30 @@ function hideError(): void {
     banner = undefined;
 }
 
+/**
+ * Other extensions' lenses for the document of `version`, grouped by the index
+ * of the top-level block in the host's parse. Taken only while the page holds
+ * as many blocks as that parse had: a page that split or joined blocks since
+ * is ahead of the rows, and the host refreshes after that edit lands. Rows for
+ * a document older than the one shown are dropped; empty rows always clear.
+ */
+function showLenses(version: number, blocks: number, rows: LensRow[]): void {
+    if (!view || !current || version < current.version) {
+        return;
+    }
+    if (rows.length > 0 && blocks !== view.state.doc.childCount) {
+        return;
+    }
+    view.dispatch(setLensesTransaction(view.state, rows));
+}
+
+/** A lens may depend on other files, and no provider's change event reaches this extension: asked again when the page is back. */
+function refreshLenses(): void {
+    if (view) {
+        post({ type: 'refreshLenses' });
+    }
+}
+
 window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     const msg = event.data;
     switch (msg.type) {
@@ -393,6 +419,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
         case 'error':
             showError(msg.message);
             break;
+        case 'lenses':
+            showLenses(msg.version, msg.blocks, msg.rows);
+            break;
     }
 });
 
@@ -401,5 +430,12 @@ window.addEventListener('keydown', onSaveKeydown, true);
 // Leaving the page must not lose the last keystrokes still inside the delay.
 window.addEventListener('blur', () => flush());
 window.addEventListener('pagehide', () => flush());
+
+window.addEventListener('focus', refreshLenses);
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        refreshLenses();
+    }
+});
 
 post({ type: 'ready' });
