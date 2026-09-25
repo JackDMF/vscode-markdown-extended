@@ -219,6 +219,99 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await hint()).text, 'Link removed — Ctrl+Z');
     });
 
+    test('a Change URL commit keeps the bar shown throughout: it does not blink out and wait for the delay again', async function () {
+        this.timeout(15000);
+        await showDocument('See [the spec](spec.md) here.\n', 'See');
+        await clickBefore('spec', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await clickVerb('change-url');
+        // Every state the selection's bar takes from here on.
+        await page.evaluate(() => {
+            const bar = document.querySelector('.mep-object-toolbar[data-trigger="selection"]') as HTMLElement;
+            const w = window as unknown as { barHidden: boolean[] };
+            w.barHidden = [];
+            new MutationObserver(() => w.barHidden.push(bar.hidden)).observe(bar, { attributes: true, attributeFilter: ['hidden'] });
+        });
+        await page.keyboard.type('other.md');
+        await page.keyboard.press('Enter');
+        await delay(INLINE_DELAY_MS + 200);
+        assert.deepStrictEqual(await page.evaluate(() => (window as unknown as { barHidden: boolean[] }).barHidden.filter(h => h)), [], 'never hidden');
+        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'change-url', 'remove-link'] });
+        assert.strictEqual((await active()).editor, true, 'the focus is back in the text');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'See [the spec](other.md) here.\n');
+    });
+
+    test('the field survives the window losing the focus, and has it again when the window returns; a click in the page cancels it', async function () {
+        this.timeout(15000);
+        await showDocument('See [the spec](spec.md) here.\n', 'See');
+        await clickBefore('spec', 1);
+        await clickVerb('change-url');
+        await page.keyboard.type('half');
+        // What Alt+Tab to another application does: the document loses the
+        // focus, the field is blurred, and the window gets `blur`; later `focus`.
+        await page.evaluate(() => {
+            const d = document as unknown as { hasFocus(): boolean; realHasFocus?: () => boolean };
+            d.realHasFocus = d.hasFocus.bind(document);
+            d.hasFocus = () => false;
+            (document.activeElement as HTMLElement).blur();
+            window.dispatchEvent(new Event('blur'));
+        });
+        await delay(100);
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'half', 'kept, with what was typed');
+        await page.evaluate(() => {
+            const d = document as unknown as { hasFocus(): boolean; realHasFocus: () => boolean };
+            d.hasFocus = d.realHasFocus;
+            window.dispatchEvent(new Event('focus'));
+        });
+        await delay(80);
+        assert.strictEqual((await active()).field, true, 'focused again');
+        await page.keyboard.type('.md');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'See [the spec](half.md) here.\n');
+
+        // Within the page, the focus moving elsewhere is a cancel.
+        await clickVerb('change-url');
+        await page.keyboard.type('never');
+        const before = (await (editor as EditorPage).edits()).length;
+        await clickBefore('here', 2);
+        await delay(100);
+        assert.strictEqual(await page.$('.mep-inline-field'), null, 'cancelled');
+        await settle();
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing was edited');
+    });
+
+    test('after Change source and an undo, the image\'s bar offers the source the document holds again', async function () {
+        this.timeout(15000);
+        await showDocument('An ![pic](p.png) here.\n', 'An');
+        // A broken image has no size of its own; give it one to click.
+        await page.addStyleTag({ content: '.ProseMirror img { display: inline-block; width: 60px; height: 30px; }' });
+        const img = await (await page.$('.ProseMirror img'))?.boundingBox();
+        assert.ok(img);
+        await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
+        await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
+        await clickVerb('change-source');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'p.png');
+        await page.keyboard.down('Control');
+        await page.keyboard.press('a');
+        await page.keyboard.up('Control');
+        await page.keyboard.type('q.png');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An ![pic](q.png) here.\n');
+
+        await page.keyboard.down('Control');
+        await page.keyboard.press('z');
+        await page.keyboard.up('Control');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png) here.\n');
+        await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
+        await clickVerb('change-source');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'p.png', 'not the undone q.png');
+        await page.keyboard.press('Escape');
+    });
+
     test('a source block shows its bar while the pointer is on it, keeps it while the pointer crosses to it, and Delete block removes it', async function () {
         this.timeout(15000);
         await showDocument('Before.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nAfter.\n', 'Before');

@@ -4,8 +4,10 @@
  * value is asked for where it is used (a class or an attribute, later).
  *
  * The contract is small on purpose: it opens prefilled with the value selected;
- * `Enter` commits, `Esc` cancels, and the focus leaving cancels too, so a click
- * elsewhere never applies a half-typed value. Exactly one of `onCommit` and
+ * `Enter` commits, `Esc` cancels, and the focus moving elsewhere in the page
+ * cancels too, so a click elsewhere never applies a half-typed value. The
+ * window losing the focus is not that: Alt+Tab away to copy a URL and back
+ * finds the field as it was, and focused again. Exactly one of `onCommit` and
  * `onCancel` is called, once. Keys typed in it are its own: they do not reach
  * ProseMirror, and `Ctrl+Z` undoes the typing rather than reaching VS Code,
  * whose undo would revert the document. `Ctrl+S` is still the page's save — it
@@ -28,6 +30,8 @@ export class InlineField {
     /** The input; the caller puts it where it belongs, then calls `focus`. */
     readonly el: HTMLInputElement;
     private done = false;
+    /** Set while the window is away with the field open: its return gives the field the focus back. */
+    private awaitingWindow: (() => void) | null = null;
 
     constructor(private readonly options: InlineFieldOptions) {
         const input = document.createElement('input');
@@ -40,7 +44,7 @@ export class InlineField {
         // Wide enough for the value, within what the stylesheet allows.
         input.size = Math.max(12, Math.min(60, options.value.length + 2));
         input.addEventListener('keydown', e => this.onKey(e));
-        input.addEventListener('blur', () => this.finish(null, 'blur'));
+        input.addEventListener('blur', () => this.onBlur());
         // ProseMirror and the page keep out of the field.
         for (const type of ['mousedown', 'click', 'input', 'paste', 'copy', 'cut', 'keypress', 'keyup']) {
             input.addEventListener(type, e => e.stopPropagation());
@@ -62,7 +66,40 @@ export class InlineField {
     /** Remove it without committing or cancelling: its owner is going away. */
     dispose(): void {
         this.done = true;
+        this.stopAwaitingWindow();
         this.el.remove();
+    }
+
+    /**
+     * A blur while the page itself still has the focus is the focus moving to
+     * something else in the page: a cancel. One while it has not is the window
+     * going away (another application, a VS Code panel): the field stays, and
+     * takes the focus again when the window comes back.
+     */
+    private onBlur(): void {
+        if (this.done) {
+            return;
+        }
+        if (document.hasFocus()) {
+            this.finish(null, 'blur');
+            return;
+        }
+        if (this.awaitingWindow === null) {
+            this.awaitingWindow = () => {
+                this.stopAwaitingWindow();
+                if (!this.done && this.el.isConnected) {
+                    this.el.focus();
+                }
+            };
+            window.addEventListener('focus', this.awaitingWindow);
+        }
+    }
+
+    private stopAwaitingWindow(): void {
+        if (this.awaitingWindow !== null) {
+            window.removeEventListener('focus', this.awaitingWindow);
+            this.awaitingWindow = null;
+        }
     }
 
     private onKey(e: KeyboardEvent): void {
@@ -85,6 +122,7 @@ export class InlineField {
             return;
         }
         this.done = true;
+        this.stopAwaitingWindow();
         this.el.remove();
         if (value === null) {
             this.options.onCancel(reason);

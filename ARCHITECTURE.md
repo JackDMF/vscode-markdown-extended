@@ -773,8 +773,14 @@ hint (`webview/hint.ts`: *Note removed — Ctrl+Z*, `Cmd+Z` on macOS), in a neut
 **The inline field** (`webview/inlineField.ts`) is one reusable component, exported for the
 next place a value is asked for where it is used (stage 3's classes and attributes): a
 one-line `<input>` opened prefilled with the value selected; `Enter` commits, `Esc`
-cancels, the focus leaving cancels — a click elsewhere never applies a half-typed value —
-and exactly one of `onCommit` and `onCancel` is called, once. Its keys are its own (`Ctrl+Z`
+cancels, the focus moving elsewhere in the page cancels — a click elsewhere never applies a
+half-typed value — and exactly one of `onCommit` and `onCancel` is called, once. A blur
+while `document.hasFocus()` is false is the window going away (Alt+Tab to copy a URL), not
+a move in the page: the field stays, and takes the focus back on the window's `focus`.
+A verb's commit puts the focus back in the text *before* it dispatches: the input is
+already gone, and a refresh seeing the focus on the body would hide the bar and restart the
+inline delay. The bar redraws whenever anything it shows or would prefill changed — an
+image's `src` is in no label, and after an undo a stale bar would offer the undone value. Its keys are its own (`Ctrl+Z`
 undoes the typing, not the document); `Ctrl+S` stays the page's save, which saves the
 document without the field's value. The bar shows it in place of its verbs, beside the
 label. *Change URL* and *Change source* set the mark's or the node's attribute: nothing

@@ -137,7 +137,13 @@ class ObjectBar {
     show(object: EditorObject, presentation: Presentation): void {
         this.object = object;
         this.el.dataset.object = object.kind;
-        const signature = JSON.stringify([object.kind, object.from, presentation.label, presentation.verbs.map(v => [v.id, v.label, v.title, v.refusal ?? null])]);
+        // Everything the bar draws or will prefill: an image's `src` is in no
+        // label, only in the title and the field's value, and a bar kept after
+        // an undo would otherwise offer the undone source.
+        const signature = JSON.stringify([
+            object.kind, object.from, presentation.label, presentation.title,
+            presentation.verbs.map(v => [v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? null]),
+        ]);
         if (!this.field && signature !== this.signature) {
             this.signature = signature;
             this.render(presentation);
@@ -353,7 +359,11 @@ class ObjectToolbarView implements PluginView {
         this.listeners.push([target, type, listener, capture]);
     }
 
+    /** The focus is in the editor or a bar — or a bar's field is open: it keeps itself open while the window is away (`InlineField`). */
     private focusInside(): boolean {
+        if (this.selectionBar.editing) {
+            return true;
+        }
         const active = document.activeElement;
         return active !== null && (this.view.dom.contains(active) || this.selectionBar.el.contains(active) || this.hoverBar.el.contains(active));
     }
@@ -528,13 +538,19 @@ class ObjectToolbarView implements PluginView {
 
     // -- the verbs -------------------------------------------------------------
 
-    /** Run `make` on the object as it is now; nothing when it is gone. Then the result's hint, and the focus back in the text. */
+    /**
+     * Run `make` on the object as it is now; nothing when it is gone. The focus
+     * goes back into the text **first**: a field's commit has already removed
+     * the input, and the dispatch's own refresh, seeing the focus on the body,
+     * would hide the bar and re-arm the inline delay — the bar blinking out and
+     * coming back late after every change of a URL or a source.
+     */
     private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string): void {
+        this.view.focus();
         const current = currentObject(this.view.state, object);
         if (current !== null && make(current) && hint !== undefined) {
             this.say(`${hint} — ${undoKey()}`, 'neutral');
         }
-        this.view.focus();
     }
 
     private say(text: string, tone: HintTone): void {
@@ -732,20 +748,19 @@ class ObjectToolbarView implements PluginView {
      * engine makes of the text, and would sooner or later guess otherwise.
      */
     private commitNoteSource(object: EditorObject, original: string, value: string): void {
+        // The focus first, as in `act`.
+        this.view.focus();
         const current = currentObject(this.view.state, object);
         if (current === null || current.kind !== 'note' || value === original || value.trim() === '') {
-            this.view.focus();
             return;
         }
         const tr = inlineSourceTransaction(this.view.state, current.from, current.to, value, current.node.marks, this.host.sourceContext());
         if (tr === null) {
             this.say('This note cannot be written as source here.', 'refusal');
-            this.view.focus();
             return;
         }
         this.view.dispatch(tr);
         this.host.flushReparse();
-        this.view.focus();
     }
 }
 
