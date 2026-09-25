@@ -74,7 +74,7 @@ export type MarkTarget = 'em' | 'strong' | 'code' | 'mark' | 'sup' | 'sub' | 'st
 export type ActionApply =
     /** A mark; `markup` is the delimiter it is written with (`null` for a mark whose delimiter cannot vary). */
     | { kind: 'mark'; mark: MarkTarget; markup: string | null }
-    /** A note or a sidebar made of the selection, edited in place (`notes.ts`, `wrapInNote`). */
+    /** A note or a sidebar made of the selection, edited in place; inside one of its kind, removed again, its text kept (`notes.ts`, `toggleNote`). */
     | { kind: 'wrap-node'; node: NoteNodeName }
     | { kind: 'block'; node: BlockTarget; level?: number }
     /**

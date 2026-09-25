@@ -389,6 +389,12 @@ selected — and never above the first.
 The reference and the note stay two parts: `Delete` at the end of one does not join them,
 and pasting into a note pastes its text.
 
+**Remove note:** with the caret or a selection in a note, choose its button again — in
+the Annotation menu or the bubble, where it shows as active. The note goes and its text
+stays in the sentence: a sidenote or marginal note leaves its reference (the note's own
+text is dropped), a sidebar its text, with their formatting. One `Ctrl+Z` brings the
+note back. There is no key for it.
+
 ### Links
 
 **A click on a link does not follow it; `Ctrl+click` (`Cmd+click` on macOS) does.** In text

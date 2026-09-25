@@ -1,13 +1,14 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
+import { undo } from 'prosemirror-history';
 import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
 import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import {
-    NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, leaveNote, nextNotePart, noteContextAt, noteRefusal, previousNotePart,
-    wrapInNote, wrapNodeLockReason,
+    NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal, previousNotePart,
+    toggleNote, unwrapNote, wrapInNote, wrapNodeLockReason,
 } from '../../../src/editor/webview/notes';
 import { markRefusal, toggleMarkup } from '../../../src/editor/webview/toolbar/commands';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -310,5 +311,66 @@ suite('Editor notes: what the serializer cannot write back is not made', () => {
         const state = stateOf('Alpha ++the `ab` ref|body++ gamma.\n');
         const tr = state.tr.insertText('|', posOf(state.doc, 'ab') + 1).setMeta(PRESERVE_SOURCE_META, true);
         assert.strictEqual(noteRefusal(tr), null);
+    });
+});
+
+suite('Editor notes: a note action removes its note again, keeping the text', () => {
+    /** Toggle `name` with the caret right after `needle`'s first character, and what typing there then writes. */
+    function toggledAt(source: string, needle: string, name: 'sidenote' | 'marginal_note' | 'left_sidebar' | 'right_sidebar'): EditorState {
+        const base = stateOf(source);
+        return run(caretAt(base, posOf(base.doc, needle) + 1), toggleNote(name));
+    }
+
+    test('a sidenote becomes its reference, the note dropped, the caret at the reference\'s end', () => {
+        const state = toggledAt('Alpha ++beta ref|the body++ gamma.\n', 'body', 'sidenote');
+        assert.strictEqual(text(state), 'Alpha beta ref gamma.\n');
+        assert.strictEqual(text(type(state, 'X')), 'Alpha beta refX gamma.\n', 'the caret is at the end of the kept text');
+    });
+
+    test('a marginal note becomes its reference, marks inside kept', () => {
+        const state = toggledAt('The !!lives *in* **here**|note body!! and more.\n', 'lives', 'marginal_note');
+        assert.strictEqual(text(state), 'The lives *in* **here** and more.\n');
+        // At the end of bold text typing goes on in bold, as anywhere.
+        assert.strictEqual(text(type(state, 'X')), 'The lives *in* **hereX** and more.\n');
+    });
+
+    test('a sidebar becomes its text, marks kept; the marks the note carried go onto that text', () => {
+        const left = toggledAt('A $ **L** side $ b.\n', 'side', 'left_sidebar');
+        // The spaces inside the markers stay; a run of spaces is written as one.
+        assert.strictEqual(text(left), 'A **L** side b.\n');
+        const right = toggledAt('**Bold @right@ around** end.\n', 'right', 'right_sidebar');
+        assert.strictEqual(text(right), '**Bold right around** end.\n');
+        assert.strictEqual(text(type(right, 'X')), '**Bold rightX around** end.\n');
+    });
+
+    test('a selection inside the note unwraps it too; the other kind\'s action does not', () => {
+        const base = select(stateOf('Alpha ++beta|body++ gamma.\n'), 'bod');
+        assert.strictEqual(text(run(base, toggleNote('sidenote'))), 'Alpha beta gamma.\n');
+        assert.strictEqual(unwrapNote('marginal_note')(base), false);
+        assert.strictEqual(toggleNote('marginal_note')(base), false, 'and it makes no note inside a note');
+    });
+
+    test('the note node selected is unwrapped the same way', () => {
+        let state = press(caretAt(stateOf('Alpha ++beta|body++ gamma.\n'), posOf(stateOf('Alpha ++beta|body++ gamma.\n').doc, 'beta')), 'Backspace');
+        assert.ok(state.selection instanceof NodeSelection);
+        state = run(state, toggleNote('sidenote'));
+        assert.strictEqual(text(state), 'Alpha beta gamma.\n');
+    });
+
+    test('one undo brings the note back', () => {
+        const source = 'Alpha ++beta|body++ gamma.\n';
+        const state = toggledAt(source, 'body', 'sidenote');
+        let undone = state;
+        assert.ok(undo(state, tr => {
+            undone = state.apply(tr);
+        }));
+        assert.strictEqual(text(undone), source);
+    });
+
+    test('outside a note, the action still makes one; inside one it is active', () => {
+        const made = run(select(stateOf('Alpha beta gamma.\n'), 'beta'), toggleNote('sidenote'));
+        assert.strictEqual(text(made), 'Alpha ++beta|note++ gamma.\n');
+        assert.strictEqual(inNoteOf(made, 'sidenote'), true);
+        assert.strictEqual(inNoteOf(made, 'marginal_note'), false);
     });
 });

@@ -28,7 +28,7 @@ import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'p
 import { EditorView } from 'prosemirror-view';
 import { editorSchema } from '../../schema';
 import { editRawSourceAt } from '../nodeViews';
-import { inNoteOf, wrapInNote, wrapNodeLockReason } from '../notes';
+import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
 import {
     MENU_LABELS, PREVIEW_CARD_CLASS, ROW_LAYOUT, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
     inBubble, inRow, menuOf, submenuOf, tooltipOf,
@@ -103,8 +103,12 @@ function evaluate(action: ToolbarAction, state: EditorState): ActionState {
             return { enabled: reason === null && toggleMarkup(type, apply.markup)(state), active: markActive(state, type, apply.markup), reason };
         }
         case 'wrap-node': {
+            // Inside a note of its kind the action removes it, like a mark's button.
+            if (inNoteOf(state, apply.node)) {
+                return { enabled: true, active: true, reason: null };
+            }
             const reason = wrapNodeLockReason(state, apply.node);
-            return { enabled: reason === null, active: inNoteOf(state, apply.node), reason };
+            return { enabled: reason === null, active: false, reason };
         }
         case 'block': {
             if (apply.node === 'horizontal_rule') {
@@ -670,7 +674,7 @@ class ToolbarView implements PluginView {
                 view.focus();
                 return;
             case 'wrap-node':
-                wrapInNote(apply.node)(view.state, view.dispatch);
+                toggleNote(apply.node)(view.state, view.dispatch);
                 view.focus();
                 return;
             case 'block':

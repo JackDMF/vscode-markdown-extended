@@ -198,6 +198,23 @@ suite('Editor notes and links (e2e)', () => {
         assert.ok(button.title.includes('"@"'), button.title);
     });
 
+    test('a click into a note and the Sidenote entry again removes the note, the reference text in its place', async function () {
+        this.timeout(15000);
+        await showDocument('Alpha ++beta ref|the body++ gamma.\n', 'Alpha');
+        await clickBefore('body', 1);
+        await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
+        await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden])');
+        assert.strictEqual(await page.$eval('.mep-menu [data-action="sidenote"]', el => el.classList.contains('mep-active')), true, 'shown active inside a sidenote');
+        assert.strictEqual(await page.$eval('.mep-menu [data-action="marginal-note"]', el => el.getAttribute('aria-disabled')), 'true');
+        await page.click('.mep-menu [data-action="sidenote"]');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Alpha beta ref gamma.\n');
+        assert.strictEqual(await page.$('.ProseMirror .sn-ref'), null);
+        await page.keyboard.type('!');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Alpha beta ref! gamma.\n', 'the caret is at the end of the kept text');
+    });
+
     test('Backspace through an emptied reference removes the whole note', async function () {
         this.timeout(15000);
         await showDocument('Keep ++ab|body++ this.\n', 'Keep');

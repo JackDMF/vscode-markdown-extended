@@ -508,8 +508,7 @@ export function wrapNodeLockReason(state: EditorState, name?: NoteNodeName): str
 
 /** Whether the selection is inside a note of this kind. */
 export function inNoteOf(state: EditorState, name: NoteNodeName): boolean {
-    const ctx = noteContextAt(state.selection.$from);
-    return ctx !== null && ctx.note.type.name === name;
+    return noteOfKindAt(state, name) !== null;
 }
 
 /**
@@ -530,6 +529,57 @@ export function wrapInNote(name: NoteNodeName): Command {
         dispatch?.(wrapTransaction(state, name).scrollIntoView());
         return true;
     };
+}
+
+/**
+ * The note of kind `name` the selection is in — both its ends, or the note
+ * selected as a node — with its position; `null` otherwise.
+ */
+export function noteOfKindAt(state: EditorState, name: NoteNodeName): { pos: number; node: Node } | null {
+    const sel = state.selection;
+    if (sel instanceof NodeSelection) {
+        return sel.node.type.name === name ? { pos: sel.from, node: sel.node } : null;
+    }
+    const from = noteContextAt(sel.$from);
+    const to = noteContextAt(sel.$to);
+    if (from === null || to === null || from.noteBefore !== to.noteBefore || from.note.type.name !== name) {
+        return null;
+    }
+    return { pos: from.noteBefore, node: from.note };
+}
+
+/**
+ * Remove the note of kind `name` the selection is in and keep its text: a
+ * sidenote or marginal note becomes its reference's inline content (the note
+ * itself is dropped), a sidebar its own. Marks inside are kept, and the marks
+ * the note carried go onto the kept text; the caret is at its end. One step,
+ * so one undo brings the note back.
+ */
+export function unwrapNote(name: NoteNodeName): Command {
+    return (state, dispatch) => {
+        const found = noteOfKindAt(state, name);
+        if (found === null) {
+            return false;
+        }
+        if (dispatch) {
+            const { pos, node } = found;
+            const kept = NOTE_PART_NODES.has(node.type.name) ? node.content : node.child(0).content;
+            const content: Node[] = [];
+            kept.forEach(child => {
+                content.push(child.mark(node.marks.reduce((set, m) => m.addToSet(set), child.marks)));
+            });
+            const fragment = Fragment.from(content);
+            const tr = state.tr.replaceWith(pos, pos + node.nodeSize, fragment);
+            tr.setSelection(TextSelection.create(tr.doc, pos + fragment.size));
+            dispatch(tr.scrollIntoView());
+        }
+        return true;
+    };
+}
+
+/** A note action: inside a note of its kind it removes the note (`unwrapNote`), elsewhere it makes one (`wrapInNote`). */
+export function toggleNote(name: NoteNodeName): Command {
+    return (state, dispatch, view) => unwrapNote(name)(state, dispatch, view) || wrapInNote(name)(state, dispatch, view);
 }
 
 /** The transaction `wrapInNote` dispatches, for a selection `wrapNodeLockReason` allows. */

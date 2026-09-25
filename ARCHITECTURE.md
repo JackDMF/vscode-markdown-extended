@@ -426,7 +426,10 @@ any other deletion there by its `getTargetRanges` clamped to the part, a paste a
 caret put between a note's two parts is moved into one. The keys: `Tab`/`Enter` go from
 the reference to the body and out, `Shift+Tab` back, `Esc` out, `→`/`←` across the parts'
 ends and into a note from outside, `Backspace` at the start of an empty reference removes
-the note (no husk), at the start of one with text selects it.
+the note (no husk), at the start of one with text selects it. The toolbar's note actions
+are toggles (`toggleNote`): inside a note of their kind they unwrap it (`unwrapNote`) — the
+note node replaced, in one step, by its reference's inline content or a sidebar's, the
+note's own marks added to it, the caret at its end — and they show as active there.
 
 ### Injected content
 
