@@ -18,6 +18,8 @@
 export interface InlineFieldOptions {
     /** What the field starts with, selected, so typing replaces it. */
     value: string;
+    /** Where the caret goes instead of selecting the value: `{.}` with the caret after the dot, to type a class. */
+    caret?: number;
     /** The field's accessible name, and its placeholder. */
     label: string;
     /** `Enter`: the value as typed. The field is already closed. */
@@ -26,37 +28,30 @@ export interface InlineFieldOptions {
     onCancel(reason: 'escape' | 'blur'): void;
 }
 
-export class InlineField {
-    /** The input; the caller puts it where it belongs, then calls `focus`. */
-    readonly el: HTMLInputElement;
+/**
+ * What the field and the choice share: the element, the one-shot finish, and
+ * the rule that the window going away is not a move in the page.
+ */
+abstract class InlineControl<E extends HTMLInputElement | HTMLSelectElement> {
+    /** The control; the caller puts it where it belongs, then calls `focus`. */
+    readonly el: E;
     private done = false;
-    /** Set while the window is away with the field open: its return gives the field the focus back. */
+    /** Set while the window is away with the control open: its return gives it the focus back. */
     private awaitingWindow: (() => void) | null = null;
 
-    constructor(private readonly options: InlineFieldOptions) {
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'mep-inline-field';
-        input.value = options.value;
-        input.placeholder = options.label;
-        input.setAttribute('aria-label', options.label);
-        input.spellcheck = false;
-        // Wide enough for the value, within what the stylesheet allows.
-        input.size = Math.max(12, Math.min(60, options.value.length + 2));
-        input.addEventListener('keydown', e => this.onKey(e));
-        input.addEventListener('blur', () => this.onBlur());
-        // ProseMirror and the page keep out of the field.
+    protected constructor(el: E, label: string, private readonly callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) {
+        el.setAttribute('aria-label', label);
+        el.addEventListener('keydown', e => this.onKey(e as KeyboardEvent));
+        el.addEventListener('blur', () => this.onBlur());
+        // ProseMirror and the page keep out of the control.
         for (const type of ['mousedown', 'click', 'input', 'paste', 'copy', 'cut', 'keypress', 'keyup']) {
-            input.addEventListener(type, e => e.stopPropagation());
+            el.addEventListener(type, e => e.stopPropagation());
         }
-        this.el = input;
+        this.el = el;
     }
 
-    /** Take the focus, the value selected. */
-    focus(): void {
-        this.el.focus();
-        this.el.select();
-    }
+    /** Take the focus. */
+    abstract focus(): void;
 
     /** Whether it has been committed or cancelled. */
     get closed(): boolean {
@@ -73,7 +68,7 @@ export class InlineField {
     /**
      * A blur while the page itself still has the focus is the focus moving to
      * something else in the page: a cancel. One while it has not is the window
-     * going away (another application, a VS Code panel): the field stays, and
+     * going away (another application, a VS Code panel): the control stays, and
      * takes the focus again when the window comes back.
      */
     private onBlur(): void {
@@ -117,7 +112,7 @@ export class InlineField {
         }
     }
 
-    private finish(value: string | null, reason: 'escape' | 'blur'): void {
+    protected finish(value: string | null, reason: 'escape' | 'blur'): void {
         if (this.done) {
             return;
         }
@@ -125,9 +120,68 @@ export class InlineField {
         this.stopAwaitingWindow();
         this.el.remove();
         if (value === null) {
-            this.options.onCancel(reason);
+            this.callbacks.onCancel(reason);
         } else {
-            this.options.onCommit(value);
+            this.callbacks.onCommit(value);
         }
+    }
+}
+
+export class InlineField extends InlineControl<HTMLInputElement> {
+    constructor(private readonly options: InlineFieldOptions) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'mep-inline-field';
+        input.value = options.value;
+        input.placeholder = options.label;
+        input.spellcheck = false;
+        // Wide enough for the value, within what the stylesheet allows.
+        input.size = Math.max(12, Math.min(60, options.value.length + 2));
+        super(input, options.label, options);
+    }
+
+    /** Take the focus, the value selected — or the caret where the options put it. */
+    focus(): void {
+        this.el.focus();
+        if (this.options.caret === undefined) {
+            this.el.select();
+        } else {
+            this.el.setSelectionRange(this.options.caret, this.options.caret);
+        }
+    }
+}
+
+export interface InlineChoiceOptions {
+    /** The values to choose from, with what each is called; `value` among them is chosen at first. */
+    choices: readonly { value: string; label: string }[];
+    value: string;
+    label: string;
+    /** A value picked (a click, the arrow keys and `Enter`). The choice is already closed. */
+    onCommit(value: string): void;
+    onCancel(reason: 'escape' | 'blur'): void;
+}
+
+/**
+ * The inline field's counterpart for a value out of a list — an admonition's
+ * type: a `<select>` in the bar, with the field's contract. Picking a value
+ * commits it at once; `Esc` and the focus moving elsewhere in the page cancel.
+ */
+export class InlineChoice extends InlineControl<HTMLSelectElement> {
+    constructor(options: InlineChoiceOptions) {
+        const select = document.createElement('select');
+        select.className = 'mep-inline-field mep-inline-choice';
+        for (const choice of options.choices) {
+            const option = document.createElement('option');
+            option.value = choice.value;
+            option.textContent = choice.label;
+            select.append(option);
+        }
+        select.value = options.value;
+        super(select, options.label, options);
+        select.addEventListener('change', () => this.finish(select.value, 'escape'));
+    }
+
+    focus(): void {
+        this.el.focus();
     }
 }

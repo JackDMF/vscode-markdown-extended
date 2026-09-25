@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as path from 'path';
-import { Fragment, Node, Slice } from 'prosemirror-model';
+import { Fragment, Mark, Node, Slice } from 'prosemirror-model';
 import { GapCursor } from 'prosemirror-gapcursor';
 import { AllSelection, Command, EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
@@ -12,7 +12,7 @@ import {
 } from '../../../src/editor/webview/toolbar/actions';
 import {
     ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
-    insertSourceTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup, wrapSourceTransaction,
+    insertSourceTransaction, insertWrapperTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup, wrapSourceTransaction,
 } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { hostEngine, readText, repoRoot } from './helpers';
@@ -93,6 +93,33 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                 });
                 assert.ok(names.includes(action.apply.node), `${action.example} parses as ${action.apply.node}: ${names.join(', ')}`);
             }
+            if (action.apply.kind === 'attr-span') {
+                // The span the action makes draws the element and class the
+                // engine renders its example as, and the example parses into it.
+                const marks: Mark[] = [];
+                parseDocument(md, action.example, {}).doc.descendants(n => {
+                    marks.push(...n.marks.filter(m => m.type.name === 'attr_span'));
+                });
+                assert.strictEqual(marks.length > 0, true, `${action.example} parses as an attribute span`);
+                const [tag, attrs] = marks[0].type.spec.toDOM?.(marks[0], true) as unknown as [string, { class?: string }];
+                assert.strictEqual(tag, action.sample.tag);
+                assert.strictEqual(attrs.class, action.sample.className);
+            }
+            if (action.apply.kind === 'insert-wrapper') {
+                // The node the action inserts draws the element the engine
+                // renders its example as, and the example parses into that node.
+                const state = EditorState.create({ doc: parseDocument(md, 'Text.\n', {}).doc });
+                const inserted = state.apply(insertWrapperTransaction(state, action.apply)).doc.child(1);
+                assert.strictEqual(inserted.type.name, action.apply.node);
+                const [tag, attrs] = inserted.type.spec.toDOM?.(inserted) as unknown as [string, { class?: string }];
+                assert.strictEqual(tag, action.sample.tag);
+                assert.strictEqual(attrs.class, action.sample.className);
+                const parsed = parseDocument(md, action.example, {}).doc.child(0);
+                assert.strictEqual(parsed.type.name, action.apply.node, `${action.example} parses as ${action.apply.node}`);
+                if (action.apply.node === 'admonition') {
+                    assert.deepStrictEqual([parsed.attrs.type, parsed.attrs.title], [inserted.attrs.type, inserted.attrs.title]);
+                }
+            }
             assert.ok(tooltipOf(action).includes(action.syntax.split('\n')[0]), 'the tooltip names the syntax');
         });
     }
@@ -115,7 +142,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         }
         assert.deepStrictEqual(ROW_LAYOUT, [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']]);
         const byMenu = (menu: string) => TOOLBAR_ACTIONS.filter(a => menuOf(a) === menu && submenuOf(a) === null).map(a => a.id);
-        assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd']);
+        assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class']);
         assert.deepStrictEqual(byMenu('annotation'), ['sidenote', 'marginal-note', 'left-sidebar', 'right-sidebar', 'footnote-reference']);
         assert.deepStrictEqual(byMenu('insert'),
             ['horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents']);
@@ -146,6 +173,9 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         }
         const sourceIds = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'wrap-source').map(a => a.id);
         assert.deepStrictEqual(sourceIds, ['footnote-reference'], 'of the inline constructs only the footnote is written as source');
+        const inserted = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'insert-source').map(a => a.id);
+        assert.deepStrictEqual(inserted, ['table', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents'],
+            'admonitions and the container are inserted as rich text since stage 3');
     });
 });
 

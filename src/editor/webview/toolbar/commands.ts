@@ -7,8 +7,9 @@ import { Mark, MarkType, Node, NodeType, ResolvedPos } from 'prosemirror-model';
 import { liftListItem, wrapInList } from 'prosemirror-schema-list';
 import { GapCursor } from 'prosemirror-gapcursor';
 import { AllSelection, Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
+import { parseAttrsLiteral } from '../../attrs';
 import { PRESERVE_SOURCE_META } from '../../fidelity';
-import { editorSchema } from '../../schema';
+import { SUFFIX_NODES, editorSchema } from '../../schema';
 import { RAW_TEXT_MARKS, serializeNode, unwritableInNote } from '../../serialize';
 import { ActionApply, BlockTarget, FOOTNOTE_LABEL } from './actions';
 
@@ -237,6 +238,35 @@ const insertRule: Command = (state, dispatch) => {
 };
 
 /**
+ * `command` (a `setBlockType`), with the attribute literal of each top-level
+ * textblock it retypes carried to the new type: `setBlockType` rebuilds a
+ * node's attributes, and `{.lead}` would be gone from the file with one click.
+ * A heading writes its literal at the end of its line and takes the anchor
+ * from its id; a paragraph or a fence written that way reads back the same.
+ */
+function keepingLiterals(command: Command): Command {
+    return (state, dispatch) => command(state, dispatch && (tr => {
+        const { from, to } = state.selection;
+        state.doc.forEach((node, pos) => {
+            const suffix = node.attrs.attrsSuffix as string | null | undefined;
+            if (!suffix || !node.isTextblock || pos + node.nodeSize < from || pos > to) {
+                return;
+            }
+            const at = tr.mapping.map(pos);
+            const now = tr.doc.nodeAt(at);
+            if (!now || now.type === node.type || !SUFFIX_NODES.has(now.type.name) || now.attrs.attrsSuffix !== null) {
+                return;
+            }
+            const id = (parseAttrsLiteral(suffix) ?? []).filter(([n]) => n === 'id').map(([, v]) => v).pop() ?? null;
+            tr.setNodeMarkup(at, undefined, now.type === nodes.heading
+                ? { ...now.attrs, attrsSuffix: suffix, anchor: id }
+                : { ...now.attrs, attrsSuffix: suffix, attrsPlacement: 'end' });
+        });
+        dispatch(tr);
+    }));
+}
+
+/**
  * The command a `block` action runs. The type the block already has is not
  * applied again (it would only reset the block's attributes); a list or quote
  * that is already there is lifted, a list of the other kind converted.
@@ -255,16 +285,16 @@ export function blockCommand(node: BlockTarget, level?: number): Command {
         switch (node) {
             case 'paragraph':
                 if ($from.parent.type !== nodes.paragraph) {
-                    return setBlockType(nodes.paragraph)(state, dispatch);
+                    return keepingLiterals(setBlockType(nodes.paragraph))(state, dispatch);
                 }
                 if (!wrapper) {
                     return false;
                 }
                 return wrapper.node.type === nodes.blockquote ? lift(state, dispatch) : liftListItem(nodes.list_item)(state, dispatch);
             case 'heading':
-                return isCurrent(current, 'heading', level) ? false : setBlockType(nodes.heading, { level })(state, dispatch);
+                return isCurrent(current, 'heading', level) ? false : keepingLiterals(setBlockType(nodes.heading, { level }))(state, dispatch);
             case 'code_block':
-                return isCurrent(current, 'code_block') ? false : setBlockType(nodes.code_block, { params: '', markup: '```' })(state, dispatch);
+                return isCurrent(current, 'code_block') ? false : keepingLiterals(setBlockType(nodes.code_block, { params: '', markup: '```' }))(state, dispatch);
             case 'blockquote':
                 return wrapper?.node.type === nodes.blockquote ? lift(state, dispatch) : wrapIn(nodes.blockquote)(state, dispatch);
             case 'bullet_list':
@@ -500,6 +530,23 @@ export function inlineSourceTransaction(
     const tr = state.tr.replaceWith(topPos, topPos + top.nodeSize, block);
     tr.setSelection(NodeSelection.create(tr.doc, topPos));
     return tr.setMeta(PRESERVE_SOURCE_META, true).scrollIntoView();
+}
+
+/**
+ * The transaction an `insert-wrapper` action makes: a new container or
+ * admonition after the block the selection is in (`insertionPoint`), holding
+ * one empty paragraph with the caret in it — typed text is its body at once.
+ * Native, like the rule: nothing goes through the host.
+ */
+export function insertWrapperTransaction(state: EditorState, apply: Extract<ActionApply, { kind: 'insert-wrapper' }>): Transaction {
+    const pos = insertionPoint(state);
+    const attrs = apply.node === 'container'
+        ? { name: apply.name, info: '', markup: ':::' }
+        : { type: apply.type, title: apply.title, markup: '!!!', header: null };
+    const node = nodes[apply.node].create(attrs, nodes.paragraph.create());
+    const tr = state.tr.insert(pos, node);
+    // Into the wrapper, into its paragraph.
+    return tr.setSelection(TextSelection.create(tr.doc, pos + 2)).scrollIntoView();
 }
 
 /**

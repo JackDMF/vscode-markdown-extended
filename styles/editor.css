@@ -473,6 +473,33 @@
 .mep-front-matter-source { margin: 4px 0 0; }
 
 /* ------------------------------------------------------------------------- */
+/* Containers and admonitions                                                */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * A container is a `div` with its info's classes, drawn as the preview draws
+ * it — which for most class names is nothing at all. The editor marks where it
+ * begins and ends with an outline, which takes no room, so the preview's
+ * layout is unchanged; an admonition draws itself (markdown-it-admonition.css).
+ */
+.ProseMirror div[data-mep-container] {
+    outline: 1px dashed var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.5));
+    outline-offset: 2px;
+}
+
+/* An admonition's title bar is the admonition's attribute, changed from its object toolbar. */
+.ProseMirror .admonition-title[data-mep-admonition-title] {
+    cursor: default;
+    user-select: none;
+}
+
+/* The inline choice: the field's frame around a list of values (an admonition's type). */
+.mep-inline-choice {
+    min-width: 8em;
+    font-family: var(--vscode-font-family, sans-serif);
+}
+
+/* ------------------------------------------------------------------------- */
 /* The document cannot be shown without loss                                 */
 /* ------------------------------------------------------------------------- */
 

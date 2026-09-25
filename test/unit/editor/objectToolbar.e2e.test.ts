@@ -362,4 +362,58 @@ suite('Editor object toolbar (e2e)', () => {
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Alpha !!beta rXef|the body!! gamma.\n', 'Enter chose Convert to marginal note');
     });
+
+    test('the caret in an admonition: Change type from the menu of types, Edit title; the page and the file say both', async function () {
+        this.timeout(15000);
+        await showDocument('Intro.\n\n!!! note "Old title"\n    Body text here.\n\nAfter.\n', 'Body');
+        await clickBefore('text here', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        assert.deepStrictEqual(await barState(), { object: 'admonition', label: 'Admonition note', verbs: ['change-type', 'edit-title', 'remove-admonition'] });
+
+        await clickVerb('change-type');
+        const choice = `${BAR} select.mep-inline-choice`;
+        assert.strictEqual(await page.$eval(choice, el => (el as HTMLSelectElement).value), 'note', 'the current type is chosen');
+        await page.select(choice, 'danger');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Intro.\n\n!!! danger "Old title"\n    Body text here.\n\nAfter.\n');
+        assert.strictEqual(await page.$eval('.ProseMirror div.admonition.danger > p.admonition-title', el => el.textContent), 'Old title');
+
+        await clickVerb('edit-title');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'Old title');
+        await page.keyboard.type('New title');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Intro.\n\n!!! danger "New title"\n    Body text here.\n\nAfter.\n');
+        assert.strictEqual(await page.$eval('.ProseMirror div.admonition.danger > p.admonition-title', el => el.textContent), 'New title');
+    });
+
+    test('the caret in a container: Remove container, keep content posts its paragraphs where it stood, and says so', async function () {
+        this.timeout(15000);
+        await showDocument('Intro.\n\n::: box\nFirst kept.\n\nSecond kept.\n:::\n\nAfter.\n', 'First');
+        await clickBefore('First kept', 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        assert.deepStrictEqual(await barState(), { object: 'container', label: 'Container box', verbs: ['change-name', 'remove-container'] });
+        await clickVerb('remove-container');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Intro.\n\nFirst kept.\n\nSecond kept.\n\nAfter.\n');
+        assert.strictEqual((await hint()).text, 'Container removed — Ctrl+Z');
+        assert.strictEqual(await page.$('.ProseMirror div[data-mep-container]'), null);
+    });
+
+    test('the caret in a span: Edit attributes and Remove attributes, keep text', async function () {
+        this.timeout(15000);
+        await showDocument('A [styled]{.old} word.\n', 'styled');
+        await clickBefore('styled', 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        assert.deepStrictEqual(await barState(), { object: 'span', label: 'Span', verbs: ['edit-attributes', 'remove-attributes'] });
+        await clickVerb('edit-attributes');
+        await page.keyboard.type('{.new #s}');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'A [styled]{.new #s} word.\n');
+        assert.strictEqual(await page.$eval('.ProseMirror span.new', el => el.id), 's');
+        await clickVerb('remove-attributes');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'A styled word.\n');
+    });
 });

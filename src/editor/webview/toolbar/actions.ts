@@ -25,10 +25,12 @@
  * - `sample` and `example`: the element and Markdown in which the construct
  *   renders as that element;
  * - `preview`: a fuller example — Markdown and the elements it renders as;
- * - `apply`: `mark`, `wrap-node` and `block` edit natively — the extension's
- *   inline syntax (highlight, keys, notes, sidebars, …) is rich text since
- *   stage 2; `wrap-source` and `insert-source` write a construct the editor
- *   cannot edit as rich text (a footnote, the block constructs), as source;
+ * - `apply`: `mark`, `wrap-node`, `block`, `attr-span` and `insert-wrapper`
+ *   edit natively — the extension's inline syntax (highlight, keys, notes,
+ *   sidebars, …) is rich text since stage 2, attribute spans, containers and
+ *   admonitions since stage 3; `wrap-source` and `insert-source` write a
+ *   construct the editor cannot edit as rich text (a footnote, a table, a
+ *   definition list, …), as source;
  * - `bubble`: whether the selection bubble offers it too.
  *
  * The test renders every `example` and `preview.markdown` through the real
@@ -77,6 +79,18 @@ export type ActionApply =
     /** A note or a sidebar made of the selection, edited in place; inside one of its kind, removed again, its text kept (`notes.ts`, `toggleNote`). */
     | { kind: 'wrap-node'; node: NoteNodeName }
     | { kind: 'block'; node: BlockTarget; level?: number }
+    /**
+     * An attribute span made of the selection (`[text]{…}`): the inline field
+     * asks for the literal, prefilled `{.}` with the caret after the dot.
+     */
+    | { kind: 'attr-span' }
+    /**
+     * A new container or admonition after the current block, edited in place,
+     * the caret in its body (an empty paragraph): `name` is the container's
+     * first class, `type` and `title` the admonition's.
+     */
+    | { kind: 'insert-wrapper'; node: 'container'; name: string }
+    | { kind: 'insert-wrapper'; node: 'admonition'; type: string; title: string }
     /**
      * The selection's text wrapped in `open` … `close` as literal source
      * (`placeholder` when nothing is selected); the block comes back from the
@@ -235,6 +249,12 @@ function formatAction(id: string, label: string, mark: MarkTarget, open: string,
 
 const M = INLINE_MARKERS;
 
+/** The literal the span action's example is written with. */
+const SPAN_LITERAL_EXAMPLE = '{.class}';
+
+/** What the span action's field starts with, and where its caret goes: after the dot, to type the class. */
+export const SPAN_FIELD_PREFILL = { value: '{.}', caret: 2 } as const;
+
 const formatting: ToolbarAction[] = [
     formatAction('mark', 'Highlight', 'mark', M.mark, M.mark, el('mark', 'mark'),
         { markdown: `Highlight ${M.mark}the point${M.mark} of a sentence.`, nodes: [el('p', 'Highlight ', el('mark', 'the point'), ' of a sentence.')] }),
@@ -246,6 +266,12 @@ const formatting: ToolbarAction[] = [
         { markdown: `The ${M.strikethrough}old${M.strikethrough} new wording.`, nodes: [el('p', 'The ', el('s', 'old'), ' new wording.')] }),
     formatAction('kbd', 'Key', 'kbd', KBD_MARKERS.open, KBD_MARKERS.close, el('kbd', 'Ctrl'),
         { markdown: `Press ${KBD_MARKERS.open}Ctrl+S${KBD_MARKERS.close} to save.`, nodes: [el('p', 'Press ', el('kbd', 'Ctrl+S'), ' to save.')] }),
+    {
+        // markdown-it-bracketed-spans with markdown-it-attrs: the class a stylesheet names.
+        id: 'span-class', place: { menu: 'formatting' }, label: 'Span with class', syntax: `[text]${SPAN_LITERAL_EXAMPLE}`,
+        sample: el('span.class', 'span'), apply: { kind: 'attr-span' }, example: `[span]${SPAN_LITERAL_EXAMPLE}`,
+        preview: { markdown: 'A [styled phrase]{.lead} in a sentence.', nodes: [el('p', 'A ', el('span.lead', 'styled phrase'), ' in a sentence.')] },
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -328,18 +354,8 @@ const TABLE_TEMPLATE = [
     '| Item1    | Item1     | Item1     |',
 ].join('\n');
 
-const CONTAINER_TEMPLATE = [
-    '::::: container',
-    ':::: row',
-    '::: col-xs-6 alert alert-success',
-    'success text',
-    ':::',
-    '::: col-xs-6 alert alert-warning',
-    'warning text',
-    ':::',
-    '::::',
-    ':::::',
-].join('\n');
+/** The class a new container is given; its object toolbar's Change name/info renames it. */
+export const NEW_CONTAINER_NAME = 'container';
 
 const checkbox = (checked: boolean): SampleSpec => withAttrs(el('input'), checked ? { type: 'checkbox', checked: 'true' } : { type: 'checkbox' });
 
@@ -352,14 +368,19 @@ const insert: ToolbarAction[] = [
         apply: { kind: 'block', node: 'horizontal_rule' }, example: 'Text\n\n---',
         preview: { markdown: 'Above the rule.\n\n---\n\nBelow it.', nodes: [el('p', 'Above the rule.'), el('hr'), el('p', 'Below it.')] },
     },
+    // Native since stage 3: an admonition node, its title the type's name, the caret in its body.
     ...ADMONITION_TYPES.map((type): ToolbarAction => ({
-        ...insertAction(`admonition-${type}`, titleOf(type), `${ADMONITION_MARKER} ${type} ${titleOf(type)}\n    Text`,
-            el(`div.admonition.${type}`, el('p.admonition-title', titleOf(type))),
-            {
-                markdown: `${ADMONITION_MARKER} ${type} ${titleOf(type)}\n    One line of body text.`,
-                nodes: [el(`div.admonition.${type}`, el('p.admonition-title', titleOf(type)), el('p', 'One line of body text.'))],
-            }),
+        id: `admonition-${type}`,
         place: { menu: 'insert', submenu: 'admonition' },
+        label: titleOf(type),
+        syntax: `${ADMONITION_MARKER} ${type} "${titleOf(type)}"`,
+        sample: el(`div.admonition.${type}`, el('p.admonition-title', titleOf(type))),
+        apply: { kind: 'insert-wrapper', node: 'admonition', type, title: titleOf(type) },
+        example: `${ADMONITION_MARKER} ${type} "${titleOf(type)}"\n    Text`,
+        preview: {
+            markdown: `${ADMONITION_MARKER} ${type} "${titleOf(type)}"\n    One line of body text.`,
+            nodes: [el(`div.admonition.${type}`, el('p.admonition-title', titleOf(type)), el('p', 'One line of body text.'))],
+        },
     })),
     insertAction('table', 'Table', TABLE_TEMPLATE,
         el('table', el('tr', el('th', 'A'), el('th', 'B')), el('tr', el('td', '1'), el('td', '2'))),
@@ -369,13 +390,17 @@ const insert: ToolbarAction[] = [
                 el('thead', el('tr', el('th', 'Name'), el('th', 'Value'))),
                 el('tbody', el('tr', el('td', 'Alpha'), el('td', '1')), el('tr', el('td', 'Beta'), el('td', '2'))))],
         }),
-    insertAction('container', 'Container', CONTAINER_TEMPLATE, el('div.container', 'container'),
-        {
-            markdown: CONTAINER_TEMPLATE,
-            nodes: [el('div.container', el('div.row',
-                el('div.col-xs-6.alert.alert-success', el('p', 'success text')),
-                el('div.col-xs-6.alert.alert-warning', el('p', 'warning text'))))],
-        }),
+    {
+        // Native since stage 3: a container node, the caret in its body.
+        id: 'container', place: { menu: 'insert' }, label: 'Container', syntax: `::: ${NEW_CONTAINER_NAME}\n…\n:::`,
+        sample: el(`div.${NEW_CONTAINER_NAME}`, 'container'),
+        apply: { kind: 'insert-wrapper', node: 'container', name: NEW_CONTAINER_NAME },
+        example: `::: ${NEW_CONTAINER_NAME}\nText\n:::`,
+        preview: {
+            markdown: `::: ${NEW_CONTAINER_NAME}\nA block with the class ${NEW_CONTAINER_NAME}.\n:::`,
+            nodes: [el(`div.${NEW_CONTAINER_NAME}`, el('p', `A block with the class ${NEW_CONTAINER_NAME}.`))],
+        },
+    },
     insertAction('task-list', 'Task list', '- [ ] Task',
         el('ul', el('li', checkbox(false), el('label', 'Task'))),
         { markdown: '- [ ] An open task\n- [x] A done one', nodes: [el('ul', el('li', checkbox(false), el('label', 'An open task')), el('li', checkbox(true), el('label', 'A done one')))] }),

@@ -367,7 +367,9 @@ export class HeadingView implements NodeView {
         if (node.type !== this.node.type
             || node.attrs.level !== this.node.attrs.level
             || node.attrs.reqPrefix !== this.node.attrs.reqPrefix
-            || node.attrs.anchor !== this.node.attrs.anchor) {
+            || node.attrs.anchor !== this.node.attrs.anchor
+            // The suffix's classes and attributes are on the element (`headingDOM`).
+            || node.attrs.attrsSuffix !== this.node.attrs.attrsSuffix) {
             return false;
         }
         this.node = node;

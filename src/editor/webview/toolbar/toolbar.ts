@@ -27,14 +27,17 @@
 import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { editorSchema } from '../../schema';
+import { showHint } from '../hint';
+import { InlineField } from '../inlineField';
 import { editRawSourceAt } from '../nodeViews';
 import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
+import { applySpanTransaction, literalRefusal, spanLockReason } from '../objects';
 import {
-    MENU_LABELS, PREVIEW_CARD_CLASS, ROW_LAYOUT, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
+    MENU_LABELS, PREVIEW_CARD_CLASS, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
     inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
-    SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertSourceTransaction, isCurrent,
+    SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertSourceTransaction, insertWrapperTransaction, isCurrent,
     markActive, markRefusal, toggleMarkup, wrapSourceTransaction,
 } from './commands';
 
@@ -123,7 +126,12 @@ function evaluate(action: ToolbarAction, state: EditorState): ActionState {
             return { enabled, active: false, reason: enabled ? null : WRAP_LOCK };
         }
         case 'insert-source':
+        case 'insert-wrapper':
             return { enabled: true, active: false, reason: null };
+        case 'attr-span': {
+            const reason = spanLockReason(state);
+            return { enabled: reason === null, active: false, reason };
+        }
     }
 }
 
@@ -168,6 +176,8 @@ class ToolbarView implements PluginView {
     private readonly menus: Menu[] = [];
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
     private cardTimer: ReturnType<typeof setTimeout> | undefined;
+    /** The span action's field, while it is open. */
+    private spanField: { bar: HTMLElement; field: InlineField } | null = null;
 
     constructor(private readonly view: EditorView, private readonly host: ToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -235,6 +245,7 @@ class ToolbarView implements PluginView {
 
     destroy(): void {
         clearTimeout(this.cardTimer);
+        this.closeSpanField();
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
         }
@@ -704,7 +715,89 @@ class ToolbarView implements PluginView {
                 editRawSourceAt(view, pos);
                 return;
             }
+            case 'insert-wrapper':
+                view.dispatch(insertWrapperTransaction(view.state, apply));
+                view.focus();
+                return;
+            case 'attr-span':
+                this.askSpanLiteral();
+                return;
         }
+    }
+
+    // -- the span's field ------------------------------------------------------
+
+    /**
+     * **Span with class**: the inline field, in a bar of the object toolbar's
+     * kind under the selection, asks for the `{…}` literal — `{.}` with the caret
+     * after the dot, so the class is typed at once — and `Enter` makes the
+     * selection `[text]{literal}`. The selection stays in the state while the
+     * field has the focus; a re-sync meanwhile maps it, so the commit applies to
+     * the text it was opened for.
+     */
+    private askSpanLiteral(): void {
+        this.closeSpanField();
+        const view = this.view;
+        if (spanLockReason(view.state) !== null) {
+            return;
+        }
+        const bar = div('mep-object-toolbar');
+        bar.dataset.trigger = 'toolbar';
+        bar.dataset.object = 'span';
+        bar.setAttribute('role', 'toolbar');
+        bar.setAttribute('aria-label', 'Span with class');
+        const close = () => {
+            if (this.spanField?.bar === bar) {
+                this.spanField = null;
+            }
+            bar.remove();
+        };
+        const field = new InlineField({
+            value: SPAN_FIELD_PREFILL.value,
+            caret: SPAN_FIELD_PREFILL.caret,
+            label: 'Attributes',
+            onCommit: value => {
+                close();
+                view.focus();
+                const refusal = literalRefusal(value);
+                const tr = refusal === null ? applySpanTransaction(view.state, value) : null;
+                if (tr === null) {
+                    showHint(view, refusal ?? 'These attributes cannot be given to this text here.', 'refusal');
+                    return;
+                }
+                view.dispatch(tr);
+            },
+            onCancel: reason => {
+                close();
+                if (reason === 'escape') {
+                    view.focus();
+                }
+            },
+        });
+        field.el.dataset.verb = 'span-attributes';
+        bar.addEventListener('mousedown', e => {
+            if (e.target !== field.el) {
+                e.preventDefault();
+            }
+        });
+        bar.append(span('mep-object-label', 'Span attributes'), field.el);
+        this.mount.append(bar);
+        this.spanField = { bar, field };
+        // Under the selection's last line: the bubble is above it.
+        const sel = view.state.selection;
+        const start = view.coordsAtPos(sel.from, 1);
+        const end = view.coordsAtPos(sel.to, -1);
+        const base = this.mount.getBoundingClientRect();
+        const x = Math.max(base.left, Math.min(start.left, base.right - bar.offsetWidth));
+        bar.style.left = `${x - base.left}px`;
+        bar.style.top = `${end.bottom + 6 - base.top}px`;
+        field.focus();
+    }
+
+    private closeSpanField(): void {
+        this.spanField?.field.dispose();
+        this.spanField?.bar.remove();
+        this.spanField = null;
     }
 
     // -- the bubble ------------------------------------------------------------

@@ -31,15 +31,19 @@
  * Buttons act on `mousedown` + `preventDefault`, as the formatting toolbar's
  * do, so the editor keeps its focus and its selection.
  */
-import { Plugin, PluginView, TextSelection } from 'prosemirror-state';
+import { Plugin, PluginView, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { ADMONITION_TYPES } from '../../syntax/markers';
+import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
-import { InlineField } from './inlineField';
+import { InlineChoice, InlineField } from './inlineField';
 import { NoteNodeName, unwrapNote } from './notes';
 import {
-    EditorObject, NOTE_CONVERSION, changeImageTransaction, changeLinkTransaction, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectTransaction, isBlockObject, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction, sameObject,
+    EditorObject, NOTE_CONVERSION, blockAttrsRefusal, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction,
+    changeImageTransaction, changeLinkTransaction, changeSpanTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
+    deleteObjectTransaction, isBlockObject, isBlockPlaced, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
+    removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 
@@ -76,6 +80,8 @@ interface Verb {
     run?(): void;
     /** A verb that asks for a value first, in the inline field. */
     field?: { value: string; label: string; commit(value: string): void };
+    /** A verb that asks for one of a list of values, in the inline choice. */
+    choice?: { value: string; label: string; options: readonly { value: string; label: string }[]; commit(value: string): void };
 }
 
 interface Presentation {
@@ -98,6 +104,16 @@ const CONVERT_LABELS: Readonly<Record<NoteNodeName, string>> = {
     right_sidebar: 'Move to left',
 };
 
+/** What a block carrying an attribute literal is called in its bar's label. */
+const BLOCK_LABELS: Readonly<Record<string, string>> = {
+    paragraph: 'Paragraph',
+    heading: 'Heading',
+    bullet_list: 'List',
+    ordered_list: 'List',
+    code_block: 'Code block',
+    horizontal_rule: 'Rule',
+};
+
 function isSidebar(name: NoteNodeName): boolean {
     return name === 'left_sidebar' || name === 'right_sidebar';
 }
@@ -106,7 +122,7 @@ function isSidebar(name: NoteNodeName): boolean {
 class ObjectBar {
     readonly el: HTMLElement;
     object: EditorObject | null = null;
-    private field: InlineField | null = null;
+    private field: InlineField | InlineChoice | null = null;
     private signature = '';
     private buttons: { verb: Verb; el: HTMLButtonElement }[] = [];
 
@@ -142,7 +158,7 @@ class ObjectBar {
         // an undo would otherwise offer the undone source.
         const signature = JSON.stringify([
             object.kind, object.from, presentation.label, presentation.title,
-            presentation.verbs.map(v => [v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? null]),
+            presentation.verbs.map(v => [v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? v.choice?.value ?? null]),
         ]);
         if (!this.field && signature !== this.signature) {
             this.signature = signature;
@@ -196,16 +212,22 @@ class ObjectBar {
         }
         if (verb.field) {
             this.openField(verb, verb.field);
+        } else if (verb.choice) {
+            this.openField(verb, verb.choice);
         } else {
             verb.run?.();
         }
     }
 
-    private openField(verb: Verb, spec: NonNullable<Verb['field']>): void {
+    /** The verb's field — or its choice, for a verb with `options` — in place of the verbs, beside the label. */
+    private openField(verb: Verb, spec: NonNullable<Verb['field']> | NonNullable<Verb['choice']>): void {
         const label = this.el.querySelector('.mep-object-label');
-        const field = new InlineField({
-            value: spec.value,
-            label: spec.label,
+        const make = 'options' in spec
+            ? (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
+                new InlineChoice({ choices: spec.options, value: spec.value, label: spec.label, ...callbacks })
+            : (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
+                new InlineField({ value: spec.value, label: spec.label, ...callbacks });
+        const field = make({
             onCommit: value => {
                 this.field = null;
                 this.signature = '';
@@ -483,12 +505,12 @@ class ObjectToolbarView implements PluginView {
     /** Where the object's first line starts and its last line ends. */
     private anchor(object: EditorObject): Anchor {
         const view = this.view;
-        if (object.kind !== 'link') {
+        if (object.kind !== 'link' && object.kind !== 'span') {
             const dom = view.nodeDOM(object.from);
             if (dom instanceof Element) {
-                if (isBlockObject(object)) {
+                if (isBlockPlaced(object)) {
                     const r = dom.getBoundingClientRect();
-                    return { right: r.right - ATOM_INSET, top: r.top, bottom: r.bottom };
+                    return { right: r.right - (isBlockObject(object) ? ATOM_INSET : 0), top: r.top, bottom: r.bottom };
                 }
                 // An inline element's own line boxes: a note's body floated
                 // into the margin is not one of them, so the bar keeps to the
@@ -665,6 +687,123 @@ class ObjectToolbarView implements PluginView {
                     ],
                 };
             }
+            case 'span': {
+                const literal = object.mark.attrs.literal as string;
+                return {
+                    label: 'Span',
+                    title: `[text]${literal}: a span with these attributes.`,
+                    verbs: [
+                        {
+                            id: 'edit-attributes',
+                            label: 'Edit attributes',
+                            title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
+                            field: {
+                                value: literal,
+                                label: 'Attributes',
+                                commit: value => this.commitLiteral(object, value, current =>
+                                    current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null),
+                            },
+                        },
+                        {
+                            id: 'remove-attributes',
+                            label: 'Remove attributes, keep text',
+                            title: 'The span goes; its text stays, with its formatting.',
+                            run: () => this.apply(object, current => (current.kind === 'span' ? removeSpanTransaction(view.state, current) : null), 'Attributes removed'),
+                        },
+                    ],
+                };
+            }
+            case 'container': {
+                const name = object.node.attrs.name as string;
+                const info = object.node.attrs.info as string;
+                return {
+                    label: name === '' ? 'Container' : `Container ${name}`,
+                    title: `A block with the class "${containerClass(name, info)}".`,
+                    verbs: [
+                        {
+                            id: 'change-name',
+                            label: 'Change name/info',
+                            title: 'What follows ::: — the classes the block gets (Enter to apply, Esc to cancel).',
+                            field: {
+                                value: `${name}${info}`,
+                                label: 'Name and info',
+                                commit: value => {
+                                    if (containerNameOf(value) === null) {
+                                        this.view.focus();
+                                        this.say('A container\'s name and info are one line, and cannot end in {…}: markdown-it-attrs would take that as attributes.', 'refusal');
+                                        return;
+                                    }
+                                    this.apply(object, current => changeContainerTransaction(view.state, current.from, value));
+                                },
+                            },
+                        },
+                        {
+                            id: 'remove-container',
+                            label: 'Remove container, keep content',
+                            title: 'The container goes; its blocks stay where it stood.',
+                            run: () => this.apply(object, current => unwrapTransaction(view.state, current.from), 'Container removed'),
+                        },
+                    ],
+                };
+            }
+            case 'admonition': {
+                const type = object.node.attrs.type as string;
+                const title = object.node.attrs.title as string;
+                return {
+                    label: `Admonition ${type}`,
+                    title: title === '' ? `A ${type} admonition without a title.` : `A ${type} admonition: ${title}`,
+                    verbs: [
+                        {
+                            id: 'change-type',
+                            label: 'Change type',
+                            title: 'Another of the plugin\'s types: another colour and icon.',
+                            choice: {
+                                value: type,
+                                label: 'Type',
+                                options: ADMONITION_TYPES.map(t => ({ value: t, label: t })),
+                                commit: value => this.apply(object, current => changeAdmonitionTransaction(view.state, current.from, { type: value })),
+                            },
+                        },
+                        {
+                            id: 'edit-title',
+                            label: 'Edit title',
+                            title: 'The title bar\'s text; empty for no title bar (Enter to apply, Esc to cancel).',
+                            field: {
+                                value: title,
+                                label: 'Title',
+                                commit: value => this.apply(object, current => changeAdmonitionTransaction(view.state, current.from, { title: value })),
+                            },
+                        },
+                        {
+                            id: 'remove-admonition',
+                            label: 'Remove admonition, keep content',
+                            title: 'The admonition goes; its blocks stay where it stood.',
+                            run: () => this.apply(object, current => unwrapTransaction(view.state, current.from), 'Admonition removed'),
+                        },
+                    ],
+                };
+            }
+            case 'block_attrs': {
+                const literal = (object.node.attrs.attrsSuffix as string | null) ?? '';
+                return {
+                    label: `${BLOCK_LABELS[object.node.type.name] ?? 'Block'} attributes`,
+                    title: `${literal}: the attributes the block is rendered with.`,
+                    verbs: [
+                        {
+                            id: 'edit-block-attributes',
+                            label: 'Edit block attributes',
+                            title: 'The block\'s {…}; empty removes it (Enter to apply, Esc to cancel).',
+                            refusal: blockAttrsRefusal(object.node),
+                            field: {
+                                value: literal,
+                                label: 'Attributes',
+                                commit: value => this.commitLiteral(object, value,
+                                    current => changeBlockAttrsTransaction(view.state, current.from, value), value.trim() === '' ? 'Attributes removed' : undefined),
+                            },
+                        },
+                    ],
+                };
+            }
             case 'badge': {
                 const mark = object.node.attrs.mark as { rule?: unknown } | null;
                 return {
@@ -730,6 +869,32 @@ class ObjectToolbarView implements PluginView {
 
     private showInTextEditor(object: EditorObject): Verb {
         return { id: 'show-in-text-editor', label: 'Show in text editor', title: 'Open the text editor beside, at this block.', run: () => this.host.openSourceAt(object.from) };
+    }
+
+    /** Run a verb that is one transaction on the object as it is now; nothing when it makes none. */
+    private apply(object: EditorObject, make: (current: EditorObject) => Transaction | null, hint?: string): void {
+        this.act(object, current => {
+            const tr = make(current);
+            if (tr !== null) {
+                this.view.dispatch(tr);
+            }
+            return tr !== null;
+        }, hint);
+    }
+
+    /**
+     * A literal typed into a field: refused, with the reason beside the caret,
+     * when markdown-it-attrs would not read it as attributes (`''` is allowed
+     * where it means "none"); applied otherwise.
+     */
+    private commitLiteral(object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): void {
+        const refusal = hint !== undefined && value.trim() === '' ? null : literalRefusal(value);
+        if (refusal !== null) {
+            this.view.focus();
+            this.say(refusal, 'refusal');
+            return;
+        }
+        this.apply(object, make, hint);
     }
 
     private remove(object: EditorObject, hint: string): void {

@@ -354,7 +354,7 @@ suite('Editor toolbar (e2e)', () => {
         assert.strictEqual(await page.$eval('.mep-bubble', el => (el as HTMLElement).hidden), true, 'nor does an editor without the focus');
     });
 
-    test('Insert → Admonition lists exactly the plugin\'s types, and one inserts its source with the box open', async function () {
+    test('Insert → Admonition lists exactly the plugin\'s types; one is inserted in place, and typed text is its indented body', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
         const listed = await page.$$eval(`${panel('admonition')} [data-action]`, els => els.map(el => (el as HTMLElement).dataset.action));
@@ -365,14 +365,40 @@ suite('Editor toolbar (e2e)', () => {
         await page.hover('.mep-menu [data-submenu="admonition"]');
         await page.waitForSelector(`${panel('admonition')}:not([hidden])`);
         await page.click(entry('admonition-warning'));
-        await page.waitForSelector('.mep-raw-editor');
-        assert.strictEqual(await page.$eval('.mep-raw-editor', el => (el as HTMLTextAreaElement).value), '!!! warning Warning\n    Text');
-        const render = (await (editor as EditorPage).posted()).filter(m => m.type === 'render').pop();
-        assert.strictEqual(render && (render as { src: string }).src, '!!! warning Warning\n    Text\n');
-        await page.$eval('.mep-raw-editor', el => (el as HTMLTextAreaElement).blur());
+        await page.waitForSelector('.ProseMirror div.admonition.warning');
+        assert.strictEqual(await page.$('.mep-raw-editor'), null, 'no source box: the admonition is rich text');
+        const drawn = await page.$eval('.ProseMirror div.admonition.warning', el => ({
+            first: el.firstElementChild?.className,
+            title: el.querySelector(':scope > .admonition-title')?.textContent,
+        }));
+        assert.deepStrictEqual(drawn, { first: 'admonition-title', title: 'Warning' }, 'the title bar is the first child, as the plugin renders it');
+        await page.keyboard.type('Mind the step.');
         await settle();
         const edit = await lastEdit();
-        assert.ok(edit?.text.includes('Alpha beta gamma.\n\n!!! warning Warning\n    Text\n\nSecond paragraph here.'), edit?.text);
+        assert.ok(edit?.text.includes('Alpha beta gamma.\n\n!!! warning "Warning"\n    Mind the step.\n\nSecond paragraph here.'), edit?.text);
+        assert.strictEqual(edit?.reparse, undefined, 'native: the host is not asked to parse it');
+    });
+
+    test('Formatting → Span with class asks for the literal in the inline field and makes the selection a span with that class', async function () {
+        this.timeout(10000);
+        await showDocument(SOURCE);
+        await selectText('beta');
+        await openMenu('formatting');
+        await page.click(entry('span-class'));
+        const field = '.mep-object-toolbar[data-trigger="toolbar"] .mep-inline-field';
+        await page.waitForSelector(field, { visible: true });
+        const opened = await page.$eval(field, el => {
+            const input = el as HTMLInputElement;
+            return { value: input.value, caret: [input.selectionStart, input.selectionEnd], focused: document.activeElement === input };
+        });
+        assert.deepStrictEqual(opened, { value: '{.}', caret: [2, 2], focused: true }, 'prefilled, the caret after the dot');
+        await page.keyboard.type('klasse');
+        await page.keyboard.press('Enter');
+        await settle();
+        const edit = await lastEdit();
+        assert.ok(edit?.text.includes('Alpha [beta]{.klasse} gamma.'), edit?.text);
+        assert.strictEqual(await page.$eval('.ProseMirror span.klasse', el => el.textContent), 'beta', 'the rendered span carries the class');
+        assert.strictEqual(await page.$(field), null, 'the field is gone');
     });
 
     test('the preview card shows after a pause, on hover and on focus, beside the menu', async function () {

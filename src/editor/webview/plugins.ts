@@ -11,6 +11,7 @@ import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
 import { toggleMarkType } from './toolbar/commands';
+import { admonitionTitlesPlugin, wrapperKeymap } from './wrappers';
 
 const nodes = editorSchema.nodes;
 const marks = editorSchema.marks;
@@ -82,8 +83,10 @@ function markdownKeymap(): Plugin {
 export function editorPlugins(): Plugin[] {
     return [
         markdownInputRules(),
-        // Ahead of the Markdown keys: Tab, Enter and Backspace mean something else inside a note.
+        // Ahead of the Markdown keys: Tab, Enter and Backspace mean something else inside a note,
+        // and Enter and Backspace in an empty paragraph of a container or an admonition.
         noteKeymap(),
+        wrapperKeymap(),
         markdownKeymap(),
         keymap(baseKeymap),
         history(),
@@ -91,6 +94,7 @@ export function editorPlugins(): Plugin[] {
         gapCursor(),
         hintPlugin(),
         notesPlugin(),
+        admonitionTitlesPlugin(),
         fidelityPlugin(),
     ];
 }
