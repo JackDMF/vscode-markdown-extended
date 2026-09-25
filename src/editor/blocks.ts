@@ -1,4 +1,5 @@
 import { Token } from '../@types/markdown-it';
+import { AttrPair, NOTE_SYNTAX_CHARS, findLeftDelimiter, findRightDelimiter, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
 
 /**
  * The token stream → top-level source blocks step of the rich editor.
@@ -74,6 +75,57 @@ export function findAttrsSuffix(line: string): string | null {
     return m ? m[1] : null;
 }
 
+/**
+ * The `{…}` a line ends with as markdown-it-attrs finds it — the last `{`
+ * outside a quoted value, through the line's end — when it is a literal the
+ * plugin takes as attributes; `null` otherwise. Unlike `findAttrsSuffix` it
+ * reads a quoted `}` (`{title="a}"}`) as the plugin does.
+ */
+export function findEndLiteral(line: string): string | null {
+    const trimmed = line.replace(/[ \t]+$/, '');
+    const start = findLeftDelimiter(trimmed);
+    if (start < 0) {
+        return null;
+    }
+    const literal = trimmed.slice(start);
+    return parseAttrsLiteral(literal) === null ? null : literal;
+}
+
+/**
+ * Where a block's `{…}` stands in its source, which a changed block is written
+ * back in (`serialize.ts`):
+ *
+ * - `end` — at the end of the block's last line, after a space: a paragraph's
+ *   `text {.a}`, a heading's `# Title {#id}`, a fence's opening line
+ *   ```` ```js {.a} ````, a rule's `--- {#id}`;
+ * - `line` — on a line of its own right after the block's last line: a
+ *   paragraph's or a list's `{.a}` below its text, which the plugin reads
+ *   through the soft break before it;
+ * - `blank` — on a line of its own after a blank line, which the plugin reads
+ *   for a list only (a paragraph there would be a paragraph of its own).
+ */
+export type AttrsPlacement = 'end' | 'line' | 'blank';
+
+/** A top-level block's attribute literal, verbatim, and where it was written. */
+export interface BlockAttrs {
+    suffix: string;
+    placement: AttrsPlacement;
+}
+
+/** A line that closes a container opened with `markup`: only colons, at least as many, and spaces (markdown-it-container). */
+export function isContainerClose(line: string | undefined, markup: string): boolean {
+    if (line === undefined) {
+        return false;
+    }
+    const m = /^[ \t]{0,3}(:+)[ \t]*$/.exec(line);
+    return m !== null && m[1].length >= markup.length;
+}
+
+/** The same test on a line inside a quote or a list item, whose prefix (`> `, indentation) is stripped first. */
+function isNestedContainerClose(line: string | undefined, markup: string): boolean {
+    return line !== undefined && isContainerClose(line.replace(/^[\s>]*/, ''), markup);
+}
+
 // ---------------------------------------------------------------------------
 // Injection marks (Req Explorer SPEC §10.2, FRS-RXE-097)
 // ---------------------------------------------------------------------------
@@ -129,10 +181,20 @@ function sameExpansion(a: InjectionMark | null, b: InjectionMark | null): boolea
 // Known tokens
 // ---------------------------------------------------------------------------
 
+/**
+ * The token markdown-it-container opens this extension's containers with: the
+ * extension registers the one container name `container` and accepts any info
+ * (`markdownItContainer.ts`), so every `::: …` block opens with this type.
+ * Another extension's container name is another type, and stays raw.
+ */
+export const CONTAINER_OPEN = 'container_container_open';
+export const CONTAINER_CLOSE = 'container_container_close';
+
 /** Top-level tokens that can open an editable block. Anything else at top level is a raw block. */
 export const EDITABLE_TOP_LEVEL_TOKENS: ReadonlySet<string> = new Set([
     'paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open',
     'blockquote_open', 'fence', 'code_block', 'hr',
+    CONTAINER_OPEN, 'admonition_open',
 ]);
 
 /** Every block-level token an editable block may contain, at any depth. */
@@ -144,7 +206,21 @@ export const EDITABLE_BLOCK_TOKENS: ReadonlySet<string> = new Set([
     'list_item_open', 'list_item_close',
     'blockquote_open', 'blockquote_close',
     'fence', 'code_block', 'hr', 'inline',
+    CONTAINER_OPEN, CONTAINER_CLOSE,
+    'admonition_open', 'admonition_close', 'admonition_title_open', 'admonition_title_close',
 ]);
+
+/** The block tokens that open a node holding blocks of its own: a container, an admonition. */
+const WRAPPER_OPEN_TOKENS: ReadonlySet<string> = new Set([CONTAINER_OPEN, 'admonition_open']);
+const WRAPPER_CLOSE_TOKENS: ReadonlySet<string> = new Set([CONTAINER_CLOSE, 'admonition_close']);
+
+/**
+ * How deep containers and admonitions may nest and still be edited in place: a
+ * top-level one, and one level inside it. The fence-length rule nests
+ * containers arbitrarily, but every level is one more fence the serializer has
+ * to lengthen and one more indentation to get right; deeper stays a source block.
+ */
+export const MAX_WRAPPER_DEPTH = 2;
 
 /**
  * Every authored inline token an editable block may contain. Req Explorer's
@@ -164,6 +240,8 @@ export const EDITABLE_INLINE_TOKENS: ReadonlySet<string> = new Set([
     'marginal_note_open', 'marginal_note_ref_open', 'marginal_note_ref_close',
     'marginal_note_content_open', 'marginal_note_content_close', 'marginal_note_close',
     'left_sidebar_open', 'left_sidebar_close', 'right_sidebar_open', 'right_sidebar_close',
+    // `[text]{…}`: markdown-it-bracketed-spans makes the span, markdown-it-attrs gives it the attributes.
+    'span_open', 'span_close',
 ]);
 
 /** The tokens that open and close a note or a sidebar, which the schema holds one level deep. */
@@ -171,10 +249,12 @@ export const NOTE_OPEN_TOKENS: ReadonlySet<string> = new Set(['sidenote_open', '
 const NOTE_CLOSE_TOKENS: ReadonlySet<string> = new Set(['sidenote_close', 'marginal_note_close', 'left_sidebar_close', 'right_sidebar_close']);
 
 /**
- * The attributes a token may carry and still be editable. The schema has a slot
- * for these and nothing else; any other attribute (`markdown-it-attrs` on a
- * paragraph, a list item or a span) would be lost by a re-serialization.
- * `heading_open` is checked separately, against its source line.
+ * The attributes a token carries as part of what it is, which the schema has a
+ * slot for. Anything beyond them came from a `{…}` literal (`markdown-it-attrs`):
+ * the editor keeps that literal where it can say where it was written — a span's
+ * (`[text]{…}`), a top-level block's (`recoverBlockAttrs`), a heading's — and
+ * leaves any other element carrying one (a list item, a nested paragraph, a
+ * link, emphasis) a source block, since a re-serialization would lose it.
  */
 const ALLOWED_ATTRS: Readonly<Record<string, readonly string[]>> = {
     ordered_list_open: ['start'],
@@ -182,12 +262,36 @@ const ALLOWED_ATTRS: Readonly<Record<string, readonly string[]>> = {
     image: ['src', 'alt', 'title'],
 };
 
-function attrsAllowed(token: Token): boolean {
-    if (!token.attrs || token.attrs.length === 0) {
-        return true;
-    }
+/** The token's attributes that came from a `{…}` literal, as `[name, value]` pairs. */
+function literalAttrs(token: Token): AttrPair[] {
     const allowed = ALLOWED_ATTRS[token.type] ?? [];
-    return token.attrs.every(([name]) => allowed.includes(name));
+    return (token.attrs ?? []).filter(([name]) => !allowed.includes(name)).map(([name, value]) => [name, String(value)]);
+}
+
+function attrsAllowed(token: Token): boolean {
+    return literalAttrs(token).length === 0;
+}
+
+/** The index of the token closing the one opened at `open`, by nesting. */
+function closingIndex(tokens: readonly Token[], open: number): number {
+    let depth = 0;
+    for (let i = open; i < tokens.length; i++) {
+        depth += tokens[i].nesting;
+        if (depth === 0) {
+            return i;
+        }
+    }
+    return tokens.length - 1;
+}
+
+/** The first line after a wrapper's own lines: a container's closing fence (or where it was closed), an admonition's end. */
+function wrapperEnd(tokens: readonly Token[], open: number): number {
+    const t = tokens[open];
+    if (t.type === CONTAINER_OPEN) {
+        return t.map ? t.map[1] : Number.MAX_SAFE_INTEGER;
+    }
+    const close = tokens[closingIndex(tokens, open)];
+    return close.map ? close.map[1] : Number.MAX_SAFE_INTEGER;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +329,10 @@ export interface SourceBlock {
     injectedKind: InjectedKind | null;
     /** For an injected block: the mark on its first token (`null` for `generated`). */
     mark: InjectionMark | null;
+    /** For an editable block: its `{…}` literal and where it stands, or `null` (`recoverBlockAttrs`). */
+    attrs: BlockAttrs | null;
+    /** For an editable block: the literal of each attribute span in it, in token order (`recoverSpanLiterals`). */
+    spanLiterals: string[];
 }
 
 export interface GroupedBlocks {
@@ -271,14 +379,22 @@ interface Classification {
     reason: string;
     injectedKind: InjectedKind | null;
     mark: InjectionMark | null;
+    /** An editable block's attribute literal (`attrsSuffix`), or `null`. */
+    attrs: BlockAttrs | null;
+    /** The literal of every attribute span in the block, in token order. */
+    spanLiterals: string[];
+    /** Where the block's lines end when that is past its tokens' map: a container's closing fence, a list's literal after a blank line. */
+    endLine: number | null;
 }
 
 function raw(reason: string): Classification {
-    return { kind: 'raw', reason, injectedKind: null, mark: null };
+    return { kind: 'raw', reason, injectedKind: null, mark: null, attrs: null, spanLiterals: [], endLine: null };
 }
 
 /** Why the group cannot be edited, or `null` when it can. */
 function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[]): string | null {
+    /** The first line after each enclosing container's or admonition's own lines, innermost last. */
+    const wrapperEnds: number[] = [];
     for (let i = group.start; i < group.end; i++) {
         const t = tokens[i];
         if (!EDITABLE_BLOCK_TOKENS.has(t.type)) {
@@ -292,16 +408,48 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
                 return 'heading attributes that are not written as a trailing {…} on its line';
             }
         }
+        if (WRAPPER_OPEN_TOKENS.has(t.type)) {
+            if (wrapperEnds.length >= MAX_WRAPPER_DEPTH) {
+                return `${t.type} nested more than one level deep`;
+            }
+            if (t.type === 'admonition_open' && /\s/.test(t.info.trim())) {
+                // `!!! warning big "Title"`: a second class the node has no slot for.
+                return 'admonition with more than one class';
+            }
+            if (t.type === CONTAINER_OPEN && i !== group.start) {
+                // A nested container its own fence does not close ends where
+                // its parent does (equal fences: the first `:::` closes the
+                // outer one), and the lines after it are no longer what they seem.
+                const end = t.map ? t.map[1] : -1;
+                const parentEnd = wrapperEnds.length > 0 ? wrapperEnds[wrapperEnds.length - 1] : Number.MAX_SAFE_INTEGER;
+                if (end < 0 || end >= parentEnd || !isNestedContainerClose(lines[end]?.text, t.markup)) {
+                    return 'container closed by its parent, not by a fence of its own';
+                }
+            }
+            wrapperEnds.push(wrapperEnd(tokens, i));
+        } else if (WRAPPER_CLOSE_TOKENS.has(t.type)) {
+            wrapperEnds.pop();
+        }
         if (injectionMarkOf(t) !== undefined) {
             return `injected ${t.type} nested inside an authored block`;
         }
-        if (t.type !== 'heading_open' && !attrsAllowed(t)) {
+        // The top-level opener's literal is `recoverBlockAttrs`'s.
+        if (i !== group.start && t.type !== 'heading_open' && !attrsAllowed(t)) {
             return `attributes on ${t.type}`;
         }
         if (t.type !== 'inline') {
             continue;
         }
+        if (tokens[i - 1]?.type === 'admonition_title_open') {
+            // The title is written back as the string it is; only content
+            // another extension put there would be lost.
+            if ((t.children ?? []).some(c => injectionMarkOf(c) !== undefined)) {
+                return 'injected content in an admonition title';
+            }
+            continue;
+        }
         let noteDepth = 0;
+        let spanDepth = 0;
         for (const child of t.children ?? []) {
             if (NOTE_OPEN_TOKENS.has(child.type)) {
                 if (noteDepth > 0) {
@@ -323,6 +471,21 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
             if (!EDITABLE_INLINE_TOKENS.has(child.type)) {
                 return `inline ${child.type}`;
             }
+            if (child.type === 'span_open') {
+                if (spanDepth > 0) {
+                    // One mark type cannot hold itself: a span in a span has no place.
+                    return 'attribute span inside another';
+                }
+                if (!child.attrs || child.attrs.length === 0) {
+                    return 'bracketed span with no attributes';
+                }
+                spanDepth++;
+                continue;
+            }
+            if (child.type === 'span_close') {
+                spanDepth--;
+                continue;
+            }
             if (!attrsAllowed(child)) {
                 return `attributes on ${child.type}`;
             }
@@ -331,18 +494,147 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
     return null;
 }
 
-function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[]): Classification {
+/** The top-level openers whose `{…}` the editor keeps as `attrsSuffix`, written back where it stood. */
+const SUFFIX_BLOCKS: ReadonlySet<string> = new Set(['paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'fence', 'hr']);
+
+/**
+ * The attribute literal of a top-level block, recovered verbatim from its lines
+ * and where it stands (`AttrsPlacement`), or why it cannot be kept: the literal
+ * is not where the editor could write it back, or it does not read as the
+ * attributes the token has (a second literal the plugin merged in, a spelling
+ * the source holds and the token does not show). A heading keeps its existing
+ * rule: a trailing `{…}` on its line, whatever it holds — Req Explorer's anchors.
+ *
+ * `nextStart` is the first line a later block's tokens claim: a list's literal
+ * after a blank line (`blank`) is in no token's map, since the plugin removes
+ * the paragraph it was, and belongs to the list only when nothing else stands
+ * between.
+ */
+function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], nextStart: number): { attrs: BlockAttrs | null; endLine: number | null } | string {
+    const open = tokens[group.start];
+    const wanted = literalAttrs(open);
+    if (wanted.length === 0) {
+        return { attrs: null, endLine: null };
+    }
+    if (!SUFFIX_BLOCKS.has(open.type) || !open.map) {
+        return `attributes on ${open.type}`;
+    }
+    const reads = (literal: string | null): literal is string => {
+        const pairs = literal === null ? null : parseAttrsLiteral(literal);
+        return pairs !== null && sameAttrs(joinAttrs(pairs), wanted);
+    };
+    const [start, end] = open.map;
+    const last = trimTrailingBlank(lines, start, end) - 1;
+    const lastText = lines[last]?.text.trim() ?? '';
+    const where = `${open.type.replace(/_open$/, '')} attributes not written where the editor can keep them`;
+    switch (open.type) {
+        case 'heading_open': {
+            const suffix = findAttrsSuffix(lines[start]?.text ?? '');
+            return suffix === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix, placement: 'end' }, endLine: null };
+        }
+        case 'fence': {
+            const literal = findEndLiteral(lines[start]?.text ?? '');
+            return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
+        }
+        case 'hr': {
+            const literal = findEndLiteral(open.markup);
+            return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
+        }
+        case 'paragraph_open': {
+            if (last > start && reads(lastText)) {
+                return { attrs: { suffix: lastText, placement: 'line' }, endLine: null };
+            }
+            const literal = findEndLiteral(lines[last]?.text ?? '');
+            return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
+        }
+        default: {
+            // A list: the literal under its last line, or under a blank line after it.
+            if (last > start && reads(lastText)) {
+                return { attrs: { suffix: lastText, placement: 'line' }, endLine: null };
+            }
+            let k = last + 1;
+            while (k < nextStart && isBlankLine(lines[k])) {
+                k++;
+            }
+            const candidate = lines[k]?.text.trim() ?? null;
+            if (k > last + 1 && k < nextStart && reads(candidate)) {
+                return { attrs: { suffix: candidate, placement: 'blank' }, endLine: k + 1 };
+            }
+            return where;
+        }
+    }
+}
+
+/**
+ * The literal of every attribute span in the group (`[text]{…}`), in the order
+ * of their `span_open` tokens, recovered verbatim from the block's lines.
+ *
+ * Inline tokens carry no line map, so each span is matched to the next `]{…}`
+ * in the source whose literal reads as exactly the attributes its token has;
+ * a `]{…}` that reads otherwise (inside a code span, say) is passed over. Where
+ * no occurrence matches — an entity or a backslash escape markdown-it decoded
+ * inside the literal, so the source spells it as the token does not — the
+ * span is written in the normalized form `{#id .a .b key="v"}`, which reads as
+ * the same attributes: a changed block then shows that form in its diff, and
+ * only for that span.
+ *
+ * A span inside a note may not hold the characters the notes plugin searches
+ * the raw source for; such a block stays a source block.
+ */
+function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], endLine: number): string[] | string {
+    const spans: { token: Token; inNote: boolean }[] = [];
+    for (let i = group.start; i < group.end; i++) {
+        let noteDepth = 0;
+        for (const child of tokens[i].type === 'inline' ? tokens[i].children ?? [] : []) {
+            if (NOTE_OPEN_TOKENS.has(child.type)) {
+                noteDepth++;
+            } else if (NOTE_CLOSE_TOKENS.has(child.type)) {
+                noteDepth--;
+            } else if (child.type === 'span_open') {
+                spans.push({ token: child, inNote: noteDepth > 0 });
+            }
+        }
+    }
+    if (spans.length === 0 || group.map === null) {
+        return [];
+    }
+    const src = sliceLines(lines, group.map[0], endLine);
+    const out: string[] = [];
+    let from = 0;
+    for (const { token, inNote } of spans) {
+        const wanted = literalAttrs(token);
+        let literal: string | null = null;
+        for (let at = src.indexOf(']{', from); at >= 0 && literal === null; at = src.indexOf(']{', at + 1)) {
+            const close = findRightDelimiter(src, at + 3);
+            const candidate = close < 0 ? null : src.slice(at + 1, close + 1);
+            const pairs = candidate === null ? null : parseAttrsLiteral(candidate);
+            if (candidate !== null && pairs !== null && sameAttrs(joinAttrs(pairs), wanted)) {
+                literal = candidate;
+                from = close + 1;
+            }
+        }
+        const written = literal ?? normalizedLiteral(joinAttrs(wanted));
+        if (inNote && NOTE_SYNTAX_CHARS.test(written)) {
+            return 'attribute span in a note whose literal holds a note marker';
+        }
+        out.push(written);
+    }
+    return out;
+}
+
+function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], nextStart: number): Classification {
     const first = tokens[group.start];
+    const none = { attrs: null, spanLiterals: [], endLine: null };
     if (first.type === 'front_matter') {
-        return { kind: 'front_matter', reason: 'front matter', injectedKind: null, mark: null };
+        return { kind: 'front_matter', reason: 'front matter', injectedKind: null, mark: null, ...none };
     }
     const mark = injectionMarkOf(first);
     if (mark !== undefined) {
         const injectedKind: InjectedKind = mark.kind === 'expansion' ? 'expansion' : 'atom';
-        return { kind: 'injected', reason: `injected by ${mark.rule}`, injectedKind, mark };
+        return { kind: 'injected', reason: `injected by ${mark.rule}`, injectedKind, mark, ...none };
     }
     if (group.map === null) {
-        return { kind: 'injected', reason: `${first.type} stands for no source line`, injectedKind: 'generated', mark: null };
+        return { kind: 'injected', reason: `${first.type} stands for no source line`, injectedKind: 'generated', mark: null, ...none };
     }
     if (!EDITABLE_TOP_LEVEL_TOKENS.has(first.type)) {
         return raw(first.type);
@@ -351,7 +643,21 @@ function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly S
     if (because !== null) {
         return raw(because);
     }
-    return { kind: 'editable', reason: first.type, injectedKind: null, mark: null };
+    const recovered = recoverBlockAttrs(tokens, group, lines, nextStart);
+    if (typeof recovered === 'string') {
+        return raw(recovered);
+    }
+    // markdown-it-container leaves its closing fence out of the map; it is the
+    // container's last line, or the container runs to the end of the file.
+    let endLine = recovered.endLine;
+    if (first.type === CONTAINER_OPEN && isContainerClose(lines[group.map[1]]?.text, first.markup)) {
+        endLine = group.map[1] + 1;
+    }
+    const spanLiterals = recoverSpanLiterals(tokens, group, lines, Math.max(group.map[1], endLine ?? 0));
+    if (typeof spanLiterals === 'string') {
+        return raw(spanLiterals);
+    }
+    return { kind: 'editable', reason: first.type, injectedKind: null, mark: null, attrs: recovered.attrs, spanLiterals, endLine };
 }
 
 /** The end of `[start, end)` with trailing blank lines removed, never below one line. */
@@ -386,7 +692,17 @@ interface LaidOut {
  */
 export function groupSourceBlocks(tokens: readonly Token[], lines: readonly SourceLine[]): GroupedBlocks {
     const groups = topLevelGroups(tokens);
-    const classified = groups.map(g => ({ group: g, classification: classify(tokens, g, lines) }));
+    // The first line a later group's tokens claim, for a literal that no map holds.
+    const nextStarts: number[] = [];
+    let next = lines.length;
+    for (let i = groups.length - 1; i >= 0; i--) {
+        nextStarts[i] = next;
+        const map = groups[i].map;
+        if (map !== null) {
+            next = Math.min(next, map[0]);
+        }
+    }
+    const classified = groups.map((g, i) => ({ group: g, classification: classify(tokens, g, lines, nextStarts[i]) }));
     const laid: LaidOut[] = [];
     let cursor = 0;
     let lastMapped: LaidOut | null = null;
@@ -428,7 +744,7 @@ export function groupSourceBlocks(tokens: readonly Token[], lines: readonly Sour
             continue;
         }
         let s = group.map[0];
-        const e = trimTrailingBlank(lines, s, group.map[1]);
+        const e = trimTrailingBlank(lines, s, Math.max(group.map[1], classification.endLine ?? 0));
         const prev = lastMapped as LaidOut | null;
         // Every token of one include expansion carries the directive's line; the
         // consecutive top-level groups they form are one atom standing for it.
@@ -459,6 +775,9 @@ export function groupSourceBlocks(tokens: readonly Token[], lines: readonly Sour
                     reason: `${tokens[group.start].type} overlapping lines an earlier block holds`,
                     injectedKind: 'generated',
                     mark: null,
+                    attrs: null,
+                    spanLiterals: [],
+                    endLine: null,
                 },
                 tokenRange: [group.start, group.end],
                 lineRange: null,
@@ -487,6 +806,8 @@ export function groupSourceBlocks(tokens: readonly Token[], lines: readonly Sour
         gap: l.lineRange === null ? '' : sliceLines(lines, l.gapStart, l.lineRange[0]),
         injectedKind: l.classification.injectedKind,
         mark: l.classification.mark,
+        attrs: l.classification.attrs,
+        spanLiterals: l.classification.spanLiterals,
     }));
     return { blocks, tail };
 }

@@ -1,7 +1,18 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
-import { parseDocument } from '../../../src/editor';
-import { conformanceDocument, hostEngine, readText, topChildren } from './helpers';
+import { groupSourceBlocks, parseDocument, splitLines } from '../../../src/editor';
+import { conformanceDocument, constructsFixture, hostEngine, readText, topChildren } from './helpers';
+
+/** FR-CON's raw blocks: each one's first line and the reason `blocks.ts` gives. */
+const FR_CON_RAW: [string, string][] = [
+    ['<!-- include: legal-notice -->', 'html_block'],
+    ['| Construct | Kept by the default serializer | Owner |', 'table_open'],
+    ['<!-- requirement-summary: FR-CON-001 -->', 'html_block'],
+    ['| Field | Value |', 'table_open'],
+    ['<details>', 'html_block'],
+    ['</details>', 'html_block'],
+    ['An authored inline element: press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>V</kbd> to', 'inline html_inline'],
+];
 
 /**
  * Which top-level blocks of Req Explorer's conformance document the editor may
@@ -123,6 +134,13 @@ suite('Editor block classification (FR-CON.md)', () => {
         assert.deepStrictEqual(rule.map(b => b.type.name), ['horizontal_rule']);
     });
 
+    check('every block that stays raw, and why: HTML, tables and markup inside a paragraph — the stage-3 constructs are not in this corpus', () => {
+        const text = readText(fixture.file).replace(/\r\n/g, '\n');
+        const { blocks: grouped } = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text));
+        const raw = grouped.filter(b => b.kind === 'raw').map(b => [(b.src ?? '').split('\n')[0], b.reason]);
+        assert.deepStrictEqual(raw, FR_CON_RAW);
+    });
+
     check('a block\'s src stops before the blank line markdown-it counts into a list\'s map; that line is the next gap', () => {
         const bullets = block('- A bullet list item.');
         assert.ok((bullets.attrs.src as string).endsWith('outer level.\n'));
@@ -130,3 +148,75 @@ suite('Editor block classification (FR-CON.md)', () => {
         assert.strictEqual(ordered.attrs.gap, '\n');
     });
 });
+
+/**
+ * The same over this repository's fixture, which holds every construct the
+ * extension renders: which blocks are rich text since stage 3 (attributes,
+ * spans, containers, admonitions), and why each of the others is a source block.
+ */
+suite('Editor block classification (constructs.md)', () => {
+    const text = readText(constructsFixture).replace(/\r\n/g, '\n');
+    const grouped = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text)).blocks;
+    const blocks = topChildren(parseDocument(hostEngine(), text).doc);
+
+    /** The one top-level block whose source starts with `prefix`, and its classification. */
+    function block(prefix: string): { node: Node; reason: string } {
+        const at = grouped.map((b, i) => ((b.src ?? '').startsWith(prefix) ? i : -1)).filter(i => i >= 0);
+        assert.strictEqual(at.length, 1, `exactly one block starting with ${JSON.stringify(prefix)}`);
+        return { node: blocks[at[0]], reason: grouped[at[0]].reason };
+    }
+
+    test('admonitions, with a title and without, and containers, nested one level, are nodes holding their blocks', () => {
+        const titled = block('!!! note "A titled note"').node;
+        assert.deepStrictEqual([titled.type.name, titled.attrs.type, titled.attrs.title], ['admonition', 'note', 'A titled note']);
+        const untitled = block('!!! tip').node;
+        assert.deepStrictEqual([untitled.type.name, untitled.attrs.title, untitled.child(1).type.name], ['admonition', '', 'bullet_list']);
+        const warning = block('::: warning').node;
+        assert.deepStrictEqual([warning.type.name, warning.attrs.name], ['container', 'warning']);
+        const outer = block(':::: note-box wide').node;
+        assert.deepStrictEqual([outer.type.name, outer.attrs.name, outer.attrs.info, outer.attrs.markup], ['container', 'note-box', ' wide', '::::']);
+        const kinds: string[] = [];
+        outer.forEach(child => kinds.push(child.type.name));
+        assert.deepStrictEqual(kinds, ['paragraph', 'bullet_list', 'container']);
+    });
+
+    test('block attributes are kept where they were written: end of line, own line under a paragraph or a list, a fence\'s line', () => {
+        const suffix = (prefix: string) => [block(prefix).node.type.name, block(prefix).node.attrs.attrsSuffix, block(prefix).node.attrs.attrsPlacement];
+        assert.deepStrictEqual(suffix('A paragraph with a class.'), ['paragraph', '{.lead}', 'end']);
+        assert.deepStrictEqual(suffix('A class on its own line'), ['paragraph', '{.aside}', 'line']);
+        assert.deepStrictEqual(suffix('- A list\n- with a class'), ['bullet_list', '{.checklist}', 'line']);
+        assert.deepStrictEqual(suffix('```js {.numbered}'), ['code_block', '{.numbered}', 'end']);
+    });
+
+    test('attribute spans are rich text, each literal as written', () => {
+        const p = block('A [styled span]').node;
+        const literals: string[] = [];
+        p.forEach(child => {
+            const span = child.marks.find(m => m.type.name === 'attr_span');
+            if (span && !literals.includes(span.attrs.literal as string)) {
+                literals.push(span.attrs.literal as string);
+            }
+        });
+        assert.deepStrictEqual([p.type.name, literals], ['paragraph', ['{#s1 .accent style="color: red"}', '{class="a b"}']]);
+    });
+
+    test('what stays raw, and why: the TOC, a setext heading, tables, footnotes, definition lists, task lists, inline HTML, abbreviations, reference definitions', () => {
+        const raw = grouped.filter(b => b.kind === 'raw').map(b => [(b.src ?? '').split('\n')[0], b.reason]);
+        assert.deepStrictEqual(raw, CONSTRUCTS_RAW);
+    });
+});
+
+/** constructs.md's raw blocks: each one's first line and the reason `blocks.ts` gives. */
+const CONSTRUCTS_RAW: [string, string][] = [
+    ['[[toc]]', 'toc_open'],
+    ['Setext heading', 'setext heading: its underline has no place in the heading node'],
+    ['| Left | Centre | Right |', 'table_open'],
+    ['A sentence with a footnote.[^first]', 'inline footnote_ref'],
+    ['[^first]: The footnote body.', 'source lines no token accounts for'],
+    ['Term', 'dl_open'],
+    ['- [ ] An open task', 'inline checkbox_input'],
+    ['Press <kbd>Ctrl</kbd> or [[Ctrl+S]], ==mark== this, H~2~O and x^2^, :smile:, ~~gone~~.', 'inline html_inline'],
+    ['*[HTML]: HyperText Markup Language', 'source lines no token accounts for'],
+    ['An abbreviation: HTML.', 'inline abbr_open'],
+    ['[ref]: https://example.net/ref', 'source lines no token accounts for'],
+];

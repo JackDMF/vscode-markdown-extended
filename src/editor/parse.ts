@@ -5,11 +5,13 @@ import { MarkdownParser } from 'prosemirror-markdown';
 import { Attrs, Node } from 'prosemirror-model';
 import { Environment, MarkdownIt, Options, Token } from '../@types/markdown-it';
 import {
+    BlockAttrs,
     InjectionMark,
     NOTE_OPEN_TOKENS,
     SourceBlock,
     detectEol,
     findAttrsSuffix,
+    findEndLiteral,
     groupSourceBlocks,
     injectionMarkOf,
     splitLines,
@@ -189,9 +191,14 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     };
 
     // Attributes MarkdownParser cannot derive from a token alone: the source
-    // slice of a top-level block, and a heading's lifted prefix.
+    // slice of a top-level block and its attribute literal, a heading's lifted
+    // prefix, an admonition's title (its tokens are not in the stream), and the
+    // literal each attribute span was written with.
     const topAttrs = new WeakMap<object, { src: string | null; gap: string | null }>();
+    const blockAttrs = new WeakMap<object, BlockAttrs>();
     const headingPrefix = new WeakMap<object, string>();
+    const admonitionTitle = new WeakMap<object, string>();
+    const spanLiteral = new WeakMap<object, string>();
     const stream: StreamToken[] = [];
 
     for (const block of blocks) {
@@ -214,11 +221,26 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             case 'editable': {
                 const [start, end] = block.tokenRange;
                 topAttrs.set(tokens[start], { src: block.src, gap: block.gap });
+                if (block.attrs !== null) {
+                    blockAttrs.set(tokens[start], block.attrs);
+                }
+                let span = 0;
                 for (let i = start; i < end; i++) {
                     const t = tokens[i];
+                    if (t.type === 'admonition_title_open') {
+                        // The title is the admonition's attribute, not a block of its body.
+                        admonitionTitle.set(tokens[i - 1], (tokens[i + 1]?.content ?? '').trim());
+                        i += 2;
+                        continue;
+                    }
                     if (t.type !== 'inline') {
                         stream.push(t as unknown as StreamToken);
                         continue;
+                    }
+                    for (const child of t.children ?? []) {
+                        if (child.type === 'span_open') {
+                            spanLiteral.set(child, block.spanLiterals[span++]);
+                        }
                     }
                     let children = preprocessInline(engine, env, t.children ?? []);
                     const opener = tokens[i - 1];
@@ -237,6 +259,10 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     }
 
     const sourceOf = (tok: StreamToken) => topAttrs.get(tok) ?? { src: null, gap: null };
+    const suffixOf = (tok: StreamToken) => {
+        const found = blockAttrs.get(tok);
+        return { attrsSuffix: found?.suffix ?? null, attrsPlacement: found?.placement ?? null };
+    };
     const own = (tok: StreamToken): Attrs => tok.pmAttrs ?? {};
     const real = (tok: StreamToken) => tok as unknown as Token;
 
@@ -253,12 +279,25 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             block: 'paragraph',
             getAttrs: (tok, s, i) => {
                 const map = real(tok).map;
-                const source = map ? lines.slice(map[0], map[1]).map(l => l.text) : [];
-                const content = (s[i + 1]?.type === 'inline' ? s[i + 1].content : '').split('\n');
+                let source = map ? lines.slice(map[0], map[1]).map(l => l.text) : [];
+                let content = (s[i + 1]?.type === 'inline' ? s[i + 1].content : '').split('\n');
+                // The width is the text's: the attribute literal is written after
+                // it is wrapped (`serialize.ts`), so it is no evidence of the width.
+                const literal = blockAttrs.get(tok);
+                if (literal?.placement === 'line') {
+                    source = source.slice(0, -1);
+                    content = content.slice(0, -1);
+                } else if (literal?.placement === 'end') {
+                    const strip = (all: string[]) => all.map((l, k) => (k === all.length - 1 && l.trimEnd().endsWith(literal.suffix)
+                        ? l.trimEnd().slice(0, -literal.suffix.length).trimEnd() : l));
+                    source = strip(source);
+                    content = strip(content);
+                }
                 return {
                     ...sourceOf(tok),
                     wrapWidth: measureWrapWidth(source, content),
                     lineWidth: measureLineWidth(source),
+                    ...suffixOf(tok),
                 };
             },
         },
@@ -277,9 +316,33 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             },
         },
         blockquote: { block: 'blockquote', getAttrs: tok => ({ ...sourceOf(tok) }) },
+        container_container: {
+            block: 'container',
+            getAttrs: tok => {
+                // `info` is the opening line after the fence (` warning big`).
+                const [, name, info] = /^\s*(\S*)([\s\S]*)$/.exec(real(tok).info) ?? ['', '', ''];
+                return { ...sourceOf(tok), name, info, markup: real(tok).markup || ':::' };
+            },
+        },
+        admonition: {
+            block: 'admonition',
+            getAttrs: tok => {
+                const t = real(tok);
+                const line = t.map ? lines[t.map[0]]?.text ?? '' : '';
+                const marker = line.indexOf(t.markup);
+                return {
+                    ...sourceOf(tok),
+                    type: t.info.trim() || 'note',
+                    title: admonitionTitle.get(tok) ?? '',
+                    markup: t.markup || '!!!',
+                    // From the marker on: a quote's `> ` or a list's indentation is not the header's.
+                    header: marker < 0 ? null : line.slice(marker),
+                };
+            },
+        },
         bullet_list: {
             block: 'bullet_list',
-            getAttrs: (tok, s, i) => ({ ...sourceOf(tok), bullet: real(tok).markup || '-', tight: listIsTight(s, i) }),
+            getAttrs: (tok, s, i) => ({ ...sourceOf(tok), bullet: real(tok).markup || '-', tight: listIsTight(s, i), ...suffixOf(tok) }),
         },
         ordered_list: {
             block: 'ordered_list',
@@ -288,20 +351,36 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 order: Number(attr(real(tok), 'start') ?? 1),
                 delimiter: real(tok).markup || '.',
                 tight: listIsTight(s, i),
+                ...suffixOf(tok),
             }),
         },
         list_item: { block: 'list_item' },
         fence: {
             block: 'code_block',
             noCloseToken: true,
-            getAttrs: tok => ({ ...sourceOf(tok), params: real(tok).info || '', markup: real(tok).markup || '```' }),
+            getAttrs: tok => ({ ...sourceOf(tok), params: real(tok).info || '', markup: real(tok).markup || '```', ...suffixOf(tok) }),
         },
         code_block: {
             block: 'code_block',
             noCloseToken: true,
             getAttrs: tok => ({ ...sourceOf(tok), params: '', markup: '' }),
         },
-        hr: { node: 'horizontal_rule', getAttrs: tok => ({ ...sourceOf(tok), markup: real(tok).markup || '---' }) },
+        hr: {
+            node: 'horizontal_rule',
+            getAttrs: tok => {
+                // markdown-it-attrs turns `--- {#id}` into a rule whose markup is
+                // the whole line; the literal is `attrsSuffix`, the rule the rest.
+                const suffix = suffixOf(tok);
+                let markup = real(tok).markup || '---';
+                const literal = suffix.attrsSuffix === null ? null : findEndLiteral(markup);
+                if (literal !== null && markup.trimEnd().endsWith(literal)) {
+                    markup = markup.trimEnd().slice(0, -literal.length).trimEnd();
+                }
+                return { ...sourceOf(tok), markup, ...suffix };
+            },
+        },
+        // `[text]{…}`: the literal as the block's source spells it (`recoverSpanLiterals`).
+        span: { mark: 'attr_span', getAttrs: tok => ({ literal: spanLiteral.get(tok) ?? '{}' }) },
         image: {
             node: 'image',
             getAttrs: tok => {

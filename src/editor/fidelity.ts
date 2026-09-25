@@ -225,6 +225,7 @@ export function fidelityPlugin(): Plugin {
 
             if (!undo) {
                 stripDuplicatedIds(after, ancestor, set);
+                stripCopiedSuffixes(after, from, set);
             }
 
             let tr: Transaction | null = null;
@@ -234,9 +235,55 @@ export function fidelityPlugin(): Plugin {
                     tr.setNodeMarkup(c.offset, undefined, updates[j]);
                 }
             });
+            if (!undo) {
+                // Positions inside a top-level node are unchanged by setNodeMarkup on it.
+                for (const pos of nestedSuffixes(after, present)) {
+                    tr = tr ?? newState.tr;
+                    const node = tr.doc.nodeAt(pos) as Node;
+                    tr.setNodeMarkup(pos, undefined, { ...node.attrs, attrsSuffix: null, attrsPlacement: null });
+                }
+            }
             return tr;
         },
     });
+}
+
+/**
+ * The attribute-literal rule of `fidelityPlugin`, for every block but a heading
+ * (whose literal is its anchor, `stripDuplicatedIds`): a top-level block that
+ * descends from none loses the literal it carries. Splitting a paragraph copies
+ * its attributes into the second half, and `{#id}` written twice is two elements
+ * with one id; the half that stands where the paragraph stood keeps it.
+ */
+function stripCopiedSuffixes(after: Child[], from: number[], set: (j: number, key: string, value: unknown) => void): void {
+    after.forEach((c, j) => {
+        if (from[j] < 0 && c.node.type.name !== 'heading' && (c.node.attrs.attrsSuffix ?? null) !== null) {
+            set(j, 'attrsSuffix', null);
+            set(j, 'attrsPlacement', null);
+        }
+    });
+}
+
+/**
+ * Nested blocks of a changed top-level node that carry an attribute literal,
+ * by position. Only a top-level block's literal is written (`serialize.ts`): a
+ * paragraph wrapped into a quote or a list would keep drawing a class the file
+ * no longer holds, so it loses it — the page shows what will be saved.
+ */
+function nestedSuffixes(after: Child[], present: ReadonlySet<Node>): number[] {
+    const out: number[] = [];
+    for (const c of after) {
+        if (present.has(c.node) || c.node.isTextblock || c.node.isAtom) {
+            continue;
+        }
+        c.node.descendants((node, pos) => {
+            if ((node.attrs.attrsSuffix ?? null) !== null && node.type.name !== 'heading') {
+                out.push(c.offset + 1 + pos);
+            }
+            return !node.isTextblock;
+        });
+    }
+    return out;
 }
 
 /** The heading rule of `fidelityPlugin`: a heading that newly carries a duplicated id loses it. */

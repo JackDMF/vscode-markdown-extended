@@ -2,6 +2,7 @@
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
+import { NOTE_SYNTAX_CHARS } from './attrs';
 import { NOTE_NODES, SOURCE_NODES, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
 
@@ -36,6 +37,8 @@ interface StateInternals {
     notePart?: NotePart;
     /** The marker character of the note being written (`+`, `!`), when one is; this module's own field. */
     noteMarker?: string;
+    /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
+    flushClose(size?: number): void;
 }
 
 /**
@@ -243,6 +246,12 @@ function backtickFence(text: string): { open: string; close: string } {
 const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // The decoration is Req Explorer's wrapper; only the text it wraps is in the file.
     req_ref: { open: '', close: '', mixable: true },
+    // `[text]{literal}`, the literal as it was read (`blocks.ts`). No line break
+    // may fall between `]` and `{`, nor inside the literal: they are held.
+    attr_span: {
+        open: '[',
+        close: (_state, mark) => HOLD_OPEN + ']' + (mark.attrs.literal as string) + HOLD_CLOSE,
+    },
     em: {
         open: (_state, mark, parent, index) => emphasisDelimiter(mark, parent, index, true, '*'),
         close: (_state, mark, parent, index) => emphasisDelimiter(mark, parent, index, false, '*'),
@@ -410,7 +419,10 @@ function noteUnwritable(note: Node): string | null {
             const text = child.text ?? '';
             const code = child.marks.some(m => m.type.name === 'code');
             const raw = code || child.marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
-            if (raw && terminator !== null && text.includes(terminator)) {
+            const span = child.marks.find(m => m.type.name === 'attr_span' && NOTE_SYNTAX_CHARS.test(m.attrs.literal as string));
+            if (span !== undefined) {
+                reason = `An attribute span in a note cannot hold ${span.attrs.literal as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+            } else if (raw && terminator !== null && text.includes(terminator)) {
                 reason = `Inline code, superscript and subscript in this part of a note cannot hold "${terminator}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
             } else if (code && marker !== null && text.includes(marker)) {
                 reason = `Inline code in a note cannot hold "${marker}": the notes plugin reads it as the note's end, and nothing escapes it there.`;
@@ -615,7 +627,9 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
                 longest = Math.max(longest, run.trim().length);
             }
             const fence = longest >= markup.length ? ch.repeat(longest + 1) : markup;
-            state.write(fence + params + '\n');
+            // A fence's attribute literal stands on its opening line (`blocks.ts`).
+            const suffix = node.attrs.attrsSuffix as string | null;
+            state.write(fence + params + (suffix ? ` ${suffix}` : '') + '\n');
             state.text(content, false);
             state.write('\n');
             state.write(fence);
@@ -625,7 +639,117 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             state.write(String(node.attrs.markup || '---'));
             state.closeBlock(node);
         },
+        container(state, node) {
+            // `::: name info`, the body at the container's own indentation, and the fence again.
+            const fence = containerFence(node);
+            const name = node.attrs.name as string;
+            state.write(fence + (name === '' ? '' : ` ${name}`) + (node.attrs.info as string));
+            state.ensureNewLine();
+            if (!onlyEmptyParagraph(node)) {
+                state.renderContent(node);
+            }
+            internals(state).flushClose(1);
+            state.write(fence);
+            state.closeBlock(node);
+        },
+        admonition(state, node) {
+            // `!!! type "Title"`, the body indented by four (the plugin's `blkIndent + 4`).
+            state.write(admonitionHeader(node));
+            if (onlyEmptyParagraph(node)) {
+                // A body of one empty paragraph is no line at all, not a line of spaces.
+                state.closeBlock(node);
+                return;
+            }
+            state.ensureNewLine();
+            state.wrapBlock(ADMONITION_INDENT, null, node, () => state.renderContent(node));
+        },
     }, marks, { escapeExtraCharacters: ESCAPE_EXTRA });
+}
+
+/** How far an admonition's body is indented: `markdownItAdmonition.ts` reads it at `blkIndent + 4`. */
+export const ADMONITION_INDENT = '    ';
+
+/** Whether a container's or an admonition's whole body is one empty paragraph, as a new one is. */
+function onlyEmptyParagraph(node: Node): boolean {
+    return node.childCount === 1 && node.child(0).type.name === 'paragraph' && node.child(0).content.size === 0;
+}
+
+/**
+ * An admonition's opening line: as it was written while its type and title are
+ * what the line says (`header`), else `!!! type "Title"` — the quoted form, which
+ * the plugin reads for every title, a first word that is a type included — or
+ * `!!! type` for none.
+ */
+export function admonitionHeader(node: Node): string {
+    const header = node.attrs.header as string | null;
+    if (header !== null) {
+        return header;
+    }
+    const title = node.attrs.title as string;
+    return `${String(node.attrs.markup || '!!!')} ${node.attrs.type as string}${title === '' ? '' : ` "${title}"`}`;
+}
+
+/**
+ * The fence a container is written with: as written, unless something inside
+ * would close it early — markdown-it-container ends a container at the first
+ * line of colons at least as long as its own fence, whatever it is nested in
+ * but an indented block. A container inside it (its own fence, as this
+ * function writes it) or a line of colons in a code block inside it make the
+ * fence one colon longer than the longest of them.
+ */
+export function containerFence(node: Node): string {
+    let longest = 0;
+    node.descendants(inner => {
+        if (inner.type.name === 'container') {
+            longest = Math.max(longest, containerFence(inner).length);
+            return false;
+        }
+        if (inner.type.name === 'code_block') {
+            for (const m of inner.textContent.matchAll(/^ {0,3}(:{3,})[ \t]*$/gm)) {
+                longest = Math.max(longest, m[1].length);
+            }
+        }
+        return true;
+    });
+    const markup = String(node.attrs.markup || ':::');
+    return longest >= markup.length ? ':'.repeat(longest + 1) : markup;
+}
+
+/** The list forms a `{…}` under the last line is read back for: every item's first paragraph a lazy line away from it, no nested list the plugin could give it to. */
+function listTakesLineLiteral(list: Node): boolean {
+    let nested = false;
+    list.descendants(n => {
+        nested = nested || n.type.name === 'bullet_list' || n.type.name === 'ordered_list';
+        return !nested;
+    });
+    const last = list.lastChild;
+    return !nested && last !== null && last.childCount === 1 && last.child(0).type.name === 'paragraph';
+}
+
+/**
+ * A changed top-level block's text with its attribute literal where it stood
+ * (`attrsPlacement`, see `AttrsPlacement` in `blocks.ts`): after a space at the
+ * end of its last line, on a line of its own under it, or — for a list — under a
+ * blank line. A list whose last item the literal would no longer reach through
+ * a lazy line (a second block in it, a nested list the plugin would hand the
+ * literal to) takes the blank-line form, which the plugin always gives the
+ * list. A heading and a fence write theirs themselves; an empty paragraph is
+ * the literal alone, which the plugin reads as the same empty paragraph.
+ */
+function withBlockSuffix(node: Node, text: string): string {
+    const suffix = node.attrs.attrsSuffix as string | null | undefined;
+    const name = node.type.name;
+    if (!suffix || name === 'heading' || name === 'code_block') {
+        return text;
+    }
+    if (text === '') {
+        return suffix;
+    }
+    const placement = (node.attrs.attrsPlacement as string | null) ?? 'end';
+    if (name === 'bullet_list' || name === 'ordered_list') {
+        return text + (placement === 'line' && listTakesLineLiteral(node) ? '\n' : '\n\n') + suffix;
+    }
+    return placement === 'end' ? `${text.replace(/[ \t]+$/, '')} ${suffix}` : `${text}\n${suffix}`;
 }
 
 /**
@@ -641,7 +765,7 @@ export function serializeInline(node: Node): string {
 /** One editable node written by rule, with `\n` line breaks and no trailing newline. */
 export function serializeNode(node: Node, options: SerializeOptions): string {
     const doc = editorSchema.topNodeType.create(null, [node]);
-    return blockSerializer(options).serialize(doc);
+    return withBlockSuffix(node, blockSerializer(options).serialize(doc));
 }
 
 /**
@@ -666,7 +790,7 @@ export function serializeDocument(parsed: { doc: Node; eol: '\n' | '\r\n'; tail:
         if (name === 'front_matter' || SOURCE_NODES.has(name) || (src !== null && src !== undefined)) {
             body = src ?? '';
         } else {
-            const text = serializer.serialize(editorSchema.topNodeType.create(null, [node]));
+            const text = withBlockSuffix(node, serializer.serialize(editorSchema.topNodeType.create(null, [node])));
             body = text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
         }
         if (body === '') {

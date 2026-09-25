@@ -1,6 +1,7 @@
 import * as assert from 'assert';
-import { DOMSerializer, Node } from 'prosemirror-model';
+import { Node } from 'prosemirror-model';
 import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
+import { drawInline } from './fakeDom';
 import { hostEngine, topChildren, touched } from './helpers';
 
 const schema = editorSchema;
@@ -38,47 +39,9 @@ function shape(node: Node): string {
     return `${marks}${node.type.name}(${inner.join(' ')})`;
 }
 
-// ---------------------------------------------------------------------------
-// A DOM small enough for DOMSerializer, so the schema's drawing can be read in
-// the extension host, where there is no document.
-// ---------------------------------------------------------------------------
-
-const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-class FakeNode {
-    readonly childNodes: FakeNode[] = [];
-    constructor(readonly nodeType: number, readonly tag = '', readonly text = '') { }
-    readonly attrs: [string, string][] = [];
-    appendChild(child: FakeNode): FakeNode {
-        this.childNodes.push(child);
-        return child;
-    }
-    setAttribute(name: string, value: string): void {
-        this.attrs.push([name, value]);
-    }
-    html(): string {
-        if (this.nodeType === 3) {
-            return escapeHtml(this.text);
-        }
-        const inner = this.childNodes.map(c => c.html()).join('');
-        if (this.nodeType === 11) {
-            return inner;
-        }
-        const attrs = this.attrs.map(([n, v]) => ` ${n}="${escapeHtml(v)}"`).join('');
-        return `<${this.tag}${attrs}>${inner}</${this.tag}>`;
-    }
-}
-
-const fakeDocument = {
-    createElement: (tag: string) => new FakeNode(1, tag),
-    createTextNode: (text: string) => new FakeNode(3, '', text),
-    createDocumentFragment: () => new FakeNode(11),
-};
-
 /** The inline content of a textblock as the editor draws it, with the reference's own wrapper removed — the plugin emits none. */
 function drawn(block: Node): string {
-    const fragment = DOMSerializer.fromSchema(schema).serializeFragment(block.content, { document: fakeDocument as unknown as Document });
-    return (fragment as unknown as FakeNode).html().replace(/<span data-mep-note-ref="">((?:(?!<\/?span).)*)<\/span>/g, '$1');
+    return drawInline(block.content).html().replace(/<span data-mep-note-ref="">((?:(?!<\/?span).)*)<\/span>/g, '$1');
 }
 
 suite('Editor inline constructs: parsed as rich text', () => {

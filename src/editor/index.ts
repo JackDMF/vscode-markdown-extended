@@ -12,16 +12,19 @@ export {
     EDITABLE_INLINE_TOKENS,
     EDITABLE_TOP_LEVEL_TOKENS,
     INJECTION_META_KEY,
+    MAX_WRAPPER_DEPTH,
     detectEol,
     findAttrsSuffix,
+    findEndLiteral,
     groupSourceBlocks,
     injectionMarkOf,
     isBlankLine,
     sliceLines,
     splitLines,
 } from './blocks';
-export type { BlockKind, GroupedBlocks, InjectedKind, InjectionMark, SourceBlock, SourceLine } from './blocks';
-export { EDITABLE_TOP_NODES, SOURCE_NODES, editorSchema } from './schema';
+export type { AttrsPlacement, BlockAttrs, BlockKind, GroupedBlocks, InjectedKind, InjectionMark, SourceBlock, SourceLine } from './blocks';
+export { EDITABLE_TOP_NODES, SOURCE_NODES, SUFFIX_NODES, WRAPPER_NODES, editorSchema } from './schema';
+export { domAttrsOf, normalizedLiteral, parseAttrsLiteral } from './attrs';
 export type { EditorSchema } from './schema';
 export { parseDocument, parsedDocumentFromJSON, parsedDocumentToJSON } from './parse';
 export type { ParsedDocument, ParsedDocumentJSON } from './parse';

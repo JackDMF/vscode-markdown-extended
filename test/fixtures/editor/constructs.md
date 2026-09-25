@@ -24,6 +24,23 @@ Setext heading
 A container with a class name.
 :::
 
+!!! tip
+    An admonition without a title, its body a list:
+
+    - one
+    - two
+
+:::: note-box wide
+A container holding a list and a container of its own:
+
+- first
+- second
+
+::: inner
+Nested one level.
+:::
+::::
+
 ## Annotations
 
 Text with ++a sidenote|the note body++ in it, and !!a marginal note|its body!! too.
@@ -61,6 +78,15 @@ An abbreviation: HTML.
 
 A paragraph with a class. {.lead}
 
+A [styled span]{#s1 .accent style="color: red"} and [a second one]{class="a b"} in one paragraph.
+
+A class on its own line under the paragraph
+{.aside}
+
+- A list
+- with a class
+{.checklist}
+
 An autolinked URL https://example.com/path and an angle one <https://example.org>.
 
 ![An image](images/logo.png "Logo")
@@ -92,5 +118,9 @@ A [reference link][ref] to somewhere.
 ~~~python
 print("tilde fence")
 ~~~
+
+```js {.numbered}
+const fenced = true;
+```
 
 ***

@@ -1,5 +1,6 @@
 import { DOMOutputSpec, DOMParser, Fragment, Mark, Node, NodeSpec, Schema } from 'prosemirror-model';
-import { NOTE_SYNTAX } from '../syntax/markers';
+import { ADMONITION_TYPES, NOTE_SYNTAX } from '../syntax/markers';
+import { domAttrsOf } from './attrs';
 
 /**
  * The rich editor's document model, shared by the extension host (which parses
@@ -24,15 +25,69 @@ import { NOTE_SYNTAX } from '../syntax/markers';
  * and is attached by a node view, not by the schema.
  *
  * Inline, a textblock holds text under the marks at the end of this file —
- * CommonMark's and this extension's own (`==`, `^`, `~`, `~~`, `[[…]]`) —
- * images, hard breaks, Req Explorer's badges, and the note family (sidenotes,
- * marginal notes, sidebars), each drawn as the element the engine renders.
+ * CommonMark's and this extension's own (`==`, `^`, `~`, `~~`, `[[…]]`), and an
+ * attribute span (`[text]{…}`) — images, hard breaks, Req Explorer's badges,
+ * and the note family (sidenotes, marginal notes, sidebars), each drawn as the
+ * element the engine renders.
+ *
+ * Two editable nodes hold blocks of their own and mirror their plugin's DOM:
+ * `container` (`::: name info` … `:::`, a `div` with the info's classes) and
+ * `admonition` (`!!! type "Title"`, `div.admonition.<type>`, its title drawn by
+ * the page as the plugin's `p.admonition-title`, see `admonitionTitleSpec`).
+ *
+ * A `{…}` attribute literal is kept verbatim wherever the editor edits it — the
+ * span mark's `literal`, a top-level block's `attrsSuffix` — and the element is
+ * drawn with the attributes the literal gives (`domAttrsOf`), so the page's
+ * stylesheets style it as they style the preview.
  */
 
 /** The top-level editable node types, whose `src` the fidelity plugin clears on change. */
 export const EDITABLE_TOP_NODES: ReadonlySet<string> = new Set([
     'paragraph', 'heading', 'bullet_list', 'ordered_list', 'blockquote', 'code_block', 'horizontal_rule',
+    'container', 'admonition',
 ]);
+
+/** The nodes that hold blocks and are written around them: a container and an admonition. */
+export const WRAPPER_NODES: ReadonlySet<string> = new Set(['container', 'admonition']);
+
+/** The nodes that carry a block attribute literal (`attrsSuffix`); a heading carries one too, with its anchor. */
+export const SUFFIX_NODES: ReadonlySet<string> = new Set(['paragraph', 'heading', 'bullet_list', 'ordered_list', 'code_block', 'horizontal_rule']);
+
+/**
+ * A top-level block's `{…}` literal, verbatim, and where it stood
+ * (`AttrsPlacement` in `blocks.ts`: `end`, `line`, `blank`). Both `null` on a
+ * block that has none; a nested block never carries one (`fidelity.ts`).
+ */
+const suffixAttrs = {
+    attrsSuffix: { default: null as string | null },
+    attrsPlacement: { default: null as string | null },
+};
+
+/** The attributes the block's literal gives, merged under the ones the node draws itself. */
+function withSuffix(node: Node, own: Record<string, string | null> = {}): Record<string, string | null> {
+    return { ...domAttrsOf(node.attrs.attrsSuffix as string | null), ...own };
+}
+
+/** The class a container is drawn with: `markdownItContainer.ts` puts the whole info, trimmed, in its `class`. */
+export function containerClass(name: string, info: string): string {
+    return `${name}${info}`.trim();
+}
+
+/**
+ * An admonition's title bar as `markdownItAdmonition.ts` renders it:
+ * `p.admonition-title`, the first child of `div.admonition`. A content hole
+ * must be the only child of its element, so the schema cannot draw it beside
+ * the body; the page puts it there as a widget (`webview/wrappers.ts`) and a
+ * test puts it there the same way when comparing with the engine.
+ */
+export function admonitionTitleSpec(title: string): DOMOutputSpec {
+    return ['p', { class: 'admonition-title', contenteditable: 'false', 'data-mep-admonition-title': '' }, title];
+}
+
+/** The type an admonition's classes name: the first known one, else `note`, as the plugin decides. */
+function admonitionTypeOf(dom: HTMLElement): string {
+    return Array.from(dom.classList).find(c => c !== 'admonition' && ADMONITION_TYPES.includes(c)) ?? 'note';
+}
 
 /** The top-level node types emitted from `src` whatever happens to them. */
 export const SOURCE_NODES: ReadonlySet<string> = new Set(['front_matter', 'raw_block', 'injected_block']);
@@ -47,7 +102,11 @@ function headingDOM(node: Node): DOMOutputSpec {
     const level = node.attrs.level as number;
     const anchor = node.attrs.anchor as string | null;
     const prefix = node.attrs.reqPrefix as string | null;
-    const attrs: Record<string, string> = anchor ? { id: anchor } : {};
+    // Everything the suffix gives (`{#id .unnumbered}`), the anchor as the id.
+    const attrs: Record<string, string> = domAttrsOf(node.attrs.attrsSuffix as string | null);
+    if (anchor) {
+        attrs.id = anchor;
+    }
     if (prefix) {
         // The requirement id is read-only (the anchor migration owns it), so it
         // sits outside the content hole where no keystroke reaches it.
@@ -195,9 +254,11 @@ export const editorSchema = new Schema({
                 wrapWidth: { default: null as number | null },
                 /** For a paragraph that was one line: that line's width. Wrapped at the larger of it and the default (`measureLineWidth`). */
                 lineWidth: { default: null as number | null },
+                ...suffixAttrs,
             },
-            parseDOM: [{ tag: 'p' }],
-            toDOM(): DOMOutputSpec { return ['p', 0]; },
+            // An admonition's title bar is its node's attribute, never a paragraph of its body.
+            parseDOM: [{ tag: 'p.admonition-title', ignore: true }, { tag: 'p' }],
+            toDOM(node): DOMOutputSpec { return ['p', withSuffix(node), 0]; },
         },
         heading: {
             // A note is written inside the heading's one line; a hard break is not.
@@ -225,6 +286,59 @@ export const editorSchema = new Schema({
             parseDOM: [{ tag: 'blockquote' }],
             toDOM(): DOMOutputSpec { return ['blockquote', 0]; },
         },
+        container: {
+            content: 'block+',
+            group: 'block',
+            defining: true,
+            attrs: {
+                ...sourceAttrs,
+                /** The first word of the opening line's info: `warning` in `::: warning big`. */
+                name: { default: '' },
+                /** The rest of the info after the name, verbatim (` big`, its leading space included). */
+                info: { default: '' },
+                /** The fence as written, `:::` or longer; the serializer lengthens it around a nested one. */
+                markup: { default: ':::' },
+            },
+            parseDOM: [{
+                tag: 'div[data-mep-container]',
+                getAttrs: (dom: HTMLElement) => ({ name: dom.getAttribute('data-mep-container') ?? '', info: dom.getAttribute('data-mep-info') ?? '' }),
+            }],
+            toDOM(node): DOMOutputSpec {
+                const name = node.attrs.name as string;
+                const info = node.attrs.info as string;
+                return ['div', { class: containerClass(name, info), 'data-mep-container': name, 'data-mep-info': info }, 0];
+            },
+        },
+        admonition: {
+            content: 'block+',
+            group: 'block',
+            defining: true,
+            attrs: {
+                ...sourceAttrs,
+                /** One of `ADMONITION_TYPES`: the second class of `div.admonition`. */
+                type: { default: 'note' },
+                /** The title bar's text, as written between the quotes; `''` for none (no title bar). */
+                title: { default: '' },
+                /** The marker as written, `!!!` or longer. */
+                markup: { default: '!!!' },
+                /**
+                 * The opening line as written, while type and title are what it says:
+                 * a changed body keeps `!!! note Some title` instead of rewriting it
+                 * as `!!! note "Some title"`. The verbs that change either clear it.
+                 */
+                header: { default: null as string | null },
+            },
+            parseDOM: [{
+                tag: 'div.admonition',
+                getAttrs: (dom: HTMLElement) => ({
+                    type: admonitionTypeOf(dom),
+                    title: dom.getAttribute('data-mep-title') ?? dom.querySelector(':scope > .admonition-title')?.textContent?.trim() ?? '',
+                }),
+            }],
+            toDOM(node): DOMOutputSpec {
+                return ['div', { class: `admonition ${node.attrs.type as string}`, 'data-mep-title': node.attrs.title as string }, 0];
+            },
+        },
         bullet_list: {
             content: 'list_item+',
             group: 'block',
@@ -233,9 +347,10 @@ export const editorSchema = new Schema({
                 /** The bullet character the list was written with. */
                 bullet: { default: '-' },
                 tight: { default: false },
+                ...suffixAttrs,
             },
             parseDOM: [{ tag: 'ul', getAttrs: (dom: HTMLElement) => ({ tight: dom.hasAttribute('data-tight') }) }],
-            toDOM(node): DOMOutputSpec { return ['ul', { 'data-tight': node.attrs.tight ? 'true' : null }, 0]; },
+            toDOM(node): DOMOutputSpec { return ['ul', withSuffix(node, { 'data-tight': node.attrs.tight ? 'true' : null }), 0]; },
         },
         ordered_list: {
             content: 'list_item+',
@@ -246,6 +361,7 @@ export const editorSchema = new Schema({
                 /** `.` or `)`, as written. */
                 delimiter: { default: '.' },
                 tight: { default: false },
+                ...suffixAttrs,
             },
             parseDOM: [{
                 tag: 'ol',
@@ -255,10 +371,10 @@ export const editorSchema = new Schema({
                 }),
             }],
             toDOM(node): DOMOutputSpec {
-                return ['ol', {
+                return ['ol', withSuffix(node, {
                     start: node.attrs.order === 1 ? null : String(node.attrs.order),
                     'data-tight': node.attrs.tight ? 'true' : null,
-                }, 0];
+                }), 0];
             },
         },
         list_item: {
@@ -279,6 +395,7 @@ export const editorSchema = new Schema({
                 params: { default: '' },
                 /** The fence as written (```` ``` ````, `~~~~`, …), or `''` for an indented code block. */
                 markup: { default: '```' },
+                ...suffixAttrs,
             },
             parseDOM: [{
                 tag: 'pre',
@@ -286,18 +403,20 @@ export const editorSchema = new Schema({
                 getAttrs: (dom: HTMLElement) => ({ params: dom.getAttribute('data-params') || '' }),
             }],
             toDOM(node): DOMOutputSpec {
-                return ['pre', node.attrs.params ? { 'data-params': node.attrs.params as string } : {}, ['code', 0]];
+                // The fence's attributes are on its `<code>`, as the engine renders them.
+                return ['pre', node.attrs.params ? { 'data-params': node.attrs.params as string } : {}, ['code', withSuffix(node), 0]];
             },
         },
         horizontal_rule: {
             group: 'block',
             attrs: {
                 ...sourceAttrs,
-                /** The rule as markdown-it normalized it (`---`, `***`, `___`). */
+                /** The rule as markdown-it normalized it (`---`, `***`, `___`), without an attribute suffix. */
                 markup: { default: '---' },
+                ...suffixAttrs,
             },
             parseDOM: [{ tag: 'hr' }],
-            toDOM(): DOMOutputSpec { return ['div', ['hr']]; },
+            toDOM(node): DOMOutputSpec { return ['div', ['hr', withSuffix(node)]]; },
         },
         front_matter: {
             atom: true,
@@ -424,6 +543,23 @@ export const editorSchema = new Schema({
             toDOM(mark: Mark): DOMOutputSpec {
                 const title = mark.attrs.title as string | null;
                 return ['span', title ? { class: 'req-ref', title } : { class: 'req-ref' }, ['code', 0]];
+            },
+        },
+        // `[text]{…}` (markdown-it-bracketed-spans with markdown-it-attrs): a
+        // `<span>` with exactly the attributes the engine renders from the
+        // literal, which is kept verbatim and written back as it was. Outside
+        // the other marks, as its brackets are around them; not inclusive, so
+        // typing after a span is prose.
+        attr_span: {
+            inclusive: false,
+            attrs: {
+                /** The `{…}` as written (`{.a}`, `{class="a b"}`, `{#x .a style="color:red"}`). */
+                literal: {},
+            },
+            parseDOM: [{ tag: 'span[data-mep-attrs]', getAttrs: (dom: HTMLElement) => ({ literal: dom.getAttribute('data-mep-attrs') }) }],
+            toDOM(mark: Mark): DOMOutputSpec {
+                const literal = mark.attrs.literal as string;
+                return ['span', { ...domAttrsOf(literal), 'data-mep-attrs': literal }, 0];
             },
         },
         em: {
