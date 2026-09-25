@@ -8,6 +8,7 @@ import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-li
 import { Command, Plugin } from 'prosemirror-state';
 import { fidelityPlugin } from '../fidelity';
 import { editorSchema } from '../schema';
+import { noteKeymap, notesPlugin } from './notes';
 import { toggleMarkType } from './toolbar/commands';
 
 const nodes = editorSchema.nodes;
@@ -80,11 +81,14 @@ function markdownKeymap(): Plugin {
 export function editorPlugins(): Plugin[] {
     return [
         markdownInputRules(),
+        // Ahead of the Markdown keys: Tab, Enter and Backspace mean something else inside a note.
+        noteKeymap(),
         markdownKeymap(),
         keymap(baseKeymap),
         history(),
         dropCursor(),
         gapCursor(),
+        notesPlugin(),
         fidelityPlugin(),
     ];
 }

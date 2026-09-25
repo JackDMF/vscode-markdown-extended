@@ -262,7 +262,7 @@ export function blockCommand(node: BlockTarget, level?: number): Command {
 }
 
 // ---------------------------------------------------------------------------
-// Stage 1: constructs outside the editable core, written as source
+// Constructs outside the editable core (a footnote, the block constructs), written as source
 // ---------------------------------------------------------------------------
 
 /** What writing source needs from the page. */

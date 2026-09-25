@@ -12,6 +12,9 @@
  *   sample is scaled down with `zoom` until it fits), the syntax beside it.
  * - **The preview card** shows the hovered or focused entry at its natural size,
  *   in a short example, 300 ms after the pointer or the focus reaches it.
+ * - **The bubble** offers, over a text selection, the five native marks, the
+ *   extension's five (highlight, super- and subscript, strikethrough, key)
+ *   and the two notes (`inBubble`).
  *
  * Everything lives inside the page's `body.markdown-body`, so a sample is
  * styled by the same stylesheets as the document; only the chrome is
@@ -25,9 +28,10 @@ import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'p
 import { EditorView } from 'prosemirror-view';
 import { editorSchema } from '../../schema';
 import { editRawSourceAt } from '../nodeViews';
+import { inNoteOf, wrapInNote, wrapNodeLockReason } from '../notes';
 import {
     MENU_LABELS, PREVIEW_CARD_CLASS, ROW_LAYOUT, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
-    inRow, menuOf, submenuOf, tooltipOf,
+    inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertSourceTransaction, isCurrent,
@@ -96,6 +100,10 @@ function evaluate(action: ToolbarAction, state: EditorState): ActionState {
         case 'mark': {
             const type = editorSchema.marks[apply.mark];
             return { enabled: toggleMarkup(type, apply.markup)(state), active: markActive(state, type, apply.markup), reason: null };
+        }
+        case 'wrap-node': {
+            const reason = wrapNodeLockReason(state);
+            return { enabled: reason === null, active: inNoteOf(state, apply.node), reason };
         }
         case 'block': {
             if (apply.node === 'horizontal_rule') {
@@ -262,7 +270,7 @@ class ToolbarView implements PluginView {
         bubble.setAttribute('role', 'toolbar');
         bubble.setAttribute('aria-label', 'Format selection');
         bubble.hidden = true;
-        for (const action of TOOLBAR_ACTIONS.filter(inRow)) {
+        for (const action of TOOLBAR_ACTIONS.filter(inBubble)) {
             bubble.append(this.markButton(action));
         }
         return bubble;
@@ -658,6 +666,10 @@ class ToolbarView implements PluginView {
         switch (apply.kind) {
             case 'mark':
                 toggleMarkup(editorSchema.marks[apply.mark], apply.markup)(view.state, view.dispatch);
+                view.focus();
+                return;
+            case 'wrap-node':
+                wrapInNote(apply.node)(view.state, view.dispatch);
                 view.focus();
                 return;
             case 'block':

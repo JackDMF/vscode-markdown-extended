@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
-    PREVIEW_CARD_CLASS, ROW_LAYOUT, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, inRow, menuOf, submenuOf, tooltipOf,
+    PREVIEW_CARD_CLASS, ROW_LAYOUT, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from '../../../src/editor/webview/toolbar/actions';
 import {
     ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
@@ -80,6 +80,19 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                 assert.strictEqual(schemaTagOf(action), rendered[1], 'the editor draws the mark as the engine renders it');
                 assert.strictEqual(action.sample.tag, rendered[1]);
             }
+            if (action.apply.kind === 'wrap-node') {
+                // The node the action makes draws the element the engine renders
+                // its example as, and the example parses into that node.
+                const type = editorSchema.nodes[action.apply.node];
+                const [tag, attrs] = type.spec.toDOM?.(type.createAndFill() as Node) as unknown as [string, { class?: string }];
+                assert.strictEqual(tag, action.sample.tag);
+                assert.strictEqual(attrs.class, action.sample.className);
+                const names: string[] = [];
+                parseDocument(md, action.example, {}).doc.descendants(n => {
+                    names.push(n.type.name);
+                });
+                assert.ok(names.includes(action.apply.node), `${action.example} parses as ${action.apply.node}: ${names.join(', ')}`);
+            }
             assert.ok(tooltipOf(action).includes(action.syntax.split('\n')[0]), 'the tooltip names the syntax');
         });
     }
@@ -116,7 +129,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
     });
 
     test('the four emphasis delimiters are four actions, drawn as four elements', () => {
-        const emphasis = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'mark' && a.apply.mark !== 'code');
+        const emphasis = TOOLBAR_ACTIONS.filter(a => inRow(a) && a.apply.kind === 'mark' && a.apply.mark !== 'code');
         assert.deepStrictEqual(emphasis.map(a => [a.apply.kind === 'mark' ? a.apply.markup : null, a.sample.tag]),
             [['*', 'i'], ['_', 'em'], ['**', 'b'], ['__', 'strong']]);
     });
@@ -126,11 +139,13 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         assert.deepStrictEqual(listed, [...ADMONITION_TYPES]);
     });
 
-    test('a source action says in its tooltip that it edits as source until stage 2', () => {
+    test('a source action says in its tooltip that it is edited as source; a native one does not', () => {
         for (const action of TOOLBAR_ACTIONS) {
             const source = action.apply.kind === 'wrap-source' || action.apply.kind === 'insert-source';
-            assert.strictEqual(tooltipOf(action).includes('edits as source until stage 2'), source, action.id);
+            assert.strictEqual(tooltipOf(action).includes(SOURCE_FOOTNOTE), source, action.id);
         }
+        const sourceIds = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'wrap-source').map(a => a.id);
+        assert.deepStrictEqual(sourceIds, ['footnote-reference'], 'of the inline constructs only the footnote is written as source');
     });
 });
 
@@ -212,9 +227,10 @@ suite('Editor toolbar: commands', () => {
 
     test('wrap-source writes the markers unescaped around the selection and makes the block a source block', () => {
         const state = select(stateOf(SOURCE), 'beta ');
-        const apply = action('sidenote').apply;
-        assert.strictEqual(apply.kind, 'wrap-source');
-        const tr = wrapSourceTransaction(state, apply as Extract<typeof apply, { kind: 'wrap-source' }>, CONTEXT);
+        // The footnote is the one inline construct still written this way; the
+        // mechanism is the same for any markers.
+        const apply = { kind: 'wrap-source' as const, open: '++', close: '|note++', placeholder: '' };
+        const tr = wrapSourceTransaction(state, apply, CONTEXT);
         assert.ok(tr);
         const next = state.apply(tr);
         const block = next.doc.child(1);

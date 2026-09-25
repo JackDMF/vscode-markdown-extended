@@ -231,33 +231,40 @@ suite('Editor toolbar (e2e)', () => {
         assert.ok((await lastEdit())?.text.includes('\n### Second paragraph here.\n'), (await lastEdit())?.text);
     });
 
-    test('the sidenote posts its source with reparse, the host\'s parse shows it rendered, and one undo takes it back', async function () {
+    test('the sidenote is made in place: the paragraph stays rich text, and one undo takes it back', async function () {
         this.timeout(15000);
         await showDocument(SOURCE);
-        const before = (await (editor as EditorPage).edits()).length;
         await selectText('beta');
         await openMenu('annotation');
         await page.click(entry('sidenote'));
-        // No settle: the edit goes at once, asking to be parsed again.
-        const all = await (editor as EditorPage).edits();
-        assert.strictEqual(all.length, before + 1);
-        const edit = all[all.length - 1];
-        assert.strictEqual(edit.reparse, true);
-        assert.strictEqual(edit.text, SOURCE.replace('beta', '++beta|note++'));
         assert.strictEqual(await page.$eval(panel('annotation'), el => (el as HTMLElement).hidden), true, 'choosing closes the menu');
-
-        // The host's half: the edit lands, and the document comes back parsed.
-        await showDocument(edit.text);
-        // Rich text now: the sidenote is a node of the paragraph, not a source block.
-        await page.waitForSelector('.ProseMirror p .sn-ref');
+        await settle();
+        const edit = await lastEdit();
+        assert.strictEqual(edit?.text, SOURCE.replace('beta', '++beta|note++'));
+        assert.strictEqual(edit?.reparse, undefined, 'nothing for the host to parse: the note is the editor\'s own');
+        assert.strictEqual(await page.$('.ProseMirror .mep-raw-block'), null, 'no source block');
+        assert.strictEqual(await page.$eval('.ProseMirror p .sn-ref .sidenote', el => el.textContent), 'note');
 
         await page.focus('.ProseMirror');
         await pressWith('Control', 'z');
         await settle();
-        const undone = await lastEdit();
-        assert.strictEqual(undone?.text, SOURCE, 'the wrap and the host\'s re-sync after it are undone as one step');
-        assert.strictEqual(undone?.reparse, undefined);
+        assert.strictEqual((await lastEdit())?.text, SOURCE, 'one undo');
         assert.strictEqual(await page.$('.ProseMirror .sn-ref'), null);
+    });
+
+    test('Formatting → Highlight toggles the mark on the selection, and off again', async function () {
+        this.timeout(10000);
+        await showDocument(SOURCE);
+        await selectText('beta');
+        await openMenu('formatting');
+        await page.click(entry('mark'));
+        await settle();
+        assert.ok((await lastEdit())?.text.includes('Alpha ==beta== gamma.'), (await lastEdit())?.text);
+        assert.strictEqual(await page.$eval('.ProseMirror p mark', el => el.textContent), 'beta');
+        await selectText('beta');
+        await page.click('.mep-bubble [data-action="mark"]');
+        await settle();
+        assert.ok((await lastEdit())?.text.includes('Alpha beta gamma.'), (await lastEdit())?.text);
     });
 
     test('the block-type menu turns a paragraph into a heading, and its face names the type as text', async function () {
@@ -316,7 +323,7 @@ suite('Editor toolbar (e2e)', () => {
         assert.ok((await lastEdit())?.text.includes('\nAlpha beta gamma.\n'), (await lastEdit())?.text);
     });
 
-    test('the bubble holds the five marks, appears above a selection, and hides when it collapses or loses the focus', async function () {
+    test('the bubble holds the ten marks and the two notes, appears above a selection, and hides when it collapses or loses the focus', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('gamma');
@@ -331,7 +338,10 @@ suite('Editor toolbar (e2e)', () => {
                 tools: Array.from(bubble.querySelectorAll('[data-action]')).map(t => (t as HTMLElement).dataset.action),
             };
         });
-        assert.deepStrictEqual(placed, { hidden: false, above: true, overlapsHorizontally: true, tools: ['italic', 'emphasis', 'bold', 'strong', 'code'] });
+        assert.deepStrictEqual(placed, {
+            hidden: false, above: true, overlapsHorizontally: true,
+            tools: ['italic', 'emphasis', 'bold', 'strong', 'code', 'mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'sidenote', 'marginal-note'],
+        });
 
         await page.evaluate(() => (document.getSelection() as Selection).collapseToStart());
         await delay(150);

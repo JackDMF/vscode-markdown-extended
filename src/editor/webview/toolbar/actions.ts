@@ -25,14 +25,18 @@
  * - `sample` and `example`: the element and Markdown in which the construct
  *   renders as that element;
  * - `preview`: a fuller example — Markdown and the elements it renders as;
- * - `apply`: `mark` and `block` edit natively; `wrap-source` and `insert-source`
- *   write a construct the editor cannot yet edit as rich text, as source.
+ * - `apply`: `mark`, `wrap-node` and `block` edit natively — the extension's
+ *   inline syntax (highlight, keys, notes, sidebars, …) is rich text since
+ *   stage 2; `wrap-source` and `insert-source` write a construct the editor
+ *   cannot edit as rich text (a footnote, the block constructs), as source;
+ * - `bubble`: whether the selection bubble offers it too.
  *
  * The test renders every `example` and `preview.markdown` through the real
  * engine and requires the drawn elements in the HTML, so "this entry makes this
  * element" is checked, not assumed.
  */
-import { ADMONITION_MARKER, ADMONITION_TYPES, INLINE_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
+import { ADMONITION_MARKER, ADMONITION_TYPES, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
+import type { NoteNodeName } from '../notes';
 
 /** The menus of the row, left to right after the marks' group. */
 export type ToolbarMenu = 'block-type' | 'formatting' | 'annotation' | 'insert';
@@ -64,18 +68,24 @@ export const FOOTNOTE_LABEL = '{n}';
  */
 export const PREVIEW_CARD_CLASS = 'mep-preview-card';
 
+/** The schema's marks a toolbar action toggles. */
+export type MarkTarget = 'em' | 'strong' | 'code' | 'mark' | 'sup' | 'sub' | 'strike' | 'kbd';
+
 export type ActionApply =
-    /** A native mark; `markup` is the delimiter it is written with (`null` for a mark without one). */
-    | { kind: 'mark'; mark: 'em' | 'strong' | 'code'; markup: string | null }
+    /** A mark; `markup` is the delimiter it is written with (`null` for a mark whose delimiter cannot vary). */
+    | { kind: 'mark'; mark: MarkTarget; markup: string | null }
+    /** A note or a sidebar made of the selection, edited in place (`notes.ts`, `wrapInNote`). */
+    | { kind: 'wrap-node'; node: NoteNodeName }
     | { kind: 'block'; node: BlockTarget; level?: number }
     /**
-     * Stage 1: the selection's text wrapped in `open` … `close` as literal
-     * source (`placeholder` when nothing is selected); the block comes back from
-     * the host as a source block. `definition`, when set, is a source block of
-     * its own inserted after it (a footnote's text).
+     * The selection's text wrapped in `open` … `close` as literal source
+     * (`placeholder` when nothing is selected); the block comes back from the
+     * host as a source block. `definition`, when set, is a source block of its
+     * own inserted after it (a footnote's text) — the one inline construct the
+     * editor still writes this way, since a footnote is two blocks.
      */
     | { kind: 'wrap-source'; open: string; close: string; placeholder: string; definition?: string }
-    /** Stage 1: a new source block holding `template`, inserted after the current block, its source opened. */
+    /** A new source block holding `template`, inserted after the current block, its source opened. */
     | { kind: 'insert-source'; template: string };
 
 /** A fuller example for the preview card: Markdown, and the top-level elements it renders as. */
@@ -96,10 +106,12 @@ export interface ToolbarAction {
     example: string;
     /** What the preview card shows; every menu entry has one. */
     preview?: ActionPreview;
+    /** Offered in the selection bubble too. */
+    bubble?: true;
 }
 
-/** What a source action's tooltip says about stage 1. */
-export const SOURCE_FOOTNOTE = '¹ edits as source until stage 2';
+/** What a source action's tooltip says: the construct is edited as Markdown in a source block, not as rich text. */
+export const SOURCE_FOOTNOTE = '¹ edited as source, in a source block';
 
 /** Whether the action writes source the editor shows as a source block, not as rich text. */
 export function isSourceAction(action: ToolbarAction): boolean {
@@ -110,6 +122,11 @@ export function inRow(action: ToolbarAction): boolean {
     return 'row' in action.place;
 }
 
+/** The bubble: the row's marks, then the entries marked for it, in the table's order. */
+export function inBubble(action: ToolbarAction): boolean {
+    return inRow(action) || action.bubble === true;
+}
+
 export function menuOf(action: ToolbarAction): ToolbarMenu | null {
     return 'menu' in action.place ? action.place.menu : null;
 }
@@ -118,7 +135,7 @@ export function submenuOf(action: ToolbarAction): ToolbarSubmenu | null {
     return 'menu' in action.place ? action.place.submenu ?? null : null;
 }
 
-/** The action's tooltip: its name, the syntax it writes, and the stage-1 footnote where it applies. */
+/** The action's tooltip: its name, the syntax it writes, and the source footnote where it applies. */
 export function tooltipOf(action: ToolbarAction): string {
     const source = isSourceAction(action);
     const renders = action.apply.kind === 'mark' ? ` — rendered as <${action.sample.tag}>` : '';
@@ -205,32 +222,43 @@ const blockTypes: ToolbarAction[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Formatting and annotations — the extension's inline syntax, as source
+// Formatting — the extension's inline marks, toggled like the native ones
 // ---------------------------------------------------------------------------
 
-function wrapAction(id: string, menu: ToolbarMenu, label: string, open: string, close: string, sample: SampleSpec, preview: ActionPreview, syntaxText = 'text'): ToolbarAction {
-    const placeholder = typeof sample.children?.[0] === 'string' ? sample.children[0] : 'text';
+function formatAction(id: string, label: string, mark: MarkTarget, open: string, close: string, sample: SampleSpec, preview: ActionPreview): ToolbarAction {
+    const glyph = typeof sample.children?.[0] === 'string' ? sample.children[0] : 'text';
     return {
-        id, place: { menu }, label, syntax: `${open}${syntaxText}${close}`, sample,
-        apply: { kind: 'wrap-source', open, close, placeholder }, example: `${open}${placeholder}${close}`, preview,
+        id, place: { menu: 'formatting' }, label, syntax: `${open}text${close}`, sample,
+        apply: { kind: 'mark', mark, markup: null }, example: `${open}${glyph}${close}`, preview, bubble: true,
     };
 }
 
 const M = INLINE_MARKERS;
 
 const formatting: ToolbarAction[] = [
-    wrapAction('mark', 'formatting', 'Highlight', M.mark, M.mark, el('mark', 'mark'),
+    formatAction('mark', 'Highlight', 'mark', M.mark, M.mark, el('mark', 'mark'),
         { markdown: `Highlight ${M.mark}the point${M.mark} of a sentence.`, nodes: [el('p', 'Highlight ', el('mark', 'the point'), ' of a sentence.')] }),
-    wrapAction('superscript', 'formatting', 'Superscript', M.superscript, M.superscript, el('sup', 'sup'),
+    formatAction('superscript', 'Superscript', 'sup', M.superscript, M.superscript, el('sup', 'sup'),
         { markdown: `2${M.superscript}10${M.superscript} is 1024.`, nodes: [el('p', '2', el('sup', '10'), ' is 1024.')] }),
-    wrapAction('subscript', 'formatting', 'Subscript', M.subscript, M.subscript, el('sub', 'sub'),
+    formatAction('subscript', 'Subscript', 'sub', M.subscript, M.subscript, el('sub', 'sub'),
         { markdown: `Water is H${M.subscript}2${M.subscript}O.`, nodes: [el('p', 'Water is H', el('sub', '2'), 'O.')] }),
-    wrapAction('strikethrough', 'formatting', 'Strikethrough', M.strikethrough, M.strikethrough, el('s', 'strike'),
+    formatAction('strikethrough', 'Strikethrough', 'strike', M.strikethrough, M.strikethrough, el('s', 'strike'),
         { markdown: `The ${M.strikethrough}old${M.strikethrough} new wording.`, nodes: [el('p', 'The ', el('s', 'old'), ' new wording.')] }),
-    // `markdown-it-kbd`'s own delimiters; the package states them, not this extension.
-    wrapAction('kbd', 'formatting', 'Key', '[[', ']]', el('kbd', 'Ctrl'),
-        { markdown: 'Press [[Ctrl+S]] to save.', nodes: [el('p', 'Press ', el('kbd', 'Ctrl+S'), ' to save.')] }),
+    formatAction('kbd', 'Key', 'kbd', KBD_MARKERS.open, KBD_MARKERS.close, el('kbd', 'Ctrl'),
+        { markdown: `Press ${KBD_MARKERS.open}Ctrl+S${KBD_MARKERS.close} to save.`, nodes: [el('p', 'Press ', el('kbd', 'Ctrl+S'), ' to save.')] }),
 ];
+
+// ---------------------------------------------------------------------------
+// Annotations — notes and sidebars, edited in place; the footnote as source
+// ---------------------------------------------------------------------------
+
+function noteAction(id: string, label: string, node: NoteNodeName, open: string, close: string, sample: SampleSpec, preview: ActionPreview, syntaxText: string, bubble: boolean): ToolbarAction {
+    const glyph = typeof sample.children?.[0] === 'string' ? sample.children[0] : 'text';
+    return {
+        id, place: { menu: 'annotation' }, label, syntax: `${open}${syntaxText}${close}`, sample,
+        apply: { kind: 'wrap-node', node }, example: `${open}${glyph}${close}`, preview, ...(bubble ? { bubble: true as const } : {}),
+    };
+}
 
 const SN = NOTE_SYNTAX.sidenote;
 const MN = NOTE_SYNTAX.marginalNote;
@@ -255,12 +283,12 @@ function sidebarPreview(marker: string, cssClass: string): ActionPreview {
 }
 
 const annotations: ToolbarAction[] = [
-    wrapAction('sidenote', 'annotation', 'Sidenote', SN.marker, `${NOTE_SEPARATOR}note${SN.marker}`,
-        el(`span.${SN.refClass}`, 'sidenote'), notePreview(SN.marker, SN.refClass, SN.noteClass), 'reference'),
-    wrapAction('marginal-note', 'annotation', 'Marginal note', MN.marker, `${NOTE_SEPARATOR}note${MN.marker}`,
-        el(`span.${MN.refClass}`, 'marginal'), notePreview(MN.marker, MN.refClass, MN.noteClass), 'reference'),
-    wrapAction('left-sidebar', 'annotation', 'Left sidebar', LS.marker, LS.marker, el(`span.${LS.cssClass}`, 'left'), sidebarPreview(LS.marker, LS.cssClass)),
-    wrapAction('right-sidebar', 'annotation', 'Right sidebar', RS.marker, RS.marker, el(`span.${RS.cssClass}`, 'right'), sidebarPreview(RS.marker, RS.cssClass)),
+    noteAction('sidenote', 'Sidenote', 'sidenote', SN.marker, `${NOTE_SEPARATOR}note${SN.marker}`,
+        el(`span.${SN.refClass}`, 'sidenote'), notePreview(SN.marker, SN.refClass, SN.noteClass), 'reference', true),
+    noteAction('marginal-note', 'Marginal note', 'marginal_note', MN.marker, `${NOTE_SEPARATOR}note${MN.marker}`,
+        el(`span.${MN.refClass}`, 'marginal'), notePreview(MN.marker, MN.refClass, MN.noteClass), 'reference', true),
+    noteAction('left-sidebar', 'Left sidebar', 'left_sidebar', LS.marker, LS.marker, el(`span.${LS.cssClass}`, 'left'), sidebarPreview(LS.marker, LS.cssClass), 'text', false),
+    noteAction('right-sidebar', 'Right sidebar', 'right_sidebar', RS.marker, RS.marker, el(`span.${RS.cssClass}`, 'right'), sidebarPreview(RS.marker, RS.cssClass), 'text', false),
     {
         // A footnote label cannot hold the selected prose (no spaces), and a
         // reference without a definition renders as its literal text; so the
