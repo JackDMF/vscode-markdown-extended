@@ -8,6 +8,7 @@ import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-li
 import { Command, Plugin } from 'prosemirror-state';
 import { fidelityPlugin } from '../fidelity';
 import { editorSchema } from '../schema';
+import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
 import { toggleMarkType } from './toolbar/commands';
 
@@ -88,6 +89,7 @@ export function editorPlugins(): Plugin[] {
         history(),
         dropCursor(),
         gapCursor(),
+        hintPlugin(),
         notesPlugin(),
         fidelityPlugin(),
     ];

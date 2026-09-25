@@ -29,9 +29,11 @@
 import { Fragment, Mark, Node, ResolvedPos } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { keymap } from 'prosemirror-keymap';
+import { EditorView } from 'prosemirror-view';
 import { PRESERVE_SOURCE_META } from '../fidelity';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, unwritableInNote } from '../serialize';
+import { showHint } from './hint';
 
 const nodes = editorSchema.nodes;
 
@@ -316,9 +318,6 @@ function typingAtNoteEdge(state: EditorState): boolean {
     return around.some(n => n !== null && NOTE_NODES.has(n.type.name));
 }
 
-/** How long the hint for a refused edit stays. */
-const HINT_MS = 3500;
-
 /** prosemirror-history's meta key; an undo restores a state that was allowed. */
 const HISTORY_META = 'history$';
 
@@ -356,7 +355,7 @@ export function noteRefusal(tr: Transaction): string | null {
  * part as text — a slice of paragraphs would split the note in two.
  */
 export function notesPlugin(): Plugin {
-    let hint: ((reason: string) => void) | null = null;
+    let editorView: EditorView | null = null;
     return new Plugin({
         // The one edit the serializer cannot write back is refused here,
         // whatever made it — a key, the toolbar, a paste, typing into a code
@@ -364,35 +363,18 @@ export function notesPlugin(): Plugin {
         filterTransaction(tr) {
             const reason = noteRefusal(tr);
             if (reason !== null) {
-                hint?.(reason);
+                if (editorView) {
+                    showHint(editorView, reason, 'refusal');
+                }
                 return false;
             }
             return true;
         },
-        view(editorView) {
-            const el = document.createElement('div');
-            el.className = 'mep-hint';
-            el.setAttribute('role', 'status');
-            el.hidden = true;
-            editorView.dom.parentElement?.append(el);
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            hint = reason => {
-                const base = (el.offsetParent ?? document.body).getBoundingClientRect();
-                const at = editorView.coordsAtPos(editorView.state.selection.head);
-                el.textContent = reason;
-                el.hidden = false;
-                el.style.left = `${Math.max(0, at.left - base.left)}px`;
-                el.style.top = `${at.bottom - base.top + 4}px`;
-                clearTimeout(timer);
-                timer = setTimeout(() => {
-                    el.hidden = true;
-                }, HINT_MS);
-            };
+        view(view) {
+            editorView = view;
             return {
                 destroy() {
-                    clearTimeout(timer);
-                    hint = null;
-                    el.remove();
+                    editorView = null;
                 },
             };
         },
