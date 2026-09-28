@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { MarkdownIt, StateBase, Token } from '../../../src/@types/markdown-it';
 import { InjectionMark, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
+import { objectOfNode } from '../../../src/editor/webview/objects';
 import { hostEngine, toCrlf, topChildren } from './helpers';
 
 type TokenCtor = new (type: string, tag: string, nesting: number) => Token;
@@ -24,8 +25,11 @@ const SNIPPET = 'Snippet body naming FR-X-003.\n\n- a snippet item\n';
  * §10.2 describes and marks under `token.meta.reqExplorer`: the include
  * expansion after `block`, then at the end of core the heading badge, the
  * summary table after the heading and the `req-ref` decoration around a bare id.
+ * With `badge: false` it injects the table alone, as Req Explorer does since
+ * `CR-RXE-129` wherever the table shows the status; with `artifact`, the table
+ * names that artifact instead of the heading's own.
  */
-function fakeReqExplorer(md: MarkdownIt): MarkdownIt {
+function fakeReqExplorer(md: MarkdownIt, options: { badge?: boolean; artifact?: string } = {}): MarkdownIt {
     md.core.ruler.after('block', 'req-includes', (state: StateBase) => {
         const tokens = state.tokens;
         for (let i = tokens.length - 1; i >= 0; i--) {
@@ -59,11 +63,13 @@ function fakeReqExplorer(md: MarkdownIt): MarkdownIt {
                 if (!id) {
                     continue;
                 }
-                const value: InjectionMark = expansionOf(inline) ?? { rule: 'req-status-badges', kind: 'atom', artifact: id };
-                const badge = new tokenClass('html_inline', '', 0);
-                badge.content = '<span class="req-badge req-badge-implemented">implemented</span>';
-                mark(badge, value);
-                inline.children.push(badge);
+                const value: InjectionMark = expansionOf(inline) ?? { rule: 'req-status-badges', kind: 'atom', artifact: options.artifact ?? id };
+                if (options.badge !== false) {
+                    const badge = new tokenClass('html_inline', '', 0);
+                    badge.content = '<span class="req-badge req-badge-implemented">implemented</span>';
+                    mark(badge, value);
+                    inline.children.push(badge);
+                }
                 summaries.push({ after: i + 2, value });
                 continue;
             }
@@ -196,6 +202,47 @@ suite('Editor treatment of injected content', () => {
             const out = serializeDocument(parseDocument(md, text), { defaultWrap: 90 });
             assert.strictEqual(out, text);
             assert.ok(!out.includes('Snippet body'), 'the snippet body is never written into the file');
+        }
+    });
+});
+
+/**
+ * The second signal of a requirement heading: the summary table Req Explorer
+ * injects as the next top-level block names the artifact, where it draws no
+ * badge because the table shows the status (`CR-RXE-129`).
+ */
+suite('Editor treatment of a requirement heading with a summary and no badge', () => {
+    const HEADING = '## FR-X-001: A requirement {#fr-x-001--abcdef12}';
+    const TEXT = `${HEADING}\n\nProse.\n`;
+    const headingOf = (engine: MarkdownIt, text = TEXT) => topChildren(parseDocument(engine, text).doc).find(n => n.type.name === 'heading') as Node;
+
+    test('the heading followed by the table lifts "FR-X-001: " into reqPrefix, keeps its anchor and suffix, and is a requirement heading', () => {
+        const heading = headingOf(hostEngine([engine => fakeReqExplorer(engine, { badge: false })]));
+        assert.strictEqual(heading.attrs.reqPrefix, 'FR-X-001: ');
+        assert.strictEqual(heading.textContent, 'A requirement');
+        assert.strictEqual(heading.attrs.anchor, 'fr-x-001--abcdef12');
+        assert.strictEqual(heading.attrs.attrsSuffix, '{#fr-x-001--abcdef12}');
+        let atoms = 0;
+        heading.descendants(n => {
+            atoms += n.type.name === 'inline_atom' ? 1 : 0;
+        });
+        assert.strictEqual(atoms, 0, 'no badge was injected');
+        // The object toolbar's kind, labelled "Requirement FR-X-001" from reqPrefix; not the attribute literal's object.
+        assert.strictEqual(objectOfNode(heading, 0)?.kind, 'heading');
+    });
+
+    test('the page\'s text round-trips byte for byte with the table alone', () => {
+        const md = hostEngine([engine => fakeReqExplorer(engine, { badge: false })]);
+        for (const text of [TEXT, toCrlf(TEXT), DOCUMENT]) {
+            assert.strictEqual(serializeDocument(parseDocument(md, text), { defaultWrap: 90 }), text);
+        }
+    });
+
+    test('with neither badge nor table, and with a table naming another artifact, the id stays editable text', () => {
+        for (const engine of [hostEngine([]), hostEngine([md => fakeReqExplorer(md, { badge: false, artifact: 'FR-X-009' })])]) {
+            const heading = headingOf(engine);
+            assert.strictEqual(heading.attrs.reqPrefix, null);
+            assert.strictEqual(heading.textContent, 'FR-X-001: A requirement');
         }
     });
 });

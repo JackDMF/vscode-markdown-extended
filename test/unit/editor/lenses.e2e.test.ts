@@ -799,4 +799,32 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         assert.strictEqual(await page.$eval('.ProseMirror .mep-inline-atom', el => el.classList.contains('mep-lens-target')), false);
         assert.deepStrictEqual(await rows(), []);
     });
+
+    test('a requirement heading with its table and no badge: the status lens on the Status row, the actions in the heading\'s bar', async function () {
+        this.timeout(15000);
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        // As the parser leaves it when Req Explorer injects the table alone
+        // (`injection.test.ts`): the id lifted by the table's mark, no badge.
+        const json = parsedDocumentToJSON(parseDocument(md, '# FRS-TST-001: Page\n\nA plain paragraph.\n', {}));
+        const content = json.doc.content as { type: string; attrs: Record<string, unknown>; content?: Record<string, unknown>[] }[];
+        content[0].attrs.reqPrefix = 'FRS-TST-001: ';
+        content[0].content = [{ type: 'text', text: 'Page' }];
+        content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html: withStatusRow(SUMMARY_HTML), src: null, gap: null } });
+        version++;
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90 });
+        await page.waitForFunction(() => document.querySelectorAll('.ProseMirror tr[data-req-field="status"]').length === 1
+            && document.querySelector('.ProseMirror .mep-inline-atom') === null);
+        await send([{
+            blockIndex: 0, items: [
+                { id: 'st', title: 'Set status', surface: 'status', artifact: 'FRS-TST-001' },
+                { id: 'a.1', title: 'Add test', surface: 'action', artifact: 'FRS-TST-001' },
+                { id: 'a.2', title: '+ ref', surface: 'action', artifact: 'FRS-TST-001' },
+            ],
+        }], 3);
+        await delay(150);
+        assert.deepStrictEqual((await targets()).map(t => [t.el, t.lens]), [['th:status', 'st']]);
+        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'lens:a.1', 'lens:a.2']);
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Requirement FRS-TST-001');
+        assert.deepStrictEqual(await rows(), []);
+    });
 });

@@ -150,23 +150,44 @@ function preprocessInline(md: EngineWithOptions, env: Environment, children: rea
 }
 
 /**
+ * The artifact an injected atom names (`{ kind: 'atom', artifact }`): Req
+ * Explorer's status badge in a heading, its summary table after one.
+ */
+function atomArtifact(mark: InjectionMark | null | undefined): string | null {
+    return mark?.kind === 'atom' && 'artifact' in mark ? mark.artifact : null;
+}
+
+/**
  * Lift a requirement heading's `ID: ` prefix out of its editable text.
  *
  * The id is read-only in the editor (the anchor migration owns renaming it), so
  * it moves into the heading's `reqPrefix` attribute and the text starts after
- * it. Only when the badge Req Explorer appended names that artifact and the
- * text really starts with it — a heading merely mentioning an id keeps it.
+ * it. Only when Req Explorer says the heading is that artifact's and the text
+ * really starts with it — a heading merely mentioning an id keeps it.
+ *
+ * **Two signals say so, because Req Explorer injects either or both.** The
+ * status badge it appends to the heading names the artifact; so does the
+ * summary table it injects as the next top-level block. Since `CR-RXE-129` the
+ * summary is the one status surface, and a heading whose table shows the
+ * status gets no badge — the badge stays only where no table repeats it. Read
+ * from the badge alone, every requirement heading with a summary would lose
+ * its read-only id; read from the table alone, a heading with a badge and no
+ * table would. The badge is asked first, then `following`, the artifact of the
+ * table right after the heading (`null` when the next block is none).
  */
-function liftRequirementPrefix(children: StreamToken[], rawChildren: readonly Token[]): { children: StreamToken[]; prefix: string | null } {
-    const atom = rawChildren
-        .map(c => injectionMarkOf(c))
-        .find((m): m is Extract<InjectionMark, { artifact: string }> => m?.kind === 'atom' && 'artifact' in m);
+function liftRequirementPrefix(
+    children: StreamToken[], rawChildren: readonly Token[], following: string | null,
+): { children: StreamToken[]; prefix: string | null } {
+    const badge = rawChildren.map(c => atomArtifact(injectionMarkOf(c))).find((a): a is string => a !== null);
     const first = children[0];
-    if (atom === undefined || first === undefined || first.type !== 'text') {
+    if (first === undefined || first.type !== 'text') {
         return { children, prefix: null };
     }
-    const prefix = `${atom.artifact}: `;
-    if (!first.content.startsWith(prefix)) {
+    const prefix = [badge, following]
+        .filter((a): a is string => typeof a === 'string')
+        .map(a => `${a}: `)
+        .find(p => first.content.startsWith(p));
+    if (prefix === undefined) {
         return { children, prefix: null };
     }
     const rest: StreamToken = { type: 'text', content: first.content.slice(prefix.length), children: null };
@@ -212,7 +233,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     const spanLiteral = new WeakMap<object, string>();
     const stream: StreamToken[] = [];
 
-    for (const block of blocks) {
+    for (const [k, block] of blocks.entries()) {
         switch (block.kind) {
             case 'front_matter':
                 stream.push(synthetic('front_matter', { src: block.src ?? '' }));
@@ -256,7 +277,11 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                     let children = preprocessInline(engine, env, t.children ?? []);
                     const opener = tokens[i - 1];
                     if (opener?.type === 'heading_open') {
-                        const lifted = liftRequirementPrefix(children, t.children ?? []);
+                        // The summary table right after counts only for a heading that
+                        // is the top-level block itself, not one inside a container.
+                        const next = blocks[k + 1];
+                        const following = i - 1 === start && next?.kind === 'injected' ? atomArtifact(next.mark) : null;
+                        const lifted = liftRequirementPrefix(children, t.children ?? [], following);
                         children = lifted.children;
                         if (lifted.prefix !== null) {
                             headingPrefix.set(opener, lifted.prefix);

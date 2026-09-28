@@ -548,9 +548,16 @@ differently:
 
 Token ranges nobody marked and no source line accounts for (the footnote list
 `markdown-it-footnote` appends) become `injected_block`s of kind `generated`. A
-requirement heading's `ID: ` prefix, recognised through the badge naming that id, is
-lifted into `reqPrefix` and rendered non-editable; the `{#anchor}` suffix is kept
-verbatim in `attrsSuffix`.
+requirement heading's `ID: ` prefix is lifted into `reqPrefix` and rendered
+non-editable; the `{#anchor}` suffix is kept verbatim in `attrsSuffix`. A heading is
+recognised as the artifact's by **either of two signals** in the token stream
+(`liftRequirementPrefix`): the badge atom in it naming the id, or — for a heading that is
+itself the top-level block — the summary table (`injected_block`, mark `{ kind: 'atom',
+artifact }`) that is the next top-level block, blank lines aside, naming it; the text
+must start with `ID: ` either way. Two, because Req Explorer injects either or both: since
+`CR-RXE-129` the summary is the one status surface and a heading whose table shows the
+status gets no badge, while a heading with no table keeps its badge. Reading one signal
+alone would leave the other kind of heading with an editable id.
 
 ### Host and page
 

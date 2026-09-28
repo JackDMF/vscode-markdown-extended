@@ -622,7 +622,9 @@ place — each for a reason:
   what changes them.
 
 A requirement heading written as `## ID: Title {#anchor}` keeps the id and the anchor
-read-only; only the title is editable. `Enter` inside its title starts a paragraph below
+read-only; only the title is editable. The editor knows it for a requirement heading by
+what Req Explorer shows with it — its summary table below, or its status badge where no
+table is shown; a heading merely starting with an id is ordinary text. `Enter` inside its title starts a paragraph below
 rather than a second heading, so the id and the anchor are never written twice.
 
 ### The fidelity promise
