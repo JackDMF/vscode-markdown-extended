@@ -12,7 +12,7 @@
  * to a stub for that reason (`stubs/markdown-it.ts`).
  */
 import { Node } from 'prosemirror-model';
-import { EditorState, Transaction } from 'prosemirror-state';
+import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import type { CodeActionItem, HostMessage, LensRow, WebviewMessage } from '../protocol';
@@ -319,6 +319,52 @@ function followFragment(fragment: string): boolean {
     return true;
 }
 
+/**
+ * Bring the element a followed link's fragment names into view and put the
+ * caret there (`revealAnchor`). A top-level heading whose `anchor` is the
+ * fragment first — the `{#id}` the file carries — else the top-level block
+ * the host's line starts in, since the host resolved slugs and line
+ * fragments against the document's text and the page has no second slug
+ * rule. Blocks' start lines only grow, so the block is found by bisection
+ * over `lineAt`, which serializes what stands before a block.
+ */
+function revealAnchor(anchor: string, line: number | null): void {
+    if (!view) {
+        return;
+    }
+    const doc = view.state.doc;
+    const offsets: number[] = [];
+    doc.forEach((_child, offset) => offsets.push(offset));
+    let index = offsets.findIndex((_offset, i) => doc.child(i).type === editorSchema.nodes.heading && doc.child(i).attrs.anchor === anchor);
+    if (index < 0 && line !== null && offsets.length > 0) {
+        let low = 0;
+        let high = offsets.length - 1;
+        while (low < high) {
+            const mid = Math.ceil((low + high) / 2);
+            if (lineAt(offsets[mid]) <= line) {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        index = low;
+    }
+    if (index < 0) {
+        return;
+    }
+    const node = doc.child(index);
+    const offset = offsets[index];
+    const selection = node.isTextblock
+        ? TextSelection.create(doc, offset + 1)
+        : node.isAtom ? NodeSelection.create(doc, offset) : Selection.near(doc.resolve(offset + 1));
+    view.focus();
+    view.dispatch(view.state.tr.setSelection(selection).setMeta('addToHistory', false));
+    const dom = view.nodeDOM(offset);
+    if (dom instanceof HTMLElement) {
+        dom.scrollIntoView({ block: 'start' });
+    }
+}
+
 /** Put every open raw-source textarea's text into the document, so the next flush carries it. */
 function commitOpenSources(): void {
     for (const editor of [...openSourceEditors]) {
@@ -559,6 +605,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'invalidateActions':
             invalidateActions(msg.refused);
+            break;
+        case 'revealAnchor':
+            revealAnchor(msg.anchor, msg.line);
             break;
     }
 });

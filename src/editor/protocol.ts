@@ -115,7 +115,17 @@ export type HostMessage =
      * With `refused`, a `runAction` for the action of that title was not applied
      * because the text changed since it was offered; the page says so.
      */
-    | { type: 'invalidateActions'; refused?: string };
+    | { type: 'invalidateActions'; refused?: string }
+    /**
+     * Bring the element a link's fragment names into view and put the caret
+     * there: a link followed to this document, from another one or from
+     * itself. `anchor` is the fragment; `line` is the 0-based line the host
+     * resolved it to in the document's text (a `{#id}`, a heading's slug, a
+     * line fragment — `host/links.ts`), `null` when it names none there. The
+     * page takes a heading whose `anchor` is the fragment first, else the
+     * block that line starts, so the slug rule lives only on the host.
+     */
+    | { type: 'revealAnchor'; anchor: string; line: number | null };
 
 /** Webview → host. */
 export type WebviewMessage =

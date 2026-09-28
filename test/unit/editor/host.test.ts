@@ -8,7 +8,9 @@ import { EditorEngineHost, buildEditorEngine } from '../../../src/editor/host/en
 import { CodeActionController } from '../../../src/editor/host/codeActions';
 import { blockIndexForLine, lensHintOf, lensRows } from '../../../src/editor/host/lenses';
 import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
-import { SessionWebview, VisualEditorSession } from '../../../src/editor/host/session';
+import { SessionWebview, VisualEditorSession, revealInVisualEditor } from '../../../src/editor/host/session';
+import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
+import { GITHUB_SLUG_REPLACE } from '../../../src/editor/host/githubSlugRegex';
 import { blockLineRanges } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 
@@ -793,6 +795,137 @@ suite('Editor host: following a link', () => {
             session.dispose();
             engineChanged.dispose();
             fs.rmSync(uri.fsPath, { force: true });
+        }
+    });
+});
+
+/** A document whose headings a fragment can name: 0-based lines in the comments. */
+const FRAGMENT_TARGET = [
+    '# Title',                                          // 0
+    '',
+    '## FRS-TST-001: Smoke {#frs-tst-001-1a2b3c4d}',    // 2
+    '',
+    '## Second Heading, with `code` & punctuation!',    // 4
+    '',
+    '## Second Heading, with `code` & punctuation!',    // 6
+    '',
+    '## Other {#title}',                                // 8
+    '',
+    'Text.',
+    '',
+    // Enough below for any heading to be scrolled to the top of the window.
+    ...Array.from({ length: 80 }, (_, k) => `Filler ${k}.\n`),
+].join('\n');
+
+suite('Editor host: a link lands on the element its fragment names', () => {
+    test('the slug rule is the one the built-in Markdown language server of this VS Code uses', function () {
+        const bundle = path.join(vscode.env.appRoot, 'extensions', 'markdown-language-features', 'dist', 'serverWorkerMain.js');
+        if (!fs.existsSync(bundle)) {
+            this.skip();
+        }
+        const src = fs.readFileSync(bundle, 'utf8');
+        const key = 'githubSlugReplaceRegex = /';
+        const start = src.indexOf(key);
+        assert.ok(start >= 0, 'the built-in names its slug regex githubSlugReplaceRegex');
+        const shipped = src.slice(start + key.length, src.indexOf('/g;', start));
+        assert.strictEqual(GITHUB_SLUG_REPLACE.source, shipped, 'regenerate src/editor/host/githubSlugRegex.ts from this VS Code');
+        assert.strictEqual(githubSlug('  Second Heading, with `code` & punctuation!  '), 'second-heading-with-code--punctuation');
+    });
+
+    test('a {#id} heading, a slugged heading, a repeated slug, a line fragment; an id wins over a slug; a missing one is none', async () => {
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const anchors = headingAnchors(md, FRAGMENT_TARGET, {});
+        const line = (fragment: string) => fragmentLine(anchors, fragment);
+        assert.strictEqual(line('frs-tst-001-1a2b3c4d'), 2, 'the explicit id');
+        assert.strictEqual(line('frs-tst-001-smoke'), 2, 'its slug too: the id is not in the slugged text');
+        assert.strictEqual(line('second-heading-with-code--punctuation'), 4);
+        assert.strictEqual(line('Second-Heading-With-Code--Punctuation'), 4, 'compared without case');
+        assert.strictEqual(line('second-heading-with-code--punctuation-1'), 6, 'the second of a repeated slug');
+        assert.strictEqual(line('title'), 8, 'an id wins over the slug of "# Title"');
+        assert.strictEqual(line('L11'), 10);
+        assert.strictEqual(line('no-such-heading'), null);
+        assert.strictEqual(line(''), null);
+    });
+
+    test('a link to another file opens it at the heading; a fragment it lacks opens it at the top, logged as info at most', async function () {
+        this.timeout(20000);
+        const source = tempMarkdown('Source.\n');
+        const dir = path.dirname(source.fsPath);
+        const target = vscode.Uri.file(path.join(dir, `mep-fragment-target-${process.pid}-${Date.now()}.md`));
+        const other = vscode.Uri.file(path.join(dir, `mep-fragment-other-${process.pid}-${Date.now()}.md`));
+        fs.writeFileSync(target.fsPath, FRAGMENT_TARGET, 'utf8');
+        fs.writeFileSync(other.fsPath, FRAGMENT_TARGET, 'utf8');
+        const logged: string[] = [];
+        const engineChanged = new vscode.EventEmitter<void>();
+        const webview = new FakeWebview();
+        const session = new VisualEditorSession(await vscode.workspace.openTextDocument(source), webview, {
+            engine: () => buildEditorEngine(EXTENSION_ID, () => undefined),
+            onDidChangeEngine: engineChanged.event,
+            log: line => logged.push(line),
+        });
+        const editorOn = (uri: vscode.Uri) => until(() => {
+            const editor = vscode.window.activeTextEditor;
+            return editor && editor.document.uri.toString() === uri.toString() ? editor : undefined;
+        }, 5000);
+        try {
+            webview.send({ type: 'openLink', href: `${path.basename(target.fsPath)}#frs-tst-001-1a2b3c4d` });
+            const editor = await editorOn(target);
+            assert.ok(editor, 'the target opened in the text editor');
+            await until(() => (editor.selection.active.line === 2 ? true : undefined), 3000);
+            assert.strictEqual(editor.selection.active.line, 2, 'the caret on the heading');
+            // In view. That it stands at the top is not checked here: the test
+            // host's window does not render, and scrolls nothing — revealRange
+            // and revealLine alike leave its visible range at line 0.
+            assert.ok(editor.visibleRanges.some(r => r.contains(new vscode.Position(2, 0))), 'the heading in view');
+
+            webview.send({ type: 'openLink', href: `${path.basename(other.fsPath)}#no-such-heading` });
+            const opened = await editorOn(other);
+            assert.ok(opened, 'the file opens all the same');
+            await delay(200);
+            assert.strictEqual(opened.selection.active.line, 0, 'at the top');
+            assert.deepStrictEqual(logged.filter(l => !l.startsWith('[INFO]')), [], 'nothing louder than info');
+            assert.ok(logged.some(l => l.startsWith('[INFO]') && l.includes('#no-such-heading')), JSON.stringify(logged));
+        } finally {
+            session.dispose();
+            engineChanged.dispose();
+            await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+            for (const uri of [source, target, other]) {
+                fs.rmSync(uri.fsPath, { force: true });
+            }
+        }
+    });
+
+    test('a link to this very document is revealed in its own page; a reveal for another page reaches that page\'s session', async function () {
+        this.timeout(10000);
+        const uri = tempMarkdown(FRAGMENT_TARGET);
+        const second = tempMarkdown(FRAGMENT_TARGET);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const host = { engine: () => buildEditorEngine(EXTENSION_ID, () => undefined), onDidChangeEngine: engineChanged.event, log: () => undefined };
+        const webview = new FakeWebview();
+        const otherWebview = new FakeWebview();
+        const session = new VisualEditorSession(await vscode.workspace.openTextDocument(uri), webview, host);
+        const otherSession = new VisualEditorSession(await vscode.workspace.openTextDocument(second), otherWebview, host);
+        const reveals = (w: FakeWebview) => w.posted.filter(m => m.type === 'revealAnchor');
+        try {
+            webview.send({ type: 'ready' });
+            await until(() => webview.documents()[0], 5000);
+            webview.send({ type: 'openLink', href: `${path.basename(uri.fsPath)}#second-heading-with-code--punctuation-1` });
+            await until(() => reveals(webview)[0], 5000);
+            assert.deepStrictEqual(reveals(webview), [{ type: 'revealAnchor', anchor: 'second-heading-with-code--punctuation-1', line: 6 }]);
+
+            // Before the other page has its document the reveal waits, then follows the document.
+            revealInVisualEditor(second, { anchor: 'frs-tst-001-1a2b3c4d', line: 2 });
+            await delay(100);
+            assert.deepStrictEqual(reveals(otherWebview), []);
+            otherWebview.send({ type: 'ready' });
+            await until(() => reveals(otherWebview)[0], 5000);
+            assert.deepStrictEqual(otherWebview.posted.map(m => m.type).slice(0, 2), ['document', 'revealAnchor']);
+        } finally {
+            session.dispose();
+            otherSession.dispose();
+            engineChanged.dispose();
+            fs.rmSync(uri.fsPath, { force: true });
+            fs.rmSync(second.fsPath, { force: true });
         }
     });
 });

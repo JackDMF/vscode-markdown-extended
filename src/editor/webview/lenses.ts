@@ -18,10 +18,13 @@
  * | `links` | `tr[data-req-relation="<relation>"]` of that table, of its side (`data-req-direction`) when the lens names one | a verb of the heading |
  * | `action` | — | a verb of the heading, in its object toolbar |
  *
- * On a table row the lens lives on the label cell (`th`) only: the other
- * cells hold the values, and a relation's target links open on a plain click
- * (the table is a read model, `InjectedBlockView`); the label runs the group's
- * lens.
+ * On a table row the lens lives on one cell. A relation row's lens is on its
+ * label cell (`th`): the other cell holds the relation's target links, which
+ * open on a plain click (the table is a read model, `InjectedBlockView`), and
+ * the label runs the group's lens. A status or priority lens is on the value
+ * — the status chip, the priority cell — since it sets that value. The
+ * element says which (`data-lens-kind`: `set` drawn as a dropdown, `go`
+ * underlined as a link).
  *
  * The heading and the table are looked for beside the lens first — the
  * heading it stands on, the table right after — and only then anywhere in the
@@ -153,13 +156,33 @@ function badgePos(heading: Node, offset: number, artifact: string): number | nul
 }
 
 /**
- * The label cell of a table row: where a row's lens lives. The row's other
- * cells hold the values — for a relation, links to its targets, which a
- * plain click opens (`nodeViews.ts`, `InjectedBlockView`); the label runs the
- * lens (the group's picker). A row without a `th` is its own label.
+ * The label cell of a table row: where a relation row's lens lives. The row's
+ * other cells hold links to the relation's targets, which a plain click opens
+ * (`nodeViews.ts`, `InjectedBlockView`); the label runs the lens (the group's
+ * picker). A row without a `th` is its own label.
  */
 function labelCellOf(row: HTMLElement): HTMLElement {
     return Array.from(row.children).find((c): c is HTMLElement => c.tagName === 'TH') ?? row;
+}
+
+/**
+ * The value of a field row: where a lens that sets the field lives — the
+ * status chip in the status row where Req Explorer draws one, else the value
+ * cell. It is what the verb changes, and what the dropdown grammar goes on.
+ */
+function valueOf(row: HTMLElement): HTMLElement {
+    const cell = Array.from(row.children).find((c): c is HTMLElement => c.tagName === 'TD');
+    return cell?.querySelector<HTMLElement>('.req-badge') ?? cell ?? row;
+}
+
+/**
+ * What a lens's click does, as its element shows it (`data-lens-kind`):
+ * `set` changes the artifact — its status, its priority — and is drawn as a
+ * dropdown; `go` goes somewhere — a relation's picker — and is underlined, as
+ * the links beside it are. Two verbs, two signifiers (Daniel, 2026-09-28).
+ */
+function lensKind(target: HeldTarget): 'set' | 'go' {
+    return target.on === 'badge' || target.key.surface !== 'links' ? 'set' : 'go';
 }
 
 /**
@@ -414,7 +437,7 @@ function targetElement(view: EditorView, child: Node, offset: number, target: He
     }
     const dom = view.nodeDOM(offset);
     const row = dom instanceof HTMLElement ? tableRowIn(dom, target.key) : null;
-    return row === null ? null : labelCellOf(row);
+    return row === null ? null : target.key.surface === 'links' ? labelCellOf(row) : valueOf(row);
 }
 
 /** Whether `el` is part of a table, whose semantics a lens on it keeps: no `role=button` on a cell. */
@@ -431,6 +454,7 @@ function markTarget(el: HTMLElement, target: HeldTarget): void {
     }
     el.classList.add('mep-lens-target');
     el.dataset.lens = target.id;
+    el.dataset.lensKind = lensKind(target);
     const title = targetTitle(target.item);
     if (el.title !== title) {
         el.title = title;
@@ -461,6 +485,7 @@ function unmarkTarget(el: HTMLElement): void {
     }
     el.classList.remove('mep-lens-target');
     delete el.dataset.lens;
+    delete el.dataset.lensKind;
     el.removeAttribute('tabindex');
     if (!inTable(el)) {
         el.removeAttribute('role');

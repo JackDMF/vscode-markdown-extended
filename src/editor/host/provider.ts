@@ -4,7 +4,9 @@ import { EditorEngineHost } from './engineHost';
 import { editorPage, localResourceRoots } from './html';
 import { VisualEditorSession } from './session';
 
-export const VISUAL_EDITOR_VIEW_TYPE = 'markdownExtended.visualEditor';
+import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
+
+export { VISUAL_EDITOR_VIEW_TYPE };
 
 /**
  * The rich editor as a `CustomTextEditorProvider` over the file's own

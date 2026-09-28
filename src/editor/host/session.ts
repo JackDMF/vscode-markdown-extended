@@ -7,8 +7,9 @@ import { HostMessage, WebviewMessage } from '../protocol';
 import { CodeActionController } from './codeActions';
 import { message } from './errors';
 import { LensController, SessionPort } from './lenses';
-import { resolveLinkTarget } from './links';
+import { fragmentLine, headingAnchors, resolveLinkTarget } from './links';
 import { minimalReplacement } from './minimalEdit';
+import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
 
 /** What a session needs from the extension, injected so a test can drive one without a webview. */
 export interface SessionHost {
@@ -27,6 +28,32 @@ export interface SessionWebview {
 
 /** How long a burst of changes from another writer (typing in the text editor) is left to settle before re-parsing. */
 const RESYNC_DELAY_MS = 100;
+
+/** A fragment to bring into view in a page: see the `revealAnchor` message. */
+export interface Reveal {
+    anchor: string;
+    line: number | null;
+}
+
+/** The open sessions by document uri, so a link followed from one page can land in another. */
+const sessions = new Map<string, VisualEditorSession>();
+/** A reveal for a document whose page is opening: taken by its session when it is made. */
+const pendingReveals = new Map<string, Reveal>();
+
+/**
+ * Bring `reveal` into view in the Visual Editor over `uri`: now, if a session
+ * is open for it, else as soon as one is (the page a `vscode.open` just
+ * opened may not have made its session yet). The session posts it once its
+ * page has the document.
+ */
+export function revealInVisualEditor(uri: vscode.Uri, reveal: Reveal): void {
+    const session = sessions.get(uri.toString());
+    if (session) {
+        session.reveal(reveal);
+    } else {
+        pendingReveals.set(uri.toString(), reveal);
+    }
+}
 
 /**
  * One rich editor over one `TextDocument`: the host half of the protocol in
@@ -58,6 +85,8 @@ export class VisualEditorSession implements vscode.Disposable {
     /** Other extensions' code actions on a block, asked of VS Code when the page's object toolbar opens for it. */
     private readonly codeActions: CodeActionController;
     private readonly subscriptions: vscode.Disposable[];
+    /** A fragment to bring into view once the page has the document (`reveal`). */
+    private pendingReveal: Reveal | undefined;
 
     constructor(
         private readonly document: vscode.TextDocument,
@@ -93,6 +122,32 @@ export class VisualEditorSession implements vscode.Disposable {
             }),
             host.onDidChangeEngine(() => this.enqueue(() => this.post())),
         ];
+        const key = document.uri.toString();
+        sessions.set(key, this);
+        this.pendingReveal = pendingReveals.get(key);
+        pendingReveals.delete(key);
+    }
+
+    /**
+     * Bring a link's fragment into view in this page: posted behind whatever
+     * the queue holds, once the page has a document — at once when it has,
+     * else right after the first document is posted (`post`).
+     */
+    reveal(reveal: Reveal): void {
+        this.pendingReveal = reveal;
+        this.enqueue(async () => {
+            if (this.postedVersion >= 0 && !this.broken) {
+                await this.postReveal();
+            }
+        });
+    }
+
+    private async postReveal(): Promise<void> {
+        const reveal = this.pendingReveal;
+        this.pendingReveal = undefined;
+        if (reveal) {
+            await this.webview.postMessage({ type: 'revealAnchor', anchor: reveal.anchor, line: reveal.line });
+        }
     }
 
     /** Resolves when every message received so far has been handled. For tests. */
@@ -103,6 +158,9 @@ export class VisualEditorSession implements vscode.Disposable {
     dispose(): void {
         if (this.resyncTimer !== undefined) {
             clearTimeout(this.resyncTimer);
+        }
+        if (sessions.get(this.document.uri.toString()) === this) {
+            sessions.delete(this.document.uri.toString());
         }
         this.subscriptions.forEach(d => d.dispose());
     }
@@ -180,7 +238,7 @@ export class VisualEditorSession implements vscode.Disposable {
         }
     }
 
-    /** A Ctrl/Cmd+clicked link: resolved against this document, opened by VS Code or the system. */
+    /** A followed link: resolved against this document, opened by VS Code or the system. */
     private async openLink(href: string): Promise<void> {
         try {
             // Inside the try: a strict parse throws on an href such as
@@ -191,13 +249,75 @@ export class VisualEditorSession implements vscode.Disposable {
             if (target.kind === 'external') {
                 await vscode.env.openExternal(target.uri);
             } else if (target.kind === 'open') {
-                await vscode.commands.executeCommand('vscode.open', target.uri);
+                await this.openAt(target.uri);
             } else {
                 this.host.log(`[WARN] Visual Editor: did not follow ${href}: ${target.reason}.`);
             }
         } catch (error) {
             this.host.log(`[WARN] Visual Editor: opening ${href} failed: ${message(error)}`);
         }
+    }
+
+    /**
+     * Open a file at the element its `#fragment` names, as the text editor's
+     * own link handling lands on the heading. The fragment is resolved to a
+     * line in the file's text (`fragmentLine`: a `{#id}`, a heading's slug, a
+     * line fragment); the file opens with `vscode.open`, in whichever editor
+     * VS Code chooses for it. In the text editor the line is revealed at the
+     * top; in the Visual Editor its page is sent `revealAnchor`. A link to
+     * this very document scrolls this page, and opens nothing. A fragment the
+     * file does not have opens it at the top — not an error, the link may be
+     * older than the heading it named.
+     */
+    private async openAt(uri: vscode.Uri): Promise<void> {
+        const fragment = uri.fragment;
+        const file = uri.with({ fragment: '' });
+        if (fragment === '') {
+            await vscode.commands.executeCommand('vscode.open', uri);
+            return;
+        }
+        const self = file.toString() === this.document.uri.toString();
+        let line: number | null = null;
+        try {
+            const document = self ? this.document : await vscode.workspace.openTextDocument(file);
+            line = await this.lineOf(document, fragment);
+        } catch {
+            // Not a text file (an image, a folder): there is nothing to land on.
+        }
+        if (line === null) {
+            this.host.log(`[INFO] Visual Editor: ${file.fsPath} has no #${fragment}; opened at the top.`);
+        }
+        if (self) {
+            this.reveal({ anchor: fragment, line });
+            return;
+        }
+        if (line === null) {
+            await vscode.commands.executeCommand('vscode.open', file);
+            return;
+        }
+        const at = new vscode.Range(line, 0, line, 0);
+        await vscode.commands.executeCommand('vscode.open', file, { selection: at });
+        const tab = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+        if (tab instanceof vscode.TabInputCustom && tab.viewType === VISUAL_EDITOR_VIEW_TYPE && tab.uri.toString() === file.toString()) {
+            revealInVisualEditor(file, { anchor: fragment, line });
+            return;
+        }
+        // The editor `vscode.open` showed; the active one may not be it yet when the call returns.
+        const editor = [vscode.window.activeTextEditor, ...vscode.window.visibleTextEditors]
+            .find(e => e !== undefined && e.document.uri.toString() === file.toString());
+        if (editor) {
+            editor.selection = new vscode.Selection(at.start, at.start);
+            editor.revealRange(at, vscode.TextEditorRevealType.AtTop);
+        }
+    }
+
+    /** The line `fragment` names in `document`: headings only in Markdown, a line fragment in any text. */
+    private async lineOf(document: vscode.TextDocument, fragment: string): Promise<number | null> {
+        const anchors = document.languageId === 'markdown'
+            ? headingAnchors(await this.host.engine(), document.getText(), { currentDocument: document.uri } as unknown as Environment)
+            : [];
+        const line = fragmentLine(anchors, fragment);
+        return line === null ? null : Math.min(line, document.lineCount - 1);
     }
 
     /** Parse the document as it is now and hand it to the webview, or say why it cannot be shown. */
@@ -231,6 +351,8 @@ export class VisualEditorSession implements vscode.Disposable {
             version,
             defaultWrap: Config.instance.editorWrapColumn(this.document.uri),
         });
+        // A link followed here before the page had the document lands now.
+        await this.postReveal();
         this.lenses.schedule();
     }
 

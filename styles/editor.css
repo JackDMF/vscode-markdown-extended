@@ -555,12 +555,19 @@
 .mep-lens-separator { white-space: pre; }
 
 /*
- * A lens placed on the element it is about — the status badge, the label
- * cell of a row of the summary table, whose other cells and links stay plain
- * links (webview/lenses.ts). At rest it looks exactly as the preview
- * draws it; the pointer on it underlines it and shows the verb as its tooltip.
- * The underline is put on every descendant too: a badge drawn as an inline
- * block, and a row's cells, take none from their parent.
+ * A lens placed on the element it is about (webview/lenses.ts). At rest it
+ * looks exactly as the preview draws it; the pointer on it, or the keyboard's
+ * focus, shows what a click does, and its tooltip names the verb. Two verbs,
+ * two signifiers (Daniel, 2026-09-28):
+ *
+ * - `data-lens-kind="set"` — a verb that changes the artifact: the status chip
+ *   or badge, the priority value. Drawn as a dropdown: a subtle button
+ *   surface, rounded, and a `▾` after the value; no underline, which would say
+ *   "link". A chip keeps its own colour, so the surface is a ring around it.
+ * - `data-lens-kind="go"` — a verb that goes somewhere: a relation's label,
+ *   which opens its picker. Underlined, as the target links beside it are.
+ *   The underline is put on every descendant too: a badge drawn as an inline
+ *   block, and a row's cells, take none from their parent.
  *
  * A `<summary>` — the "12 tests" of a collapsed list — is not the lens's: a
  * click on it opens the list. So it never shows the underline, and a row
@@ -570,27 +577,47 @@
  * opens, never on the row, the cell or the `<details>` around it. Its tooltip
  * is kept off by an empty `title` (webview/lenses.ts).
  */
-.mep-lens-target:not(:has(summary)):hover,
-.mep-lens-target:not(:has(summary)):hover * {
+.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
+    border-radius: 3px;
+    box-shadow: 0 0 0 2px var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.25));
+    cursor: pointer;
+}
+
+/* A value cell has no colour of its own to keep: the surface is its background. */
+td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
+    background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.25));
+    box-shadow: none;
+}
+
+.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible)::after {
+    content: "\00a0\25be";
+}
+
+.mep-lens-target[data-lens-kind="go"]:not(:has(summary)):is(:hover, :focus-visible),
+.mep-lens-target[data-lens-kind="go"]:not(:has(summary)):is(:hover, :focus-visible) * {
     text-decoration-line: underline;
     cursor: pointer;
 }
 
-.mep-lens-target:has(summary):hover:not(:has(summary:hover)) { cursor: pointer; }
+.mep-lens-target[data-lens-kind="go"]:has(summary):hover:not(:has(summary:hover)) { cursor: pointer; }
 
-.mep-lens-target:has(summary):hover:not(:has(summary:hover)) :is(th, td):not(:has(summary)),
-.mep-lens-target:has(summary):hover:not(:has(summary:hover)) :is(th, td):not(:has(summary)) *,
-.mep-lens-target:has(summary):hover:not(:has(summary:hover)) details > :not(summary),
-.mep-lens-target:has(summary):hover:not(:has(summary:hover)) details > :not(summary) * {
+.mep-lens-target[data-lens-kind="go"]:has(summary):hover:not(:has(summary:hover)) :is(th, td):not(:has(summary)),
+.mep-lens-target[data-lens-kind="go"]:has(summary):hover:not(:has(summary:hover)) :is(th, td):not(:has(summary)) *,
+.mep-lens-target[data-lens-kind="go"]:has(summary):hover:not(:has(summary:hover)) details > :not(summary),
+.mep-lens-target[data-lens-kind="go"]:has(summary):hover:not(:has(summary:hover)) details > :not(summary) * {
     text-decoration-line: underline;
 }
 
 .mep-lens-target:focus { outline: none; }
 
+/* A go target shows its underline to the keyboard, a set target its surface; both also the focus ring. */
 .mep-lens-target:focus-visible {
     outline: 1px solid var(--vscode-focusBorder, #0078d4);
     outline-offset: 1px;
 }
+
+/* A block brought into view (a followed link's fragment) stands below the sticky formatting row, not under it. */
+.mep-editor .ProseMirror > * { scroll-margin-top: 64px; }
 
 /* ------------------------------------------------------------------------- */
 /* The document cannot be shown without loss                                 */

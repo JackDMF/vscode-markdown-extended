@@ -383,3 +383,64 @@ suite('Editor webview (e2e)', () => {
         assert.strictEqual(await saveWasForwarded(), false, 'and is kept from VS Code');
     });
 });
+
+/**
+ * `revealAnchor`: a followed link's fragment brought into view in the page,
+ * the caret put there — by a heading's `anchor`, else by the line the host
+ * resolved the fragment to.
+ */
+suite('Editor revealing a link\'s fragment (e2e)', () => {
+    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+
+    const filler = Array.from({ length: 40 }, (_, k) => `Paragraph ${k} of filler.\n`).join('\n');
+    const SOURCE_TEXT = `# Top\n\n${filler}\n## Far away {#far-away}\n\n${filler}\n## Slugged heading\n\n${filler}`;
+
+    /** Where the heading with `text` stands in the window, and whether the caret is in it. */
+    const headingState = (text: string) => page.evaluate(t => {
+        const heading = Array.from(document.querySelectorAll<HTMLElement>('.ProseMirror h2')).find(h => h.textContent?.includes(t));
+        const anchor = window.getSelection()?.anchorNode ?? null;
+        return {
+            top: heading ? Math.round(heading.getBoundingClientRect().top) : null,
+            caretIn: heading !== undefined && anchor !== null && heading.contains(anchor),
+            focused: document.activeElement?.classList.contains('ProseMirror') ?? false,
+        };
+    }, text);
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage();
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        await editor.send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE_TEXT, {})), version: 1, defaultWrap: 90 });
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Slugged heading'));
+    });
+
+    suiteTeardown(async () => {
+        await editor?.close();
+    });
+
+    test('a heading\'s anchor is scrolled to the top, below the formatting row, with the caret in it', async () => {
+        assert.ok(((await headingState('Far away')).top ?? 0) > 900, 'out of view at first');
+        await (editor as EditorPage).send({ type: 'revealAnchor', anchor: 'far-away', line: null });
+        await delay(150);
+        const state = await headingState('Far away');
+        assert.ok(state.top !== null && state.top >= 40 && state.top < 120, `the heading at the top, clear of the sticky row: ${state.top}`);
+        assert.strictEqual(state.caretIn, true, 'the caret in the heading');
+        assert.strictEqual(state.focused, true);
+        assert.deepStrictEqual(await (editor as EditorPage).edits(), [], 'revealing writes nothing');
+    });
+
+    test('a fragment no heading carries as its anchor lands on the block the host\'s line starts', async () => {
+        const line = SOURCE_TEXT.split('\n').indexOf('## Slugged heading');
+        await (editor as EditorPage).send({ type: 'revealAnchor', anchor: 'slugged-heading', line });
+        await delay(150);
+        const state = await headingState('Slugged heading');
+        assert.ok(state.top !== null && state.top >= 40 && state.top < 120, `at the top: ${state.top}`);
+        assert.strictEqual(state.caretIn, true);
+    });
+});

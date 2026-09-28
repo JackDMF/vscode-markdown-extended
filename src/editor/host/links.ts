@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { Environment, MarkdownIt, Token } from '../../@types/markdown-it';
+import { GITHUB_SLUG_REPLACE } from './githubSlugRegex';
 
 /**
  * Where a link the person Ctrl/Cmd+clicked in the rich editor goes.
@@ -63,4 +65,98 @@ export function resolveLinkTarget(href: string, documentUri: vscode.Uri, workspa
         : vscode.Uri.joinPath(documentUri, '..');
     const segments = path.split('/').filter(s => s !== '');
     return { kind: 'open', uri: vscode.Uri.joinPath(base, ...segments).with({ fragment }) };
+}
+
+// ---------------------------------------------------------------------------
+// Fragments: the element a link lands on
+// ---------------------------------------------------------------------------
+
+/**
+ * A heading's GitHub-style slug, by the rule VS Code's built-in Markdown
+ * language server resolves a link's fragment with (`githubSlugifier`): trimmed,
+ * lower-cased, stripped of `GITHUB_SLUG_REPLACE`, each white-space character a
+ * hyphen. No public command of that extension opens a document at a fragment
+ * for another extension (`openDocumentLink` is internal to it), so its rule is
+ * ported here, the regex generated from its bundle.
+ */
+export function githubSlug(heading: string): string {
+    return heading.trim().toLowerCase().replace(GITHUB_SLUG_REPLACE, '').replace(/\s/g, '-');
+}
+
+/**
+ * The slugs of a document's headings in order, as the built-in's slug builder
+ * gives them: a repeated slug gets `-1`, `-2`, … by how often it came before.
+ */
+export function slugBuilder(): (heading: string) => string {
+    const seen = new Map<string, { count: number }>();
+    return heading => {
+        const slug = githubSlug(heading);
+        const entry = seen.get(slug);
+        if (entry) {
+            entry.count++;
+            return githubSlug(`${slug}-${entry.count}`);
+        }
+        seen.set(slug, { count: 0 });
+        return slug;
+    };
+}
+
+/** A heading a fragment can name: its 0-based line, its explicit `{#id}`, its slug. */
+export interface HeadingAnchor {
+    line: number;
+    id: string | null;
+    slug: string;
+}
+
+/** A heading's text as the built-in slugs it: the text, emoji and inline code of its inline children. */
+function headingText(inline: Token | undefined): string {
+    const walk = (tokens: readonly Token[]): string => tokens.map(t => {
+        if (t.children && t.children.length > 0) {
+            return walk(t.children);
+        }
+        return t.type === 'text' || t.type === 'emoji' || t.type === 'code_inline' ? t.content : '';
+    }).join('');
+    return inline ? walk(inline.children ?? []) : '';
+}
+
+/**
+ * Every heading of `text` as the engine parses it — the preview's composition,
+ * so `markdown-it-attrs` has read a `{#id}` into the heading's `id` and taken
+ * it out of the text that is slugged.
+ */
+export function headingAnchors(md: MarkdownIt, text: string, env: Environment): HeadingAnchor[] {
+    const tokens = md.parse(text, env);
+    const slug = slugBuilder();
+    const anchors: HeadingAnchor[] = [];
+    tokens.forEach((token, i) => {
+        if (token.type === 'heading_open' && token.map) {
+            anchors.push({ line: token.map[0], id: token.attrGet('id'), slug: slug(headingText(tokens[i + 1])) });
+        }
+    });
+    return anchors;
+}
+
+/**
+ * The 0-based line a fragment names, or `null`: a heading whose explicit `id`
+ * is the fragment — Req Explorer's anchors are written as `{#id}`, and an id
+ * the author wrote wins over a slug — else a heading whose slug is the
+ * fragment, compared without case as the built-in does, else a line fragment
+ * (`L12`, `12`, `L12,5`) as the built-in reads one.
+ */
+export function fragmentLine(anchors: readonly HeadingAnchor[], fragment: string): number | null {
+    if (fragment === '') {
+        return null;
+    }
+    const byId = anchors.find(a => a.id === fragment);
+    if (byId) {
+        return byId.line;
+    }
+    const lower = fragment.toLowerCase();
+    const bySlug = anchors.find(a => a.slug.toLowerCase() === lower);
+    if (bySlug) {
+        return bySlug.line;
+    }
+    const line = /^L?(\d+)(?:,\d+)?(?:-L?\d+(?:,\d+)?)?$/i.exec(fragment);
+    const n = line ? parseInt(line[1], 10) : NaN;
+    return Number.isInteger(n) && n > 0 ? n - 1 : null;
 }
