@@ -560,11 +560,28 @@
  * draws it; the pointer on it underlines it and shows the verb as its tooltip.
  * The underline is put on every descendant too: a badge drawn as an inline
  * block, and a row's cells, take none from their parent.
+ *
+ * A `<summary>` — the "12 tests" of a collapsed list — is not the lens's: a
+ * click on it opens the list. So it never shows the underline, and a row
+ * holding one shows none at all while the pointer is on it. An underline
+ * given to an ancestor cannot be taken back by a descendant, so in such a row
+ * it goes only on the cells without the summary and on the list the summary
+ * opens, never on the row, the cell or the `<details>` around it. Its tooltip
+ * is kept off by an empty `title` (webview/lenses.ts).
  */
-.mep-lens-target:hover,
-.mep-lens-target:hover * {
+.mep-lens-target:not(:has(summary)):hover,
+.mep-lens-target:not(:has(summary)):hover * {
     text-decoration-line: underline;
     cursor: pointer;
+}
+
+.mep-lens-target:has(summary):hover:not(:has(summary:hover)) { cursor: pointer; }
+
+.mep-lens-target:has(summary):hover:not(:has(summary:hover)) :is(th, td):not(:has(summary)),
+.mep-lens-target:has(summary):hover:not(:has(summary:hover)) :is(th, td):not(:has(summary)) *,
+.mep-lens-target:has(summary):hover:not(:has(summary:hover)) details > :not(summary),
+.mep-lens-target:has(summary):hover:not(:has(summary:hover)) details > :not(summary) * {
+    text-decoration-line: underline;
 }
 
 .mep-lens-target:focus { outline: none; }

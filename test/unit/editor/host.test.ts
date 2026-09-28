@@ -502,6 +502,17 @@ suite('Editor host: lens placement', () => {
         assert.deepStrictEqual(commands.get(rows[0].items[0].id as string)?.arguments, ['a', status], 'the command runs with the hint in place');
         assert.deepStrictEqual(lensHintOf({ title: 'x', command: 'c', arguments: [links] }), links.reqExplorer);
         assert.strictEqual(lensHintOf({ title: 'x', command: 'c' }), undefined);
+
+        // A symmetric relation's side: `out` or `in`, and nothing else.
+        const side = (direction: unknown) => lensHintOf({
+            title: 'x', command: 'c',
+            arguments: [{ reqExplorer: { surface: 'links', artifact: 'FRS-TST-001', relation: 'conflicts-with', direction } }],
+        });
+        assert.strictEqual(side('in')?.direction, 'in');
+        assert.strictEqual(side('out')?.direction, 'out');
+        assert.ok(side('sideways') && !('direction' in (side('sideways') as object)), 'an unknown side is left out; the lens keeps its relation');
+        const withSide = lensRows([lens(4, 'Conflicted by', [{ reqExplorer: { surface: 'links', artifact: 'FRS-TST-001', relation: 'conflicts-with', direction: 'in' } }])], ranges, '2');
+        assert.strictEqual(withSide.rows[0].items[0].direction, 'in', 'the side crosses to the page');
     });
 });
 

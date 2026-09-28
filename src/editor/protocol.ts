@@ -20,9 +20,9 @@ import type { ParsedDocumentJSON } from './parse';
  * that do not survive `postMessage` — and is absent for a lens whose command
  * has no command id: its title is shown as text, as the text editor shows it.
  *
- * `surface`, `artifact` and `relation` are the lens's own statement of which
- * rendered element it is about (`LensHint`, read by `host/lenses.ts`); all
- * three are absent for a lens that makes none — a foreign lens.
+ * `surface`, `artifact`, `relation` and `direction` are the lens's own
+ * statement of which rendered element it is about (`LensHint`, read by
+ * `host/lenses.ts`); all are absent for a lens that makes none — a foreign lens.
  */
 export interface LensItem {
     id?: string;
@@ -31,7 +31,16 @@ export interface LensItem {
     surface?: LensSurface;
     artifact?: string;
     relation?: string;
+    direction?: LensDirection;
 }
+
+/**
+ * Which side of a relation a `links` lens counts: the artifact's own edges
+ * (`out`) or the ones pointing at it (`in`). A symmetric relation
+ * (`conflicts-with`) has a row for each under one key, and only this tells
+ * them apart.
+ */
+export type LensDirection = 'out' | 'in';
 
 /**
  * The rendered element a lens is about, as the extension that made it names
@@ -45,11 +54,14 @@ export type LensSurface = 'status' | 'priority' | 'links' | 'action';
  * What a lens carries, as the last element of `command.arguments`, to say which
  * surface it belongs to. `artifact` is the readable id the page matches against
  * the injection marks (`InjectionMark.artifact`); `relation` is the relation
- * key of a `links` lens, matched against `tr[data-req-relation]`. The argument
- * stays in place when the command runs: it is the provider's, not the page's.
+ * key of a `links` lens, matched against `tr[data-req-relation]`, and
+ * `direction` its side, matched against `tr[data-req-direction]` — absent from
+ * a Req Explorer older than it, whose lens then takes the relation's first row.
+ * The argument stays in place when the command runs: it is the provider's, not
+ * the page's.
  */
 export interface LensHint {
-    reqExplorer: { surface: LensSurface; artifact: string; relation?: string };
+    reqExplorer: { surface: LensSurface; artifact: string; relation?: string; direction?: LensDirection };
 }
 
 /** The lenses of one top-level block, in line order, drawn as one row above it. */

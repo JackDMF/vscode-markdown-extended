@@ -15,8 +15,14 @@
  * | --- | --- | --- |
  * | `status` | the status badge (`inline_atom`, mark `artifact`) in its heading | a verb of the heading |
  * | `priority` | `tr[data-req-field="priority"]` of the summary table (`injected_block`, mark `artifact`) | a verb of the heading |
- * | `links` | `tr[data-req-relation="<relation>"]` of that table | a verb of the heading |
+ * | `links` | `tr[data-req-relation="<relation>"]` of that table, of its side (`data-req-direction`) when the lens names one | a verb of the heading |
  * | `action` | — | a verb of the heading, in its object toolbar |
+ *
+ * The heading and the table are looked for beside the lens first — the
+ * heading it stands on, the table right after — and only then anywhere in the
+ * document, since two headings can carry one readable id. An element takes
+ * one lens; a second for the same element is a verb, not a lens nobody can
+ * reach.
  *
  * A placed element keeps the look it has in the preview, and on hover shows an
  * underline, a pointer and a tooltip naming the verb; a click, or `Enter` with
@@ -47,17 +53,18 @@ import { Node } from 'prosemirror-model';
 import { EditorState, Plugin, PluginKey, PluginView, Transaction } from 'prosemirror-state';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { descent, topLevelChildren } from '../fidelity';
-import type { LensItem, LensRow } from '../protocol';
+import type { LensDirection, LensItem, LensRow } from '../protocol';
 import { objectOfNode } from './objects';
 
-/** A lens placed on a rendered element of its block. */
-interface HeldTarget {
-    id: string;
-    item: LensItem;
-    surface: 'status' | 'priority' | 'links';
-    artifact: string;
+/** The row of a summary table a lens names: the priority field, or a relation — on one side of it when `direction` is given. */
+interface RowKey {
+    surface: 'priority' | 'links';
     relation?: string;
+    direction?: LensDirection;
 }
+
+/** A lens placed on a rendered element of its block: the badge (`status`), or a row of the table. */
+type HeldTarget = { id: string; item: LensItem; artifact: string } & ({ surface: 'status' } | RowKey);
 
 /** What one top-level block holds of the last `lenses` message. */
 interface HeldBlock {
@@ -110,13 +117,19 @@ function artifactOf(mark: unknown): string | null {
     return m !== null && typeof m === 'object' && m.kind === 'atom' && typeof m.artifact === 'string' ? m.artifact : null;
 }
 
-/** The row of a summary table a lens names, in `root` (the table's rendering, live or parsed). */
-function tableRowIn(root: ParentNode, surface: 'priority' | 'links', relation: string | undefined): HTMLElement | null {
-    if (surface === 'priority') {
+/**
+ * The row of a summary table a lens names, in `root` (the table's rendering,
+ * live or parsed). A `links` lens with a `direction` takes the row of that
+ * side only — a symmetric relation has one per side under one key; one
+ * without (a Req Explorer older than the field) takes the relation's first.
+ */
+function tableRowIn(root: ParentNode, key: RowKey): HTMLElement | null {
+    if (key.surface === 'priority') {
         return root.querySelector<HTMLElement>('tr[data-req-field="priority"]');
     }
     // Compared, not put into a selector: the key is the provider's text.
-    return Array.from(root.querySelectorAll<HTMLElement>('tr[data-req-relation]')).find(tr => tr.dataset.reqRelation === relation) ?? null;
+    return Array.from(root.querySelectorAll<HTMLElement>('tr[data-req-relation]'))
+        .find(tr => tr.dataset.reqRelation === key.relation && (key.direction === undefined || tr.dataset.reqDirection === key.direction)) ?? null;
 }
 
 /** The position of the status badge naming `artifact` inside `heading` at `offset`, or `null`. */
@@ -134,50 +147,76 @@ function badgePos(heading: Node, offset: number, artifact: string): number | nul
     return found;
 }
 
-/** Where each artifact's badge and summary table stand: the index of the top-level block holding them. */
-interface ArtifactIndex {
-    badges: Map<string, number>;
-    tables: Map<string, { index: number; html: string }>;
+/** Whether the top-level `child` is a heading carrying the badge that names `artifact`. */
+function headingOf(child: Node, artifact: string): boolean {
+    return child.type.name === 'heading' && badgePos(child, 0, artifact) !== null;
 }
 
-function artifactIndex(doc: Node): ArtifactIndex {
-    const badges = new Map<string, number>();
-    const tables = new Map<string, { index: number; html: string }>();
-    doc.forEach((child, _offset, index) => {
-        if (child.type.name === 'injected_block') {
-            const artifact = artifactOf(child.attrs.mark);
-            if (artifact !== null && !tables.has(artifact)) {
-                tables.set(artifact, { index, html: child.attrs.html as string });
-            }
-            return;
-        }
-        if (child.type.name !== 'heading') {
-            return;
-        }
-        child.descendants(node => {
-            const artifact = node.type.name === 'inline_atom' ? artifactOf(node.attrs.mark) : null;
-            if (artifact !== null && !badges.has(artifact)) {
-                badges.set(artifact, index);
-            }
-            return true;
-        });
-    });
-    return { badges, tables };
+/** Whether the top-level `child` is the summary table injected for `artifact`. */
+function tableOf(child: Node, artifact: string): boolean {
+    return child.type.name === 'injected_block' && artifactOf(child.attrs.mark) === artifact;
 }
 
-/** Whether the table rendering `html` has the row a lens names; each rendering parsed once per placement. */
-function rowChecker(): (html: string, surface: 'priority' | 'links', relation: string | undefined) => boolean {
-    const parsed = new Map<string, DocumentFragment>();
-    return (html, surface, relation) => {
-        let content = parsed.get(html);
+/**
+ * Where an artifact's heading (with its badge) and summary table stand, for a
+ * lens on block `b`: **its own block first** — the heading the lens sits on,
+ * the table directly after it (or the table itself) — and only then the first
+ * of each in the document. A readable id is not unique: two headings can
+ * carry the same one (a collision the corpus's checks report), and each
+ * heading's lenses belong to its own badge and table, not the first pair
+ * with that id.
+ */
+function artifactPlaces(doc: Node): (b: number, artifact: string) => { heading?: number; table?: number } {
+    const first = (test: (child: Node, artifact: string) => boolean) => {
+        const found = new Map<string, number | undefined>();
+        return (artifact: string): number | undefined => {
+            if (!found.has(artifact)) {
+                let at: number | undefined;
+                for (let i = 0; i < doc.childCount && at === undefined; i++) {
+                    if (test(doc.child(i), artifact)) {
+                        at = i;
+                    }
+                }
+                found.set(artifact, at);
+            }
+            return found.get(artifact);
+        };
+    };
+    const firstHeading = first(headingOf);
+    const firstTable = first(tableOf);
+    const at = (i: number) => (i >= 0 && i < doc.childCount ? doc.child(i) : null);
+    return (b, artifact) => {
+        const own = at(b);
+        const next = at(b + 1);
+        const prev = at(b - 1);
+        const heading = own !== null && headingOf(own, artifact) ? b
+            : own !== null && tableOf(own, artifact) && prev !== null && headingOf(prev, artifact) ? b - 1
+                : undefined;
+        const table = own !== null && tableOf(own, artifact) ? b
+            : heading !== undefined && next !== null && tableOf(next, artifact) ? b + 1
+                : undefined;
+        // A table only beside its own heading: the lens's heading has none, or another's.
+        const local = heading !== undefined || table !== undefined;
+        return {
+            heading: heading ?? (local ? undefined : firstHeading(artifact)),
+            table: table ?? (local ? undefined : firstTable(artifact)),
+        };
+    };
+}
+
+/** The row a lens names in the table rendering of block `index`, or `null`; each block's rendering parsed once per placement. */
+function rowFinder(doc: Node): (index: number, key: RowKey) => HTMLElement | null {
+    const parsed = new Map<number, DocumentFragment>();
+    return (index, key) => {
+        let content = parsed.get(index);
         if (content === undefined) {
             // Inert: a template's content runs no script and loads nothing.
             const template = document.createElement('template');
-            template.innerHTML = html;
+            template.innerHTML = doc.child(index).attrs.html as string;
             content = template.content;
-            parsed.set(html, content);
+            parsed.set(index, content);
         }
-        return tableRowIn(content, surface, relation) !== null;
+        return tableRowIn(content, key);
     };
 }
 
@@ -192,8 +231,23 @@ function verbOrder(items: LensItem[]): LensItem[] {
  * by the host's parse of that same text.
  */
 function place(doc: Node, rows: readonly LensRow[], tag: string): (HeldBlock | null)[] {
-    const index = artifactIndex(doc);
-    const hasRow = rowChecker();
+    const placesFor = artifactPlaces(doc);
+    const rowOf = rowFinder(doc);
+    /**
+     * The elements already given a lens — a heading's badge by its index, a
+     * table row by the element the parsed rendering has for it: a second lens
+     * for the same element (two status lenses, two lenses of one relation from
+     * a Req Explorer that names no side) would be marked on an element that
+     * shows only the first, and could never be reached. It is a verb instead.
+     */
+    const claimed = new Set<unknown>();
+    const claim = (element: unknown): boolean => {
+        if (claimed.has(element)) {
+            return false;
+        }
+        claimed.add(element);
+        return true;
+    };
     const parts = Array.from({ length: doc.childCount }, () => ({ row: [] as LensItem[], verbs: [] as LensItem[], targets: [] as HeldTarget[] }));
     const offsets: number[] = [];
     doc.forEach((_child, offset) => offsets.push(offset));
@@ -215,22 +269,33 @@ function place(doc: Node, rows: readonly LensRow[], tag: string): (HeldBlock | n
                 continue;
             }
             const artifact = item.artifact;
-            const heading = index.badges.get(artifact);
+            const { heading, table } = placesFor(b, artifact);
             const surface = item.surface;
             if (surface === 'status' && heading !== undefined) {
                 // Without a command the lens only repeats what the badge says.
-                if (item.id !== undefined) {
-                    parts[heading].targets.push({ id: item.id, item, surface, artifact });
-                }
-                continue;
-            }
-            if (surface === 'priority' || surface === 'links') {
-                const table = index.tables.get(artifact);
-                if (table !== undefined && (surface === 'priority' || item.relation !== undefined) && hasRow(table.html, surface, item.relation)) {
-                    if (item.id !== undefined) {
-                        parts[table.index].targets.push({ id: item.id, item, surface, artifact, ...(item.relation !== undefined ? { relation: item.relation } : {}) });
-                    }
+                if (item.id === undefined) {
                     continue;
+                }
+                if (claim(`badge ${heading}`)) {
+                    parts[heading].targets.push({ id: item.id, item, surface, artifact });
+                    continue;
+                }
+            }
+            if ((surface === 'priority' || surface === 'links') && table !== undefined) {
+                const key: RowKey = {
+                    surface,
+                    ...(item.relation !== undefined ? { relation: item.relation } : {}),
+                    ...(item.direction !== undefined ? { direction: item.direction } : {}),
+                };
+                const row = surface === 'priority' || key.relation !== undefined ? rowOf(table, key) : null;
+                if (row !== null) {
+                    if (item.id === undefined) {
+                        continue;
+                    }
+                    if (claim(row)) {
+                        parts[table].targets.push({ id: item.id, item, artifact, ...key });
+                        continue;
+                    }
                 }
             }
             // An action, or a lens whose element the page does not show: a verb of the artifact's heading.
@@ -321,11 +386,11 @@ function targetElement(view: EditorView, child: Node, offset: number, target: He
         const dom = pos === null ? null : view.nodeDOM(pos);
         return dom instanceof HTMLElement ? dom : null;
     }
-    if (child.type.name !== 'injected_block' || artifactOf(child.attrs.mark) !== target.artifact) {
+    if (!tableOf(child, target.artifact)) {
         return null;
     }
     const dom = view.nodeDOM(offset);
-    return dom instanceof HTMLElement ? tableRowIn(dom, target.surface, target.relation) : null;
+    return dom instanceof HTMLElement ? tableRowIn(dom, target) : null;
 }
 
 /** The title an element had before a lens was placed on it, to give back when the lens goes. */
@@ -349,9 +414,21 @@ function markTarget(el: HTMLElement, target: HeldTarget): void {
         // A row keeps its table semantics; the badge is a button while it runs a lens.
         el.setAttribute('role', 'button');
     }
+    // A `<summary>` inside is not the lens's: a click on it opens its list
+    // (`LensTargets`), so it must not promise the verb either. An empty title
+    // stops the row's from showing over it; the underline is kept off it in
+    // `editor.css`.
+    for (const summary of Array.from(el.querySelectorAll<HTMLElement>('summary:not([title])'))) {
+        summary.setAttribute('title', '');
+        summary.dataset.mepLensUntitled = '';
+    }
 }
 
 function unmarkTarget(el: HTMLElement): void {
+    for (const summary of Array.from(el.querySelectorAll<HTMLElement>('summary[data-mep-lens-untitled]'))) {
+        summary.removeAttribute('title');
+        delete summary.dataset.mepLensUntitled;
+    }
     el.classList.remove('mep-lens-target');
     delete el.dataset.lens;
     el.removeAttribute('tabindex');

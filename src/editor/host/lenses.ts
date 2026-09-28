@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Config } from '../../services/common/config';
-import type { HostMessage, LensHint, LensItem, LensRow, LensSurface } from '../protocol';
+import type { HostMessage, LensDirection, LensHint, LensItem, LensRow, LensSurface } from '../protocol';
 import { message } from './errors';
 
 /** How long a burst of edits is left to settle before VS Code is asked for the lenses again. */
@@ -46,7 +46,8 @@ const SURFACES: ReadonlySet<string> = new Set<LensSurface>(['status', 'priority'
 /**
  * The surface a lens names for itself: the last of its command's arguments,
  * when that is an object of the `LensHint` shape — a known surface and an
- * artifact id; `relation` only when it is a string. Anything else, and a lens
+ * artifact id; `relation` only when it is a string, `direction` only when it
+ * is `out` or `in` (a Req Explorer older than it sends none). Anything else, and a lens
  * with no arguments, names none: it is a foreign lens, drawn as the text
  * editor draws it. The shape is checked, not assumed — the argument is the
  * provider's own and may be anything.
@@ -61,7 +62,7 @@ export function lensHintOf(command: vscode.Command): LensHint['reqExplorer'] | u
     if (typeof hint !== 'object' || hint === null) {
         return undefined;
     }
-    const { surface, artifact, relation } = hint as { surface?: unknown; artifact?: unknown; relation?: unknown };
+    const { surface, artifact, relation, direction } = hint as { surface?: unknown; artifact?: unknown; relation?: unknown; direction?: unknown };
     if (typeof surface !== 'string' || !SURFACES.has(surface) || typeof artifact !== 'string' || artifact === '') {
         return undefined;
     }
@@ -69,6 +70,7 @@ export function lensHintOf(command: vscode.Command): LensHint['reqExplorer'] | u
         surface: surface as LensSurface,
         artifact,
         ...(typeof relation === 'string' && relation !== '' ? { relation } : {}),
+        ...(direction === 'out' || direction === 'in' ? { direction: direction as LensDirection } : {}),
     };
 }
 
@@ -106,6 +108,9 @@ export function lensRows(lenses: readonly vscode.CodeLens[], ranges: readonly Li
             item.artifact = hint.artifact;
             if (hint.relation !== undefined) {
                 item.relation = hint.relation;
+            }
+            if (hint.direction !== undefined) {
+                item.direction = hint.direction;
             }
         }
         if (command.command) {
