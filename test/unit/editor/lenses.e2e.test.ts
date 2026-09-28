@@ -376,10 +376,16 @@ suite('Editor code actions as object verbs (e2e)', () => {
     });
 });
 
-/** The summary table as Req Explorer renders it, with the row hooks of the lens contract. */
+/** The status row of a summary table, where Req Explorer shows the status (and draws no badge). */
+const STATUS_ROW = '<tr data-req-field="status"><th scope="row">Status</th><td>implemented</td></tr>';
+
+/**
+ * The summary table as Req Explorer renders it, with the row hooks of the lens
+ * contract — without a status row, so the status lens goes to the badge;
+ * `withStatusRow` adds it.
+ */
 const SUMMARY_HTML = '<table class="req-summary" data-req-id="FRS-TST-001">'
     + '<tbody class="req-summary-fields">'
-    + '<tr data-req-field="status"><th scope="row">Status</th><td>implemented</td></tr>'
     + '<tr data-req-field="priority"><th scope="row">Priority</th><td>high</td></tr>'
     + '</tbody><tbody class="req-summary-links">'
     + '<tr data-req-relation="verified-by" data-req-direction="out"><th scope="row">Verified by</th><td><a href="TST-001.md">TST-001</a></td></tr>'
@@ -389,6 +395,8 @@ const SUMMARY_HTML = '<table class="req-summary" data-req-id="FRS-TST-001">'
     + '<details class="req-summary-more"><summary>3 requirements</summary><ul><li>FRS-TST-003</li><li>FRS-TST-004</li><li>FRS-TST-005</li></ul></details>'
     + '</td></tr>'
     + '</tbody></table>';
+
+const withStatusRow = (html: string) => html.replace('<tbody class="req-summary-fields">', `<tbody class="req-summary-fields">${STATUS_ROW}`);
 
 const BADGE_MARK = { rule: 'req-status-badges', kind: 'atom', artifact: 'FRS-TST-001' };
 
@@ -436,7 +444,8 @@ suite('Editor lenses on their surfaces (e2e)', () => {
 
     const targets = () => page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('.ProseMirror .mep-lens-target'), el => ({
         el: el.classList.contains('mep-inline-atom') ? 'badge'
-            : el.tagName === 'TR' ? `tr:${el.dataset.reqField ?? `${el.dataset.reqRelation}/${el.dataset.reqDirection}`}` : el.tagName,
+            : el.tagName === 'TH' ? (tr => `th:${tr.dataset.reqField ?? `${tr.dataset.reqRelation}/${tr.dataset.reqDirection}`}`)(el.closest('tr') as HTMLElement)
+                : el.tagName,
         lens: el.dataset.lens,
         title: el.title,
         tabIndex: el.tabIndex,
@@ -523,26 +532,61 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         assert.deepStrictEqual(await targets(), [
             { el: 'badge', lens: 's.0', title: 'Set status\nChange the status of FRS-TST-001', tabIndex: 0 },
             // The codicon is left out of the tooltip too.
-            { el: 'tr:priority', lens: 'p.0', title: 'Set priority', tabIndex: 0 },
-            { el: 'tr:verified-by/out', lens: 'l.0', title: '1 test', tabIndex: 0 },
+            { el: 'th:priority', lens: 'p.0', title: 'Set priority', tabIndex: 0 },
+            { el: 'th:verified-by/out', lens: 'l.0', title: '1 test', tabIndex: 0 },
             // Each side of the symmetric relation its own lens.
-            { el: 'tr:conflicts-with/out', lens: 'c.out', title: 'Conflicts with 1', tabIndex: 0 },
-            { el: 'tr:conflicts-with/in', lens: 'c.in', title: 'Conflicted by 3', tabIndex: 0 },
+            { el: 'th:conflicts-with/out', lens: 'c.out', title: 'Conflicts with 1', tabIndex: 0 },
+            { el: 'th:conflicts-with/in', lens: 'c.in', title: 'Conflicted by 3', tabIndex: 0 },
         ]);
         assert.deepStrictEqual(await rows(), [{ text: 'Foreign lens', before: 'A plain paragraph.' }],
             'one block, one grammar: no row on the heading; the paragraph\'s foreign lens has its row');
         assert.deepStrictEqual(await (editor as EditorPage).edits(), [], 'placing lenses writes nothing');
     });
 
-    test('at rest a target looks as the preview draws it; the pointer on it underlines it', async () => {
+    test('at rest a target looks as the preview draws it; the pointer on it underlines it; a row\'s lens is its label cell only', async () => {
         assert.strictEqual((await decorationOf('.mep-inline-atom.mep-lens-target')).line, 'none');
-        assert.strictEqual((await decorationOf('tr[data-req-field="priority"] td')).line, 'none');
+        assert.strictEqual((await decorationOf('tr[data-req-field="priority"] th')).line, 'none');
         await page.hover('.mep-inline-atom.mep-lens-target');
         assert.deepStrictEqual(await decorationOf('.mep-inline-atom.mep-lens-target'), { line: 'underline', cursor: 'pointer' });
         assert.deepStrictEqual(await decorationOf('.mep-inline-atom.mep-lens-target .req-badge'), { line: 'underline', cursor: 'pointer' });
+        await page.hover('tr[data-req-field="priority"] th');
+        assert.deepStrictEqual(await decorationOf('tr[data-req-field="priority"] th'), { line: 'underline', cursor: 'pointer' });
+        assert.strictEqual((await decorationOf('tr[data-req-field="priority"] td')).line, 'none', 'the value cell is not the lens\'s');
         await page.hover('tr[data-req-field="priority"] td');
-        assert.deepStrictEqual(await decorationOf('tr[data-req-field="priority"] td'), { line: 'underline', cursor: 'pointer' });
-        assert.strictEqual((await decorationOf('tr[data-req-field="status"] td')).line, 'none', 'a row no lens is on stays as it is');
+        assert.strictEqual((await decorationOf('tr[data-req-field="priority"] th')).line, 'none', 'the pointer on the value shows nothing of the lens');
+        await page.mouse.move(2, 2);
+    });
+
+    test('in the summary a plain click opens a target link, Ctrl+click too, and runs no lens; the label cell runs the group\'s lens', async () => {
+        const ROW = 'tr[data-req-relation="verified-by"]';
+        await page.hover(`${ROW} a`);
+        const link = await page.$eval(`${ROW} a`, a => ({
+            cursor: getComputedStyle(a).cursor,
+            inTarget: a.closest('.mep-lens-target') !== null,
+            tooltip: a.closest('[title]')?.getAttribute('title') ?? null,
+        }));
+        assert.deepStrictEqual(link, { cursor: 'pointer', inTarget: false, tooltip: null }, 'a link shows its own affordance, not the verb');
+        await page.hover(`${ROW} th`);
+        assert.strictEqual(await page.$eval(`${ROW} th`, th => (th as HTMLElement).title), '1 test', 'the label names the verb');
+
+        const opens = async () => (await (editor as EditorPage).posted()).filter(m => m.type === 'openLink');
+        const beforeRuns = (await runs()).length;
+        const beforeOpens = (await opens()).length;
+        await clickCentre(`${ROW} a`);
+        const box = await (await page.$(`${ROW} a`))?.boundingBox();
+        assert.ok(box);
+        await page.keyboard.down('Control');
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await page.keyboard.up('Control');
+        await delay(80);
+        assert.deepStrictEqual((await opens()).slice(beforeOpens), [{ type: 'openLink', href: 'TST-001.md' }, { type: 'openLink', href: 'TST-001.md' }]);
+        assert.deepStrictEqual((await runs()).slice(beforeRuns), [], 'a link click is not the lens\'s');
+        assert.strictEqual(await page.evaluate(() => document.querySelector('.mep-injected-block.ProseMirror-selectednode') !== null), false,
+            'the click opened the link instead of selecting the table');
+
+        await clickCentre(`${ROW} th`);
+        assert.deepStrictEqual((await runs()).slice(beforeRuns), ['l.0']);
+        assert.deepStrictEqual(await (editor as EditorPage).edits(), []);
         await page.mouse.move(2, 2);
     });
 
@@ -557,35 +601,35 @@ suite('Editor lenses on their surfaces (e2e)', () => {
                 details: line(row.querySelector('details')), summary: line(summary), list: line(row.querySelector('ul')),
                 summaryCursor: getComputedStyle(summary).cursor,
                 tooltip: summary.closest('[title]')?.getAttribute('title') ?? null,
+                label: (row.querySelector('th') as HTMLElement).title,
             };
         });
         await page.hover(`${IN} summary`);
         assert.deepStrictEqual(await state(), {
-            row: 'none', th: 'none', td: 'none', details: 'none', summary: 'none', list: 'none', summaryCursor: 'auto', tooltip: '',
+            row: 'none', th: 'none', td: 'none', details: 'none', summary: 'none', list: 'none', summaryCursor: 'auto', tooltip: null, label: 'Conflicted by 3',
         }, 'the pointer on the summary shows nothing of the lens');
         await page.hover(`${IN} th`);
         const onHeader = await state();
         assert.deepStrictEqual({ th: onHeader.th, td: onHeader.td, details: onHeader.details, summary: onHeader.summary, list: onHeader.list },
-            { th: 'underline', td: 'none', details: 'none', summary: 'none', list: 'underline' },
-            'on the rest of the row, everything but the summary is underlined');
-        assert.strictEqual(await page.$eval(IN, row => (row as HTMLElement).title), 'Conflicted by 3', 'the row keeps its tooltip');
+            { th: 'underline', td: 'none', details: 'none', summary: 'none', list: 'none' },
+            'on the label cell, the label alone is underlined');
 
         const before = (await runs()).length;
         await clickCentre(`${IN} summary`);
         assert.deepStrictEqual((await runs()).slice(before), [], 'the summary ran no lens');
         assert.strictEqual(await page.$eval(`${IN} details`, d => (d as HTMLDetailsElement).open), true, 'it opened its list');
         await clickCentre(`${IN} th`);
-        assert.deepStrictEqual((await runs()).slice(before), ['c.in'], 'the rest of the row runs the incoming side\'s lens');
+        assert.deepStrictEqual((await runs()).slice(before), ['c.in'], 'the label runs the incoming side\'s lens');
         await page.mouse.move(2, 2);
     });
 
-    test('a click on the badge, the priority row, or the link in a relation row runs its lens, and selects nothing', async () => {
+    test('a click on the badge or a row\'s label cell runs its lens, and selects nothing', async () => {
         const before = (await runs()).length;
         await clickCentre('.mep-inline-atom.mep-lens-target');
         const selected = await page.evaluate(() => document.querySelector('.mep-inline-atom.ProseMirror-selectednode') !== null);
         assert.strictEqual(selected, false, 'the badge ran its lens instead of being selected');
-        await clickCentre('tr[data-req-field="priority"] td');
-        await clickCentre('tr[data-req-relation="verified-by"] a');
+        await clickCentre('tr[data-req-field="priority"] th');
+        await clickCentre('tr[data-req-relation="verified-by"] th');
         await clickCentre('tr[data-req-relation="conflicts-with"][data-req-direction="out"] th');
         assert.deepStrictEqual((await runs()).slice(before), ['s.0', 'p.0', 'l.0', 'c.out']);
         assert.deepStrictEqual(await (editor as EditorPage).edits(), []);
@@ -629,7 +673,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
     test('the placement follows its blocks through an edit, and the next lenses replace it', async function () {
         this.timeout(10000);
         await send(HINTED);
-        await page.waitForSelector('tr[data-req-field="priority"].mep-lens-target');
+        await page.waitForSelector('tr[data-req-field="priority"] th.mep-lens-target');
         // Out of the heading first: its bar, open since the last test, is not in the way of the click below.
         await page.mouse.click(2, 2);
         await delay(100);
@@ -683,8 +727,8 @@ suite('Editor lenses on their surfaces (e2e)', () => {
                 { id: 'o.1', title: 'Conflicted by (old)', surface: 'links', artifact: 'FRS-TST-001', relation: 'conflicts-with' },
             ],
         }]);
-        await page.waitForSelector('tr.mep-lens-target');
-        assert.deepStrictEqual((await targets()).map(t => [t.el, t.lens]), [['tr:conflicts-with/out', 'o.0']]);
+        await page.waitForSelector('th.mep-lens-target');
+        assert.deepStrictEqual((await targets()).map(t => [t.el, t.lens]), [['th:conflicts-with/out', 'o.0']]);
         assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'lens:o.1']);
     });
 
@@ -716,7 +760,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         await page.waitForSelector('.mep-lens-target');
         const placed = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('.ProseMirror .mep-lens-target'), el => ({
             lens: el.dataset.lens,
-            text: el.classList.contains('mep-inline-atom') ? el.textContent : el.querySelector('td')?.textContent,
+            text: el.classList.contains('mep-inline-atom') ? el.textContent : el.closest('tr')?.querySelector('td')?.textContent,
         })));
         assert.deepStrictEqual(placed, [
             { lens: 's.first', text: 'implemented' },
@@ -725,5 +769,34 @@ suite('Editor lenses on their surfaces (e2e)', () => {
             { lens: 'p.second', text: 'low' },
         ]);
         assert.deepStrictEqual(await rows(), [], 'nothing left over for a row');
+    });
+
+    test('a status lens goes on the table\'s status row first, and on the badge only where the table has none', async function () {
+        this.timeout(15000);
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        /** A requirement heading — with or without its badge — and its table, with or without a status row: three blocks. */
+        const show = async (badge: boolean, statusRow: boolean) => {
+            const json = parsedDocumentToJSON(parseDocument(md, '# FRS-TST-001: Page\n\nA plain paragraph.\n', {}));
+            const content = json.doc.content as { type: string; attrs: Record<string, unknown>; content?: Record<string, unknown>[] }[];
+            content[0].attrs.reqPrefix = 'FRS-TST-001: ';
+            content[0].content = badge
+                ? [{ type: 'text', text: 'Page ' }, { type: 'inline_atom', attrs: { html: '<span class="req-badge req-badge-implemented">implemented</span>', mark: BADGE_MARK } }]
+                : [{ type: 'text', text: 'Page' }];
+            const html = statusRow ? withStatusRow(SUMMARY_HTML) : SUMMARY_HTML;
+            content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html, src: null, gap: null } });
+            version++;
+            await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90 });
+            await page.waitForFunction(v => document.querySelector('.ProseMirror')?.textContent?.includes('A plain paragraph.')
+                && document.querySelectorAll('.ProseMirror tr[data-req-field="status"]').length === v, {}, statusRow ? 1 : 0);
+            await send([{ blockIndex: 0, items: [{ id: 'st', title: 'Set status', surface: 'status', artifact: 'FRS-TST-001' }] }], 3);
+            // The message is taken asynchronously; the last document's target may still be marked until then.
+            await delay(150);
+            return (await targets()).map(t => [t.el, t.lens]);
+        };
+        assert.deepStrictEqual(await show(false, true), [['th:status', 'st']], 'a status row and no badge: the row');
+        assert.deepStrictEqual(await show(true, false), [['badge', 'st']], 'a badge and no status row: the badge');
+        assert.deepStrictEqual(await show(true, true), [['th:status', 'st']], 'both: the row, and the badge stays as it is');
+        assert.strictEqual(await page.$eval('.ProseMirror .mep-inline-atom', el => el.classList.contains('mep-lens-target')), false);
+        assert.deepStrictEqual(await rows(), []);
     });
 });

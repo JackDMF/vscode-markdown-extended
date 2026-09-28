@@ -138,7 +138,8 @@ export type WebviewMessage =
     | { type: 'openSnippet'; path: string }
     /**
      * Follow a link the person Ctrl/Cmd+clicked — in rich text or in a rendered
-     * block — with its `href` exactly as the element carries it. The host
+     * block — or plain-clicked in a read model (Req Explorer's summary table),
+     * with its `href` exactly as the element carries it. The host
      * resolves a relative one against the document (`host/links.ts`); a link
      * to a heading of this very document never comes here, the page scrolls.
      */

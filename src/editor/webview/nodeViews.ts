@@ -298,7 +298,11 @@ export class InjectedBlockView extends AtomView {
         this.content = element('div', 'mep-atom-content');
         this.dom.append(this.content);
         inertControls(this.content);
-        followLinksIn(this.content, href => port.openLink(href));
+        // An atom Req Explorer injected (mark kind `atom`: the summary table)
+        // is a read model — nothing in it is edited here — so a plain click on
+        // one of its links opens it. An expansion is a snippet's text, and
+        // keeps the Ctrl+click rule of text.
+        followLinksIn(this.content, href => port.openLink(href), () => isReadModel(this.node));
         this.render();
     }
 
@@ -306,6 +310,12 @@ export class InjectedBlockView extends AtomView {
         this.dom.dataset.kind = this.node.attrs.kind as string;
         this.content.innerHTML = this.node.attrs.html as string;
     }
+}
+
+/** Whether an injected block is a read model: an atom Req Explorer injected (its mark's kind is `atom`), whose links a plain click opens. */
+function isReadModel(node: Node): boolean {
+    const mark = node.attrs.mark as { kind?: unknown } | null;
+    return mark !== null && typeof mark === 'object' && mark.kind === 'atom';
 }
 
 /** An inline injected atom — Req Explorer's status badge on a heading. */

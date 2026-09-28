@@ -555,8 +555,9 @@
 .mep-lens-separator { white-space: pre; }
 
 /*
- * A lens placed on the element it is about — the status badge, a row of the
- * summary table (webview/lenses.ts). At rest it looks exactly as the preview
+ * A lens placed on the element it is about — the status badge, the label
+ * cell of a row of the summary table, whose other cells and links stay plain
+ * links (webview/lenses.ts). At rest it looks exactly as the preview
  * draws it; the pointer on it underlines it and shows the verb as its tooltip.
  * The underline is put on every descendant too: a badge drawn as an inline
  * block, and a row's cells, take none from their parent.
