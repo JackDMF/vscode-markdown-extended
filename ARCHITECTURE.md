@@ -584,7 +584,7 @@ text the other — never a diff:
 | page → host | `render { requestId, src }` | Render this raw block source |
 | page → host | `openSnippet { path }` | Open an expansion's snippet file (only paths the document's own marks name are opened) |
 | page → host | `openSource { line }` | Open the text editor beside, at this line |
-| page → host | `openLink { href }` | Follow a Ctrl/Cmd+clicked link; the host resolves it against the document (`host/links.ts`) |
+| page → host | `openLink { href }` | Follow a Ctrl/Cmd+clicked link (a plain-clicked one in a read model); the host resolves it against the document (`host/links.ts`) |
 | page → host | `refreshLenses` | Ask VS Code for the lenses again (the page took the focus or came back into view) |
 | page → host | `runLens { id }` | Run the command of a lens from the last `lenses` |
 | page → host | `actionsFor { requestId, blockIndex, blocks }` | The object toolbar opened for this top-level block of a page holding `blocks` |
@@ -619,6 +619,17 @@ against the document and the workspace folder (`resolveLinkTarget`): `http(s)`/`
 to `env.openExternal`, a file to `vscode.open` with its fragment kept, any other scheme
 (`command:`, `vscode:`, `javascript:`) refused. A link's `title` shows its href; the
 link's own title travels in `data-mep-title`, so copy and paste inside the editor keep it.
+
+**The exception: a read model** (Daniel, 2026-09-28, from the acceptance test). In an
+`injected_block` whose mark's kind is `atom` — Req Explorer's summary table — a plain
+click on a link opens it too, through the same `openLink` (a relative href resolved on the
+host, a `#fragment` scrolled to); `Ctrl+click` does the same. The Ctrl+click rule exists so
+a click in text can place the caret; a read model has no text anybody edits here, and a
+list of links whose click does not follow the link reads as broken. `followLinksIn` takes
+the predicate (`plainFollows`), evaluated per event against the node the view shows now;
+an include expansion (mark kind `expansion`) is a snippet's text and keeps the rule, as do
+raw blocks and the rest of the page. A press on such a link is prevented, so it does not
+select the table.
 
 The session remembers the text it believes the page holds. An `edit` is written only
 when its `baseVersion` is the last posted version and the document still holds that
@@ -1041,10 +1052,14 @@ the same one (a collision the corpus's checks report), and each heading's lenses
 its own badge and table. For every row the host sent:
 
 - a row with no hinted lens stays a row, on its block;
-- in a row with a hinted lens, each lens is placed: `status` on the artifact's badge;
-  `priority` and `links` on its table, when the table's HTML (parsed inert, in a
-  `template`) has `tr[data-req-field="priority"]`, or the `tr[data-req-relation]` of that
-  key — and of that `data-req-direction`, when the lens names one; a lens so placed without a
+- in a row with a hinted lens, each lens is placed on its table, when the table's HTML
+  (parsed inert, in a `template`) has the row: `status` and `priority` on
+  `tr[data-req-field="status"|"priority"]`, `links` on the `tr[data-req-relation]` of its
+  key — and of that `data-req-direction`, when the lens names one. **The status row comes
+  first**: Req Explorer shows the status in the table and draws a badge beside the heading
+  only where no table repeats it (2026-09-28), so `status` goes to the artifact's badge only
+  when the table has no status row. A heading is the artifact's when it carries that badge
+  or its `reqPrefix` names the id. A lens so placed without a
   command is dropped, since the element already shows what it says. **An element takes one
   lens**: a second for the same badge or row (two lenses of a relation from a Req Explorer
   that names no side) would be marked on an element that shows only the first, and could
@@ -1061,17 +1076,18 @@ held per top-level block, as the rows were, and follow their nodes through every
 transaction by `descent`; the next `lenses` message places everything afresh.
 
 *Placed elements.* A plugin view (`LensTargets`) marks the elements after every update:
-the badge's node-view element (found by the artifact inside its heading node) and the table
-row (found in the `injected_block`'s node-view element) get `mep-lens-target`,
-`data-lens`, the lens title — the verb — as `title`, `tabindex=0`, and the badge
-`role=button`; an element whose lens went is given back its own title. A redrawn rendering
+the badge's node-view element (found by the artifact inside its heading node) and, for a
+table row, **its label cell** — the `th`, the row itself only where it has none (found in
+the `injected_block`'s node-view element) — get `mep-lens-target`, `data-lens`, the lens
+title — the verb — as `title`, `tabindex=0`, and the badge `role=button` (a cell keeps its
+table role). The lens is on the label only because the value cell beside it holds links to
+the relation's targets, which a plain click opens (above): the label runs the group's lens
+(the picker), the targets are plain links; an element whose lens went is given back its own title. A redrawn rendering
 (an `InjectedBlockView` resets its HTML on update) is marked again on the same pass. Its
 listeners are on the editor's element in the capture phase, before ProseMirror and before
-a rendering's own link handling: a plain click (not with Ctrl/Cmd, not on a `<summary>`)
-runs the lens and selects nothing, `mousedown` is prevented so no caret moves, and
-`Enter` or `Space` on the focused element runs it. A link inside a relation row runs the
-row's lens too — the underline says the row is what is clicked; Ctrl+click still follows the
-link. `editor.css` draws nothing at rest; `:hover` underlines the element and its
+a rendering's own link handling: a plain click (not with Ctrl/Cmd, not on a `<summary>`,
+not on a link) runs the lens and selects nothing, `mousedown` is prevented so no caret
+moves, and `Enter` or `Space` on the focused element runs it. `editor.css` draws nothing at rest; `:hover` underlines the element and its
 descendants (a badge drawn as an inline block and a row's cells take no decoration from
 their parent) with a pointer, and `:focus-visible` outlines it. A `<summary>` inside a row
 (a collapsed list's "12 tests") is not the lens's — a click on it opens the list — so it

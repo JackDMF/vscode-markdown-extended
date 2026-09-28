@@ -475,12 +475,17 @@ both, without any arrangement between the extensions: it asks VS Code for them, 
 way the text editor does, so what one shows the other shows.
 
 - **A lens is placed on the element it is about.** In the text editor a lens row stands in
-  for a view the text cannot show; here the view is on the page — a requirement's status
-  badge, its summary table — and a row repeating it would say everything twice. So a lens
-  that names its surface runs from that element: the **status badge** runs the status
-  lens, the table's **Priority** row the priority lens, a **relation row** (_Verified by_,
-  _Depends on_, …) the lens counting that relation. At rest they look exactly as in the
-  preview; the pointer on one underlines it, and its tooltip names what a click does.
+  for a view the text cannot show; here the view is on the page — a requirement's summary
+  table — and a row repeating it would say everything twice. So a lens that names its
+  surface runs from that element: the table's **Status** row runs the status lens (the
+  status badge beside the heading, where Req Explorer draws one because no table repeats
+  it), the **Priority** row the priority lens, a **relation row** (_Verified by_,
+  _Depends on_, …) the lens of that relation — its picker. On a row the lens is on the
+  **label** (_Status_, _Verified by_); the targets beside it are links, and **a plain click
+  on a link in the summary opens it**: the table is a read model, nothing in it is edited
+  here, so the Ctrl+click rule of text protects nothing. At rest they look exactly as in
+  the preview; the pointer on a label or the badge underlines it, and its tooltip names
+  what a click does.
   `Tab` reaches them, `Enter` runs the focused one. A lens that is a verb (**+ ref**) is a
   verb in the heading's object toolbar — the caret resting in the heading shows it — and
   so is a lens whose element the page does not show (a count for a relation the table
@@ -519,7 +524,8 @@ way the text editor does, so what one shows the other shows.
 **A click on a link does not follow it; `Ctrl+click` (`Cmd+click` on macOS) does**, and so
 does **Open** in the link's bar. In text
 a click puts the caret in the link, to edit it; on a rendered block (a table, say) it
-selects the block. Hovering a link shows where it goes. A relative link opens the file it
+selects the block. The one exception is Req Explorer's summary table under a requirement
+heading: it is a read model, and a plain click on one of its links opens it. Hovering a link shows where it goes. A relative link opens the file it
 names (resolved against the document's folder), a link to a heading of the same document
 scrolls to it, and a web or mail address opens outside VS Code.
 
