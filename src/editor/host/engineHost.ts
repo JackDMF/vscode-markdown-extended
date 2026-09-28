@@ -17,37 +17,62 @@ const PREVIEW_SETTINGS = ['markdown.preview.linkify', 'markdown.preview.typograp
 
 type Log = (line: string) => void;
 
+/** One extension that contributes a markdown-it plugin, activated: its id, the name it shows, and what it exports. */
+export interface MarkdownItExtension {
+    id: string;
+    displayName: string;
+    exports: unknown;
+}
+
 /**
- * Every other extension's `extendMarkdownIt`, in the order VS Code hands them
- * to the preview (the order of `vscode.extensions.all`).
+ * Every other extension that contributes a markdown-it plugin, activated, in
+ * the order VS Code hands them to the preview (the order of
+ * `vscode.extensions.all`). The one list both the engine's extenders and the
+ * include providers (`includes.ts`) are read from: an extension offering
+ * includes is the extension whose plugin resolves them.
  *
  * An extension counts when its manifest sets `markdown.markdownItPlugins`, as
  * the preview's contribution reader decides. `selfId` is left out because its
  * plugins are already in the registry the engine starts from; the built-in
  * Markdown extension is left out because it contributes the preview itself.
  *
- * Each one is activated first, since `exports` is empty until then. An
- * extension that fails to activate, exports no extender, or throws while
- * extending is logged and skipped: one broken plugin must not keep a person out
- * of the editor, and the preview treats it the same way.
+ * Each one is activated first, since `exports` is empty until then. One that
+ * fails to activate is logged (naming `purpose`) and skipped: one broken
+ * plugin must not keep a person out of the editor, and the preview treats it
+ * the same way.
  */
-export async function collectMarkdownItExtenders(selfId: string, log: Log): Promise<MarkdownItExtender[]> {
-    const extenders: MarkdownItExtender[] = [];
+export async function markdownItExtensions(selfId: string | undefined, log: Log, purpose: string): Promise<MarkdownItExtension[]> {
+    const found: MarkdownItExtension[] = [];
     for (const ext of vscode.extensions.all) {
         const contributes = (ext.packageJSON as { contributes?: Record<string, unknown> } | undefined)?.contributes;
         if (contributes?.['markdown.markdownItPlugins'] !== true) {
             continue;
         }
-        if (ext.id.toLowerCase() === selfId.toLowerCase() || ext.id === BUILTIN_MARKDOWN_EXTENSION) {
+        if ((selfId !== undefined && ext.id.toLowerCase() === selfId.toLowerCase()) || ext.id === BUILTIN_MARKDOWN_EXTENSION) {
             continue;
         }
         let exported: unknown;
         try {
             exported = await ext.activate();
         } catch (error) {
-            log(`[ERROR] Visual Editor: could not activate ${ext.id} for its markdown-it plugin: ${message(error)}`);
+            log(`[ERROR] Visual Editor: could not activate ${ext.id} for ${purpose}: ${message(error)}`);
             continue;
         }
+        const name = (ext.packageJSON as { displayName?: unknown } | undefined)?.displayName;
+        found.push({ id: ext.id, displayName: typeof name === 'string' && name !== '' ? name : ext.id, exports: exported });
+    }
+    return found;
+}
+
+/**
+ * Every other extension's `extendMarkdownIt` (`markdownItExtensions`). One
+ * that exports no extender is skipped; one that throws while extending is
+ * logged and skipped, as the preview treats it.
+ */
+export async function collectMarkdownItExtenders(selfId: string, log: Log): Promise<MarkdownItExtender[]> {
+    const extenders: MarkdownItExtender[] = [];
+    for (const ext of await markdownItExtensions(selfId, log, 'its markdown-it plugin')) {
+        const exported = ext.exports;
         const extend = (exported as { extendMarkdownIt?: unknown } | undefined)?.extendMarkdownIt;
         if (typeof extend !== 'function') {
             continue;

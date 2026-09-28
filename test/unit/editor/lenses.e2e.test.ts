@@ -47,7 +47,7 @@ suite('Editor lens rows (e2e)', () => {
     const showDocument = async () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90 });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Intro.'));
     };
 
@@ -256,7 +256,7 @@ suite('Editor code actions as object verbs (e2e)', () => {
         heading.attrs.reqPrefix = 'FRS-TST-001: ';
         heading.content = [{ ...heading.content[0], text: 'Page' }];
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90 });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Plain heading'));
         await page.mouse.move(2, 2);
         await delay(100);
@@ -514,7 +514,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html: SUMMARY_HTML, src: null, gap: null } });
         assert.strictEqual(content.length, BLOCKS);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90 });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('A plain paragraph.'));
         await page.mouse.move(2, 2);
     };
@@ -778,7 +778,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         content.splice(2, 0, table('low'));
         content.splice(1, 0, table('high'));
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90 });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
         await page.waitForFunction(() => document.querySelectorAll('.ProseMirror .mep-injected-block').length === 2);
         const lenses = (n: string) => [
             { id: `s.${n}`, title: `Status ${n}`, surface: 'status' as const, artifact: 'FRS-TST-001' },
@@ -813,7 +813,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
             const html = statusRow ? withStatusRow(SUMMARY_HTML) : SUMMARY_HTML;
             content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html, src: null, gap: null } });
             version++;
-            await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90 });
+            await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
             await page.waitForFunction(v => document.querySelector('.ProseMirror')?.textContent?.includes('A plain paragraph.')
                 && document.querySelectorAll('.ProseMirror tr[data-req-field="status"]').length === v, {}, statusRow ? 1 : 0);
             await send([{ blockIndex: 0, items: [{ id: 'st', title: 'Set status', surface: 'status', artifact: 'FRS-TST-001' }] }], 3);
@@ -839,7 +839,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         content[0].content = [{ type: 'text', text: 'Page' }];
         content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html: withStatusRow(SUMMARY_HTML), src: null, gap: null } });
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90 });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
         await page.waitForFunction(() => document.querySelectorAll('.ProseMirror tr[data-req-field="status"]').length === 1
             && document.querySelector('.ProseMirror .mep-inline-atom') === null);
         await send([{

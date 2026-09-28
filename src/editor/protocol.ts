@@ -91,8 +91,11 @@ export type HostMessage =
      * The document to show. `version` is the `TextDocument` version it was parsed
      * from and comes back as an edit's `baseVersion`; `defaultWrap` is
      * `markdownExtended.editor.wrapColumn` as it applies to this file.
+     * `includes` says whether any installed extension offers include choices
+     * (`host/includes.ts`): the page enables **Insert → Include…** and an
+     * expansion's **Change snippet…** only then.
      */
-    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number }
+    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean }
     /** The answer to a `render` request: the raw block's source rendered by the host's engine. */
     | { type: 'rendered'; requestId: number; html: string }
     /** The document cannot be shown without losing a byte; the webview offers the text editor instead. */
@@ -125,7 +128,13 @@ export type HostMessage =
      * page takes a heading whose `anchor` is the fragment first, else the
      * block that line starts, so the slug rule lives only on the host.
      */
-    | { type: 'revealAnchor'; anchor: string; line: number | null };
+    | { type: 'revealAnchor'; anchor: string; line: number | null }
+    /**
+     * The answer to `pickInclude`: the line the person chose, exactly as the
+     * extension offering it wrote it (`IncludeChoice.insert`, one line without
+     * its terminator); absent when they dismissed the pick or nothing was offered.
+     */
+    | { type: 'includeChosen'; requestId: number; insert?: string };
 
 /** Webview → host. */
 export type WebviewMessage =
@@ -173,4 +182,28 @@ export type WebviewMessage =
      */
     | { type: 'actionsFor'; requestId: number; blockIndex: number; blocks: number }
     /** Apply the code action `id` from an `actions` answer: its edit, then its command. */
-    | { type: 'runAction'; id: string };
+    | { type: 'runAction'; id: string }
+    /**
+     * Ask for an include line: the host collects the choices other extensions
+     * offer for this document and shows them in VS Code's own QuickPick; the
+     * answer is `includeChosen`. With `replace`, the line is to take the place
+     * of the directive of the top-level block `blockIndex` (an expansion's
+     * **Change snippet…**). Sent after any pending edit, so a provider that
+     * reads the document reads the page's text.
+     */
+    | { type: 'pickInclude'; requestId: number; replace?: { blockIndex: number } };
+
+/**
+ * What an extension offering includes exports beside `extendMarkdownIt`
+ * (`listIncludeChoices(documentUri): Promise<IncludeChoice[]>`), one per
+ * snippet it can include in that document. `label`, `description` and `detail`
+ * are shown as a QuickPick item's; `insert` is the complete line to put into
+ * the document — the directive in the provider's own syntax, which the editor
+ * never writes or reads itself.
+ */
+export interface IncludeChoice {
+    label: string;
+    description?: string;
+    detail?: string;
+    insert: string;
+}

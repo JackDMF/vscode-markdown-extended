@@ -6,6 +6,7 @@ import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
 import { HostMessage, WebviewMessage } from '../protocol';
 import { CodeActionController } from './codeActions';
 import { message } from './errors';
+import { IncludeController, IncludePicker, IncludeProvider, collectIncludeProviders } from './includes';
 import { LensController, SessionPort } from './lenses';
 import { fragmentLine, headingAnchors, resolveLinkTarget } from './links';
 import { minimalReplacement } from './minimalEdit';
@@ -18,6 +19,14 @@ export interface SessionHost {
     /** Fires when the engine was rebuilt and every document must be parsed again. */
     onDidChangeEngine: vscode.Event<void>;
     log(line: string): void;
+    /**
+     * The extensions that offer includes (`collectIncludeProviders`, the
+     * default); a test passes its own, since no provider is installed in the
+     * test host.
+     */
+    includeProviders?(): Promise<IncludeProvider[]>;
+    /** VS Code's QuickPick and information message (the default); a test answers for the person. */
+    includePicker?: IncludePicker;
 }
 
 /** The part of a `vscode.Webview` a session talks to. */
@@ -84,6 +93,8 @@ export class VisualEditorSession implements vscode.Disposable {
     private readonly lenses: LensController;
     /** Other extensions' code actions on a block, asked of VS Code when the page's object toolbar opens for it. */
     private readonly codeActions: CodeActionController;
+    /** Include insertion: the choices other extensions offer, picked in VS Code's QuickPick. */
+    private readonly includes: IncludeController;
     private readonly subscriptions: vscode.Disposable[];
     /** A fragment to bring into view once the page has the document (`reveal`). */
     private pendingReveal: Reveal | undefined;
@@ -102,6 +113,8 @@ export class VisualEditorSession implements vscode.Disposable {
         };
         this.lenses = new LensController(port);
         this.codeActions = new CodeActionController(port);
+        const includeProviders = host.includeProviders?.bind(host) ?? (() => collectIncludeProviders(undefined, line => this.host.log(line)));
+        this.includes = new IncludeController(port, includeProviders, host.includePicker);
         this.subscriptions = [
             this.lenses,
             this.codeActions,
@@ -235,6 +248,15 @@ export class VisualEditorSession implements vscode.Disposable {
                 // click; `run` waits only for the action's own edit.
                 this.enqueue(() => this.codeActions.run(msg.id));
                 break;
+            case 'pickInclude':
+                // In the queue, behind the edit the page flushed before asking,
+                // so a provider that reads the document reads the page's text;
+                // the pick is not waited for there, or the person choosing
+                // would hold up every edit behind it.
+                this.enqueue(async () => {
+                    void this.includes.answer(msg.requestId, msg.replace !== undefined);
+                });
+                break;
         }
     }
 
@@ -329,6 +351,8 @@ export class VisualEditorSession implements vscode.Disposable {
             this.fail(`The Markdown engine could not be built: ${message(error)}`);
             return;
         }
+        // Before the text is read: nothing may be awaited between reading it and posting its parse.
+        const includes = await this.includes.offered();
         // Read after the await, and parse synchronously, so the text posted is
         // the text of the version posted.
         const text = this.document.getText();
@@ -350,6 +374,7 @@ export class VisualEditorSession implements vscode.Disposable {
             json,
             version,
             defaultWrap: Config.instance.editorWrapColumn(this.document.uri),
+            includes,
         });
         // A link followed here before the page had the document lands now.
         await this.postReveal();

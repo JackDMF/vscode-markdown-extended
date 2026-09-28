@@ -30,12 +30,14 @@
  *   sidebars, …) is rich text since stage 2, attribute spans, containers and
  *   admonitions since stage 3; `wrap-source` and `insert-source` write a
  *   construct the editor cannot edit as rich text (a footnote, a table, a
- *   definition list, …), as source;
+ *   definition list, …), as source; `insert-include` writes, as source, the
+ *   include line the host hands back from another extension's choices;
  * - `bubble`: whether the selection bubble offers it too.
  *
  * The test renders every `example` and `preview.markdown` through the real
  * engine and requires the drawn elements in the HTML, so "this entry makes this
- * element" is checked, not assumed.
+ * element" is checked, not assumed. **Include…** has no example: its syntax is
+ * the offering extension's, and what it makes is whatever the snippet holds.
  */
 import { ADMONITION_MARKER, ADMONITION_TYPES, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
 import type { NoteNodeName } from '../notes';
@@ -100,7 +102,15 @@ export type ActionApply =
      */
     | { kind: 'wrap-source'; open: string; close: string; placeholder: string; definition?: string }
     /** A new source block holding `template`, inserted after the current block, its source opened. */
-    | { kind: 'insert-source'; template: string };
+    | { kind: 'insert-source'; template: string }
+    /**
+     * `insert-source`'s variant whose line comes from the host: an include
+     * directive, chosen in VS Code's QuickPick from the lines the extensions
+     * that resolve includes offer (`host/includes.ts`). Inserted as a source
+     * block after the current block and parsed again by the host, which turns
+     * it into the expansion. The syntax is the provider's; nothing here knows it.
+     */
+    | { kind: 'insert-include' };
 
 /** A fuller example for the preview card: Markdown, and the top-level elements it renders as. */
 export interface ActionPreview {
@@ -354,6 +364,12 @@ const TABLE_TEMPLATE = [
     '| Item1    | Item1     | Item1     |',
 ].join('\n');
 
+/** What **Include…** names as its syntax: the line is the offering extension's, not this one's. */
+export const INCLUDE_SYNTAX = 'a snippet line, as its extension offers it';
+
+/** Why **Include…** and **Change snippet…** are disabled; the host's message says the same. */
+export const NO_INCLUDES_REFUSAL = 'No extension offers includes for this document.';
+
 /** The class a new container is given; its object toolbar's Change name/info renames it. */
 export const NEW_CONTAINER_NAME = 'container';
 
@@ -423,6 +439,16 @@ const insert: ToolbarAction[] = [
         },
         // A table of contents lists the headings after it.
         '[[TOC]]\n\n# Contents'),
+    {
+        // The directive's syntax belongs to the extension that resolves it:
+        // there is no example to render here, only the line it will offer.
+        id: 'include', place: { menu: 'insert' }, label: 'Include…', syntax: INCLUDE_SYNTAX,
+        sample: el('p', 'Snippet'), apply: { kind: 'insert-include' }, example: '',
+        preview: {
+            markdown: 'The text of a snippet, shown where its directive line stands.',
+            nodes: [el('p', 'The text of a snippet, shown where its directive line stands.')],
+        },
+    },
 ];
 
 /** Every action: the row's marks, then each menu's entries in their order. */

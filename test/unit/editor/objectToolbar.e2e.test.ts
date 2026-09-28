@@ -29,7 +29,7 @@ suite('Editor object toolbar (e2e)', () => {
     const showDocument = async (text: string, marker: string) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90 });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         // Out of any object the last test left the caret or the pointer in.
         await page.mouse.move(2, 2);

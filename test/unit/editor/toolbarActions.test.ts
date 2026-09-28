@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
-    PREVIEW_CARD_CLASS, ROW_LAYOUT, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, inBubble, inRow, menuOf, submenuOf, tooltipOf,
+    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, inBubble, inRow, isSourceAction, menuOf, submenuOf, tooltipOf,
 } from '../../../src/editor/webview/toolbar/actions';
 import {
     ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
@@ -73,6 +73,16 @@ suite('Editor toolbar: every action makes the element it shows', () => {
 
     for (const action of TOOLBAR_ACTIONS) {
         test(`${action.id} (${action.apply.kind}): ${JSON.stringify(action.example)} renders its sample`, () => {
+            if (action.apply.kind === 'insert-include') {
+                // The line is the offering extension's, in its syntax: nothing
+                // here can render it, so the entry claims no example, and names
+                // where the line comes from instead of a syntax of its own.
+                assert.strictEqual(action.example, '');
+                assert.strictEqual(action.syntax, INCLUDE_SYNTAX);
+                assert.ok(!/[<>{}[\]!]/.test(action.syntax), 'no directive syntax is spelled here');
+                assert.strictEqual(isSourceAction(action), false, 'it becomes an expansion, not a source block');
+                return;
+            }
             assertRendersSample(md.render(action.example), action.sample, action.id);
             if (action.apply.kind === 'mark') {
                 const rendered = /^<(\w+)>/.exec(md.renderInline(action.example));
@@ -145,7 +155,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class']);
         assert.deepStrictEqual(byMenu('annotation'), ['sidenote', 'marginal-note', 'left-sidebar', 'right-sidebar', 'footnote-reference']);
         assert.deepStrictEqual(byMenu('insert'),
-            ['horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents']);
+            ['horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents', 'include']);
     });
 
     test('the preview card\'s class is the one both stylesheets name', () => {

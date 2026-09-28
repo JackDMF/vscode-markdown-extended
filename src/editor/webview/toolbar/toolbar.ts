@@ -33,7 +33,7 @@ import { editRawSourceAt } from '../nodeViews';
 import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
 import { applySpanTransaction, literalRefusal, spanLockReason } from '../objects';
 import {
-    MENU_LABELS, PREVIEW_CARD_CLASS, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
+    MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
     inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
@@ -48,6 +48,10 @@ export interface ToolbarHost {
     flushReparse(): void;
     /** Ask the host to render a new source block. */
     requestRender(src: string): void;
+    /** Whether any extension offers includes for this document (the `document` message's `includes`). */
+    includesOffered(): boolean;
+    /** Ask the host for an include line; the page inserts the answer after the current block (`main.ts`). */
+    pickInclude(): void;
 }
 
 /** How long the pointer or the focus rests on an entry before its preview card shows. */
@@ -97,7 +101,7 @@ interface ActionState {
 }
 
 /** Whether each action applies at the selection, and whether it is what the selection already has. */
-function evaluate(action: ToolbarAction, state: EditorState): ActionState {
+function evaluate(action: ToolbarAction, state: EditorState, includes: boolean): ActionState {
     const apply = action.apply;
     switch (apply.kind) {
         case 'mark': {
@@ -128,6 +132,8 @@ function evaluate(action: ToolbarAction, state: EditorState): ActionState {
         case 'insert-source':
         case 'insert-wrapper':
             return { enabled: true, active: false, reason: null };
+        case 'insert-include':
+            return { enabled: includes, active: false, reason: includes ? null : NO_INCLUDES_REFUSAL };
         case 'attr-span': {
             const reason = spanLockReason(state);
             return { enabled: reason === null, active: false, reason };
@@ -218,10 +224,11 @@ class ToolbarView implements PluginView {
     update(view: EditorView): void {
         const state = view.state;
         const states = new Map<ToolbarAction, ActionState>();
+        const includes = this.host.includesOffered();
         const stateOf = (action: ToolbarAction) => {
             let s = states.get(action);
             if (!s) {
-                s = evaluate(action, state);
+                s = evaluate(action, state, includes);
                 states.set(action, s);
             }
             return s;
@@ -718,6 +725,11 @@ class ToolbarView implements PluginView {
             case 'insert-wrapper':
                 view.dispatch(insertWrapperTransaction(view.state, apply));
                 view.focus();
+                return;
+            case 'insert-include':
+                // VS Code's QuickPick takes the choice; the line comes back as
+                // `includeChosen` and is inserted then, at the selection as it is.
+                this.host.pickInclude();
                 return;
             case 'attr-span':
                 this.askSpanLiteral();

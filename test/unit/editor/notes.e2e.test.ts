@@ -33,7 +33,7 @@ suite('Editor notes and links (e2e)', () => {
     const showDocument = async (text: string, marker: string, extensionOnly = false) => {
         const md = extensionOnly ? hostEngine() : await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90 });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         await delay(80);
     };

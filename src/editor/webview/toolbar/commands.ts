@@ -561,3 +561,43 @@ export function insertSourceTransaction(state: EditorState, template: string, co
     tr.setSelection(NodeSelection.create(tr.doc, pos));
     return { tr: tr.scrollIntoView(), pos, src };
 }
+
+/** One line as another extension handed it: a terminator at its end is dropped, the document's own is written. */
+function singleLine(line: string): string {
+    return line.replace(/\r?\n$/, '');
+}
+
+/**
+ * The transaction **Insert → Include…** makes once the host has answered: a
+ * new source block holding exactly `line` — the include directive another
+ * extension offered, written as it was given, nothing substituted in it — after
+ * the block the selection is in (`insertionPoint`), selected. The page then
+ * sends the text with `reparse`, and the host's parser, which has the
+ * provider's plugin, turns the block into the expansion.
+ */
+export function insertLineTransaction(state: EditorState, line: string, eol: '\n' | '\r\n'): { tr: Transaction; pos: number } {
+    const pos = insertionPoint(state);
+    const tr = state.tr.insert(pos, nodes.raw_block.create({ src: singleLine(line) + eol, gap: null, html: '' }));
+    tr.setSelection(NodeSelection.create(tr.doc, pos));
+    return { tr: tr.scrollIntoView(), pos };
+}
+
+/**
+ * The transaction an expansion's **Change snippet…** makes: the directive line
+ * of the include expansion at `pos` replaced by `line`, the line another
+ * extension offered. The block keeps its rendering until the host's parse
+ * replaces it (the page sends `reparse`), so it does not flash empty, and keeps
+ * its gap and its line terminator — none when the directive was the file's last
+ * line without one. `null` when no expansion stands at `pos`.
+ */
+export function changeIncludeTransaction(state: EditorState, pos: number, line: string): Transaction | null {
+    const node = pos >= 0 && pos < state.doc.content.size ? state.doc.nodeAt(pos) : null;
+    if (node === null || node.type !== nodes.injected_block || node.attrs.kind !== 'expansion' || state.doc.resolve(pos).depth !== 0) {
+        return null;
+    }
+    const old = (node.attrs.src as string | null) ?? '';
+    const terminator = /\r?\n$/.exec(old)?.[0] ?? '';
+    const tr = state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: singleLine(line) + terminator });
+    tr.setSelection(NodeSelection.create(tr.doc, pos));
+    return tr.scrollIntoView();
+}

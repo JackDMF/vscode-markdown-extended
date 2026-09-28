@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Command } from '../../commands/command';
 import { EditorEngineHost } from './engineHost';
 import { editorPage, localResourceRoots } from './html';
+import { collectIncludeProviders } from './includes';
 import { VisualEditorSession } from './session';
 
 import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
@@ -24,6 +25,7 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
         private readonly extensionUri: vscode.Uri,
         private readonly engines: EditorEngineHost,
         private readonly log: (line: string) => void,
+        private readonly selfId?: string,
     ) { }
 
     resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): void {
@@ -37,6 +39,7 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
             engine: () => this.engines.get(),
             onDidChangeEngine: this.engines.onDidChange,
             log: this.log,
+            includeProviders: () => collectIncludeProviders(this.selfId, this.log),
         });
         panel.onDidDispose(() => session.dispose());
     }
@@ -75,7 +78,7 @@ export class CommandOpenVisualEditor extends Command {
  */
 export function registerVisualEditor(context: vscode.ExtensionContext, log: (line: string) => void): vscode.Disposable {
     const engines = new EditorEngineHost(context.extension.id, log);
-    const provider = new VisualEditorProvider(context.extensionUri, engines, log);
+    const provider = new VisualEditorProvider(context.extensionUri, engines, log, context.extension.id);
     return vscode.Disposable.from(
         engines,
         vscode.window.registerCustomEditorProvider(VISUAL_EDITOR_VIEW_TYPE, provider, {

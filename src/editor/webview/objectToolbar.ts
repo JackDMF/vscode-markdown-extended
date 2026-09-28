@@ -46,6 +46,7 @@ import {
     deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
+import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import type { CodeActionItem, LensItem } from '../protocol';
 import { lensLabel } from './lenses';
@@ -74,6 +75,10 @@ export interface ObjectToolbarHost {
      */
     lensesAt(pos: number): readonly LensItem[];
     runLens(id: string): void;
+    /** Whether any extension offers includes for this document (the `document` message's `includes`). */
+    includesOffered(): boolean;
+    /** Ask the host for an include line to replace the directive of the expansion at `pos` with (`main.ts`). */
+    pickInclude(pos: number): void;
 }
 
 /**
@@ -984,12 +989,25 @@ class ObjectToolbarView implements PluginView {
                 if (typeof path === 'string' && !mark?.missing) {
                     verbs.push({ id: 'open-snippet', label: 'Open snippet', title: path, run: () => host.openSnippet(path) });
                 }
+                // Offered on a missing snippet too: choosing another is how it is mended.
+                verbs.push({
+                    id: 'change-snippet',
+                    label: 'Change snippet…',
+                    title: 'Choose another snippet for this directive from the ones the extensions offer.',
+                    refusal: host.includesOffered() ? null : NO_INCLUDES_REFUSAL,
+                    run: () => {
+                        if (currentObject(view.state, object)) {
+                            host.pickInclude(object.from);
+                        }
+                    },
+                });
                 verbs.push(
                     this.showInTextEditor(object),
                     {
                         id: 'delete-directive',
                         label: 'Delete directive',
-                        title: `The line <!-- include: ${snippet} --> goes from the file, and the snippet with it; the snippet's own file stays.`,
+                        // The line is named, not spelled: its syntax is the extension's that resolves it.
+                        title: `The directive line of ${snippet} goes from the file, and the snippet with it; the snippet's own file stays.`,
                         run: () => this.remove(object, 'Directive deleted'),
                     },
                 );

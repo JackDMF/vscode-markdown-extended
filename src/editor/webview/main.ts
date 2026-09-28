@@ -25,6 +25,7 @@ import { linkClickPlugin } from './links';
 import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
 import { resyncTransaction } from './resync';
+import { changeIncludeTransaction, insertLineTransaction } from './toolbar/commands';
 import { toolbarPlugin } from './toolbar/toolbar';
 
 interface VsCodeApi {
@@ -303,6 +304,80 @@ function applyActions(requestId: number, items: CodeActionItem[]): void {
     view.dispatch(view.state.tr.setMeta(ACTIONS_ARRIVED_META, true).setMeta('addToHistory', false));
 }
 
+/** Whether any extension offers includes for the document shown: the `document` message's `includes`. */
+let includesOffered = false;
+let includeSeq = 0;
+/** The include picks asked of the host: for each, the expansion whose directive the line replaces, `null` for a new one. */
+const pendingIncludes = new Map<number, Node | null>();
+
+/**
+ * Ask the host for an include line: VS Code's QuickPick, filled with what the
+ * extensions that resolve includes offer, takes the choice, so the page draws
+ * nothing of its own. With `replaceAt`, the line is for the expansion there
+ * (**Change snippet…**), remembered by its node: a document from the host
+ * meanwhile keeps an untouched block's node, and one it changed is not
+ * replaced by a line chosen for what it was. The pending edit goes first, as
+ * before a lens runs, so the host asks the providers about the page's text.
+ */
+function pickInclude(replaceAt: number | null): void {
+    if (!view) {
+        return;
+    }
+    let target: Node | null = null;
+    let blockIndex: number | undefined;
+    if (replaceAt !== null) {
+        const doc = view.state.doc;
+        target = replaceAt >= 0 && replaceAt < doc.content.size ? doc.nodeAt(replaceAt) : null;
+        if (target === null || target.type !== editorSchema.nodes.injected_block || doc.resolve(replaceAt).depth !== 0) {
+            return;
+        }
+        blockIndex = doc.resolve(replaceAt).index(0);
+    }
+    flush();
+    const requestId = ++includeSeq;
+    pendingIncludes.set(requestId, target);
+    post({ type: 'pickInclude', requestId, ...(blockIndex !== undefined ? { replace: { blockIndex } } : {}) });
+}
+
+/**
+ * The host's answer to `pickInclude`: the chosen line inserted after the
+ * block the selection is in, or put in place of the expansion's directive,
+ * and sent with `reparse` — only the host's parser, which has the providing
+ * extension's plugin, can tell what the line expands to. Nothing happens for
+ * a dismissed pick but the focus coming back.
+ */
+function applyInclude(requestId: number, insert: string | undefined): void {
+    if (!pendingIncludes.has(requestId)) {
+        return;
+    }
+    const target = pendingIncludes.get(requestId) ?? null;
+    pendingIncludes.delete(requestId);
+    if (!view || !current) {
+        return;
+    }
+    view.focus();
+    if (insert === undefined) {
+        return;
+    }
+    if (target === null) {
+        view.dispatch(insertLineTransaction(view.state, insert, current.eol).tr);
+    } else {
+        let pos = -1;
+        view.state.doc.forEach((child, offset) => {
+            if (child === target) {
+                pos = offset;
+            }
+        });
+        const tr = pos < 0 ? null : changeIncludeTransaction(view.state, pos, insert);
+        if (tr === null) {
+            showHint(view, 'The snippet was not changed: the block changed while it was being chosen — choose again', 'refusal');
+            return;
+        }
+        view.dispatch(tr);
+    }
+    flush(false, true);
+}
+
 /** Scroll to the element of the document with this id; false when the page has none. */
 function followFragment(fragment: string): boolean {
     let id = fragment;
@@ -414,6 +489,8 @@ const plugins = [
         sourceContext,
         flushReparse: () => flush(false, true),
         requestRender: src => port.requestRender(src),
+        includesOffered: () => includesOffered,
+        pickInclude: () => pickInclude(null),
     }),
     objectToolbarPlugin({
         openSourceAt: pos => post({ type: 'openSource', line: lineAt(pos) }),
@@ -425,6 +502,8 @@ const plugins = [
         runCodeAction: id => runBehindEdit({ type: 'runAction', id }),
         lensesAt: pos => (view ? lensVerbsAt(view.state, pos) : []),
         runLens: id => runBehindEdit({ type: 'runLens', id }),
+        includesOffered: () => includesOffered,
+        pickInclude: pos => pickInclude(pos),
     }),
     lensPlugin(id => runBehindEdit({ type: 'runLens', id })),
 ];
@@ -439,7 +518,7 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
     }
 }
 
-function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: number): void {
+function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: number, includes: boolean): void {
     // An edit still waiting in the delay is dropped: it was computed against
     // the document this one supersedes, and the host would refuse it for its
     // stale base. The keystrokes it carried vanish with it — the price of never
@@ -451,6 +530,8 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     // A parse is what a pending reparse asked for, and this is one.
     reparseWanted = false;
     actionEpoch++;
+    // Read by the toolbars as they redraw for the state below.
+    includesOffered = includes;
     hideError();
     const doc = Node.fromJSON(editorSchema, json.doc);
     current = { eol: json.eol, tail: json.tail, version, defaultWrap };
@@ -589,7 +670,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     const msg = event.data;
     switch (msg.type) {
         case 'document':
-            showDocument(msg.json, msg.version, msg.defaultWrap);
+            showDocument(msg.json, msg.version, msg.defaultWrap, msg.includes);
             break;
         case 'rendered':
             applyRendered(msg.requestId, msg.html);
@@ -608,6 +689,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'revealAnchor':
             revealAnchor(msg.anchor, msg.line);
+            break;
+        case 'includeChosen':
+            applyInclude(msg.requestId, msg.insert);
             break;
     }
 });

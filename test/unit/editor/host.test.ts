@@ -6,6 +6,9 @@ import * as vscode from 'vscode';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { EditorEngineHost, buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { CodeActionController } from '../../../src/editor/host/codeActions';
+import {
+    IncludeController, IncludePickItem, IncludePicker, IncludeProvider, NO_INCLUDES_MESSAGE, collectIncludeProviders,
+} from '../../../src/editor/host/includes';
 import { blockIndexForLine, lensHintOf, lensRows } from '../../../src/editor/host/lenses';
 import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
 import { SessionWebview, VisualEditorSession, revealInVisualEditor } from '../../../src/editor/host/session';
@@ -926,6 +929,208 @@ suite('Editor host: a link lands on the element its fragment names', () => {
             engineChanged.dispose();
             fs.rmSync(uri.fsPath, { force: true });
             fs.rmSync(second.fsPath, { force: true });
+        }
+    });
+});
+
+type IncludeChosenMessage = Extract<HostMessage, { type: 'includeChosen' }>;
+
+/** A picker that answers for the person: records what it was shown, and picks what `choose` says. */
+class FakePicker implements IncludePicker {
+    readonly shown: { items: IncludePickItem[]; options: vscode.QuickPickOptions }[] = [];
+    readonly informed: string[] = [];
+    choose: (items: IncludePickItem[]) => IncludePickItem | undefined = () => undefined;
+
+    pick(items: IncludePickItem[], options: vscode.QuickPickOptions): Thenable<IncludePickItem | undefined> {
+        this.shown.push({ items, options });
+        return Promise.resolve(this.choose(items));
+    }
+
+    inform(text: string): void {
+        this.informed.push(text);
+    }
+}
+
+function provider(id: string, displayName: string, list: (uri: vscode.Uri) => unknown): IncludeProvider {
+    return { id, displayName, listIncludeChoices: list };
+}
+
+/**
+ * Include insertion. No extension offering includes is installed in the test
+ * host (`--disable-extensions`), so the providers are injected — the session
+ * and the controller take a `providers()` function, the real collection by
+ * default — and the QuickPick is answered by a fake picker.
+ */
+suite('Editor host: includes', () => {
+    const logged: string[] = [];
+    let document: vscode.TextDocument;
+    let uri: vscode.Uri;
+
+    suiteSetup(async () => {
+        uri = tempMarkdown(SOURCE);
+        document = await vscode.workspace.openTextDocument(uri);
+    });
+
+    suiteTeardown(() => {
+        fs.rmSync(uri.fsPath, { force: true });
+    });
+
+    /** A controller over the test document, posting into `posts`. */
+    const controller = (providers: IncludeProvider[], picker: FakePicker, posts: HostMessage[]) => new IncludeController({
+        document,
+        pageHolds: () => true,
+        lineRanges: async () => [],
+        post: m => {
+            posts.push(m);
+            return Promise.resolve(true);
+        },
+        log: line => logged.push(line),
+    }, async () => providers, picker);
+
+    test('the real collection skips every extension that exports no listIncludeChoices', async () => {
+        // This extension and VS Code's built-in math extension both contribute
+        // markdown-it plugins, and neither offers includes.
+        assert.deepStrictEqual(await collectIncludeProviders(undefined, line => logged.push(line)), []);
+        assert.deepStrictEqual(await collectIncludeProviders(EXTENSION_ID, line => logged.push(line)), []);
+    });
+
+    test('choices are collected from every provider, each under a separator with its display name; the chosen line is the answer', async () => {
+        const asked: string[] = [];
+        const picker = new FakePicker();
+        picker.choose = items => items.find(i => i.label === 'legal-notice');
+        const posts: HostMessage[] = [];
+        await controller([
+            provider('corpus.req-explorer', 'Req Explorer', u => {
+                asked.push(u.toString());
+                return Promise.resolve([
+                    { label: 'legal-notice', description: 'Legal notice', detail: 'snippets/legal-notice.md', insert: '<!-- include: legal-notice -->' },
+                    { label: 'glossary', insert: 'INCLUDE glossary\n' },
+                ]);
+            }),
+            provider('other.snippets', 'Other Snippets', () => [{ label: 'intro', description: '', insert: '@include intro' }]),
+        ], picker, posts).answer(7, false);
+
+        assert.deepStrictEqual(asked, [uri.toString()], 'asked for this document');
+        assert.strictEqual(picker.shown.length, 1);
+        const { items, options } = picker.shown[0];
+        assert.deepStrictEqual(items.map(i => [i.kind === vscode.QuickPickItemKind.Separator ? 'separator' : 'choice', i.label]), [
+            ['separator', 'Req Explorer'], ['choice', 'legal-notice'], ['choice', 'glossary'],
+            ['separator', 'Other Snippets'], ['choice', 'intro'],
+        ]);
+        assert.deepStrictEqual([items[1].description, items[1].detail], ['Legal notice', 'snippets/legal-notice.md']);
+        assert.strictEqual(items[2].insert, 'INCLUDE glossary', 'a terminator at the end is the page\'s to write');
+        assert.strictEqual(items[4].description, undefined, 'an empty description is none');
+        assert.deepStrictEqual(options, { placeHolder: 'Include…', matchOnDescription: true, matchOnDetail: true });
+        assert.deepStrictEqual(posts, [{ type: 'includeChosen', requestId: 7, insert: '<!-- include: legal-notice -->' }]);
+    });
+
+    test('a provider that throws, rejects or answers no list is logged and skipped; so is a choice without a label or a one-line insert', async () => {
+        const picker = new FakePicker();
+        picker.choose = items => items.find(i => i.insert !== undefined);
+        const posts: HostMessage[] = [];
+        logged.length = 0;
+        await controller([
+            provider('broken.throws', 'Throws', () => {
+                throw new Error('provider exploded');
+            }),
+            provider('broken.rejects', 'Rejects', () => Promise.reject(new Error('provider rejected'))),
+            provider('broken.object', 'Not a list', () => ({ label: 'x', insert: 'x' })),
+            provider('mixed.choices', 'Mixed', () => [
+                null, { label: '', insert: 'x' }, { label: 'two lines', insert: 'a\nb' }, { label: 'blank', insert: '  ' }, { insert: 'unlabelled' },
+                { label: 'good', insert: 'GOOD' },
+            ]),
+        ], picker, posts).answer(8, true);
+
+        const { items, options } = picker.shown[0];
+        assert.deepStrictEqual(items.map(i => i.label), ['Mixed', 'good'], 'only the provider with a valid choice, and only that choice');
+        assert.strictEqual(options.placeHolder, 'Change snippet…', 'a replacement says so');
+        assert.deepStrictEqual(posts, [{ type: 'includeChosen', requestId: 8, insert: 'GOOD' }]);
+        for (const id of ['broken.throws', 'broken.rejects', 'broken.object', 'mixed.choices']) {
+            assert.ok(logged.some(l => l.startsWith('[WARN]') && l.includes(id)), `${id} logged: ${JSON.stringify(logged)}`);
+        }
+    });
+
+    test('nothing to offer shows the information message and answers without a line; a dismissed pick answers without one too', async () => {
+        const picker = new FakePicker();
+        const posts: HostMessage[] = [];
+        await controller([provider('empty.one', 'Empty', () => [])], picker, posts).answer(9, false);
+        await controller([], picker, posts).answer(10, false);
+        assert.deepStrictEqual(picker.informed, [NO_INCLUDES_MESSAGE, NO_INCLUDES_MESSAGE]);
+        assert.strictEqual(NO_INCLUDES_MESSAGE, 'No extension offers includes for this document');
+        assert.strictEqual(picker.shown.length, 0, 'no empty QuickPick');
+
+        await controller([provider('one', 'One', () => [{ label: 'a', insert: 'A' }])], picker, posts).answer(11, false);
+        assert.strictEqual(picker.shown.length, 1);
+        assert.deepStrictEqual(posts, [
+            { type: 'includeChosen', requestId: 9 },
+            { type: 'includeChosen', requestId: 10 },
+            { type: 'includeChosen', requestId: 11 },
+        ]);
+    });
+
+    test('the document says whether any extension offers includes', async function () {
+        this.timeout(10000);
+        const engine = buildEditorEngine(EXTENSION_ID, () => undefined);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const flags: boolean[] = [];
+        for (const providers of [[], [provider('one', 'One', () => [])]]) {
+            const webview = new FakeWebview();
+            const session = new VisualEditorSession(document, webview, {
+                engine: () => engine,
+                onDidChangeEngine: engineChanged.event,
+                log: () => undefined,
+                includeProviders: async () => providers,
+            });
+            try {
+                webview.send({ type: 'ready' });
+                await session.settled();
+                const [posted] = webview.documents();
+                assert.ok(posted);
+                flags.push(posted.includes);
+            } finally {
+                session.dispose();
+            }
+        }
+        engineChanged.dispose();
+        assert.deepStrictEqual(flags, [false, true]);
+    });
+
+    test('pickInclude is answered behind the edit the page sent before it: the provider reads the typed text', async function () {
+        this.timeout(10000);
+        const source = tempMarkdown(SOURCE);
+        const doc = await vscode.workspace.openTextDocument(source);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const webview = new FakeWebview();
+        const picker = new FakePicker();
+        picker.choose = items => items.find(i => i.insert !== undefined);
+        const seen: string[] = [];
+        const session = new VisualEditorSession(doc, webview, {
+            engine: () => buildEditorEngine(EXTENSION_ID, () => undefined),
+            onDidChangeEngine: engineChanged.event,
+            log: () => undefined,
+            includeProviders: async () => [provider('reads.document', 'Reads', () => {
+                seen.push(doc.getText());
+                return [{ label: 'x', insert: 'X' }];
+            })],
+            includePicker: picker,
+        });
+        try {
+            webview.send({ type: 'ready' });
+            await session.settled();
+            const [first] = webview.documents();
+            assert.ok(first);
+            const typed = SOURCE.replace('stays', 'was typed');
+            // The page flushed its pending edit before asking: both arrive back to back.
+            webview.send({ type: 'edit', text: typed, baseVersion: first.version });
+            webview.send({ type: 'pickInclude', requestId: 3 });
+            const answer = await until(() => webview.posted.find((m): m is IncludeChosenMessage => m.type === 'includeChosen'), 5000);
+            assert.deepStrictEqual(answer, { type: 'includeChosen', requestId: 3, insert: 'X' });
+            assert.deepStrictEqual(seen, [typed], 'the provider was asked after the edit landed');
+        } finally {
+            session.dispose();
+            engineChanged.dispose();
+            // Not saved first: a save's local-history copy races the removal.
+            fs.rmSync(source.fsPath, { force: true });
         }
     });
 });
