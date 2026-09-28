@@ -20,7 +20,7 @@ import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
 import { showHint } from './hint';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
-import { lensPlugin, setLensesTransaction } from './lenses';
+import { lensPlugin, lensVerbsAt, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
 import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
@@ -377,6 +377,8 @@ const plugins = [
         flushReparse: () => flush(false, true),
         codeActionsAt,
         runCodeAction: id => runBehindEdit({ type: 'runAction', id }),
+        lensesAt: pos => (view ? lensVerbsAt(view.state, pos) : []),
+        runLens: id => runBehindEdit({ type: 'runLens', id }),
     }),
     lensPlugin(id => runBehindEdit({ type: 'runLens', id })),
 ];

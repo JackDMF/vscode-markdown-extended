@@ -47,7 +47,8 @@ import {
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
-import type { CodeActionItem } from '../protocol';
+import type { CodeActionItem, LensItem } from '../protocol';
+import { lensLabel } from './lenses';
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -66,7 +67,22 @@ export interface ObjectToolbarHost {
      */
     codeActionsAt(pos: number): readonly CodeActionItem[];
     runCodeAction(id: string): void;
+    /**
+     * The lenses other extensions put on the top-level block at `pos` as its
+     * verbs (`lensVerbsAt`): a heading's `action` lenses, and the lenses whose
+     * element the page does not show.
+     */
+    lensesAt(pos: number): readonly LensItem[];
+    runLens(id: string): void;
 }
+
+/**
+ * How many lens verbs a bar shows in a line. With more, the first ones stay
+ * and the rest go behind **Actions ▾**, so the bar keeps to this many slots:
+ * a requirement heading can carry eight lenses, and a bar as wide as the page
+ * is a row again.
+ */
+export const LENS_VERBS_INLINE = 4;
 
 /** How long the caret rests in an inline object before its toolbar shows. */
 export const INLINE_DELAY_MS = 400;
@@ -91,7 +107,7 @@ interface Verb {
     field?: { value: string; label: string; commit(value: string): void };
     /** A verb that asks for one of a list of values, in the inline choice. */
     choice?: { value: string; label: string; options: readonly { value: string; label: string }[]; commit(value: string): void };
-    /** Drawn after a separator: the first of another extension's code actions. */
+    /** Drawn after a separator: the first of another extension's lenses, or of its code actions. */
     separated?: boolean;
 }
 
@@ -432,7 +448,7 @@ class ObjectToolbarView implements PluginView {
             this.matured = isBlockObject(object) ? null : object;
             const presentation = this.present(object);
             if (presentation.verbs.length === 0 && object.kind === 'heading') {
-                // A heading's verbs are other extensions' actions; with none, no bar.
+                // A heading's verbs are other extensions' lenses and actions; with none, no bar.
                 this.selectionBar.hide();
             } else {
                 this.selectionBar.show(object, presentation);
@@ -621,27 +637,83 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * The object's own verbs, then — for a whole top-level block — the code
-     * actions other extensions offer for its lines, after a separator, as the
-     * text editor's light bulb would offer them there.
+     * The object's own verbs, then — for a whole top-level block — the lenses
+     * other extensions put on it as verbs (`lenses.ts`), then the code actions
+     * they offer for its lines, as the text editor's light bulb would offer
+     * them there; each group after a separator.
      */
     private present(object: EditorObject): Presentation {
         const own = this.ownPresentation(object);
         if (!isTopLevelBlock(this.view.state, object)) {
             return own;
         }
+        const lenses = this.lensVerbs(this.host.lensesAt(object.from), own.verbs.length > 0);
+        const before = own.verbs.length + lenses.length;
         const actions = this.host.codeActionsAt(object.from).map((item, k): Verb => ({
             id: `code-action:${item.id}`,
             label: item.title,
             title: item.kind ? `${item.title} (${item.kind}, from another extension)` : `${item.title} (from another extension)`,
             refusal: item.refusal ?? null,
-            separated: k === 0 && own.verbs.length > 0,
+            separated: k === 0 && before > 0,
             run: () => {
                 this.view.focus();
                 this.host.runCodeAction(item.id);
             },
         }));
-        return actions.length === 0 ? own : { ...own, verbs: [...own.verbs, ...actions] };
+        return lenses.length + actions.length === 0 ? own : { ...own, verbs: [...own.verbs, ...lenses, ...actions] };
+    }
+
+    /**
+     * Lenses as verbs: each its title, running its command. Past
+     * `LENS_VERBS_INLINE` the first ones stay and the rest are one **Actions ▾**
+     * verb, a choice of them. A lens without a command is shown, and refused:
+     * it is what the other extension shows there, and runs nothing.
+     */
+    private lensVerbs(items: readonly LensItem[], separated: boolean): Verb[] {
+        const run = (id: string) => {
+            this.view.focus();
+            this.host.runLens(id);
+        };
+        const verbs = (items.length > LENS_VERBS_INLINE ? items.slice(0, LENS_VERBS_INLINE - 1) : items).map((item, k): Verb => {
+            const label = lensLabel(item.title);
+            const id = item.id;
+            return {
+                id: `lens:${id ?? `text-${k}`}`,
+                label,
+                title: `${item.tooltip ?? label} (from another extension)`,
+                refusal: id === undefined ? 'The extension that shows it gave it no command.' : null,
+                run: () => {
+                    if (id !== undefined) {
+                        run(id);
+                    }
+                },
+            };
+        });
+        if (items.length > LENS_VERBS_INLINE) {
+            const rest = items.slice(LENS_VERBS_INLINE - 1).filter((item): item is LensItem & { id: string } => item.id !== undefined);
+            verbs.push({
+                id: 'lens-overflow',
+                label: 'Actions ▾',
+                title: 'More from other extensions',
+                refusal: rest.length === 0 ? 'None of the others runs anything.' : null,
+                choice: {
+                    value: '',
+                    label: 'Action',
+                    options: [{ value: '', label: 'Choose an action…' }, ...rest.map(item => ({ value: item.id, label: lensLabel(item.title) }))],
+                    commit: value => {
+                        if (value === '') {
+                            this.view.focus();
+                            return;
+                        }
+                        run(value);
+                    },
+                },
+            });
+        }
+        if (verbs.length > 0 && separated) {
+            verbs[0] = { ...verbs[0], separated: true };
+        }
+        return verbs;
     }
 
     private ownPresentation(object: EditorObject): Presentation {

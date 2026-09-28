@@ -19,11 +19,37 @@ import type { ParsedDocumentJSON } from './parse';
  * registry, where its command stays — a command's `arguments` may hold objects
  * that do not survive `postMessage` — and is absent for a lens whose command
  * has no command id: its title is shown as text, as the text editor shows it.
+ *
+ * `surface`, `artifact` and `relation` are the lens's own statement of which
+ * rendered element it is about (`LensHint`, read by `host/lenses.ts`); all
+ * three are absent for a lens that makes none — a foreign lens.
  */
 export interface LensItem {
     id?: string;
     title: string;
     tooltip?: string;
+    surface?: LensSurface;
+    artifact?: string;
+    relation?: string;
+}
+
+/**
+ * The rendered element a lens is about, as the extension that made it names
+ * it (Req Explorer's side of the contract, 2026-09-28): the status badge on the
+ * artifact's heading, the priority row or a relation row of its summary table,
+ * or no element — a verb of the heading.
+ */
+export type LensSurface = 'status' | 'priority' | 'links' | 'action';
+
+/**
+ * What a lens carries, as the last element of `command.arguments`, to say which
+ * surface it belongs to. `artifact` is the readable id the page matches against
+ * the injection marks (`InjectionMark.artifact`); `relation` is the relation
+ * key of a `links` lens, matched against `tr[data-req-relation]`. The argument
+ * stays in place when the command runs: it is the provider's, not the page's.
+ */
+export interface LensHint {
+    reqExplorer: { surface: LensSurface; artifact: string; relation?: string };
 }
 
 /** The lenses of one top-level block, in line order, drawn as one row above it. */

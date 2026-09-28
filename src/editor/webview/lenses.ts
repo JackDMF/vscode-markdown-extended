@@ -1,37 +1,79 @@
 /**
- * Other extensions' code lenses, drawn as rows above the blocks they belong to,
- * the way the text editor draws them above lines: small, dimmed, `a | b | c`,
- * each title a command. The host asks VS Code for the lenses and says which
- * top-level block each row is for (`host/lenses.ts`); the page only draws them
- * and posts `runLens` with the id of the one clicked.
+ * Other extensions' code lenses in the page.
  *
- * **A row follows its block, not its index.** The rows arrive for the host's
- * parse of a text the page held; from then on the page may split, join and
- * move blocks before the next refresh arrives. On arrival each row is put on
- * the top-level node at its index, and from then on it follows that node
- * through every transaction the way `fidelityPlugin` follows a node for its
- * `src` and `gap` (`descent`: the same object, else the node the mapping takes
- * its start to). A node that disappears takes its row with it; a node that
- * descends from none (the second half of a split) has none until the refresh.
+ * **A lens's value here is its command, placed on the element it is about**
+ * (Daniel, 2026-09-28). In the text editor a lens is the substitute for a
+ * rendered view — a requirement's status, priority and edge counts in grey
+ * above its heading. The page renders that view: the badge, the summary table.
+ * A row repeating it in identical grey tokens, facts and counts and one verb
+ * alike, with no sign of what is clickable, says everything twice and nothing
+ * clearly. So a lens that names its surface (`LensSurface`, carried from the
+ * provider by `host/lenses.ts`) is placed there, resolved by its `artifact`
+ * against the injection marks of the document:
+ *
+ * | Surface | Placed on | When that is not there |
+ * | --- | --- | --- |
+ * | `status` | the status badge (`inline_atom`, mark `artifact`) in its heading | a verb of the heading |
+ * | `priority` | `tr[data-req-field="priority"]` of the summary table (`injected_block`, mark `artifact`) | a verb of the heading |
+ * | `links` | `tr[data-req-relation="<relation>"]` of that table | a verb of the heading |
+ * | `action` | — | a verb of the heading, in its object toolbar |
+ *
+ * A placed element keeps the look it has in the preview, and on hover shows an
+ * underline, a pointer and a tooltip naming the verb; a click, or `Enter` with
+ * it focused, runs the lens. **The editor does not guess**: a lens without a
+ * hint is a foreign lens and keeps the text editor's grammar, a row above its
+ * block — except on a block that received a hinted lens, where the foreign ones
+ * join the hinted ones' verbs in the object toolbar: one block, one grammar; a
+ * row beside clickable badges and table rows would be the mixed grammar this
+ * replaces. Only a block with no object toolbar (a paragraph) keeps a row for
+ * the verbs that would have gone there, since a lens with nowhere to be would
+ * be lost.
+ *
+ * **Everything follows its block, not its index.** The lenses arrive for the
+ * host's parse of a text the page held; from then on the page may split, join
+ * and move blocks before the next refresh arrives. On arrival each placement is
+ * put on the top-level node it resolved to, and from then on it follows that
+ * node through every transaction the way `fidelityPlugin` follows a node for
+ * its `src` and `gap` (`descent`: the same object, else the node the mapping
+ * takes its start to). A node that disappears takes its lenses with it; a node
+ * that descends from none (the second half of a split) has none until the
+ * refresh. A badge or a table row is found again inside its block on every
+ * update, so a redrawn rendering is marked afresh.
  *
  * The rows are widgets at the start of their block: not content, never
  * serialized, not selectable, and every event inside them is theirs.
  */
 import { Node } from 'prosemirror-model';
-import { EditorState, Plugin, PluginKey, Transaction } from 'prosemirror-state';
-import { Decoration, DecorationSet } from 'prosemirror-view';
+import { EditorState, Plugin, PluginKey, PluginView, Transaction } from 'prosemirror-state';
+import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { descent, topLevelChildren } from '../fidelity';
 import type { LensItem, LensRow } from '../protocol';
+import { objectOfNode } from './objects';
 
-/** One row as the page holds it: `key` is fresh per `lenses` message, so a widget is redrawn only when its row was replaced. */
-interface HeldRow {
+/** A lens placed on a rendered element of its block. */
+interface HeldTarget {
+    id: string;
+    item: LensItem;
+    surface: 'status' | 'priority' | 'links';
+    artifact: string;
+    relation?: string;
+}
+
+/** What one top-level block holds of the last `lenses` message. */
+interface HeldBlock {
+    /** Fresh per `lenses` message, so a row widget is redrawn only when it was replaced. */
     key: string;
-    items: readonly LensItem[];
+    /** Drawn as a row above the block, as the text editor draws lenses. */
+    row: readonly LensItem[];
+    /** Verbs of the block's object toolbar (`lensVerbsAt`). */
+    verbs: readonly LensItem[];
+    /** Elements of the block's rendering that run a lens. */
+    targets: readonly HeldTarget[];
 }
 
 interface LensState {
-    /** Parallel to the document's top-level children: the row above child `i`, or `null`. */
-    rows: readonly (HeldRow | null)[];
+    /** Parallel to the document's top-level children: what child `i` holds, or `null`. */
+    blocks: readonly (HeldBlock | null)[];
     decorations: DecorationSet;
 }
 
@@ -40,40 +82,171 @@ export const lensPluginKey = new PluginKey<LensState>('mepLenses');
 let received = 0;
 
 /**
- * Glyphs for the product icons lens titles use (`$(name)`, VS Code's codicon
- * syntax). The page has no access to the workbench's icon font, so the common
- * ones are drawn as characters and any other is left out, its text kept.
+ * A lens title as the page draws it: its `$(icon)` references — VS Code's
+ * codicon syntax — left out. The page has no access to the workbench's icon
+ * font, and a stand-in character reads as a broken icon, which is worse than
+ * none.
  */
-const ICONS: Readonly<Record<string, string>> = {
-    'add': '+',
-    'beaker': '⚗',
-    'check': '✓',
-    'check-all': '✓',
-    'circle-filled': '●',
-    'circle-outline': '○',
-    'close': '✕',
-    'error': '✕',
-    'file': '□',
-    'file-code': '‹›',
-    'info': 'ℹ',
-    'link': '→',
-    'pass': '✓',
-    'play': '▶',
-    'references': '→',
-    'run': '▶',
-    'symbol-event': '⚡',
-    'warning': '⚠',
-};
-
-/** A lens title with its `$(icon)` references drawn as characters, or left out where there is none. */
 export function lensLabel(title: string): string {
     return title
-        .replace(/\$\(([a-z0-9-]+)(?:~[a-z]+)?\)/gi, (_whole, name: string) => ICONS[name.toLowerCase()] ?? '')
+        .replace(/\$\([a-z0-9-]+(?:~[a-z]+)?\)/gi, '')
         .replace(/\s+/g, ' ')
         .trim();
 }
 
-function rowDOM(row: HeldRow, run: (id: string) => void): HTMLElement {
+/** What a placed element's tooltip says: the verb, then the provider's own tooltip where it says more. */
+function targetTitle(item: LensItem): string {
+    const label = lensLabel(item.title);
+    return item.tooltip && item.tooltip !== item.title && item.tooltip !== label ? `${label}\n${item.tooltip}` : label;
+}
+
+// ---------------------------------------------------------------------------
+// Resolution
+// ---------------------------------------------------------------------------
+
+/** The artifact an injection mark names, for an atom (the badge, the summary table). */
+function artifactOf(mark: unknown): string | null {
+    const m = mark as { kind?: unknown; artifact?: unknown } | null;
+    return m !== null && typeof m === 'object' && m.kind === 'atom' && typeof m.artifact === 'string' ? m.artifact : null;
+}
+
+/** The row of a summary table a lens names, in `root` (the table's rendering, live or parsed). */
+function tableRowIn(root: ParentNode, surface: 'priority' | 'links', relation: string | undefined): HTMLElement | null {
+    if (surface === 'priority') {
+        return root.querySelector<HTMLElement>('tr[data-req-field="priority"]');
+    }
+    // Compared, not put into a selector: the key is the provider's text.
+    return Array.from(root.querySelectorAll<HTMLElement>('tr[data-req-relation]')).find(tr => tr.dataset.reqRelation === relation) ?? null;
+}
+
+/** The position of the status badge naming `artifact` inside `heading` at `offset`, or `null`. */
+function badgePos(heading: Node, offset: number, artifact: string): number | null {
+    let found: number | null = null;
+    heading.descendants((node, pos) => {
+        if (found !== null) {
+            return false;
+        }
+        if (node.type.name === 'inline_atom' && artifactOf(node.attrs.mark) === artifact) {
+            found = offset + 1 + pos;
+        }
+        return true;
+    });
+    return found;
+}
+
+/** Where each artifact's badge and summary table stand: the index of the top-level block holding them. */
+interface ArtifactIndex {
+    badges: Map<string, number>;
+    tables: Map<string, { index: number; html: string }>;
+}
+
+function artifactIndex(doc: Node): ArtifactIndex {
+    const badges = new Map<string, number>();
+    const tables = new Map<string, { index: number; html: string }>();
+    doc.forEach((child, _offset, index) => {
+        if (child.type.name === 'injected_block') {
+            const artifact = artifactOf(child.attrs.mark);
+            if (artifact !== null && !tables.has(artifact)) {
+                tables.set(artifact, { index, html: child.attrs.html as string });
+            }
+            return;
+        }
+        if (child.type.name !== 'heading') {
+            return;
+        }
+        child.descendants(node => {
+            const artifact = node.type.name === 'inline_atom' ? artifactOf(node.attrs.mark) : null;
+            if (artifact !== null && !badges.has(artifact)) {
+                badges.set(artifact, index);
+            }
+            return true;
+        });
+    });
+    return { badges, tables };
+}
+
+/** Whether the table rendering `html` has the row a lens names; each rendering parsed once per placement. */
+function rowChecker(): (html: string, surface: 'priority' | 'links', relation: string | undefined) => boolean {
+    const parsed = new Map<string, DocumentFragment>();
+    return (html, surface, relation) => {
+        let content = parsed.get(html);
+        if (content === undefined) {
+            // Inert: a template's content runs no script and loads nothing.
+            const template = document.createElement('template');
+            template.innerHTML = html;
+            content = template.content;
+            parsed.set(html, content);
+        }
+        return tableRowIn(content, surface, relation) !== null;
+    };
+}
+
+/** An `action` lens comes before the fallbacks among a block's verbs: it is a verb by its provider's word. */
+function verbOrder(items: LensItem[]): LensItem[] {
+    return [...items.filter(i => i.surface === 'action'), ...items.filter(i => i.surface !== 'action')];
+}
+
+/**
+ * Where each lens of a `lenses` message goes in `doc`, the document the page
+ * holds as it arrives (parallel to its top-level children). `rows` are indexed
+ * by the host's parse of that same text.
+ */
+function place(doc: Node, rows: readonly LensRow[], tag: string): (HeldBlock | null)[] {
+    const index = artifactIndex(doc);
+    const hasRow = rowChecker();
+    const parts = Array.from({ length: doc.childCount }, () => ({ row: [] as LensItem[], verbs: [] as LensItem[], targets: [] as HeldTarget[] }));
+    const offsets: number[] = [];
+    doc.forEach((_child, offset) => offsets.push(offset));
+    const hasToolbar = (i: number) => objectOfNode(doc.child(i), offsets[i]) !== null;
+    // A verb goes to the block's object toolbar; a block without one keeps it in a row.
+    const verb = (i: number, item: LensItem) => (hasToolbar(i) ? parts[i].verbs : parts[i].row).push(item);
+
+    for (const { blockIndex: b, items } of rows) {
+        if (b < 0 || b >= parts.length || items.length === 0) {
+            continue;
+        }
+        if (!items.some(i => i.surface !== undefined)) {
+            parts[b].row.push(...items);
+            continue;
+        }
+        for (const item of items) {
+            if (item.surface === undefined || item.artifact === undefined) {
+                verb(b, item);
+                continue;
+            }
+            const artifact = item.artifact;
+            const heading = index.badges.get(artifact);
+            const surface = item.surface;
+            if (surface === 'status' && heading !== undefined) {
+                // Without a command the lens only repeats what the badge says.
+                if (item.id !== undefined) {
+                    parts[heading].targets.push({ id: item.id, item, surface, artifact });
+                }
+                continue;
+            }
+            if (surface === 'priority' || surface === 'links') {
+                const table = index.tables.get(artifact);
+                if (table !== undefined && (surface === 'priority' || item.relation !== undefined) && hasRow(table.html, surface, item.relation)) {
+                    if (item.id !== undefined) {
+                        parts[table.index].targets.push({ id: item.id, item, surface, artifact, ...(item.relation !== undefined ? { relation: item.relation } : {}) });
+                    }
+                    continue;
+                }
+            }
+            // An action, or a lens whose element the page does not show: a verb of the artifact's heading.
+            verb(heading ?? b, item);
+        }
+    }
+    return parts.map((p, i) => (p.row.length + p.verbs.length + p.targets.length === 0
+        ? null
+        : { key: `${tag}-${i}`, row: p.row, verbs: verbOrder(p.verbs), targets: p.targets }));
+}
+
+// ---------------------------------------------------------------------------
+// Rows
+// ---------------------------------------------------------------------------
+
+function rowDOM(items: readonly LensItem[], run: (id: string) => void): HTMLElement {
     const el = document.createElement('div');
     el.className = 'mep-lens-row';
     el.contentEditable = 'false';
@@ -81,7 +254,7 @@ function rowDOM(row: HeldRow, run: (id: string) => void): HTMLElement {
     el.setAttribute('aria-label', 'Code lenses');
     // The pointer is the row's: no caret placed, no focus taken from the text.
     el.addEventListener('mousedown', e => e.preventDefault());
-    row.items.forEach((item, k) => {
+    items.forEach((item, k) => {
         if (k > 0) {
             const sep = document.createElement('span');
             sep.className = 'mep-lens-separator';
@@ -106,7 +279,7 @@ function rowDOM(row: HeldRow, run: (id: string) => void): HTMLElement {
         button.className = 'mep-lens';
         button.dataset.lens = id;
         button.textContent = label;
-        button.title = item.tooltip ?? item.title;
+        button.title = item.tooltip ?? label;
         button.addEventListener('click', e => {
             e.preventDefault();
             run(id);
@@ -116,14 +289,15 @@ function rowDOM(row: HeldRow, run: (id: string) => void): HTMLElement {
     return el;
 }
 
-function decorate(doc: Node, rows: readonly (HeldRow | null)[], run: (id: string) => void): DecorationSet {
+function decorate(doc: Node, blocks: readonly (HeldBlock | null)[], run: (id: string) => void): DecorationSet {
     const widgets: Decoration[] = [];
     doc.forEach((_child, offset, index) => {
-        const row = rows[index];
-        if (row) {
+        const block = blocks[index];
+        if (block && block.row.length > 0) {
+            const { key, row } = block;
             widgets.push(Decoration.widget(offset, () => rowDOM(row, run), {
                 side: -1,
-                key: row.key,
+                key,
                 ignoreSelection: true,
                 stopEvent: () => true,
             }));
@@ -132,47 +306,206 @@ function decorate(doc: Node, rows: readonly (HeldRow | null)[], run: (id: string
     return DecorationSet.create(doc, widgets);
 }
 
-function noRows(doc: Node): (HeldRow | null)[] {
+function nothingHeld(doc: Node): (HeldBlock | null)[] {
     return Array.from({ length: doc.childCount }, () => null);
 }
 
-/** Put `rows` — from a `lenses` message, indexed by the host's parse — on the top-level nodes at those indices, replacing every row before. */
+// ---------------------------------------------------------------------------
+// Placed elements
+// ---------------------------------------------------------------------------
+
+/** The element of the block at `offset` that `target` is placed on, in the view as it is drawn now. */
+function targetElement(view: EditorView, child: Node, offset: number, target: HeldTarget): HTMLElement | null {
+    if (target.surface === 'status') {
+        const pos = child.type.name === 'heading' ? badgePos(child, offset, target.artifact) : null;
+        const dom = pos === null ? null : view.nodeDOM(pos);
+        return dom instanceof HTMLElement ? dom : null;
+    }
+    if (child.type.name !== 'injected_block' || artifactOf(child.attrs.mark) !== target.artifact) {
+        return null;
+    }
+    const dom = view.nodeDOM(offset);
+    return dom instanceof HTMLElement ? tableRowIn(dom, target.surface, target.relation) : null;
+}
+
+/** The title an element had before a lens was placed on it, to give back when the lens goes. */
+const titleBefore = new WeakMap<HTMLElement, string | null>();
+
+function markTarget(el: HTMLElement, target: HeldTarget): void {
+    if (!titleBefore.has(el)) {
+        titleBefore.set(el, el.getAttribute('title'));
+    }
+    el.classList.add('mep-lens-target');
+    el.dataset.lens = target.id;
+    const title = targetTitle(target.item);
+    if (el.title !== title) {
+        el.title = title;
+    }
+    if (el.tabIndex !== 0) {
+        // Reachable with Tab, and `Enter` runs it (`LensTargets`).
+        el.tabIndex = 0;
+    }
+    if (el.tagName !== 'TR' && el.getAttribute('role') !== 'button') {
+        // A row keeps its table semantics; the badge is a button while it runs a lens.
+        el.setAttribute('role', 'button');
+    }
+}
+
+function unmarkTarget(el: HTMLElement): void {
+    el.classList.remove('mep-lens-target');
+    delete el.dataset.lens;
+    el.removeAttribute('tabindex');
+    if (el.tagName !== 'TR') {
+        el.removeAttribute('role');
+    }
+    const title = titleBefore.get(el);
+    titleBefore.delete(el);
+    if (title === null || title === undefined) {
+        el.removeAttribute('title');
+    } else {
+        el.title = title;
+    }
+}
+
+/**
+ * The badges and table rows that run a lens: marked after every update — a
+ * rendering the view redrew is marked afresh, one whose lens went is given
+ * back its own look — and their pointer and keys taken before anything under
+ * them sees them. A click on a link inside a row runs the row's lens too: the
+ * underline says the row is what is clicked. A Ctrl/Cmd+click stays the
+ * link's, and a click on a `<summary>` opens the list it collapses.
+ */
+class LensTargets implements PluginView {
+    private marked = new Set<HTMLElement>();
+    private readonly listeners: [string, EventListener][] = [];
+
+    constructor(private readonly view: EditorView, private readonly run: (id: string) => void) {
+        const own = (e: Event): HTMLElement | null => {
+            const target = e.target as Element | null;
+            const el = typeof target?.closest === 'function' ? target.closest<HTMLElement>('.mep-lens-target') : null;
+            return el !== null && this.marked.has(el) && view.dom.contains(el) ? el : null;
+        };
+        const plain = (e: MouseEvent, el: HTMLElement): boolean => {
+            const target = e.target as Element;
+            const summary = target.closest('summary');
+            return e.button === 0 && !e.ctrlKey && !e.metaKey && !(summary !== null && el.contains(summary));
+        };
+        this.listen('mousedown', e => {
+            const el = own(e);
+            if (el !== null && plain(e as MouseEvent, el)) {
+                // No node selection, no caret moved, no focus taken from the text.
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        });
+        this.listen('click', e => {
+            const el = own(e);
+            if (el !== null && plain(e as MouseEvent, el) && el.dataset.lens) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.run(el.dataset.lens);
+            }
+        });
+        this.listen('keydown', e => {
+            const key = (e as KeyboardEvent).key;
+            const el = own(e);
+            if (el !== null && e.target === el && (key === 'Enter' || key === ' ') && el.dataset.lens) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.run(el.dataset.lens);
+            }
+        });
+        this.update();
+    }
+
+    update(): void {
+        const view = this.view;
+        const blocks = lensPluginKey.getState(view.state)?.blocks ?? [];
+        const next = new Map<HTMLElement, HeldTarget>();
+        view.state.doc.forEach((child, offset, index) => {
+            for (const target of blocks[index]?.targets ?? []) {
+                const el = targetElement(view, child, offset, target);
+                if (el !== null && !next.has(el)) {
+                    next.set(el, target);
+                }
+            }
+        });
+        for (const el of this.marked) {
+            if (!next.has(el)) {
+                unmarkTarget(el);
+            }
+        }
+        for (const [el, target] of next) {
+            markTarget(el, target);
+        }
+        this.marked = new Set(next.keys());
+    }
+
+    destroy(): void {
+        for (const [type, listener] of this.listeners) {
+            this.view.dom.removeEventListener(type, listener, true);
+        }
+        this.marked.forEach(unmarkTarget);
+        this.marked.clear();
+    }
+
+    /** In the capture phase on the editor: before ProseMirror, and before a rendering's own link handling. */
+    private listen(type: string, listener: EventListener): void {
+        this.view.dom.addEventListener(type, listener, true);
+        this.listeners.push([type, listener]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The plugin
+// ---------------------------------------------------------------------------
+
+/** Place `rows` — from a `lenses` message, indexed by the host's parse — on the document, replacing every placement before. */
 export function setLensesTransaction(state: EditorState, rows: readonly LensRow[]): Transaction {
     return state.tr.setMeta(lensPluginKey, rows).setMeta('addToHistory', false);
 }
 
 /** The rows the state holds, as block index and titles: for tests. */
 export function lensRowsOf(state: EditorState): { blockIndex: number; titles: string[] }[] {
-    const held = lensPluginKey.getState(state)?.rows ?? [];
-    return held.flatMap((row, blockIndex) => (row ? [{ blockIndex, titles: row.items.map(i => i.title) }] : []));
+    const held = lensPluginKey.getState(state)?.blocks ?? [];
+    return held.flatMap((block, blockIndex) => (block && block.row.length > 0 ? [{ blockIndex, titles: block.row.map(i => i.title) }] : []));
 }
 
-/** The lens rows; `run` is called with a lens's id when it is clicked or chosen with the keyboard. */
+/**
+ * The lenses the object toolbar of the top-level block at `pos` carries as
+ * verbs: its `action` lenses first, then the hinted lenses whose element is
+ * not shown and the foreign lenses beside them, in line order.
+ */
+export function lensVerbsAt(state: EditorState, pos: number): readonly LensItem[] {
+    const doc = state.doc;
+    if (pos < 0 || pos >= doc.content.size) {
+        return [];
+    }
+    const $pos = doc.resolve(pos);
+    return $pos.depth === 0 ? lensPluginKey.getState(state)?.blocks[$pos.index(0)]?.verbs ?? [] : [];
+}
+
+/** The lenses; `run` is called with a lens's id when it is clicked or chosen with the keyboard. */
 export function lensPlugin(run: (id: string) => void): Plugin<LensState> {
     return new Plugin<LensState>({
         key: lensPluginKey,
         state: {
-            init: (_config, state) => ({ rows: noRows(state.doc), decorations: DecorationSet.empty }),
+            init: (_config, state) => ({ blocks: nothingHeld(state.doc), decorations: DecorationSet.empty }),
             apply(tr, value, oldState, newState): LensState {
                 const incoming = tr.getMeta(lensPluginKey) as readonly LensRow[] | undefined;
                 if (incoming !== undefined) {
-                    const tag = `mep-lens-${++received}`;
-                    const rows = noRows(newState.doc);
-                    for (const row of incoming) {
-                        if (row.blockIndex >= 0 && row.blockIndex < rows.length && row.items.length > 0) {
-                            rows[row.blockIndex] = { key: `${tag}-${row.blockIndex}`, items: row.items };
-                        }
-                    }
-                    return { rows, decorations: decorate(newState.doc, rows, run) };
+                    const blocks = place(newState.doc, incoming, `mep-lens-${++received}`);
+                    return { blocks, decorations: decorate(newState.doc, blocks, run) };
                 }
                 if (!tr.docChanged) {
                     return value;
                 }
                 const from = descent([tr], topLevelChildren(oldState.doc), topLevelChildren(newState.doc));
-                const rows = from.map(i => (i < 0 ? null : value.rows[i] ?? null));
-                return { rows, decorations: decorate(newState.doc, rows, run) };
+                const blocks = from.map(i => (i < 0 ? null : value.blocks[i] ?? null));
+                return { blocks, decorations: decorate(newState.doc, blocks, run) };
             },
         },
+        view: view => new LensTargets(view, run),
         props: {
             decorations: state => lensPluginKey.getState(state)?.decorations ?? DecorationSet.empty,
         },

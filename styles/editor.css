@@ -554,6 +554,26 @@
 
 .mep-lens-separator { white-space: pre; }
 
+/*
+ * A lens placed on the element it is about — the status badge, a row of the
+ * summary table (webview/lenses.ts). At rest it looks exactly as the preview
+ * draws it; the pointer on it underlines it and shows the verb as its tooltip.
+ * The underline is put on every descendant too: a badge drawn as an inline
+ * block, and a row's cells, take none from their parent.
+ */
+.mep-lens-target:hover,
+.mep-lens-target:hover * {
+    text-decoration-line: underline;
+    cursor: pointer;
+}
+
+.mep-lens-target:focus { outline: none; }
+
+.mep-lens-target:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder, #0078d4);
+    outline-offset: 1px;
+}
+
 /* ------------------------------------------------------------------------- */
 /* The document cannot be shown without loss                                 */
 /* ------------------------------------------------------------------------- */

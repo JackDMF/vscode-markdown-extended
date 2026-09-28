@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { EditorEngineHost, buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { CodeActionController } from '../../../src/editor/host/codeActions';
-import { blockIndexForLine } from '../../../src/editor/host/lenses';
+import { blockIndexForLine, lensHintOf, lensRows } from '../../../src/editor/host/lenses';
 import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
 import { SessionWebview, VisualEditorSession } from '../../../src/editor/host/session';
 import { blockLineRanges } from '../../../src/editor/parse';
@@ -471,6 +471,37 @@ suite('Editor host: lens placement', () => {
         assert.strictEqual(blockIndexForLine(ranges, 12), 4, 'after the last block');
         assert.strictEqual(blockIndexForLine([], 0), null);
         assert.strictEqual(blockIndexForLine([null], 0), null);
+    });
+
+    test('a lens naming its surface carries it to the page; a lens without, or with a malformed hint, carries none; the command keeps the hint', () => {
+        const lens = (line: number, title: string, args: unknown[]) => new vscode.CodeLens(
+            new vscode.Range(line, 0, line, 1), { title, command: 'test.lens', arguments: args },
+        );
+        const status = { reqExplorer: { surface: 'status', artifact: 'FRS-TST-001' } };
+        const links = { reqExplorer: { surface: 'links', artifact: 'FRS-TST-001', relation: 'verified-by' } };
+        const { rows, commands } = lensRows([
+            lens(4, 'Set status', ['a', status]),
+            lens(4, '3 tests', [links]),
+            lens(4, 'Foreign', ['plain']),
+            // The hint is the last argument, or none.
+            lens(4, 'Hint not last', [status, 'after']),
+            lens(4, 'Unknown surface', [{ reqExplorer: { surface: 'elsewhere', artifact: 'FRS-TST-001' } }]),
+            lens(4, 'No artifact', [{ reqExplorer: { surface: 'status' } }]),
+            lens(4, 'Null argument', [null]),
+        ], ranges, '1');
+        assert.deepStrictEqual(rows[0].items.map(({ title, surface, artifact, relation }) => ({ title, surface, artifact, relation })), [
+            { title: 'Set status', surface: 'status', artifact: 'FRS-TST-001', relation: undefined },
+            { title: '3 tests', surface: 'links', artifact: 'FRS-TST-001', relation: 'verified-by' },
+            { title: 'Foreign', surface: undefined, artifact: undefined, relation: undefined },
+            { title: 'Hint not last', surface: undefined, artifact: undefined, relation: undefined },
+            { title: 'Unknown surface', surface: undefined, artifact: undefined, relation: undefined },
+            { title: 'No artifact', surface: undefined, artifact: undefined, relation: undefined },
+            { title: 'Null argument', surface: undefined, artifact: undefined, relation: undefined },
+        ]);
+        assert.ok(!('surface' in rows[0].items[2]), 'a foreign lens has no hint fields at all');
+        assert.deepStrictEqual(commands.get(rows[0].items[0].id as string)?.arguments, ['a', status], 'the command runs with the hint in place');
+        assert.deepStrictEqual(lensHintOf({ title: 'x', command: 'c', arguments: [links] }), links.reqExplorer);
+        assert.strictEqual(lensHintOf({ title: 'x', command: 'c' }), undefined);
     });
 });
 

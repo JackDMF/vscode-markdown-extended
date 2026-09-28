@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Config } from '../../services/common/config';
-import type { HostMessage, LensItem, LensRow } from '../protocol';
+import type { HostMessage, LensHint, LensItem, LensRow, LensSurface } from '../protocol';
 import { message } from './errors';
 
 /** How long a burst of edits is left to settle before VS Code is asked for the lenses again. */
@@ -41,12 +41,45 @@ export function blockIndexForLine(ranges: readonly LineRange[], line: number): n
     return last;
 }
 
+const SURFACES: ReadonlySet<string> = new Set<LensSurface>(['status', 'priority', 'links', 'action']);
+
+/**
+ * The surface a lens names for itself: the last of its command's arguments,
+ * when that is an object of the `LensHint` shape — a known surface and an
+ * artifact id; `relation` only when it is a string. Anything else, and a lens
+ * with no arguments, names none: it is a foreign lens, drawn as the text
+ * editor draws it. The shape is checked, not assumed — the argument is the
+ * provider's own and may be anything.
+ */
+export function lensHintOf(command: vscode.Command): LensHint['reqExplorer'] | undefined {
+    const args = command.arguments;
+    const last: unknown = args && args.length > 0 ? args[args.length - 1] : undefined;
+    if (typeof last !== 'object' || last === null) {
+        return undefined;
+    }
+    const hint = (last as { reqExplorer?: unknown }).reqExplorer;
+    if (typeof hint !== 'object' || hint === null) {
+        return undefined;
+    }
+    const { surface, artifact, relation } = hint as { surface?: unknown; artifact?: unknown; relation?: unknown };
+    if (typeof surface !== 'string' || !SURFACES.has(surface) || typeof artifact !== 'string' || artifact === '') {
+        return undefined;
+    }
+    return {
+        surface: surface as LensSurface,
+        artifact,
+        ...(typeof relation === 'string' && relation !== '' ? { relation } : {}),
+    };
+}
+
 /**
  * The rows the page draws, and the commands their ids stand for. Lenses are
  * ordered by where they stand (line, then column; a provider's own order among
  * equals) and grouped by block. A lens VS Code could not resolve has no
  * command and nothing to show, as in the text editor; one whose command has no
- * command id is a title only, drawn as text.
+ * command id is a title only, drawn as text. A lens naming its surface
+ * (`lensHintOf`) carries it to the page, which places it there; its command is
+ * kept whole, the hint among its arguments.
  */
 export function lensRows(lenses: readonly vscode.CodeLens[], ranges: readonly LineRange[], idPrefix: string): { rows: LensRow[]; commands: Map<string, vscode.Command> } {
     const commands = new Map<string, vscode.Command>();
@@ -66,6 +99,14 @@ export function lensRows(lenses: readonly vscode.CodeLens[], ranges: readonly Li
         const item: LensItem = { title: command.title };
         if (command.tooltip) {
             item.tooltip = command.tooltip;
+        }
+        const hint = lensHintOf(command);
+        if (hint) {
+            item.surface = hint.surface;
+            item.artifact = hint.artifact;
+            if (hint.relation !== undefined) {
+                item.relation = hint.relation;
+            }
         }
         if (command.command) {
             item.id = `${idPrefix}.${commands.size}`;
@@ -105,7 +146,8 @@ export interface SessionPort {
  * provider and resolves them — the same lenses the text editor shows. Their
  * commands stay here, in a registry that is replaced on each refresh: an
  * argument may be a `Uri` or any object the provider made, and what crosses to
- * the page is a title and an id. A `runLens` naming an id of an earlier refresh
+ * the page is a title, an id and — for a lens that names one — its surface. A
+ * `runLens` naming an id of an earlier refresh
  * is refused and logged; the row it came from is on its way out.
  *
  * Rows are posted only for a text the page holds, and dropped when the document
