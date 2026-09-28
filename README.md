@@ -474,22 +474,38 @@ every requirement heading — its status, priority, links, evidence, **+ ref** �
 both, without any arrangement between the extensions: it asks VS Code for them, the same
 way the text editor does, so what one shows the other shows.
 
-- **Lenses** stand as a row above the block they belong to — small, dimmed,
-  `Implemented | Must | depends on 2 | + ref`, as in the text editor — and a click runs the
-  lens, as a click there does. `Tab` reaches them from the text, `Enter` runs the focused
-  one. A lens on a line inside a block belongs to that block (a front-matter line to the
-  front matter); a lens on a blank line belongs to the block after it. The lenses of all
-  extensions are shown, as the text editor shows them. They are asked again after every
+- **A lens is placed on the element it is about.** In the text editor a lens row stands in
+  for a view the text cannot show; here the view is on the page — a requirement's status
+  badge, its summary table — and a row repeating it would say everything twice. So a lens
+  that names its surface runs from that element: the **status badge** runs the status
+  lens, the table's **Priority** row the priority lens, a **relation row** (_Verified by_,
+  _Depends on_, …) the lens counting that relation. At rest they look exactly as in the
+  preview; the pointer on one underlines it, and its tooltip names what a click does.
+  `Tab` reaches them, `Enter` runs the focused one. A lens that is a verb (**+ ref**) is a
+  verb in the heading's object toolbar — the caret resting in the heading shows it — and
+  so is a lens whose element the page does not show (a count for a relation the table
+  hides); past four, the first three stay and the rest are behind **Actions ▾**.
+- **The other extension says where a lens goes; the editor does not guess.** A lens names
+  its surface in the last of its command's arguments,
+  `{ reqExplorer: { surface: 'status' | 'priority' | 'links' | 'action', artifact: 'FR-X-001', relation?: 'verified-by' } }`,
+  and the editor finds the badge and the table rows injected for that artifact. Req
+  Explorer does this for its own lenses.
+- **Every other lens stands as a row** above the block it belongs to — small, dimmed,
+  `a | b | c`, as in the text editor — and a click runs it. A lens on a line inside a block
+  belongs to that block (a front-matter line to the front matter); a lens on a blank line
+  belongs to the block after it. On a block that has lenses naming their surface, the
+  others join them as verbs in its toolbar, so one block does not speak two ways; a block
+  without a toolbar (a paragraph) keeps its row. Lenses are asked again after every
   change, and when you come back to the tab: a lens can count things in other files.
-  Product icons in a title (`$(check)`) are drawn as simple characters, or left out — the
-  editor has no access to VS Code's icon font.
+  Product icons in a title (`$(check)`) are left out: the editor has no access to VS Code's
+  icon font, and a stand-in would read as a broken icon.
 - **Code actions** of a block are verbs in its bar, after a separator: the quick fixes for
   the problems on its lines, and the refactorings an extension offers there. A heading
   has a bar for them alone, so a requirement heading gets its actions; it shows none when
   there are none. Actions for the whole file (the Source Action menu's), VS Code's
   *Surround With* snippets and *Modify* with inline chat are left out: they act on a text
   editor's selection. Inline objects — a link, a note — have no actions here yet.
-- **`markdownExtended.editor.codeLenses`** (default `true`) turns the lens rows off; so
+- **`markdownExtended.editor.codeLenses`** (default `true`) turns the lenses off; so
   does VS Code's own `editor.codeLens`, as it does in the text editor.
 - A lens or an action whose command needs the text editor to be active may do nothing
   here, or act on another text editor: the command, not the Visual Editor, decides what

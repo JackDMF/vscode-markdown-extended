@@ -576,7 +576,7 @@ text the other — never a diff:
 | host → page | `document { json, version, defaultWrap }` | Show this parse of document `version` |
 | host → page | `rendered { requestId, html }` | A raw block's new source, rendered by the host engine |
 | host → page | `error { message }` | The document cannot be shown without loss; offer the text editor |
-| host → page | `lenses { version, blocks, rows }` | Other extensions' code lenses, one row of `{ id?, title, tooltip? }` per top-level block index (below) |
+| host → page | `lenses { version, blocks, rows }` | Other extensions' code lenses, one row of `{ id?, title, tooltip?, surface?, artifact?, relation? }` per top-level block index (below) |
 | host → page | `actions { requestId, blockIndex, items }` | The code actions for one block, `{ id, title, kind, refusal? }` each (below) |
 | host → page | `invalidateActions { refused? }` | Every answer the page holds may be stale; ask again. With `refused`, that action was not applied (below) |
 | page → host | `ready` | Loaded; send the document |
@@ -997,13 +997,81 @@ row with it. The rows are `Decoration.widget`s at their block's start (`side: -1
 `mousedown` is prevented so no caret moves. The row stands in the block's top margin
 (`editor.css`: the block after a row has none), in the editor font at 90 %,
 `--vscode-editorCodeLens-foreground`, as the text editor draws lenses. `$(icon)` references
-in titles are drawn as characters for the common codicons and otherwise left out: the page
-cannot reach the workbench's icon font.
+in titles are left out: the page cannot reach the workbench's icon font, and the stand-in
+characters it once drew for the common codicons read as broken icons.
 
 The object toolbar keeps off the rows: `place` treats every row's rectangle as occupied and
 moves a bar that would cover one past it — above it going up, below it going down — so a
 block's bar sits above the block's row. The pointer on a row counts as on the block below it,
 so crossing the row towards the bar does not hide the bar.
+
+**Lenses that name their surface.** A row is the text editor's substitute for a rendered
+view: above a requirement heading it says the status, the priority and the edge counts,
+which the page already renders as the badge and the summary table. The row repeated them in
+identical grey tokens — facts, counts and one verb alike, nothing saying which could be
+clicked. The decision (Daniel, 2026-09-28): **a lens's value here is its command, placed on
+the element it is about**; the row stays only where no rendered view exists; and **the
+editor does not guess from titles** — the extension that made the lens says which surface it
+belongs to. Guessing would be a second reading of Req Explorer's model (which title is the
+status, which count is which relation) that goes wrong the day a title is reworded or
+translated; the hint is read from the one place it is true.
+
+*The contract.* A lens that names its surface carries, as the **last element of
+`command.arguments`**, `{ reqExplorer: { surface, artifact, relation? } }` (`LensHint`):
+`surface` one of `status`, `priority`, `links`, `action`; `artifact` the readable id, as the
+injection marks carry it; `relation` the relation key of a `links` lens. `lensHintOf`
+(`host/lenses.ts`) checks the shape — an unknown surface, a missing artifact, a hint that is
+not the last argument make a foreign lens — and `LensItem` carries the three fields to the
+page. The argument stays in the command: `runLens` runs the provider's command exactly as
+it was given. On Req Explorer's side, the summary table (`injected_block`, mark
+`{ kind: 'atom', artifact }`) marks its rows `tr[data-req-field="<field>"]` and
+`tr[data-req-relation="<relation key>"]`, and the badge is the `inline_atom` with the same
+mark inside the heading.
+
+*Resolution by artifact* (`place` in `webview/lenses.ts`), against the document the page
+holds when the `lenses` message arrives: an index of each artifact's badge (the top-level
+heading holding an `inline_atom` whose mark names it) and summary table (the top-level
+`injected_block` whose mark names it). For every row the host sent:
+
+- a row with no hinted lens stays a row, on its block;
+- in a row with a hinted lens, each lens is placed: `status` on the artifact's badge;
+  `priority` and `links` on its table, when the table's HTML (parsed inert, in a
+  `template`) has `tr[data-req-field="priority"]`, or the `tr[data-req-relation]` of that
+  key; a lens so placed without a command is dropped, since the element already shows what
+  it says. Everything else — an `action`, a lens whose element is not there (no badge on
+  the page, a relation the table hides, a `links` lens without a relation), and the foreign
+  lenses of that row — becomes a verb of the artifact's heading, or of the lens's own block
+  when the page has no badge for the artifact. **One block, one grammar**: a row beside a
+  clickable badge and clickable table rows would be the mixed grammar this replaces.
+- A verb whose block has no object toolbar (`objectOfNode` is `null` — a paragraph) goes
+  into a row on that block instead: a lens with nowhere to be would be lost.
+
+Verbs are ordered `action` lenses first, then the rest in line order. The placements are
+held per top-level block, as the rows were, and follow their nodes through every
+transaction by `descent`; the next `lenses` message places everything afresh.
+
+*Placed elements.* A plugin view (`LensTargets`) marks the elements after every update:
+the badge's node-view element (found by the artifact inside its heading node) and the table
+row (found in the `injected_block`'s node-view element) get `mep-lens-target`,
+`data-lens`, the lens title — the verb — as `title`, `tabindex=0`, and the badge
+`role=button`; an element whose lens went is given back its own title. A redrawn rendering
+(an `InjectedBlockView` resets its HTML on update) is marked again on the same pass. Its
+listeners are on the editor's element in the capture phase, before ProseMirror and before
+a rendering's own link handling: a plain click (not with Ctrl/Cmd, not on a `<summary>`)
+runs the lens and selects nothing, `mousedown` is prevented so no caret moves, and
+`Enter` or `Space` on the focused element runs it. A link inside a relation row runs the
+row's lens too — the underline says the row is what is clicked; Ctrl+click still follows the
+link. `editor.css` draws nothing at rest; `:hover` underlines the element and its
+descendants (a badge drawn as an inline block and a row's cells take no decoration from
+their parent) with a pointer, and `:focus-visible` outlines it. The preview's stylesheets
+are not touched.
+
+*Verbs in the toolbar.* `ObjectToolbarHost.lensesAt(pos)` answers `lensVerbsAt` for the
+top-level block; `present` draws them after the object's own verbs and before the code
+actions, each group after a separator, a lens without a command refused. More than
+`LENS_VERBS_INLINE` (4) lens verbs: the first three stay and the rest are one **Actions ▾**
+verb, an inline choice of them, so the bar keeps to four slots. A heading's bar is a caret
+object's: it shows once the caret rests in the heading.
 
 **Code actions as object verbs** (`host/codeActions.ts`). When the object toolbar presents
 an object that is a whole top-level block, the page's `codeActionsAt` answers from what it
@@ -1050,8 +1118,8 @@ block, lenses on or off. An answer kept past its epoch is shown while it is aske
 the bar does not blink; running it is guarded by the host's version check. Every post of an
 answer or an invalidation is guarded: a webview disposed meanwhile is a logged warning. The answer's arrival dispatches an
 empty transaction, and the toolbar redraws with the verbs. A heading is an object for this
-alone: its presentation has no verbs of its own, and the selection's bar is hidden while it
-has none. Inline objects carry no actions — the host knows no range for a note or a link,
+and for its lens verbs alone: its presentation has no verbs of its own, and the selection's
+bar is hidden while it has none. Inline objects carry no actions — the host knows no range for a note or a link,
 and computing one would be a second answer to where the page's text is in the file.
 
 ### Styles
