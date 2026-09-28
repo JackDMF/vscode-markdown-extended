@@ -586,6 +586,7 @@ text the other — never a diff:
 | host → page | `lenses { version, blocks, rows }` | Other extensions' code lenses, one row of `{ id?, title, tooltip?, surface?, artifact?, relation? }` per top-level block index (below) |
 | host → page | `actions { requestId, blockIndex, items }` | The code actions for one block, `{ id, title, kind, refusal? }` each (below) |
 | host → page | `invalidateActions { refused? }` | Every answer the page holds may be stale; ask again. With `refused`, that action was not applied (below) |
+| host → page | `revealAnchor { anchor, line }` | Bring a followed link's fragment into view and put the caret there: the heading whose `anchor` it is, else the block `line` starts (below) |
 | page → host | `ready` | Loaded; send the document |
 | page → host | `edit { text, baseVersion, save?, reparse? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it; with `reparse`, the host posts the document back after applying it, although it is the page's own text (the toolbar wrote syntax as source) |
 | page → host | `render { requestId, src }` | Render this raw block source |
@@ -637,6 +638,36 @@ the predicate (`plainFollows`), evaluated per event against the node the view sh
 an include expansion (mark kind `expansion`) is a snippet's text and keeps the rule, as do
 raw blocks and the rest of the page. A press on such a link is prevented, so it does not
 select the table.
+
+**A link lands on the element its fragment names** (Daniel, 2026-09-28: in the text
+editor the built-in link handling lands on the heading; here the file opened at its
+top). `openAt` in `host/session.ts` resolves the fragment against the target file's text
+before opening it (`fragmentLine`, `host/links.ts`), in this order: a heading whose
+explicit `{#id}` is the fragment — Req Explorer writes its anchors so, and an id the author
+wrote wins over a slug; a heading whose GitHub-style slug equals it, without case; a line
+fragment (`L12`, `L12,5`). The slug is the built-in's, read from where it is true: no public
+command of `vscode.markdown-language-features` opens a document at a fragment for another
+extension (its `openDocumentLink` is internal), so its rule is ported — trimmed, lower-cased,
+`githubSlugReplaceRegex` removed, each white-space character a hyphen, a repeated slug
+`-1`, `-2`, … — and the regex is generated from the language server's bundle into
+`host/githubSlugRegex.ts`. It is github-slugger's table, a snapshot of one Unicode version
+(it strips `²` and letters newer than that version), so no `\p{…}` property escape
+reproduces it; `host.test.ts` compares it with the regex the test host's VS Code ships and
+fails when they part. Headings are read with the editor's engine, so `markdown-it-attrs`
+has put a `{#id}` into the heading's `id` and taken it out of the slugged text.
+
+The file then opens with `vscode.open` and `{ selection }`, in whichever editor VS Code
+picks for it. In a text editor the line is also revealed `AtTop`. In the Visual Editor
+(the active tab is its custom editor for that uri) the file's session is sent the reveal —
+at once when its page has the document, else right after the first `document`; sessions are
+kept by uri for this, and a reveal for a page whose session does not exist yet waits for it.
+A link to the document itself opens nothing and reveals in its own page. A fragment the file
+does not have opens it at the top and logs an `[INFO]` line: the link may be older than the
+heading it named. The page (`revealAnchor` in `webview/main.ts`) takes the top-level heading
+whose `anchor` is the fragment, else the top-level block the host's line starts in — found by
+bisection over `lineAt`, since block start lines only grow — so the slug rule lives only on
+the host; it puts the caret at the block's start and scrolls it to the top, where
+`scroll-margin-top` keeps it clear of the sticky formatting row.
 
 The session remembers the text it believes the page holds. An `edit` is written only
 when its `baseVersion` is the last posted version and the document still holds that
@@ -1084,8 +1115,9 @@ transaction by `descent`; the next `lenses` message places everything afresh.
 
 *Placed elements.* A plugin view (`LensTargets`) marks the elements after every update:
 the badge's node-view element (found by the artifact inside its heading node) and, for a
-table row, **its label cell** — the `th`, the row itself only where it has none (found in
-the `injected_block`'s node-view element) — get `mep-lens-target`, `data-lens`, the lens
+relation row, **its label cell** — the `th`, the row itself only where it has none — or,
+for a status or priority row, its value (found in the `injected_block`'s node-view
+element) — get `mep-lens-target`, `data-lens`, the lens
 title — the verb — as `title`, `tabindex=0`, and the badge `role=button` (a cell keeps its
 table role). The lens is on the label only because the value cell beside it holds links to
 the relation's targets, which a plain click opens (above): the label runs the group's lens
@@ -1094,9 +1126,17 @@ the relation's targets, which a plain click opens (above): the label runs the gr
 listeners are on the editor's element in the capture phase, before ProseMirror and before
 a rendering's own link handling: a plain click (not with Ctrl/Cmd, not on a `<summary>`,
 not on a link) runs the lens and selects nothing, `mousedown` is prevented so no caret
-moves, and `Enter` or `Space` on the focused element runs it. `editor.css` draws nothing at rest; `:hover` underlines the element and its
-descendants (a badge drawn as an inline block and a row's cells take no decoration from
-their parent) with a pointer, and `:focus-visible` outlines it. A `<summary>` inside a row
+moves, and `Enter` or `Space` on the focused element runs it. `editor.css` draws nothing at
+rest. **Two verbs, two signifiers** (Daniel, 2026-09-28: an underline says "link", not
+"set"): the element carries `data-lens-kind`. A `set` lens — `status` or `priority`, a verb
+that changes the artifact — is marked on the value it sets (the status chip in the status
+row, else the value cell; the badge where one is drawn) and on hover or keyboard focus is
+drawn as a dropdown: a subtle rounded button surface (`--vscode-button-secondaryBackground`,
+as a ring around a chip so the chip keeps its colour, as the background of a plain cell) and
+a `▾` after the value, no underline. A `go` lens — a relation's label, which opens its
+picker — is underlined with its descendants (a badge drawn as an inline block and a row's
+cells take no decoration from their parent), as the target links beside it are. Both show a
+pointer, and `:focus-visible` outlines them. A `<summary>` inside a row
 (a collapsed list's "12 tests") is not the lens's — a click on it opens the list — so it
 promises nothing: while the pointer is on it the row shows no underline and no pointer
 (`:has(summary:hover)`), on the rest of the row only the cells without it and the list it

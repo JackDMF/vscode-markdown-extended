@@ -480,12 +480,15 @@ way the text editor does, so what one shows the other shows.
   surface runs from that element: the table's **Status** row runs the status lens (the
   status badge beside the heading, where Req Explorer draws one because no table repeats
   it), the **Priority** row the priority lens, a **relation row** (_Verified by_,
-  _Depends on_, …) the lens of that relation — its picker. On a row the lens is on the
-  **label** (_Status_, _Verified by_); the targets beside it are links, and **a plain click
-  on a link in the summary opens it**: the table is a read model, nothing in it is edited
-  here, so the Ctrl+click rule of text protects nothing. At rest they look exactly as in
-  the preview; the pointer on a label or the badge underlines it, and its tooltip names
-  what a click does.
+  _Depends on_, …) the lens of that relation — its picker. **What a click does shows on
+  hover, one look per kind of verb:** a lens that *sets* something — the status chip, the
+  priority value, the badge — looks like a dropdown on hover, a soft rounded surface and a
+  `▾` after the value; a lens that *goes* somewhere — a relation's label (_Verified by_),
+  which opens its picker — is underlined, like the links beside it. The targets in a
+  relation row are links, and **a plain click on a link in the summary opens it**: the
+  table is a read model, nothing in it is edited here, so the Ctrl+click rule of text
+  protects nothing. At rest everything looks exactly as in the preview; the tooltip names
+  what a click does, and the keyboard's focus shows the same as the pointer.
   `Tab` reaches them, `Enter` runs the focused one. A lens that is a verb (**+ ref**) is a
   verb in the heading's object toolbar — the caret resting in the heading shows it — and
   so is a lens whose element the page does not show (a count for a relation the table
@@ -526,8 +529,14 @@ does **Open** in the link's bar. In text
 a click puts the caret in the link, to edit it; on a rendered block (a table, say) it
 selects the block. The one exception is Req Explorer's summary table under a requirement
 heading: it is a read model, and a plain click on one of its links opens it. Hovering a link shows where it goes. A relative link opens the file it
-names (resolved against the document's folder), a link to a heading of the same document
-scrolls to it, and a web or mail address opens outside VS Code.
+names (resolved against the document's folder), a web or mail address opens outside VS
+Code. **A link with a `#fragment` lands on the element it names**, as the text editor's
+own link handling does: a heading whose `{#id}` is the fragment (Req Explorer's anchors),
+else the heading whose GitHub-style slug it is — the rule of VS Code's built-in Markdown
+support — else a line (`#L12`). In the text editor the heading comes to the top of the
+window; in the Visual Editor it is scrolled to below the toolbar and the caret put in it;
+a link to a heading of the same document scrolls there. A fragment the file does not have
+opens it at the top.
 
 ### Toolbar
 
