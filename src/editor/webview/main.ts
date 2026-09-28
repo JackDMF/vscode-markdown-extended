@@ -18,6 +18,7 @@ import type { ParsedDocumentJSON } from '../parse';
 import type { CodeActionItem, HostMessage, LensRow, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
+import { showHint } from './hint';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
 import { lensPlugin, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
@@ -265,6 +266,33 @@ function codeActionsAt(pos: number): readonly CodeActionItem[] {
     return known?.items ?? [];
 }
 
+/**
+ * Run another extension's lens or code action, after the edit still waiting in
+ * the delay: the host queues the run behind it. Posted at once, the run could
+ * write to the document before the typed text arrived, and the host would then
+ * refuse that text as computed against a document that has moved on.
+ */
+function runBehindEdit(message: Extract<WebviewMessage, { type: 'runLens' | 'runAction' }>): void {
+    flush();
+    post(message);
+}
+
+/**
+ * Every answer the page holds may be out of date: asked again when its bar
+ * shows, the bar shown now redrawn so it asks. With `refused`, a chosen action
+ * was not applied because the text changed since it was offered.
+ */
+function invalidateActions(refused: string | undefined): void {
+    actionEpoch++;
+    if (!view) {
+        return;
+    }
+    view.dispatch(view.state.tr.setMeta(ACTIONS_ARRIVED_META, true).setMeta('addToHistory', false));
+    if (refused !== undefined) {
+        showHint(view, `"${refused}" was not applied: the text changed since it was offered — choose it again`, 'refusal');
+    }
+}
+
 function applyActions(requestId: number, items: CodeActionItem[]): void {
     const asked = pendingActions.get(requestId);
     pendingActions.delete(requestId);
@@ -348,9 +376,9 @@ const plugins = [
         sourceContext,
         flushReparse: () => flush(false, true),
         codeActionsAt,
-        runCodeAction: id => post({ type: 'runAction', id }),
+        runCodeAction: id => runBehindEdit({ type: 'runAction', id }),
     }),
-    lensPlugin(id => post({ type: 'runLens', id })),
+    lensPlugin(id => runBehindEdit({ type: 'runLens', id })),
 ];
 
 /** Room above the caret for the sticky toolbar when ProseMirror scrolls the selection into view. */
@@ -526,6 +554,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'actions':
             applyActions(msg.requestId, msg.items);
+            break;
+        case 'invalidateActions':
+            invalidateActions(msg.refused);
             break;
     }
 });

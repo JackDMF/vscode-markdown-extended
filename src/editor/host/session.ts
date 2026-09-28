@@ -155,7 +155,13 @@ export class VisualEditorSession implements vscode.Disposable {
                 this.lenses.schedule();
                 break;
             case 'runLens':
-                void this.lenses.run(msg.id);
+                // Behind the edit the page flushed before the click: a lens
+                // whose command edits the file must not write over keystrokes
+                // on their way. Started there, not waited for — a command
+                // that saves would wait for the queue it is in.
+                this.enqueue(async () => {
+                    void this.lenses.run(msg.id);
+                });
                 break;
             case 'actionsFor':
                 // In the queue, behind the edit the page sent before asking, so
@@ -167,7 +173,9 @@ export class VisualEditorSession implements vscode.Disposable {
                 });
                 break;
             case 'runAction':
-                void this.codeActions.run(msg.id);
+                // In the queue, behind the edit the page flushed before the
+                // click; `run` waits only for the action's own edit.
+                this.enqueue(() => this.codeActions.run(msg.id));
                 break;
         }
     }
@@ -276,6 +284,9 @@ export class VisualEditorSession implements vscode.Disposable {
         }
         // The lenses of the text the page now holds: a provider's lines moved with the edit.
         this.lenses.schedule();
+        // And its code actions: those of a block the edit did not touch are
+        // registered for the previous version, and may no longer be offered.
+        this.codeActions.invalidate();
     }
 
     /**

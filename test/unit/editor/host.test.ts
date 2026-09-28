@@ -5,9 +5,11 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { EditorEngineHost, buildEditorEngine } from '../../../src/editor/host/engineHost';
+import { CodeActionController } from '../../../src/editor/host/codeActions';
 import { blockIndexForLine } from '../../../src/editor/host/lenses';
 import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
 import { SessionWebview, VisualEditorSession } from '../../../src/editor/host/session';
+import { blockLineRanges } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 
 const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
@@ -311,6 +313,8 @@ suite('Editor host: code lenses', () => {
     const engineChanged = new vscode.EventEmitter<void>();
     const subscriptions: vscode.Disposable[] = [];
     const ran: unknown[][] = [];
+    /** The document's text when each lens command ran. */
+    const textsAtRun: string[] = [];
     /** An argument no `postMessage` could carry: it must reach the command as this very object. */
     const handle = { kind: 'handle', call: () => 'called' };
     let resolved = 0;
@@ -337,6 +341,7 @@ suite('Editor host: code lenses', () => {
         subscriptions.push(
             vscode.commands.registerCommand(LENS_COMMAND, (...args: unknown[]) => {
                 ran.push(args);
+                textsAtRun.push(document.getText());
             }),
             vscode.languages.registerCodeLensProvider({ language: 'markdown' }, {
                 // Unresolved: the command comes from resolveCodeLens, as Req Explorer's does.
@@ -408,6 +413,21 @@ suite('Editor host: code lenses', () => {
         assert.deepStrictEqual(ran, [], 'an id of no current lens runs nothing');
     });
 
+    test('a runLens sent right after an edit runs once the edit has landed', async function () {
+        this.timeout(10000);
+        await session.settled();
+        const msg = lensMessages()[lensMessages().length - 1];
+        const [doc] = webview.documents();
+        textsAtRun.length = 0;
+        const typed = document.getText().replace('A paragraph.', 'A paragraph, typed just before the click.');
+        webview.send({ type: 'edit', text: typed, baseVersion: doc.version });
+        webview.send({ type: 'runLens', id: msg.rows[1].items[0].id as string });
+        const text = await until(() => textsAtRun[0], 5000);
+        assert.strictEqual(text, typed, 'the command saw the typed text: it ran behind the edit, and did not race it');
+        await session.settled();
+        assert.strictEqual(document.getText(), typed);
+    });
+
     test('an applied edit is followed by lenses for the text the page now holds', async function () {
         this.timeout(10000);
         const [doc] = webview.documents();
@@ -475,11 +495,24 @@ suite('Editor host: code actions', () => {
     const subscriptions: vscode.Disposable[] = [];
     const ran: unknown[][] = [];
     const asked: vscode.Range[] = [];
+    const logged: string[] = [];
     const handle = { kind: 'handle', call: () => 'called' };
+    /** How long the provider takes; above 0, an edit can land while VS Code computes. */
+    let providerDelayMs = 0;
+    /** Called as the provider is asked, before it answers. */
+    let onProvide: (() => void) | undefined;
 
     const answer = (requestId: number) => until(
         () => webview.posted.find((m): m is ActionsMessage => m.type === 'actions' && m.requestId === requestId), 5000,
     );
+    type InvalidateMessage = Extract<HostMessage, { type: 'invalidateActions' }>;
+    const invalidations = () => webview.posted.filter((m): m is InvalidateMessage => m.type === 'invalidateActions');
+    /** The version of the last document posted, which the page's edits are based on (its own edits are not posted back). */
+    const pageVersion = () => {
+        const last = webview.documents().pop();
+        assert.ok(last);
+        return last.version;
+    };
 
     suiteSetup(async function () {
         this.timeout(20000);
@@ -489,11 +522,15 @@ suite('Editor host: code actions', () => {
                 ran.push(args);
             }),
             vscode.languages.registerCodeActionsProvider({ language: 'markdown' }, {
-                provideCodeActions: (d, range) => {
+                provideCodeActions: async (d, range) => {
                     if (d.uri.toString() !== uri.toString()) {
                         return [];
                     }
                     asked.push(range);
+                    onProvide?.();
+                    if (providerDelayMs > 0) {
+                        await delay(providerDelayMs);
+                    }
                     const insert = new vscode.CodeAction('Insert marker', vscode.CodeActionKind.QuickFix);
                     insert.edit = new vscode.WorkspaceEdit();
                     insert.edit.insert(d.uri, new vscode.Position(range.start.line, 0), 'X');
@@ -511,7 +548,7 @@ suite('Editor host: code actions', () => {
         session = new VisualEditorSession(document, webview, {
             engine: () => engine,
             onDidChangeEngine: engineChanged.event,
-            log: () => undefined,
+            log: line => logged.push(line),
         });
         webview.send({ type: 'ready' });
         await session.settled();
@@ -571,6 +608,96 @@ suite('Editor host: code actions', () => {
         const posted = await until(() => webview.documents()[before], 5000);
         assert.strictEqual(document.getText(), ACTION_SOURCE.replace('A paragraph', 'XA paragraph'));
         assert.ok(posted, 'the change is posted like any other writer\'s');
+        await session.settled();
+    });
+
+    test('actions computed while the page\'s text moved on are not offered: the answer is empty and the page is told to ask again', async function () {
+        this.timeout(10000);
+        // A controller of its own, whose page stops holding the text while the
+        // provider computes — what an edit landing in that moment does. (VS Code
+        // itself may drop the actions of a model that changed meanwhile, so a
+        // real edit does not show whether the controller checks after the await.)
+        let holds = true;
+        const posts: HostMessage[] = [];
+        const controller = new CodeActionController({
+            document,
+            pageHolds: () => holds,
+            lineRanges: async text => blockLineRanges(await buildEditorEngine(EXTENSION_ID, () => undefined), text),
+            post: m => {
+                posts.push(m);
+                return Promise.resolve(true);
+            },
+            log: () => undefined,
+        });
+        onProvide = () => {
+            holds = false;
+        };
+        providerDelayMs = 200;
+        try {
+            await controller.answer(40, 1, 2);
+            const msg = posts.find((m): m is ActionsMessage => m.type === 'actions');
+            assert.ok(msg);
+            assert.deepStrictEqual(msg.items, [], 'no action of the text that was replaced');
+            assert.ok(await until(() => (posts.some(m => m.type === 'invalidateActions') ? true : undefined), 2000), 'the page is told to ask again');
+        } finally {
+            onProvide = undefined;
+            providerDelayMs = 0;
+            controller.dispose();
+        }
+    });
+
+    test('an action offered before the page\'s edit is refused, not applied over it; the page is told why, and the typed text stays', async function () {
+        this.timeout(10000);
+        webview.send({ type: 'actionsFor', requestId: 21, blockIndex: 1, blocks: 2 });
+        const msg = await answer(21);
+        assert.ok(msg);
+        const insert = msg.items.find(i => i.title === 'Insert marker');
+        assert.ok(insert);
+        const typed = document.getText().replace('A paragraph', 'A typed paragraph');
+        // The page flushed its pending edit before the click: both arrive back to back.
+        webview.send({ type: 'edit', text: typed, baseVersion: pageVersion() });
+        webview.send({ type: 'runAction', id: insert.id });
+        const refused = await until(() => invalidations().find(m => m.refused === 'Insert marker'), 3000);
+        await session.settled();
+        assert.ok(refused, 'the page is told the action was refused');
+        assert.strictEqual(document.getText(), typed, 'the typed text landed, and the stale edit was not written after it');
+        assert.ok(logged.some(l => l.startsWith('[WARN]') && l.includes('Insert marker')), JSON.stringify(logged));
+    });
+
+    test('a change of the document\'s diagnostics invalidates the page\'s answers, without any lens', async function () {
+        this.timeout(10000);
+        const before = invalidations().length;
+        const diagnostics = vscode.languages.createDiagnosticCollection('mep-test');
+        try {
+            diagnostics.set(uri, [new vscode.Diagnostic(new vscode.Range(0, 0, 0, 1), 'A test finding')]);
+            assert.ok(await until(() => (invalidations().length > before ? true : undefined), 3000), 'invalidateActions posted');
+        } finally {
+            diagnostics.dispose();
+        }
+    });
+
+    test('an answer the page can no longer receive is a logged warning, not an unhandled rejection', async function () {
+        this.timeout(10000);
+        const warnings: string[] = [];
+        const rejections: unknown[] = [];
+        const onRejection = (reason: unknown) => rejections.push(reason);
+        process.on('unhandledRejection', onRejection);
+        const controller = new CodeActionController({
+            document,
+            pageHolds: () => true,
+            lineRanges: async () => [[0, 1], [2, 4]],
+            post: () => Promise.reject(new Error('Webview is disposed')),
+            log: line => warnings.push(line),
+        });
+        try {
+            await controller.answer(30, 1, 2);
+            await delay(200);
+        } finally {
+            process.off('unhandledRejection', onRejection);
+            controller.dispose();
+        }
+        assert.deepStrictEqual(rejections, []);
+        assert.ok(warnings.some(l => l.startsWith('[WARN]') && l.includes('Webview is disposed')), JSON.stringify(warnings));
     });
 });
 

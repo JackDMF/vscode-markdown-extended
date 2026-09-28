@@ -578,6 +578,7 @@ text the other — never a diff:
 | host → page | `error { message }` | The document cannot be shown without loss; offer the text editor |
 | host → page | `lenses { version, blocks, rows }` | Other extensions' code lenses, one row of `{ id?, title, tooltip? }` per top-level block index (below) |
 | host → page | `actions { requestId, blockIndex, items }` | The code actions for one block, `{ id, title, kind, refusal? }` each (below) |
+| host → page | `invalidateActions { refused? }` | Every answer the page holds may be stale; ask again. With `refused`, that action was not applied (below) |
 | page → host | `ready` | Loaded; send the document |
 | page → host | `edit { text, baseVersion, save?, reparse? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it; with `reparse`, the host posts the document back after applying it, although it is the page's own text (the toolbar wrote syntax as source) |
 | page → host | `render { requestId, src }` | Render this raw block source |
@@ -1021,15 +1022,33 @@ on the file and which the light bulb leaves out too; VS Code's *Surround With* s
 actions (`refactor.surround`), which core offers for every range from every extension's
 snippets, around a text selection; and actions whose command works on the active text
 editor (`editor.action.*`, `inlineChat.*` — *Modify* with inline chat), of which there is
-none. `runAction` applies the action's `WorkspaceEdit` with `workspace.applyEdit`, which
-reaches the page as another writer's change, then runs its command; a `Command` returned in
-place of an action is run as it is. The registry keeps only the actions of the current
-document version.
+none. The answer's actions are registered under the document version they were computed
+for, checked **after** the provider's await: an edit that landed while VS Code computed has
+moved the text their offsets point into, and such an answer is empty and followed by
+`invalidateActions`.
+
+`runAction` runs in the session's queue, behind every edit the page sent before the click —
+the page flushes its pending edit before posting `runAction` or `runLens`, since a run
+arriving first would write to the document before the typed text, which the host would then
+drop as based on a superseded text. An action is applied only while the document is at the
+version it was registered for and the page holds that text: otherwise nothing is written, the
+entry is dropped and the page gets `invalidateActions { refused }` — its hint says the text
+changed since the action was offered, and the bar asks again. Clicking an action within the
+typing delay therefore refuses it; a second click applies the fresh one. Then the
+`WorkspaceEdit` is applied with `workspace.applyEdit`, which reaches the page as another
+writer's change, and the command is **started, not awaited**: a command that saves would wait
+for the session's queue through the will-save listener while the queue waited for it. A
+`Command` returned in place of an action is started as it is. A lens's command runs the same
+way, queued behind the edit and not awaited.
 
 On the page the answer is kept per node (a `WeakMap`: an edit to the block makes a new node,
-asked about afresh) and per epoch — the epoch moves on with every `document` and `lenses`
-message, after which a diagnostic behind a quick fix may have come or gone; a stale answer is
-shown while it is asked again, so the bar does not blink. The answer's arrival dispatches an
+asked about afresh) and per epoch. The epoch moves on with every `document`, every `lenses`
+and every `invalidateActions` message — the host sends that one, debounced, after every edit
+it applies for the page and whenever `languages.onDidChangeDiagnostics` names the document,
+so a quick fix for a diagnostic an edit elsewhere removed is not offered on an untouched
+block, lenses on or off. An answer kept past its epoch is shown while it is asked again, so
+the bar does not blink; running it is guarded by the host's version check. Every post of an
+answer or an invalidation is guarded: a webview disposed meanwhile is a logged warning. The answer's arrival dispatches an
 empty transaction, and the toolbar redraws with the verbs. A heading is an object for this
 alone: its presentation has no verbs of its own, and the selection's bar is hidden while it
 has none. Inline objects carry no actions — the host knows no range for a note or a link,

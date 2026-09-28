@@ -174,6 +174,37 @@ suite('Editor lens rows (e2e)', () => {
         await delay(400);
         assert.ok(await page.$('.mep-object-toolbar[data-trigger="hover"]:not([hidden])'), 'the row is the block\'s, for the pointer');
     });
+
+    test('a lens clicked while typed text still waits in the delay posts that text first', async function () {
+        this.timeout(10000);
+        // Just inside the text's last character: a click right of a short line may land elsewhere.
+        const paragraph = await page.evaluate(() => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                if (node.textContent === 'A paragraph.') {
+                    const range = document.createRange();
+                    range.setStart(node, 10);
+                    range.setEnd(node, 11);
+                    const r = range.getBoundingClientRect();
+                    return { x: r.left + 1, y: r.top + r.height / 2 };
+                }
+            }
+            throw new Error('no "A paragraph."');
+        });
+        await page.mouse.click(paragraph.x, paragraph.y);
+        await page.keyboard.press('End');
+        await settle();
+        const before = (await (editor as EditorPage).posted()).length;
+        await page.keyboard.type(' Typed');
+        // At once, well inside the page's 250 ms delay.
+        await page.$eval('[data-lens="1.2"]', el => (el as HTMLElement).click());
+        await delay(80);
+        const since = (await (editor as EditorPage).posted()).slice(before);
+        const edit = since.findIndex(m => m.type === 'edit' && m.text.includes('A paragraph. Typed'));
+        const run = since.findIndex(m => m.type === 'runLens');
+        assert.ok(edit >= 0 && run > edit, `the edit goes before the run, so the host queues the run behind it: ${JSON.stringify(since)}`);
+    });
 });
 
 /** The selection's object toolbar, shown. */
@@ -301,5 +332,46 @@ suite('Editor code actions as object verbs (e2e)', () => {
         assert.deepStrictEqual((await barState()).children, [
             'mep-object-label', 'edit-source', 'show-in-text-editor', 'delete-block', 'mep-object-separator', 'code-action:b.0',
         ]);
+    });
+
+    test('invalidateActions makes the bar shown ask again, the old verbs kept until the answer; with refused, the page says why', async function () {
+        this.timeout(10000);
+        const before = (await actionRequests()).length;
+        await (editor as EditorPage).send({ type: 'invalidateActions' });
+        await delay(100);
+        const asked = await actionRequests();
+        assert.strictEqual(asked.length, before + 1, 'asked again, without a document or a lens message');
+        assert.strictEqual(asked[asked.length - 1].blockIndex, 3);
+        assert.ok(await page.$(`${BAR} [data-verb="code-action:b.0"]`), 'no blink while asking');
+
+        await (editor as EditorPage).send({ type: 'invalidateActions', refused: 'Fix table' });
+        const hint = await page.waitForFunction(() => {
+            const el = document.querySelector('.mep-hint') as HTMLElement | null;
+            return el && !el.hidden && el.textContent?.includes('Fix table') ? el.dataset.tone : undefined;
+        }, { timeout: 2000 });
+        assert.strictEqual(await hint.jsonValue(), 'refusal');
+    });
+
+    test('an action clicked while typed text still waits in the delay posts that text first', async function () {
+        this.timeout(10000);
+        await clickText('Text.');
+        await page.keyboard.press('End');
+        // The table's bar, by the pointer; the caret stays in the paragraph.
+        const table = await page.$('.ProseMirror > .mep-raw-block');
+        const box = await table?.boundingBox();
+        assert.ok(box);
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        const hover = '.mep-object-toolbar[data-trigger="hover"]:not([hidden])';
+        await page.waitForSelector(`${hover} [data-verb="code-action:b.0"]`, { visible: true, timeout: 2000 });
+        await settle();
+        const before = (await (editor as EditorPage).posted()).length;
+        await page.keyboard.type(' Typed');
+        // At once, well inside the page's 250 ms delay.
+        await page.$eval(`${hover} [data-verb="code-action:b.0"]`, el => (el as HTMLElement).click());
+        await delay(80);
+        const since = (await (editor as EditorPage).posted()).slice(before);
+        const edit = since.findIndex(m => m.type === 'edit' && m.text.includes('Text. Typed'));
+        const run = since.findIndex(m => m.type === 'runAction');
+        assert.ok(edit >= 0 && run > edit, `the edit goes before the run, so the host queues the run behind it: ${JSON.stringify(since.map(m => m.type))}`);
     });
 });

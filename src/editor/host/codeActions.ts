@@ -1,10 +1,13 @@
 import * as vscode from 'vscode';
-import type { CodeActionItem } from '../protocol';
+import type { CodeActionItem, HostMessage } from '../protocol';
 import { message } from './errors';
 import { LineRange, SessionPort } from './lenses';
 
 /** How many code actions VS Code resolves (their lazily computed edits) before handing them over. */
 export const ACTION_RESOLVE_COUNT = 50;
+
+/** How long a burst of reasons to invalidate the page's answers is left to settle. */
+const INVALIDATE_DELAY_MS = 100;
 
 type AnyAction = vscode.CodeAction | vscode.Command;
 
@@ -65,39 +68,106 @@ export function rangeOfLines(document: vscode.TextDocument, range: readonly [num
  */
 export class CodeActionController implements vscode.Disposable {
     private readonly actions = new Map<string, { version: number; action: AnyAction }>();
+    private invalidateTimer: ReturnType<typeof setTimeout> | undefined;
+    private disposed = false;
+    private readonly subscriptions: vscode.Disposable[];
 
-    constructor(private readonly host: SessionPort) { }
+    constructor(private readonly host: SessionPort) {
+        this.subscriptions = [
+            // A quick fix is offered for a diagnostic: when the diagnostics
+            // change, so may the actions — also of a block nobody edited.
+            vscode.languages.onDidChangeDiagnostics(e => {
+                const uri = this.host.document.uri.toString();
+                if (e.uris.some(u => u.toString() === uri)) {
+                    this.invalidate();
+                }
+            }),
+        ];
+    }
 
     dispose(): void {
+        this.disposed = true;
+        if (this.invalidateTimer !== undefined) {
+            clearTimeout(this.invalidateTimer);
+        }
         this.actions.clear();
+        this.subscriptions.forEach(d => d.dispose());
+    }
+
+    /**
+     * Tell the page that every answer it holds may be out of date, once a burst
+     * of reasons has settled: after an applied edit, a change of the document's
+     * diagnostics, an answer computed against a text that changed meanwhile.
+     */
+    invalidate(): void {
+        if (this.disposed) {
+            return;
+        }
+        if (this.invalidateTimer !== undefined) {
+            clearTimeout(this.invalidateTimer);
+        }
+        this.invalidateTimer = setTimeout(() => {
+            this.invalidateTimer = undefined;
+            this.send({ type: 'invalidateActions' });
+        }, INVALIDATE_DELAY_MS);
+    }
+
+    /** Post, never throwing: the page may be gone (the webview disposed) by the time an answer is ready. */
+    private async send(msg: HostMessage): Promise<void> {
+        try {
+            await this.host.post(msg);
+        } catch (error) {
+            this.host.log(`[WARN] Visual Editor: the code actions could not be sent to the page: ${message(error)}`);
+        }
     }
 
     /** Answer `actionsFor`: never throws, and always answers, if only with nothing. */
     async answer(requestId: number, blockIndex: number, blocks: number): Promise<void> {
         let items: CodeActionItem[] = [];
+        let stale = false;
         try {
-            items = await this.actionsFor(requestId, blockIndex, blocks);
+            const result = await this.actionsFor(requestId, blockIndex, blocks);
+            items = result.items;
+            stale = result.stale;
         } catch (error) {
             this.host.log(`[WARN] Visual Editor: the code actions could not be read: ${message(error)}`);
         }
-        await this.host.post({ type: 'actions', requestId, blockIndex, items });
+        await this.send({ type: 'actions', requestId, blockIndex, items });
+        if (stale) {
+            // Asked about a text that changed while VS Code computed: the page asks again.
+            this.invalidate();
+        }
     }
 
-    private async actionsFor(requestId: number, blockIndex: number, blocks: number): Promise<CodeActionItem[]> {
+    /** Whether the page holds the document as it is now, so an action registered for `version` edits the text it was computed on. */
+    private current(version: number): boolean {
+        const document = this.host.document;
+        return document.version === version && this.host.pageHolds(document.getText());
+    }
+
+    private async actionsFor(requestId: number, blockIndex: number, blocks: number): Promise<{ items: CodeActionItem[]; stale: boolean }> {
         const document = this.host.document;
         const version = document.version;
         const text = document.getText();
         if (!this.host.pageHolds(text)) {
-            return [];
+            return { items: [], stale: false };
         }
         const ranges: LineRange[] = await this.host.lineRanges(text);
         const lines = ranges.length === blocks ? ranges[blockIndex] ?? null : null;
-        if (lines === null || document.version !== version) {
-            return [];
+        if (lines === null) {
+            return { items: [], stale: false };
+        }
+        if (!this.current(version)) {
+            return { items: [], stale: true };
         }
         const found = await vscode.commands.executeCommand<AnyAction[]>(
             'vscode.executeCodeActionProvider', document.uri, rangeOfLines(document, lines), undefined, ACTION_RESOLVE_COUNT,
         ) ?? [];
+        // Checked after the await, not before: an edit that landed while the
+        // providers computed has moved the text their edits' offsets point into.
+        if (!this.current(version)) {
+            return { items: [], stale: true };
+        }
         // Actions of an older version edit text that is no longer there.
         for (const [id, entry] of this.actions) {
             if (entry.version !== version) {
@@ -114,10 +184,23 @@ export class CodeActionController implements vscode.Disposable {
             }
             items.push(item);
         });
-        return items;
+        return { items, stale: false };
     }
 
-    /** Apply a code action: its edit, then its command — the order VS Code applies them in. */
+    /**
+     * Apply a code action: its edit, then its command — the order VS Code
+     * applies them in. The session runs this in its queue, behind every edit
+     * the page sent before the click, so it never writes over keystrokes on
+     * their way.
+     *
+     * An action is applied only to the text it was computed on: its edit holds
+     * offsets into that text, and a `Command` in its place may hold ranges.
+     * When the document moved on since — the page's own edit ahead of the click
+     * is the usual case — nothing is applied, and the page is told to ask again
+     * and say why. The action's command is started, not waited for: a command
+     * that saves the document would wait for the session's queue, which would
+     * be waiting for the command.
+     */
     async run(id: string): Promise<void> {
         const entry = this.actions.get(id);
         if (entry === undefined) {
@@ -125,9 +208,20 @@ export class CodeActionController implements vscode.Disposable {
             return;
         }
         const action = entry.action;
+        if (!this.current(entry.version)) {
+            this.actions.delete(id);
+            this.host.log(`[WARN] Visual Editor: "${action.title}" was offered for version ${entry.version}, the document is at ${this.host.document.version}; nothing was applied.`);
+            await this.send({ type: 'invalidateActions', refused: action.title });
+            return;
+        }
+        const start = (command: string, args: readonly unknown[] | undefined) => {
+            void Promise.resolve(vscode.commands.executeCommand(command, ...(args ?? []))).catch(error => {
+                this.host.log(`[WARN] Visual Editor: the code action "${action.title}" failed: ${message(error)}`);
+            });
+        };
         try {
             if (isCommand(action)) {
-                await vscode.commands.executeCommand(action.command, ...(action.arguments ?? []));
+                start(action.command, action.arguments);
                 return;
             }
             if (action.disabled) {
@@ -138,7 +232,7 @@ export class CodeActionController implements vscode.Disposable {
                 return;
             }
             if (action.command) {
-                await vscode.commands.executeCommand(action.command.command, ...(action.command.arguments ?? []));
+                start(action.command.command, action.command.arguments);
             }
         } catch (error) {
             this.host.log(`[WARN] Visual Editor: the code action "${action.title}" failed: ${message(error)}`);

@@ -69,7 +69,15 @@ export type HostMessage =
      */
     | { type: 'lenses'; version: number; blocks: number; rows: LensRow[] }
     /** The answer to `actionsFor`: the code actions for that block's lines, empty when there are none or the page's text is not the document's. */
-    | { type: 'actions'; requestId: number; blockIndex: number; items: CodeActionItem[] };
+    | { type: 'actions'; requestId: number; blockIndex: number; items: CodeActionItem[] }
+    /**
+     * Every `actions` answer the page holds may be out of date — the document's
+     * diagnostics changed, an edit landed, an answer was computed against a
+     * text that changed meanwhile — and is asked again when its bar shows.
+     * With `refused`, a `runAction` for the action of that title was not applied
+     * because the text changed since it was offered; the page says so.
+     */
+    | { type: 'invalidateActions'; refused?: string };
 
 /** Webview → host. */
 export type WebviewMessage =
