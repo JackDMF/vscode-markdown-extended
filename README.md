@@ -487,9 +487,12 @@ way the text editor does, so what one shows the other shows.
   hides); past four, the first three stay and the rest are behind **Actions ▾**.
 - **The other extension says where a lens goes; the editor does not guess.** A lens names
   its surface in the last of its command's arguments,
-  `{ reqExplorer: { surface: 'status' | 'priority' | 'links' | 'action', artifact: 'FR-X-001', relation?: 'verified-by' } }`,
-  and the editor finds the badge and the table rows injected for that artifact. Req
-  Explorer does this for its own lenses.
+  `{ reqExplorer: { surface: 'status' | 'priority' | 'links' | 'action', artifact: 'FR-X-001', relation?: 'verified-by', direction?: 'out' | 'in' } }`,
+  and the editor finds the badge and the table rows injected for that artifact — on the
+  heading the lens stands on first, so two headings sharing an id each keep their own; the
+  `direction` tells the two rows of a symmetric relation apart. Req Explorer does this for
+  its own lenses. A collapsed list's "12 tests" in a row opens the list, and so shows no
+  underline or tooltip of the lens.
 - **Every other lens stands as a row** above the block it belongs to — small, dimmed,
   `a | b | c`, as in the text editor — and a click runs it. A lens on a line inside a block
   belongs to that block (a front-matter line to the front matter); a lens on a blank line

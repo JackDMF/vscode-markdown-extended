@@ -1017,28 +1017,38 @@ status, which count is which relation) that goes wrong the day a title is reword
 translated; the hint is read from the one place it is true.
 
 *The contract.* A lens that names its surface carries, as the **last element of
-`command.arguments`**, `{ reqExplorer: { surface, artifact, relation? } }` (`LensHint`):
-`surface` one of `status`, `priority`, `links`, `action`; `artifact` the readable id, as the
-injection marks carry it; `relation` the relation key of a `links` lens. `lensHintOf`
-(`host/lenses.ts`) checks the shape — an unknown surface, a missing artifact, a hint that is
-not the last argument make a foreign lens — and `LensItem` carries the three fields to the
-page. The argument stays in the command: `runLens` runs the provider's command exactly as
+`command.arguments`**, `{ reqExplorer: { surface, artifact, relation?, direction? } }`
+(`LensHint`): `surface` one of `status`, `priority`, `links`, `action`; `artifact` the
+readable id, as the injection marks carry it; `relation` the relation key of a `links` lens;
+`direction` its side, `out` or `in` — a symmetric relation (`conflicts-with`) has a row for
+each side under one key, and only the side tells them apart. `lensHintOf` (`host/lenses.ts`)
+checks the shape — an unknown surface, a missing artifact, a hint that is not the last
+argument make a foreign lens; an unknown direction is left out — and `LensItem` carries the
+fields to the page. The argument stays in the command: `runLens` runs the provider's command exactly as
 it was given. On Req Explorer's side, the summary table (`injected_block`, mark
 `{ kind: 'atom', artifact }`) marks its rows `tr[data-req-field="<field>"]` and
-`tr[data-req-relation="<relation key>"]`, and the badge is the `inline_atom` with the same
-mark inside the heading.
+`tr[data-req-relation="<relation key>"]` with `data-req-direction="out"|"in"`, and the
+badge is the `inline_atom` with the same mark inside the heading. A lens without `direction`
+(a Req Explorer older than it) takes the relation's first row.
 
 *Resolution by artifact* (`place` in `webview/lenses.ts`), against the document the page
-holds when the `lenses` message arrives: an index of each artifact's badge (the top-level
-heading holding an `inline_atom` whose mark names it) and summary table (the top-level
-`injected_block` whose mark names it). For every row the host sent:
+holds when the `lenses` message arrives. The artifact's heading (the top-level heading
+holding an `inline_atom` whose mark names it) and summary table (the top-level
+`injected_block` whose mark names it) are looked for **beside the lens first** — the heading
+the lens stands on and the table right after it — and only when the lens's block is neither
+in the whole document, the first of each. A readable id is not unique: two headings can carry
+the same one (a collision the corpus's checks report), and each heading's lenses belong to
+its own badge and table. For every row the host sent:
 
 - a row with no hinted lens stays a row, on its block;
 - in a row with a hinted lens, each lens is placed: `status` on the artifact's badge;
   `priority` and `links` on its table, when the table's HTML (parsed inert, in a
   `template`) has `tr[data-req-field="priority"]`, or the `tr[data-req-relation]` of that
-  key; a lens so placed without a command is dropped, since the element already shows what
-  it says. Everything else — an `action`, a lens whose element is not there (no badge on
+  key — and of that `data-req-direction`, when the lens names one; a lens so placed without a
+  command is dropped, since the element already shows what it says. **An element takes one
+  lens**: a second for the same badge or row (two lenses of a relation from a Req Explorer
+  that names no side) would be marked on an element that shows only the first, and could
+  never be reached; it becomes a verb. Everything else — an `action`, a lens whose element is not there (no badge on
   the page, a relation the table hides, a `links` lens without a relation), and the foreign
   lenses of that row — becomes a verb of the artifact's heading, or of the lens's own block
   when the page has no badge for the artifact. **One block, one grammar**: a row beside a
@@ -1063,8 +1073,13 @@ runs the lens and selects nothing, `mousedown` is prevented so no caret moves, a
 row's lens too — the underline says the row is what is clicked; Ctrl+click still follows the
 link. `editor.css` draws nothing at rest; `:hover` underlines the element and its
 descendants (a badge drawn as an inline block and a row's cells take no decoration from
-their parent) with a pointer, and `:focus-visible` outlines it. The preview's stylesheets
-are not touched.
+their parent) with a pointer, and `:focus-visible` outlines it. A `<summary>` inside a row
+(a collapsed list's "12 tests") is not the lens's — a click on it opens the list — so it
+promises nothing: while the pointer is on it the row shows no underline and no pointer
+(`:has(summary:hover)`), on the rest of the row only the cells without it and the list it
+opens are underlined (a decoration given to the row, the cell or the `<details>` would reach
+the summary, and no descendant can take it back), and an empty `title` on it keeps the
+row's tooltip off. The preview's stylesheets are not touched.
 
 *Verbs in the toolbar.* `ObjectToolbarHost.lensesAt(pos)` answers `lensVerbsAt` for the
 top-level block; `present` draws them after the object's own verbs and before the code
