@@ -543,7 +543,7 @@ differently:
 | Mark | Example | Editor treatment |
 | --- | --- | --- |
 | `atom` | Status badge, `table.req-summary` | A read-only block or inline atom showing the rendering; nothing is written |
-| `expansion` | A snippet expanded from `<!-- include: id -->` | One read-only block; the directive line is written back. Its object toolbar offers **Open snippet** only with `path` — a `missing` expansion has none — and **Show in text editor** and **Delete directive** always |
+| `expansion` | A snippet expanded from `<!-- include: id -->` | One read-only block; the directive line is written back. Its object toolbar offers **Open snippet** only with `path` — a `missing` expansion has none — and **Change snippet…** (below, *Includes from other extensions*), **Show in text editor** and **Delete directive** always |
 | `decoration` | `span.req-ref` around a bare id | Not a node: the id stays editable text, carrying a `req_ref` mark that is never serialized |
 
 Token ranges nobody marked and no source line accounts for (the footnote list
@@ -580,13 +580,14 @@ text the other — never a diff:
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| host → page | `document { json, version, defaultWrap }` | Show this parse of document `version` |
+| host → page | `document { json, version, defaultWrap, includes }` | Show this parse of document `version`; `includes`: whether any extension offers include choices (below) |
 | host → page | `rendered { requestId, html }` | A raw block's new source, rendered by the host engine |
 | host → page | `error { message }` | The document cannot be shown without loss; offer the text editor |
 | host → page | `lenses { version, blocks, rows }` | Other extensions' code lenses, one row of `{ id?, title, tooltip?, surface?, artifact?, relation? }` per top-level block index (below) |
 | host → page | `actions { requestId, blockIndex, items }` | The code actions for one block, `{ id, title, kind, refusal? }` each (below) |
 | host → page | `invalidateActions { refused? }` | Every answer the page holds may be stale; ask again. With `refused`, that action was not applied (below) |
 | host → page | `revealAnchor { anchor, line }` | Bring a followed link's fragment into view and put the caret there: the heading whose `anchor` it is, else the block `line` starts (below) |
+| host → page | `includeChosen { requestId, insert? }` | The include line chosen in the QuickPick, as its provider offered it; none when dismissed or nothing was offered (below) |
 | page → host | `ready` | Loaded; send the document |
 | page → host | `edit { text, baseVersion, save?, reparse? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it; with `reparse`, the host posts the document back after applying it, although it is the page's own text (the toolbar wrote syntax as source) |
 | page → host | `render { requestId, src }` | Render this raw block source |
@@ -597,6 +598,7 @@ text the other — never a diff:
 | page → host | `runLens { id }` | Run the command of a lens from the last `lenses` |
 | page → host | `actionsFor { requestId, blockIndex, blocks }` | The object toolbar opened for this top-level block of a page holding `blocks` |
 | page → host | `runAction { id }` | Apply a code action from an `actions` answer: its edit, then its command |
+| page → host | `pickInclude { requestId, replace? }` | Show the include choices other extensions offer; with `replace: { blockIndex }`, for that expansion's directive (below) |
 
 A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
 save's own edit when Ctrl+S commits it): what the source now says may no longer be a
@@ -1199,6 +1201,74 @@ empty transaction, and the toolbar redraws with the verbs. A heading is an objec
 and for its lens verbs alone: its presentation has no verbs of its own, and the selection's
 bar is hidden while it has none. Inline objects carry no actions — the host knows no range for a note or a link,
 and computing one would be a second answer to where the page's text is in the file.
+
+### Includes from other extensions
+
+The editor showed an include as one atom and could open its snippet, but nobody could
+insert one: the snippet ids and the directive's syntax belong to the extension that
+resolves them. The decision (Daniel, 2026-09-28): **that extension exports the choices;
+the editor asks and inserts what it is given.** There is no second implementation of the
+directive here — not its syntax, not its ids, not a guess at which raw line is one.
+
+**The provider contract.** An extension that contributes `markdown.markdownItPlugins` may
+export, beside `extendMarkdownIt`:
+
+```ts
+listIncludeChoices(documentUri: vscode.Uri): Promise<IncludeChoice[]>
+interface IncludeChoice { label: string; description?: string; detail?: string; insert: string }
+```
+
+`insert` is the complete line to put into the document; `label`, `description` and
+`detail` are a QuickPick item's. Req Explorer is the first provider: a corpus's snippets by
+id, with their first heading and path.
+
+**Collection** (`host/includes.ts`). `collectIncludeProviders` reads the same list the
+engine's extenders come from — `markdownItExtensions` in `host/engineHost.ts`, every
+activated extension contributing a markdown-it plugin, this one and the built-in Markdown
+extension aside — and keeps those whose exports have a `listIncludeChoices` function; an
+extension offering includes is by construction the one whose plugin will expand the line.
+A provider without the function is skipped silently (most plugins offer no includes). On
+`pickInclude`, `IncludeController` asks every provider for the session's document at once;
+one that throws, rejects or answers something that is not a list is logged and skipped, and
+so is a choice without a label or whose `insert` is not one non-empty line (a terminator at
+its end is dropped: the page writes the document's own). The choices are concatenated in
+the providers' order, each provider's under a `QuickPickItemKind.Separator` with its display
+name, and shown with `showQuickPick` (`matchOnDescription`, `matchOnDetail`, placeholder
+*Include…*, or *Change snippet…* with `replace`). Nothing to offer is an information message
+— *No extension offers includes for this document* — and an answer without a line. The
+answer is `includeChosen { requestId, insert? }`, `insert` the chosen item's own, so the page
+can only ever write a line a provider offered. The session takes `includeProviders()` and
+`includePicker` from its `SessionHost`, the real collection and VS Code's UI by default: no
+provider is installed under `--disable-extensions`, so the tests inject both.
+
+**Ordering.** `pickInclude` runs in the session's queue like `actionsFor`: the page flushes
+its pending edit before asking, and a provider that reads the document reads the page's
+text. The pick is started there, not awaited — the person choosing would otherwise hold up
+every edit behind it.
+
+**Whether to offer it.** Each `document` carries `includes`, whether any provider exists
+(asked before the text is read, so nothing is awaited between reading the text and posting
+its parse). **Insert → Include…** (`apply: { kind: 'insert-include' }`, the variant of
+`insert-source` whose line comes from the host) and an expansion's **Change snippet…** are
+disabled without one, the reason in their tooltips.
+
+**Writing the line.** The page remembers what each request is for: nothing (a new include)
+or the expansion's node (**Change snippet…**). A new line goes in as a `raw_block` at
+`insertionPoint` of the selection as it is when the answer comes (the QuickPick has the
+focus meanwhile; a re-sync maps the selection), written exactly as given
+(`insertLineTransaction` substitutes nothing, unlike a template's footnote label). A
+replacement sets the expansion's `src` to the line, keeping its terminator and gap, and its
+old rendering until the new parse arrives (`changeIncludeTransaction`); the node is found by
+identity, so a block changed meanwhile is not replaced, and the page says so. Either edit is
+sent with `reparse`: only the host's parser, which has the provider's plugin, turns the line
+into the expansion with its mark, its rendering and **Open snippet**. A dismissed pick
+writes nothing.
+
+**Not offered: Change snippet… on a raw block.** A raw block that is exactly one directive
+line the provider would produce — an include whose snippet the plugin could not resolve at
+all — would deserve the verb too, but telling it from any other one-line raw block takes
+the directive's syntax, which is the provider's. It is left out; a `missing` expansion,
+which the plugin does mark, has it.
 
 ### Styles
 

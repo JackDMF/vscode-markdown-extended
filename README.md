@@ -432,7 +432,7 @@ never covers the line you are typing on.
 | Container | while the caret is in it, after a moment | **Change name/info** · **Remove container, keep content** |
 | A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Edit block attributes** (empty removes them) |
 | Source block — a table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
-| Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Show in text editor** · **Delete directive** |
+| Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Change snippet…** · **Show in text editor** · **Delete directive** |
 | Front matter, a status badge, a summary table | as above | its name only |
 | Heading | while the caret is in it, after a moment — only when another extension offers actions for it | the actions alone; a requirement heading is named by its id |
 
@@ -578,8 +578,8 @@ opens a submenu), choose with `Enter` and close with `Esc`.
 - **Insert** — horizontal rule; admonition, a submenu of every type the admonition plugin
   knows, each drawn as its box; container; table, task list, definition list, abbreviation
   and table of contents, from the same templates as this extension's snippets where one
-  exists. An admonition (titled with its type's name) and a container (`::: container`)
-  go in as rich text with the caret in their body: type, and it is the body.
+  exists; **Include…** (below). An admonition (titled with its type's name) and a container
+  (`::: container`) go in as rich text with the caret in their body: type, and it is the body.
 
 In the card, notes and sidebars are shown stacked, as they render below the margin
 layout's 1280px breakpoint, however wide the window: a card is too narrow for a margin,
@@ -598,6 +598,20 @@ and the footnote's paragraph becomes a source block rendered as the preview rend
 The tooltip of each such entry says *edited as source, in a source block*. One `Ctrl+Z`
 takes it back.
 
+**Include… lists what the extension that resolves includes offers.** The snippets and the
+directive's syntax are not this extension's: they belong to the extension whose preview
+plugin expands the directive — Req Explorer, for a requirements corpus. So **Insert →
+Include…** asks the installed extensions for their choices for this document and shows
+them in VS Code's own quick pick, grouped under each extension's name and searchable by
+every column; with Req Explorer that is the corpus's snippets by id, with their first
+heading and their path. The line you choose goes in after the current block exactly as the
+extension wrote it, and appears at once as the expanded snippet, with **Open snippet** on
+its bar. On an included snippet, **Change snippet…** does the same for its directive line —
+also for a snippet that was not found, which is how that is mended. With no extension
+offering includes both are disabled, and their tooltips say so; Escape in the quick pick
+changes nothing. An extension offers includes by exporting `listIncludeChoices` beside its
+`extendMarkdownIt` (ARCHITECTURE.md, *Includes from other extensions*).
+
 **A requirement heading keeps its type.** On a heading written `## ID: Title {#anchor}`
 the block-type menu is disabled, and its tooltip says why: changing the type would rebuild
 the heading and lose the id and the anchor. Its title can still be formatted.
@@ -614,7 +628,8 @@ place — each for a reason:
 - **Content another extension injects** — Req Explorer's status badges and summary
   tables, a snippet expanded from `<!-- include: … -->` — is not in the file at that
   place, so it cannot be edited there. An expanded snippet's bar offers **Open snippet**,
-  which opens the file it came from; the file itself keeps the one directive line.
+  which opens the file it came from, and **Change snippet…**, which puts another one in its
+  place; the file itself keeps the one directive line.
 - **Tables, raw HTML and the rest of the extended syntax** — the table of contents,
   footnotes and their definitions, definition lists, task lists, abbreviations, reference
   definitions, setext headings — are *source blocks*, and so is a block whose attributes
