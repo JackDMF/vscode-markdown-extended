@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as childProcess from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as puppeteer from 'puppeteer';
@@ -104,16 +105,21 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         close: async () => {
             // A suite's teardown has mocha's 5 s; on a loaded machine Chromium can
             // take longer to close, and a teardown that times out fails the run
-            // with every test passed. What has not closed by then is killed.
+            // with every test passed. What has not closed by then is killed,
+            // with its whole process tree.
             let closed = false;
+            let timer: ReturnType<typeof setTimeout> | undefined;
             await Promise.race([
                 browser.close().then(() => {
                     closed = true;
+                }).catch(() => undefined),
+                new Promise<void>(resolve => {
+                    timer = setTimeout(resolve, CLOSE_GRACE_MS);
                 }),
-                new Promise(resolve => setTimeout(resolve, CLOSE_GRACE_MS)),
             ]);
+            clearTimeout(timer);
             if (!closed) {
-                browser.process()?.kill('SIGKILL');
+                killTree(browser.process()?.pid);
             }
         },
     };
@@ -121,3 +127,24 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
 
 /** How long a browser may take to close before the harness kills it: inside mocha's 5 s hook timeout. */
 const CLOSE_GRACE_MS = 3500;
+
+/**
+ * Kill a browser and every process it started. Killing the launcher alone
+ * orphans Chromium's renderers on Windows; `taskkill /T` takes the tree there,
+ * and on POSIX Puppeteer starts the browser as a process group's leader, so the
+ * group's id is its pid.
+ */
+function killTree(pid: number | undefined): void {
+    if (pid === undefined) {
+        return;
+    }
+    try {
+        if (process.platform === 'win32') {
+            childProcess.execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+        } else {
+            process.kill(-pid, 'SIGKILL');
+        }
+    } catch {
+        // Gone already.
+    }
+}
