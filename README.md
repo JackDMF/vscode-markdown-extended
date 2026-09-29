@@ -540,7 +540,7 @@ Editor too, asked of VS Code as the text editor asks, so both show the same.
 - **Problems on the page.** Every diagnostic VS Code holds for the file (the Problems view's)
   is a squiggle on the text it is about — red for an error, yellow for a warning, blue for an
   info, dotted for a hint. One that cannot be placed exactly — in a table, a source block,
-  between blocks — outlines its whole block instead. A block with problems carries one
+  between blocks — marks its whole block instead, with a bar at its left edge. A block with problems carries one
   marker in the left margin, of its worst severity; the right end of the toolbar counts
   them (`⨯ 1 ⚠ 2`), and a click on the count opens the Problems view.
 - **One card for what the pointer rests on.** After half a second on a squiggle or on text,

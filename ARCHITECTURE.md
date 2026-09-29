@@ -1318,13 +1318,18 @@ came from.
 
 **Accepting applies the provider's edit to the source, not to the page.** The page posts
 `applyCompletion { requestId, index, baseVersion, position }` (after its pending edit) and
-writes nothing. The host kept the answer's items with the text they were computed on; it
-applies an item only to that text, or to one that differs from it only inside the item's
-range — what the page typed while the list filtered, `minimalReplacement` between the two —
-the range then extended over the typing, as the text editor's replace range grows as you
-type. The item's range and its `additionalTextEdits` (those after the range shifted by the
-typing; one overlapping the range refuses the item) go into one `WorkspaceEdit`, line breaks
-in the document's own ending; then the session posts the document (`repost`, from inside the
+writes nothing. The host kept the newest answer's items (an older question resolving later
+does not replace them) with the text they were computed on; it applies an item only to that
+text, or to one the page changed only by typing at its caret inside the item's range while
+the list filtered — the text before the range and after its end as it was, the range then
+running to the caret the page sent, as the text editor's replace range grows as you type.
+The caret anchors it, not a common prefix and suffix of the two texts: a typed character
+equal to the one after the range would put such a diff after the range. VS Code resolves
+only the first 20 items of an answer; an item further down is asked for again at accept
+time, resolving up to it, and found by its label and what it inserts, for its
+`additionalTextEdits` and command. The item's range and its additional edits (one
+overlapping the range refuses the item) go into one `WorkspaceEdit`, line breaks in the
+document's own ending; then the session posts the document (`repost`, from inside the
 queue) and answers `completionApplied { requestId, version, caret }` — the insertion's end,
 or the snippet's `$0` — which the page, holding that document by then, maps back and puts the
 caret at. The block comes back as another writer's change does, in place (`resync.ts`). An
@@ -1338,19 +1343,23 @@ space trigger answers mid-line only.
 
 **Diagnostics** (sketch 6). The host reads `languages.getDiagnostics(uri)` — what the text
 editor squiggles and the Problems view lists — when `onDidChangeDiagnostics` names the
-document (150 ms, `DIAGNOSTICS_DELAY_MS`), after every document it posts and after every
-edit of the page's it applies, and sends `diagnostics { version, items }`, each
-`{ range, severity, message, code?, source? }` in range order, only while the page holds the
-text. `version` is the document the host last posted: the page's own edits since do not
-change it. The page draws them only while it holds that text with no edit waiting; ahead of
-the host it keeps its marks, and the host's send after the edit lands replaces them.
+document (150 ms, `DIAGNOSTICS_DELAY_MS`) and after every document it posts — **never after
+an edit of the page's it applied**: the providers have not linted the new text yet, and the
+ranges read then are the old text's, which would overwrite the page's marks (mapped
+correctly through the edit) and make a squiggle jump. It sends `diagnostics { version,
+items }`, each `{ range, severity, message, code?, source? }` in range order, only while the
+page holds the text. `version` is the document the host last posted: the page's own edits
+since do not change it. The page draws them only while it holds that text with no edit
+waiting; ahead of the host it keeps its marks, mapped through its edits, until the providers
+publish again.
 `diagnosticMarks` maps each range with `pageRangeOf` — pure, and tested without a page: an
 exact range is a squiggle (`Decoration.inline`, `mep-diag-<severity>`, a wavy underline in
 `--vscode-editorError-foreground`, `…Warning…`, `…Info…`, a hint dotted); a range across
 top-level blocks is split at them, an atom inside it (a table, any source block) marked
 whole; an approximate range — inside a delimiter, on a blank line, in a source block — marks
-its whole top-level block (`Decoration.node`, `mep-diag-block-<severity>`, a dashed outline,
-which takes no room), never nothing; an empty range is widened to the character after it (at
+its whole top-level block (`Decoration.node`, `mep-diag-block-<severity>`: a 3px bar in the
+severity's colour at the block's left edge, drawn as a shadow in the gutter so it takes no
+room — an outline around a whole table spoke louder than the problem), never nothing; an empty range is widened to the character after it (at
 a textblock's end the one before), as the text editor draws one. Between messages the
 decorations are mapped through every transaction. Each marked block carries one marker, of
 its worst severity, `aria-label` its counts (*1 error, 2 warnings*): in a paragraph or a
@@ -1360,24 +1369,36 @@ inside a list item the text's left edge is the item's, and the marker would stan
 bullet. The count is at the right end of the formatting row (`.mep-row-status`, the row's
 slot for what the page says about the document as a whole): `$(error) 1 $(warning) 2`, via
 `lensLabelNodes`, infos too, hints not (as VS Code's status bar). VS Code's own tab strip is
-not reachable from a webview, so the toolbar's end is the place; a click posts `showProblems`,
-and the host runs `workbench.actions.view.problems`.
+not reachable from a webview, so the toolbar's end is the place. It is a button and says so:
+`title="Open Problems"`, a pointer, its numbers underlined on hover; a click posts
+`showProblems`, and the host runs `workbench.actions.view.problems`.
 
 **Hover and the card** (sketch 7). After the pointer rests `HOVER_DELAY_MS` (500 ms) on a
 character of text (within 12 px of a character boundary; not a lens row, a marker, a bar),
 the card shows the diagnostics drawn there at once — message with its severity's icon and
 code, the source dimmed — and asks, after the pending edit, `quickFixesFor { requestId,
-baseVersion, range }` for each (at most three; the host runs
+baseVersion, range }` for each (at most three) — the diagnostic's own range while the page's
+document is the one the marks were placed on, else where its squiggle now is, read back
+through the position map after the flush (a whole block's mark has no such place, and is not
+asked about; the host runs
 `vscode.executeCodeActionProvider(uri, range, 'quickfix', 50)`, keeps the quick fixes alone
 — no source actions, no command acting on a text editor — in the code-action registry, and
-answers `quickFixes`; a fix is a link *Quick fix: …* that runs with `runAction`, behind the
-pending edit) and `hover { requestId, baseVersion, position }`. The host calls
+answers `quickFixes`; the fixes follow one *Quick fix(es)* label line, each a link that runs
+with `runAction`, behind the pending edit) and `hover { requestId, baseVersion, position }`. The host calls
 `vscode.executeHoverProvider(uri, position)` and answers `hoverResult { requestId, html,
 range? }`: **the host renders**, because the trust a command link needs is known only there
 and the page has no parser. It renders with a plain markdown-it, not the preview's engine —
 a hover is VS Code's Markdown, which the workbench renders, and the preview's plugins would
 read `++…++` in it as a sidenote — with raw HTML only for a part that allows it
-(`supportHtml`), `file:` links kept as links. Each `MarkdownString` is one
+(`supportHtml`), `file:` links kept as links. Such a part's whole rendering is then sanitized
+on the host (`host/hoverHtml.ts`) to the allowlist VS Code's own hover applies
+(`renderMarkdown`'s tags and attributes): allowed tags rebuilt from their allowed attributes,
+`href`/`src` only with `http`, `https`, `mailto`, `file` or a `data:` image, `script`,
+`style`, `form`, `iframe` and the like dropped with their content, every `on*`, `style`,
+`id` and `data-*` attribute dropped — so raw HTML cannot forge the `data-mep-command` or
+`data-mep-action` a card link runs by. The link rule's own command links pass because it
+marks them with a per-render nonce (`data-mep-nonce`), which raw HTML cannot know and which
+never reaches the page. Images from `https:` stay, as VS Code's hover shows them. Each `MarkdownString` is one
 `div.mep-hover-part` (`data-icons` for `supportThemeIcons`, whose `$(icon)`s the page then
 draws with `lensLabelNodes`). A command link (`command:id?args`, the args
 `JSON.parse(decodeURIComponent(query))`, a non-array the one argument) is kept only when the
@@ -1385,9 +1406,11 @@ part may run it (`commandLinkAllowed`: `isTrusted: true`, or `{ enabledCommands 
 false, absent or a plain `MarkedString` — none); a kept one is registered under an id and
 carries it as `data-mep-command`, and `runHoverCommand { id }` runs the registered command
 with its own arguments, queued behind the pending edit and not awaited. The registry is
-replaced with every answer, so an id of an earlier one runs nothing. Every other `command:`
-link is its text alone, and raw HTML keeps no `command:` target (the page strips any it
-still finds). The hover's range, when it has one, is what the card is about.
+replaced with the newest answer (an older question resolving later does not replace it), so
+an id of an earlier one runs nothing. Every other `command:` link is its text alone. On the
+page, as a second line, a `command:` target left in a hover loses it, and each kind of link
+is taken only where the page puts it: `data-mep-command` in the hover section,
+`data-mep-action` in a diagnostic's. The hover's range, when it has one, is what the card is about.
 
 The card is one component with two contents, diagnostics first as in the text editor's
 hover; one card at a time. It is placed under the range's first character (above it when
