@@ -715,7 +715,7 @@ monospace, since it *is* the key — and a control that fits the value it holds:
 | A date written `YYYY-MM-DD` | the date as text, a calendar button beside it (`Alt+↓` opens it too); a value that is no date is refused, saying so |
 | `true` / `false` | a checkbox |
 | A list of short values (`[a, b]` or `- a` lines) | chips, each with `×`, and **+ add** (`Enter` adds and stays for the next, `Backspace` in the empty field takes the last one back) |
-| `lang` | a text field offering the values `lang` has anywhere in the file |
+| `lang` | a text field listing the values `lang` has anywhere in the file under it as you type, as the editor's other completions do |
 | `uid`, or a key ending in `uid`/`id` holding a UUID | read-only, in mono and dimmed; a click copies it |
 | Anything nested — a map, a list of maps, a multi-line text | one row, *5 items, nested · edit as source*, which opens the YAML at that key |
 
@@ -723,8 +723,10 @@ monospace, since it *is* the key — and a control that fits the value it holds:
 leaving a row applies it too — a row shows its value, and a value you typed should not
 silently turn back. A second `Esc` puts the caret in the text below. **+ Add property**, the
 last row, asks for the name and then the value; the value is typed from what you write
-(`2026-10-01`, `true`, `[a, b]`). Pointing at a row shows a small `×` that removes the key,
-announced as *Removed key — Ctrl+Z*; `Ctrl+Z` in the panel is the editor's undo, so the key
+(`2026-10-01`, `true`, `[a, b]`). Every value you can edit has a faint outline, so it reads as a
+field before you point at it; the read-only id has none. Pointing at a row, or tabbing to it,
+shows a small `×` right after its value that removes the key — `Shift+Delete` in the row does
+the same — announced as *Removed key — Ctrl+Z*; `Ctrl+Z` in the panel is the editor's undo, so the key
 comes back. **Edit as source** and a nested row's link open the YAML between the `---`
 lines in a box (`Ctrl+Enter` or clicking away applies, `Esc` cancels). A document without
 front matter has no panel; **Insert → Properties** adds one at the top and asks for the

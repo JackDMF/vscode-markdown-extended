@@ -656,8 +656,10 @@ collapsed by default, `uid` read-only, a nested key one row that opens the sourc
 generic panel for Markdown Extended Pro, never a Req Explorer form). The node is still the
 `front_matter` atom its slice made, and its `src` is still what the serializer writes; what
 changed is that the page can now set that `src` — from a row of the panel, in one
-transaction (`commitFrontMatter` in `webview/main.ts`, a `setNodeMarkup`), so every edit is
-one undo step and is posted like any block edit. `fidelity.ts` never clears a source node's
+transaction (`commitFrontMatter` in `webview/main.ts`, a `setNodeMarkup` under
+`closeHistory`), so every edit is one undo step of its own — never merged with the one made a
+moment before, which is what makes *Removed `key` — Ctrl+Z* true after two quick edits — and
+is posted like any block edit. `fidelity.ts` never clears a source node's
 `src`, so nothing else is needed for "no longer untouched": the new `src` *is* the
 serialization of the model.
 
@@ -685,10 +687,15 @@ read. A YAML the parser refuses (a syntax error, a duplicate key) or whose top l
 a map is one row saying why, beside *edit as source*.
 
 **In place, not round-tripped.** An edit is a text splice at the offsets `parseDocument`
-reports for the node it changes — `setText` and `setBoolean` replace a scalar's value
-characters (an anchor before it, a comment after it stay), `addItem` and `removeItem` add or
-delete a block list item's line with the prefix of the line before it, `removeProperty`
-deletes a pair's lines, `addProperty` appends `key: value` at the end — and the document is
+reports for the node it changes (with `keepSourceTokens`, for the indicators the nodes do not
+carry) — `setText` and `setBoolean` replace a scalar's value characters (an anchor before it,
+a comment after it stay; an empty value is written right after its colon, so `key:   # note`
+becomes `key: x   # note`, not `x# note`); `addItem` inserts `, x` after a flow list's last
+item, or a line of the last item's indentation and `- ` (not its anchor or tag) after a block
+list's; `removeItem` cuts a flow item's own text with one comma, or a block item's line;
+`removeProperty` deletes a pair's lines; `addProperty` appends `key: value`, only to a block
+mapping or an empty YAML (a flow map or a list would not take the line as a key) and with a key
+quoted where plain would not read back as itself — and the document is
 never written back through `yaml`'s stringifier, which would normalize indentation, spacing
 and the blank lines between keys. Key order, comments, quoting, anchors, block scalars,
 blank lines and line endings of every key not edited are therefore the file's bytes; a new
@@ -699,17 +706,18 @@ number, a string as that exact string), and is single-quoted otherwise, so `true
 `a # b` or `a: b` typed into a text row stay text. A new key's value is written as typed
 where it reads as one plain scalar or a flow list of scalars (`2026-10-01`, `true`,
 `[a, b]`) — typed from its value, as every other row — else quoted. An edit whose key is not
-there, or not of its kind, returns `null` rather than guess. `frontMatter.test.ts` holds a
+there, or not of its kind, returns `null` rather than guess, and so does one whose result would
+not parse or would leave an alias naming no anchor (`checked`: removing `&x a` while `*x` stands
+elsewhere). A key is named for an edit by where it stands as well as by its name (`KeyRef`,
+`{ offset, key }`): `1:` and `'1':` are two keys that read as one name. `frontMatter.test.ts` holds a
 YAML with comments, an anchor and its alias, a block scalar, both list styles and a nested
 list of maps to "one scalar changed, one line changed", every other kind of edit to the same,
 LF and CRLF, and Req Explorer's conformance documents (`FR-CON.md`, `FR-CON.de.md`) to one
 line changed and a parse with the same blocks.
 
-*Its limits, as built:* a flow list is written again from its items' own text when an item
-goes in or out, so a comment inside the brackets is lost and a flow list spread over
-lines becomes one line; removing a key leaves a comment line above it, which may have been
-about it; a new key goes at the end, never beside a related one; the last item of a block
-list removed leaves `key: []`, since a block list cannot be empty.
+*Its limits, as built:* removing a key leaves a comment line above it, which may have been
+about it; a new key goes at the end, never beside a related one; the last item of a block list
+removed leaves `key: []`, since a block list cannot be empty.
 
 **The panel** (`webview/properties.ts`, `PropertiesView`, the `front_matter` node view).
 A header `▸ Properties  <n>` — the count of top-level keys — and **Edit as source** at its
@@ -717,34 +725,49 @@ right, collapsed by default; the state is remembered per document in `localStora
 the document's uri, which the host writes on the page's mount element
 (`data-document-uri`, `host/html.ts`) — a page without storage opens collapsed. Expanded,
 one row per key: the key in the editor's monospace, since it *is* the key, and the control
-of its kind — a text field (the inline field's colours, a border only on hover and focus, so
-the rows read as values at rest); a date as its text as the file writes it, with a calendar
+of its kind — a text field (the inline field's colours, as wide as its value — `field-sizing:
+content`, `size` as the fallback — with a 1px border at 20 % of the foreground at rest, stronger
+on hover, the focus colour on focus: an editable value must look editable before the pointer
+finds it, and the read-only uid, borderless and dimmed, is told apart by that difference); a date as its text as the file writes it, with a calendar
 button that opens the browser's picker from a date input kept out of sight (`showPicker`,
 `Alt+↓` in the field too) — `<input type="date">` itself shows the system locale's
 `09/29/2026` beside the file's `2026-09-29`, a second spelling of one value — and a text that
-is no date refused with the reason; `lang` a text field with a `datalist` of the file's
-values; a checkbox; chips with `×` and a dashed **+ add**; a uid in mono, dimmed, copied on a
+is no date refused with the reason; `lang` a text field whose values are listed under it in
+the editor's one completion list (`CompletionListView`, `webview/completionList.ts`, as the
+link field's and the language completions are), opened on focus, narrowed to the values holding
+what is typed, `↓`/`↑` and `Enter` to set one, `Esc` closing it before it reverts the row — a
+native `datalist` would have been the browser's chrome beside the editor's; a checkbox; chips with `×` and a dashed **+ add**; a uid in mono, dimmed, copied on a
 click (`navigator.clipboard`, else `execCommand('copy')`); a source row *`<n>` items, nested ·
 edit as source*. The last row is **+ Add property**: the name, then the value. A row's `×`
-shows on hover or while the row has the focus, keeps its place so nothing moves, and removes
-the key — *Removed `key` — Ctrl+Z*, in the caret hint, which `showHint` can now place under
+stands right after its value — at the row's far end it was 900 px from the key it removes — shows
+on hover or while the row has the focus, keeps its place so nothing moves, is a Tab stop named
+*Remove `key`*, and removes the key; so does `Shift+Delete` on any of the row's controls — *Removed `key` — Ctrl+Z*, in the caret hint, which `showHint` can now place under
 an element (`near`) since the caret is not where the panel is. A uid row has no `×`:
 read-only is read-only.
 
 *The keys.* `Enter` commits a row, `Esc` reverts it, a second `Esc` puts the caret in the text
 after the front matter (`leaveFrontMatter`). `Tab` goes through the rows in the browser's
-order (each row's control, a list's **+ add**, then **+ Add property**; the `×`s are not
-stops). A row is committed when the focus leaves it too — a deliberate difference from the
+order (each row's control, a list's **+ add**, the row's `×`, then **+ Add property**). A row is committed when the focus leaves it too — a deliberate difference from the
 inline field, which is gone once it loses the focus: a row stays and shows its value, and a
 value that showed typed and then silently reverted would say something the file does not
 hold. `Ctrl+Z` in a field with typing of its own undoes the typing; anywhere else in the
 panel it runs the editor's `undo` (`history` on the port), and is kept from VS Code either
-way. Rows with typing not yet committed register with the page as a `SourceEditor`, so
+way; a field with no committed value of its own (a new property's name and value) is all
+typing. Rows with typing not yet committed register with the page as a `SourceEditor`, so
 `Ctrl+S` commits them before it saves, as it commits an open source box.
+
+*A click during typing is not lost.* The commit on leaving redraws the rows, and a redraw
+between a press and its release leaves the click nowhere — a `×`, a checkbox, a chip's `×`,
+**+ add**, the calendar. So while a field holds uncommitted typing, a press on anything in the
+panel but a text field is kept from moving the focus (`preventDefault` on `mousedown`, in the
+capture phase), and each action commits the typing itself first (`flushDirty`) and then looks
+its key up in the model as it now is (`ref`: the row's index and name), since the commit may
+have moved every offset after it.
 
 *A redraw keeps the focus.* Every commit sets the node's `src`, ProseMirror calls `update`,
 and the panel draws its rows again (only when `src` changed). The focused control is found
-again by its slot (`data-slot`: `value:key`, `add-item:key`, `add:name`, …) and focused, with
+again by its slot (`data-slot`: `value:<row>`, `remove:<row>`, `add-item:<row>`, `add:name`, …,
+by row index, since two keys can share a name) and focused, with
 typing that had not been committed restored where the value under it did not change — so
 `Tab` after typing lands on the next row although the commit redrew the panel under it (the
 commit runs on a zero-delay timer after the blur, once the focus has moved), and a re-sync
