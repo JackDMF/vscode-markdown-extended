@@ -468,6 +468,8 @@ function tableDecorations(state: EditorState, flashed: readonly number[]): Decor
 export function tablesPlugins(): Plugin[] {
     let editorView: EditorView | null = null;
     let flashTimer: ReturnType<typeof setTimeout> | undefined;
+    /** Set by the transaction that carries new cells, taken by the next view update to start the timer. */
+    let flashArmed = false;
     return [
         tableEditing(),
         new Plugin<number[]>({
@@ -476,7 +478,18 @@ export function tablesPlugins(): Plugin[] {
                 init: () => [],
                 apply: (tr, cells) => {
                     const meta = tr.getMeta(flashKey) as number[] | undefined;
-                    return meta !== undefined ? meta : cells.length === 0 || !tr.docChanged ? cells : cells.map(p => tr.mapping.map(p));
+                    if (meta !== undefined) {
+                        // Only the verb that made the cells arms the timer; nothing else re-arms it.
+                        flashArmed = meta.length > 0;
+                        return meta;
+                    }
+                    if (cells.length === 0 || !tr.docChanged) {
+                        return cells;
+                    }
+                    // What the verb's own transaction brings along (the fidelity plugin's
+                    // follow-up) keeps the cells; any other change — typing, an undo —
+                    // ends the flash rather than mapping it onto cells it may not mean.
+                    return tr.getMeta('appendedTransaction') !== undefined ? cells.map(p => tr.mapping.map(p)) : [];
                 },
             },
             props: {
@@ -495,9 +508,9 @@ export function tablesPlugins(): Plugin[] {
             view(view) {
                 editorView = view;
                 return {
-                    update(current, previous) {
-                        const cells = flashKey.getState(current.state) ?? [];
-                        if (cells.length > 0 && cells !== flashKey.getState(previous)) {
+                    update(current) {
+                        if (flashArmed) {
+                            flashArmed = false;
                             clearTimeout(flashTimer);
                             flashTimer = setTimeout(() => {
                                 if ((flashKey.getState(current.state) ?? []).length > 0) {

@@ -16,6 +16,7 @@
  * is taken on the window, before the field sees it — and saves the document as
  * it is, without the field's value.
  */
+import { CompletionListView } from './completionList';
 
 /** One completion a field may take: `value` goes into the field, `label` and `detail` are what the list shows. */
 export interface Completion {
@@ -200,7 +201,7 @@ let listSeq = 0;
 
 export class InlineField extends InlineControl<HTMLInputElement> {
     /** The completion list under the field, while it shows choices. */
-    private list: HTMLElement | null = null;
+    private list: CompletionListView | null = null;
     private choices: readonly Completion[] = [];
     /** The chosen entry of the list; `-1` for none, so `Enter` commits what is typed. */
     private chosen = -1;
@@ -321,73 +322,25 @@ export class InlineField extends InlineControl<HTMLInputElement> {
             this.closeList();
             return;
         }
-        const list = this.list ?? document.createElement('div');
-        list.className = 'mep-completions';
-        const options = document.createElement('div');
-        options.className = 'mep-completion-options';
-        options.id = this.listId;
-        options.setAttribute('role', 'listbox');
-        options.setAttribute('aria-label', this.options.label);
-        options.replaceChildren(...items.map((item, i) => {
-            const option = document.createElement('div');
-            option.className = 'mep-completion';
-            option.id = `${this.listId}-${i}`;
-            option.setAttribute('role', 'option');
-            option.setAttribute('aria-selected', 'false');
-            option.dataset.value = item.value;
-            if (item.kind) {
-                option.dataset.kind = item.kind;
-            }
-            const label = document.createElement('span');
-            label.className = 'mep-completion-label';
-            label.textContent = item.label;
-            option.append(label);
-            if (item.detail) {
-                const detail = document.createElement('span');
-                detail.className = 'mep-completion-detail';
-                detail.textContent = item.detail;
-                option.append(detail);
-            }
-            // The press is not a move of the focus: the field keeps it.
-            option.addEventListener('mousedown', e => {
-                e.preventDefault();
-                e.stopPropagation();
-            });
-            option.addEventListener('click', e => {
-                e.preventDefault();
-                e.stopPropagation();
-                this.take(item);
-            });
-            return option;
-        }));
         // The keys, said where the eye is: the list alone does not say that
         // Tab takes a choice and goes on while Enter sets it.
-        const keys = document.createElement('div');
-        keys.className = 'mep-completions-keys';
-        keys.setAttribute('aria-hidden', 'true');
-        keys.textContent = COMPLETION_KEYS;
-        list.replaceChildren(options, keys);
+        const view = this.list ?? new CompletionListView(this.listId, this.options.label, COMPLETION_KEYS, i => this.take(this.choices[i]));
+        view.render(items);
         if (this.list === null) {
-            this.list = list;
-            this.el.after(list);
+            this.list = view;
+            this.el.after(view.el);
         }
-        list.style.left = `${this.el.offsetLeft}px`;
-        list.style.minWidth = `${this.el.offsetWidth}px`;
+        view.el.style.left = `${this.el.offsetLeft}px`;
+        view.el.style.minWidth = `${this.el.offsetWidth}px`;
         this.el.setAttribute('aria-expanded', 'true');
         this.el.removeAttribute('aria-activedescendant');
     }
 
     private choose(index: number): void {
         this.chosen = index;
-        const options = Array.from(this.list?.querySelectorAll<HTMLElement>('.mep-completion') ?? []);
-        options.forEach((option, i) => {
-            option.setAttribute('aria-selected', String(i === index));
-            option.classList.toggle('mep-chosen', i === index);
-        });
-        const option = options[index];
+        const option = this.list?.choose(index);
         if (option) {
             this.el.setAttribute('aria-activedescendant', option.id);
-            option.scrollIntoView({ block: 'nearest' });
         } else {
             this.el.removeAttribute('aria-activedescendant');
         }

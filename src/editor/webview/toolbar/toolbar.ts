@@ -28,7 +28,7 @@ import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'p
 import { EditorView } from 'prosemirror-view';
 import type { LinkChoice, LinkedFile } from '../../protocol';
 import { editorSchema } from '../../schema';
-import { textInBand } from '../clearance';
+import { firstFree } from '../clearance';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
@@ -310,6 +310,9 @@ class ToolbarView implements PluginView {
             }
             row.append(box);
         }
+        // The row's right end: what the page says about the document as a
+        // whole (the diagnostics count, `diagnostics.ts`), not a control of the text.
+        row.append(div('mep-row-status'));
         return row;
     }
 
@@ -969,15 +972,28 @@ class ToolbarView implements PluginView {
         };
         this.mount.append(bar);
         const field = open(first);
-        // Under the selection's last line: the bubble is above it. Placed
+        // Where no content is, as every bar (`clearance.ts`): under the
+        // selection's last line, above its first, or beside its block. Placed
         // before the field takes the focus, which scrolls it into view.
         const sel = view.state.selection;
         const start = view.coordsAtPos(sel.from, 1);
         const end = view.coordsAtPos(sel.to, -1);
         const base = this.mount.getBoundingClientRect();
-        const x = Math.max(base.left, Math.min(start.left, base.right - bar.offsetWidth));
-        bar.style.left = `${x - base.left}px`;
-        bar.style.top = `${end.bottom + 6 - base.top}px`;
+        const width = bar.offsetWidth;
+        const height = bar.offsetHeight;
+        const gap = 6;
+        const x = Math.max(base.left, Math.min(start.left, base.right - width));
+        const blockDom = sel.$from.depth >= 1 ? view.nodeDOM(sel.$from.before(1)) : null;
+        const beside = (blockDom instanceof Element ? blockDom.getBoundingClientRect().right : -Infinity) + gap;
+        const below = end.bottom + gap;
+        const found = firstFree(view, this.mount, [
+            { x, y: below },
+            { x, y: start.top - height - gap },
+            { x: beside, y: start.top, when: () => beside + width <= base.right },
+            { x: base.right - width, y: start.top },
+        ], { width, height }, bar);
+        bar.style.left = `${Math.max(base.left, Math.min(found?.x ?? x, base.right - width)) - base.left}px`;
+        bar.style.top = `${(found?.y ?? below) - base.top}px`;
         // What the field acts on stays visible while the field has the focus.
         showPendingRange(view, range?.from ?? sel.from, range?.to ?? sel.to);
         field.focus();
@@ -1032,33 +1048,22 @@ class ToolbarView implements PluginView {
         const oneLine = Math.abs(start.top - end.top) < 2;
         let x = oneLine ? (start.left + end.right) / 2 - width / 2 : start.left;
         x = Math.max(base.left, Math.min(x, base.right - width));
-        const ceiling = this.row.getBoundingClientRect().bottom;
-        const free = (left: number, top: number) => !textInBand(view, { left, right: left + width, top, bottom: top + height });
         const above = start.top - height - gap;
         const below = end.bottom + gap;
         // Beside the block: just right of its box, which only a block narrower than the column — a table — leaves room for.
         const blockDom = sel.$from.depth >= 1 ? view.nodeDOM(sel.$from.before(1)) : null;
-        const blockRight = blockDom instanceof Element ? blockDom.getBoundingClientRect().right : -Infinity;
-        const beside = blockRight + gap;
-        let y: number;
-        if (above >= ceiling && free(x, above)) {
-            y = above;
-        } else if (Number.isFinite(blockRight) && beside + width <= base.right && free(beside, start.top)) {
+        const beside = (blockDom instanceof Element ? blockDom.getBoundingClientRect().right : -Infinity) + gap;
+        const found = firstFree(view, this.mount, [
+            { x, y: above },
             // Close to what it acts on: a narrow table's edge is a few pixels from its cell.
-            x = beside;
-            y = start.top;
-        } else if (free(x, below)) {
-            y = below;
-        } else if (free(base.right - width, start.top)) {
+            { x: beside, y: start.top, when: () => beside + width <= base.right },
+            { x, y: below },
             // At the column's right edge on the selection's line.
-            x = base.right - width;
-            y = start.top;
-        } else {
-            // Nowhere free: below, never over the row above, which is read while choosing.
-            y = below;
-        }
-        this.bubble.style.left = `${x - base.left}px`;
-        this.bubble.style.top = `${y - base.top}px`;
+            { x: base.right - width, y: start.top },
+        ], { width, height }, this.bubble);
+        // Nowhere free: below, never over the row above, which is read while choosing.
+        this.bubble.style.left = `${(found?.x ?? x) - base.left}px`;
+        this.bubble.style.top = `${(found?.y ?? below) - base.top}px`;
     }
 
     /** Whether the bubble is shown now: while it is, the object toolbar shows no block's bar, so there is one thing at a time. */
@@ -1068,6 +1073,11 @@ class ToolbarView implements PluginView {
 }
 
 const toolbarViews = new WeakMap<EditorView, ToolbarView>();
+
+/** The status slot at the right end of the view's formatting row; `null` without a toolbar. */
+export function toolbarStatusSlot(view: EditorView): HTMLElement | null {
+    return view.dom.parentElement?.querySelector<HTMLElement>(':scope > .mep-toolbar > .mep-row-status') ?? null;
+}
 
 /** Whether the selection bubble of `view` is shown: the object toolbar hides every block's bar meanwhile. */
 export function selectionBubbleShown(view: EditorView): boolean {
