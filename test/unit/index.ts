@@ -8,8 +8,9 @@ export function run(): Promise<void> {
         ui: 'tdd',
         color: true,
         timeout: 5000,
-        // `MOCHA_GREP=…` runs only the suites and tests whose titles match.
-        ...(process.env.MOCHA_GREP ? { grep: process.env.MOCHA_GREP } : {}),
+        // `MOCHA_GREP=…` runs only the suites and tests whose titles hold that
+        // text, as written: `(e2e)` is the parentheses, not a regex group.
+        ...(process.env.MOCHA_GREP ? { grep: new RegExp(process.env.MOCHA_GREP.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) } : {}),
     });
 
     const testsRoot = path.resolve(__dirname);
