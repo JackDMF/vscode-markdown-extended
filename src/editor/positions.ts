@@ -298,15 +298,16 @@ function collectUnits(block: Node): Unit[] {
             if (r > 0) {
                 anchor('\n');
             }
-            if (r === 1) {
-                anchor('|'.repeat(row.childCount + 1) + '\n');
-            }
             row.forEach((cell, cellOffset) => {
                 anchor('|');
                 const cellPos = rowPos + 1 + cellOffset;
                 cell.forEach((child, childOffset) => visit(child, cellPos + 1 + childOffset));
             });
             anchor('|');
+            if (r === 0) {
+                // The delimiter row follows the header whether or not a body does, one `|` per boundary of the header's cells.
+                anchor('\n' + '|'.repeat(row.childCount + 1));
+            }
         });
     };
     visit(block, 0);

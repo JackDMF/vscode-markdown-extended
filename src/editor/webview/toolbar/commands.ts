@@ -7,6 +7,7 @@ import { Mark, MarkType, Node, NodeType, ResolvedPos } from 'prosemirror-model';
 import { liftListItem, wrapInList } from 'prosemirror-schema-list';
 import { GapCursor } from 'prosemirror-gapcursor';
 import { AllSelection, Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
+import { isInTable } from 'prosemirror-tables';
 import { parseAttrsLiteral } from '../../attrs';
 import { PRESERVE_SOURCE_META } from '../../fidelity';
 import { SUFFIX_NODES, editorSchema } from '../../schema';
@@ -143,17 +144,6 @@ export const WHOLE_LOCK = 'The whole document is selected; put the caret in the 
 export const NO_TEXT_LOCK = 'Put the caret in a paragraph or heading to change its type.';
 export const TABLE_LOCK = 'A table cell holds one line of text and has no block type; the table\'s bar adds rows and columns.';
 
-/** Whether the selection's start is inside a table (a cell, or cells selected across). */
-function inTableCell(state: EditorState): boolean {
-    const $from = state.selection.$from;
-    for (let d = $from.depth; d > 0; d--) {
-        if ($from.node(d).type === nodes.table) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /**
  * Why the block type cannot be changed here, or `null` when it can — decided
  * per kind of selection, so the tooltip says what is actually the matter:
@@ -179,7 +169,7 @@ export function blockLockReason(state: EditorState): string | null {
     if (sel instanceof AllSelection) {
         return state.doc.childCount > 1 ? ALL_LOCK : WHOLE_LOCK;
     }
-    if (inTableCell(state)) {
+    if (isInTable(state)) {
         return TABLE_LOCK;
     }
     if (!(sel instanceof TextSelection)) {

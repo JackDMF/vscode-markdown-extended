@@ -182,7 +182,8 @@ function destination(href: string, part?: NotePart, noteMarker?: string, inTable
 /** A link's or image's `(destination "title")` content, as a note part and a table cell can hold it. */
 function target(st: StateInternals, href: string, title: string | null): string {
     // A backtick in a title would open code for the table plugin's row scan; the title takes an escape.
-    const titleText = st.inTableCell && title ? title.replace(/`/g, '\\`') : title;
+    // In a table cell a `|` in a title is a boundary to the row scan, and it takes an escape.
+    const titleText = st.inTableCell && title ? title.replace(/[`|]/g, '\\$&') : title;
     const titled = breakMarkerRuns(partText(st.notePart, titlePart(titleText)), st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
     return destination(href, st.notePart, st.noteMarker, st.inTableCell) + titled;
 }
@@ -553,6 +554,15 @@ function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string
     state.text(marker, false);
 }
 
+/**
+ * In a table cell a `|` in text is a cell boundary to the table plugin, so it
+ * is escaped where every other character the engine would read as syntax is:
+ * in the text, the alt text and a sidebar's text, as `\|`. What is written
+ * verbatim — code, an attribute span's literal — gets no escape; a `|` there
+ * has no spelling and is not made (`unwritableInTable`).
+ */
+const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, 'g');
+
 function inlineSerializer(fromBlockStart: boolean, inTableCell = false): MarkdownSerializer {
     return new MarkdownSerializer({
         ...inlineNodes,
@@ -561,7 +571,7 @@ function inlineSerializer(fromBlockStart: boolean, inTableCell = false): Markdow
             state.renderInline(node, fromBlockStart);
             state.closeBlock(node);
         },
-    }, marks, { escapeExtraCharacters: ESCAPE_EXTRA });
+    }, marks, { escapeExtraCharacters: inTableCell ? ESCAPE_IN_CELL : ESCAPE_EXTRA });
 }
 
 const inlineAtStart = inlineSerializer(true);
@@ -589,7 +599,8 @@ const inlineInCell = inlineSerializer(false, true);
  * - the delimiter row carries the alignment: `---` none, `:--` left, `:-:`
  *   centre, `--:` right, as many dashes as the column is wide;
  * - a cell is its inline Markdown on one line, trimmed, as the plugin trims
- *   it: a `|` in it is `\|`; an empty cell is its padding, so never `||`, which
+ *   it: a `|` in its text is escaped as `\|` where the text is escaped
+ *   (`ESCAPE_IN_CELL`); an empty cell is its padding, so never `||`, which
  *   the plugin reads as a colspan; a cell whose text reads as a delimiter cell
  *   (`---`, `:-:`) has its first character escaped, or a row of them would
  *   read as a delimiter row; `^^`, the plugin's rowspan, is escaped as every
@@ -598,8 +609,8 @@ const inlineInCell = inlineSerializer(false, true);
  * The plugin finds the cell boundaries in the raw line before any inline
  * parse: a `|` after a backslash is no boundary, one inside single-backtick
  * code is none either, one inside a longer fence is. So a cell also writes a
- * link's destination with `|` and a backtick percent-encoded, and a backtick
- * in a link title escaped (a raw one opens code for the row scan); a bare or
+ * link's destination with `|` and a backtick percent-encoded, and a `|` or a
+ * backtick in a link title escaped (a raw backtick opens code for the row scan); a bare or
  * angle link holding either is written inline; a backslash right before a code
  * span (text ending in `\`) is `&#92;`, because the row scan reads `\\` as
  * escaping the backtick after it and then takes the span's closing backtick
@@ -624,8 +635,7 @@ export function tableCellMarkdown(cell: Node): string {
         .replace(BACKSLASH_BEFORE_CODE, '&#92;')
         .replace(HOLD_RE, '')
         .replace(/\r?\n/g, ' ')
-        .trim()
-        .replace(/\|/g, '\\|');
+        .trim();
     return READS_AS_DELIMITER.test(written) ? `\\${written}` : written;
 }
 
@@ -663,6 +673,9 @@ export function tableLines(table: Node): string[] {
     return formatted.stringify().split('\n');
 }
 
+/** Why a cell holds no line break: said wherever a hard break is refused, by key (`webview/tables.ts`) or by any other edit. */
+export const CELL_BREAK_REFUSAL = 'A table cell holds one line: a pipe table has no line break inside a cell.';
+
 /**
  * Why a table between `from` and `to` cannot be written so that it reads back
  * as itself, or `null` — what the tidy form above has no spelling for, which
@@ -686,7 +699,7 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
                 return false;
             }
             if (child.type.name === 'hard_break') {
-                reason = 'A table cell holds one line: a pipe table has no line break inside a cell.';
+                reason = CELL_BREAK_REFUSAL;
             } else if (child.isText && (child.text ?? '').includes('|') && child.marks.some(m => m.type.name === 'code')) {
                 reason = 'Inline code in a table cell cannot hold "|": the table plugin splits the row at it, and nothing escapes it there.';
             } else {

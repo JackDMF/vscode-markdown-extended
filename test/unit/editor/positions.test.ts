@@ -246,6 +246,24 @@ suite('Editor positions: page ↔ source', () => {
         }
     });
 
+    test('a header-only table: its delimiter row is anchored after the header all the same, unedited and edited', () => {
+        const source = 'Intro.\n\n|Name|Kind|\n|:--|---|\n\nAfter.\n';
+        const parsed = parseDocument(md, source);
+        assert.strictEqual(parsed.doc.child(1).type.name, 'table');
+        assert.strictEqual(parsed.doc.child(1).childCount, 1);
+        const typed = edited(parsed, state => state.tr.insertText('s', pageOf(state.doc, 'Kind') + 'Kind'.length));
+        for (const [variant, name] of [[parsed, 'unedited'], [typed, 'edited']] as const) {
+            const map = createPositionMap(variant, OPTIONS);
+            const text = map.text;
+            if (variant === typed) {
+                assert.ok(text.includes('| Name | Kinds |\n| :--- | ----- |\n'), `written tidy: ${text}`);
+            }
+            for (const needle of ['Name', 'ame', 'Kind', 'ind', 'After']) {
+                assertBothWays(map, pageOf(variant.doc, needle), sourceOf(text, needle), `${name}: ${needle}`);
+            }
+        }
+    });
+
     test('a raw atom maps to its whole slice: its start before it, its end after it', () => {
         const source = 'Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n';
         const parsed = parseDocument(md, source);
