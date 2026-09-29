@@ -599,6 +599,7 @@ text the other — never a diff:
 | page → host | `actionsFor { requestId, blockIndex, blocks }` | The object toolbar opened for this top-level block of a page holding `blocks` |
 | page → host | `runAction { id }` | Apply a code action from an `actions` answer: its edit, then its command |
 | page → host | `pickInclude { requestId, replace? }` | Show the include choices other extensions offer; with `replace: { blockIndex }`, for that expansion's directive (below) |
+| page → host | `caret { baseVersion, position }` | Where the caret is in the text the host holds — 0-based line and UTF-16 character, `null` for none — 100 ms after the selection settles, behind the pending edit (below, *Source positions*) |
 
 A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
 save's own edit when Ctrl+S commits it): what the source now says may no longer be a
@@ -1199,8 +1200,9 @@ the bar does not blink; running it is guarded by the host's version check. Every
 answer or an invalidation is guarded: a webview disposed meanwhile is a logged warning. The answer's arrival dispatches an
 empty transaction, and the toolbar redraws with the verbs. A heading is an object for this
 and for its lens verbs alone: its presentation has no verbs of its own, and the selection's
-bar is hidden while it has none. Inline objects carry no actions — the host knows no range for a note or a link,
-and computing one would be a second answer to where the page's text is in the file.
+bar is hidden while it has none. Inline objects carry no actions yet: the host knew no range for a note or a
+link, and computing one beside the parse would have been a second answer to where the page's text is in the
+file. *Source positions* (below) is now the one answer, and what they would be built on.
 
 ### Includes from other extensions
 
@@ -1269,6 +1271,119 @@ line the provider would produce — an include whose snippet the plugin could no
 all — would deserve the verb too, but telling it from any other one-line raw block takes
 the directive's syntax, which is the provider's. It is left out; a `missing` expansion,
 which the plugin does mark, has it.
+
+### Source positions
+
+Completion, diagnostics, hover and "which requirement is the caret in" all cross between a
+ProseMirror position in the page and a position in the text VS Code holds, and nothing did:
+the host knew each top-level block's lines at parse time only, and an edited block's text has
+moved relative to its slice. `positions.ts` is the one answer — pure, no `vscode`, no DOM — so
+the page (the caret it reports), the host (`host/positions.ts`) and the tests ask the same code.
+`createPositionMap(parsed, options)` gives, for one document, `sourcePositionOf(pos)`,
+`pagePositionOf({ line, character })` and `pageRangeOf(range)`; `caretOf(selection, map)` is
+the caret rule below.
+
+**The text is the one the page would write.** `serializeLayout` (`serialize.ts`) is the loop
+`serializeDocument` is, returning with the text where every top-level node's body stands in it
+— an untouched block's `src`, an edited block's fresh serialization, wrapped by `wrap.ts` at
+its width in the document's line ending — which is what the host holds once the page's edit
+has landed. The offsets are read from where they are made, never counted a second time.
+
+**Coordinates** are `vscode.Position`'s: 0-based line, 0-based character in UTF-16 code units
+(ProseMirror counts text the same way). Lines break at `\r\n`, `\n` and a lone `\r`, as VS Code
+and markdown-it both break them; a character past a line's end is its end, and a position
+never falls between `\r` and `\n`. A CRLF file maps to exactly the lines and characters of its
+LF twin: each body is aligned with its line breaks read as one `\n`, markdown-it's own
+normalization, and the offsets are mapped back to the body as written.
+
+**Inside a block, the page's text is aligned with the source's**, not counted. The source
+holds delimiters the page does not (`*`, `**`, `` ` ``, `[…](…)`, `{…}`, `++`, `|`, a heading's
+`# ` and `ID: `, bullets, indentation, an admonition's header); the page holds characters the
+source spells otherwise (`&#124;` in a note's reference, a soft break that is a space in the
+page and a line break in the file). Counting delimiters by hand would be a second serializer,
+and wrong for every `src` block written by a person. So the block's page text — one unit per
+UTF-16 code unit and per inline leaf, a hard break matching a line break, an image or a badge
+matching nothing — and its source are aligned as two sequences: an affine-gap alignment
+(Gotoh) that first maximizes the characters matched, then minimizes the gap runs, where a run
+that starts a source line (a line's prefix) is free and ties go to the earlier match. Three
+kinds of anchor without a page position steer it: a line break before every textblock but the
+first, and a note's markers and separator read from `src/syntax/markers.ts`, so a reference's
+text cannot be matched into the body. It runs in a band around the diagonal, since the source
+is the page's text plus delimiters; a block over the band's budget (a paragraph holding a
+6000-character URL) is aligned greedily and every answer in it is approximate. A block's
+alignment is kept per node and body (`WeakMap`) with positions relative to the block, so a
+caret report re-aligns only the block typed in.
+
+**Between two characters** a position maps to just after the one before it when that one is
+matched — the caret after typed text is after that text, before any closing delimiter — else to
+just before the one after it; after a matched line break, before the next character, so a
+wrapped list item's second line starts after its indentation. From the source back, the same
+two rules in the same order: for every text position the directions agree (the property test
+walks every one, LF and CRLF, untouched and re-serialized), except where the page has more
+positions than the source has characters — two spaces the serializer writes as one.
+
+**Atoms map to their whole slice.** The position before a source block, an injected block,
+the front matter or a rule is its slice's start, the position after it the end of its last
+line; a source position inside it maps before it, approximately.
+
+**Nothing throws.** A position that is none (outside the document, not an integer) answers
+`null`. One that can only be placed near answers the nearest place with `approximate: true`:
+an empty paragraph, the end of a heading after a badge, a position between a list's items, a
+source position inside a delimiter, on a blank line between blocks, in the tail, past a line's
+end or the text's, or inside an atom, and anything in a greedily aligned block.
+
+**On the host** (`host/positions.ts`), `VisualEditorSession.toSource(pos)` and
+`toPage(position)` answer through `HostPositions`, the map of the host's parse of the text the
+page holds, parsed once per text, and `undefined` while the document holds another text (a
+change on its way to the page). The parse's nodes are the page's wherever the page's text reads
+back as itself, which is the serializer's promise; until a re-sync, a page edit that did not
+could hold its positions elsewhere, which the page's own answers, from its own document, cannot.
+They are for what comes next — completion, diagnostics and hover in the page — and have no UI yet.
+
+**The caret** (`webview/caret.ts`). `caretOf` answers for a text selection whose head is in
+text, `null` for a node selection (an atom, an image, a badge), a gap cursor, Ctrl+A, and a
+mapping that is only approximate: a caret that may be wrong is not reported as right. The page
+reports it 100 ms after the selection or the document last changed, and only while the host
+holds the page's text: while an edit waits in its delay or a save commits, the report waits
+and goes right after the edit that carries it (`flush`, as the code-action question does), so
+the host reads it against the text it holds. It is sent only when it changed, and again after
+every `document`. The host takes it in its queue, behind that edit, only for the document it
+last posted and while the document holds the page's text, and forgets it when another writer's
+change arrives, when it posts a document, and in the error state.
+
+### The active editor and its caret
+
+A command Req Explorer runs from the palette without arguments takes the active document, and
+the requirement at the caret, from `vscode.window.activeTextEditor` — which a custom editor is
+not, and VS Code has no API saying a custom editor is active or where its caret is. The editor
+that owns the caret says it: `activate` returns, beside `extendMarkdownIt`,
+
+```ts
+visualEditor: {
+    /** The Visual Editor that has focus, if one does: its document uri and the caret's source position. */
+    active(): { uri: vscode.Uri; caret: vscode.Position | undefined } | undefined;
+    onDidChangeActive: vscode.Event<{ uri: vscode.Uri; caret: vscode.Position | undefined } | undefined>;
+}
+```
+
+`caret` is a position in the document's text: 0-based line and UTF-16 character, as every
+`vscode.Position`, so it can be handed to `document.offsetAt` or compared with a symbol's range
+unchanged. It is `undefined` when the selection is in an atom (a source block, an injected
+block, the front matter, a badge) or is no caret (Ctrl+A, a gap cursor), when the mapping is
+only approximate, and while a change the page has not seen is on its way to it (above).
+`active()` is `undefined` when no Visual Editor has the focus — a text editor has it, or
+nothing does — and `onDidChangeActive` fires when another Visual Editor or none takes the focus,
+and when the active one's caret changes. The web build exports the same shape; there no editor
+is ever active.
+
+`host/activeEditor.ts` (`ActiveVisualEditorTracker`) follows every editor's `WebviewPanel`:
+the one whose panel is `active` — VS Code's own flag, updated through `onDidChangeViewState` —
+is the active editor, until its panel stops being active or is closed; the provider tells it of
+each panel as it resolves one. What is exported is the two members, not the tracker. A reader
+takes it from `vscode.extensions.getExtension('jackdmf.markdown-extended-pro')` — `exports`,
+or what `activate()` resolves with. The extension activates on any Markdown file and on the
+Visual Editor itself (`onLanguage:markdown`, `onCustomEditor:…`), so it is active whenever a
+Visual Editor can be; a reader that finds it inactive has no Visual Editor to ask about.
 
 ### Styles
 
