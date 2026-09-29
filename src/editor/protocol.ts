@@ -134,7 +134,58 @@ export type HostMessage =
      * extension offering it wrote it (`IncludeChoice.insert`, one line without
      * its terminator); absent when they dismissed the pick or nothing was offered.
      */
-    | { type: 'includeChosen'; requestId: number; insert?: string };
+    | { type: 'includeChosen'; requestId: number; insert?: string }
+    /**
+     * The answer to `linkChoices`: what a link's (or an image's) field may
+     * complete its value with, best first and capped (`host/linkChoices.ts`).
+     * The field shows the answer to its latest query only.
+     */
+    | { type: 'linkChoicesResult'; requestId: number; items: LinkChoice[] }
+    /**
+     * The answer to `pickImage` and `insertFiles`: each file as the page
+     * inserts it, its path relative to the document (`LinkedFile`). Empty
+     * when the dialog was dismissed or no file could be linked.
+     */
+    | { type: 'filesChosen'; requestId: number; files: LinkedFile[] }
+    /**
+     * The answer to `saveImage`: where the host wrote the pasted bitmap,
+     * relative to the document, as the image's `src` is written; absent when
+     * it could not be written (the host says why in its log and a message).
+     */
+    | { type: 'imageSaved'; requestId: number; path?: string }
+    /**
+     * The answer to `resolveImages`: for each asked `src` the host could
+     * resolve to a file, the address the page loads it from
+     * (`webview.asWebviewUri`). A `src` left out is shown as written — a web
+     * address, a `data:` image, one that names no file. Display only: the
+     * node keeps the `src` the file holds.
+     */
+    | { type: 'imagesResolved'; requestId: number; sources: Record<string, string> };
+
+/**
+ * One completion of a link's field: `value` is what the field then holds — a
+ * path relative to the document, percent-encoded as a destination is written,
+ * or `#anchor` after one — `label` what the list shows, `detail` a heading's
+ * text. `kind` says what it names.
+ */
+export interface LinkChoice {
+    value: string;
+    label: string;
+    detail?: string;
+    kind: 'file' | 'heading';
+}
+
+/**
+ * A file the page links to: `src` its path relative to the document (POSIX
+ * separators, percent-encoded as a destination is written), `alt` its name
+ * without the extension, `image` whether it is inserted as an image — any
+ * other file becomes a link named by its file name.
+ */
+export interface LinkedFile {
+    src: string;
+    alt: string;
+    image: boolean;
+}
 
 /** Webview → host. */
 export type WebviewMessage =
@@ -191,7 +242,31 @@ export type WebviewMessage =
      * **Change snippet…**). Sent after any pending edit, so a provider that
      * reads the document reads the page's text.
      */
-    | { type: 'pickInclude'; requestId: number; replace?: { blockIndex: number } };
+    | { type: 'pickInclude'; requestId: number; replace?: { blockIndex: number } }
+    /**
+     * Completions for a link's field holding `query`: workspace files relative
+     * to the document (Markdown first), the current document's headings for a
+     * `#…`, a target file's headings for `path#…`. With `images`, image files
+     * only (an image's path). Answered with `linkChoicesResult`.
+     */
+    | { type: 'linkChoices'; requestId: number; query: string; images?: true }
+    /** Ask for an image file in VS Code's open dialog (**Insert → Image…**); answered with `filesChosen`. */
+    | { type: 'pickImage'; requestId: number }
+    /**
+     * Files dropped or pasted into the page — VS Code's `resourceurls`, a
+     * `text/uri-list`, a `File` with a path — as uris (or file-system paths);
+     * the host makes each relative to the document. Answered with `filesChosen`.
+     */
+    | { type: 'insertFiles'; requestId: number; uris: string[] }
+    /**
+     * A bitmap pasted from the clipboard (a screenshot), `bytes` base64: the
+     * host writes it beside the document — where `markdown.copyFiles.destination`
+     * says, else `images/<document>-<yyyymmdd-hhmmss>.<ext>` — and answers with
+     * `imageSaved`.
+     */
+    | { type: 'saveImage'; requestId: number; bytes: string; suggestedName: string }
+    /** Where the page may load these images' `src` from; answered with `imagesResolved`. */
+    | { type: 'resolveImages'; requestId: number; srcs: string[] };
 
 /**
  * What an extension offering includes exports beside `extendMarkdownIt`

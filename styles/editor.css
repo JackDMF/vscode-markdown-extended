@@ -438,6 +438,57 @@
 }
 
 /*
+ * A link's field completes: the files and headings the host offers, listed
+ * under the field as VS Code's suggest widget lists them. Inside the bar, so it
+ * moves with it; positioned from the field's left edge by inlineField.ts.
+ */
+.mep-completions {
+    position: absolute;
+    top: 100%;
+    z-index: 15;
+    box-sizing: border-box;
+    max-width: min(60ch, 90vw);
+    max-height: 14em;
+    overflow-y: auto;
+    margin-top: 2px;
+    padding: 2px 0;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: 12px;
+    line-height: 20px;
+    color: var(--vscode-editorSuggestWidget-foreground, var(--vscode-foreground, CanvasText));
+    background: var(--vscode-editorSuggestWidget-background, var(--vscode-editorWidget-background, Canvas));
+    border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-editorWidget-border, #8888));
+    border-radius: 3px;
+    box-shadow: 0 1px 4px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+}
+
+.mep-completion {
+    display: flex;
+    gap: 8px;
+    padding: 0 8px;
+    overflow: hidden;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.mep-completion:hover { background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15)); }
+.mep-completion.mep-chosen {
+    color: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground, inherit));
+    background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground, rgba(0, 120, 212, 0.25)));
+}
+
+.mep-completion-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mep-completion-detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--vscode-descriptionForeground, #888);
+}
+
+/*
  * The caret hint: why an edit was refused (a warning's accent), or what a verb
  * did ("Note removed — Ctrl+Z", neutral), beside the caret for a moment.
  */

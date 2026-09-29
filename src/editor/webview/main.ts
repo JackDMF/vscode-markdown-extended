@@ -15,10 +15,12 @@ import { Node } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
-import type { CodeActionItem, HostMessage, LensRow, WebviewMessage } from '../protocol';
+import type { CodeActionItem, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
 import { showHint } from './hint';
+import { ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
+import { imageLockReason, insertFilesTransaction } from './objects';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
 import { lensPlugin, lensVerbsAt, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
@@ -134,7 +136,14 @@ function lineAt(pos: number): number {
     return (prefix.match(/\n/g) ?? []).length + (gap.match(/\n/g) ?? []).length;
 }
 
+/** Where each image's `src` is loaded from, as the host resolves it (`images.ts`). */
+const imageSources = new ImageSources(
+    (requestId, srcs) => post({ type: 'resolveImages', requestId, srcs }),
+    () => mount,
+);
+
 const port: EditorPort = {
+    showImages: container => showImagesIn(container, imageSources),
     openLink: href => {
         // A heading or footnote of this document is in the page: scrolled to, not opened.
         if (href.startsWith('#') && followFragment(href.slice(1))) {
@@ -378,6 +387,118 @@ function applyInclude(requestId: number, insert: string | undefined): void {
     flush(false, true);
 }
 
+// ---------------------------------------------------------------------------
+// Links and images: the host completes, chooses, relativizes and saves
+// ---------------------------------------------------------------------------
+
+let linkSeq = 0;
+/** The completions asked of the host, by request: an answer to none of them is dropped. */
+const pendingLinkChoices = new Map<number, (items: LinkChoice[]) => void>();
+let fileSeq = 0;
+/** The files asked of the host (the open dialog, a drop, a pasted bitmap), by request, with what to do with the answer. */
+const pendingFiles = new Map<number, (files: LinkedFile[]) => void>();
+
+/**
+ * Completions for a link's field. A `#` query names this document's headings,
+ * which the host reads from its text: the pending edit goes first, so a
+ * heading typed a moment ago is among them.
+ */
+function linkChoices(query: string, images: boolean): Promise<LinkChoice[]> {
+    if (!view) {
+        return Promise.resolve([]);
+    }
+    if (query.includes('#')) {
+        flush();
+    }
+    const requestId = ++linkSeq;
+    return new Promise(resolve => {
+        pendingLinkChoices.set(requestId, resolve);
+        post({ type: 'linkChoices', requestId, query, ...(images ? { images: true as const } : {}) });
+    });
+}
+
+function applyLinkChoices(requestId: number, items: LinkChoice[]): void {
+    const resolve = pendingLinkChoices.get(requestId);
+    pendingLinkChoices.delete(requestId);
+    resolve?.(items);
+}
+
+/** Ask the host for files (`pickImage`, `insertFiles`); `chosen` gets the answer while the page still shows a document. */
+function askFiles(message: { type: 'pickImage' } | { type: 'insertFiles'; uris: string[] }, chosen: (files: LinkedFile[]) => void): void {
+    if (!view) {
+        return;
+    }
+    const requestId = ++fileSeq;
+    pendingFiles.set(requestId, chosen);
+    post({ ...message, requestId });
+}
+
+function applyFiles(requestId: number, files: LinkedFile[]): void {
+    const chosen = pendingFiles.get(requestId);
+    pendingFiles.delete(requestId);
+    if (chosen && view) {
+        chosen(files);
+    }
+}
+
+/** Dropped or pasted files, as the host linked them, at the selection as it is when the answer comes. */
+function insertLinkedFiles(files: readonly LinkedFile[]): void {
+    if (!view || files.length === 0) {
+        return;
+    }
+    const tr = insertFilesTransaction(view.state, files);
+    if (tr === null) {
+        showHint(view, imageLockReason(view.state) ?? 'The file cannot be inserted here.', 'refusal');
+        return;
+    }
+    // A single image is selected by the transaction, for **Insert → Image…**'s alt field; here the caret goes after it.
+    view.dispatch(tr.setSelection(TextSelection.create(tr.doc, tr.selection.to)));
+    view.focus();
+}
+
+/** The name of a saved image's file, without its extension: its alt text. */
+function stemOfPath(path: string): string {
+    let name = path.slice(path.lastIndexOf('/') + 1);
+    try {
+        name = decodeURIComponent(name);
+    } catch {
+        // As written.
+    }
+    const dot = name.lastIndexOf('.');
+    return dot > 0 ? name.slice(0, dot) : name;
+}
+
+/** A pasted or dropped bitmap: the host saves it beside the document, and the path it answers with is inserted. */
+function saveBitmap(file: File): void {
+    if (!view) {
+        return;
+    }
+    const requestId = ++fileSeq;
+    pendingFiles.set(requestId, insertLinkedFiles);
+    readBase64(file).then(bytes => {
+        if (pendingFiles.has(requestId)) {
+            post({ type: 'saveImage', requestId, bytes, suggestedName: file.name || 'image.png' });
+        }
+    }, () => {
+        pendingFiles.delete(requestId);
+        if (view) {
+            showHint(view, 'The pasted image could not be read.', 'refusal');
+        }
+    });
+}
+
+function applySavedImage(requestId: number, path: string | undefined): void {
+    applyFiles(requestId, path === undefined ? [] : [{ src: path, alt: stemOfPath(path), image: true }]);
+}
+
+/** Put the caret where a file was dropped, so the answer goes in there. */
+function placeDrop(target: EditorView, event: DragEvent): void {
+    const at = target.posAtCoords({ left: event.clientX, top: event.clientY });
+    if (at) {
+        target.dispatch(target.state.tr.setSelection(Selection.near(target.state.doc.resolve(at.pos))).setMeta('addToHistory', false));
+    }
+}
+
 /** Scroll to the element of the document with this id; false when the page has none. */
 function followFragment(fragment: string): boolean {
     let id = fragment;
@@ -473,6 +594,7 @@ const nodeViews: Record<string, NodeViewConstructor> = {
     inline_atom: node => new InlineAtomView(node, port),
     front_matter: node => new FrontMatterView(node),
     heading: node => new HeadingView(node),
+    image: node => new ImageView(node, imageSources),
 };
 /* eslint-enable @typescript-eslint/naming-convention */
 
@@ -491,6 +613,8 @@ const plugins = [
         requestRender: src => port.requestRender(src),
         includesOffered: () => includesOffered,
         pickInclude: () => pickInclude(null),
+        linkChoices,
+        pickImage: chosen => askFiles({ type: 'pickImage' }, chosen),
     }),
     objectToolbarPlugin({
         openSourceAt: pos => post({ type: 'openSource', line: lineAt(pos) }),
@@ -504,8 +628,13 @@ const plugins = [
         runLens: id => runBehindEdit({ type: 'runLens', id }),
         includesOffered: () => includesOffered,
         pickInclude: pos => pickInclude(pos),
+        linkChoices,
     }),
     lensPlugin(id => runBehindEdit({ type: 'runLens', id })),
+    fileDropPlugin({
+        insertFiles: uris => askFiles({ type: 'insertFiles', uris }, insertLinkedFiles),
+        saveImage: saveBitmap,
+    }, placeDrop),
 ];
 
 /** Room above the caret for the sticky toolbar when ProseMirror scrolls the selection into view. */
@@ -620,6 +749,11 @@ function showError(message: string): void {
     view = undefined;
     current = undefined;
     hostText = undefined;
+    // An answer for the document this page no longer shows is dropped.
+    pendingFiles.clear();
+    pendingLinkChoices.forEach(resolve => resolve([]));
+    pendingLinkChoices.clear();
+    imageSources.reset();
     mount.replaceChildren();
     banner?.remove();
     banner = document.createElement('div');
@@ -692,6 +826,18 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'includeChosen':
             applyInclude(msg.requestId, msg.insert);
+            break;
+        case 'linkChoicesResult':
+            applyLinkChoices(msg.requestId, msg.items);
+            break;
+        case 'filesChosen':
+            applyFiles(msg.requestId, msg.files);
+            break;
+        case 'imageSaved':
+            applySavedImage(msg.requestId, msg.path);
+            break;
+        case 'imagesResolved':
+            imageSources.resolved(msg.requestId, msg.sources);
             break;
     }
 });

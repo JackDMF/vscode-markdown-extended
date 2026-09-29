@@ -155,7 +155,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class']);
         assert.deepStrictEqual(byMenu('annotation'), ['sidenote', 'marginal-note', 'left-sidebar', 'right-sidebar', 'footnote-reference']);
         assert.deepStrictEqual(byMenu('insert'),
-            ['horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents', 'include']);
+            ['link', 'image', 'horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents', 'include']);
     });
 
     test('the preview card\'s class is the one both stylesheets name', () => {

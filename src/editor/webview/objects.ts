@@ -31,7 +31,7 @@
  * offer for it (`isTopLevelBlock`), and shows only when there are some.
  */
 import { liftTarget } from 'prosemirror-transform';
-import { Mark, Node, ResolvedPos } from 'prosemirror-model';
+import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { endsWithAttrsLiteral, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
@@ -323,14 +323,92 @@ export function removeLinkTransaction(state: EditorState, link: Extract<EditorOb
     return tr.setSelection(TextSelection.create(tr.doc, link.to)).scrollIntoView();
 }
 
-/** The image at `pos` showing `src` instead, its alt text and title kept. `null` for an empty or unchanged source. */
-export function changeImageTransaction(state: EditorState, pos: number, src: string): Transaction | null {
-    const node = state.doc.nodeAt(pos);
-    const next = src.trim();
-    if (!node || node.type !== nodes.image || next === '' || next === node.attrs.src) {
+/**
+ * Why a link cannot be made at the selection, or `null`: it needs a caret or a
+ * selection within one textblock that is not code (a link is a mark on text).
+ */
+export function linkLockReason(state: EditorState): string | null {
+    const sel = state.selection;
+    const ok = sel instanceof TextSelection && sel.$from.sameParent(sel.$to)
+        && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code;
+    return ok ? null : 'Put the caret in text, or select text within one paragraph, heading or list item (not code), to link it.';
+}
+
+/** Why an image cannot be put at the selection, or `null`: it goes where text could be typed, and not in code. */
+export function imageLockReason(state: EditorState): string | null {
+    const sel = state.selection;
+    const ok = sel instanceof TextSelection && sel.$from.sameParent(sel.$to)
+        && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code;
+    return ok ? null : 'Put the caret in text (not code) to insert an image there.';
+}
+
+/**
+ * A link to `href` made at the selection: selected text is linked as it is;
+ * at a caret, `text` is inserted linked — the address itself when `text` is
+ * empty — with the marks the caret carries, and the caret after it. `null` for
+ * an empty href, a selection a link cannot be made at (`linkLockReason`), or a
+ * link a note around it could not hold.
+ */
+export function insertLinkTransaction(state: EditorState, text: string, href: string): Transaction | null {
+    const target = href.trim();
+    if (target === '' || linkLockReason(state) !== null) {
         return null;
     }
-    const tr = state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: next });
+    const link = editorSchema.marks.link.create({ href: target });
+    const { from, to, empty } = state.selection;
+    let tr: Transaction;
+    if (empty) {
+        const content = text === '' ? target : text;
+        const marks = link.addToSet((state.storedMarks ?? state.selection.$from.marks()).filter(m => m.type !== link.type));
+        tr = state.tr.replaceSelectionWith(editorSchema.text(content, marks), false);
+        tr.setSelection(TextSelection.create(tr.doc, from + content.length));
+    } else {
+        tr = state.tr.removeMark(from, to, editorSchema.marks.link).addMark(from, to, link);
+    }
+    return noteRefusal(tr) === null ? tr.scrollIntoView() : null;
+}
+
+/**
+ * The files the host chose (`LinkedFile`) put at the selection: an image by
+ * its path, its alt text the file's stem; any other file as a link named by
+ * its file name; a space between two. The selection is replaced; with one
+ * image, it is selected afterwards (its alt text is asked for next), else the
+ * caret goes after them. `null` where nothing can go (`imageLockReason`), or
+ * where a note around the selection could not hold it.
+ */
+export function insertFilesTransaction(state: EditorState, files: readonly { src: string; alt: string; image: boolean }[]): Transaction | null {
+    if (files.length === 0 || imageLockReason(state) !== null) {
+        return null;
+    }
+    const marks = (state.storedMarks ?? state.selection.$from.marks()).filter(m => m.type !== editorSchema.marks.link);
+    const inserted: Node[] = [];
+    files.forEach((file, i) => {
+        if (i > 0) {
+            inserted.push(editorSchema.text(' ', marks));
+        }
+        inserted.push(file.image
+            ? editorSchema.nodes.image.create({ src: file.src, alt: file.alt }, null, marks)
+            : editorSchema.text(file.alt || file.src, editorSchema.marks.link.create({ href: file.src }).addToSet(marks)));
+    });
+    const from = state.selection.from;
+    const tr = state.tr.replaceSelection(new Slice(Fragment.from(inserted), 0, 0));
+    const size = inserted.reduce((n, node) => n + node.nodeSize, 0);
+    tr.setSelection(files.length === 1 && files[0].image ? NodeSelection.create(tr.doc, from) : TextSelection.create(tr.doc, from + size));
+    return noteRefusal(tr) === null ? tr.scrollIntoView() : null;
+}
+
+/**
+ * The image at `pos` with `alt` and `src` instead, its title kept — its
+ * **Edit image…**. `null` when there is no image there, for an empty source,
+ * or when nothing changes.
+ */
+export function editImageTransaction(state: EditorState, pos: number, alt: string, src: string): Transaction | null {
+    const node = state.doc.nodeAt(pos);
+    const next = src.trim();
+    if (!node || node.type !== nodes.image || next === '' || (next === node.attrs.src && alt === (node.attrs.alt ?? ''))) {
+        return null;
+    }
+    const tr = state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: next, alt: alt === '' ? null : alt });
     return tr.setSelection(NodeSelection.create(tr.doc, pos)).scrollIntoView();
 }
 

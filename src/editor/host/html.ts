@@ -26,9 +26,11 @@ function fontVariables(): string {
 /**
  * The folders the webview may load from: this extension (the script, the
  * editor's stylesheet and the codicon font under `dist/codicons`), the built-in Markdown extension (the preview's
- * stylesheets) and the workspace folders, for what a rendered block links to.
+ * stylesheets), the workspace folders and the document's own folder — for the
+ * images the document shows, whose `src` the page loads through
+ * `asWebviewUri` (`host/images.ts`), a document outside any workspace included.
  */
-export function localResourceRoots(extensionUri: vscode.Uri): vscode.Uri[] {
+export function localResourceRoots(extensionUri: vscode.Uri, documentUri?: vscode.Uri): vscode.Uri[] {
     const roots = [extensionUri];
     const builtin = vscode.extensions.getExtension(BUILTIN_MARKDOWN_EXTENSION);
     if (builtin) {
@@ -36,6 +38,14 @@ export function localResourceRoots(extensionUri: vscode.Uri): vscode.Uri[] {
     }
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
         roots.push(folder.uri);
+    }
+    if (documentUri) {
+        const dir = vscode.Uri.joinPath(documentUri, '..');
+        const inside = (root: vscode.Uri) => root.scheme === dir.scheme && root.authority === dir.authority
+            && (dir.path === root.path || dir.path.startsWith(root.path.endsWith('/') ? root.path : `${root.path}/`));
+        if (!roots.some(inside)) {
+            roots.push(dir);
+        }
     }
     return roots;
 }

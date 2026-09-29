@@ -38,17 +38,17 @@ import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
-import { InlineChoice, InlineField } from './inlineField';
+import { FieldStep, InlineChoice, InlineField, fieldHeading } from './inlineField';
 import { NoteNodeName, unwrapNote } from './notes';
 import {
     EditorObject, NOTE_CONVERSION, blockAttrsRefusal, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction,
-    changeImageTransaction, changeLinkTransaction, changeSpanTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
+    changeLinkTransaction, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
-import type { CodeActionItem, LensItem } from '../protocol';
+import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { lensLabelNodes, lensName } from './lenses';
 
 /** What the verbs need from the page. */
@@ -79,6 +79,8 @@ export interface ObjectToolbarHost {
     includesOffered(): boolean;
     /** Ask the host for an include line to replace the directive of the expansion at `pos` with (`main.ts`). */
     pickInclude(pos: number): void;
+    /** What a link's (with `images`, an image's) path may complete to: the host's answer to `linkChoices`. */
+    linkChoices(query: string, images: boolean): Promise<LinkChoice[]>;
 }
 
 /**
@@ -109,8 +111,8 @@ interface Verb {
     refusal?: string | null;
     /** A verb that runs at once. */
     run?(): void;
-    /** A verb that asks for a value first, in the inline field. */
-    field?: { value: string; label: string; commit(value: string): void };
+    /** A verb that asks for a value first, in the inline field — and, when its commit names another step, for that one next. */
+    field?: FieldStep;
     /** A verb that asks for one of a list of values, in the inline choice. */
     choice?: { value: string; label: string; options: readonly { value: string; label: string }[]; commit(value: string): void };
     /** Drawn after a separator: the first of another extension's lenses, or of its code actions. */
@@ -264,19 +266,28 @@ class ObjectBar {
         }
     }
 
-    /** The verb's field — or its choice, for a verb with `options` — in place of the verbs, beside the label. */
+    /**
+     * The verb's field — or its choice, for a verb with `options` — in place of
+     * the verbs, beside the label. A field whose commit names a next step
+     * (**Edit image…**: the alt text, then the path) shows that field next, in
+     * the same place; the bar is redrawn once the last one is in.
+     */
     private openField(verb: Verb, spec: NonNullable<Verb['field']> | NonNullable<Verb['choice']>): void {
         const label = this.el.querySelector('.mep-object-label');
         const make = 'options' in spec
             ? (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
                 new InlineChoice({ choices: spec.options, value: spec.value, label: spec.label, ...callbacks })
             : (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
-                new InlineField({ value: spec.value, label: spec.label, ...callbacks });
+                new InlineField({ value: spec.value, caret: spec.caret, label: spec.label, placeholder: spec.placeholder, complete: spec.complete, ...callbacks });
         const field = make({
             onCommit: value => {
                 this.field = null;
                 this.signature = '';
-                spec.commit(value);
+                const next = spec.commit(value);
+                if (next) {
+                    this.openField(verb, next);
+                    return;
+                }
                 this.events.fieldClosed(true);
             },
             onCancel: reason => {
@@ -290,6 +301,10 @@ class ObjectBar {
         });
         field.el.dataset.verb = verb.id;
         this.field = field;
+        if (label) {
+            // A prefilled field shows no placeholder: the label says what the value is.
+            label.textContent = fieldHeading(this.el.getAttribute('aria-label') ?? '', spec.label);
+        }
         this.el.replaceChildren(...(label ? [label] : []), field.el);
         field.focus();
     }
@@ -781,12 +796,14 @@ class ObjectToolbarView implements PluginView {
                     verbs: [
                         { id: 'open-link', label: 'Open', title: `Open ${href} (as Ctrl+click does).`, run: () => host.openLink(href) },
                         {
-                            id: 'change-url',
-                            label: 'Change URL',
-                            title: 'Link the text to another address (Enter to apply, Esc to cancel).',
+                            // The field Ctrl+K and Insert → Link… open in a link, with the same completion.
+                            id: 'edit-link',
+                            label: 'Edit link…',
+                            title: 'Link the text to another address: a file, a #heading, a web address (Enter to apply, Esc to cancel).',
                             field: {
                                 value: href,
-                                label: 'URL',
+                                label: 'Address',
+                                complete: query => host.linkChoices(query, false),
                                 commit: value => this.act(object, current => {
                                     const tr = current.kind === 'link' ? changeLinkTransaction(view.state, current, value) : null;
                                     if (tr) {
@@ -813,26 +830,33 @@ class ObjectToolbarView implements PluginView {
             }
             case 'image': {
                 const src = object.node.attrs.src as string;
+                const alt = (object.node.attrs.alt as string | null) ?? '';
                 return {
                     label: 'Image',
-                    title: src,
+                    title: alt === '' ? src : `${alt}: ${src}`,
                     verbs: [
                         {
-                            id: 'change-source',
-                            label: 'Change source',
-                            title: 'Show another image here, its alt text kept (Enter to apply, Esc to cancel).',
+                            id: 'edit-image',
+                            label: 'Edit image…',
+                            title: 'Its alt text, then its path, each in the field (Enter to go on and apply, Esc to cancel).',
                             field: {
-                                value: src,
-                                label: 'Image source',
-                                commit: value => this.act(object, current => {
-                                    const tr = changeImageTransaction(view.state, current.from, value);
-                                    if (tr) {
-                                        dispatch(tr);
-                                    }
-                                    return tr !== null;
+                                value: alt,
+                                label: 'Alt text',
+                                commit: nextAlt => ({
+                                    value: src,
+                                    label: 'Image path',
+                                    complete: query => host.linkChoices(query, true),
+                                    commit: nextSrc => this.act(object, current => {
+                                        const tr = editImageTransaction(view.state, current.from, nextAlt, nextSrc);
+                                        if (tr) {
+                                            dispatch(tr);
+                                        }
+                                        return tr !== null;
+                                    }),
                                 }),
                             },
                         },
+                        { id: 'open-image', label: 'Open file', title: `Open ${src} (as Ctrl+click on a link does).`, run: () => host.openLink(src) },
                         { id: 'remove-image', label: 'Remove image', title: 'The image goes from the text.', run: () => this.remove(object, 'Image removed') },
                     ],
                 };

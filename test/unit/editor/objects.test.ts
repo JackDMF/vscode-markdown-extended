@@ -7,8 +7,9 @@ import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import {
-    EditorObject, changeImageTransaction, changeLinkTransaction, convertNoteRefusal, convertNoteTransaction, currentObject, deleteObjectTransaction,
-    isTopLevelBlock, noteSource, objectAtSelection, removeLinkTransaction,
+    EditorObject, changeLinkTransaction, convertNoteRefusal, convertNoteTransaction, currentObject, deleteObjectTransaction,
+    editImageTransaction, imageLockReason, insertFilesTransaction, insertLinkTransaction, isTopLevelBlock, linkLockReason, noteSource, objectAtSelection,
+    removeLinkTransaction,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { inlineSourceTransaction } from '../../../src/editor/webview/toolbar/commands';
@@ -195,15 +196,67 @@ suite('Editor objects: a link\'s and an image\'s verbs', () => {
         assert.strictEqual(objectAtSelection(removed), null);
     });
 
-    test('Change source shows another image, its alt text kept; Remove image takes it out', () => {
+    test('Edit image… with the alt text kept shows another image; Remove image takes it out', () => {
         const state = nodeSelected(stateOf('An ![pic](p.png "T") here.\n'), 'image');
         const image = objectHere(state);
-        const changed = state.apply(changeImageTransaction(state, image.from, 'q.png') as never);
+        const changed = state.apply(editImageTransaction(state, image.from, 'pic', 'q.png') as never);
         assert.strictEqual(text(changed), 'An ![pic](q.png "T") here.\n');
         assert.ok(changed.selection instanceof NodeSelection, 'the image stays selected');
         const removed = state.apply(deleteObjectTransaction(state, image));
         // The two spaces left are written as one: a run of spaces is one in HTML.
         assert.strictEqual(text(removed), 'An here.\n');
+    });
+
+    test('Edit image… sets the alt text and the path, the title kept; nothing changed is no transaction', () => {
+        const state = nodeSelected(stateOf('An ![pic](p.png "T") here.\n'), 'image');
+        const image = objectHere(state);
+        const edited = state.apply(editImageTransaction(state, image.from, 'A picture', 'images/q%20r.png') as never);
+        assert.strictEqual(text(edited), 'An ![A picture](images/q%20r.png "T") here.\n');
+        assert.ok(edited.selection instanceof NodeSelection);
+        assert.strictEqual(editImageTransaction(state, image.from, 'pic', 'p.png'), null, 'unchanged');
+        assert.strictEqual(editImageTransaction(state, image.from, 'pic', ' '), null, 'no path');
+    });
+});
+
+suite('Editor objects: making a link, inserting files', () => {
+    const select = (state: EditorState, needle: string) => {
+        const from = posOf(state.doc, needle);
+        return state.apply(state.tr.setSelection(TextSelection.create(state.doc, from, from + needle.length)));
+    };
+
+    test('a link around selected text keeps the text; at a caret the text typed is inserted linked, or the address when none was', () => {
+        const selected = select(stateOf('See the spec here.\n'), 'the spec');
+        assert.strictEqual(linkLockReason(selected), null);
+        assert.strictEqual(text(selected.apply(insertLinkTransaction(selected, '', ' docs/spec.md#scope ') as never)), 'See [the spec](docs/spec.md#scope) here.\n');
+
+        const caret = caretAt(stateOf('See here.\n'), 'here', 0);
+        const typed = caret.apply(insertLinkTransaction(caret, 'the spec', 'spec.md') as never);
+        assert.strictEqual(text(typed), 'See [the spec](spec.md)here.\n');
+        assert.strictEqual(typed.selection.from, posOf(caret.doc, 'here') + 'the spec'.length, 'the caret after the link');
+        assert.strictEqual(text(caret.apply(insertLinkTransaction(caret, '', 'https://example.com') as never)), 'See [https://example.com](https://example.com)here.\n');
+        assert.strictEqual(insertLinkTransaction(caret, 'x', '  '), null, 'no address, no link');
+    });
+
+    test('no link or image in code', () => {
+        const code = caretAt(stateOf('```\ncode\n```\n'), 'code');
+        assert.ok(linkLockReason(code));
+        assert.ok(imageLockReason(code));
+        assert.strictEqual(insertLinkTransaction(code, 'x', 'y.md'), null);
+        assert.strictEqual(insertFilesTransaction(code, [{ src: 'a.png', alt: 'a', image: true }]), null);
+    });
+
+    test('files go in at the caret: an image by its path and stem, one selected for its alt text; another file as a link named by its name', () => {
+        const caret = caretAt(stateOf('Before after.\n'), 'after', 0);
+        const one = caret.apply(insertFilesTransaction(caret, [{ src: 'images/a%20b.png', alt: 'a b', image: true }]) as never);
+        assert.strictEqual(text(one), 'Before ![a b](images/a%20b.png)after.\n');
+        assert.ok(one.selection instanceof NodeSelection && one.selection.node.type.name === 'image', 'the one image is selected');
+
+        const two = caret.apply(insertFilesTransaction(caret, [
+            { src: 'images/x.png', alt: 'x', image: true },
+            { src: '../docs/spec.pdf', alt: 'spec.pdf', image: false },
+        ]) as never);
+        assert.strictEqual(text(two), 'Before ![x](images/x.png) [spec.pdf](../docs/spec.pdf)after.\n');
+        assert.ok(two.selection instanceof TextSelection, 'the caret after them');
     });
 });
 

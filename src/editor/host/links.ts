@@ -101,11 +101,12 @@ export function slugBuilder(): (heading: string) => string {
     };
 }
 
-/** A heading a fragment can name: its 0-based line, its explicit `{#id}`, its slug. */
+/** A heading a fragment can name: its 0-based line, its explicit `{#id}`, its slug, and the text the slug is made of. */
 export interface HeadingAnchor {
     line: number;
     id: string | null;
     slug: string;
+    text: string;
 }
 
 /** A heading's text as the built-in slugs it: the text, emoji and inline code of its inline children. */
@@ -130,7 +131,8 @@ export function headingAnchors(md: MarkdownIt, text: string, env: Environment): 
     const anchors: HeadingAnchor[] = [];
     tokens.forEach((token, i) => {
         if (token.type === 'heading_open' && token.map) {
-            anchors.push({ line: token.map[0], id: token.attrGet('id'), slug: slug(headingText(tokens[i + 1])) });
+            const text = headingText(tokens[i + 1]);
+            anchors.push({ line: token.map[0], id: token.attrGet('id'), slug: slug(text), text: text.trim() });
         }
     });
     return anchors;

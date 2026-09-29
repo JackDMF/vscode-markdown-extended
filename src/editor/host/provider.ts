@@ -32,7 +32,7 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
         const webview = panel.webview;
         webview.options = {
             enableScripts: true,
-            localResourceRoots: localResourceRoots(this.extensionUri),
+            localResourceRoots: localResourceRoots(this.extensionUri, document.uri),
         };
         webview.html = editorPage(webview, this.extensionUri, document.uri);
         const session = new VisualEditorSession(document, webview, {
