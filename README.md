@@ -373,6 +373,14 @@ And these blocks, edited in place with their content as rich text:
   a line of its own under it, under a list, on a fence's opening line, after a rule — are
   kept verbatim and written back where they stood; the block is drawn with them. A
   heading's `{#anchor}` stays as it always was.
+- **Pipe tables** — a header row, the delimiter row with its `:` alignment, body rows —
+  with each cell's text edited like a paragraph's (emphasis, code, links, images, highlight,
+  keys, sidebars). Rows and columns are added, deleted and aligned from the table's bar
+  (below). A changed table is written as **Format Table** writes one: pipes lined up, every
+  cell padded to its column, `|` in a cell as `\|`; an untouched one byte for byte. A table
+  using markdown-it-multimd-table's extensions — a colspan (`||`), a rowspan (`^^`), a
+  multi-line row, a caption, no header row, a second body — stays a source block, labelled
+  _Source · multimd table_.
 
 Format them from the toolbar (below) or with the keys a Markdown author already knows:
 
@@ -414,6 +422,15 @@ To remove, convert or edit a note as a whole, use its bar (below).
 | `Enter` in an empty last paragraph | Leaves it: the caret goes to a new paragraph after it |
 | `Backspace` at the start of an empty first paragraph | Removes the admonition or container, keeping its content |
 
+**Inside a table:**
+
+| Keys | Does |
+| ---- | ---- |
+| `Tab` / `Shift+Tab` | To the next / previous cell, its text selected; `Tab` in the last cell adds a row |
+| `Enter` | To the cell below; in the last row adds a row; in an empty last row leaves the table |
+| `Shift+Enter` | Refused: a cell holds one line |
+| Arrow keys, a drag across cells | Move between cells, select cells |
+
 ### Every object carries its verbs
 
 A note, a link, an image, a source block, an included snippet: each is an *object*, and
@@ -431,7 +448,8 @@ never covers the line you are typing on.
 | Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Remove admonition, keep content** |
 | Container | while the caret is in it, after a moment | **Change name/info** · **Remove container, keep content** |
 | A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Edit block attributes** (empty removes them) |
-| Source block — a table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
+| Table | while the caret is in it, after a moment; the caret's column is tinted | **Row ▾** (insert above, insert below, delete) · **Column ▾** (insert left, insert right, delete) · **Align ▾** (left, center, right; the current one marked) · **Edit source** · **Delete table** |
+| Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
 | Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Change snippet…** · **Show in text editor** · **Delete directive** |
 | Front matter, a status badge, a summary table | as above | its name only |
 | Heading | while the caret is in it, after a moment — only when another extension offers actions for it | the actions alone; a requirement heading is named by its id |
@@ -591,7 +609,10 @@ each its own look — underlining `_b_`, say, while `*a*` stays italic. The edit
 delimiter you wrote and draws it as the preview does; choosing emphasis on italic text
 swaps `*` for `_` rather than nesting one inside the other.
 
-**The other block constructs go in as source.** A table, a task list, a definition list,
+**Insert → Table makes a table in place**: a header row (`Column 1` … `Column 3`, the first
+one's text selected, so typing names the column) and two empty rows.
+
+**The other block constructs go in as source.** A task list, a definition list,
 an abbreviation, the table of contents and the footnote are edited as Markdown: a block one
 is inserted after the current block as a source block with its **Edit source** box open,
 and the footnote's paragraph becomes a source block rendered as the preview renders it.
@@ -630,7 +651,7 @@ place — each for a reason:
   place, so it cannot be edited there. An expanded snippet's bar offers **Open snippet**,
   which opens the file it came from, and **Change snippet…**, which puts another one in its
   place; the file itself keeps the one directive line.
-- **Tables, raw HTML and the rest of the extended syntax** — the table of contents,
+- **Tables using markdown-it-multimd-table's extensions, raw HTML and the rest of the extended syntax** — the table of contents,
   footnotes and their definitions, definition lists, task lists, abbreviations, reference
   definitions, setext headings — are *source blocks*, and so is a block whose attributes
   the editor could not write back where they stand: on a list item, a link, emphasis, an
@@ -668,8 +689,14 @@ rather than a second heading, so the id and the anchor are never written twice.
 ### Limits
 
 - **Experimental.** Try it on files under version control.
-- **Tables are edited as source**, not cell by cell, and so are the other block
-  constructs listed above.
+- **Only pipe tables are tables.** A table using markdown-it-multimd-table's extensions is
+  edited as source, and so are the other block constructs listed above. A table inside a
+  container, a quote or a list leaves that block a source block. A cell holds one line:
+  no hard break, no sidenote or marginal note (its `|` would end the cell), no code
+  holding a `|`.
+- **The header row looks a little different from the preview.** The editor draws every
+  row in one `<tbody>`, the header's cells as `<th>`; a stylesheet rule written for
+  `thead` does not reach it, and striped rows are striped the other way round.
 - **Containers and admonitions nest one level deep.** A container in a container, or an
   admonition in one, is edited in place; a third level stays a source block. Nested
   containers need a longer outer fence (`::::` around `:::`) — with equal fences the

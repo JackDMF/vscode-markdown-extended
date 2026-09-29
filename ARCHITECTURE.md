@@ -340,8 +340,8 @@ block (`gap`). Every block is one of four kinds:
 | Kind | What | Node | Written back as |
 | --- | --- | --- | --- |
 | `front_matter` | The YAML block at the top | `front_matter` (atom) | Its `src`, always |
-| `editable` | The core: paragraph, heading, lists, blockquote, code, rule, container, admonition — with the inline constructs and the attribute literals below | The matching node, with `src` and `gap` | Its `src` while untouched; serialized by rule once changed |
-| `raw` | Anything else — tables, HTML, the TOC, footnotes, definition and task lists, abbreviations, reference definitions, a setext heading, a note inside a note, an attribute literal the editor cannot write back where it stands, a container or admonition nested past one level, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
+| `editable` | The core: paragraph, heading, lists, blockquote, code, rule, container, admonition, pipe table — with the inline constructs and the attribute literals below | The matching node, with `src` and `gap` | Its `src` while untouched; serialized by rule once changed |
+| `raw` | Anything else — a table using markdown-it-multimd-table's extensions, HTML, the TOC, footnotes, definition and task lists, abbreviations, reference definitions, a setext heading, a note inside a note, an attribute literal the editor cannot write back where it stands, a container or admonition nested past one level, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
 | `injected` | Content the file does not hold at this place | `injected_block` (atom) | An expansion's directive line, or nothing |
 
 `parse.ts` rebuilds the text from the blocks and **throws** when it does not match,
@@ -533,6 +533,101 @@ start of an empty first paragraph lifts the wrapper's blocks out (`unwrapTransac
 same transaction as the bars' *Remove …, keep content*). The toolbar inserts both natively
 (`insertWrapperTransaction`, `insert-wrapper`), and **Span with class** (`attr-span`) asks
 for the literal in the inline field, prefilled `{.}` with the caret after the dot.
+
+### Tables
+
+**Pipe tables are native; multimd's extensions stay raw** (Daniel, 2026-09-29). The engine's
+table rule is markdown-it-multimd-table's, which reads GFM's pipe table and a good deal more.
+The editor edits the GFM subset as a table — a header row, the delimiter row with optional `:`
+alignment, body rows, one line each, inline content in the cells — and leaves every table
+that uses anything else a source block, edited as Markdown exactly as before.
+
+**What stays raw, and how it is told** (`pipeTableNotEditableBecause` in `blocks.ts`). From the
+tokens wherever they show it: a colspan (`||`) or rowspan (`^^`) cell carries a `colspan` or
+`rowspan` attribute, a `+` in the delimiter row a `class`; a caption (`[…]` above or below) is
+`caption_open`; a headerless table has no `thead`, a second header row is a second `tr` in
+it, a second body after a blank line a second `tbody` — the plugin joins tables a blank line
+apart into one; a multi-line row (`\` at a line's end) is a `tr` whose map spans lines, its
+cells holding paragraphs. From the delimiter row's slice where only the source tells: a `=`
+(`|===|`), which the tokens do not show. And a table whose cells hold what a cell cannot
+hold here: a row of another width than the header (the plugin renders it ragged), a
+sidenote or marginal note (below), code holding a `|`, anything that already makes a
+paragraph raw (inline HTML, a footnote reference). A source block that is a table says so
+in its bar — *Source · multimd table*, or *Source · table* for one of the last kind
+(`construct` on `raw_block`) — so the table with no Row and Column menus explains itself
+beside the one that has them. A table inside a container, a quote or a list leaves that
+block a source block, as before: `table` is in its own schema group, top level only.
+
+**The model** (`schema.ts`, *Tables*). `prosemirror-tables`' four nodes, made by its
+`tableNodes`; a cell is a textblock whose content is the paragraph's inline set without a
+hard break (a row is one line — `\` at its end would continue the row, `<br>` is raw HTML)
+and without the two notes with a reference, whose `|` is a cell boundary: escaped as `\|`,
+the notes plugin still ends the reference there, backslash and all. A column's alignment is
+an `align` attribute of every cell of it, drawn as `style="text-align:…"`, as the plugin
+draws it. The library draws every row inside one `<tbody>` (one node has one content hole),
+the header row's cells `<th>`: a stylesheet rule keyed on `thead` does not reach the header
+here, and `tr:nth-child(2n)` counts the header row. Spans and column widths are not Markdown:
+a pasted `colspan` reads as 1, and `columnResizing` is not installed.
+
+**The tidy form** (`serialize.ts`). A changed table is written as the extension's own **Format
+Table** writes one — `tableLines` hands the cells' Markdown to `MDTable` in
+`src/services/table`, so the editor and the text editor's command cannot disagree on what a
+tidy table is: `| cell | cell |`, every cell padded to its column's widest (monospace
+columns, a CJK character two), the column at least as wide as its delimiter needs, the
+delimiter row carrying the colons (`---`, `:--`, `:-:`, `--:`). A cell is its inline Markdown on
+one line, trimmed: `|` in text is `\|`; an empty cell is its padding, never `||` (a colspan);
+a cell reading as a delimiter cell (`---`) has its first character escaped; `^^` is escaped as
+every `^` is. The row scan finds boundaries before any inline parse, so a link's destination
+in a cell has `|` and a backtick percent-encoded, a backtick in its title is escaped, a bare
+link holding either is written inline, and a text's `\` right before a code span is `&#92;`
+(the scan reads `\\` as escaping the backtick after it). Code holding a `|` has no spelling —
+the scan splits a row at it inside a longer fence and not inside a single-backtick one — nor
+has an attribute span's literal holding a `|` or a backtick; the page refuses to make either
+(`unwritableInTable`, a `filterTransaction` in `webview/tables.ts`, as the notes' refusal
+works). Wrapping never touches a table: its serializer writes whole rows, and `wrap.ts` only
+wraps paragraphs. An untouched table is its slice, in whatever form it was written, and the
+tidy form is a fixed point: parsed and written again it is the same text. Found on the way:
+`MDTable` computed a column's width floor before its alignment was known, so Format Table wrote
+a narrow aligned column's delimiter as a bare `:`; setting the alignments now recomputes it.
+
+**The keys** (`webview/tables.ts`, ahead of the Markdown keys). `Tab` moves to the next cell,
+its text selected, and in the last cell adds a row and goes into it; `Shift+Tab` moves back
+and stays in the first cell. `Enter` moves to the cell below — never a line break, since a
+cell holds one line and ProseMirror's split would split the cell into two cells — and in the
+last row adds one; in an empty last row it takes the row away again and leaves the table for
+a new paragraph after it, as `Enter` in an empty last item leaves a list. `Shift+Enter`, a hard
+break, is refused with the reason beside the caret. Arrows, a drag across cells (a
+`CellSelection`, drawn in the selection colour) and pasting cells are `tableEditing`'s; a cell
+has no block type, so the block-type control is locked there (`TABLE_LOCK`).
+
+**The invariants the library does not keep** (`normalizeTables`, run by every verb and
+appended to every other transaction): exactly one header row, the first — a row added above
+the header is the new header, a deleted header row hands the role to the next — and one
+alignment per column, the header cell's. The verbs that add a row copy the alignment of the
+row beside it, so a row added above the header keeps the columns aligned. There is no
+*Toggle header row*: GFM has no table without a header, and multimd's headerless one is raw.
+
+**The bar** (`objectToolbar.ts`, Daniel, 2026-09-29): five slots — `Row ▾` (*Insert above*,
+*Insert below* with `Tab at end` as its keyboard route, *Delete row*), `Column ▾` (*Insert
+left*, *Insert right*, *Delete column*), `Align ▾` (*Left*, *Center*, *Right*, each with its
+delimiter, the current one marked; the marked one chosen again is the default, `---`), a gap,
+then *Edit source* and *Delete table*. The three are set-verbs: a menu opens under the verb on
+a click, `Enter` or `Space`, in the formatting toolbar's menu chrome (`.mep-menu`), the arrows
+move, `Enter` chooses, `Esc` closes back to the verb. They act on the rows and columns the
+selection is in, and while the bar shows the caret's column is tinted — a node decoration on
+its cells — so *left* and *right* have something to be left and right of. Deleting the last row
+or the last column is refused with *Delete table* named instead. *Edit source* replaces the
+table by a source block holding its text (its slice untouched, else the tidy form) and opens
+its box; the commit is parsed by the host again, a table once more if it still is one.
+**Insert → Table** makes a table natively after the current block (`insert-table`): a header
+row `Column 1` … `Column 3` and two empty rows, the first header cell's text selected.
+
+**Positions** (`positions.ts`). A cell is a textblock but not a line: its text starts after a
+`|`. The anchors of a table are a line break before every row but the first, a `|` before
+every cell and after the last, and after the header the delimiter row's `|`s between two line
+breaks; the padding and the dashes are delimiter runs. So a position after a cell's text
+maps before its padding, and back. A code lens on any of a table's lines goes on the table
+block, as on any block (`blockIndexForLine`).
 
 ### Injected content
 
@@ -796,9 +891,9 @@ The layers:
   (`wrapInNote` in `notes.ts`: the selection is the reference, the body a selected
   placeholder). `block` sets the textblock type, or wraps, lifts or converts a list or
   quote. `insert-wrapper` inserts a container or an admonition, `attr-span` makes an
-  attribute span (both above, "Attributes, containers and admonitions"). `wrap-source` and
-  `insert-source` are for what the core does not edit — the footnote, tables and the other
-  block constructs (below).
+  attribute span (both above, "Attributes, containers and admonitions"), `insert-table` a
+  pipe table (above, "Tables"). `wrap-source` and `insert-source` are for what the core does
+  not edit — the footnote and the other block constructs (below).
 - **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
   active and disabled states per action, the block-type face (the current type's name,
   locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
@@ -878,6 +973,7 @@ as opposed to text, which is typed:
 | `image` | an `image` node | the node |
 | `badge` | an `inline_atom` | the node |
 | `container`, `admonition` | the node | the node |
+| `table` | a pipe table the caret is in, or whose cells are selected across | the node |
 | `block_attrs` | a block carrying `attrsSuffix` — not a requirement heading, whose anchor is Req Explorer's | the node |
 | `heading` | a top-level heading that is no `block_attrs` (a requirement heading is one) | the node |
 | `raw_block`, `injected_block`, `front_matter` | the node | the node |
@@ -896,7 +992,7 @@ else.
 pointer is on them or they are selected, at once — as the source block's toolbar did. The
 others are *caret* objects and show it once the caret or the selection has rested in
 them for `INLINE_DELAY_MS` (400 ms), hiding it the moment the caret leaves — a container,
-an admonition, a block with attributes and a heading too, which hold the text being typed and whose bar
+an admonition, a table, a block with attributes and a heading too, which hold the text being typed and whose bar
 would otherwise flash on every click into them; their bar is placed like a block's
 (`isBlockPlaced`); the pointer does
 not show them, because an inline bar that followed the pointer across a paragraph would
@@ -946,7 +1042,13 @@ scrolls with the text; it is placed again on scroll and resize.
   `header`;
 - block with attributes — *Edit block attributes* (the literal replaced in place, its
   placement kept; empty removes it; a heading's anchor follows the literal's id);
+- table — `Row ▾`, `Column ▾`, `Align ▾`, *Edit source*, *Delete table* (above, "Tables"): a
+  verb may be a **set-verb**, a menu of related actions that opens under it (`Verb.menu`),
+  in the formatting toolbar's menu chrome, keyboard-navigable, the current value of a
+  choice marked;
 - source block — *Edit source* (`editRawSourceAt`), *Show in text editor*, *Delete block*;
+  labelled *Source · multimd table* or *Source · table* when it is a table the editor
+  leaves as source;
 - expansion — *Open snippet* (only with `mark.path`), *Show in text editor*, *Delete
   directive* (the node deleted, and with it the one line it writes);
 - badge, other injected content, front matter — the label alone;
@@ -1319,10 +1421,11 @@ and wrong for every `src` block written by a person. So the block's page text �
 UTF-16 code unit and per inline leaf, a hard break matching a line break, an image or a badge
 matching nothing — and its source are aligned as two sequences: an affine-gap alignment
 (Gotoh) that first maximizes the characters matched, then minimizes the gap runs, where a run
-that starts a source line (a line's prefix) is free and ties go to the earlier match. Three
+that starts a source line (a line's prefix) is free and ties go to the earlier match. Four
 kinds of anchor without a page position steer it: a line break before every textblock but the
-first, and a note's markers and separator read from `src/syntax/markers.ts`, so a reference's
-text cannot be matched into the body. It runs in a band around the diagonal, since the source
+first, a note's markers and separator read from `src/syntax/markers.ts`, so a reference's
+text cannot be matched into the body, and a table's line breaks and `|`s (a cell is a
+textblock that starts after a `|`, not on a line; above, "Tables"). It runs in a band around the diagonal, since the source
 is the page's text plus delimiters; a block over the band's budget (a paragraph holding a
 6000-character URL) is aligned greedily and every answer in it is approximate. A block's
 alignment is kept per node and body (`WeakMap`) with positions relative to the block, so a
