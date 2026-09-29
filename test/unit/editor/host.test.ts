@@ -88,6 +88,15 @@ suite('Editor host: engine', () => {
         assert.ok(!md.render('see example.com', {}).includes('<a '));
         assert.ok(md.render('see https://example.com', {}).includes('<a '));
     });
+
+    test('an image keeps its alt text, and a media link or image still embeds', async () => {
+        // markdown-it-html5-embed 0.3.3 rendered every image by the link rule's
+        // default when both of its syntaxes were on in one registration.
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        assert.ok(md.render('![A diagram](a.png)', {}).includes('alt="A diagram"'), md.render('![A diagram](a.png)', {}));
+        assert.ok(md.render('![clip](v.mp4)', {}).includes('<video'));
+        assert.ok(md.render('[talk](t.mp3)', {}).includes('<audio'));
+    });
 });
 
 suite('Editor host: page', () => {
