@@ -17,6 +17,7 @@ import { CommandExportWorkSpace } from './commands/exportWorkspace';
 import { ExtensionContext } from './services/common/extensionContext';
 import { BrowserManager } from './services/browser/browserManager';
 import { registerVisualEditor } from './editor/host/provider';
+import { ActiveVisualEditorTracker } from './editor/host/activeEditor';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -26,6 +27,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     
     // Initialize BrowserManager singleton
     BrowserManager.initialize(ctx);
+
+    // Which Visual Editor has the focus and where its caret is, for other
+    // extensions (`visualEditor` below; ARCHITECTURE.md, "The active editor
+    // and its caret").
+    const visualEditors = new ActiveVisualEditorTracker();
     
     const subscriptions = [
         extensionContext.outputPanel,
@@ -52,11 +58,13 @@ export function activate(ctx: vscode.ExtensionContext) {
             } catch {
                 // Nothing left to report to.
             }
-        }),
+        }, visualEditors),
+        visualEditors,
     ].filter(Boolean);
     
     ctx.subscriptions.push(...subscriptions);
     return {
+        visualEditor: visualEditors.api,
         extendMarkdownIt(md: markdowIt.MarkdownIt) {
             // Filter out null/undefined plugins and add error handling
             plugins

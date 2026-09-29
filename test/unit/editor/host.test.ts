@@ -18,6 +18,7 @@ import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/ho
 import { GITHUB_SLUG_REPLACE } from '../../../src/editor/host/githubSlugRegex';
 import { blockLineRanges } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
+import { ActiveVisualEditor, ActiveVisualEditorTracker, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
 
 const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
 
@@ -1163,6 +1164,274 @@ suite('Editor host: includes', () => {
             engineChanged.dispose();
             // Not saved first: a save's local-history copy races the removal.
             fs.rmSync(source.fsPath, { force: true });
+        }
+    });
+});
+
+type MapMessage = Extract<HostMessage, { type: 'map' }>;
+
+/** How long the suite's session waits for a `mapped` answer. */
+const MAP_TIMEOUT = 300;
+
+suite('Editor host: the caret and source positions', () => {
+    let uri: vscode.Uri;
+    let document: vscode.TextDocument;
+    let webview: FakeWebview;
+    let session: VisualEditorSession;
+    const engineChanged = new vscode.EventEmitter<void>();
+    const carets: (vscode.Position | undefined)[] = [];
+
+    const lastDocument = () => {
+        const docs = webview.documents();
+        return docs[docs.length - 1];
+    };
+    const caretNow = () => (session.caret === undefined ? undefined : [session.caret.line, session.caret.character]);
+
+    suiteSetup(async function () {
+        this.timeout(20000);
+        uri = tempMarkdown(SOURCE);
+        document = await vscode.workspace.openTextDocument(uri);
+        const engine = buildEditorEngine(EXTENSION_ID, () => undefined);
+        webview = new FakeWebview();
+        session = new VisualEditorSession(document, webview, {
+            engine: () => engine,
+            onDidChangeEngine: engineChanged.event,
+            log: () => undefined,
+            mapTimeoutMs: MAP_TIMEOUT,
+        });
+        session.onDidChangeCaret(caret => carets.push(caret));
+        webview.send({ type: 'ready' });
+        await session.settled();
+    });
+
+    suiteTeardown(() => {
+        session.dispose();
+        engineChanged.dispose();
+        // Not saved first: a save's local-history copy races the removal.
+        fs.rmSync(uri.fsPath, { force: true });
+    });
+
+    test('toSource and toPage ask the page, and take its answer only for the document it holds', async function () {
+        this.timeout(10000);
+        const posted = lastDocument();
+        const requests = () => webview.posted.filter((m): m is MapMessage => m.type === 'map');
+        const before = requests().length;
+
+        const source = session.toSource(12);
+        const asked = await until(() => requests()[before], 2000);
+        assert.ok(asked);
+        assert.deepStrictEqual(asked.toSource, [12]);
+        webview.send({ type: 'mapped', id: asked.id, baseVersion: posted.version, toSource: [{ line: 7, character: 2, approximate: false }], toPage: [] });
+        assert.deepStrictEqual(await source, { position: new vscode.Position(7, 2), approximate: false });
+
+        const page = session.toPage(new vscode.Position(7, 2));
+        const askedPage = await until(() => requests()[before + 1], 2000);
+        assert.ok(askedPage);
+        assert.deepStrictEqual(askedPage.toPage, [{ line: 7, character: 2 }]);
+        webview.send({ type: 'mapped', id: askedPage.id, baseVersion: posted.version, toSource: [], toPage: [{ pos: 30, approximate: true }] });
+        assert.deepStrictEqual(await page, { pos: 30, approximate: true });
+
+        const stale = session.toSource(12);
+        const askedStale = await until(() => requests()[before + 2], 2000);
+        assert.ok(askedStale);
+        webview.send({ type: 'mapped', id: askedStale.id, baseVersion: posted.version - 1, toSource: [{ line: 7, character: 2, approximate: false }], toPage: [] });
+        assert.strictEqual(await stale, undefined, 'an answer for an older document is dropped');
+
+        const none = session.toSource(1);
+        const askedNone = await until(() => requests()[before + 3], 2000);
+        assert.ok(askedNone);
+        webview.send({ type: 'mapped', id: askedNone.id, baseVersion: posted.version, toSource: [null], toPage: [] });
+        assert.strictEqual(await none, undefined, 'a position that is none');
+
+        const started = Date.now();
+        assert.strictEqual(await session.toSource(5), undefined, 'no answer: undefined once the wait is over');
+        assert.ok(Date.now() - started >= MAP_TIMEOUT - 50);
+    });
+
+    test('a caret for the document the host posted is taken; one for a superseded version is dropped', async function () {
+        this.timeout(10000);
+        const posted = lastDocument();
+        webview.send({ type: 'caret', baseVersion: posted.version - 1, position: { line: 7, character: 2 } });
+        await session.settled();
+        assert.strictEqual(session.caret, undefined, 'a stale caret is dropped');
+        webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 2 } });
+        await session.settled();
+        assert.deepStrictEqual(caretNow(), [7, 2]);
+        webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 2 } });
+        await session.settled();
+        assert.strictEqual(carets.length, 1, 'the same caret again is no change');
+        webview.send({ type: 'caret', baseVersion: posted.version, position: null });
+        await session.settled();
+        assert.strictEqual(session.caret, undefined, 'no caret: a selected atom, an approximate mapping');
+        webview.send({ type: 'caret', baseVersion: posted.version, position: { line: -1, character: 0 } });
+        await session.settled();
+        assert.strictEqual(session.caret, undefined, 'a malformed position is none');
+    });
+
+    test('a caret behind the page\'s edit is in the edited text; another writer\'s change makes it unknown', async function () {
+        this.timeout(10000);
+        const posted = lastDocument();
+        webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 2 } });
+        await session.settled();
+        assert.deepStrictEqual(caretNow(), [7, 2]);
+        const typed = document.getText().replace('stays', 'stays, typed');
+        const seenWhileApplying: (vscode.Position | undefined)[] = [];
+        const listener = vscode.workspace.onDidChangeTextDocument(e => {
+            if (e.document === document) {
+                seenWhileApplying.push(session.caret);
+            }
+        });
+        try {
+            // The page sends its caret right after the edit that carries it.
+            webview.send({ type: 'edit', text: typed, baseVersion: posted.version });
+            webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 29 } });
+            await session.settled();
+        } finally {
+            listener.dispose();
+        }
+        assert.strictEqual(document.getText(), typed);
+        assert.ok(seenWhileApplying.length > 0 && seenWhileApplying.every(c => c === undefined), 'a listener to the edit is not handed the caret of the text before it');
+        assert.deepStrictEqual(caretNow(), [7, 29]);
+
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(uri, document.positionAt(document.getText().length), '\nAppended by another writer.\n');
+        assert.ok(await vscode.workspace.applyEdit(edit));
+        assert.strictEqual(session.caret, undefined, 'the caret was a position in the text before the change');
+        assert.strictEqual(await session.toSource(1), undefined, 'nor is any position mapped while the page holds the old text');
+        webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 29 } });
+        await delay(300);
+        await session.settled();
+        assert.strictEqual(session.caret, undefined, 'a caret for the text before is dropped');
+        const next = lastDocument();
+        assert.ok(next.version > posted.version, 'the change was posted');
+        webview.send({ type: 'caret', baseVersion: next.version, position: { line: 7, character: 3 } });
+        await session.settled();
+        assert.deepStrictEqual(caretNow(), [7, 3]);
+    });
+});
+
+suite('Editor host: a change that comes and goes', () => {
+    test('another writer\'s change undone before the re-sync posts no document and asks the page for its caret', async function () {
+        this.timeout(20000);
+        const uri = tempMarkdown(SOURCE);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const webview = new FakeWebview();
+        const session = new VisualEditorSession(document, webview, {
+            engine: () => buildEditorEngine(EXTENSION_ID, () => undefined),
+            onDidChangeEngine: engineChanged.event,
+            log: () => undefined,
+        });
+        try {
+            webview.send({ type: 'ready' });
+            await session.settled();
+            const [posted] = webview.documents();
+            webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 2 } });
+            await session.settled();
+            assert.ok(session.caret);
+
+            const insert = new vscode.WorkspaceEdit();
+            insert.insert(uri, new vscode.Position(7, 0), 'x');
+            assert.ok(await vscode.workspace.applyEdit(insert));
+            assert.strictEqual(session.caret, undefined);
+            const remove = new vscode.WorkspaceEdit();
+            remove.delete(uri, new vscode.Range(7, 0, 7, 1));
+            assert.ok(await vscode.workspace.applyEdit(remove));
+            assert.strictEqual(document.getText(), SOURCE);
+            await delay(300);
+            await session.settled();
+            assert.strictEqual(webview.documents().length, 1, 'the text is the page\'s again: nothing to post');
+            assert.ok(webview.posted.some(m => m.type === 'reportCaret'), 'the page is asked to report its caret again');
+            webview.send({ type: 'caret', baseVersion: posted.version, position: { line: 7, character: 2 } });
+            await session.settled();
+            assert.deepStrictEqual([session.caret?.line, session.caret?.character], [7, 2]);
+        } finally {
+            session.dispose();
+            engineChanged.dispose();
+            fs.rmSync(uri.fsPath, { force: true });
+        }
+    });
+});
+
+/** A panel stand-in for the tracker: `active` as the test sets it, and the event VS Code would fire. */
+class FakePanel implements TrackedPanel {
+    active = false;
+    private readonly emitter = new vscode.EventEmitter<void>();
+    readonly onDidChangeViewState = this.emitter.event;
+
+    set(active: boolean): void {
+        this.active = active;
+        this.emitter.fire();
+    }
+}
+
+/** A session stand-in for the tracker: its uri, and a caret the test moves. */
+class FakeEditor implements TrackedEditor {
+    caret: vscode.Position | undefined;
+    private readonly emitter = new vscode.EventEmitter<void>();
+    readonly onDidChangeCaret = this.emitter.event;
+
+    constructor(readonly uri: vscode.Uri) { }
+
+    move(caret: vscode.Position | undefined): void {
+        this.caret = caret;
+        this.emitter.fire();
+    }
+}
+
+suite('Editor host: the active Visual Editor', () => {
+    const describe = (active: ActiveVisualEditor | undefined) =>
+        active === undefined ? 'none' : `${active.uri.path}${active.caret ? `@${active.caret.line}:${active.caret.character}` : ''}`;
+
+    test('the editor whose panel is active, and its caret, until another takes the focus or it closes', () => {
+        const tracker = new ActiveVisualEditorTracker();
+        const events: string[] = [];
+        tracker.api.onDidChangeActive(active => events.push(describe(active)));
+        try {
+            const a = new FakeEditor(vscode.Uri.file('/a.md'));
+            const b = new FakeEditor(vscode.Uri.file('/b.md'));
+            const panelA = new FakePanel();
+            const panelB = new FakePanel();
+            panelA.active = true;
+            tracker.track(panelA, a);
+            const trackingB = tracker.track(panelB, b);
+            assert.strictEqual(describe(tracker.api.active()), '/a.md');
+
+            a.move(new vscode.Position(3, 4));
+            b.move(new vscode.Position(9, 9));
+            assert.strictEqual(describe(tracker.api.active()), '/a.md@3:4', 'only the active editor\'s caret is news');
+
+            panelA.set(false);
+            panelB.set(true);
+            assert.strictEqual(describe(tracker.api.active()), '/b.md@9:9');
+            trackingB.dispose();
+            assert.strictEqual(tracker.api.active(), undefined, 'a closed editor is not active');
+            assert.deepStrictEqual(events, ['/a.md', '/a.md@3:4', 'none', '/b.md@9:9', 'none']);
+            assert.deepStrictEqual(Object.keys(tracker.api).sort(), ['active', 'onDidChangeActive'], 'nothing of the tracker leaks');
+        } finally {
+            tracker.dispose();
+        }
+    });
+
+    test('activate exports it, and a Visual Editor opened is the active one until its tab closes', async function () {
+        this.timeout(30000);
+        const extension = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(extension);
+        const api = (await extension.activate() as { visualEditor: VisualEditorApi }).visualEditor;
+        assert.strictEqual(typeof api.active, 'function');
+        assert.strictEqual(typeof api.onDidChangeActive, 'function');
+        const uri = tempMarkdown(SOURCE);
+        try {
+            await vscode.commands.executeCommand('vscode.openWith', uri, VISUAL_EDITOR_VIEW_TYPE);
+            const active = await until(() => (api.active()?.uri.toString() === uri.toString() ? api.active() : undefined), 10000);
+            assert.ok(active, 'the opened Visual Editor is the active one');
+            const tab = await until(() => customTab(uri), 10000);
+            assert.ok(tab);
+            await vscode.window.tabGroups.close(tab);
+            const gone = await until(() => (api.active()?.uri.toString() === uri.toString() ? undefined : true), 10000);
+            assert.ok(gone, 'a closed Visual Editor is not active');
+        } finally {
+            fs.rmSync(uri.fsPath, { force: true });
         }
     });
 });
