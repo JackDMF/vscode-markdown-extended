@@ -32,8 +32,9 @@
  * Buttons act on `mousedown` + `preventDefault`, as the formatting toolbar's
  * do, so the editor keeps its focus and its selection.
  */
-import { Plugin, PluginView, TextSelection, Transaction } from 'prosemirror-state';
-import { EditorView } from 'prosemirror-view';
+import { EditorState, Plugin, PluginKey, PluginView, TextSelection, Transaction } from 'prosemirror-state';
+import { CellSelection, isInTable, selectedRect } from 'prosemirror-tables';
+import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
@@ -41,13 +42,18 @@ import { HintTone, showHint, undoKey } from './hint';
 import { InlineChoice, InlineField } from './inlineField';
 import { NoteNodeName, unwrapNote } from './notes';
 import {
-    EditorObject, NOTE_CONVERSION, blockAttrsRefusal, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction,
+    EditorObject, NOTE_CONVERSION, NodeObjectKind, blockAttrsRefusal, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction,
     changeImageTransaction, changeLinkTransaction, changeSpanTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
+import {
+    addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
+    deleteRowTransaction, tableSourceTransaction,
+} from './tables';
+import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem } from '../protocol';
 import { lensLabelNodes, lensName } from './lenses';
 
@@ -61,6 +67,8 @@ export interface ObjectToolbarHost {
     sourceContext(): SourceContext;
     /** Send the document now and ask the host to parse it again (`edit.reparse`). */
     flushReparse(): void;
+    /** Ask the host to render a new source block's text (`render`), as the toolbar's source actions do. */
+    requestRender(src: string): void;
     /**
      * The code actions other extensions offer for the top-level block at `pos`,
      * as far as the page knows them: asked of the host the first time, the bar
@@ -113,8 +121,30 @@ interface Verb {
     field?: { value: string; label: string; commit(value: string): void };
     /** A verb that asks for one of a list of values, in the inline choice. */
     choice?: { value: string; label: string; options: readonly { value: string; label: string }[]; commit(value: string): void };
-    /** Drawn after a separator: the first of another extension's lenses, or of its code actions. */
+    /**
+     * A set-verb: a menu of related actions that opens under it on a click,
+     * `Enter` or `Space` — a table's `Row ▾`, `Column ▾`, `Align ▾` — drawn
+     * with the formatting toolbar's menu chrome (`.mep-menu`), navigated with
+     * the arrow keys, `Enter` choosing and `Esc` closing it.
+     */
+    menu?: readonly MenuEntry[];
+    /** Drawn after a separator: the first of another extension's lenses, or of its code actions, or a group of the object's own. */
     separated?: boolean;
+}
+
+/** One entry of a set-verb's menu. */
+interface MenuEntry {
+    /** `data-entry`: what tests name it by. */
+    id: string;
+    label: string;
+    title: string;
+    /** The keyboard route to the same thing, shown at the entry's right (`Tab at end`). */
+    keys?: string;
+    /** For a choice of one value out of several: whether this is the current one, marked. */
+    checked?: boolean;
+    /** Why it cannot be chosen here, in its tooltip; the entry is drawn disabled. */
+    refusal?: string | null;
+    run(): void;
 }
 
 interface Presentation {
@@ -147,6 +177,58 @@ const BLOCK_LABELS: Readonly<Record<string, string>> = {
     horizontal_rule: 'Rule',
 };
 
+/**
+ * The table whose caret column is tinted, by its position: set by the bar's
+ * view when a table's bar shows and goes (`ObjectToolbarView.refresh`), read
+ * by the plugin's decorations, which tint the selection's columns of it.
+ */
+const tintKey = new PluginKey<number | null>('mep-table-tint');
+
+/** The caret's columns of the table at `tablePos`, as node decorations on their cells; none when the selection is not in it. */
+function columnTint(state: EditorState, tablePos: number | null): DecorationSet {
+    const table = tablePos === null ? null : state.doc.nodeAt(tablePos);
+    if (tablePos === null || !table || table.type.name !== 'table' || !(isInTable(state) || state.selection instanceof CellSelection)) {
+        return DecorationSet.empty;
+    }
+    const rect = selectedRect(state);
+    if (rect.tableStart !== tablePos + 1) {
+        return DecorationSet.empty;
+    }
+    const decorations: Decoration[] = [];
+    for (let row = 0; row < rect.map.height; row++) {
+        for (let col = rect.left; col < rect.right; col++) {
+            const pos = rect.tableStart + rect.map.map[row * rect.map.width + col];
+            const cell = state.doc.nodeAt(pos);
+            if (cell) {
+                decorations.push(Decoration.node(pos, pos + cell.nodeSize, { class: 'mep-table-column' }));
+            }
+        }
+    }
+    return DecorationSet.create(state.doc, decorations);
+}
+
+/**
+ * What a source block's bar calls it: a source block, or — for a table the
+ * editor leaves as source — the kind of table, so the bar says why this table
+ * has no Row and Column menus when the one above it has them.
+ */
+function rawBlockLabel(construct: string | null): { label: string; title: string } {
+    switch (construct) {
+        case 'multimd table':
+            return {
+                label: 'Source · multimd table',
+                title: 'A table using markdown-it-multimd-table\'s extensions — a span, a caption, a multi-line row, no header or a second body — shown as the preview renders it, edited as Markdown.',
+            };
+        case 'table':
+            return {
+                label: 'Source · table',
+                title: 'A pipe table holding what a cell cannot hold here — a note, code with a |, HTML, a row of another width — shown as the preview renders it, edited as Markdown.',
+            };
+        default:
+            return { label: 'Source block', title: 'Shown as the preview renders it, edited as Markdown.' };
+    }
+}
+
 function isSidebar(name: NoteNodeName): boolean {
     return name === 'left_sidebar' || name === 'right_sidebar';
 }
@@ -158,6 +240,8 @@ class ObjectBar {
     private field: InlineField | InlineChoice | null = null;
     private signature = '';
     private buttons: { verb: Verb; el: HTMLButtonElement }[] = [];
+    /** A set-verb's open menu: its panel, the verb's button, its entries. */
+    private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
 
     constructor(trigger: 'selection' | 'hover', private readonly events: { escape(): void; fieldClosed(committed: boolean): void }) {
         this.el = document.createElement('div');
@@ -191,9 +275,12 @@ class ObjectBar {
         // an undo would otherwise offer the undone source.
         const signature = JSON.stringify([
             object.kind, object.from, presentation.label, presentation.title,
-            presentation.verbs.map(v => [v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? v.choice?.value ?? null, v.separated ?? false]),
+            presentation.verbs.map(v => [
+                v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? v.choice?.value ?? null, v.separated ?? false,
+                v.menu?.map(m => [m.id, m.label, m.title, m.keys ?? null, m.checked ?? null, m.refusal ?? null]) ?? null,
+            ]),
         ]);
-        if (!this.field && signature !== this.signature) {
+        if (!this.field && !this.menu && signature !== this.signature) {
             this.signature = signature;
             this.render(presentation);
         }
@@ -201,6 +288,7 @@ class ObjectBar {
     }
 
     hide(): void {
+        this.closeMenu(false);
         this.field?.dispose();
         this.field = null;
         this.object = null;
@@ -216,6 +304,7 @@ class ObjectBar {
     }
 
     private render(presentation: Presentation): void {
+        this.closeMenu(false);
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
@@ -234,6 +323,10 @@ class ObjectBar {
             el.tabIndex = -1;
             el.title = verb.refusal ? `${verb.title}\n${verb.refusal}` : verb.title;
             el.setAttribute('aria-disabled', String(Boolean(verb.refusal)));
+            if (verb.menu) {
+                el.setAttribute('aria-haspopup', 'menu');
+                el.setAttribute('aria-expanded', 'false');
+            }
             el.addEventListener('click', e => {
                 e.preventDefault();
                 this.choose(verb);
@@ -255,12 +348,146 @@ class ObjectBar {
         if (verb.refusal) {
             return;
         }
-        if (verb.field) {
+        if (verb.menu) {
+            const button = this.buttons.find(b => b.verb === verb)?.el;
+            const open = this.menu?.button === button;
+            this.closeMenu(open);
+            if (button && !open) {
+                this.openMenu(verb.menu, button);
+            }
+        } else if (verb.field) {
             this.openField(verb, verb.field);
         } else if (verb.choice) {
             this.openField(verb, verb.choice);
         } else {
             verb.run?.();
+        }
+    }
+
+    /**
+     * A set-verb's menu, under its button (above it where the window has no
+     * room below), in the formatting toolbar's menu chrome: an entry is its
+     * label and, at its right, the keys that do the same; the current value of
+     * a choice is marked as that toolbar marks an active entry. The focus goes
+     * to the marked entry, else the first that can be chosen. Inside the bar's
+     * element, so the bar counts the focus in it as its own.
+     */
+    private openMenu(entries: readonly MenuEntry[], button: HTMLButtonElement): void {
+        const panel = document.createElement('div');
+        panel.className = 'mep-menu mep-object-menu';
+        panel.setAttribute('role', 'menu');
+        panel.tabIndex = -1;
+        panel.setAttribute('aria-label', lensName(button.textContent ?? ''));
+        const made = entries.map(entry => {
+            const el = document.createElement('div');
+            el.className = 'mep-menu-item';
+            el.dataset.entry = entry.id;
+            el.tabIndex = -1;
+            el.setAttribute('role', entry.checked === undefined ? 'menuitem' : 'menuitemradio');
+            if (entry.checked !== undefined) {
+                el.setAttribute('aria-checked', String(entry.checked));
+                el.classList.toggle('mep-active', entry.checked);
+            }
+            const label = document.createElement('span');
+            label.className = 'mep-entry-label';
+            label.textContent = entry.label;
+            el.append(label);
+            if (entry.keys) {
+                const keys = document.createElement('span');
+                keys.className = 'mep-entry-syntax';
+                keys.textContent = entry.keys;
+                el.append(keys);
+            }
+            el.title = entry.refusal ? `${entry.title}\n${entry.refusal}` : entry.title;
+            if (entry.refusal) {
+                el.classList.add('mep-disabled');
+                el.setAttribute('aria-disabled', 'true');
+            }
+            el.addEventListener('click', e => {
+                e.preventDefault();
+                this.pick(entry);
+            });
+            return { entry, el };
+        });
+        panel.append(...made.map(m => m.el));
+        panel.addEventListener('keydown', e => this.onMenuKey(e));
+        panel.addEventListener('focusout', e => {
+            if (!(e.relatedTarget instanceof globalThis.Node && panel.contains(e.relatedTarget))) {
+                this.closeMenu(false);
+            }
+        });
+        this.menu = { panel, button, entries: made };
+        button.setAttribute('aria-expanded', 'true');
+        this.el.append(panel);
+        const r = button.getBoundingClientRect();
+        const below = r.bottom + 2;
+        panel.style.left = `${Math.max(0, Math.min(r.left, window.innerWidth - panel.offsetWidth))}px`;
+        panel.style.top = `${below + panel.offsetHeight > window.innerHeight ? Math.max(0, r.top - 2 - panel.offsetHeight) : below}px`;
+        const first = made.find(m => m.entry.checked && !m.entry.refusal) ?? made.find(m => !m.entry.refusal);
+        (first?.el ?? panel).focus({ preventScroll: true });
+    }
+
+    /** Close the open menu, the focus back on its verb when asked. */
+    private closeMenu(focusButton: boolean): void {
+        const menu = this.menu;
+        if (menu === null) {
+            return;
+        }
+        this.menu = null;
+        menu.button.setAttribute('aria-expanded', 'false');
+        menu.panel.remove();
+        if (focusButton) {
+            menu.button.focus({ preventScroll: true });
+        }
+    }
+
+    private pick(entry: MenuEntry): void {
+        if (entry.refusal) {
+            return;
+        }
+        this.closeMenu(false);
+        entry.run();
+    }
+
+    private onMenuKey(e: KeyboardEvent): void {
+        const menu = this.menu;
+        if (menu === null) {
+            return;
+        }
+        // The bar's own keys move between verbs; inside the menu they are the menu's.
+        e.stopPropagation();
+        const enabled = menu.entries.filter(m => !m.entry.refusal);
+        const index = enabled.findIndex(m => m.el === document.activeElement);
+        const focus = (k: number) => enabled[(k % enabled.length + enabled.length) % enabled.length]?.el.focus({ preventScroll: true });
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                focus(index + 1);
+                break;
+            case 'ArrowUp':
+                e.preventDefault();
+                focus(index < 0 ? -1 : index - 1);
+                break;
+            case 'Home':
+                e.preventDefault();
+                focus(0);
+                break;
+            case 'End':
+                e.preventDefault();
+                focus(-1);
+                break;
+            case 'Enter':
+            case ' ':
+                e.preventDefault();
+                if (index >= 0) {
+                    this.pick(enabled[index].entry);
+                }
+                break;
+            case 'Escape':
+            case 'Tab':
+                e.preventDefault();
+                this.closeMenu(true);
+                break;
         }
     }
 
@@ -479,6 +706,24 @@ class ObjectToolbarView implements PluginView {
             };
         }
         this.refreshHover();
+        this.retint();
+    }
+
+    /**
+     * Tint the caret's column of the table whose bar shows, and only while it
+     * shows. The tint is a decoration, so the view is told in a transaction of
+     * its own — after this update, which may not dispatch one itself.
+     */
+    private retint(): void {
+        const shown = this.selectionBar.visible && this.selectionBar.object?.kind === 'table' ? this.selectionBar.object.from : null;
+        if (shown === (tintKey.getState(this.view.state) ?? null)) {
+            return;
+        }
+        queueMicrotask(() => {
+            if (!this.destroyed && shown !== (tintKey.getState(this.view.state) ?? null)) {
+                this.view.dispatch(this.view.state.tr.setMeta(tintKey, shown));
+            }
+        });
     }
 
     // -- the pointer's bar -----------------------------------------------------
@@ -933,6 +1178,8 @@ class ObjectToolbarView implements PluginView {
                     ],
                 };
             }
+            case 'table':
+                return this.tablePresentation(object);
             case 'block_attrs': {
                 const literal = (object.node.attrs.attrsSuffix as string | null) ?? '';
                 return {
@@ -964,8 +1211,7 @@ class ObjectToolbarView implements PluginView {
             }
             case 'raw_block':
                 return {
-                    label: 'Source block',
-                    title: 'Shown as the preview renders it, edited as Markdown.',
+                    ...rawBlockLabel(object.node.attrs.construct as string | null),
                     verbs: [
                         {
                             id: 'edit-source',
@@ -1039,6 +1285,82 @@ class ObjectToolbarView implements PluginView {
         }
     }
 
+    /**
+     * A table's bar, five slots (Daniel, 2026-09-29): three set-verbs — `Row ▾`
+     * (insert above, insert below, delete), `Column ▾` (insert left, insert
+     * right, delete), `Align ▾` (left, center, right, the current one marked;
+     * the marked one chosen again is the default, `---`) — then, after a gap,
+     * **Edit source** and **Delete table**. The menus act on the rows and
+     * columns the selection is in, the caret's cell or the cells selected
+     * across, and the caret's column is tinted while the bar shows, so
+     * "left" and "right" have something to be left and right of. No *Toggle
+     * header row*: a pipe table has exactly one header (`tables.ts`).
+     */
+    private tablePresentation(object: Extract<EditorObject, { kind: NodeObjectKind }>): Presentation {
+        const view = this.view;
+        const state = view.state;
+        const columns = object.node.firstChild?.childCount ?? 0;
+        const rows = object.node.childCount;
+        const entry = (id: string, label: string, title: string, make: () => Transaction | null, more: Partial<MenuEntry> = {}, hint?: string): MenuEntry => ({
+            id, label, title, ...more, run: () => this.apply(object, make, hint),
+        });
+        const align = columnAlign(state);
+        const alignEntry = (value: Exclude<TableAlign, null>, label: string, delimiter: string): MenuEntry => entry(
+            `align-${value}`, label,
+            align === value ? `Aligned ${value} (${delimiter}): choose it again for the default alignment (---).` : `Align the column ${value}: its delimiter cell becomes ${delimiter}.`,
+            () => alignColumnTransaction(view.state, align === value ? null : value),
+            { checked: align === value, keys: delimiter },
+        );
+        return {
+            label: 'Table',
+            title: `A pipe table: ${columns} ${columns === 1 ? 'column' : 'columns'}, a header row and ${rows - 1} ${rows === 2 ? 'row' : 'rows'} under it.`,
+            verbs: [
+                {
+                    id: 'row', label: 'Row ▾', title: 'Insert a row next to the caret\'s, or delete it.',
+                    menu: [
+                        entry('insert-row-above', 'Insert above', 'A new row above the caret\'s; above the header row it is the new header.', () => addRowTransaction(view.state, 'above')),
+                        entry('insert-row-below', 'Insert below', 'A new row below the caret\'s. Tab in the last cell adds one too.', () => addRowTransaction(view.state, 'below'), { keys: 'Tab at end' }),
+                        entry('delete-row', 'Delete row', 'The caret\'s row goes; deleting the header row makes the next row the header.',
+                            () => deleteRowTransaction(view.state), { refusal: deleteRowRefusal(state) }, 'Row deleted'),
+                    ],
+                },
+                {
+                    id: 'column', label: 'Column ▾', title: 'Insert a column next to the caret\'s (tinted), or delete it.',
+                    menu: [
+                        entry('insert-column-left', 'Insert left', 'A new column left of the caret\'s.', () => addColumnTransaction(view.state, 'left')),
+                        entry('insert-column-right', 'Insert right', 'A new column right of the caret\'s.', () => addColumnTransaction(view.state, 'right')),
+                        entry('delete-column', 'Delete column', 'The caret\'s column goes.', () => deleteColumnTransaction(view.state), { refusal: deleteColumnRefusal(state) }, 'Column deleted'),
+                    ],
+                },
+                {
+                    id: 'align', label: 'Align ▾', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
+                    menu: [alignEntry('left', 'Left', ':--'), alignEntry('center', 'Center', ':-:'), alignEntry('right', 'Right', '--:')],
+                },
+                {
+                    id: 'edit-source',
+                    label: 'Edit source',
+                    title: 'Edit this table as Markdown (Ctrl+Enter to apply, Esc to cancel).',
+                    separated: true,
+                    run: () => this.editTableSource(object),
+                },
+                { id: 'delete-table', label: 'Delete table', title: 'The table goes from the file.', run: () => this.remove(object, 'Table deleted') },
+            ],
+        };
+    }
+
+    /** A table's **Edit source**: the table becomes a source block holding its text, the source box open (`tableSourceTransaction`). */
+    private editTableSource(object: EditorObject): void {
+        this.view.focus();
+        const current = currentObject(this.view.state, object);
+        const made = current === null ? null : tableSourceTransaction(this.view.state, current.from, this.host.sourceContext());
+        if (current === null || made === null) {
+            return;
+        }
+        this.view.dispatch(made.tr);
+        this.host.requestRender(made.src);
+        editRawSourceAt(this.view, current.from);
+    }
+
     private showInTextEditor(object: EditorObject): Verb {
         return { id: 'show-in-text-editor', label: 'Show in text editor', title: 'Open the text editor beside, at this block.', run: () => this.host.openSourceAt(object.from) };
     }
@@ -1105,14 +1427,25 @@ class ObjectToolbarView implements PluginView {
 const toolbarViews = new WeakMap<EditorView, ObjectToolbarView>();
 
 /** The object toolbar, as a plugin: its view follows every state, and `Alt+Enter` opens it from the keyboard. */
-export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin {
-    return new Plugin({
+export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<number | null> {
+    return new Plugin<number | null>({
+        key: tintKey,
+        state: {
+            init: () => null,
+            apply: (tr, value) => {
+                const meta = tr.getMeta(tintKey) as number | null | undefined;
+                return meta !== undefined ? meta : value === null ? null : tr.mapping.map(value);
+            },
+        },
         view(editorView) {
             const toolbar = new ObjectToolbarView(editorView, host);
             toolbarViews.set(editorView, toolbar);
             return toolbar;
         },
         props: {
+            decorations(state) {
+                return columnTint(state, tintKey.getState(state) ?? null);
+            },
             handleKeyDown(view, event) {
                 if (event.key !== 'Enter' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
                     return false;

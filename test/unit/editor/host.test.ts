@@ -198,7 +198,7 @@ suite('Editor host: session protocol', () => {
         assert.strictEqual(first.version, document.version);
         assert.strictEqual(first.defaultWrap, 90);
         const types = (first.json.doc.content as { type: string }[]).map(n => n.type);
-        assert.deepStrictEqual(types, ['front_matter', 'heading', 'paragraph', 'raw_block']);
+        assert.deepStrictEqual(types, ['front_matter', 'heading', 'paragraph', 'table']);
     });
 
     test('an edit is written as one minimal replacement and not echoed back', async function () {

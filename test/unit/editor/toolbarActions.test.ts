@@ -11,7 +11,7 @@ import {
     INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, inBubble, inRow, isSourceAction, menuOf, submenuOf, tooltipOf,
 } from '../../../src/editor/webview/toolbar/actions';
 import {
-    ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
+    ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, TABLE_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
     insertSourceTransaction, insertWrapperTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup, wrapSourceTransaction,
 } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
@@ -184,8 +184,8 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         const sourceIds = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'wrap-source').map(a => a.id);
         assert.deepStrictEqual(sourceIds, ['footnote-reference'], 'of the inline constructs only the footnote is written as source');
         const inserted = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'insert-source').map(a => a.id);
-        assert.deepStrictEqual(inserted, ['table', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents'],
-            'admonitions and the container are inserted as rich text since stage 3');
+        assert.deepStrictEqual(inserted, ['task-list', 'definition-list', 'abbreviation', 'table-of-contents'],
+            'admonitions, the container and the table are inserted as rich text');
     });
 });
 
@@ -397,7 +397,8 @@ suite('Editor toolbar: where a block is inserted, and why the block type is lock
     });
 
     test('nothing is inserted before the first block, whatever stands at position 0', () => {
-        const withAtom = `| a |\n| - |\n| 1 |\n\n${SOURCE}`;
+        // A multimd table (its `=` delimiter row): a source block, an atom at position 0.
+        const withAtom = `| a |\n| = |\n| 1 |\n\n${SOURCE}`;
         let state = stateOf(withAtom);
         assert.strictEqual(state.doc.firstChild?.type.name, 'raw_block');
         state = state.apply(state.tr.setSelection(new GapCursor(state.doc.resolve(0))));
@@ -411,7 +412,7 @@ suite('Editor toolbar: where a block is inserted, and why the block type is lock
     });
 
     test('each kind of selection gets its own reason', () => {
-        const base = stateOf(`| a |\n| - |\n| 1 |\n\n${SOURCE}Tail.\n\n---\n`);
+        const base = stateOf(`| a |\n| = |\n| 1 |\n\n${SOURCE}Tail.\n\n---\n`);
         const at = (sel: Selection) => blockLockReason(base.apply(base.tr.setSelection(sel)));
         assert.strictEqual(at(NodeSelection.create(base.doc, 0)), ATOM_LOCK, 'a source block is an atom');
         const rulePos = base.doc.content.size - (base.doc.lastChild as Node).nodeSize;
@@ -423,5 +424,8 @@ suite('Editor toolbar: where a block is inserted, and why the block type is lock
         assert.strictEqual(blockLockReason(single.apply(single.tr.setSelection(new AllSelection(single.doc)))), WHOLE_LOCK);
         const caret = posOf(base.doc, 'beta');
         assert.strictEqual(at(TextSelection.create(base.doc, caret)), null, 'text in a paragraph can be retyped');
+        const table = stateOf('| a | b |\n| - | - |\n| cell | 2 |\n');
+        assert.strictEqual(table.doc.firstChild?.type.name, 'table');
+        assert.strictEqual(blockLockReason(table.apply(table.tr.setSelection(TextSelection.create(table.doc, posOf(table.doc, 'cell'))))), TABLE_LOCK, 'a cell is no block to retype');
     });
 });

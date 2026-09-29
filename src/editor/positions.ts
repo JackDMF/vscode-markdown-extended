@@ -40,11 +40,13 @@ import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize
  * alignment (Gotoh) that first maximizes the characters matched and then
  * minimizes the number of gap runs, where a gap run that starts a source line
  * (a line's prefix: `- `, `> `, `1. `, `# `, indentation, an admonition's
- * header) is free, and ties go to the earlier match. Three kinds of anchor with
+ * header) is free, and ties go to the earlier match. Four kinds of anchor with
  * no page position of their own help it: a line break before every textblock
- * but the first, and a note's markers and separator (`NOTE_SYNTAX`,
+ * but the first, a note's markers and separator (`NOTE_SYNTAX`,
  * `NOTE_SEPARATOR` — read from where the syntax is stated), so the text of one
- * part cannot be matched into another. The alignment runs in a band around the
+ * part cannot be matched into another, and a table's line breaks and `|`s
+ * (`visitTable`: a cell is a textblock that starts after a `|`, not on a line
+ * of its own). The alignment runs in a band around the
  * diagonal (the source is the page text plus delimiters); a block too large for
  * the band's budget is aligned greedily instead and every answer in it is
  * approximate.
@@ -261,6 +263,10 @@ function collectUnits(block: Node): Unit[] {
             units.push({ pos, code: node.type.name === 'hard_break' ? NEWLINE : UNMATCHABLE });
             return;
         }
+        if (node.type.name === 'table') {
+            visitTable(node, pos);
+            return;
+        }
         if (node.isTextblock && units.length > 0) {
             anchor('\n');
         }
@@ -277,6 +283,31 @@ function collectUnits(block: Node): Unit[] {
         if (note) {
             anchor(note.close);
         }
+    };
+    /**
+     * A table's rows are its lines and its cells the text between `|`s, so
+     * the anchors are those: a line break before every row but the first, a
+     * `|` before every cell and after the last, and the delimiter row — as
+     * many `|`s as it has, between two line breaks — after the header. The
+     * padding and the delimiter row's dashes are delimiter runs. A cell is a
+     * textblock, but its text starts after a `|`, not on a line of its own.
+     */
+    const visitTable = (table: Node, pos: number): void => {
+        table.forEach((row, rowOffset, r) => {
+            const rowPos = pos + 1 + rowOffset;
+            if (r > 0) {
+                anchor('\n');
+            }
+            if (r === 1) {
+                anchor('|'.repeat(row.childCount + 1) + '\n');
+            }
+            row.forEach((cell, cellOffset) => {
+                anchor('|');
+                const cellPos = rowPos + 1 + cellOffset;
+                cell.forEach((child, childOffset) => visit(child, cellPos + 1 + childOffset));
+            });
+            anchor('|');
+        });
     };
     visit(block, 0);
     return units;

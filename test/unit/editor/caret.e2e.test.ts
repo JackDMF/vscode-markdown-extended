@@ -5,7 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
 
-const SOURCE = 'Intro paragraph.\n\nSecond *paragraph* here.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n';
+const SOURCE = 'Intro paragraph.\n\nSecond *paragraph* here.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n';
 
 type CaretMessage = Extract<WebviewMessage, { type: 'caret' }>;
 

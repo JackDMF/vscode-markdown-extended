@@ -34,8 +34,17 @@ export const settle = () => new Promise(resolve => setTimeout(resolve, 500));
 export interface EditorPageOptions {
     /** The viewport width; 1200 unless given. */
     width?: number;
+    /** The viewport height; 900 unless given. */
+    height?: number;
     /** Stylesheets of this extension's `styles/` to load before `editor.css`, as the preview's cascade would. */
     styles?: readonly string[];
+    /** Stylesheets by absolute path, loaded first: VS Code's own `markdown.css`, which the preview's cascade starts with. */
+    stylesheets?: readonly string[];
+}
+
+/** VS Code's preview stylesheet, from the VS Code the tests run in: the first sheet of the preview's cascade. */
+export function vscodeMarkdownCss(): string {
+    return path.join(vscode.env.appRoot, 'extensions', 'markdown-language-features', 'media', 'markdown.css');
 }
 
 export async function openEditorPage(options: EditorPageOptions = {}): Promise<EditorPage | undefined> {
@@ -62,7 +71,7 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
 
     const browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
     const page = await browser.newPage();
-    await page.setViewport({ width: options.width ?? 1200, height: 900 });
+    await page.setViewport({ width: options.width ?? 1200, height: options.height ?? 900 });
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(String(error)));
     await page.setContent(
@@ -72,6 +81,11 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         + '</body></html>',
         { waitUntil: 'load' },
     );
+    for (const sheet of options.stylesheets ?? []) {
+        if (fs.existsSync(sheet)) {
+            await page.addStyleTag({ path: sheet });
+        }
+    }
     for (const sheet of [...(options.styles ?? []), 'editor.css']) {
         await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', sheet) });
     }

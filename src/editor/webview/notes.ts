@@ -328,6 +328,16 @@ const HISTORY_META = 'history$';
  * document that was written or allowed.
  */
 export function noteRefusal(tr: Transaction): string | null {
+    const range = refusableRange(tr);
+    return range === null ? null : unwritableInNote(tr.doc, range.from, range.to);
+}
+
+/**
+ * The range of the new document a transaction changed, which a refusal is
+ * decided over — the notes' here, the tables' (`tables.ts`) — or `null` for one
+ * that is never refused: no change, a re-sync from the host, an undo.
+ */
+export function refusableRange(tr: Transaction): { from: number; to: number } | null {
     if (!tr.docChanged || tr.getMeta(PRESERVE_SOURCE_META) === true || tr.getMeta(HISTORY_META) !== undefined) {
         return null;
     }
@@ -344,7 +354,7 @@ export function noteRefusal(tr: Transaction): string | null {
         from = Math.min(from, after.map(range.from, -1));
         to = Math.max(to, after.map(range.to, 1));
     });
-    return from > to ? null : unwritableInNote(tr.doc, from, to);
+    return from > to ? null : { from, to };
 }
 
 /**

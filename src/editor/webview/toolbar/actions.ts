@@ -25,12 +25,12 @@
  * - `sample` and `example`: the element and Markdown in which the construct
  *   renders as that element;
  * - `preview`: a fuller example — Markdown and the elements it renders as;
- * - `apply`: `mark`, `wrap-node`, `block`, `attr-span` and `insert-wrapper`
- *   edit natively — the extension's inline syntax (highlight, keys, notes,
- *   sidebars, …) is rich text since stage 2, attribute spans, containers and
- *   admonitions since stage 3; `wrap-source` and `insert-source` write a
- *   construct the editor cannot edit as rich text (a footnote, a table, a
- *   definition list, …), as source; `insert-include` writes, as source, the
+ * - `apply`: `mark`, `wrap-node`, `block`, `attr-span`, `insert-wrapper` and
+ *   `insert-table` edit natively — the extension's inline syntax (highlight,
+ *   keys, notes, sidebars, …) is rich text since stage 2, attribute spans,
+ *   containers and admonitions since stage 3, pipe tables since; `wrap-source`
+ *   and `insert-source` write a construct the editor cannot edit as rich text
+ *   (a footnote, a task list, a definition list, …), as source; `insert-include` writes, as source, the
  *   include line the host hands back from another extension's choices;
  * - `bubble`: whether the selection bubble offers it too.
  *
@@ -93,6 +93,8 @@ export type ActionApply =
      */
     | { kind: 'insert-wrapper'; node: 'container'; name: string }
     | { kind: 'insert-wrapper'; node: 'admonition'; type: string; title: string }
+    /** A new pipe table after the current block, edited in place: a header row of `columns` cells and `rows` body rows, the first header cell's text selected. */
+    | { kind: 'insert-table'; columns: number; rows: number }
     /**
      * The selection's text wrapped in `open` … `close` as literal source
      * (`placeholder` when nothing is selected); the block comes back from the
@@ -358,10 +360,13 @@ function titleOf(type: string): string {
 
 // Templates follow `snippets/markdown.code-snippets` where it has one, with
 // its tab stops filled in.
-const TABLE_TEMPLATE = [
-    '| Column1  | Column2   | Column3   |',
-    '|-------------- | -------------- | -------------- |',
-    '| Item1    | Item1     | Item1     |',
+/** What **Insert → Table** makes: three columns, a header row and two empty rows, in the tidy form a changed table is written in. */
+const NEW_TABLE = { columns: 3, rows: 2 };
+const NEW_TABLE_MARKDOWN = [
+    '| Column 1 | Column 2 | Column 3 |',
+    '| -------- | -------- | -------- |',
+    '|          |          |          |',
+    '|          |          |          |',
 ].join('\n');
 
 /** What **Include…** names as its syntax: the line is the offering extension's, not this one's. */
@@ -398,14 +403,18 @@ const insert: ToolbarAction[] = [
             nodes: [el(`div.admonition.${type}`, el('p.admonition-title', titleOf(type)), el('p', 'One line of body text.'))],
         },
     })),
-    insertAction('table', 'Table', TABLE_TEMPLATE,
-        el('table', el('tr', el('th', 'A'), el('th', 'B')), el('tr', el('td', '1'), el('td', '2'))),
-        {
-            markdown: '| Name | Value |\n| ---- | ----- |\n| Alpha | 1 |\n| Beta | 2 |',
+    {
+        // Native: a pipe table edited in place, the first header cell's text selected.
+        id: 'table', place: { menu: 'insert' }, label: 'Table', syntax: NEW_TABLE_MARKDOWN,
+        sample: el('table', el('tr', el('th', 'A'), el('th', 'B')), el('tr', el('td', '1'), el('td', '2'))),
+        apply: { kind: 'insert-table', ...NEW_TABLE }, example: NEW_TABLE_MARKDOWN,
+        preview: {
+            markdown: '| Name  | Value |\n| ----- | ----: |\n| Alpha |     1 |\n| Beta  |     2 |',
             nodes: [el('table',
                 el('thead', el('tr', el('th', 'Name'), el('th', 'Value'))),
                 el('tbody', el('tr', el('td', 'Alpha'), el('td', '1')), el('tr', el('td', 'Beta'), el('td', '2'))))],
-        }),
+        },
+    },
     {
         // Native since stage 3: a container node, the caret in its body.
         id: 'container', place: { menu: 'insert' }, label: 'Container', syntax: `::: ${NEW_CONTAINER_NAME}\n…\n:::`,

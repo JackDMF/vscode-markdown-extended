@@ -89,7 +89,7 @@ suite('Editor objects: which object the selection is on', () => {
     });
 
     test('a node selected as a whole: an image, a source block', () => {
-        const state = stateOf('An ![pic](p.png) here.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n');
+        const state = stateOf('An ![pic](p.png) here.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n');
         assert.strictEqual(objectHere(nodeSelected(state, 'image')).kind, 'image');
         assert.strictEqual(objectHere(nodeSelected(state, 'raw_block')).kind, 'raw_block');
     });
@@ -209,7 +209,7 @@ suite('Editor objects: a link\'s and an image\'s verbs', () => {
 
 suite('Editor objects: deleting a block', () => {
     test('Delete block removes a source block, the caret where it was', () => {
-        const state = nodeSelected(stateOf('Before.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nAfter.\n'), 'raw_block');
+        const state = nodeSelected(stateOf('Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n'), 'raw_block');
         const deleted = state.apply(deleteObjectTransaction(state, objectHere(state)));
         assert.strictEqual(text(deleted), 'Before.\n\nAfter.\n');
         assert.ok(deleted.selection instanceof TextSelection);

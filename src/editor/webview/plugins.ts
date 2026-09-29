@@ -10,6 +10,7 @@ import { fidelityPlugin } from '../fidelity';
 import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
+import { tableKeymap, tablesPlugins } from './tables';
 import { toggleMarkType } from './toolbar/commands';
 import { admonitionTitlesPlugin, wrapperKeymap } from './wrappers';
 
@@ -84,9 +85,11 @@ export function editorPlugins(): Plugin[] {
     return [
         markdownInputRules(),
         // Ahead of the Markdown keys: Tab, Enter and Backspace mean something else inside a note,
-        // and Enter and Backspace in an empty paragraph of a container or an admonition.
+        // Enter and Backspace in an empty paragraph of a container or an admonition,
+        // and Tab, Enter and Shift+Enter in a table cell (a sidebar in a cell keeps its own keys).
         noteKeymap(),
         wrapperKeymap(),
+        tableKeymap(),
         markdownKeymap(),
         keymap(baseKeymap),
         history(),
@@ -95,6 +98,7 @@ export function editorPlugins(): Plugin[] {
         hintPlugin(),
         notesPlugin(),
         admonitionTitlesPlugin(),
+        ...tablesPlugins(),
         fidelityPlugin(),
     ];
 }

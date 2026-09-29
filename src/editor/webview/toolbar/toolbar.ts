@@ -32,6 +32,7 @@ import { InlineField } from '../inlineField';
 import { editRawSourceAt } from '../nodeViews';
 import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
 import { applySpanTransaction, literalRefusal, spanLockReason } from '../objects';
+import { insertTableTransaction } from '../tables';
 import {
     MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
     inBubble, inRow, menuOf, submenuOf, tooltipOf,
@@ -131,6 +132,7 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
         }
         case 'insert-source':
         case 'insert-wrapper':
+        case 'insert-table':
             return { enabled: true, active: false, reason: null };
         case 'insert-include':
             return { enabled: includes, active: false, reason: includes ? null : NO_INCLUDES_REFUSAL };
@@ -724,6 +726,10 @@ class ToolbarView implements PluginView {
             }
             case 'insert-wrapper':
                 view.dispatch(insertWrapperTransaction(view.state, apply));
+                view.focus();
+                return;
+            case 'insert-table':
+                view.dispatch(insertTableTransaction(view.state, apply.columns, apply.rows));
                 view.focus();
                 return;
             case 'insert-include':

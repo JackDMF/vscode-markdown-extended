@@ -761,6 +761,7 @@
     "prosemirror-model": "^1.25.12",
     "prosemirror-schema-list": "^1.5.1",
     "prosemirror-state": "^1.4.4",
+    "prosemirror-tables": "^1.8.5",
     "prosemirror-transform": "^1.12.1",
     "prosemirror-view": "^1.42.5",
     "puppeteer": "^24.3.1"

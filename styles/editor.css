@@ -394,7 +394,10 @@
     text-overflow: ellipsis;
 }
 
-/* Between an object's own verbs and the code actions other extensions offer for it. */
+/* A set-verb's menu (a table's Row, Column, Align) is the formatting toolbar's menu, narrower. */
+.mep-object-menu { min-width: 180px; }
+
+/* Between an object's own verbs and the code actions other extensions offer for it, or between groups of its own. */
 .mep-object-separator {
     align-self: stretch;
     width: 1px;
@@ -494,6 +497,24 @@
     outline: 1px dashed var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.5));
     outline-offset: 2px;
 }
+
+/* ------------------------------------------------------------------------- */
+/* Tables                                                                    */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * A pipe table is drawn by the preview's own table rules. The editor adds only
+ * what editing needs: the cells a drag selects across (prosemirror-tables'
+ * `CellSelection`, which hides the text selection inside them), in the
+ * editor's selection colour, and a floor under an empty cell's width, so a new
+ * column can be clicked into.
+ */
+.ProseMirror td, .ProseMirror th { min-width: 1.5em; }
+.ProseMirror .selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }
+.ProseMirror .selectedCell *::selection, .ProseMirror .selectedCell::selection { background: transparent; }
+/* The caret's column while the table's bar shows: what Insert left and right are left and right of. */
+.ProseMirror .mep-table-column { background-color: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.15)); }
+.ProseMirror .mep-table-column.selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }
 
 /* An admonition's title bar is the admonition's attribute, changed from its object toolbar. */
 .ProseMirror .admonition-title[data-mep-admonition-title] {

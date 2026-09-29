@@ -314,12 +314,12 @@ suite('Editor object toolbar (e2e)', () => {
 
     test('a source block shows its bar while the pointer is on it, keeps it while the pointer crosses to it, and Delete block removes it', async function () {
         this.timeout(15000);
-        await showDocument('Before.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nAfter.\n', 'Before');
+        await showDocument('Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n', 'Before');
         const table = await (await page.$('.mep-raw-block table'))?.boundingBox();
         assert.ok(table);
         await page.mouse.move(table.x + table.width / 2, table.y + table.height / 2);
         await page.waitForSelector(HOVER_BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(HOVER_BAR), { object: 'raw_block', label: 'Source block', verbs: ['edit-source', 'show-in-text-editor', 'delete-block'] });
+        assert.deepStrictEqual(await barState(HOVER_BAR), { object: 'raw_block', label: 'Source · multimd table', verbs: ['edit-source', 'show-in-text-editor', 'delete-block'] });
         assert.strictEqual(await page.$(BAR), null, 'nothing is selected');
 
         const button = await (await page.$(`${HOVER_BAR} [data-verb="delete-block"]`))?.boundingBox();

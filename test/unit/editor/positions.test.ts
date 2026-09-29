@@ -110,6 +110,11 @@ const PROPERTY_SOURCE = [
     '',
     'Last paragraph with $left sidebar$ text and !!margin|a marginal note!!.',
     '',
+    // A multimd table (its `=` delimiter row) stays a source block: the raw atom the walk passes.
+    '| c | d |',
+    '| = | = |',
+    '| 3 | 4 |',
+    '',
 ].join('\n');
 
 suite('Editor positions: page ↔ source', () => {
@@ -218,8 +223,31 @@ suite('Editor positions: page ↔ source', () => {
         }
     });
 
+    test('a table: each cell is its text between pipes, the padding and the delimiter row delimiters, unedited and edited', () => {
+        const source = 'Intro.\n\n|Name|Value|\n|:--|--:|\n| Alpha \\| x | 1 |\n|Beta|22|\n\nAfter.\n';
+        const parsed = parseDocument(md, source);
+        assert.strictEqual(parsed.doc.child(1).type.name, 'table');
+        const typed = edited(parsed, state => state.tr.insertText('max', pageOf(state.doc, 'Beta') + 'Beta'.length));
+        for (const [variant, name] of [[parsed, 'unedited'], [typed, 'edited']] as const) {
+            const map = createPositionMap(variant, OPTIONS);
+            const text = map.text;
+            if (variant === typed) {
+                assert.ok(text.includes('| Betamax    |    22 |'), `written tidy: ${text}`);
+            }
+            for (const needle of ['Name', 'alue', 'Alpha', ' x', '1', 'eta', '22', 'After']) {
+                assertBothWays(map, pageOf(variant.doc, needle), sourceOf(text, needle), `${name}: ${needle}`);
+            }
+            const beta = variant === typed ? 'Betamax' : 'Beta';
+            const end = pageOf(variant.doc, beta) + beta.length;
+            const after = sourceOf(text, beta);
+            assertBothWays(map, end, { line: after.line, character: after.character + beta.length }, `${name}: the end of a cell's text, before its padding`);
+            const caret = caretOf(TextSelection.create(variant.doc, end), map);
+            assert.deepStrictEqual(caret, { line: after.line, character: after.character + beta.length }, `${name}: a caret in a cell is reported`);
+        }
+    });
+
     test('a raw atom maps to its whole slice: its start before it, its end after it', () => {
-        const source = 'Before.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nAfter.\n';
+        const source = 'Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n';
         const parsed = parseDocument(md, source);
         assert.deepStrictEqual(topChildren(parsed.doc).map(n => n.type.name), ['paragraph', 'raw_block', 'paragraph']);
         const map = createPositionMap(parsed, OPTIONS);
@@ -231,7 +259,7 @@ suite('Editor positions: page ↔ source', () => {
     });
 
     test('a position in an atom or on a selected node is no caret', () => {
-        const parsed = parseDocument(md, 'Before.\n\n| a | b |\n| - | - |\n\nAn ![image](x.png) here.\n');
+        const parsed = parseDocument(md, 'Before.\n\n| a | b |\n| = | = |\n\nAn ![image](x.png) here.\n');
         const map = createPositionMap(parsed, OPTIONS);
         const state = EditorState.create({ doc: parsed.doc });
         const raw = parsed.doc.child(0).nodeSize;
