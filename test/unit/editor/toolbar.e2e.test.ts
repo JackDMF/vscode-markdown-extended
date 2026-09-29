@@ -113,7 +113,7 @@ suite('Editor toolbar (e2e)', () => {
             const bar = document.querySelector('.mep-toolbar') as HTMLElement;
             const controls = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool'));
             return {
-                groups: Array.from(bar.children).map(g => Array.from(g.children).map(c => (c as HTMLElement).dataset.action ?? `menu:${(c as HTMLElement).dataset.menu}`)),
+                groups: Array.from(bar.querySelectorAll(':scope > .mep-row-group')).map(g => Array.from(g.children).map(c => (c as HTMLElement).dataset.action ?? `menu:${(c as HTMLElement).dataset.menu}`)),
                 heights: [...new Set(controls.map(c => c.offsetHeight))],
                 tops: [...new Set(controls.map(c => Math.round(c.getBoundingClientRect().top)))],
                 faces: Array.from(bar.querySelectorAll('.mep-menu-face')).map(f => ({ text: f.textContent, samples: f.querySelectorAll('.mep-sample').length })),

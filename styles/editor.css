@@ -882,7 +882,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 .mep-language-card a:hover { color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground, #006ab1)); text-decoration: underline; }
 .mep-language-card a:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: 1px; }
 .mep-card-action.mep-disabled { opacity: 0.5; cursor: default; }
-:is(.mep-card-action, .mep-hover-part) .codicon { font-size: inherit; vertical-align: text-bottom; }
+:is(.mep-card-action, .mep-hover-part) .codicon { font-size: inherit; vertical-align: text-bottom; margin-inline-end: 0.25em; }
 
 /* The hover's Markdown: the card's own measure, not the document's. */
 .mep-card-hover > .mep-hover-part + .mep-hover-part { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--vscode-editorHoverWidget-border, #c8c8c8); }

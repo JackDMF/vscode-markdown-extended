@@ -97,7 +97,18 @@ export class CompletionListView {
             option.classList.toggle('mep-chosen', i === index);
         });
         const option = options[index];
-        option?.scrollIntoView({ block: 'nearest' });
+        if (option) {
+            // Within the list only: `scrollIntoView` would scroll the page too,
+            // to wherever the list stands before it is placed.
+            const box = this.options;
+            const top = option.offsetTop - box.offsetTop;
+            const bottom = top + option.offsetHeight;
+            if (top < box.scrollTop) {
+                box.scrollTop = top;
+            } else if (bottom > box.scrollTop + box.clientHeight) {
+                box.scrollTop = bottom - box.clientHeight;
+            }
+        }
         return option;
     }
 
