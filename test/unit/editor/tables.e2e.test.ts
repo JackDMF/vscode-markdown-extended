@@ -5,7 +5,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
-import { CELL_BREAK_REFUSAL } from '../../../src/editor/webview/tables';
+import { CELL_BREAK_REFUSAL } from '../../../src/editor/serialize';
 import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle, vscodeMarkdownCss } from './pageHarness';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -94,6 +94,8 @@ suite('Editor pipe tables (e2e)', () => {
             if (hint) {
                 hint.hidden = true;
             }
+            // A room the last test was given scrolled the page; each test starts at its top.
+            window.scrollTo(0, 0);
         });
         await delay(300);
     };
@@ -149,6 +151,39 @@ suite('Editor pipe tables (e2e)', () => {
         label: bar.querySelector('.mep-object-label')?.textContent,
         verbs: Array.from(bar.querySelectorAll('button[data-verb]')).map(v => (v as HTMLElement).dataset.verb),
     }));
+
+    /** The text the element `selector` covers: every line box of the document's text it overlaps, as that text. */
+    const coveredText = (selector: string, scope = '.ProseMirror') => page.evaluate((sel, within) => {
+        const bar = document.querySelector(sel) as HTMLElement | null;
+        if (!bar) {
+            return [] as string[];
+        }
+        const b = bar.getBoundingClientRect();
+        const covered: string[] = [];
+        const root = document.querySelector(within) as HTMLElement;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if ((node.textContent ?? '').trim() === '' || (node.parentElement?.closest('.mep-object-toolbar, .mep-bubble'))) {
+                continue;
+            }
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            for (const r of Array.from(range.getClientRects())) {
+                if (r.width > 0 && r.left < b.right && r.right > b.left && r.top < b.bottom && r.bottom > b.top) {
+                    covered.push(node.textContent ?? '');
+                    break;
+                }
+            }
+        }
+        return covered;
+    }, selector, scope);
+
+    /** The text of the cell the caret is in. */
+    const caretCell = () => page.evaluate(() => {
+        const anchor = (document.getSelection() as Selection).anchorNode;
+        const el = anchor instanceof Element ? anchor : anchor?.parentElement;
+        return el?.closest('td, th')?.textContent ?? null;
+    });
 
     /** The caret in the cell holding `needle`, and the table's bar shown. */
     const barFor = async (needle: string, index = 1) => {
@@ -207,6 +242,7 @@ suite('Editor pipe tables (e2e)', () => {
         await clickAt('Alpha', 2);
         await shot('01-table-caret.png');
         assert.strictEqual(await page.$(BAR), null, `no bar before ${INLINE_DELAY_MS} ms`);
+        assert.ok(await page.$('.ProseMirror table.mep-table-active'), 'the table is outlined while the caret is in it, before its bar');
         await press('Tab');
         assert.strictEqual(await selected(), 'first');
         await press('Tab');
@@ -264,6 +300,13 @@ suite('Editor pipe tables (e2e)', () => {
         await page.click('.mep-menu [data-action="table"]');
         await delay(100);
         assert.strictEqual(await selected(), 'Column 1');
+        assert.deepStrictEqual(await coveredText('.mep-bubble:not([hidden])'), [], 'the bubble covers no text: the line above it is text, so it goes below');
+        const empty = await page.$$eval('.ProseMirror td', cells => cells.map(c => {
+            const r = c.getBoundingClientRect();
+            return { height: r.height, width: r.width, line: getComputedStyle(c).boxShadow !== 'none' };
+        }));
+        assert.strictEqual(empty.length, 6);
+        assert.ok(empty.every(c => c.height >= 16 && c.width >= 16 && c.line), `every empty cell can be seen: ${JSON.stringify(empty)}`);
         await shot('06-insert-table.png');
         await page.keyboard.type('Key');
         await press('Tab');
@@ -292,11 +335,47 @@ suite('Editor pipe tables (e2e)', () => {
         await page.waitForSelector('.mep-table-column', { timeout: 1000 });
         const tinted = await page.$$eval('.ProseMirror .mep-table-column', els => els.map(e => e.textContent));
         assert.deepStrictEqual(tinted, ['Kind', 'first', 'second'], 'the caret\'s column, every row of it');
+        assert.deepStrictEqual(await coveredText(BAR), [], 'the bar covers no text');
+        const beside = await page.evaluate(sel => {
+            const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+            const table = (document.querySelector('.ProseMirror table') as HTMLElement).getBoundingClientRect();
+            return { left: bar.left, right: table.right, top: bar.top, tableTop: table.top };
+        }, BAR);
+        assert.ok(beside.left > beside.right && Math.abs(beside.top - beside.tableTop) < 2, `beside the table's first line, top-aligned: ${JSON.stringify(beside)}`);
+        assert.strictEqual(await page.$('.mep-bar-room'), null, 'a table with room beside it is given none above');
         await shot('02-table-bar.png');
 
         await clickAt('After', 2);
         await delay(100);
         assert.strictEqual(await page.$('.mep-table-column'), null, 'the tint goes with the bar');
+        assert.strictEqual(await page.$('.ProseMirror table.mep-table-active'), null, 'and the outline with the caret');
+    });
+
+    test('a block with text in every place its bar could go gets room above for it; the caret\'s line stays where it was', async function () {
+        this.timeout(15000);
+        // Text at the column's right edge above the container, below it, and in its own first line.
+        const long = 'Inside the container, a first line of prose long enough to run across the whole width of the column and on past its right edge, so its first line is full.';
+        await showDocument(`Right-aligned text above. {style="text-align: right"}\n\n::: note\n${long}\n:::\n\nRight-aligned text below. {style="text-align: right"}\n`, 'Inside');
+        await clickAt('Inside', 2);
+        const caretTop = () => page.evaluate(() => (document.getSelection() as Selection).getRangeAt(0).getBoundingClientRect().top);
+        const before = await caretTop();
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await page.waitForSelector('.mep-bar-room', { timeout: 1000 });
+        await delay(50);
+        assert.strictEqual((await barState()).object, 'container');
+        assert.deepStrictEqual(await coveredText(BAR), [], 'the bar stands in the room, over no text');
+        assert.ok(Math.abs((await caretTop()) - before) < 1.5, 'the room moved the content above, not the line being typed');
+        await clickAt('Right-aligned', 2);
+        await delay(100);
+        assert.strictEqual(await page.$('.mep-bar-room'), null, 'the room goes with the bar');
+
+        // A block with a free place for its bar needs no room, and nothing moves: a short line ends far from it.
+        await showDocument('Short line.\n\n::: note\nInside the container.\n:::\n', 'Inside');
+        await clickAt('Inside', 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await delay(50);
+        assert.strictEqual(await page.$('.mep-bar-room'), null);
+        assert.deepStrictEqual(await coveredText(BAR), []);
     });
 
     test('Row ▾ inserts above and below and deletes, Column ▾ inserts left and right and deletes: each a tidy table', async function () {
@@ -311,10 +390,17 @@ suite('Editor pipe tables (e2e)', () => {
         ]);
         await press('Escape');
         await choose('row', 'insert-row-below');
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-cell-new', els => els.length), 3, 'the new row\'s cells are highlighted');
+        await delay(700);
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-cell-new', els => els.length), 0, 'for 600 ms');
         await barFor('first');
+        // The shot while the new column still shows its highlight: the animation, held.
+        await page.addStyleTag({ content: '.ProseMirror .mep-cell-new { animation-play-state: paused !important; }' });
         await choose('column', 'insert-column-right');
+        await page.waitForSelector('.ProseMirror .mep-cell-new', { timeout: 500 });
         await page.waitForSelector(BAR, { timeout: 2000 });
         await shot('04-after-insert.png');
+        await page.addStyleTag({ content: '.ProseMirror .mep-cell-new { animation-play-state: running !important; }' });
         await settle();
         assert.strictEqual((await lastEdit())?.text, [
             'Intro paragraph.',
@@ -335,8 +421,10 @@ suite('Editor pipe tables (e2e)', () => {
         await choose('column', 'insert-column-left');
         await choose('column', 'delete-column');
         assert.strictEqual((await hint()).text, 'Column deleted — Ctrl+Z');
+        assert.strictEqual(await caretCell(), '', 'the caret in the cell now standing where the deleted one stood: the new row\'s first');
         await barFor('Beta');
         await choose('row', 'delete-row');
+        assert.strictEqual(await caretCell(), '', 'the caret in the row before, the last one having gone');
         await settle();
         assert.strictEqual((await lastEdit())?.text, [
             'Intro paragraph.',
@@ -356,6 +444,7 @@ suite('Editor pipe tables (e2e)', () => {
         await choose('row', 'delete-row');
         await settle();
         assert.deepStrictEqual((await cells())[0], ['th:Alpha', 'th:first', 'th:', 'th:1'], 'the next row is the header');
+        assert.strictEqual(await caretCell(), 'Alpha', 'the caret in the cell below the deleted one');
     });
 
     test('Align ▾ marks the current alignment, sets another into the delimiter row, and the marked one again is the default', async function () {
@@ -368,6 +457,8 @@ suite('Editor pipe tables (e2e)', () => {
             ['align-center', 'Center', ':-:', 'true'],
             ['align-right', 'Right', '--:', 'false'],
         ]);
+        const marks = await page.$$eval(`${MENU} .mep-menu-item`, items => items.map(i => getComputedStyle(i, '::before').content));
+        assert.deepStrictEqual(marks, ['""', '"✓"', '""'], 'the current value is a check, apart from the focus ring');
         await shot('03-align-menu.png');
         await press('Escape');
         await choose('align', 'align-right');
@@ -437,6 +528,9 @@ suite('Editor pipe tables (e2e)', () => {
         await page.waitForSelector(HOVER_BAR, { timeout: 2000 });
         assert.deepStrictEqual(await barState(HOVER_BAR), { object: 'raw_block', label: 'Source · multimd table', verbs: ['edit-source', 'show-in-text-editor', 'delete-block'] });
         assert.strictEqual((await barState()).label, 'Table', 'the native table keeps its own bar');
+        await delay(100);
+        assert.deepStrictEqual(await coveredText(HOVER_BAR), [], 'the source block\'s bar covers no text');
+        assert.deepStrictEqual(await coveredText(BAR), [], 'nor does the table\'s');
         await shot('05-multimd-raw.png');
     });
 
@@ -452,6 +546,9 @@ suite('Editor pipe tables (e2e)', () => {
         await delay(100);
         await press('b', 'Control');
         await delay(INLINE_DELAY_MS + 100);
+        assert.ok(await page.$('.mep-bubble:not([hidden])'), 'the bubble shows over the selected text');
+        assert.strictEqual(await page.$(BAR), null, 'and no block\'s bar beside it: one thing at a time');
+        assert.deepStrictEqual(await coveredText('.mep-bubble:not([hidden])', '.ProseMirror table'), [], 'the bubble covers no row of the table');
         await shot('07-cell-mark.png');
         await settle();
         assert.ok((await lastEdit())?.text.includes('| Beta  | **sec**ond |    22 |'), (await lastEdit())?.text);

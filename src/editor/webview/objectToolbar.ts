@@ -47,7 +47,9 @@ import {
     deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
+import { firstLineOf, rightEdgeIn, textInBand, textInElement } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
+import { selectionBubbleShown } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
@@ -177,22 +179,40 @@ const BLOCK_LABELS: Readonly<Record<string, string>> = {
     horizontal_rule: 'Rule',
 };
 
+/** Room made above a block for its bar: a widget of `height` at the block's position `pos`. */
+interface Room {
+    pos: number;
+    height: number;
+}
+
 /**
- * The table whose caret column is tinted, by its position: set by the bar's
- * view when a table's bar shows and goes (`ObjectToolbarView.refresh`), read
- * by the plugin's decorations, which tint the selection's columns of it.
+ * What the bars draw into the document, set by the bars' view as they show
+ * and go (`ObjectToolbarView.syncDecorations`) and drawn by the plugin's
+ * decorations: `tint`, the table whose caret column is tinted while its bar
+ * shows, by its position; `rooms`, the room above a block whose bar has no
+ * place beside it.
  */
-const tintKey = new PluginKey<number | null>('mep-table-tint');
+interface BarDecor {
+    tint: number | null;
+    rooms: readonly Room[];
+}
+
+const NO_DECOR: BarDecor = { tint: null, rooms: [] };
+
+const decorKey = new PluginKey<BarDecor>('mep-object-toolbar-decor');
+
+/** The class of the room widget, which the pointer counts as the block below it. */
+const ROOM_CLASS = 'mep-bar-room';
 
 /** The caret's columns of the table at `tablePos`, as node decorations on their cells; none when the selection is not in it. */
-function columnTint(state: EditorState, tablePos: number | null): DecorationSet {
+function columnTint(state: EditorState, tablePos: number | null): Decoration[] {
     const table = tablePos === null ? null : state.doc.nodeAt(tablePos);
     if (tablePos === null || !table || table.type.name !== 'table' || !(isInTable(state) || state.selection instanceof CellSelection)) {
-        return DecorationSet.empty;
+        return [];
     }
     const rect = selectedRect(state);
     if (rect.tableStart !== tablePos + 1) {
-        return DecorationSet.empty;
+        return [];
     }
     const decorations: Decoration[] = [];
     for (let row = 0; row < rect.map.height; row++) {
@@ -204,7 +224,34 @@ function columnTint(state: EditorState, tablePos: number | null): DecorationSet 
             }
         }
     }
-    return DecorationSet.create(state.doc, decorations);
+    return decorations;
+}
+
+/**
+ * The room above a block for its bar: an empty widget of the bar's height,
+ * before the block's lens row if it has one (`side` further out than the
+ * row's), so the bar stands in space of its own and the line above the block
+ * stays readable.
+ */
+function roomWidget(room: Room): Decoration {
+    return Decoration.widget(room.pos, () => {
+        const el = document.createElement('div');
+        el.className = ROOM_CLASS;
+        el.setAttribute('contenteditable', 'false');
+        el.setAttribute('aria-hidden', 'true');
+        el.style.height = `${room.height}px`;
+        return el;
+    }, { side: -2, key: `${ROOM_CLASS}:${room.height}`, ignoreSelection: true });
+}
+
+function barDecorations(state: EditorState, decor: BarDecor): DecorationSet {
+    const decorations = [...columnTint(state, decor.tint), ...decor.rooms.filter(r => r.pos >= 0 && r.pos <= state.doc.content.size).map(roomWidget)];
+    return decorations.length === 0 ? DecorationSet.empty : DecorationSet.create(state.doc, decorations);
+}
+
+function sameDecor(a: BarDecor, b: BarDecor): boolean {
+    return a.tint === b.tint && a.rooms.length === b.rooms.length
+        && a.rooms.every((r, i) => r.pos === b.rooms[i].pos && r.height === b.rooms[i].height);
 }
 
 /**
@@ -237,6 +284,8 @@ function isSidebar(name: NoteNodeName): boolean {
 class ObjectBar {
     readonly el: HTMLElement;
     object: EditorObject | null = null;
+    /** The room this bar asked for above its block, when it has no place beside it (`placeBlock`). */
+    room: Room | null = null;
     private field: InlineField | InlineChoice | null = null;
     private signature = '';
     private buttons: { verb: Verb; el: HTMLButtonElement }[] = [];
@@ -292,6 +341,7 @@ class ObjectBar {
         this.field?.dispose();
         this.field = null;
         this.object = null;
+        this.room = null;
         this.signature = '';
         this.el.hidden = true;
         delete this.el.dataset.object;
@@ -687,6 +737,9 @@ class ObjectToolbarView implements PluginView {
             if (presentation.verbs.length === 0 && object.kind === 'heading') {
                 // A heading's verbs are other extensions' lenses and actions; with none, no bar.
                 this.selectionBar.hide();
+            } else if (isBlockPlaced(object) && selectionBubbleShown(this.view)) {
+                // One thing at a time: while text is selected its bubble is the bar.
+                this.selectionBar.hide();
             } else {
                 this.selectionBar.show(object, presentation);
                 this.place(this.selectionBar, object);
@@ -706,24 +759,54 @@ class ObjectToolbarView implements PluginView {
             };
         }
         this.refreshHover();
-        this.retint();
+        this.syncDecorations();
     }
 
     /**
-     * Tint the caret's column of the table whose bar shows, and only while it
-     * shows. The tint is a decoration, so the view is told in a transaction of
-     * its own — after this update, which may not dispatch one itself.
+     * What the bars shown need drawn in the document: the tint of the caret's
+     * column of the table whose bar shows, and the room above each block whose
+     * bar has no place beside it. They are decorations, so the view is told in
+     * a transaction of its own — after this update, which may not dispatch one.
      */
-    private retint(): void {
-        const shown = this.selectionBar.visible && this.selectionBar.object?.kind === 'table' ? this.selectionBar.object.from : null;
-        if (shown === (tintKey.getState(this.view.state) ?? null)) {
+    private syncDecorations(): void {
+        const wanted = (): BarDecor => {
+            const tint = this.selectionBar.visible && this.selectionBar.object?.kind === 'table' ? this.selectionBar.object.from : null;
+            const rooms = [this.selectionBar, this.hoverBar]
+                .filter(bar => bar.visible && bar.room !== null)
+                .map(bar => bar.room as Room)
+                .sort((a, b) => a.pos - b.pos);
+            return { tint, rooms };
+        };
+        if (sameDecor(wanted(), decorKey.getState(this.view.state) ?? NO_DECOR)) {
             return;
         }
         queueMicrotask(() => {
-            if (!this.destroyed && shown !== (tintKey.getState(this.view.state) ?? null)) {
-                this.view.dispatch(this.view.state.tr.setMeta(tintKey, shown));
+            const next = wanted();
+            if (!this.destroyed && !sameDecor(next, decorKey.getState(this.view.state) ?? NO_DECOR)) {
+                // A room moves what is below it. What the person is at — the block
+                // the pointer is on, else the caret's line — is kept where it was
+                // by scrolling the same distance: the content above moves instead,
+                // so a pointed-at block never slides out from under the pointer.
+                const before = this.anchorTop();
+                this.view.dispatch(this.view.state.tr.setMeta(decorKey, next));
+                const after = this.anchorTop();
+                if (before !== null && after !== null && Math.abs(after - before) >= 1) {
+                    window.scrollBy(0, after - before);
+                }
             }
         });
+    }
+
+    /** The top of what the person is at, in the window: the pointed-at block, else the caret's line. */
+    private anchorTop(): number | null {
+        if (this.hovered && this.view.dom.contains(this.hovered)) {
+            return this.hovered.getBoundingClientRect().top;
+        }
+        try {
+            return this.view.coordsAtPos(this.view.state.selection.head).top;
+        } catch {
+            return null;
+        }
     }
 
     // -- the pointer's bar -----------------------------------------------------
@@ -737,10 +820,15 @@ class ObjectToolbarView implements PluginView {
             this.hoverTimer = undefined;
             return;
         }
-        // A block's lens row is the block's, for the pointer: crossing it on the
-        // way to the bar above must not hide the bar.
-        const lensRow = target.closest<HTMLElement>('.mep-lens-row');
-        const below = lensRow?.parentElement === this.view.dom ? lensRow.nextElementSibling : null;
+        // A block's lens row, and the room made above it for its bar, are the
+        // block's, for the pointer: crossing them on the way to the bar above
+        // must not hide the bar (and a room that went would move the block
+        // back under the pointer, and come again).
+        const before = target.closest<HTMLElement>(`.mep-lens-row, .${ROOM_CLASS}`);
+        let below = before?.parentElement === this.view.dom ? before.nextElementSibling : null;
+        while (below instanceof HTMLElement && (below.classList.contains('mep-lens-row') || below.classList.contains(ROOM_CLASS))) {
+            below = below.nextElementSibling;
+        }
         const atom = below instanceof HTMLElement && below.classList.contains('mep-atom') ? below : target.closest<HTMLElement>('.mep-atom');
         if (atom && atom.parentElement === this.view.dom) {
             clearTimeout(this.hoverTimer);
@@ -784,12 +872,13 @@ class ObjectToolbarView implements PluginView {
 
     private refreshHover(): void {
         const object = this.hoveredObject();
-        if (object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object))) {
+        if (object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object)) || selectionBubbleShown(this.view)) {
             this.hoverBar.hide();
-            return;
+        } else {
+            this.hoverBar.show(object, this.present(object));
+            this.place(this.hoverBar, object);
         }
-        this.hoverBar.show(object, this.present(object));
-        this.place(this.hoverBar, object);
+        this.syncDecorations();
     }
 
     // -- placing ---------------------------------------------------------------
@@ -800,6 +889,7 @@ class ObjectToolbarView implements PluginView {
                 this.place(bar, bar.object);
             }
         }
+        this.syncDecorations();
     }
 
     /** Where the object's first line starts and its last line ends. */
@@ -808,10 +898,6 @@ class ObjectToolbarView implements PluginView {
         if (object.kind !== 'link' && object.kind !== 'span') {
             const dom = view.nodeDOM(object.from);
             if (dom instanceof Element) {
-                if (isBlockPlaced(object)) {
-                    const r = dom.getBoundingClientRect();
-                    return { right: r.right - (isBlockObject(object) ? ATOM_INSET : 0), top: r.top, bottom: r.bottom };
-                }
                 // An inline element's own line boxes: a note's body floated
                 // into the margin is not one of them, so the bar keeps to the
                 // reference's lines.
@@ -833,32 +919,24 @@ class ObjectToolbarView implements PluginView {
      * selection bubble is above.
      */
     private place(bar: ObjectBar, object: EditorObject): void {
+        if (isBlockPlaced(object)) {
+            this.placeBlock(bar, object);
+            return;
+        }
+        bar.room = null;
         const el = bar.el;
         const base = this.mount.getBoundingClientRect();
         const anchor = this.anchor(object);
         const width = el.offsetWidth;
         const height = el.offsetHeight;
-        const row = this.mount.querySelector(':scope > .mep-toolbar');
-        const ceiling = Math.max(0, row ? row.getBoundingClientRect().bottom : 0);
+        const ceiling = this.ceiling();
         const sel = this.view.state.selection;
         const typing = bar === this.selectionBar && sel instanceof TextSelection;
         const caret = typing ? this.view.coordsAtPos(sel.head) : null;
         const covers = (y: number) => caret !== null && y < caret.bottom && y + height > caret.top;
         const fits = (y: number) => y >= ceiling && !covers(y);
-        // Another extension's lens row (`lenses.ts`) sits right above a block's
-        // first line, which is where the bar goes too: a bar that would cover a
-        // row is moved past it, above it when going up and below it when going
-        // down, so the two never overlap.
-        const lensRows = Array.from(this.view.dom.querySelectorAll(':scope > .mep-lens-row'), r => r.getBoundingClientRect());
-        const clear = (y: number, up: boolean): number => {
-            let at = y;
-            for (let hit = lensRows.find(r => at < r.bottom && at + height > r.top); hit; hit = lensRows.find(r => at < r.bottom && at + height > r.top)) {
-                at = up ? hit.top - GAP - height : hit.bottom + GAP;
-            }
-            return at;
-        };
-        const above = clear(anchor.top - GAP - height, true);
-        const below = clear(anchor.bottom + GAP, false);
+        const above = this.clearOfLensRows(anchor.top - GAP - height, height, true);
+        const below = this.clearOfLensRows(anchor.bottom + GAP, height, false);
         const order = typing && !sel.empty ? [below, above] : [above, below];
         let y = order.find(fits) ?? order[1];
         if (covers(y) && caret !== null) {
@@ -866,6 +944,102 @@ class ObjectToolbarView implements PluginView {
         }
         const edge = anchor.left ?? (anchor.right ?? base.right) - width;
         const x = Math.max(base.left, Math.min(edge, base.right - width));
+        el.style.left = `${x - base.left}px`;
+        el.style.top = `${y - base.top}px`;
+    }
+
+    /** The bottom of the sticky formatting row: nothing is placed under it. */
+    private ceiling(): number {
+        const row = this.mount.querySelector(':scope > .mep-toolbar');
+        return Math.max(0, row ? row.getBoundingClientRect().bottom : 0);
+    }
+
+    /**
+     * `y` moved past another extension's lens rows (`lenses.ts`), which sit
+     * right above a block's first line, where a bar goes too — above a row
+     * when going up, below it going down — so the two never overlap.
+     */
+    private clearOfLensRows(y: number, height: number, up: boolean): number {
+        const rows = Array.from(this.view.dom.querySelectorAll(':scope > .mep-lens-row'), r => r.getBoundingClientRect());
+        let at = y;
+        for (let hit = rows.find(r => at < r.bottom && at + height > r.top); hit; hit = rows.find(r => at < r.bottom && at + height > r.top)) {
+            at = up ? hit.top - GAP - height : hit.bottom + GAP;
+        }
+        return at;
+    }
+
+    /**
+     * A block's bar never covers text (Daniel, 2026-09-29). The first of these
+     * places that holds no text is where it goes:
+     *
+     * 1. beside the block's first line, outside it, top-aligned with it — where
+     *    the block ends short of the text column's right edge (a table, a short
+     *    heading);
+     * 2. above the block, right-aligned to the column — where the line above
+     *    ends short of it, or a margin is there;
+     * 3. inside the block's own box at its top right — a source block, a
+     *    container or an admonition whose first line is short;
+     * 4. below the block, right-aligned to the column;
+     * 5. above the block, in room the block is given while the bar shows
+     *    (`Room`, a widget of the bar's height before it), so the line above
+     *    stays readable. Once given, a room is kept while the bar shows: the
+     *    band it makes is free, and taking it away for that would move the
+     *    block back under the bar, and give it again.
+     *
+     * The places before the room move nothing: a pointed-at block that shifted
+     * down as its bar appeared would leave the pointer. Where the room is made,
+     * the view scrolls by its height, so what the person is at stays put
+     * (`syncDecorations`). A block that draws a box of its own (a table, a
+     * source block, a container, an admonition) is its box; a heading or a
+     * block with attributes is its text, whose lines in the bar's band must
+     * all end before the bar.
+     */
+    private placeBlock(bar: ObjectBar, object: EditorObject): void {
+        const el = bar.el;
+        const view = this.view;
+        const base = this.mount.getBoundingClientRect();
+        const width = el.offsetWidth;
+        const height = el.offsetHeight;
+        const dom = object.kind === 'link' || object.kind === 'span' ? null : view.nodeDOM(object.from);
+        if (!(dom instanceof Element)) {
+            bar.room = null;
+            return;
+        }
+        const box = dom.getBoundingClientRect();
+        const style = getComputedStyle(view.dom);
+        const columnRight = view.dom.getBoundingClientRect().right - (parseFloat(style.paddingRight) || 0);
+        const textual = object.kind === 'heading' || object.kind === 'block_attrs';
+        const line = textual ? firstLineOf(dom) : null;
+        const top = line?.top ?? box.top;
+        const right = textual
+            ? rightEdgeIn(dom, top, top + height)
+            : box.right - (isBlockObject(object) ? ATOM_INSET : 0);
+        const ceiling = this.ceiling();
+        const band = (left: number, bandTop: number) => ({ left, right: left + width, top: bandTop, bottom: bandTop + height });
+        const given = (decorKey.getState(view.state) ?? NO_DECOR).rooms.some(r => r.pos === object.from);
+        const edge = columnRight - width;
+        const aboveY = this.clearOfLensRows(box.top - GAP - height, height, true);
+        const insideRight = box.right - (isBlockObject(object) ? ATOM_INSET : 0) - GAP;
+        const insideY = box.top + (isBlockObject(object) ? ATOM_INSET : GAP);
+        const belowY = this.clearOfLensRows(box.bottom + GAP, height, false);
+        const places: { x: number; y: number; free: () => boolean }[] = [
+            { x: right + GAP, y: top, free: () => Number.isFinite(right) && right + GAP + width <= columnRight },
+            { x: edge, y: aboveY, free: () => !textInBand(view, band(edge, aboveY)) },
+            ...(textual || object.kind === 'table' ? [] : [{ x: insideRight - width, y: insideY, free: () => !textInElement(dom, band(insideRight - width, insideY)) }]),
+            { x: edge, y: belowY, free: () => belowY + height <= window.innerHeight && !textInBand(view, band(edge, belowY)) },
+        ];
+        const found = given ? undefined : places.find(p => p.y >= ceiling && p.free());
+        let x: number;
+        let y: number;
+        if (found) {
+            bar.room = null;
+            ({ x, y } = found);
+        } else {
+            bar.room = { pos: object.from, height: height + 2 * GAP };
+            x = edge;
+            y = Math.max(aboveY, ceiling);
+        }
+        x = Math.max(base.left, Math.min(x, base.right - width));
         el.style.left = `${x - base.left}px`;
         el.style.top = `${y - base.top}px`;
     }
@@ -1427,14 +1601,23 @@ class ObjectToolbarView implements PluginView {
 const toolbarViews = new WeakMap<EditorView, ObjectToolbarView>();
 
 /** The object toolbar, as a plugin: its view follows every state, and `Alt+Enter` opens it from the keyboard. */
-export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<number | null> {
-    return new Plugin<number | null>({
-        key: tintKey,
+export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
+    return new Plugin<BarDecor>({
+        key: decorKey,
         state: {
-            init: () => null,
+            init: () => NO_DECOR,
             apply: (tr, value) => {
-                const meta = tr.getMeta(tintKey) as number | null | undefined;
-                return meta !== undefined ? meta : value === null ? null : tr.mapping.map(value);
+                const meta = tr.getMeta(decorKey) as BarDecor | undefined;
+                if (meta !== undefined) {
+                    return meta;
+                }
+                if (!tr.docChanged || (value.tint === null && value.rooms.length === 0)) {
+                    return value;
+                }
+                return {
+                    tint: value.tint === null ? null : tr.mapping.map(value.tint),
+                    rooms: value.rooms.map(r => ({ pos: tr.mapping.map(r.pos), height: r.height })),
+                };
             },
         },
         view(editorView) {
@@ -1444,7 +1627,7 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<number | nu
         },
         props: {
             decorations(state) {
-                return columnTint(state, tintKey.getState(state) ?? null);
+                return barDecorations(state, decorKey.getState(state) ?? NO_DECOR);
             },
             handleKeyDown(view, event) {
                 if (event.key !== 'Enter' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {

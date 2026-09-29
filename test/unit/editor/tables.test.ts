@@ -6,7 +6,8 @@ import { EDITABLE_TOP_NODES, InjectionMark, ParsedDocument, blockLineRanges, edi
 import { blockIndexForLine } from '../../../src/editor/host/lenses';
 import { tableLines, unwritableInTable } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
-import { addRowTransaction, deleteColumnRefusal, deleteRowRefusal, deleteRowTransaction, tableRefusal } from '../../../src/editor/webview/tables';
+import { addRowTransaction, deleteColumnRefusal, deleteRowRefusal, deleteRowTransaction, enterInCell, tableRefusal } from '../../../src/editor/webview/tables';
+import { CellSelection } from 'prosemirror-tables';
 import { hostEngine, toCrlf, topChildren, touched } from './helpers';
 
 /** The position where `needle` starts in one of the document's text nodes. */
@@ -206,6 +207,8 @@ suite('Editor pipe tables', () => {
         ['a sidenote in a cell', '| a | b |\n| --- | --- |\n| ++ref\\|note++ | y |\n', 'sidenote_open'],
         ['code holding | in a cell', '| a | b |\n| --- | --- |\n| `x|y` | y |\n', 'code holding |'],
         ['inline HTML in a cell', '| a | b |\n| --- | --- |\n| x<br>y | y |\n', 'html_inline'],
+        // markdown-it-attrs does not read the literal at all here; `classify` refuses one that holds `|` or a backtick besides.
+        ['an attribute span whose literal would hold | in a cell', '| a | b |\n| --- | --- |\n| [s]{title="p\\|q"} | y |\n', 'span'],
     ];
 
     for (const [name, source, why] of MULTIMD) {
@@ -312,6 +315,50 @@ suite('Editor pipe tables', () => {
         const inText = plain.apply(plain.tr.setSelection(TextSelection.create(plain.doc, cellTextPos(plain.doc, 'text') + 2)));
         const written = inText.apply(inText.tr.insertText('|'));
         assert.ok(serializeDocument({ doc: written.doc, eol: '\n', tail: '' }, OPTIONS).includes('| te\\|xt |'), 'a | in text is written \\|');
+    });
+
+    test('a | is escaped where the text is, once: in text, alt text and a title; a text backslash before it stays one backslash', () => {
+        const link = editorSchema.marks.link.create({ href: 'x.md', title: 'a|b', markup: null });
+        const table = nodes.table.create(null, [
+            nodes.table_row.create(null, [nodes.table_header.create(null, editorSchema.text('h'))]),
+            nodes.table_row.create(null, [nodes.table_cell.create(null, [
+                editorSchema.text('a\\|b '),
+                editorSchema.text('l', [link]),
+                editorSchema.text(' '),
+                nodes.image.create({ src: 'i.png', alt: 'p|q', title: null }),
+            ])]),
+        ]);
+        const text = `${tableLines(table).join('\n')}\n`;
+        assert.ok(text.includes('a\\\\\\|b [l](x.md "a\\|b") ![p\\|q](i.png)'), text);
+        const cell = cellsOf(parseDocument(md, text).doc.child(0))[1][0];
+        assert.strictEqual(cell.text, 'a\\|b l ', 'reads back as it was');
+    });
+
+    test('Enter leaves the table only from a caret in an empty last row, not from cells selected down into it', () => {
+        const source = '| a |\n| - |\n| x |\n|   |\n';
+        const base = EditorState.create({ doc: parseDocument(md, source).doc, plugins: editorPlugins() });
+        const table = base.doc.child(0);
+        const cellStart = (row: number) => {
+            let pos = 1;
+            for (let r = 0; r < row; r++) {
+                pos += table.child(r).nodeSize;
+            }
+            return pos + 1;
+        };
+        assert.strictEqual(table.childCount, 3, 'the header, a row, an empty last row');
+        const across = base.apply(base.tr.setSelection(CellSelection.create(base.doc, cellStart(1), cellStart(2))));
+        let result: EditorState | null = null;
+        enterInCell(across, tr => {
+            result = across.apply(tr);
+        });
+        assert.ok(result);
+        assert.strictEqual((result as EditorState).doc.child(0).childCount, 4, 'a selection across rows keeps the empty row, and adds one as Enter in the last row does');
+        const caret = base.apply(base.tr.setSelection(TextSelection.create(base.doc, cellStart(2) + 1)));
+        enterInCell(caret, tr => {
+            result = caret.apply(tr);
+        });
+        assert.strictEqual((result as EditorState).doc.child(0).childCount, 2, 'a caret there takes the row away');
+        assert.strictEqual((result as EditorState).doc.child(1).type, nodes.paragraph, 'and leaves for a paragraph');
     });
 
     test('a lens on any line of a table goes on the table block, as on any block', () => {

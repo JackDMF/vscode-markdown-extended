@@ -8,7 +8,7 @@
  * next cell, its text selected, and in the last cell adds a row and moves into
  * it; `Shift+Tab` moves back and stays in the first cell; `Enter` moves to the
  * cell below — a pipe table has one line per row, so it never breaks a line —
- * and in the last row adds a row, except that `Enter` in an empty last row
+ * and in the last row adds a row, except that a caret in an empty last row
  * takes the row away again and leaves the table for a new paragraph after it,
  * as `Enter` in an empty last item leaves a list. `Shift+Enter` would be a hard
  * break, which a cell cannot hold: it is refused, with the reason beside the
@@ -30,37 +30,26 @@
  * **What is not made** (`tablesPlugin`'s filter): a transaction that would
  * leave in a table what the tidy form cannot write (`unwritableInTable`) is
  * refused with the reason, as the notes plugin refuses an unwritable note.
+ *
+ * **Feedback** (`tableDecorations`): the table the caret is in is outlined, a
+ * signifier there before its bar; the cells a verb made are flashed for
+ * `FLASH_MS`; a delete leaves the caret in the cell now standing where the
+ * deleted one stood (`intoNeighbour`).
  */
 import { keymap } from 'prosemirror-keymap';
 import { Node } from 'prosemirror-model';
-import { Command, EditorState, NodeSelection, Plugin, TextSelection, Transaction } from 'prosemirror-state';
-import { EditorView } from 'prosemirror-view';
+import { Command, EditorState, NodeSelection, Plugin, PluginKey, TextSelection, Transaction } from 'prosemirror-state';
+import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { CellSelection, TableMap, TableRect, addColumn, addRow, deleteColumn, deleteRow, goToNextCell, isInTable, selectedRect, tableEditing } from 'prosemirror-tables';
 import { PRESERVE_SOURCE_META } from '../fidelity';
 import { TableAlign, editorSchema } from '../schema';
-import { serializeNode, unwritableInTable } from '../serialize';
+import { CELL_BREAK_REFUSAL, serializeNode, unwritableInTable } from '../serialize';
 import { showHint } from './hint';
 import { refusableRange } from './notes';
 import { insertionPoint } from './toolbar/commands';
 import type { SourceContext } from './toolbar/commands';
 
 const nodes = editorSchema.nodes;
-
-/** What `Shift+Enter` says in a cell. */
-export const CELL_BREAK_REFUSAL = 'A table cell holds one line: a pipe table has no line break inside a cell.';
-
-/** The top-level table the selection is in, both its ends, with its position; `null` outside one. */
-export function tableAt(state: EditorState): { pos: number; node: Node } | null {
-    const sel = state.selection;
-    if (sel instanceof NodeSelection && sel.node.type === nodes.table) {
-        return { pos: sel.from, node: sel.node };
-    }
-    const { $from, $to } = sel;
-    if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1) || $from.node(1).type !== nodes.table) {
-        return null;
-    }
-    return { pos: $from.before(1), node: $from.node(1) };
-}
 
 /** The selection's cells as a rectangle of the table, or `null` when the selection is in no cell. */
 function rectOf(state: EditorState): TableRect | null {
@@ -170,8 +159,52 @@ export function addRowTransaction(state: EditorState, side: 'above' | 'below'): 
     addRow(tr, rect, row);
     copyRowAligns(tr, rect.tableStart, row, side === 'above' ? row + 1 : row - 1);
     normalizeTables(tr);
+    flashCells(tr, rect.tableStart, (r, _c) => r === row);
     const pos = cellPos(tr.doc, rect.tableStart, row, rect.left);
     return (pos === null ? tr : intoCell(tr, pos, 'end')).scrollIntoView();
+}
+
+/** How long a new cell is highlighted: long enough to be seen, short enough not to linger. */
+export const FLASH_MS = 600;
+
+/** The cells a verb just made, flashed for `FLASH_MS` (`tablesPlugins`). */
+export const flashKey = new PluginKey<number[]>('mep-table-flash');
+
+/**
+ * The cells a verb made, marked on its transaction for `tablesPlugins` to
+ * flash: the feedback that something appeared, and where.
+ */
+function flashCells(tr: Transaction, tableStart: number, made: (row: number, col: number) => boolean): void {
+    const table = tr.doc.nodeAt(tableStart - 1);
+    if (!table) {
+        return;
+    }
+    const map = TableMap.get(table);
+    const cells: number[] = [];
+    for (let row = 0; row < map.height; row++) {
+        for (let col = 0; col < map.width; col++) {
+            if (made(row, col)) {
+                cells.push(tableStart + map.map[row * map.width + col]);
+            }
+        }
+    }
+    tr.setMeta(flashKey, cells);
+}
+
+/**
+ * After the rows or columns at the selection were deleted: the caret in the
+ * cell that now stands where the selection's first cell stood — the row or
+ * column after it, or the one before when the last went — so the person sees
+ * where the edit left them.
+ */
+function intoNeighbour(tr: Transaction, rect: TableRect): Transaction {
+    const table = tr.doc.nodeAt(rect.tableStart - 1);
+    if (!table || table.type !== nodes.table) {
+        return tr;
+    }
+    const map = TableMap.get(table);
+    const pos = cellPos(tr.doc, rect.tableStart, Math.min(rect.top, map.height - 1), Math.min(rect.left, map.width - 1));
+    return pos === null ? tr : intoCell(tr, pos, 'end');
 }
 
 /** A column added left or right of the selection's columns, unaligned, the caret in its cell on the selection's first row. */
@@ -184,6 +217,7 @@ export function addColumnTransaction(state: EditorState, side: 'left' | 'right')
     const tr = state.tr;
     addColumn(tr, rect, col);
     normalizeTables(tr);
+    flashCells(tr, rect.tableStart, (_r, c) => c === col);
     const pos = cellPos(tr.doc, rect.tableStart, rect.top, col);
     return (pos === null ? tr : intoCell(tr, pos, 'end')).scrollIntoView();
 }
@@ -224,17 +258,19 @@ export function deleteRowTransaction(state: EditorState): Transaction | null {
     if (deleteRowRefusal(state) !== null) {
         return null;
     }
+    const rect = selectedRect(state);
     const tr = captured(deleteRow, state);
-    return tr === null ? null : normalizeTables(tr).scrollIntoView();
+    return tr === null ? null : intoNeighbour(normalizeTables(tr), rect).scrollIntoView();
 }
 
-/** The selection's columns deleted. `null` where refused. */
+/** The selection's columns deleted, the caret in the column that now stands there. `null` where refused. */
 export function deleteColumnTransaction(state: EditorState): Transaction | null {
     if (deleteColumnRefusal(state) !== null) {
         return null;
     }
+    const rect = selectedRect(state);
     const tr = captured(deleteColumn, state);
-    return tr === null ? null : normalizeTables(tr).scrollIntoView();
+    return tr === null ? null : intoNeighbour(normalizeTables(tr), rect).scrollIntoView();
 }
 
 /** The alignment of the selection's first column — its header cell's — or `null`. */
@@ -349,7 +385,9 @@ export const enterInCell: Command = (state, dispatch) => {
         return true;
     }
     const last = rect.map.height - 1;
-    if (last > 0 && rect.bottom === rect.map.height && rowIsEmpty(rect.table, last)) {
+    // Only a caret in that row leaves: cells selected down into it are an
+    // edit of several rows, not a step out of the table.
+    if (last > 0 && state.selection.empty && rect.top === last && rowIsEmpty(rect.table, last)) {
         if (dispatch) {
             const tablePos = rect.tableStart - 1;
             const tr = state.tr;
@@ -403,14 +441,47 @@ export function tableRefusal(tr: Transaction): string | null {
 }
 
 /**
+ * What the page draws on tables beyond their content: a hairline around the
+ * table the caret is in — the signifier that it is a table being edited, there
+ * before its bar is — and the cells a verb just made, highlighted for
+ * `FLASH_MS` (`editor.css` fades it, or holds it where motion is reduced).
+ */
+function tableDecorations(state: EditorState, flashed: readonly number[]): DecorationSet {
+    const decorations: Decoration[] = [];
+    const { $from } = state.selection;
+    if ($from.depth >= 1 && $from.node(1).type === nodes.table) {
+        decorations.push(Decoration.node($from.before(1), $from.after(1), { class: 'mep-table-active' }));
+    }
+    for (const pos of flashed) {
+        const cell = state.doc.nodeAt(pos);
+        if (cell && (cell.type === nodes.table_cell || cell.type === nodes.table_header)) {
+            decorations.push(Decoration.node(pos, pos + cell.nodeSize, { class: 'mep-cell-new' }));
+        }
+    }
+    return decorations.length === 0 ? DecorationSet.empty : DecorationSet.create(state.doc, decorations);
+}
+
+/**
  * `prosemirror-tables`' editing (cell selections, arrows, pasting cells, fixing
- * a table with holes), then this module's refusal and invariants.
+ * a table with holes), then this module's refusal, invariants and decorations.
  */
 export function tablesPlugins(): Plugin[] {
     let editorView: EditorView | null = null;
+    let flashTimer: ReturnType<typeof setTimeout> | undefined;
     return [
         tableEditing(),
-        new Plugin({
+        new Plugin<number[]>({
+            key: flashKey,
+            state: {
+                init: () => [],
+                apply: (tr, cells) => {
+                    const meta = tr.getMeta(flashKey) as number[] | undefined;
+                    return meta !== undefined ? meta : cells.length === 0 || !tr.docChanged ? cells : cells.map(p => tr.mapping.map(p));
+                },
+            },
+            props: {
+                decorations: state => tableDecorations(state, flashKey.getState(state) ?? []),
+            },
             filterTransaction(tr) {
                 const reason = tableRefusal(tr);
                 if (reason !== null) {
@@ -424,7 +495,19 @@ export function tablesPlugins(): Plugin[] {
             view(view) {
                 editorView = view;
                 return {
+                    update(current, previous) {
+                        const cells = flashKey.getState(current.state) ?? [];
+                        if (cells.length > 0 && cells !== flashKey.getState(previous)) {
+                            clearTimeout(flashTimer);
+                            flashTimer = setTimeout(() => {
+                                if ((flashKey.getState(current.state) ?? []).length > 0) {
+                                    current.dispatch(current.state.tr.setMeta(flashKey, []));
+                                }
+                            }, FLASH_MS);
+                        }
+                    },
                     destroy() {
+                        clearTimeout(flashTimer);
                         editorView = null;
                     },
                 };

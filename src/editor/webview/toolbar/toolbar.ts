@@ -27,6 +27,7 @@
 import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { editorSchema } from '../../schema';
+import { textInBand } from '../clearance';
 import { showHint } from '../hint';
 import { InlineField } from '../inlineField';
 import { editRawSourceAt } from '../nodeViews';
@@ -831,8 +832,12 @@ class ToolbarView implements PluginView {
     /**
      * Over a non-empty text selection in editable text, while the editor (or
      * the bubble) has the focus: above the selection's first line, centred on it
-     * when the selection is on one line — or below its last line when above
-     * would put it under the sticky toolbar. Hidden otherwise.
+     * when the selection is on one line — unless there it would cover text
+     * (the line above, a table's row above) or sit under the sticky toolbar;
+     * then below the selection's last line where that is free, else beside a
+     * one-line selection where that is, else below: a bar never covers text
+     * where it can help it (`clearance.ts`), and never the row above, which is
+     * what the person reads while choosing. Hidden otherwise.
      */
     private placeBubble(): void {
         const view = this.view;
@@ -854,16 +859,51 @@ class ToolbarView implements PluginView {
         const oneLine = Math.abs(start.top - end.top) < 2;
         let x = oneLine ? (start.left + end.right) / 2 - width / 2 : start.left;
         x = Math.max(base.left, Math.min(x, base.right - width));
-        let y = start.top - height - gap;
-        if (y < this.row.getBoundingClientRect().bottom) {
-            y = end.bottom + gap;
+        const ceiling = this.row.getBoundingClientRect().bottom;
+        const free = (left: number, top: number) => !textInBand(view, { left, right: left + width, top, bottom: top + height });
+        const above = start.top - height - gap;
+        const below = end.bottom + gap;
+        let y: number;
+        if (above >= ceiling && free(x, above)) {
+            y = above;
+        } else if (free(x, below)) {
+            y = below;
+        } else if (oneLine && end.right + gap + width <= base.right && free(end.right + gap, start.top)) {
+            // Text above and below (a table's rows): beside the selection, on its line.
+            x = end.right + gap;
+            y = start.top;
+        } else if (free(base.right - width, start.top)) {
+            // Or at the column's right edge on its line: beside a narrow table.
+            x = base.right - width;
+            y = start.top;
+        } else {
+            // Nowhere free: below, never over the row above, which is read while choosing.
+            y = below;
         }
         this.bubble.style.left = `${x - base.left}px`;
         this.bubble.style.top = `${y - base.top}px`;
     }
+
+    /** Whether the bubble is shown now: while it is, the object toolbar shows no block's bar, so there is one thing at a time. */
+    get bubbleShown(): boolean {
+        return !this.bubble.hidden;
+    }
+}
+
+const toolbarViews = new WeakMap<EditorView, ToolbarView>();
+
+/** Whether the selection bubble of `view` is shown: the object toolbar hides every block's bar meanwhile. */
+export function selectionBubbleShown(view: EditorView): boolean {
+    return toolbarViews.get(view)?.bubbleShown ?? false;
 }
 
 /** The toolbar and the bubble, as a plugin: its view is built with the editor's and follows every state it takes. */
 export function toolbarPlugin(host: ToolbarHost): Plugin {
-    return new Plugin({ view: view => new ToolbarView(view, host) });
+    return new Plugin({
+        view: view => {
+            const toolbar = new ToolbarView(view, host);
+            toolbarViews.set(view, toolbar);
+            return toolbar;
+        },
+    });
 }
