@@ -113,7 +113,22 @@ const webNodeShimPlugin = {
     }
 };
 
+/**
+ * The codicon font for the Visual Editor's page (`$(icon)` in a lens title).
+ * Copied out of node_modules, which the package leaves out, into dist/, which it
+ * keeps; the page links the stylesheet, which finds the font beside it.
+ */
+function copyCodicons() {
+    const from = path.dirname(require.resolve('@vscode/codicons/dist/codicon.css'));
+    const to = path.join(__dirname, 'dist', 'codicons');
+    fs.mkdirSync(to, { recursive: true });
+    for (const file of ['codicon.css', 'codicon.ttf']) {
+        fs.copyFileSync(path.join(from, file), path.join(to, file));
+    }
+}
+
 async function main() {
+    copyCodicons();
     const sharedPlugins = [
         esbuildProblemMatcherPlugin,
         ...(analyze ? [bundleAnalyzerPlugin] : [])

@@ -542,6 +542,22 @@
     cursor: pointer;
 }
 
+/*
+ * A `$(icon)` in a title (`lensLabelNodes`): the codicon font at the label's size
+ * and colour, spaced from the text. The spacing sits on the icon, not on a space
+ * character, and is dropped at the ends so a label starts and ends on its content;
+ * the bar's verbs keep one height, an icon being no taller than a line of text.
+ */
+:is(.mep-lens, .mep-lens-text, .mep-object-verb) > .codicon {
+    font-size: inherit;
+    line-height: 1;
+    color: inherit;
+    vertical-align: text-bottom;
+    margin-inline: 0.3em;
+}
+:is(.mep-lens, .mep-lens-text, .mep-object-verb) > .codicon:first-child { margin-inline-start: 0; }
+:is(.mep-lens, .mep-lens-text, .mep-object-verb) > .codicon:last-child { margin-inline-end: 0; }
+
 .mep-lens:hover {
     color: var(--vscode-editorLink-activeForeground, var(--vscode-textLink-activeForeground, inherit));
     text-decoration: underline;

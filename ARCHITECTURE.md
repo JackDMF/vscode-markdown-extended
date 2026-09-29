@@ -1048,8 +1048,14 @@ row with it. The rows are `Decoration.widget`s at their block's start (`side: -1
 `mousedown` is prevented so no caret moves. The row stands in the block's top margin
 (`editor.css`: the block after a row has none), in the editor font at 90 %,
 `--vscode-editorCodeLens-foreground`, as the text editor draws lenses. `$(icon)` references
-in titles are left out: the page cannot reach the workbench's icon font, and the stand-in
-characters it once drew for the common codicons read as broken icons.
+in titles are drawn as icons: the page links `@vscode/codicons`' stylesheet (`html.ts`; the
+build copies `codicon.css` and `codicon.ttf` into `dist/codicons`, which the package keeps
+where it leaves `node_modules` out), and `lensLabelNodes` turns each reference into a
+`<span class="codicon codicon-name">` beside the text, ignoring a `~spin` modifier, not
+checking the name (an unknown one is an empty icon slot) and keeping an escaped `\$(name)` as text. Wherever a title is drawn as elements — a lens row, an object toolbar's
+verb — the verb keeps the provider's title and the nodes are made at draw time;
+tooltips, accessible names and the `<option>`s of the **Actions ▾** choice, which holds no
+elements, take `lensLabel`'s plain text.
 
 The object toolbar keeps off the rows: `place` treats every row's rectangle as occupied and
 moves a bar that would cover one past it — above it going up, below it going down — so a

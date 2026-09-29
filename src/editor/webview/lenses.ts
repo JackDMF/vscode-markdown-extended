@@ -97,21 +97,86 @@ export const lensPluginKey = new PluginKey<LensState>('mepLenses');
 let received = 0;
 
 /**
- * A lens title as the page draws it: its `$(icon)` references — VS Code's
- * codicon syntax — left out. The page has no access to the workbench's icon
- * font, and a stand-in character reads as a broken icon, which is worse than
- * none.
+ * `$(name)` and `$(name~modifier)`: VS Code's codicon syntax in a title, with the
+ * workbench's own escape — `\$(name)` is the literal text `$(name)`.
+ */
+const ICON_REFERENCE = /(\\)?\$\(([a-z0-9-]+)(?:~[a-z0-9-]*)?\)/gi;
+
+/**
+ * A lens or code-action title as plain text: its `$(icon)` references — VS
+ * Code's codicon syntax — left out, an escaped one (`\$(name)`) kept as the
+ * literal `$(name)`. For a tooltip, an accessible name, a `<option>` (which
+ * holds no elements) and every comparison of text; where a title is drawn,
+ * `lensLabelNodes` renders the icons.
  */
 export function lensLabel(title: string): string {
     return title
-        .replace(/\$\([a-z0-9-]+(?:~[a-z]+)?\)/gi, '')
+        .replace(ICON_REFERENCE, (match, escape: string | undefined) => escape ? match.slice(1) : '')
         .replace(/\s+/g, ' ')
         .trim();
 }
 
+/**
+ * What names a title where its text is empty — an icon-only `$(refresh)`: the
+ * plain text, or else the first icon's name. For `title` and `aria-label`, so a
+ * button of only an icon still has an accessible name and a tooltip.
+ */
+export function lensName(title: string): string {
+    const text = lensLabel(title);
+    if (text !== '') {
+        return text;
+    }
+    for (const match of title.matchAll(ICON_REFERENCE)) {
+        if (!match[1]) {
+            return match[2].toLowerCase();
+        }
+    }
+    return '';
+}
+
+/**
+ * A title as the page draws it: each `$(name)` a `<span class="codicon
+ * codicon-name">` — the font is `codicon.css`, linked by the host's page — and
+ * the text between them as text nodes; an escaped `\$(name)` is the text
+ * `$(name)`. A `~modifier` (`~spin`) is ignored: an icon does not animate here.
+ * The name is not checked against the font; an unknown one is an empty icon
+ * slot. Whitespace beside an icon is dropped (the stylesheet spaces it); a title
+ * with no icon is one text node, `lensLabel`'s.
+ */
+export function lensLabelNodes(title: string): globalThis.Node[] {
+    const nodes: globalThis.Node[] = [];
+    let pending = '';
+    let last = 0;
+    const flush = () => {
+        const piece = pending.replace(/\s+/g, ' ').trim();
+        if (piece !== '') {
+            nodes.push(document.createTextNode(piece));
+        }
+        pending = '';
+    };
+    for (const match of title.matchAll(ICON_REFERENCE)) {
+        const at = match.index ?? 0;
+        pending += title.slice(last, at);
+        last = at + match[0].length;
+        if (match[1]) {
+            // Escaped: the literal stays part of the surrounding text.
+            pending += match[0].slice(1);
+            continue;
+        }
+        flush();
+        const icon = document.createElement('span');
+        icon.className = `codicon codicon-${match[2].toLowerCase()}`;
+        icon.setAttribute('aria-hidden', 'true');
+        nodes.push(icon);
+    }
+    pending += title.slice(last);
+    flush();
+    return nodes.length > 0 ? nodes : [document.createTextNode('')];
+}
+
 /** What a placed element's tooltip says: the verb, then the provider's own tooltip where it says more. */
 function targetTitle(item: LensItem): string {
-    const label = lensLabel(item.title);
+    const label = lensName(item.title);
     return item.tooltip && item.tooltip !== item.title && item.tooltip !== label ? `${label}\n${item.tooltip}` : label;
 }
 
@@ -380,15 +445,13 @@ function rowDOM(items: readonly LensItem[], run: (id: string) => void): HTMLElem
             sep.textContent = ' | ';
             el.append(sep);
         }
-        const label = lensLabel(item.title);
+        const label = lensName(item.title);
         const id = item.id;
         if (id === undefined) {
             const text = document.createElement('span');
             text.className = 'mep-lens-text';
-            text.textContent = label;
-            if (item.tooltip) {
-                text.title = item.tooltip;
-            }
+            text.replaceChildren(...lensLabelNodes(item.title));
+            text.title = item.tooltip || label;
             el.append(text);
             return;
         }
@@ -396,8 +459,9 @@ function rowDOM(items: readonly LensItem[], run: (id: string) => void): HTMLElem
         button.type = 'button';
         button.className = 'mep-lens';
         button.dataset.lens = id;
-        button.textContent = label;
+        button.replaceChildren(...lensLabelNodes(item.title));
         button.title = item.tooltip ?? label;
+        button.setAttribute('aria-label', label);
         button.addEventListener('click', e => {
             e.preventDefault();
             run(id);

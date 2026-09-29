@@ -49,7 +49,7 @@ import {
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import type { CodeActionItem, LensItem } from '../protocol';
-import { lensLabel } from './lenses';
+import { lensLabelNodes, lensName } from './lenses';
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -102,6 +102,7 @@ const GAP = 4;
 interface Verb {
     /** `data-verb`: what tests and stylesheets name it by. */
     id: string;
+    /** As its owner titled it: `$(icon)` references are drawn as icons, and `lensLabel` gives the plain text. */
     label: string;
     title: string;
     /** Why it cannot be chosen here, shown in its tooltip; `null` when it can. */
@@ -225,7 +226,11 @@ class ObjectBar {
             el.type = 'button';
             el.className = 'mep-object-verb';
             el.dataset.verb = verb.id;
-            el.textContent = verb.label;
+            el.replaceChildren(...lensLabelNodes(verb.label));
+            if ((el.textContent ?? '') === '') {
+                // Only an icon: the button is named by it, not left without a name.
+                el.setAttribute('aria-label', lensName(verb.label));
+            }
             el.tabIndex = -1;
             el.title = verb.refusal ? `${verb.title}\n${verb.refusal}` : verb.title;
             el.setAttribute('aria-disabled', String(Boolean(verb.refusal)));
@@ -654,17 +659,20 @@ class ObjectToolbarView implements PluginView {
         }
         const lenses = this.lensVerbs(this.host.lensesAt(object.from), own.verbs.length > 0);
         const before = own.verbs.length + lenses.length;
-        const actions = this.host.codeActionsAt(object.from).map((item, k): Verb => ({
-            id: `code-action:${item.id}`,
-            label: item.title,
-            title: item.kind ? `${item.title} (${item.kind}, from another extension)` : `${item.title} (from another extension)`,
-            refusal: item.refusal ?? null,
-            separated: k === 0 && before > 0,
-            run: () => {
-                this.view.focus();
-                this.host.runCodeAction(item.id);
-            },
-        }));
+        const actions = this.host.codeActionsAt(object.from).map((item, k): Verb => {
+            const name = lensName(item.title);
+            return {
+                id: `code-action:${item.id}`,
+                label: item.title,
+                title: item.kind ? `${name} (${item.kind}, from another extension)` : `${name} (from another extension)`,
+                refusal: item.refusal ?? null,
+                separated: k === 0 && before > 0,
+                run: () => {
+                    this.view.focus();
+                    this.host.runCodeAction(item.id);
+                },
+            };
+        });
         return lenses.length + actions.length === 0 ? own : { ...own, verbs: [...own.verbs, ...lenses, ...actions] };
     }
 
@@ -680,11 +688,11 @@ class ObjectToolbarView implements PluginView {
             this.host.runLens(id);
         };
         const verbs = (items.length > LENS_VERBS_INLINE ? items.slice(0, LENS_VERBS_INLINE - 1) : items).map((item, k): Verb => {
-            const label = lensLabel(item.title);
+            const label = lensName(item.title);
             const id = item.id;
             return {
                 id: `lens:${id ?? `text-${k}`}`,
-                label,
+                label: item.title,
                 title: `${item.tooltip ?? label} (from another extension)`,
                 refusal: id === undefined ? 'The extension that shows it gave it no command.' : null,
                 run: () => {
@@ -704,7 +712,7 @@ class ObjectToolbarView implements PluginView {
                 choice: {
                     value: '',
                     label: 'Action',
-                    options: [{ value: '', label: 'Choose an action…' }, ...rest.map(item => ({ value: item.id, label: lensLabel(item.title) }))],
+                    options: [{ value: '', label: 'Choose an action…' }, ...rest.map(item => ({ value: item.id, label: lensName(item.title) }))],
                     commit: value => {
                         if (value === '') {
                             this.view.focus();

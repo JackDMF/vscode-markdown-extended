@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { EditorEngineHost, buildEditorEngine } from '../../../src/editor/host/engineHost';
+import { editorPage, localResourceRoots } from '../../../src/editor/host/html';
 import { CodeActionController } from '../../../src/editor/host/codeActions';
 import {
     IncludeController, IncludePickItem, IncludePicker, IncludeProvider, NO_INCLUDES_MESSAGE, collectIncludeProviders,
@@ -85,6 +86,27 @@ suite('Editor host: engine', () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         assert.ok(!md.render('see example.com', {}).includes('<a '));
         assert.ok(md.render('see https://example.com', {}).includes('<a '));
+    });
+});
+
+suite('Editor host: page', () => {
+    test('the page links the codicon font\'s stylesheet before the editor\'s, from dist/codicons, which the webview may read', () => {
+        const extension = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(extension, 'the extension is installed in the test host');
+        const asWebviewUri = (uri: vscode.Uri) => vscode.Uri.parse(`https://webview.test${uri.path}`);
+        const webview = { cspSource: 'https://webview.test', asWebviewUri } as unknown as vscode.Webview;
+        const html = editorPage(webview, extension.extensionUri, vscode.Uri.file('/doc.md'));
+        const hrefs = Array.from(html.matchAll(/<link rel="stylesheet" type="text\/css" href="([^"]+)"/g), m => m[1]);
+        const codicons = hrefs.findIndex(h => h.endsWith('/dist/codicons/codicon.css'));
+        assert.ok(codicons >= 0, `codicon.css is linked: ${hrefs.join(', ')}`);
+        assert.ok(codicons < hrefs.findIndex(h => h.endsWith('/styles/editor.css')), 'before the editor\'s own styles');
+        assert.ok(/font-src https:\/\/webview\.test /.test(html), 'font-src admits the webview\'s own origin');
+        const font = vscode.Uri.joinPath(extension.extensionUri, 'dist', 'codicons', 'codicon.css').path;
+        assert.ok(localResourceRoots(extension.extensionUri).some(r => font.startsWith(r.path.endsWith('/') ? r.path : `${r.path}/`)),
+            'some root the webview may read is an ancestor of the font');
+        for (const file of ['codicon.css', 'codicon.ttf']) {
+            assert.ok(fs.existsSync(path.join(extension.extensionUri.fsPath, 'dist', 'codicons', file)), `${file} is built into dist/codicons`);
+        }
     });
 });
 
