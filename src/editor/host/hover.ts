@@ -1,7 +1,9 @@
+import * as crypto from 'crypto';
 import markdownIt from 'markdown-it';
 import * as vscode from 'vscode';
-import type { SourcePosition, SourceRange } from '../positions';
+import { SourcePosition, SourceRange, toSourceRange } from '../positions';
 import { message } from './errors';
+import { sanitizeHoverHtml } from './hoverHtml';
 import type { LanguageHost } from './language';
 
 /** What a hover part's `isTrusted` says about the command links it may run. */
@@ -95,6 +97,8 @@ interface HoverEnv {
     /** Decide a link: its `data-mep-command` id when it may run, `null` to strip it to its text, `undefined` to keep it. */
     link(href: string): string | null | undefined;
     stack: boolean[];
+    /** For a part with raw HTML: marks the command links this rule made, which the sanitizer then keeps (`sanitizeHoverHtml`). */
+    nonce?: string;
 }
 
 const engines = new Map<boolean, ReturnType<typeof markdownIt>>();
@@ -104,7 +108,8 @@ const engines = new Map<boolean, ReturnType<typeof markdownIt>>();
  * Code's Markdown, rendered in the text editor by the workbench's own
  * renderer, and the preview's plugins (this extension's `++note++`, another's
  * injections) would read its text as their syntax. Raw HTML only for a part
- * that allows it (`supportHtml`). `file:` links are links, as in a hover.
+ * that allows it (`supportHtml`), and then only what VS Code's own hover lets
+ * through (`sanitizeHoverHtml`); `file:` links are links, as in a hover.
  */
 function hoverEngine(html: boolean): ReturnType<typeof markdownIt> {
     let md = engines.get(html);
@@ -128,6 +133,9 @@ function hoverEngine(html: boolean): ReturnType<typeof markdownIt> {
             token.attrs = (token.attrs ?? []).filter(([name]) => name !== 'href');
             token.attrPush(['href', '#']);
             token.attrPush(['data-mep-command', decision]);
+            if (env.nonce) {
+                token.attrPush(['data-mep-nonce', env.nonce]);
+            }
         }
         return defaultOpen(tokens, idx, options, env, self);
     };
@@ -137,15 +145,14 @@ function hoverEngine(html: boolean): ReturnType<typeof markdownIt> {
     return md;
 }
 
-/** A `command:` link in raw HTML, which the link rule does not see: stripped of its target. */
-const RAW_COMMAND_HREF = /\shref\s*=\s*(["'])\s*command:[^"']*\1/gi;
-
 /**
  * The parts rendered as the card's HTML, each in a `div.mep-hover-part` (with
  * `data-icons` when its `$(icon)`s are to be drawn), in order. A command link
  * the part may run (`commandLinkAllowed`) is registered — `register` gives its
  * id — and carries it as `data-mep-command`; any other command link is its
- * text alone, and raw HTML keeps no `command:` target at all.
+ * text alone. Raw HTML is sanitized to VS Code's hover allowlist, so it keeps
+ * no `command:` target and no `data-*` attribute: only the link rule makes a
+ * `data-mep-command`.
  */
 export function renderHoverParts(parts: readonly HoverPart[], register: (command: string, args: unknown[]) => string): string {
     return parts.map(part => {
@@ -159,13 +166,15 @@ export function renderHoverParts(parts: readonly HoverPart[], register: (command
                 return commandLinkAllowed(part.trust, link.command) ? register(link.command, link.args) : null;
             },
         };
-        const html = hoverEngine(part.supportHtml).render(part.value, env).replace(RAW_COMMAND_HREF, '');
+        if (part.supportHtml) {
+            env.nonce = crypto.randomBytes(12).toString('hex');
+        }
+        const rendered = hoverEngine(part.supportHtml).render(part.value, env);
+        // The whole rendering, not token by token: markdown-it splits `<script>x</script>` in a
+        // line into three tokens, and only the whole says the text between is the element's.
+        const html = part.supportHtml ? sanitizeHoverHtml(rendered, env.nonce) : rendered;
         return `<div class="mep-hover-part"${part.supportThemeIcons ? ' data-icons' : ''}>${html}</div>`;
     }).join('');
-}
-
-function sourceRange(range: vscode.Range): SourceRange {
-    return { start: { line: range.start.line, character: range.start.character }, end: { line: range.end.line, character: range.end.character } };
 }
 
 /**
@@ -179,6 +188,8 @@ export class HoverController {
     private commands = new Map<string, { command: string; args: unknown[] }>();
     /** The position of the last answer, for **Show more**. */
     private shown: { requestId: number; position: vscode.Position } | undefined;
+    /** The newest question whose answer is kept: an older one resolving later does not replace it. */
+    private latestAnswered = 0;
 
     constructor(private readonly host: LanguageHost) { }
 
@@ -213,10 +224,15 @@ export class HoverController {
             commands.set(id, { command, args });
             return id;
         });
+        if (requestId <= this.latestAnswered) {
+            // A newer question was answered first: its commands stay, this answer is not the page's.
+            return { html: '' };
+        }
+        this.latestAnswered = requestId;
         this.commands = commands;
         this.shown = { requestId, position: at };
         const withRange = hovers.find(h => h.range !== undefined)?.range;
-        return { html, ...(withRange ? { range: sourceRange(withRange) } : {}) };
+        return { html, ...(withRange ? { range: toSourceRange(withRange) } : {}) };
     }
 
     /** Run a command link of the last answer; one of an earlier answer, or none, is refused. Started, not awaited. */
