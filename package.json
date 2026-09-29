@@ -712,6 +712,7 @@
     "@types/vscode": "~1.80.0",
     "@typescript-eslint/eslint-plugin": "^8.46.4",
     "@typescript-eslint/parser": "^8.46.4",
+    "@vscode/codicons": "^0.0.46-24",
     "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.27.0",
     "esbuild-visualizer": "^0.7.0",
@@ -727,7 +728,6 @@
   },
   "dependencies": {
     "@puppeteer/browsers": "^2.10.13",
-    "@vscode/codicons": "^0.0.46-24",
     "highlight.js": "^11.9.0",
     "js-yaml": "^4.1.0",
     "markdown-it": "^14.3.2",

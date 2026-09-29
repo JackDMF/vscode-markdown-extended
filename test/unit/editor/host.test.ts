@@ -101,7 +101,9 @@ suite('Editor host: page', () => {
         assert.ok(codicons >= 0, `codicon.css is linked: ${hrefs.join(', ')}`);
         assert.ok(codicons < hrefs.findIndex(h => h.endsWith('/styles/editor.css')), 'before the editor\'s own styles');
         assert.ok(/font-src https:\/\/webview\.test /.test(html), 'font-src admits the webview\'s own origin');
-        assert.ok(localResourceRoots(extension.extensionUri).some(r => r.toString() === extension.extensionUri.toString()));
+        const font = vscode.Uri.joinPath(extension.extensionUri, 'dist', 'codicons', 'codicon.css').path;
+        assert.ok(localResourceRoots(extension.extensionUri).some(r => font.startsWith(r.path.endsWith('/') ? r.path : `${r.path}/`)),
+            'some root the webview may read is an ancestor of the font');
         for (const file of ['codicon.css', 'codicon.ttf']) {
             assert.ok(fs.existsSync(path.join(extension.extensionUri.fsPath, 'dist', 'codicons', file)), `${file} is built into dist/codicons`);
         }

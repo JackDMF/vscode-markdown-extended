@@ -71,7 +71,7 @@ suite('Editor lens rows (e2e)', () => {
         assert.deepStrictEqual(await rows(), [
             {
                 items: [
-                    // The codicon is left out: the page has no icon font, and a stand-in reads as a broken icon.
+                    // The codicon is a span before the text; `text` is the text content, which has none of it.
                     { text: 'Heading lens', lens: '1.0', button: true },
                     { text: 'Second', lens: '1.1', button: true },
                 ],
@@ -89,6 +89,32 @@ suite('Editor lens rows (e2e)', () => {
         const title = await page.$eval('[data-lens="1.0"]', el => (el as HTMLElement).title);
         assert.strictEqual(title, 'Runs the heading lens');
         assert.deepStrictEqual(await (editor as EditorPage).edits(), [], 'a row is not content: nothing was written');
+    });
+
+    test('a row\'s icons: a span before the text on a lens and on a text-only one, the plain name when only an icon, an escape kept as text', async () => {
+        await send([{ blockIndex: 1, items: [
+            { title: '$(info) Only text', tooltip: 'Provider tip' },
+            { title: '$(warning)' },
+            { id: 'r.0', title: '$(refresh)' },
+            { id: 'r.1', title: '$(add) Add reference…' },
+            { id: 'r.2', title: '\\$(x) literal' },
+        ] }]);
+        await page.waitForFunction(() => document.querySelectorAll('.mep-lens-row .mep-lens').length === 3);
+        const items = await page.$$eval('.mep-lens-row .mep-lens, .mep-lens-row .mep-lens-text', els => els.map(el => ({
+            tag: el.tagName,
+            kids: Array.from(el.childNodes, n => n.nodeType === Node.TEXT_NODE ? `#text ${n.textContent}` : (n as HTMLElement).className),
+            title: (el as HTMLElement).title,
+            name: el.getAttribute('aria-label'),
+        })));
+        assert.deepStrictEqual(items, [
+            { tag: 'SPAN', kids: ['codicon codicon-info', '#text Only text'], title: 'Provider tip', name: null },
+            { tag: 'SPAN', kids: ['codicon codicon-warning'], title: 'warning', name: null },
+            { tag: 'BUTTON', kids: ['codicon codicon-refresh'], title: 'refresh', name: 'refresh' },
+            { tag: 'BUTTON', kids: ['codicon codicon-add', '#text Add reference…'], title: 'Add reference…', name: 'Add reference…' },
+            { tag: 'BUTTON', kids: ['#text $(x) literal'], title: '$(x) literal', name: '$(x) literal' },
+        ]);
+        await send(ROWS);
+        await page.waitForFunction(() => document.querySelectorAll('.mep-lens-row .mep-lens').length === 3);
     });
 
     test('a click posts runLens with the lens\'s id, and moves no caret', async () => {
@@ -791,6 +817,27 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         const spin = await verb('i.2');
         assert.deepStrictEqual(spin.nodes, ['codicon codicon-sync', '#text Syncing']);
         assert.strictEqual(spin.title, 'Syncing (from another extension)', 'the tooltip is the plain text of the title');
+    });
+
+    test('a code action\'s $(icon) is drawn in the bar; an icon-only one is named by the icon', async function () {
+        this.timeout(10000);
+        await showDocument();
+        await send([{ blockIndex: 0, items: [{ id: 'k.0', title: 'A lens', surface: 'action', artifact: 'FRS-TST-001' }] }]);
+        await delay(80);
+        const children = await headingBar([
+            { id: 'c.0', title: '$(lightbulb) Quick fix', kind: 'quickfix' },
+            { id: 'c.1', title: '$(x)', kind: '' },
+            { id: 'c.2', title: '\\$(y) escaped', kind: '' },
+        ]);
+        assert.deepStrictEqual(children, ['mep-object-label', 'lens:k.0', 'mep-object-separator', 'code-action:c.0', 'code-action:c.1', 'code-action:c.2']);
+        const verb = (id: string) => page.$eval(`${BAR} [data-verb="code-action:${id}"]`, el => ({
+            kids: Array.from(el.childNodes, n => n.nodeType === Node.TEXT_NODE ? `#text ${n.textContent}` : (n as HTMLElement).className),
+            title: (el as HTMLElement).title,
+            name: el.getAttribute('aria-label'),
+        }));
+        assert.deepStrictEqual(await verb('c.0'), { kids: ['codicon codicon-lightbulb', '#text Quick fix'], title: 'Quick fix (quickfix, from another extension)', name: null });
+        assert.deepStrictEqual(await verb('c.1'), { kids: ['codicon codicon-x'], title: 'x (from another extension)', name: 'x' });
+        assert.deepStrictEqual(await verb('c.2'), { kids: ['#text $(y) escaped'], title: '$(y) escaped (from another extension)', name: null });
     });
 
     test('lenses naming no side take a relation\'s first row, one each: a second for the same row is a verb, not unreachable', async function () {
