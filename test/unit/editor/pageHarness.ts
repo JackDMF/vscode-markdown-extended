@@ -101,6 +101,23 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         send: async message => {
             await page.evaluate(m => window.postMessage(m, '*'), message as unknown as Record<string, unknown>);
         },
-        close: () => browser.close(),
+        close: async () => {
+            // A suite's teardown has mocha's 5 s; on a loaded machine Chromium can
+            // take longer to close, and a teardown that times out fails the run
+            // with every test passed. What has not closed by then is killed.
+            let closed = false;
+            await Promise.race([
+                browser.close().then(() => {
+                    closed = true;
+                }),
+                new Promise(resolve => setTimeout(resolve, CLOSE_GRACE_MS)),
+            ]);
+            if (!closed) {
+                browser.process()?.kill('SIGKILL');
+            }
+        },
     };
 }
+
+/** How long a browser may take to close before the harness kills it: inside mocha's 5 s hook timeout. */
+const CLOSE_GRACE_MS = 3500;
