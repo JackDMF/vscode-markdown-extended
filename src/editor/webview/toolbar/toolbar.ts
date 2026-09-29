@@ -832,10 +832,13 @@ class ToolbarView implements PluginView {
     /**
      * Over a non-empty text selection in editable text, while the editor (or
      * the bubble) has the focus: above the selection's first line, centred on it
-     * when the selection is on one line — unless there it would cover text
+     * when the selection is on one line — unless there it would cover content
      * (the line above, a table's row above) or sit under the sticky toolbar;
-     * then below the selection's last line where that is free, else beside a
-     * one-line selection where that is, else below: a bar never covers text
+     * then beside the block, just right of its edge on the selection's line,
+     * where the block is narrower than the column — close to what it acts on,
+     * as the mapping between a control and its object weakens with distance —
+     * else below the selection's last line where that is free, else at the
+     * column's right edge on its line, else below: a bar never covers content
      * where it can help it (`clearance.ts`), and never the row above, which is
      * what the person reads while choosing. Hidden otherwise.
      */
@@ -863,17 +866,21 @@ class ToolbarView implements PluginView {
         const free = (left: number, top: number) => !textInBand(view, { left, right: left + width, top, bottom: top + height });
         const above = start.top - height - gap;
         const below = end.bottom + gap;
+        // Beside the block: just right of its box, which only a block narrower than the column — a table — leaves room for.
+        const blockDom = sel.$from.depth >= 1 ? view.nodeDOM(sel.$from.before(1)) : null;
+        const blockRight = blockDom instanceof Element ? blockDom.getBoundingClientRect().right : -Infinity;
+        const beside = blockRight + gap;
         let y: number;
         if (above >= ceiling && free(x, above)) {
             y = above;
+        } else if (Number.isFinite(blockRight) && beside + width <= base.right && free(beside, start.top)) {
+            // Close to what it acts on: a narrow table's edge is a few pixels from its cell.
+            x = beside;
+            y = start.top;
         } else if (free(x, below)) {
             y = below;
-        } else if (oneLine && end.right + gap + width <= base.right && free(end.right + gap, start.top)) {
-            // Text above and below (a table's rows): beside the selection, on its line.
-            x = end.right + gap;
-            y = start.top;
         } else if (free(base.right - width, start.top)) {
-            // Or at the column's right edge on its line: beside a narrow table.
+            // At the column's right edge on the selection's line.
             x = base.right - width;
             y = start.top;
         } else {

@@ -18,9 +18,10 @@ export interface Band {
 const PROBE_STEP = 16;
 
 /**
- * Whether any text the page shows lies in `band`: a character of a textblock,
- * or a rendered block (a source block, injected content), whose box is text as
- * far as a reader is concerned. Probed at points across the band's middle and
+ * Whether anything the page shows as content lies in `band`: a character of a
+ * textblock, a cell of an editable table (empty or not), an image, or an atom —
+ * a rendered block (a source block, injected content) or a badge, whose box is
+ * content as far as a reader is concerned (`OCCUPIED`). Probed at points across the band's middle and
  * near its edges: a point over a line of text resolves to a position whose
  * character stands at that point; a point beside a short line, or between
  * blocks, resolves to a position somewhere else, which is no text there.
@@ -51,7 +52,18 @@ export function textInBand(view: EditorView, band: Band): boolean {
 /** On the root while `textInBand` probes: the page's floating chrome takes no hit then. */
 export const PROBING_CLASS = 'mep-probing';
 
+/**
+ * What counts as occupied besides text: a cell of a table the editor edits —
+ * an empty one too, since a cell is the table's content and the page draws it
+ * to be seen (`editor.css`) — an image, and an atom of any kind.
+ */
+const OCCUPIED = '.ProseMirror > table td, .ProseMirror > table th, img, .mep-atom, .mep-inline-atom';
+
 function textAt(view: EditorView, x: number, y: number): boolean {
+    const element = document.elementFromPoint(x, y);
+    if (element !== null && view.dom.contains(element) && element.closest(OCCUPIED) !== null) {
+        return true;
+    }
     const hit = view.posAtCoords({ left: x, top: y });
     if (!hit) {
         return false;
@@ -68,8 +80,23 @@ function textAt(view: EditorView, x: number, y: number): boolean {
     if (!$pos.parent.inlineContent || $pos.parent.content.size === 0) {
         return false;
     }
-    const at = view.coordsAtPos(hit.pos);
-    return at.top <= y && at.bottom >= y && Math.abs(at.left - x) <= PROBE_STEP;
+    // Text at the point: a character on either side of the position whose box spans it.
+    // (A point beside a line's end resolves to the end, with no character there.)
+    const start = $pos.start();
+    const end = $pos.end();
+    for (const [from, to] of [[hit.pos - 1, hit.pos], [hit.pos, hit.pos + 1]]) {
+        if (from < start || to > end) {
+            continue;
+        }
+        const a = view.coordsAtPos(from, 1);
+        const b = view.coordsAtPos(to, -1);
+        const left = Math.min(a.left, b.left) - 1;
+        const right = Math.max(a.left, b.left) + 1;
+        if (a.top <= y && a.bottom >= y && x >= left && x <= right) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**

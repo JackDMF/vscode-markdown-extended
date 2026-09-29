@@ -178,6 +178,14 @@ suite('Editor pipe tables (e2e)', () => {
         return covered;
     }, selector, scope);
 
+    /** Whether the bubble stands just right of the table (within 20px of its edge), on the selection's line, overlapping none of it. */
+    const besideTheTable = () => page.evaluate(() => {
+        const bubble = (document.querySelector('.mep-bubble:not([hidden])') as HTMLElement | null)?.getBoundingClientRect();
+        const table = (document.querySelector('.ProseMirror > table') as HTMLElement).getBoundingClientRect();
+        const line = (document.getSelection() as Selection).getRangeAt(0).getBoundingClientRect();
+        return !!bubble && bubble.left >= table.right && bubble.left - table.right <= 20 && Math.abs(bubble.top - line.top) < 2;
+    });
+
     /** The text of the cell the caret is in. */
     const caretCell = () => page.evaluate(() => {
         const anchor = (document.getSelection() as Selection).anchorNode;
@@ -300,7 +308,8 @@ suite('Editor pipe tables (e2e)', () => {
         await page.click('.mep-menu [data-action="table"]');
         await delay(100);
         assert.strictEqual(await selected(), 'Column 1');
-        assert.deepStrictEqual(await coveredText('.mep-bubble:not([hidden])'), [], 'the bubble covers no text: the line above it is text, so it goes below');
+        assert.deepStrictEqual(await coveredText('.mep-bubble:not([hidden])'), [], 'the bubble covers no text');
+        assert.ok(await besideTheTable(), 'nor the table\'s cells, empty as they are: it stands just right of the table, on the selection\'s line');
         const empty = await page.$$eval('.ProseMirror td', cells => cells.map(c => {
             const r = c.getBoundingClientRect();
             return { height: r.height, width: r.width, line: getComputedStyle(c).boxShadow !== 'none' };
@@ -549,6 +558,7 @@ suite('Editor pipe tables (e2e)', () => {
         assert.ok(await page.$('.mep-bubble:not([hidden])'), 'the bubble shows over the selected text');
         assert.strictEqual(await page.$(BAR), null, 'and no block\'s bar beside it: one thing at a time');
         assert.deepStrictEqual(await coveredText('.mep-bubble:not([hidden])', '.ProseMirror table'), [], 'the bubble covers no row of the table');
+        assert.ok(await besideTheTable(), 'and stands just right of the table, close to the cell it acts on');
         await shot('07-cell-mark.png');
         await settle();
         assert.ok((await lastEdit())?.text.includes('| Beta  | **sec**ond |    22 |'), (await lastEdit())?.text);

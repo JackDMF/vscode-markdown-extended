@@ -47,7 +47,7 @@ import {
     deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
-import { firstLineOf, rightEdgeIn, textInBand, textInElement } from './clearance';
+import { Band, firstLineOf, rightEdgeIn, textInBand, textInElement } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { selectionBubbleShown } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
@@ -615,18 +615,14 @@ class ObjectBar {
 }
 
 /**
- * Where the bar is put against, in the window's coordinates: the top of the
- * object's first line and the bottom of its last, and the edge the bar is
- * aligned to — an inline object's start (`left`), a block's right edge
- * (`right`), where the source block's toolbar always sat: blocks are mostly
- * left-aligned (a table, a list), and a bar hanging over the block above at its
- * left would sit on the very thing a click there is aimed at.
+ * Where an inline object's bar is put against, in the window's coordinates:
+ * the top of the object's first line, the bottom of its last, and its start
+ * (`left`). A block's bar is placed from the block itself (`placeBlock`).
  */
 interface Anchor {
     top: number;
     bottom: number;
     left?: number;
-    right?: number;
 }
 
 /** A block's content edge: `.mep-atom` stands 8px out on each side (`editor.css`). */
@@ -929,23 +925,50 @@ class ObjectToolbarView implements PluginView {
         const anchor = this.anchor(object);
         const width = el.offsetWidth;
         const height = el.offsetHeight;
+        const view = this.view;
         const ceiling = this.ceiling();
-        const sel = this.view.state.selection;
+        const sel = view.state.selection;
         const typing = bar === this.selectionBar && sel instanceof TextSelection;
-        const caret = typing ? this.view.coordsAtPos(sel.head) : null;
+        const caret = typing ? view.coordsAtPos(sel.head) : null;
         const covers = (y: number) => caret !== null && y < caret.bottom && y + height > caret.top;
-        const fits = (y: number) => y >= ceiling && !covers(y);
-        const above = this.clearOfLensRows(anchor.top - GAP - height, height, true);
-        const below = this.clearOfLensRows(anchor.bottom + GAP, height, false);
-        const order = typing && !sel.empty ? [below, above] : [above, below];
-        let y = order.find(fits) ?? order[1];
-        if (covers(y) && caret !== null) {
+        // The bubble is a bar too: an inline bar keeps out of it, as out of text.
+        const bubble = selectionBubbleShown(view) ? this.mount.querySelector(':scope > .mep-bubble')?.getBoundingClientRect() ?? null : null;
+        const band = (left: number, top: number): Band => ({ left, right: left + width, top, bottom: top + height });
+        const free = (b: Band) => b.top >= ceiling && !textInBand(view, b)
+            && !(bubble && bubble.left < b.right && bubble.right > b.left && bubble.top < b.bottom && bubble.bottom > b.top);
+        const x0 = Math.max(base.left, Math.min(anchor.left ?? base.right - width, base.right - width));
+        const aboveY = this.clearOfLensRows(anchor.top - GAP - height, height, true);
+        const belowY = this.clearOfLensRows(anchor.bottom + GAP, height, false);
+        // Beside: right of the text of the object's line, in its textblock.
+        const block = this.textblockDOM(object.from);
+        const lineRight = block ? rightEdgeIn(block, anchor.top, anchor.top + height) : -Infinity;
+        const besideX = lineRight + GAP;
+        const places: { x: number; y: number; ok: () => boolean }[] = [
+            { x: x0, y: aboveY, ok: () => !covers(aboveY) && free(band(x0, aboveY)) },
+            { x: besideX, y: anchor.top, ok: () => Number.isFinite(lineRight) && besideX + width <= base.right && free(band(besideX, anchor.top)) },
+            { x: x0, y: belowY, ok: () => !covers(belowY) && free(band(x0, belowY)) },
+        ];
+        const found = places.find(p => p.ok());
+        let x = found?.x ?? x0;
+        let y = found?.y ?? belowY;
+        if (!found && covers(y) && caret !== null) {
             y = caret.bottom + GAP;
         }
-        const edge = anchor.left ?? (anchor.right ?? base.right) - width;
-        const x = Math.max(base.left, Math.min(edge, base.right - width));
+        x = Math.max(base.left, Math.min(x, base.right - width));
         el.style.left = `${x - base.left}px`;
         el.style.top = `${y - base.top}px`;
+    }
+
+    /** The element of the textblock holding position `pos`: the line an inline object stands on. */
+    private textblockDOM(pos: number): Element | null {
+        const $pos = this.view.state.doc.resolve(Math.min(pos, this.view.state.doc.content.size));
+        for (let d = $pos.depth; d > 0; d--) {
+            if ($pos.node(d).isTextblock) {
+                const dom = this.view.nodeDOM($pos.before(d));
+                return dom instanceof Element ? dom : null;
+            }
+        }
+        return null;
     }
 
     /** The bottom of the sticky formatting row: nothing is placed under it. */

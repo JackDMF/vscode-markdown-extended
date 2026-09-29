@@ -915,11 +915,13 @@ The layers:
   active and disabled states per action, the block-type face (the current type's name,
   locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
   `Enter`, `Esc`), the card, the bubble (placed from `coordsAtPos` inside `.mep-editor`,
-  above the selection where that covers no text and is clear of the sticky toolbar, else
-  below it where that is free, else beside a one-line selection on its line, else at the
+  above the selection where that covers no content and is clear of the sticky toolbar, else
+  beside the block — just right of its box, on the selection's line, where the block is
+  narrower than the column (a table): close to what it acts on, since the mapping between a
+  control and its object weakens with distance — else below it where that is free, else at the
   column's right edge on its line, else below — never over the row above, which is read
-  while choosing; "covers text" is `textInBand` in `webview/clearance.ts`, the one answer the
-  object toolbar asks too).
+  while choosing; "covers content" is `textInBand` in `webview/clearance.ts`, the one answer
+  the object toolbar asks too).
 
 **The syntax is read from where it is true.** `src/syntax/markers.ts` states the
 inline markers, the note and sidebar markers with their classes, and the admonition
@@ -1042,17 +1044,18 @@ the block back under the bar. A room moves what is below it, so the view scrolls
 at once, keeping what the person is at — the pointed-at block, else the caret's line — where it
 was: a pointed-at block that slid down as its bar appeared would leave the pointer, and a click
 aimed at it would land on the block above (the real-mouse tests caught exactly that). The places
-before the room move nothing, which is why they come first. "Holds text" is
+before the room move nothing, which is why they come first. "Holds content" is
 `textInBand`/`textInElement` (`webview/clearance.ts`): the page's text probed with
-`posAtCoords` at points across the band, a rendered block's own text by its line boxes, the
-floating chrome looked through while probing. An inline object's bar sits above its first line
-at its start, found from its element's own line boxes (`getClientRects` of the note's
+`posAtCoords` at points across the band, and occupied besides text wherever the probe lands
+in a cell of an editable table (an empty one too — the cell is the table's content, drawn to
+be seen), an image or an atom; a rendered block's own text by its line boxes; the floating
+chrome looked through while probing. **An inline object's bar follows the same rule with the
+same helper**: above the object's first line at its start where that holds no content, else
+beside that line — just right of its textblock's text on it — else below its last line; the
+start is found from its element's own line boxes (`getClientRects` of the note's
 `span.sn-ref` — a body floated into the margin is no line box of the reference, so the bar keeps
-to the reference) or, for a link, from `coordsAtPos` of its range; below its last line when
-the room above is under the sticky formatting row; and on the other side of the caret's line
-when it would cover it, so the line being typed is never under it — inline bars keep this
-older rule, and can still cover the line above an inline object (not changed here). While text
-is selected an inline bar prefers below, the selection bubble having the room above, and **no
+to the reference) or, for a link, from `coordsAtPos` of its range. Above and below are never
+the caret's line, and an inline bar keeps out of the selection bubble as out of text. **No
 block's bar shows while the bubble does** (`selectionBubbleShown` from `toolbar.ts`): one thing
 at a time. The bar is `position: absolute` inside `.mep-editor`, as the bubble is, so it
 scrolls with the text; it is placed again on scroll and resize.

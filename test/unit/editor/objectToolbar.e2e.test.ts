@@ -128,7 +128,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$(BAR), null);
     });
 
-    test('on the first line, under the sticky row, the bar goes below the note, still off the caret\'s line', async function () {
+    test('on the first line, under the sticky row, the bar goes beside the line, else below it, and never over text or the caret', async function () {
         this.timeout(15000);
         await showDocument('Alpha ++beta ref|the body++ gamma.\n\nSecond paragraph.\n', 'Alpha');
         await clickBefore('ref', 1);
@@ -138,10 +138,21 @@ suite('Editor object toolbar (e2e)', () => {
             const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
             const range = (document.getSelection() as Selection).getRangeAt(0);
             const caret = range.getClientRects()[0] ?? range.getBoundingClientRect();
-            return { barTop: bar.top, barBottom: bar.bottom, rowBottom: row.bottom, caretTop: caret.top, caretBottom: caret.bottom };
+            // Every line box of the document's text the bar overlaps.
+            const covered: string[] = [];
+            const walker = document.createTreeWalker(document.querySelector('.ProseMirror') as HTMLElement, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const r = document.createRange();
+                r.selectNodeContents(node);
+                if ((node.textContent ?? '').trim() !== '' && Array.from(r.getClientRects()).some(b => b.left < bar.right && b.right > bar.left && b.top < bar.bottom && b.bottom > bar.top)) {
+                    covered.push(node.textContent ?? '');
+                }
+            }
+            return { barTop: bar.top, barLeft: bar.left, rowBottom: row.bottom, caretBottom: caret.bottom, caretRight: caret.right, covered };
         }, BAR);
         assert.ok(geometry.barTop >= geometry.rowBottom, `not under the row: ${JSON.stringify(geometry)}`);
-        assert.ok(geometry.barTop >= geometry.caretBottom, `below the caret's line: ${JSON.stringify(geometry)}`);
+        assert.deepStrictEqual(geometry.covered, [], `over no text: ${JSON.stringify(geometry)}`);
+        assert.ok(geometry.barLeft > geometry.caretRight || geometry.barTop >= geometry.caretBottom, `beside the line or below it: ${JSON.stringify(geometry)}`);
     });
 
     test('Remove note, keep text posts the sentence with the reference in it, and says so beside the caret', async function () {
