@@ -1,5 +1,5 @@
 import type { ParsedDocumentJSON } from './parse';
-import type { MappedPagePosition, MappedSourcePosition, SourcePosition } from './positions';
+import type { MappedPagePosition, MappedSourcePosition, SourcePosition, SourceRange } from './positions';
 
 /**
  * The messages between the rich editor's webview and the extension host.
@@ -86,6 +86,42 @@ export interface CodeActionItem {
     refusal?: string;
 }
 
+/**
+ * One completion another extension offers at the caret, as the page lists it
+ * (`host/completion.ts`). `insertText` is what the source will hold — a
+ * snippet's placeholders filled with their defaults — and `range` the source
+ * range it replaces (VS Code's `inserting` range, the default insert mode), in
+ * the text the host held when it asked. `kind` is the `CompletionItemKind`'s
+ * name, lower-case (`reference`, `file`, …). The page filters by `filterText`,
+ * else `label`, and never writes the item itself: accepting it is
+ * `applyCompletion`, which the host applies to the source.
+ */
+export interface CompletionEntry {
+    label: string;
+    detail?: string;
+    kind?: string;
+    insertText: string;
+    range?: SourceRange;
+    sortText?: string;
+    filterText?: string;
+}
+
+/** How bad a diagnostic is, as the page draws it: VS Code's four `DiagnosticSeverity` values. */
+export type DiagnosticSeverityName = 'error' | 'warning' | 'info' | 'hint';
+
+/**
+ * One diagnostic VS Code holds for the document (`languages.getDiagnostics`),
+ * its `range` in the text the host holds for the page. `code` is the
+ * diagnostic's code as text (a `{ value, target }` code's value).
+ */
+export interface DiagnosticEntry {
+    range: SourceRange;
+    severity: DiagnosticSeverityName;
+    message: string;
+    code?: string;
+    source?: string;
+}
+
 /** Host → webview. */
 export type HostMessage =
     /**
@@ -170,7 +206,41 @@ export type HostMessage =
      * a position in the text. Answered with `mapped` of the same `id`, after
      * the page's pending edit, so the answer is in the text the host holds.
      */
-    | { type: 'map'; id: number; toSource?: number[]; toPage?: SourcePosition[] };
+    | { type: 'map'; id: number; toSource?: number[]; toPage?: SourcePosition[] }
+    /**
+     * The answer to `complete`: what the completion providers VS Code runs for
+     * the document offer at that position (`vscode.executeCompletionItemProvider`),
+     * in their order, capped; `incomplete` when a provider said its list is
+     * (the page asks again as the typed text grows). `version` is the document
+     * the page showed when it asked; empty when the page's text was not the
+     * document's or the document changed while the providers computed.
+     */
+    | { type: 'completions'; requestId: number; version: number; items: CompletionEntry[]; incomplete: boolean }
+    /**
+     * The answer to `applyCompletion`, after the document it produced was
+     * posted: where the caret goes in that document's text (the end of the
+     * inserted text, or a snippet's final tab stop), `null` when nothing was
+     * applied — the text changed since the completion was offered.
+     */
+    | { type: 'completionApplied'; requestId: number; version: number; caret: SourcePosition | null }
+    /**
+     * Every diagnostic VS Code holds for the document, in the text the host
+     * holds for the page of `version` (the document it last posted — the
+     * page's own edits since included). Sent when the diagnostics change
+     * (debounced), after every document and after every edit of the page's the
+     * host applies; never while a change the page has not seen is on its way.
+     */
+    | { type: 'diagnostics'; version: number; items: DiagnosticEntry[] }
+    /** The answer to `quickFixesFor`: the quick fixes VS Code offers for that range, run with `runAction`. */
+    | { type: 'quickFixes'; requestId: number; items: CodeActionItem[] }
+    /**
+     * The answer to `hover`: the hover providers' Markdown for that position,
+     * rendered by the host (`host/hover.ts`) — parts joined by a rule, command
+     * links the hover may run carrying `data-mep-command` ids of the host's
+     * registry, every other `command:` link stripped to its text — and the
+     * source range the hover is about. `html` is empty when there is none.
+     */
+    | { type: 'hoverResult'; requestId: number; html: string; range?: SourceRange };
 
 /**
  * One completion of a link's field: `value` is what the field then holds — a
@@ -304,7 +374,32 @@ export type WebviewMessage =
         baseVersion: number;
         toSource: (MappedSourcePosition | null)[];
         toPage: (MappedPagePosition | null)[];
-    };
+    }
+    /**
+     * Ask the completion providers at `position` — the caret, in the text of
+     * the document of `baseVersion` as the host holds it: sent after the
+     * page's pending edit, as `map` is answered. `triggerCharacter` is the
+     * non-word character just typed (`Ctrl+Space` sends none). Answered with
+     * `completions`.
+     */
+    | { type: 'complete'; requestId: number; baseVersion: number; position: SourcePosition; triggerCharacter?: string }
+    /**
+     * Accept item `index` of the `completions` answer `requestId`: the host
+     * applies its edit to the source — the item's range, extended over what
+     * the page typed since the answer, and its additional edits — and posts
+     * the document; `position` is the caret now. Sent after the pending edit.
+     */
+    | { type: 'applyCompletion'; requestId: number; index: number; baseVersion: number; position: SourcePosition }
+    /** The quick fixes for a diagnostic's source `range`, in the text of `baseVersion`; answered with `quickFixes`. */
+    | { type: 'quickFixesFor'; requestId: number; baseVersion: number; range: SourceRange }
+    /** Ask the hover providers at `position` (the pointer, rested), in the text of `baseVersion`; answered with `hoverResult`. */
+    | { type: 'hover'; requestId: number; baseVersion: number; position: SourcePosition }
+    /** Run the command link `id` of the last `hoverResult` — one the hover was trusted to run. */
+    | { type: 'runHoverCommand'; id: string }
+    /** **Show more** on a clipped hover: open the text editor at the hover's position and show VS Code's own hover there. */
+    | { type: 'showHoverInEditor'; requestId: number }
+    /** The diagnostics count in the toolbar was clicked: show VS Code's Problems view. */
+    | { type: 'showProblems' };
 
 /**
  * What an extension offering includes exports beside `extendMarkdownIt`

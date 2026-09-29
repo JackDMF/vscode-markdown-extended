@@ -8,6 +8,7 @@ import { HostMessage, WebviewMessage } from '../protocol';
 import { CodeActionController } from './codeActions';
 import { message } from './errors';
 import { IncludeController, IncludePicker, IncludeProvider, collectIncludeProviders } from './includes';
+import { LanguageFeatures } from './language';
 import { LensController, SessionPort } from './lenses';
 import { FileLister } from './linkChoices';
 import { LinksAndImages } from './linksImages';
@@ -36,6 +37,15 @@ export interface SessionHost {
     openDialog?(options: vscode.OpenDialogOptions): Thenable<vscode.Uri[] | undefined>;
     /** How long `toSource`/`toPage` wait for the page's answer (`MAP_TIMEOUT_MS`, the default). */
     mapTimeoutMs?: number;
+    /**
+     * `vscode.commands.executeCommand` (the default), through which completion,
+     * hover, quick fixes and code actions ask VS Code; a test answers for it.
+     */
+    executeCommand?<T>(command: string, ...args: unknown[]): Thenable<T>;
+    /** `vscode.languages.getDiagnostics` for one document (the default); a test answers for it. */
+    diagnostics?(uri: vscode.Uri): readonly vscode.Diagnostic[];
+    /** `vscode.languages.onDidChangeDiagnostics` (the default). */
+    onDidChangeDiagnostics?: vscode.Event<vscode.DiagnosticChangeEvent>;
 }
 
 /** The part of a `vscode.Webview` a session talks to. */
@@ -113,6 +123,8 @@ export class VisualEditorSession implements vscode.Disposable {
     private readonly includes: IncludeController;
     /** Links and images: completion, the open dialog, dropped and pasted files, where an image loads from. */
     private readonly linksAndImages: LinksAndImages;
+    /** Completion at the caret, the document's diagnostics, hovers: other extensions' providers, asked of VS Code. */
+    private readonly language: LanguageFeatures;
     private readonly subscriptions: vscode.Disposable[];
     /** A fragment to bring into view once the page has the document (`reveal`). */
     private pendingReveal: Reveal | undefined;
@@ -138,7 +150,20 @@ export class VisualEditorSession implements vscode.Disposable {
             log: line => this.host.log(line),
         };
         this.lenses = new LensController(port);
-        this.codeActions = new CodeActionController(port);
+        const execute = <T>(command: string, ...args: unknown[]): Thenable<T> => (host.executeCommand
+            ? host.executeCommand<T>(command, ...args)
+            : vscode.commands.executeCommand<T>(command, ...args));
+        this.codeActions = new CodeActionController(port, execute);
+        this.language = new LanguageFeatures({
+            port,
+            postedVersion: () => this.postedVersion,
+            enqueue: work => this.enqueue(work),
+            repost: () => this.post(),
+            execute,
+            diagnostics: uri => (host.diagnostics ? host.diagnostics(uri) : vscode.languages.getDiagnostics(uri)),
+            onDidChangeDiagnostics: host.onDidChangeDiagnostics ?? vscode.languages.onDidChangeDiagnostics,
+            send: msg => this.postQuietly(msg),
+        });
         const includeProviders = host.includeProviders?.bind(host) ?? (() => collectIncludeProviders(undefined, line => this.host.log(line)));
         this.includes = new IncludeController(port, includeProviders, host.includePicker);
         this.linksAndImages = new LinksAndImages({
@@ -152,9 +177,11 @@ export class VisualEditorSession implements vscode.Disposable {
         this.subscriptions = [
             this.lenses,
             this.codeActions,
+            this.language,
             this.caretChanged,
             webview.onDidReceiveMessage(msg => this.receive(msg)),
             webview.onDidReceiveMessage(msg => this.linksAndImages.receive(msg)),
+            webview.onDidReceiveMessage(msg => this.language.receive(msg)),
             vscode.workspace.onDidChangeTextDocument(e => {
                 if (e.document.uri.toString() === this.document.uri.toString()) {
                     this.documentChanged();
@@ -370,6 +397,18 @@ export class VisualEditorSession implements vscode.Disposable {
                 // Behind the edit the page flushed before answering, likewise.
                 this.enqueue(async () => this.takeMapped(msg));
                 break;
+            case 'quickFixesFor':
+                // In the queue, behind the edit the page flushed before asking,
+                // so the range is read in the text the page holds; a page on
+                // another document is answered with nothing.
+                this.enqueue(async () => {
+                    const r = msg.range;
+                    const range = msg.baseVersion === this.postedVersion && !this.broken && validRange(r)
+                        ? new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character)
+                        : null;
+                    void this.codeActions.quickFixes(msg.requestId, range);
+                });
+                break;
             case 'pickInclude':
                 // In the queue, behind the edit the page flushed before asking,
                 // so a provider that reads the document reads the page's text;
@@ -526,6 +565,7 @@ export class VisualEditorSession implements vscode.Disposable {
         // A link followed here before the page had the document lands now.
         await this.postReveal();
         this.lenses.schedule();
+        this.language.documentPosted();
     }
 
     /** Post a message whose loss only costs a stale answer; a disposed webview is logged, not thrown. */
@@ -595,6 +635,8 @@ export class VisualEditorSession implements vscode.Disposable {
         // And its code actions: those of a block the edit did not touch are
         // registered for the previous version, and may no longer be offered.
         this.codeActions.invalidate();
+        // And its diagnostics, in the text the page now holds.
+        this.language.editApplied();
     }
 
     /**
@@ -667,6 +709,12 @@ export class VisualEditorSession implements vscode.Disposable {
         });
         editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
     }
+}
+
+/** Whether a range the page sent is one: four non-negative integers. */
+function validRange(range: { start?: SourcePosition; end?: SourcePosition } | undefined): range is { start: SourcePosition; end: SourcePosition } {
+    const ok = (p: SourcePosition | undefined) => p !== undefined && Number.isInteger(p.line) && Number.isInteger(p.character) && p.line >= 0 && p.character >= 0;
+    return range !== undefined && ok(range.start) && ok(range.end);
 }
 
 /** The `path` of every resolved include expansion in a document's JSON. */
