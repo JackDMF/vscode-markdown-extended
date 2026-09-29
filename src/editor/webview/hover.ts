@@ -13,10 +13,10 @@
  */
 import { Plugin, PluginView } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { PositionMap, holdsText } from '../positions';
+import { PositionMap, SourceRange, holdsText } from '../positions';
 import type { CodeActionItem, DiagnosticEntry, HostMessage, WebviewMessage } from '../protocol';
 import { completionOpen } from './completion';
-import { diagnosticsAt } from './diagnostics';
+import { SEVERITY_ICON, diagnosticsAt, diagnosticsPlacedOn } from './diagnostics';
 import { CardAnchor, LanguageCard, hoverSection } from './languageCard';
 import { lensLabel, lensLabelNodes } from './lenses';
 
@@ -43,8 +43,6 @@ export interface HoverPort {
     /** Run a hover's command link, behind the pending edit. */
     runCommand(id: string): void;
 }
-
-const SEVERITY_ICON: Readonly<Record<DiagnosticEntry['severity'], string>> = { error: '$(error)', warning: '$(warning)', info: '$(info)', hint: '$(info)' };
 
 /** One diagnostic as the card shows it: the message with its severity and code, the source dimmed, then its quick fixes. */
 export function diagnosticSection(entry: DiagnosticEntry, fixes: readonly CodeActionItem[] | undefined): HTMLElement {
@@ -73,6 +71,13 @@ export function diagnosticSection(entry: DiagnosticEntry, fixes: readonly CodeAc
         source.textContent = entry.source;
         section.append(source);
     }
+    if (fixes && fixes.length > 0) {
+        // One label for the fixes, then each as a link: a prefix on every one repeats itself.
+        const label = document.createElement('div');
+        label.className = 'mep-card-fixes-label';
+        label.textContent = fixes.length === 1 ? 'Quick fix' : 'Quick fixes';
+        section.append(label);
+    }
     for (const fix of fixes ?? []) {
         const row = document.createElement('div');
         row.className = 'mep-card-fix';
@@ -80,7 +85,7 @@ export function diagnosticSection(entry: DiagnosticEntry, fixes: readonly CodeAc
             const off = document.createElement('span');
             off.className = 'mep-card-action mep-disabled';
             off.title = fix.refusal;
-            off.append(document.createTextNode('Quick fix: '), ...lensLabelNodes(fix.title));
+            off.append(...lensLabelNodes(fix.title));
             row.append(off);
         } else {
             const a = document.createElement('a');
@@ -88,7 +93,7 @@ export function diagnosticSection(entry: DiagnosticEntry, fixes: readonly CodeAc
             a.className = 'mep-card-action';
             a.dataset.mepAction = fix.id;
             a.title = lensLabel(fix.title);
-            a.append(document.createTextNode('Quick fix: '), ...lensLabelNodes(fix.title));
+            a.append(...lensLabelNodes(fix.title));
             row.append(a);
         }
         section.append(row);
@@ -101,7 +106,7 @@ interface Shown {
     /** The page range the card is about: the pointer stays on it or on the card. */
     from: number;
     to: number;
-    diagnostics: { entry: DiagnosticEntry; from: number; to: number }[];
+    diagnostics: { entry: DiagnosticEntry; from: number; to: number; whole: boolean }[];
     fixes: Map<number, readonly CodeActionItem[]>;
     /** The quick-fix questions in flight: request → index into `diagnostics`. */
     fixRequests: Map<number, number>;
@@ -330,11 +335,26 @@ class PointerCard implements PluginView {
         this.hide();
         this.shown = next;
         // Behind the pending edit, so every position below is in the text the host holds.
+        const placed = diagnosticsPlacedOn(this.view.state);
         this.port.flush();
+        const map = this.port.map();
         diagnostics.slice(0, FIX_QUESTIONS).forEach((d, index) => {
+            // Its own range while the text is the one it was placed on; after an edit, where its
+            // squiggle now is, read back through the position map — a block's mark has no such place.
+            let range: SourceRange | null = placed ? d.entry.range : null;
+            if (!placed && !d.whole && map) {
+                const start = map.sourcePositionOf(d.from);
+                const end = map.sourcePositionOf(d.to);
+                range = start && end && !start.approximate && !end.approximate
+                    ? { start: { line: start.line, character: start.character }, end: { line: end.line, character: end.character } }
+                    : null;
+            }
+            if (range === null) {
+                return;
+            }
             const requestId = ++this.seq;
             next.fixRequests.set(requestId, index);
-            this.port.post({ type: 'quickFixesFor', requestId, baseVersion: version, range: d.entry.range });
+            this.port.post({ type: 'quickFixesFor', requestId, baseVersion: version, range });
         });
         if (probe.onText) {
             const position = this.port.map()?.sourcePositionOf(probe.pos);

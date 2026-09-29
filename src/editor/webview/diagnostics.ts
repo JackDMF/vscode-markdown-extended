@@ -184,7 +184,8 @@ function markerLabel(bySeverity: Map<DiagnosticSeverityName, number>): string {
         .join(', ');
 }
 
-const ICON: Readonly<Record<DiagnosticSeverityName, string>> = { error: '$(error)', warning: '$(warning)', info: '$(info)', hint: '$(info)' };
+/** The codicon each severity is drawn with: the marker, the count, the card. */
+export const SEVERITY_ICON: Readonly<Record<DiagnosticSeverityName, string>> = { error: '$(error)', warning: '$(warning)', info: '$(info)', hint: '$(info)' };
 
 function markerElement(severity: DiagnosticSeverityName, label: string, inText: boolean): HTMLElement {
     const el = document.createElement(inText ? 'span' : 'div');
@@ -195,7 +196,7 @@ function markerElement(severity: DiagnosticSeverityName, label: string, inText: 
     el.title = label;
     const glyph = document.createElement('span');
     glyph.className = 'mep-diag-glyph';
-    glyph.append(...lensLabelNodes(ICON[severity]));
+    glyph.append(...lensLabelNodes(SEVERITY_ICON[severity]));
     el.append(glyph);
     return el;
 }
@@ -203,6 +204,8 @@ function markerElement(severity: DiagnosticSeverityName, label: string, inText: 
 interface DiagnosticsState {
     items: readonly DiagnosticEntry[];
     decorations: DecorationSet;
+    /** The document the items were placed on: while the state holds it, each item's own range is where its mark is. */
+    drawnOn: Node | null;
 }
 
 export const diagnosticsPluginKey = new PluginKey<DiagnosticsState>('mepDiagnostics');
@@ -210,13 +213,14 @@ export const diagnosticsPluginKey = new PluginKey<DiagnosticsState>('mepDiagnost
 /** The spec a squiggle or a block mark carries, so the pointer's card can find what it stands for. */
 interface MarkSpec {
     diagnostic: number;
+    whole: boolean;
 }
 
 function decorate(doc: Node, marks: readonly DiagnosticMark[]): DecorationSet {
     const decorations: Decoration[] = [];
     const byBlock = new Map<number, { worst: DiagnosticSeverityName; counts: Map<DiagnosticSeverityName, Set<number>> }>();
     for (const mark of marks) {
-        const spec: MarkSpec = { diagnostic: mark.index };
+        const spec: MarkSpec = { diagnostic: mark.index, whole: mark.whole };
         if (mark.whole) {
             decorations.push(Decoration.node(mark.from, mark.to, { class: `mep-diag-block mep-diag-block-${mark.severity}` }, spec));
         } else {
@@ -249,18 +253,27 @@ export function setDiagnosticsTransaction(state: EditorState, map: Pick<Position
     return state.tr.setMeta(diagnosticsPluginKey, { items, marks }).setMeta('addToHistory', false);
 }
 
+/**
+ * Whether the state's document is the one the diagnostics were placed on:
+ * then each item's own source range is where its mark is. After an edit the
+ * marks have moved with the text and the items' ranges have not.
+ */
+export function diagnosticsPlacedOn(state: EditorState): boolean {
+    return diagnosticsPluginKey.getState(state)?.drawnOn === state.doc;
+}
+
 /** The diagnostics the state holds (the last message's), for the toolbar's count and the card. */
 export function heldDiagnostics(state: EditorState): readonly DiagnosticEntry[] {
     return diagnosticsPluginKey.getState(state)?.items ?? [];
 }
 
 /** The diagnostics drawn at `pos` — squiggles over it, a block mark around it — with where each is drawn, worst first. */
-export function diagnosticsAt(state: EditorState, pos: number): { entry: DiagnosticEntry; from: number; to: number }[] {
+export function diagnosticsAt(state: EditorState, pos: number): { entry: DiagnosticEntry; from: number; to: number; whole: boolean }[] {
     const held = diagnosticsPluginKey.getState(state);
     if (!held) {
         return [];
     }
-    const seen = new Map<number, { entry: DiagnosticEntry; from: number; to: number }>();
+    const seen = new Map<number, { entry: DiagnosticEntry; from: number; to: number; whole: boolean }>();
     for (const d of held.decorations.find(pos, pos)) {
         const index = (d.spec as Partial<MarkSpec>).diagnostic;
         const entry = index === undefined ? undefined : held.items[index];
@@ -268,7 +281,10 @@ export function diagnosticsAt(state: EditorState, pos: number): { entry: Diagnos
             continue;
         }
         const known = seen.get(index);
-        seen.set(index, known ? { entry, from: Math.min(known.from, d.from), to: Math.max(known.to, d.to) } : { entry, from: d.from, to: d.to });
+        const whole = (d.spec as Partial<MarkSpec>).whole === true;
+        seen.set(index, known
+            ? { entry, from: Math.min(known.from, d.from), to: Math.max(known.to, d.to), whole: known.whole || whole }
+            : { entry, from: d.from, to: d.to, whole });
     }
     return [...seen.values()].sort((a, b) => RANK[a.entry.severity] - RANK[b.entry.severity] || a.from - b.from);
 }
@@ -322,14 +338,15 @@ class DiagnosticsCount implements PluginView {
         for (const s of parts) {
             const part = document.createElement('span');
             part.className = `mep-diag-count-part mep-diag-count-${s}`;
-            part.append(...lensLabelNodes(`${ICON[s]} ${counts[s]}`));
+            part.append(...lensLabelNodes(`${SEVERITY_ICON[s]} ${counts[s]}`));
             nodes.push(part);
         }
         this.el.replaceChildren(...nodes);
         const words: Record<'error' | 'warning' | 'info', [string, string]> = { error: ['error', 'errors'], warning: ['warning', 'warnings'], info: ['info', 'infos'] };
         const said = parts.map(s => `${counts[s]} ${words[s][counts[s] === 1 ? 0 : 1]}`).join(', ');
-        this.el.title = said === '' ? '' : `${said} — show the Problems view`;
-        this.el.setAttribute('aria-label', this.el.title);
+        // A button: its tooltip says what a click does, its accessible name what it counts too.
+        this.el.title = 'Open Problems';
+        this.el.setAttribute('aria-label', said === '' ? 'Open Problems' : `${said} — Open Problems`);
     }
 
     destroy(): void {
@@ -342,13 +359,13 @@ export function diagnosticsPlugin(port: DiagnosticsPort): Plugin<DiagnosticsStat
     return new Plugin<DiagnosticsState>({
         key: diagnosticsPluginKey,
         state: {
-            init: () => ({ items: [], decorations: DecorationSet.empty }),
+            init: () => ({ items: [], decorations: DecorationSet.empty, drawnOn: null }),
             apply(tr, value, _old, newState): DiagnosticsState {
                 const incoming = tr.getMeta(diagnosticsPluginKey) as { items: readonly DiagnosticEntry[]; marks: readonly DiagnosticMark[] } | undefined;
                 if (incoming !== undefined) {
-                    return { items: incoming.items, decorations: decorate(newState.doc, incoming.marks) };
+                    return { items: incoming.items, decorations: decorate(newState.doc, incoming.marks), drawnOn: newState.doc };
                 }
-                return tr.docChanged ? { items: value.items, decorations: value.decorations.map(tr.mapping, tr.doc) } : value;
+                return tr.docChanged ? { ...value, decorations: value.decorations.map(tr.mapping, tr.doc) } : value;
             },
         },
         view: view => new DiagnosticsCount(view, port),

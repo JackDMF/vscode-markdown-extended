@@ -44,6 +44,8 @@ export function hoverSection(html: string): HTMLElement {
             a.replaceWith(...Array.from(a.childNodes));
         }
     }
+    // A fix is the diagnostic section's to draw, never a hover's (the host strips it too).
+    template.content.querySelectorAll('[data-mep-action]').forEach(el => el.removeAttribute('data-mep-action'));
     for (const part of Array.from(template.content.querySelectorAll<HTMLElement>('.mep-hover-part[data-icons]'))) {
         const walker = document.createTreeWalker(part, NodeFilter.SHOW_TEXT);
         const texts: Text[] = [];
@@ -161,12 +163,13 @@ export class LanguageCard {
             this.handlers.showMore();
             return;
         }
-        const command = link.getAttribute('data-mep-command');
+        // Each kind of link only where the page put it: a command in a hover, a fix in a diagnostic.
+        const command = link.closest('.mep-card-hover') ? link.getAttribute('data-mep-command') : null;
         if (command !== null) {
             this.handlers.runCommand(command);
             return;
         }
-        const action = link.getAttribute('data-mep-action');
+        const action = link.closest('.mep-card-diagnostic') ? link.getAttribute('data-mep-action') : null;
         if (action !== null) {
             this.handlers.runAction(action);
             return;

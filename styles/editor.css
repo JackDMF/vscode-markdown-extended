@@ -739,8 +739,10 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 /*
  * A diagnostic's squiggle, in the theme's own colours for the severity; a
  * hint is dotted, as the text editor draws one. A block marked whole (an
- * approximate range, a source block) is outlined in the same colour, which
- * takes no room.
+ * approximate range, a source block) carries a 3px bar in the same colour at
+ * its left edge, drawn in the gutter beside it (a shadow, which takes no room),
+ * next to its margin marker: an outline around a whole table spoke louder than
+ * the problem it stands for.
  */
 .mep-diag {
     text-decoration-line: underline;
@@ -754,11 +756,11 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 .mep-diag-info { text-decoration-color: var(--vscode-editorInfo-foreground, #1a85ff); }
 .mep-diag-hint { text-decoration-style: dotted; text-decoration-color: var(--vscode-editorHint-foreground, #6c6c6c); }
 
-.mep-diag-block { outline: 1px dashed transparent; outline-offset: 2px; }
-.mep-diag-block-error { outline-color: var(--vscode-editorError-foreground, #e51400); }
-.mep-diag-block-warning { outline-color: var(--vscode-editorWarning-foreground, #bf8803); }
-.mep-diag-block-info { outline-color: var(--vscode-editorInfo-foreground, #1a85ff); }
-.mep-diag-block-hint { outline-color: var(--vscode-editorHint-foreground, #6c6c6c); }
+.mep-diag-block { --mep-diag-bar: transparent; box-shadow: -6px 0 0 -3px var(--mep-diag-bar); }
+.mep-diag-block-error { --mep-diag-bar: var(--vscode-editorError-foreground, #e51400); }
+.mep-diag-block-warning { --mep-diag-bar: var(--vscode-editorWarning-foreground, #bf8803); }
+.mep-diag-block-info { --mep-diag-bar: var(--vscode-editorInfo-foreground, #1a85ff); }
+.mep-diag-block-hint { --mep-diag-bar: var(--vscode-editorHint-foreground, #6c6c6c); }
 
 /*
  * The margin marker: one per block with something to say, left of its first
@@ -817,6 +819,8 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 }
 .mep-diag-count[hidden] { display: none; }
 .mep-diag-count:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+/* A button, and it looks like one under the pointer: the numbers underline, as a link's text does. */
+.mep-diag-count:hover .mep-diag-count-part { text-decoration: underline; }
 .mep-diag-count:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: -1px; }
 .mep-diag-count-part { display: inline-flex; align-items: center; gap: 4px; }
 .mep-diag-count-part > .codicon { font-size: 14px; }
@@ -873,6 +877,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     color: var(--vscode-descriptionForeground, #888);
 }
 .mep-card-source { padding-left: 20px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
+.mep-card-fixes-label { padding-left: 20px; margin-top: 2px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
 .mep-card-fix { padding-left: 20px; }
 .mep-language-card a {
     color: var(--vscode-textLink-foreground, #006ab1);

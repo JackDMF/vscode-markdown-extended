@@ -215,6 +215,7 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         const parts = await page.$$eval('.mep-toolbar .mep-row-status .mep-diag-count .mep-diag-count-part', els => els.map(el => el.textContent));
         assert.deepStrictEqual(parts, ['1', '1'], 'one error, one warning, at the row\'s right end');
         assert.deepStrictEqual(await page.$$eval('.mep-diag-count .codicon', els => els.map(el => el.className)), ['codicon codicon-error', 'codicon codicon-warning']);
+        assert.strictEqual(await page.$eval('.mep-diag-count', el => el.getAttribute('title')), 'Open Problems', 'the count says what a click does');
         const before = await count();
         await page.click('.mep-diag-count');
         await waitFor('showProblems', before);
@@ -240,6 +241,23 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         assert.ok(await cardVisible());
         await page.keyboard.press('Escape');
         assert.strictEqual(await cardVisible(), false);
+    });
+
+    test('after an edit before a squiggle, its quick fixes are asked for where the squiggle now is', async function () {
+        this.timeout(20000);
+        const at = await centreOf('A paragraph');
+        assert.ok(at);
+        await page.mouse.click(at.x, at.y);
+        await page.keyboard.press('Home');
+        await page.keyboard.type('X');
+        await settle();
+        const before = await count();
+        await rest('stylesheeet');
+        const asked = await waitFor('quickFixesFor', before);
+        assert.deepStrictEqual(asked.range, { start: { line: 4, character: 20 }, end: { line: 4, character: 31 } }, 'moved with the typed X, not the range the host sent');
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Backspace');
+        await settle();
     });
 
     test('resting on text asks the hover providers; the card\'s command links post to the host; Esc closes it', async function () {
