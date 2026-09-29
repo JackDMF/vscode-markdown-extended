@@ -509,19 +509,47 @@ way the text editor does, so what one shows the other shows.
   others join them as verbs in its toolbar, so one block does not speak two ways; a block
   without a toolbar (a paragraph) keeps its row. Lenses are asked again after every
   change, and when you come back to the tab: a lens can count things in other files.
-  Product icons in a title (`$(check)`) are left out: the editor has no access to VS Code's
-  icon font, and a stand-in would read as a broken icon.
+  Product icons in a title (`$(check)`) are drawn with VS Code's codicon font.
 - **Code actions** of a block are verbs in its bar, after a separator: the quick fixes for
   the problems on its lines, and the refactorings an extension offers there. A heading
   has a bar for them alone, so a requirement heading gets its actions; it shows none when
   there are none. Actions for the whole file (the Source Action menu's), VS Code's
   *Surround With* snippets and *Modify* with inline chat are left out: they act on a text
-  editor's selection. Inline objects — a link, a note — have no actions here yet.
+  editor's selection. Inline objects — a link, a note — have no actions here yet; the quick
+  fixes for a problem on them are in its card (below).
 - **`markdownExtended.editor.codeLenses`** (default `true`) turns the lenses off; so
   does VS Code's own `editor.codeLens`, as it does in the text editor.
 - A lens or an action whose command needs the text editor to be active may do nothing
   here, or act on another text editor: the command, not the Visual Editor, decides what
   it works on.
+
+### Completion, diagnostics and hover
+
+The completions, problems and hovers other extensions give the text editor — Req Explorer's
+requirement ids and checks, VS Code's own Markdown paths and anchors — are in the Visual
+Editor too, asked of VS Code as the text editor asks, so both show the same.
+
+- **Completion while typing.** A list opens under the caret when a completion provider
+  answers for a character just typed — Req Explorer's `-` after `FRS`, the built-in
+  Markdown's `#`, `/` and `.` in a link — and on `Ctrl+Space`; a letter never opens it.
+  Letters typed while it is open filter it. `↓`/`↑` choose, `Tab` or `Enter` accepts, `Esc`
+  closes. Accepting writes the provider's own edit into the file, and the paragraph shows
+  what the file now says, the caret after the inserted text. A space typed at the very end
+  of a paragraph is not in the file until something follows it, so a provider that
+  triggers on a space answers only mid-line.
+- **Problems on the page.** Every diagnostic VS Code holds for the file (the Problems view's)
+  is a squiggle on the text it is about — red for an error, yellow for a warning, blue for an
+  info, dotted for a hint. One that cannot be placed exactly — in a table, a source block,
+  between blocks — outlines its whole block instead. A block with problems carries one
+  marker in the left margin, of its worst severity; the right end of the toolbar counts
+  them (`⨯ 1 ⚠ 2`), and a click on the count opens the Problems view.
+- **One card for what the pointer rests on.** After half a second on a squiggle or on text,
+  a card shows the problems there — message, code, source, and each quick fix VS Code
+  offers for it as a link — and the hover providers' text for that place. A hover's command
+  links run only the commands the hover was trusted with; others are plain text. A card
+  too long for its space ends in a fade and **Show more**, which opens the text editor
+  beside at that place with VS Code's own hover. The card closes when the pointer leaves
+  it and its text, on any key, and on scroll.
 
 ### Links
 
