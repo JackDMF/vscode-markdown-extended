@@ -95,6 +95,27 @@
     outline-offset: -1px;
 }
 
+/*
+ * A selected image: which one a bar is about, beside another. An outline takes
+ * no room, so selecting it moves nothing.
+ */
+.ProseMirror img.ProseMirror-selectednode {
+    outline: 2px solid var(--vscode-focusBorder, #0078d4);
+    outline-offset: 0;
+}
+
+/*
+ * What an open inline field acts on — the text a link is made of, the span's
+ * text, the link or image edited — kept visible in the selection's colour
+ * while the field, not the text, has the focus (webview/pendingRange.ts).
+ */
+.mep-pending-range {
+    background: var(--vscode-editor-selectionBackground, Highlight);
+}
+img.mep-pending-range {
+    outline: 2px solid var(--vscode-editor-selectionBackground, Highlight);
+}
+
 /* Injected content is marked only while it is pointed at or selected; at rest it is the preview. */
 .mep-injected-block:hover,
 .mep-injected-block.ProseMirror-selectednode {
@@ -448,10 +469,8 @@
     z-index: 15;
     box-sizing: border-box;
     max-width: min(60ch, 90vw);
-    max-height: 14em;
-    overflow-y: auto;
     margin-top: 2px;
-    padding: 2px 0;
+    padding: 2px 0 0;
     font-family: var(--vscode-font-family, sans-serif);
     font-size: 12px;
     line-height: 20px;
@@ -460,6 +479,21 @@
     border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-editorWidget-border, #8888));
     border-radius: 3px;
     box-shadow: 0 1px 4px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+}
+
+.mep-completion-options {
+    max-height: 14em;
+    overflow-y: auto;
+}
+
+/* The keys, one dim line under the choices. */
+.mep-completions-keys {
+    padding: 0 8px;
+    font-size: 11px;
+    line-height: 18px;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, #888);
+    border-top: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-editorWidget-border, #8888));
 }
 
 .mep-completion {

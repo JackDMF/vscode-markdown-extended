@@ -142,17 +142,13 @@ export type HostMessage =
      */
     | { type: 'linkChoicesResult'; requestId: number; items: LinkChoice[] }
     /**
-     * The answer to `pickImage` and `insertFiles`: each file as the page
-     * inserts it, its path relative to the document (`LinkedFile`). Empty
-     * when the dialog was dismissed or no file could be linked.
+     * The answer to `pickImage`, `insertFiles` and `saveImage`: each file as
+     * the page inserts it, its path relative to the document (`LinkedFile`) —
+     * for `saveImage`, the file the host wrote. Empty when the dialog was
+     * dismissed, no file could be linked, or the bitmap could not be written
+     * (the host says why in its log and a message).
      */
     | { type: 'filesChosen'; requestId: number; files: LinkedFile[] }
-    /**
-     * The answer to `saveImage`: where the host wrote the pasted bitmap,
-     * relative to the document, as the image's `src` is written; absent when
-     * it could not be written (the host says why in its log and a message).
-     */
-    | { type: 'imageSaved'; requestId: number; path?: string }
     /**
      * The answer to `resolveImages`: for each asked `src` the host could
      * resolve to a file, the address the page loads it from
@@ -253,16 +249,19 @@ export type WebviewMessage =
     /** Ask for an image file in VS Code's open dialog (**Insert → Image…**); answered with `filesChosen`. */
     | { type: 'pickImage'; requestId: number }
     /**
-     * Files dropped or pasted into the page — VS Code's `resourceurls`, a
-     * `text/uri-list`, a `File` with a path — as uris (or file-system paths);
-     * the host makes each relative to the document. Answered with `filesChosen`.
+     * Files dropped into the page from VS Code's Explorer view — its
+     * `resourceurls`, or the `file:` lines of a `text/uri-list` — as uris; the
+     * host makes each relative to the document. Answered with `filesChosen`.
      */
     | { type: 'insertFiles'; requestId: number; uris: string[] }
     /**
-     * A bitmap pasted from the clipboard (a screenshot), `bytes` base64: the
-     * host writes it beside the document — where `markdown.copyFiles.destination`
-     * says, else `images/<document>-<yyyymmdd-hhmmss>.<ext>` — and answers with
-     * `imageSaved`.
+     * A bitmap with no file behind it, `bytes` base64: a screenshot pasted from
+     * the clipboard, or an image dropped from the system (the webview is given
+     * its bytes and name, never its path, so it is copied). The host writes it
+     * beside the document — where `markdown.copyFiles.destination` says, else
+     * `images/<suggestedName>` for a dropped file and
+     * `images/<document>-<yyyymmdd-hhmmss>.<ext>` for a screenshot — and answers
+     * with `filesChosen`.
      */
     | { type: 'saveImage'; requestId: number; bytes: string; suggestedName: string }
     /** Where the page may load these images' `src` from; answered with `imagesResolved`. */

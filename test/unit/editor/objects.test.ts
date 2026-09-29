@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import {
     EditorObject, changeLinkTransaction, convertNoteRefusal, convertNoteTransaction, currentObject, deleteObjectTransaction,
-    editImageTransaction, imageLockReason, insertFilesTransaction, insertLinkTransaction, isTopLevelBlock, linkLockReason, noteSource, objectAtSelection,
+    editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason, isTopLevelBlock, LINK_LOCK, noteSource, objectAtSelection,
     removeLinkTransaction,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -226,7 +226,7 @@ suite('Editor objects: making a link, inserting files', () => {
 
     test('a link around selected text keeps the text; at a caret the text typed is inserted linked, or the address when none was', () => {
         const selected = select(stateOf('See the spec here.\n'), 'the spec');
-        assert.strictEqual(linkLockReason(selected), null);
+        assert.strictEqual(insertLockReason(selected, LINK_LOCK), null);
         assert.strictEqual(text(selected.apply(insertLinkTransaction(selected, '', ' docs/spec.md#scope ') as never)), 'See [the spec](docs/spec.md#scope) here.\n');
 
         const caret = caretAt(stateOf('See here.\n'), 'here', 0);
@@ -239,8 +239,8 @@ suite('Editor objects: making a link, inserting files', () => {
 
     test('no link or image in code', () => {
         const code = caretAt(stateOf('```\ncode\n```\n'), 'code');
-        assert.ok(linkLockReason(code));
-        assert.ok(imageLockReason(code));
+        assert.strictEqual(insertLockReason(code, LINK_LOCK), LINK_LOCK);
+        assert.strictEqual(insertLockReason(code, IMAGE_LOCK), IMAGE_LOCK);
         assert.strictEqual(insertLinkTransaction(code, 'x', 'y.md'), null);
         assert.strictEqual(insertFilesTransaction(code, [{ src: 'a.png', alt: 'a', image: true }]), null);
     });

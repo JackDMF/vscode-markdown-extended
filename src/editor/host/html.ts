@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import { ContributesService } from '../../services/contributes/contributesService';
 import { BUILTIN_MARKDOWN_EXTENSION } from './engineHost';
+import { lowerDrive } from './images';
 
 function escapeAttribute(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
@@ -41,8 +42,12 @@ export function localResourceRoots(extensionUri: vscode.Uri, documentUri?: vscod
     }
     if (documentUri) {
         const dir = vscode.Uri.joinPath(documentUri, '..');
-        const inside = (root: vscode.Uri) => root.scheme === dir.scheme && root.authority === dir.authority
-            && (dir.path === root.path || dir.path.startsWith(root.path.endsWith('/') ? root.path : `${root.path}/`));
+        const dirPath = lowerDrive(dir.path);
+        const inside = (root: vscode.Uri) => {
+            const rootPath = lowerDrive(root.path);
+            return root.scheme === dir.scheme && root.authority === dir.authority
+                && (dirPath === rootPath || dirPath.startsWith(rootPath.endsWith('/') ? rootPath : `${rootPath}/`));
+        };
         if (!roots.some(inside)) {
             roots.push(dir);
         }

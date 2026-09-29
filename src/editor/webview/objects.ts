@@ -323,35 +323,36 @@ export function removeLinkTransaction(state: EditorState, link: Extract<EditorOb
     return tr.setSelection(TextSelection.create(tr.doc, link.to)).scrollIntoView();
 }
 
-/**
- * Why a link cannot be made at the selection, or `null`: it needs a caret or a
- * selection within one textblock that is not code (a link is a mark on text).
- */
-export function linkLockReason(state: EditorState): string | null {
-    const sel = state.selection;
-    const ok = sel instanceof TextSelection && sel.$from.sameParent(sel.$to)
-        && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code;
-    return ok ? null : 'Put the caret in text, or select text within one paragraph, heading or list item (not code), to link it.';
-}
+/** Why no link is made here — said to the gesture that asked (the key, the menu entry). */
+export const LINK_LOCK = 'Put the caret in text, or select text within one paragraph, heading or list item (not code), to link it.';
+/** Why no image or file goes in here, after Insert → Image… or a paste. */
+export const IMAGE_LOCK = 'Put the caret in text (not code) to insert an image there.';
+/** The same, after a drop: the place is where the file was let go. */
+export const DROP_LOCK = 'Drop onto text (not code) to insert an image there.';
 
-/** Why an image cannot be put at the selection, or `null`: it goes where text could be typed, and not in code. */
-export function imageLockReason(state: EditorState): string | null {
+/**
+ * `lock` — the refusal of the gesture asking — when nothing inline can go at
+ * the selection, else `null`. A link, an image and a dropped file all need a
+ * caret or a selection within one textblock that is not code: one rule, said
+ * three ways.
+ */
+export function insertLockReason(state: EditorState, lock: string): string | null {
     const sel = state.selection;
     const ok = sel instanceof TextSelection && sel.$from.sameParent(sel.$to)
         && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code;
-    return ok ? null : 'Put the caret in text (not code) to insert an image there.';
+    return ok ? null : lock;
 }
 
 /**
  * A link to `href` made at the selection: selected text is linked as it is;
  * at a caret, `text` is inserted linked — the address itself when `text` is
  * empty — with the marks the caret carries, and the caret after it. `null` for
- * an empty href, a selection a link cannot be made at (`linkLockReason`), or a
- * link a note around it could not hold.
+ * an empty href, a selection a link cannot be made at (`insertLockReason`), or
+ * a link a note around it could not hold.
  */
 export function insertLinkTransaction(state: EditorState, text: string, href: string): Transaction | null {
     const target = href.trim();
-    if (target === '' || linkLockReason(state) !== null) {
+    if (target === '' || insertLockReason(state, LINK_LOCK) !== null) {
         return null;
     }
     const link = editorSchema.marks.link.create({ href: target });
@@ -373,11 +374,11 @@ export function insertLinkTransaction(state: EditorState, text: string, href: st
  * its path, its alt text the file's stem; any other file as a link named by
  * its file name; a space between two. The selection is replaced; with one
  * image, it is selected afterwards (its alt text is asked for next), else the
- * caret goes after them. `null` where nothing can go (`imageLockReason`), or
+ * caret goes after them. `null` where nothing can go (`insertLockReason`), or
  * where a note around the selection could not hold it.
  */
 export function insertFilesTransaction(state: EditorState, files: readonly { src: string; alt: string; image: boolean }[]): Transaction | null {
-    if (files.length === 0 || imageLockReason(state) !== null) {
+    if (files.length === 0 || insertLockReason(state, IMAGE_LOCK) !== null) {
         return null;
     }
     const marks = (state.storedMarks ?? state.selection.$from.marks()).filter(m => m.type !== editorSchema.marks.link);

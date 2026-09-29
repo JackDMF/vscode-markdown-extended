@@ -30,15 +30,16 @@ import type { LinkChoice, LinkedFile } from '../../protocol';
 import { editorSchema } from '../../schema';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
+import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { editRawSourceAt } from '../nodeViews';
 import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
 import {
-    applySpanTransaction, changeLinkTransaction, currentObject, editImageTransaction, imageLockReason, insertFilesTransaction, insertLinkTransaction,
-    linkLockReason, literalRefusal, objectAtSelection, spanLockReason,
+    applySpanTransaction, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
+    LINK_LOCK, literalRefusal, objectAtSelection, spanLockReason,
 } from '../objects';
 import {
     MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
-    inBubble, inRow, menuOf, submenuOf, tooltipOf,
+    elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertSourceTransaction, insertWrapperTransaction, isCurrent,
@@ -147,11 +148,11 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
             return { enabled: reason === null, active: false, reason };
         }
         case 'insert-link': {
-            const reason = objectAtSelection(state)?.kind === 'link' ? null : linkLockReason(state);
+            const reason = objectAtSelection(state)?.kind === 'link' ? null : insertLockReason(state, LINK_LOCK);
             return { enabled: reason === null, active: false, reason };
         }
         case 'insert-image': {
-            const reason = imageLockReason(state);
+            const reason = insertLockReason(state, IMAGE_LOCK);
             return { enabled: reason === null, active: false, reason };
         }
     }
@@ -664,7 +665,7 @@ class ToolbarView implements PluginView {
             body.append(renderSample(node));
         }
         const syntax = div('mep-preview-syntax');
-        syntax.textContent = preview.markdown;
+        syntax.textContent = elideDataUris(preview.markdown);
         this.card.replaceChildren(body, syntax);
         this.card.dataset.action = action.id;
         this.card.dataset.menu = menu.id;
@@ -820,10 +821,10 @@ class ToolbarView implements PluginView {
                         view.dispatch(tr);
                     }
                 },
-            });
+            }, { from: object.from, to: object.to });
             return true;
         }
-        const reason = linkLockReason(view.state);
+        const reason = insertLockReason(view.state, LINK_LOCK);
         if (reason !== null) {
             showHint(view, reason, 'refusal');
             return false;
@@ -864,7 +865,7 @@ class ToolbarView implements PluginView {
         }
         const tr = insertFilesTransaction(view.state, files);
         if (tr === null) {
-            showHint(view, imageLockReason(view.state) ?? 'The image cannot be inserted here.', 'refusal');
+            showHint(view, insertLockReason(view.state, IMAGE_LOCK) ?? 'The image cannot be inserted here.', 'refusal');
             return;
         }
         view.dispatch(tr);
@@ -896,7 +897,7 @@ class ToolbarView implements PluginView {
      * field has the focus; a re-sync meanwhile maps it, so the commit applies
      * where the field was opened.
      */
-    private openFieldBar(object: string, barLabel: string, verb: string, first: FieldStep): void {
+    private openFieldBar(object: string, barLabel: string, verb: string, first: FieldStep, range?: { from: number; to: number }): void {
         this.closeFieldBar();
         const view = this.view;
         const bar = div('mep-object-toolbar');
@@ -915,6 +916,7 @@ class ToolbarView implements PluginView {
                 this.fieldBar = null;
             }
             bar.remove();
+            clearPendingRange(view);
         };
         const open = (step: FieldStep) => {
             const field = new InlineField({
@@ -955,6 +957,8 @@ class ToolbarView implements PluginView {
         const x = Math.max(base.left, Math.min(start.left, base.right - bar.offsetWidth));
         bar.style.left = `${x - base.left}px`;
         bar.style.top = `${end.bottom + 6 - base.top}px`;
+        // What the field acts on stays visible while the field has the focus.
+        showPendingRange(view, range?.from ?? sel.from, range?.to ?? sel.to);
         field.focus();
     }
 

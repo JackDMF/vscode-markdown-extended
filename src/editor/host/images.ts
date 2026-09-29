@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { LinkedFile } from '../protocol';
+import { schemeOf, stemOf } from '../paths';
 import { resolveLinkTarget } from './links';
 
 /**
@@ -40,6 +41,11 @@ function driveOf(p: string): string {
     return /^\/([A-Za-z]:)/.exec(p)?.[1].toLowerCase() ?? '';
 }
 
+/** A uri path with its drive letter lower-cased (`/D:/x` → `/d:/x`), as `Uri.file` writes it; others unchanged. */
+export function lowerDrive(p: string): string {
+    return p.replace(/^\/[A-Za-z]:/, d => d.toLowerCase());
+}
+
 /**
  * `target` as a path relative to the document's folder, POSIX separators,
  * encoded as a destination (`encodeDestination`); `null` when no relative path
@@ -53,22 +59,14 @@ export function relativeDestination(target: vscode.Uri, documentUri: vscode.Uri)
     if (driveOf(from) !== driveOf(target.path)) {
         return null;
     }
-    const lower = (p: string) => p.replace(/^\/[A-Za-z]:/, d => d.toLowerCase());
-    const relative = path.posix.relative(lower(from), lower(target.path));
+    const relative = path.posix.relative(lowerDrive(from), lowerDrive(target.path));
     return relative === '' ? null : encodeDestination(relative);
 }
 
-/** A file's name without its extension: the default alt text of an image. */
-export function stemOf(p: string): string {
-    const base = path.posix.basename(p);
-    const ext = path.posix.extname(base);
-    return ext === '' || ext === base ? base : base.slice(0, -ext.length);
-}
-
 /**
- * A uri the page sent (`resourceurls`, `text/uri-list`) or a file-system path
- * (a `File`'s path): parsed as a uri when it has a scheme, a drive letter
- * aside, else as a path. `null` for what is neither.
+ * A uri the page sent (`resourceurls`, `text/uri-list`), or a file-system
+ * path: parsed as a uri when it has a scheme (`schemeOf`: a drive letter is
+ * none), else as a path. `null` for what is neither.
  */
 export function uriOf(value: string): vscode.Uri | null {
     const text = value.trim();
@@ -76,7 +74,7 @@ export function uriOf(value: string): vscode.Uri | null {
         return null;
     }
     try {
-        return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(text) && !/^[A-Za-z]:[\\/]/.test(text) ? vscode.Uri.parse(text, true) : vscode.Uri.file(text);
+        return schemeOf(text) !== undefined ? vscode.Uri.parse(text, true) : vscode.Uri.file(text);
     } catch {
         return null;
     }
@@ -216,12 +214,22 @@ export function fillDestination(dest: string, ctx: DestinationContext): string {
 }
 
 /**
- * Where a pasted bitmap named `fileName` goes for `document`: the destination
- * of the first `markdown.copyFiles.destination` glob the document matches —
- * VS Code's own setting for its Markdown paste, globs matched the way it
- * matches them (a leading `/` anchored to each workspace folder, one without
- * `**` matched anywhere) — else `images/<document stem>-<yyyymmdd-hhmmss>.<ext>`
- * beside the document.
+ * Whether `fileName` is the name the browser gives a bitmap that came from no
+ * file — a screenshot on the clipboard is `image.png` — rather than a file's
+ * own name, which a dropped file keeps.
+ */
+export function isClipboardName(fileName: string): boolean {
+    return /^image\.[A-Za-z0-9]+$/i.test(fileName) || !/\.[A-Za-z0-9]+$/.test(fileName);
+}
+
+/**
+ * Where a bitmap named `fileName` goes for `document`: the destination of the
+ * first `markdown.copyFiles.destination` glob the document matches — VS Code's
+ * own setting for its Markdown paste, globs matched the way it matches them (a
+ * leading `/` anchored to each workspace folder, one without `**` matched
+ * anywhere) — else, beside the document, `images/<file name>` for a file
+ * dropped from the system (it keeps its name) and
+ * `images/<document stem>-<yyyymmdd-hhmmss>.<ext>` for a screenshot.
  */
 export function pastedImageUri(document: vscode.TextDocument, fileName: string, now: Date): vscode.Uri {
     const uri = document.uri;
@@ -236,6 +244,9 @@ export function pastedImageUri(document: vscode.TextDocument, fileName: string, 
         return filled.startsWith('/')
             ? uri.with({ path: path.posix.normalize(filled) })
             : vscode.Uri.joinPath(dir, ...filled.split('/').filter(s => s !== ''));
+    }
+    if (!isClipboardName(fileName)) {
+        return vscode.Uri.joinPath(dir, 'images', fileName);
     }
     const ext = path.posix.extname(fileName) || '.png';
     return vscode.Uri.joinPath(dir, 'images', `${stemOf(uri.path)}-${timestamp(now)}${ext}`);
@@ -281,12 +292,15 @@ export async function freeUri(uri: vscode.Uri, document: vscode.TextDocument): P
 }
 
 /**
- * Write a pasted bitmap beside the document (`pastedImageUri`, a free name
- * `freeUri`), its folders created, and answer the path the image is written
- * with: relative to the document, encoded. Throws with a reason the person can
- * read when it cannot.
+ * Write a pasted or dropped bitmap beside the document (`pastedImageUri`, a
+ * free name `freeUri`), its folders created, and answer the image as the page
+ * inserts it: its path relative to the document, encoded, and its file's stem
+ * as the alt text. Throws with a reason the person can read when it cannot.
+ *
+ * `freeUri` looks before it writes, so two saves at once could pick one name:
+ * the caller runs them one after another (`LinksAndImages`).
  */
-export async function savePastedImage(document: vscode.TextDocument, base64: string, suggestedName: string, now = new Date()): Promise<string> {
+export async function savePastedImage(document: vscode.TextDocument, base64: string, suggestedName: string, now = new Date()): Promise<LinkedFile> {
     const bytes = Buffer.from(base64, 'base64');
     if (bytes.length === 0) {
         throw new Error('the pasted image is empty');
@@ -301,5 +315,5 @@ export async function savePastedImage(document: vscode.TextDocument, base64: str
     if (src === null) {
         throw new Error(`${target.fsPath} was written, but no relative path from the document reaches it`);
     }
-    return src;
+    return { src, alt: stemOf(target.path), image: true };
 }

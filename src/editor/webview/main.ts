@@ -19,8 +19,9 @@ import type { CodeActionItem, HostMessage, LensRow, LinkChoice, LinkedFile, Webv
 import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
 import { showHint } from './hint';
-import { ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
-import { imageLockReason, insertFilesTransaction } from './objects';
+import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
+import { DROP_LOCK, IMAGE_LOCK, insertFilesTransaction, insertLockReason } from './objects';
+import { pendingRangePlugin } from './pendingRange';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
 import { lensPlugin, lensVerbsAt, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
@@ -441,14 +442,17 @@ function applyFiles(requestId: number, files: LinkedFile[]): void {
     }
 }
 
-/** Dropped or pasted files, as the host linked them, at the selection as it is when the answer comes. */
-function insertLinkedFiles(files: readonly LinkedFile[]): void {
+/**
+ * Dropped or pasted files, as the host linked or saved them, at the selection
+ * as it is when the answer comes; a refusal is said in the gesture's terms.
+ */
+function insertLinkedFiles(files: readonly LinkedFile[], gesture: FileGesture): void {
     if (!view || files.length === 0) {
         return;
     }
     const tr = insertFilesTransaction(view.state, files);
     if (tr === null) {
-        showHint(view, imageLockReason(view.state) ?? 'The file cannot be inserted here.', 'refusal');
+        showHint(view, insertLockReason(view.state, gesture === 'drop' ? DROP_LOCK : IMAGE_LOCK) ?? 'The file cannot be inserted here.', 'refusal');
         return;
     }
     // A single image is selected by the transaction, for **Insert → Image…**'s alt field; here the caret goes after it.
@@ -456,25 +460,13 @@ function insertLinkedFiles(files: readonly LinkedFile[]): void {
     view.focus();
 }
 
-/** The name of a saved image's file, without its extension: its alt text. */
-function stemOfPath(path: string): string {
-    let name = path.slice(path.lastIndexOf('/') + 1);
-    try {
-        name = decodeURIComponent(name);
-    } catch {
-        // As written.
-    }
-    const dot = name.lastIndexOf('.');
-    return dot > 0 ? name.slice(0, dot) : name;
-}
-
-/** A pasted or dropped bitmap: the host saves it beside the document, and the path it answers with is inserted. */
-function saveBitmap(file: File): void {
+/** A pasted or dropped bitmap: the host saves a copy beside the document and answers with it as the page inserts it. */
+function saveBitmap(file: File, gesture: FileGesture): void {
     if (!view) {
         return;
     }
     const requestId = ++fileSeq;
-    pendingFiles.set(requestId, insertLinkedFiles);
+    pendingFiles.set(requestId, files => insertLinkedFiles(files, gesture));
     readBase64(file).then(bytes => {
         if (pendingFiles.has(requestId)) {
             post({ type: 'saveImage', requestId, bytes, suggestedName: file.name || 'image.png' });
@@ -482,13 +474,9 @@ function saveBitmap(file: File): void {
     }, () => {
         pendingFiles.delete(requestId);
         if (view) {
-            showHint(view, 'The pasted image could not be read.', 'refusal');
+            showHint(view, 'The image could not be read.', 'refusal');
         }
     });
-}
-
-function applySavedImage(requestId: number, path: string | undefined): void {
-    applyFiles(requestId, path === undefined ? [] : [{ src: path, alt: stemOfPath(path), image: true }]);
 }
 
 /** Put the caret where a file was dropped, so the answer goes in there. */
@@ -606,6 +594,7 @@ const sourceContext = () => ({
 
 const plugins = [
     ...editorPlugins(),
+    pendingRangePlugin(),
     linkClickPlugin(href => port.openLink(href)),
     toolbarPlugin({
         sourceContext,
@@ -632,7 +621,7 @@ const plugins = [
     }),
     lensPlugin(id => runBehindEdit({ type: 'runLens', id })),
     fileDropPlugin({
-        insertFiles: uris => askFiles({ type: 'insertFiles', uris }, insertLinkedFiles),
+        insertFiles: (uris, gesture) => askFiles({ type: 'insertFiles', uris }, files => insertLinkedFiles(files, gesture)),
         saveImage: saveBitmap,
     }, placeDrop),
 ];
@@ -832,9 +821,6 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'filesChosen':
             applyFiles(msg.requestId, msg.files);
-            break;
-        case 'imageSaved':
-            applySavedImage(msg.requestId, msg.path);
             break;
         case 'imagesResolved':
             imageSources.resolved(msg.requestId, msg.sources);

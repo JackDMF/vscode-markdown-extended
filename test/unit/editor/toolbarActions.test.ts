@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
-    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, inBubble, inRow, isSourceAction, menuOf, submenuOf, tooltipOf,
+    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, elideDataUris, inBubble, inRow, isSourceAction, menuOf, submenuOf, tooltipOf,
 } from '../../../src/editor/webview/toolbar/actions';
 import {
     ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
@@ -163,6 +163,14 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         const guard = `:where(:not(.${PREVIEW_CARD_CLASS} *))`;
         assert.strictEqual(notes.split(guard).length - 1, 8, 'every selector of the margin layout keeps out of the card');
         assert.ok(readText(path.join(repoRoot, 'styles', 'editor.css')).includes(`.${PREVIEW_CARD_CLASS} {`));
+    });
+
+    test('the card prints a data: URI elided, and only the printed line: the Markdown rendered keeps it', () => {
+        assert.strictEqual(elideDataUris('A figure: ![A landscape](data:image/png;base64,iVBORw0KGgo+/=) here, [a](b.md)'),
+            'A figure: ![A landscape](data:image/png;base64,…) here, [a](b.md)');
+        const image = TOOLBAR_ACTIONS.find(a => a.id === 'image');
+        assert.ok(image?.preview && image.preview.markdown.includes('base64,iVBOR'), 'the preview\'s Markdown holds the real picture');
+        assert.ok(!elideDataUris(image.preview.markdown).includes('iVBOR'));
     });
 
     test('the four emphasis delimiters are four actions, drawn as four elements', () => {

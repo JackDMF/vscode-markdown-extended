@@ -172,6 +172,16 @@ export function submenuOf(action: ToolbarAction): ToolbarSubmenu | null {
     return 'menu' in action.place ? action.place.submenu ?? null : null;
 }
 
+/**
+ * Markdown as the preview card prints it: a `data:` URI's payload elided
+ * (`(data:image/png;base64,…)`), since a picture spelled out in base64 is
+ * noise to read. Only the printed line: the card's rendering and the sample
+ * keep the real URI, and the check renders the real Markdown.
+ */
+export function elideDataUris(markdown: string): string {
+    return markdown.replace(/\(data:([^,)\s]*),[^)\s]*\)/g, '(data:$1,…)');
+}
+
 /** The action's tooltip: its name, the syntax it writes, and the source footnote where it applies. */
 export function tooltipOf(action: ToolbarAction): string {
     const source = isSourceAction(action);

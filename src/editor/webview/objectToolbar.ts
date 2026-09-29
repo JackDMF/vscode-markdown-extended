@@ -40,6 +40,7 @@ import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading } from './inlineField';
 import { NoteNodeName, unwrapNote } from './notes';
+import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     EditorObject, NOTE_CONVERSION, blockAttrsRefusal, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
@@ -90,6 +91,13 @@ export interface ObjectToolbarHost {
  * is a row again.
  */
 export const LENS_VERBS_INLINE = 4;
+
+/**
+ * The objects whose range stays drawn while their field is open: the inline
+ * ones, whose text the field is about. A block's field (a container's name, an
+ * admonition's title) names its block by the bar beside it.
+ */
+const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'note', 'image']);
 
 /** How long the caret rests in an inline object before its toolbar shows. */
 export const INLINE_DELAY_MS = 400;
@@ -153,6 +161,16 @@ function isSidebar(name: NoteNodeName): boolean {
     return name === 'left_sidebar' || name === 'right_sidebar';
 }
 
+/** What a bar tells the view about its field. */
+interface BarEvents {
+    escape(): void;
+    /** A field opened for `object`: what it acts on is drawn (`pendingRange.ts`). */
+    fieldOpened(object: EditorObject): void;
+    fieldClosed(committed: boolean): void;
+    /** The bar went with its field open: the view hides it from inside an update, so the drawing goes after it. */
+    fieldDropped(): void;
+}
+
 /** One bar: a label and verbs, or a label and the inline field. */
 class ObjectBar {
     readonly el: HTMLElement;
@@ -161,7 +179,7 @@ class ObjectBar {
     private signature = '';
     private buttons: { verb: Verb; el: HTMLButtonElement }[] = [];
 
-    constructor(trigger: 'selection' | 'hover', private readonly events: { escape(): void; fieldClosed(committed: boolean): void }) {
+    constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents) {
         this.el = document.createElement('div');
         this.el.className = 'mep-object-toolbar';
         this.el.dataset.trigger = trigger;
@@ -203,7 +221,10 @@ class ObjectBar {
     }
 
     hide(): void {
-        this.field?.dispose();
+        if (this.field) {
+            this.field.dispose();
+            this.events.fieldDropped();
+        }
         this.field = null;
         this.object = null;
         this.signature = '';
@@ -307,6 +328,9 @@ class ObjectBar {
         }
         this.el.replaceChildren(...(label ? [label] : []), field.el);
         field.focus();
+        if (this.object) {
+            this.events.fieldOpened(this.object);
+        }
     }
 
     private onKey(e: KeyboardEvent): void {
@@ -385,9 +409,22 @@ class ObjectToolbarView implements PluginView {
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
-        const events = {
+        const events: BarEvents = {
             escape: () => this.view.focus(),
-            fieldClosed: () => this.refresh(),
+            fieldOpened: object => {
+                if (PENDING_OBJECTS.has(object.kind)) {
+                    showPendingRange(this.view, object.from, object.to);
+                }
+            },
+            fieldClosed: () => {
+                clearPendingRange(this.view);
+                this.refresh();
+            },
+            fieldDropped: () => setTimeout(() => {
+                if (!this.destroyed) {
+                    clearPendingRange(this.view);
+                }
+            }, 0),
         };
         this.selectionBar = new ObjectBar('selection', events);
         this.hoverBar = new ObjectBar('hover', events);

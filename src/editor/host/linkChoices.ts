@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { Environment, MarkdownIt } from '../../@types/markdown-it';
+import { decode, schemeOf } from '../paths';
 import type { LinkChoice } from '../protocol';
 import { message } from './errors';
 import { encodeDestination, isImagePath, relativeDestination } from './images';
@@ -48,16 +49,46 @@ export const workspaceFiles: FileLister = async documentUri => {
     return entries.filter(([, type]) => type === vscode.FileType.File).slice(0, FILE_SCAN_CAP).map(([name]) => vscode.Uri.joinPath(dir, name));
 };
 
-function decode(text: string): string {
-    try {
-        return decodeURIComponent(text);
-    } catch {
-        return text;
-    }
-}
-
 function isMarkdown(p: string): boolean {
     return /\.(md|markdown|mdown|mkd|mkdn)$/i.test(p);
+}
+
+/** A file a link may name, and what every query reads of it (`LinkChoiceController.candidates`). */
+interface Candidate {
+    /** Relative to the document, encoded: what the field is given. */
+    value: string;
+    /** The same path decoded: what the list shows. */
+    relative: string;
+    lower: string;
+    /** The file's name, lower-cased. */
+    name: string;
+    markdown: boolean;
+    image: boolean;
+    /** How far from the document: `..` steps weigh a hundred folders. */
+    distance: number;
+}
+
+/** `uri` as a candidate for `documentUri`'s links; none for the document itself, or a file no relative path reaches. */
+function candidateOf(uri: vscode.Uri, documentUri: vscode.Uri): Candidate[] {
+    if (uri.toString() === documentUri.toString()) {
+        return [];
+    }
+    const value = relativeDestination(uri, documentUri);
+    if (value === null) {
+        return [];
+    }
+    const relative = decode(value);
+    const lower = relative.toLowerCase();
+    const segments = relative.split('/');
+    return [{
+        value,
+        relative,
+        lower,
+        name: path.posix.basename(lower),
+        markdown: isMarkdown(relative),
+        image: isImagePath(uri.path),
+        distance: segments.filter(s => s === '..').length * 100 + segments.length,
+    }];
 }
 
 /**
@@ -76,7 +107,7 @@ function isMarkdown(p: string): boolean {
  * (`encodeDestination`). With `images`, image files only.
  */
 export class LinkChoiceController {
-    private files: { at: number; list: Promise<vscode.Uri[]> } | null = null;
+    private files: { at: number; list: Promise<Candidate[]> } | null = null;
 
     constructor(
         private readonly host: SessionPort,
@@ -105,17 +136,24 @@ export class LinkChoiceController {
         if (hash >= 0 && !images) {
             return this.anchors(query.slice(0, hash), query.slice(hash + 1));
         }
-        if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(query) && !/^[A-Za-z]:[\\/]/.test(query)) {
+        if (schemeOf(query) !== undefined) {
             // A web address, a mail address: nothing in the workspace completes it.
             return [];
         }
         return this.fileChoices(query, images);
     }
 
-    private listFiles(): Promise<vscode.Uri[]> {
+    /**
+     * The files a link may name, each with what every query reads of it —
+     * its encoded relative path, the path decoded and lower-cased, its name,
+     * how far away it is — derived once per read of the file list, not per
+     * keystroke over thousands of files.
+     */
+    private candidates(): Promise<Candidate[]> {
         const now = this.now();
         if (this.files === null || now - this.files.at > FILE_LIST_TTL_MS) {
-            const list = this.lister(this.host.document.uri);
+            const documentUri = this.host.document.uri;
+            const list = this.lister(documentUri).then(uris => uris.flatMap(uri => candidateOf(uri, documentUri)));
             this.files = { at: now, list };
             // A failed read is not kept for the next query.
             list.catch(() => {
@@ -128,32 +166,22 @@ export class LinkChoiceController {
     }
 
     private async fileChoices(query: string, images: boolean): Promise<LinkChoice[]> {
-        const documentUri = this.host.document.uri;
         const wanted = decode(query).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
-        const ranked: { choice: LinkChoice; key: [number, number, number, string] }[] = [];
-        for (const uri of await this.listFiles()) {
-            if (uri.toString() === documentUri.toString() || (images && !isImagePath(uri.path))) {
+        const ranked: { candidate: Candidate; quality: number }[] = [];
+        for (const candidate of await this.candidates()) {
+            if (images && !candidate.image) {
                 continue;
             }
-            const value = relativeDestination(uri, documentUri);
-            if (value === null) {
-                continue;
-            }
-            const relative = decode(value);
-            const lower = relative.toLowerCase();
-            const name = path.posix.basename(lower);
+            const { lower, name } = candidate;
             const quality = wanted === '' ? 0 : lower.startsWith(wanted) || name.startsWith(wanted) ? 0 : name.includes(wanted) ? 1 : lower.includes(wanted) ? 2 : -1;
-            if (quality < 0) {
-                continue;
+            if (quality >= 0) {
+                ranked.push({ candidate, quality });
             }
-            const up = relative.split('/').filter(s => s === '..').length;
-            ranked.push({
-                choice: { value, label: relative, kind: 'file' },
-                key: [images || isMarkdown(relative) ? 0 : 1, quality, up * 100 + relative.split('/').length, lower],
-            });
         }
-        ranked.sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2] - b.key[2] || (a.key[3] < b.key[3] ? -1 : a.key[3] > b.key[3] ? 1 : 0));
-        return ranked.slice(0, LINK_CHOICES_CAP).map(r => r.choice);
+        const kind = (c: Candidate) => (images || c.markdown ? 0 : 1);
+        ranked.sort((a, b) => kind(a.candidate) - kind(b.candidate) || a.quality - b.quality
+            || a.candidate.distance - b.candidate.distance || (a.candidate.lower < b.candidate.lower ? -1 : a.candidate.lower > b.candidate.lower ? 1 : 0));
+        return ranked.slice(0, LINK_CHOICES_CAP).map(({ candidate }) => ({ value: candidate.value, label: candidate.relative, kind: 'file' }));
     }
 
     /** The headings of the document `target` names (empty: this one) whose anchor or text holds `fragment`. */
@@ -171,7 +199,8 @@ export class LinkChoiceController {
             if (name === '' || (wanted !== '' && !name.toLowerCase().includes(wanted) && !anchor.text.toLowerCase().includes(wanted))) {
                 continue;
             }
-            choices.push({ value: `${target}#${encodeDestination(name)}`, label: `${target}#${name}`, ...(anchor.text ? { detail: anchor.text } : {}), kind: 'heading' });
+            // The path is fixed once `#` is typed: the list shows the anchor, the value is the whole destination.
+            choices.push({ value: `${target}#${encodeDestination(name)}`, label: `#${name}`, ...(anchor.text ? { detail: anchor.text } : {}), kind: 'heading' });
             if (choices.length >= LINK_CHOICES_CAP) {
                 break;
             }

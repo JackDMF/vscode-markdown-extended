@@ -29,6 +29,8 @@ export interface LinksAndImagesHost {
  */
 export class LinksAndImages {
     private readonly choices: LinkChoiceController;
+    /** The bitmaps being written, one after another (`saveImage`). */
+    private saves: Promise<void> = Promise.resolve();
 
     constructor(private readonly host: LinksAndImagesHost) {
         this.choices = new LinkChoiceController(host.port, () => host.engine(), host.linkFiles);
@@ -109,16 +111,24 @@ export class LinksAndImages {
         await this.answer({ type: 'filesChosen', requestId, files });
     }
 
-    /** A pasted bitmap written beside the document (`savePastedImage`); a failure is said, and answered without a path. */
-    private async saveImage(requestId: number, bytes: string, suggestedName: string): Promise<void> {
-        let path: string | undefined;
-        try {
-            path = await savePastedImage(this.document, bytes, suggestedName);
-        } catch (error) {
-            this.host.port.log(`[WARN] Visual Editor: the pasted image could not be saved: ${message(error)}`);
-            void vscode.window.showWarningMessage(`The pasted image could not be saved: ${message(error)}`);
-        }
-        await this.answer({ type: 'imageSaved', requestId, ...(path !== undefined ? { path } : {}) });
+    /**
+     * A pasted or dropped bitmap written beside the document
+     * (`savePastedImage`), answered as the file the page inserts; a failure is
+     * said, and answered with none. One save after another: a free name is
+     * looked for before it is written, and two saves at once would find the same.
+     */
+    private saveImage(requestId: number, bytes: string, suggestedName: string): Promise<void> {
+        this.saves = this.saves.then(async () => {
+            let files: LinkedFile[] = [];
+            try {
+                files = [await savePastedImage(this.document, bytes, suggestedName)];
+            } catch (error) {
+                this.host.port.log(`[WARN] Visual Editor: the pasted image could not be saved: ${message(error)}`);
+                void vscode.window.showWarningMessage(`The pasted image could not be saved: ${message(error)}`);
+            }
+            await this.answer({ type: 'filesChosen', requestId, files });
+        });
+        return this.saves;
     }
 
     /**

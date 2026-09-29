@@ -76,6 +76,9 @@ export function fieldHeading(object: string, field: string): string {
     return object === '' || object.toLowerCase().endsWith(field.toLowerCase()) ? object || field : `${object} · ${field}`;
 }
 
+/** The completion list's footer: its keys, the glyphs VS Code's own keybinding labels use. */
+export const COMPLETION_KEYS = '↹ complete · ↵ set · Esc close';
+
 /** How long the typing rests before a field asks for completions again. */
 const COMPLETION_DELAY_MS = 80;
 
@@ -222,7 +225,12 @@ export class InlineField extends InlineControl<HTMLInputElement> {
             input.setAttribute('aria-expanded', 'false');
             input.setAttribute('aria-controls', this.listId);
             input.autocomplete = 'off';
-            input.addEventListener('input', () => this.scheduleQuery());
+            input.addEventListener('input', () => {
+                // What is typed now is the value: `Enter` before the next
+                // answer commits it, not a choice made for the earlier text.
+                this.choose(-1);
+                this.scheduleQuery();
+            });
         }
     }
 
@@ -315,10 +323,12 @@ export class InlineField extends InlineControl<HTMLInputElement> {
         }
         const list = this.list ?? document.createElement('div');
         list.className = 'mep-completions';
-        list.id = this.listId;
-        list.setAttribute('role', 'listbox');
-        list.setAttribute('aria-label', this.options.label);
-        list.replaceChildren(...items.map((item, i) => {
+        const options = document.createElement('div');
+        options.className = 'mep-completion-options';
+        options.id = this.listId;
+        options.setAttribute('role', 'listbox');
+        options.setAttribute('aria-label', this.options.label);
+        options.replaceChildren(...items.map((item, i) => {
             const option = document.createElement('div');
             option.className = 'mep-completion';
             option.id = `${this.listId}-${i}`;
@@ -350,6 +360,13 @@ export class InlineField extends InlineControl<HTMLInputElement> {
             });
             return option;
         }));
+        // The keys, said where the eye is: the list alone does not say that
+        // Tab takes a choice and goes on while Enter sets it.
+        const keys = document.createElement('div');
+        keys.className = 'mep-completions-keys';
+        keys.setAttribute('aria-hidden', 'true');
+        keys.textContent = COMPLETION_KEYS;
+        list.replaceChildren(options, keys);
         if (this.list === null) {
             this.list = list;
             this.el.after(list);
@@ -362,7 +379,7 @@ export class InlineField extends InlineControl<HTMLInputElement> {
 
     private choose(index: number): void {
         this.chosen = index;
-        const options = Array.from(this.list?.children ?? []) as HTMLElement[];
+        const options = Array.from(this.list?.querySelectorAll<HTMLElement>('.mep-completion') ?? []);
         options.forEach((option, i) => {
             option.setAttribute('aria-selected', String(i === index));
             option.classList.toggle('mep-chosen', i === index);
@@ -371,6 +388,8 @@ export class InlineField extends InlineControl<HTMLInputElement> {
         if (option) {
             this.el.setAttribute('aria-activedescendant', option.id);
             option.scrollIntoView({ block: 'nearest' });
+        } else {
+            this.el.removeAttribute('aria-activedescendant');
         }
     }
 

@@ -1261,7 +1261,8 @@ suite('Editor host: links and images', () => {
             ['#scope-id', 'Scope', 'heading'],
         ]);
         assert.deepStrictEqual((await choices('#sco')).map(c => c.value), ['#scope-id'], 'filtered by anchor or text');
-        assert.deepStrictEqual((await choices('docs/other%20file.md#')).map(c => c.value), ['docs/other%20file.md#other-heading']);
+        assert.deepStrictEqual((await choices('docs/other%20file.md#')).map(c => [c.value, c.label]), [['docs/other%20file.md#other-heading', '#other-heading']],
+            'the path is fixed once # is typed: the list shows the anchor, the value is the whole destination');
         assert.deepStrictEqual(await choices('z.txt#'), [], 'a file that is not Markdown has no headings to offer');
     });
 
@@ -1315,17 +1316,42 @@ suite('Editor host: links and images', () => {
         }
     });
 
-    test('a pasted bitmap is written to images/<document>-<yyyymmdd-hhmmss>.png beside the document, and its relative path is the answer', async function () {
+    test('a pasted screenshot is written to images/<document>-<yyyymmdd-hhmmss>.png beside the document, and answered as the image the page inserts', async function () {
         this.timeout(10000);
         const { webview, session } = open();
         try {
             const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
             webview.send({ type: 'saveImage', requestId: 12, bytes: bytes.toString('base64'), suggestedName: 'image.png' });
-            const answer = await webview.answer('imageSaved');
-            assert.ok(answer?.path, JSON.stringify(answer));
+            const answer = await webview.answer('filesChosen');
+            assert.ok(answer, 'answered');
             assert.strictEqual(answer.requestId, 12);
-            assert.match(answer.path, /^images\/doc-\d{8}-\d{6}\.png$/);
-            assert.deepStrictEqual(fs.readFileSync(path.join(dir, ...answer.path.split('/'))), bytes, 'the bytes the page sent');
+            assert.strictEqual(answer.files.length, 1, JSON.stringify(answer));
+            const [file] = answer.files;
+            assert.match(file.src, /^images\/doc-\d{8}-\d{6}\.png$/);
+            assert.strictEqual(file.alt, file.src.slice('images/'.length, -'.png'.length), 'its file\'s stem, from the host');
+            assert.strictEqual(file.image, true);
+            assert.deepStrictEqual(fs.readFileSync(path.join(dir, ...file.src.split('/'))), bytes, 'the bytes the page sent');
+        } finally {
+            session.dispose();
+        }
+    });
+
+    test('images dropped from the system keep their name, and two saves at once of one name write two files, one after the other', async function () {
+        this.timeout(10000);
+        const { webview, session } = open();
+        try {
+            const first = Buffer.from([1, 2, 3]);
+            const second = Buffer.from([4, 5, 6]);
+            webview.send({ type: 'saveImage', requestId: 21, bytes: first.toString('base64'), suggestedName: 'my diagram.png' });
+            webview.send({ type: 'saveImage', requestId: 22, bytes: second.toString('base64'), suggestedName: 'my diagram.png' });
+            await until(() => webview.posted.filter(m => m.type === 'filesChosen' && (m.requestId === 21 || m.requestId === 22)).length === 2 ? true : undefined, 5000);
+            const answers = webview.posted.filter((m): m is Extract<HostMessage, { type: 'filesChosen' }> => m.type === 'filesChosen' && (m.requestId === 21 || m.requestId === 22));
+            assert.deepStrictEqual(answers.map(a => [a.requestId, a.files.map(f => [f.src, f.alt])]), [
+                [21, [['images/my%20diagram.png', 'my diagram']]],
+                [22, [['images/my%20diagram-1.png', 'my diagram-1']]],
+            ]);
+            assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'images', 'my diagram.png')), first);
+            assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'images', 'my diagram-1.png')), second, 'not written over the first');
         } finally {
             session.dispose();
         }

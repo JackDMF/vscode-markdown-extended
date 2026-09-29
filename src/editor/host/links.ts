@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { Environment, MarkdownIt, Token } from '../../@types/markdown-it';
+import { decode, schemeOf } from '../paths';
 import { GITHUB_SLUG_REPLACE } from './githubSlugRegex';
 
 /**
@@ -18,14 +19,6 @@ export type LinkTarget =
 
 const EXTERNAL_SCHEMES = new Set(['http', 'https', 'mailto']);
 
-function decode(path: string): string {
-    try {
-        return decodeURIComponent(path);
-    } catch {
-        return path;
-    }
-}
-
 /**
  * Resolve `href` as the preview would: a scheme names the target; a path is
  * relative to the document's folder, or with a leading `/` to the workspace
@@ -40,8 +33,8 @@ export function resolveLinkTarget(href: string, documentUri: vscode.Uri, workspa
         return { kind: 'refused', reason: 'the link is empty' };
     }
     // A drive letter is no scheme: `C:/notes/a.md` is a path.
-    const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(link)?.[1]?.toLowerCase();
-    if (scheme !== undefined && !/^[A-Za-z]:[\\/]/.test(link)) {
+    const scheme = schemeOf(link);
+    if (scheme !== undefined) {
         if (EXTERNAL_SCHEMES.has(scheme)) {
             return { kind: 'external', uri: vscode.Uri.parse(link, true) };
         }

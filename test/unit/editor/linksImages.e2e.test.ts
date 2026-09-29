@@ -3,6 +3,9 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
+import { SYSTEM_FILE_LOCK } from '../../../src/editor/webview/images';
+import { COMPLETION_KEYS } from '../../../src/editor/webview/inlineField';
+import { DROP_LOCK } from '../../../src/editor/webview/objects';
 import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -86,6 +89,8 @@ suite('Editor links and images (e2e)', () => {
         await delay(80);
     };
 
+    /** The text drawn as what an open field acts on (`mep-pending-range`). */
+    const pending = () => page.$$eval('.ProseMirror .mep-pending-range', els => els.map(el => el.textContent).join(''));
     const field = () => page.$eval(`${FIELD_BAR} .mep-inline-field`, el => ({ value: (el as HTMLInputElement).value, label: el.getAttribute('aria-label') }));
     const listed = () => page.$$eval(`${FIELD_BAR} .mep-completion`, els => els.map(el => ({
         label: el.querySelector('.mep-completion-label')?.textContent,
@@ -130,11 +135,27 @@ suite('Editor links and images (e2e)', () => {
         assert.deepStrictEqual(await field(), { value: '', label: 'Address' }, 'selected text: the address only');
         assert.strictEqual((await lastPosted('linkChoices', asked)).query, '', 'completion is asked as the field opens');
         assert.deepStrictEqual(await page.evaluate(() => (window as unknown as { chords: string[] }).chords), [], 'kept from VS Code\'s chord');
+        assert.strictEqual(await pending(), 'the spec', 'the text the link is made of stays drawn while the field has the focus');
         await page.keyboard.type('docs/spec.md');
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'See [the spec](docs/spec.md) here.\n');
         assert.strictEqual(await page.$(FIELD_BAR), null, 'the field is gone');
+        assert.strictEqual(await pending(), '', 'and the drawing with it');
+    });
+
+    test('Span with class keeps its text drawn while its field is open, and Esc takes the drawing away', async function () {
+        this.timeout(15000);
+        await showDocument('See the spec here.\n', 'See');
+        await select('the spec', 8);
+        await page.click('.mep-toolbar .mep-menu-face[data-menu="formatting"]');
+        await page.waitForSelector('.mep-menu[data-menu="formatting"]:not([hidden])');
+        await page.click('.mep-menu [data-action="span-class"]');
+        await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { timeout: 2000 });
+        assert.strictEqual(await pending(), 'the spec');
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await pending(), '');
     });
 
     test('the address field lists the host\'s files and headings; # asks for anchors; an older answer is not shown; ↓ and Enter take a choice', async function () {
@@ -157,6 +178,7 @@ suite('Editor links and images (e2e)', () => {
         });
         await page.waitForSelector(`${FIELD_BAR} .mep-completion`, { timeout: 2000 });
         assert.deepStrictEqual((await listed()).map(l => l.label), ['docs/other file.md', 'z.txt']);
+        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-completions-keys`, el => el.textContent), COMPLETION_KEYS, 'the keys, under the choices');
 
         await page.keyboard.type('#');
         const anchors = await lastPosted('linkChoices', before + 1);
@@ -180,6 +202,24 @@ suite('Editor links and images (e2e)', () => {
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'See [the part](#scope-id)here.\n');
+    });
+
+    test('a choice made, then more typed: Enter before the next answer commits what is typed, not the choice', async function () {
+        this.timeout(15000);
+        await showDocument('See the spec here.\n', 'See');
+        await select('the spec', 8);
+        const before = await count('linkChoices');
+        await ctrl('k');
+        const first = await lastPosted('linkChoices', before);
+        await send({ type: 'linkChoicesResult', requestId: first.requestId, items: [{ value: 'docs/a.md', label: 'docs/a.md', kind: 'file' }] });
+        await page.waitForSelector(`${FIELD_BAR} .mep-completion`, { timeout: 2000 });
+        await page.keyboard.press('ArrowDown');
+        assert.deepStrictEqual((await listed()).map(l => l.chosen), [true]);
+        await page.keyboard.type('x.md');
+        assert.deepStrictEqual((await listed()).map(l => l.chosen), [false], 'typing clears the choice at once');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'See [the spec](x.md) here.\n');
     });
 
     test('Tab takes a file into the field and asks again, for its headings once # follows', async function () {
@@ -211,6 +251,7 @@ suite('Editor links and images (e2e)', () => {
         await page.click(`${BAR} [data-verb="edit-link"]`);
         await delay(80);
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'spec.md');
+        assert.strictEqual(await pending(), 'the spec', 'the link edited stays drawn');
         const asked = await lastPosted('linkChoices', before);
         assert.strictEqual(asked.query, 'spec.md');
         await send({ type: 'linkChoicesResult', requestId: asked.requestId, items: [{ value: 'docs/spec.md', label: 'docs/spec.md', kind: 'file' }] });
@@ -276,9 +317,48 @@ suite('Editor links and images (e2e)', () => {
         const asked = await lastPosted('saveImage', before);
         assert.strictEqual(asked.suggestedName, 'image.png');
         assert.strictEqual(asked.bytes, Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'));
-        await send({ type: 'imageSaved', requestId: asked.requestId, path: 'images/doc-20260929-101010.png' });
+        await send({ type: 'filesChosen', requestId: asked.requestId, files: [{ src: 'images/doc-20260929-101010.png', alt: 'doc-20260929-101010', image: true }] });
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Before ![doc-20260929-101010](images/doc-20260929-101010.png)after.\n');
+    });
+
+    const dropAt = async (needle: string, index: number, files: { name: string; type: string }[]) => {
+        const at = await pointAt(needle, index);
+        await page.evaluate((x, y, list) => {
+            const data = new DataTransfer();
+            for (const f of list) {
+                data.items.add(new File([new Uint8Array([1, 2, 3])], f.name, { type: f.type }));
+            }
+            (document.elementFromPoint(x, y) as HTMLElement).dispatchEvent(new DragEvent('drop', { dataTransfer: data, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+        }, at.x, at.y, files);
+        await delay(150);
+    };
+    const hintText = () => page.$eval('.mep-hint', el => ((el as HTMLElement).hidden ? '' : el.textContent));
+
+    test('an image dropped from the system is copied: saveImage with its own name', async function () {
+        this.timeout(15000);
+        await showDocument('Before after.\n', 'Before');
+        const before = await count('saveImage');
+        await dropAt('after', 0, [{ name: 'my diagram.png', type: 'image/png' }]);
+        const asked = await lastPosted('saveImage', before);
+        assert.strictEqual(asked.suggestedName, 'my diagram.png');
+        await send({ type: 'filesChosen', requestId: asked.requestId, files: [{ src: 'images/my%20diagram.png', alt: 'my diagram', image: true }] });
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Before ![my diagram](images/my%20diagram.png)after.\n');
+    });
+
+    test('a drop onto code is refused before anything is saved, in the drop\'s words; a file from the system that is no image says where to drop it from', async function () {
+        this.timeout(15000);
+        await showDocument('Text.\n\n```\nnpm run build\n```\n', 'Text');
+        const saves = await count('saveImage');
+        await dropAt('npm run build', 2, [{ name: 'shot.png', type: 'image/png' }]);
+        assert.strictEqual(await hintText(), DROP_LOCK);
+        assert.strictEqual(await count('saveImage'), saves, 'no file written for an image that cannot go in');
+
+        const asked = await count('insertFiles');
+        await dropAt('Text', 1, [{ name: 'notes.pdf', type: 'application/pdf' }]);
+        assert.strictEqual(await hintText(), SYSTEM_FILE_LOCK);
+        assert.strictEqual(await count('insertFiles') + await count('saveImage'), asked + saves, 'nothing asked of the host');
     });
 
     test('a relative image is shown from the address the host resolves, the text keeps its path; a web address is shown as written', async function () {
@@ -286,9 +366,10 @@ suite('Editor links and images (e2e)', () => {
         const before = await count('resolveImages');
         await showDocument('An ![pic](images/p.png) and ![web](https://example.com/w.png) here.\n\n| ![t](images/t.png) |\n| - |\n| x |\n', 'An');
         const asked = await lastPosted('resolveImages', before);
-        assert.deepStrictEqual([...asked.srcs].sort(), ['https://example.com/w.png', 'images/p.png', 'images/t.png']);
+        assert.deepStrictEqual([...asked.srcs].sort(), ['images/p.png', 'images/t.png'], 'a web address is not asked about');
         const shown = () => page.$$eval('.ProseMirror img', els => els.map(el => [el.getAttribute('data-mep-src'), el.getAttribute('src')]));
-        assert.deepStrictEqual(await shown(), [['images/p.png', null], ['https://example.com/w.png', null], ['images/t.png', null]], 'nothing is loaded before the host says from where');
+        assert.deepStrictEqual(await shown(), [['images/p.png', null], ['https://example.com/w.png', 'https://example.com/w.png'], ['images/t.png', null]],
+            'a path is not loaded before the host says from where; a web address is shown at once');
 
         const webview = 'https://file%2B.vscode-resource.vscode-cdn.net/d%3A/ws/images';
         await send({ type: 'imagesResolved', requestId: asked.requestId, sources: { 'images/p.png': `${webview}/p.png`, 'images/t.png': `${webview}/t.png` } });
