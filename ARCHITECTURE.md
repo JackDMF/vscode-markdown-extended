@@ -1072,7 +1072,8 @@ before the room move nothing, which is why they come first. **One ladder, one no
 (`firstFree` in `webview/clearance.ts`): every bar — an object's, a block's, the selection
 bubble, the toolbar's field bar — gives only its candidate places in order, and `firstFree`
 refuses, the same way for all, a place under the sticky row or past the window's bottom, over
-the selection bubble (for any bar but the bubble), and over content: the page's text probed
+the selection bubble (for any bar but the bubble) or an open language card (a hover, a
+diagnostic, the completion list — read, not a bar), and over content: the page's text probed
 with `posAtCoords` at points across the band — a floated note body is no part of its line —
 and, wherever the probe lands, a cell of an editable table (an empty one too — the cell is the
 table's content, drawn to be seen), an image, an atom, or another extension's lens row

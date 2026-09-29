@@ -48,6 +48,9 @@ export const PROBING_CLASS = 'mep-probing';
  */
 const OCCUPIED = '.ProseMirror > table td, .ProseMirror > table th, img:not(.ProseMirror-separator), .mep-atom, .mep-inline-atom, .mep-lens-row';
 
+/** The language cards the page floats over the text (`languageCard.ts`, `completionList.ts`): occupied while open. */
+const OPEN_CARDS = ':scope > .mep-language-card, :scope > .mep-completions';
+
 /** What counts as content inside a rendered block, besides its text. */
 const OCCUPIED_WITHIN = 'img:not(.ProseMirror-separator), td, th, .mep-inline-atom';
 
@@ -73,6 +76,11 @@ export function firstFree(
     const ceiling = stickyCeiling(mount);
     const bubbleEl = mount.querySelector<HTMLElement>(':scope > .mep-bubble');
     const bubble = bubbleEl && !bubbleEl.hidden && bubbleEl !== self ? bubbleEl.getBoundingClientRect() : null;
+    // An open card (a hover, a diagnostic, the completion list) is read, not a bar: no bar covers it.
+    const cards = Array.from(mount.querySelectorAll<HTMLElement>(OPEN_CARDS))
+        .filter(card => card !== self && !card.hidden)
+        .map(card => card.getBoundingClientRect())
+        .filter(r => r.width > 0 && r.height > 0);
     mount.classList.add(PROBING_CLASS);
     try {
         for (const place of places) {
@@ -83,7 +91,7 @@ export function firstFree(
             if (place.when && !place.when()) {
                 continue;
             }
-            if (bubble && overlaps(bubble, band)) {
+            if ((bubble && overlaps(bubble, band)) || cards.some(card => overlaps(card, band))) {
                 continue;
             }
             if (place.within ? contentWithin(place.within, band) : contentIn(view, band)) {
