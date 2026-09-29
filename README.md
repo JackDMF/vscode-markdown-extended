@@ -547,19 +547,31 @@ type, from the files of the workspace — relative to the document, Markdown fil
 spaces written `%20` — and from headings: `#` lists this document's headings, a Markdown
 file's path followed by `#` that file's, each as the anchor a link lands on (`{#id}`, else
 the heading's slug). `↓`/`↑` choose, `Tab` takes a choice into the field and goes on (a file,
-then `#` for its headings), `Enter` applies. Files and folders your `files.exclude` and
-`search.exclude` leave out are not offered.
+then `#` for its headings), `Enter` applies — the list's last line says so. Once a path is
+followed by `#`, the list shows each `#anchor` with its heading beside it. Files and folders
+your `files.exclude` and `search.exclude` leave out are not offered. While the field is open,
+the text it will link stays highlighted.
 
 **Images.** **Insert → Image…** opens VS Code's file dialog in the document's folder; the
 image goes in at the caret as `![name](relative/path.png)` — a path relative to the document,
-with `/`, spaces as `%20` — and a field asks for its alt text, the file's name filled in. A
-**dropped** file (from the explorer — hold `Shift` to drop into the editor — or from the
-system) goes in the same way where you drop it; a file that is not an image becomes a link
-named by its file name. A **pasted screenshot** (an image on the clipboard with no file) is
-saved beside the document — where VS Code's own `markdown.copyFiles.destination` setting
-says, else as `images/<document>-<yyyymmdd-hhmmss>.png` — and inserted by that path. Images
-with a relative path show as in the preview: the editor loads them from the document's folder
-and the workspace, while the file keeps the path as you wrote it.
+with `/`, spaces as `%20` — and a field asks for its alt text, the file's name filled in.
+**Dropping files:**
+
+- **From VS Code's Explorer view** (hold `Shift` while dropping into the editor) a file is
+  *linked*: an image goes in as an image by its relative path, any other file as a link named
+  by its file name. Nothing is copied.
+- **From your system's file manager** an image is *copied*: the editor is given its contents
+  and name but not its location, so the image is saved beside the document under its own name
+  (`images/diagram.png`, or `diagram-1.png` when that is taken) and inserted by that path.
+  Another kind of file cannot be linked from there; the editor says to drop it from the
+  Explorer view.
+
+A **pasted screenshot** (an image on the clipboard with no file) is saved the same way, as
+`images/<document>-<yyyymmdd-hhmmss>.png`. Where VS Code's own `markdown.copyFiles.destination`
+setting names a place for the document, copies go there instead. Nothing is saved where it
+could not be inserted — dropping onto code, say, is refused and says so. Images with a relative
+path show as in the preview: the editor loads them from the document's folder and the
+workspace, while the file keeps the path as you wrote it.
 
 ### Toolbar
 

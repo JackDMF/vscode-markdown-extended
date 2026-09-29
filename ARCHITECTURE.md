@@ -589,8 +589,7 @@ text the other — never a diff:
 | host → page | `revealAnchor { anchor, line }` | Bring a followed link's fragment into view and put the caret there: the heading whose `anchor` it is, else the block `line` starts (below) |
 | host → page | `includeChosen { requestId, insert? }` | The include line chosen in the QuickPick, as its provider offered it; none when dismissed or nothing was offered (below) |
 | host → page | `linkChoicesResult { requestId, items }` | Completions for a link's field, `{ value, label, detail?, kind }` each, best first, capped (below, *Links and images*) |
-| host → page | `filesChosen { requestId, files }` | The files to insert, `{ src, alt, image }` each: `src` relative to the document, POSIX, percent-encoded; empty when the dialog was dismissed (below) |
-| host → page | `imageSaved { requestId, path? }` | Where a pasted bitmap was written, relative to the document; none when it could not be (below) |
+| host → page | `filesChosen { requestId, files }` | The answer to `pickImage`, `insertFiles` and `saveImage`: the files to insert, `{ src, alt, image }` each — `src` relative to the document, POSIX, percent-encoded; for `saveImage` the copy the host wrote; empty when the dialog was dismissed or nothing could be written (below) |
 | host → page | `imagesResolved { requestId, sources }` | For each asked `src` that names a file, the webview uri to load it from; a `src` left out is shown as written (below) |
 | page → host | `ready` | Loaded; send the document |
 | page → host | `edit { text, baseVersion, save?, reparse? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it; with `reparse`, the host posts the document back after applying it, although it is the page's own text (the toolbar wrote syntax as source) |
@@ -605,8 +604,8 @@ text the other — never a diff:
 | page → host | `pickInclude { requestId, replace? }` | Show the include choices other extensions offer; with `replace: { blockIndex }`, for that expansion's directive (below) |
 | page → host | `linkChoices { requestId, query, images? }` | Complete a link's field holding `query`; with `images`, an image's path (below) |
 | page → host | `pickImage { requestId }` | **Insert → Image…**: VS Code's open dialog, images, in the document's folder (below) |
-| page → host | `insertFiles { requestId, uris }` | Files dropped or pasted, as uris or paths, to be made relative to the document (below) |
-| page → host | `saveImage { requestId, bytes, suggestedName }` | Write a pasted bitmap (base64) beside the document (below) |
+| page → host | `insertFiles { requestId, uris }` | Files dropped from VS Code's Explorer view, as uris, to be made relative to the document (below) |
+| page → host | `saveImage { requestId, bytes, suggestedName }` | Write a copy of a bitmap (base64) beside the document: a pasted screenshot, an image dropped from the system (below) |
 | page → host | `resolveImages { requestId, srcs }` | Where the page may load these images from (below) |
 
 A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
@@ -997,9 +996,25 @@ given a `complete` function (`Completer`) is a combobox: it asks as it opens and
 each change, and shows the answer to its latest question only, in a list under it
 (`.mep-completions`, the suggest widget's colours). `↓`/`↑` choose, `Tab` or a click takes the
 choice into the field and asks again (a file, then its headings once `#` follows), `Enter` on
-a chosen entry takes it and commits, `Enter` with none chosen commits what is typed, `Esc`
-closes the list before it cancels the field. A press on an entry is prevented, so the field
-keeps the focus.
+a chosen entry takes it and commits, `Enter` with none chosen commits what is typed — and
+typing clears the choice at once, so an `Enter` before the next answer commits the typed text,
+not a choice made for the text before — `Esc` closes the list before it cancels the field. The
+list ends in one dim line of its keys (`COMPLETION_KEYS`: *↹ complete · ↵ set · Esc close*),
+since nothing else says that `Tab` goes on and `Enter` sets. A press on an entry is prevented,
+so the field keeps the focus.
+
+**What a field acts on stays drawn** (`webview/pendingRange.ts`, Daniel, 2026-09-29, from the
+screenshots). While a field has the focus the text does not, and the browser draws no
+selection there: the words a link was about to be made of vanished exactly while the person
+decided what to type. So from the moment a field opens until it closes, its range is a
+`Decoration.inline` with the class `mep-pending-range`, in `--vscode-editor-selectionBackground`
+(an image an outline), mapped through every transaction meanwhile — the host's re-sync
+included. The toolbar's fields draw the selection they were opened on (**Span with class**,
+**Link…**, `Ctrl+K`, an inserted image's alt text) or the link `Ctrl+K` edits; the object
+toolbar's draw their object when it is inline (`PENDING_OBJECTS`: a link, a span, a note, an
+image) — a block's field is beside its block. A bar hidden with its field open clears the
+drawing after the update that hid it. A selected image carries a 2px outline in the focus
+colour, which takes no room, so two images side by side say which one a bar is about.
 
 **A note's source goes through the host.** A note's *Edit source* field holds the note as
 the serializer writes it for that node alone (`serializeInline`, the note's own marks left
@@ -1314,7 +1329,9 @@ bitmap's file, the address an image loads from are all answered by the host, wit
 followed link already uses (`resolveLinkTarget`), so an inserted link, a shown image and a
 Ctrl+click cannot read one path three ways. The host's half is `LinksAndImages`
 (`host/linksImages.ts`), a listener on the page's messages beside the session's own, which
-hands it the session's port and queue.
+hands it the session's port and queue. What both halves read of a destination — whether it
+has a scheme (`schemeOf`: a drive letter is none), its escapes decoded, a file's stem — is
+`src/editor/paths.ts`, pure, so the page and the host load the same lines.
 
 **Making a link** (`askLink` in `toolbar/toolbar.ts`, `insertLinkTransaction` in
 `objects.ts`). `Ctrl+K` (`Cmd+K`) and **Insert → Link…** (`apply: { kind: 'insert-link' }`) do
@@ -1323,7 +1340,8 @@ at a caret, it asks for the text first and then the address, and an empty text i
 itself; in a link already, it is that link's *Edit link…*. The key is kept from VS Code — its
 `Ctrl+K` starts a chord — by the toolbar plugin's `handleKeyDown`, which stops it on the
 editor's element. A link needs a caret or a selection within one textblock that is not code
-(`linkLockReason`, the entry's refusal and the key's hint); a note around it must be able to
+(`insertLockReason` — one rule for a link, an image and a drop, said as `LINK_LOCK`,
+`IMAGE_LOCK` or `DROP_LOCK` by the gesture that asked); a note around it must be able to
 hold it (`noteRefusal`). The field sits in a bar of the object toolbar's kind under the
 selection, as **Span with class**'s does (`openFieldBar`), placed before the field takes the
 focus so the focus does not scroll the page to where the bar was built.
@@ -1337,7 +1355,8 @@ the anchors — and not waited for there. The answer is read from where each fac
   an explicit `{#id}` as written, else the heading's GitHub slug, the rule a followed link lands
   by; filtered by the anchor or the heading's text, which the list shows beside it;
 - `path#…` — that file's headings, when the path (resolved by `resolveLinkTarget`) names a
-  Markdown file;
+  Markdown file. Once `#` is typed the path is fixed, so a row's label is `#anchor` alone, the
+  heading's text beside it; the value it writes is still the whole `path#anchor`;
 - a scheme (`https:`, `mailto:`) — nothing;
 - anything else — the workspace's files (`findFiles('**/*')` with `files.exclude` and
   `search.exclude` as one exclude glob, `FILE_SCAN_CAP` = 5000; outside any workspace, the
@@ -1345,7 +1364,10 @@ the anchors — and not waited for there. The answer is read from where each fac
   document (`relativeDestination`: POSIX, `..` where needed, none across drives or file
   systems) whose text holds the query (percent escapes decoded): Markdown first, then a name
   starting with the query, a name holding it, a path holding it, then the nearer file. The file
-  list is read once per 10 s; every answer is capped at `LINK_CHOICES_CAP` = 50.
+  list is read once per 10 s, and what every query reads of a file — its encoded relative path,
+  the path decoded and lower-cased, its name, its distance — is derived then, once per read
+  (`candidateOf`), not per keystroke over thousands of files; every answer is capped at
+  `LINK_CHOICES_CAP` = 50.
 
 A value is written as a destination is (`encodeDestination`: `%`, white space, `#`, `?`,
 parentheses and angle brackets percent-encoded — `a b.md` is `a%20b.md`), which markdown-it
@@ -1361,45 +1383,64 @@ without its extension). The page puts it at the selection as it is when the answ
 prefilled and selected — `Esc` keeps it. A dismissed dialog answers with no file and writes
 nothing.
 
-**Dropping and pasting files** (`fileDropPlugin`, `webview/images.ts`). A drop names its files
-by VS Code's `resourceurls` (from the explorer), else the `file:` lines of a `text/uri-list`,
-else the `path` of a `File` that has one (`namedFiles`); the page puts the caret at the drop
-point and posts `insertFiles`, and the host answers `filesChosen` the same way — an image as an
-image, any other file as a link named by its file name. A web address in a uri list is not a
-file and stays the browser's. A **bitmap** with no path — a screenshot, an image copied from a
-browser — is read as base64 and posted as `saveImage`; a paste counts as one only while the
-clipboard holds no text, since an office program puts a picture of the copied text beside the
-text. The host writes it (`savePastedImage`) where VS Code's own
-`markdown.copyFiles.destination` says — the first glob the document matches, matched as the
-built-in matches them (`/` anchored to each workspace folder, a glob without `**` matched
-anywhere, `vscode.languages.match`), its value filled in as the built-in fills it
-(`fillDestination`: `${documentBaseName}`, `${fileName}`, `${name/regex/replacement/}`, a
-leading `/` the workspace folder, a trailing `/` the file's name) — else
-`images/<document stem>-<yyyymmdd-hhmmss>.<ext>` beside the document; an existing file gets
-`-1`, `-2`, … unless `markdown.copyFiles.overwriteBehavior` is `overwrite`. The answer is
-`imageSaved { path }`, relative and encoded, inserted with its file's stem as the alt text; a
-failure is a warning message and an answer without a path. The built-in's own paste and drop
-(a `DocumentPasteEditProvider`) serve the text editor only — a custom editor's webview has no
-edit to apply them to — so this repeats its choice of place and name, read from its settings.
+**Dropping and pasting files** (`fileDropPlugin`, `webview/images.ts`). The Visual Editor
+links what VS Code names and copies what it does not:
+
+- **From the Explorer view** a drop names its files by VS Code's `resourceurls`, else the
+  `file:` lines of a `text/uri-list` (`namedFiles`). The page puts the caret at the drop point
+  and posts `insertFiles`; the host answers `filesChosen` — an image as an image, any other file
+  as a link named by its file name, each by its path relative to the document. Nothing is
+  copied. A web address in a uri list is not a file and stays the browser's.
+- **From the system** (the OS file manager) a drop carries `File`s with their bytes and names
+  and no path: a sandboxed webview has no `File.path` (Electron 32, VS Code 1.95 and later).
+  An image among them is therefore a **copy**, posted as `saveImage` with its own name and
+  written beside the document; any other file cannot be linked and is not inserted — the hint
+  says *Drop a file from the Explorer view to link it.*
+- **A pasted bitmap** — a screenshot, an image copied from a browser — is a copy too; a paste
+  counts as one only while the clipboard holds no text, since an office program puts a picture
+  of the copied text beside the text.
+
+Before anything is asked of the host the page checks that something can go in at the place
+(`insertLockReason` after the caret was put at the drop point): a drop onto code is refused as
+*Drop onto text (not code) to insert an image there.*, a paste there with the caret wording,
+and no file is written that could not be inserted. The host writes a copy (`savePastedImage`)
+where VS Code's own `markdown.copyFiles.destination` says — the first glob the document
+matches, matched as the built-in matches them (`/` anchored to each workspace folder, a glob
+without `**` matched anywhere, `vscode.languages.match`), its value filled in as the built-in
+fills it (`fillDestination`: `${documentBaseName}`, `${fileName}`, `${name/regex/replacement/}`,
+a leading `/` the workspace folder, a trailing `/` the file's name) — else beside the document:
+`images/<file name>` for a file with a name of its own, `images/<document stem>-<yyyymmdd-hhmmss>.<ext>`
+for a screenshot (the browser calls a clipboard bitmap `image.png`, `isClipboardName`). A name
+already taken gets `-1`, `-2`, … unless `markdown.copyFiles.overwriteBehavior` is `overwrite`.
+Saves run one after another (`LinksAndImages.saves`): a free name is looked for before it is
+written, and two at once would find the same one. The answer is `filesChosen` with the copy as
+a `LinkedFile` — relative, encoded, its file's stem the alt text — and a failure is a warning
+message and an answer with no file. The built-in's own paste and drop (a
+`DocumentPasteEditProvider`) serve the text editor only — a custom editor's webview has no edit
+to apply them to — so this repeats its choice of place and name, read from its settings.
 
 **A relative image is shown** (`ImageSources`, `webview/images.ts`; `resolveImages` in
 `host/linksImages.ts`). The webview cannot load a `file:` path, and a relative `src` resolves
 against the page's own origin, so `images/x.png` showed nothing. The node keeps the `src` the
 file holds — the serializer writes it, copy and paste carry it (the schema's `toDOM` is
 unchanged) — and the page draws an image through a node view (`ImageView`) whose `<img>`
-carries it in `data-mep-src` and loads from the address the host resolved: the page asks for
-every `src` it has not seen, once, batched (`resolveImages { requestId, srcs }`); the host
+carries it in `data-mep-src` and loads from the address the host resolved. A `src` with a
+scheme other than `file:` — `http(s):`, a `data:` image of any size — names no file the host
+could resolve and is shown as written at once, neither posted nor kept. The page asks for every
+other `src` it has not seen, once, batched (`resolveImages { requestId, srcs }`); the host
 resolves each as a followed link (`displaySources`: relative to the document, a leading `/`
 to its workspace folder, escapes decoded) and answers the ones that name a file with
-`webview.asWebviewUri`. A `src` it leaves out — `http(s):`, `data:`, one naming no file — is
-shown as written. Until the answer the element has no `src`, so nothing is requested from the
+`webview.asWebviewUri`. A `src` it leaves out, naming no file, is shown as written. Until the answer the element has no `src`, so nothing is requested from the
 page's origin. A rendered block's HTML (a source block, injected content, a badge) is treated
 the same way on every render (`showImagesIn`); that HTML is display only. An answer the page
 did not ask for is dropped, and the error state forgets the questions in flight. The webview
 may load from the document's folder and every workspace folder (`localResourceRoots`, with
-the document's uri), and the CSP's `img-src` stays `${webview.cspSource} https: data:`. A
-document that is renamed opens as a new editor, with a new session and new roots, so its
-images are resolved again against where it now is.
+the document's uri; the document's folder compared to a root with drive letters
+lower-cased), and the CSP's `img-src` stays `${webview.cspSource} https: data:`. A folder
+added to or removed from the workspace changes the roots: the provider sets `webview.options`
+again when they differ, which makes VS Code rebuild the page — it asks for the document again,
+and its undo history starts afresh. A document that is renamed opens as a new editor, with a
+new session and new roots, so its images are resolved again against where it now is.
 
 ### Styles
 
