@@ -208,11 +208,28 @@ img.mep-pending-range {
 .mep-tool:focus-visible,
 .mep-menu-item:focus { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: -1px; }
 
-.mep-tool.mep-active,
-.mep-menu-item.mep-active {
+/* A row button that is on: a toggle's pressed state. */
+.mep-tool.mep-active {
     border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, #0078d4));
     background: var(--vscode-inputOption-activeBackground, rgba(0, 120, 212, 0.15));
 }
+
+/*
+ * A menu entry that is the current value — the block type, a mark that is on,
+ * a table column's alignment — carries a check in a column of its own, as the
+ * workbench's menus do. A border and a background said it too, and looked like
+ * the focus ring: which entry is current and which one Enter chooses were the
+ * same picture. State is the check, focus the ring.
+ */
+.mep-menu-item::before {
+    content: "";
+    flex: none;
+    width: 1em;
+    margin-right: -6px;
+    text-align: center;
+    color: var(--vscode-foreground, inherit);
+}
+.mep-menu-item.mep-active::before { content: "\2713"; }
 
 .mep-tool.mep-disabled,
 .mep-menu-item.mep-disabled { opacity: 0.4; cursor: default; }
@@ -415,7 +432,18 @@ img.mep-pending-range {
     text-overflow: ellipsis;
 }
 
-/* Between an object's own verbs and the code actions other extensions offer for it. */
+/* While the page asks where text is (`clearance.ts`), its floating chrome is looked through. */
+.mep-probing .mep-object-toolbar,
+.mep-probing .mep-bubble,
+.mep-probing .mep-hint { pointer-events: none !important; }
+
+/* The room above a block whose bar has no place beside it: empty, the bar's height, while the bar shows. */
+.ProseMirror > .mep-bar-room, .ProseMirror .mep-bar-room { display: block; user-select: none; }
+
+/* A set-verb's menu (a table's Row, Column, Align) is the formatting toolbar's menu, narrower. */
+.mep-object-menu { min-width: 180px; }
+
+/* Between an object's own verbs and the code actions other extensions offer for it, or between groups of its own. */
 .mep-object-separator {
     align-self: stretch;
     width: 1px;
@@ -579,6 +607,54 @@ img.mep-pending-range {
     outline: 1px dashed var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.5));
     outline-offset: 2px;
 }
+
+/* ------------------------------------------------------------------------- */
+/* Tables                                                                    */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * A pipe table is drawn by the preview's own table rules. The editor adds only
+ * what editing needs, each an affordance or feedback rather than decoration:
+ *
+ * - every cell of a table the editor edits (a top-level `table`, never a
+ *   table another extension renders) at least one line high and 1.5em wide, with a faint inner line,
+ *   so an empty cell — a new row, a new column — can be seen and clicked into:
+ *   VS Code's markdown.css draws no border around a cell, and a table of empty
+ *   rows showed as two hairlines;
+ * - a hairline around the table the caret is in (`mep-table-active`), in the
+ *   focus colour at low strength: the table looks editable before its bar
+ *   arrives;
+ * - the cells a drag selects across (prosemirror-tables' `CellSelection`,
+ *   which hides the text selection inside them), in the selection colour;
+ * - the cells a verb just made (`mep-cell-new`), highlighted and faded over
+ *   600 ms — held without the fade where motion is reduced.
+ */
+.ProseMirror > table td, .ProseMirror > table th {
+    min-width: 1.5em;
+    height: 1lh;
+    box-shadow: inset 0 0 0 1px var(--vscode-editorIndentGuide-background1, var(--vscode-editorIndentGuide-background, rgba(128, 128, 128, 0.18)));
+}
+.ProseMirror table.mep-table-active {
+    outline: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #0078d4) 40%, transparent);
+    outline-offset: 0;
+}
+/* Over the column tint: a new cell of the tinted column shows that it is new. */
+.ProseMirror > table .mep-cell-new { animation: mep-cell-new 600ms ease-out; }
+@keyframes mep-cell-new {
+    from { background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33)); }
+    to { background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ProseMirror > table .mep-cell-new {
+        animation: none;
+        background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+    }
+}
+.ProseMirror .selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }
+.ProseMirror .selectedCell *::selection, .ProseMirror .selectedCell::selection { background: transparent; }
+/* The caret's column while the table's bar shows: what Insert left and right are left and right of. */
+.ProseMirror .mep-table-column { background-color: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.15)); }
+.ProseMirror .mep-table-column.selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }
 
 /* An admonition's title bar is the admonition's attribute, changed from its object toolbar. */
 .ProseMirror .admonition-title[data-mep-admonition-title] {

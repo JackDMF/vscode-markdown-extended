@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as childProcess from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as puppeteer from 'puppeteer';
@@ -34,8 +35,17 @@ export const settle = () => new Promise(resolve => setTimeout(resolve, 500));
 export interface EditorPageOptions {
     /** The viewport width; 1200 unless given. */
     width?: number;
+    /** The viewport height; 900 unless given. */
+    height?: number;
     /** Stylesheets of this extension's `styles/` to load before `editor.css`, as the preview's cascade would. */
     styles?: readonly string[];
+    /** Stylesheets by absolute path, loaded first: VS Code's own `markdown.css`, which the preview's cascade starts with. */
+    stylesheets?: readonly string[];
+}
+
+/** VS Code's preview stylesheet, from the VS Code the tests run in: the first sheet of the preview's cascade. */
+export function vscodeMarkdownCss(): string {
+    return path.join(vscode.env.appRoot, 'extensions', 'markdown-language-features', 'media', 'markdown.css');
 }
 
 export async function openEditorPage(options: EditorPageOptions = {}): Promise<EditorPage | undefined> {
@@ -62,7 +72,7 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
 
     const browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
     const page = await browser.newPage();
-    await page.setViewport({ width: options.width ?? 1200, height: 900 });
+    await page.setViewport({ width: options.width ?? 1200, height: options.height ?? 900 });
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(String(error)));
     await page.setContent(
@@ -72,6 +82,11 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         + '</body></html>',
         { waitUntil: 'load' },
     );
+    for (const sheet of options.stylesheets ?? []) {
+        if (fs.existsSync(sheet)) {
+            await page.addStyleTag({ path: sheet });
+        }
+    }
     for (const sheet of [...(options.styles ?? []), 'editor.css']) {
         await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', sheet) });
     }
@@ -87,6 +102,49 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         send: async message => {
             await page.evaluate(m => window.postMessage(m, '*'), message as unknown as Record<string, unknown>);
         },
-        close: () => browser.close(),
+        close: async () => {
+            // A suite's teardown has mocha's 5 s; on a loaded machine Chromium can
+            // take longer to close, and a teardown that times out fails the run
+            // with every test passed. What has not closed by then is killed,
+            // with its whole process tree.
+            let closed = false;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            await Promise.race([
+                browser.close().then(() => {
+                    closed = true;
+                }).catch(() => undefined),
+                new Promise<void>(resolve => {
+                    timer = setTimeout(resolve, CLOSE_GRACE_MS);
+                }),
+            ]);
+            clearTimeout(timer);
+            if (!closed) {
+                killTree(browser.process()?.pid);
+            }
+        },
     };
+}
+
+/** How long a browser may take to close before the harness kills it: inside mocha's 5 s hook timeout. */
+const CLOSE_GRACE_MS = 3500;
+
+/**
+ * Kill a browser and every process it started. Killing the launcher alone
+ * orphans Chromium's renderers on Windows; `taskkill /T` takes the tree there,
+ * and on POSIX Puppeteer starts the browser as a process group's leader, so the
+ * group's id is its pid.
+ */
+function killTree(pid: number | undefined): void {
+    if (pid === undefined) {
+        return;
+    }
+    try {
+        if (process.platform === 'win32') {
+            childProcess.execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+        } else {
+            process.kill(-pid, 'SIGKILL');
+        }
+    } catch {
+        // Gone already.
+    }
 }

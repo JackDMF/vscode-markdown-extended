@@ -367,7 +367,7 @@ suite('Editor links and images (e2e)', () => {
         await showDocument('An ![pic](images/p.png) and ![web](https://example.com/w.png) here.\n\n| ![t](images/t.png) |\n| - |\n| x |\n', 'An');
         const asked = await lastPosted('resolveImages', before);
         assert.deepStrictEqual([...asked.srcs].sort(), ['images/p.png', 'images/t.png'], 'a web address is not asked about');
-        const shown = () => page.$$eval('.ProseMirror img', els => els.map(el => [el.getAttribute('data-mep-src'), el.getAttribute('src')]));
+        const shown = () => page.$$eval('.ProseMirror img:not(.ProseMirror-separator)', els => els.map(el => [el.getAttribute('data-mep-src'), el.getAttribute('src')]));
         assert.deepStrictEqual(await shown(), [['images/p.png', null], ['https://example.com/w.png', 'https://example.com/w.png'], ['images/t.png', null]],
             'a path is not loaded before the host says from where; a web address is shown at once');
 

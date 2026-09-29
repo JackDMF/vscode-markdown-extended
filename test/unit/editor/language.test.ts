@@ -12,9 +12,9 @@ const SOURCE = [
     '',
     'Second *paragraph* here.',
     '',
-    '| a | b |',
-    '| - | - |',
-    '| 1 | 2 |',
+    '<div class="box">',
+    '  <b>raw</b> html',
+    '</div>',
     '',
     '- item one',
     '- item two',
@@ -54,8 +54,8 @@ suite('Editor diagnostics: from source ranges to page marks', () => {
         assert.strictEqual(text(marks[0]), 'paragraph');
     });
 
-    test('an approximate range marks its whole top-level block: a range inside a source block is the block', () => {
-        const marks = diagnosticMarks(doc, map, [{ range: range(5, 2, 5, 3), severity: 'error', message: 'in the table' }]);
+    test('an approximate range marks its whole top-level block: a range inside a source block (raw HTML) is the block', () => {
+        const marks = diagnosticMarks(doc, map, [{ range: range(5, 2, 5, 3), severity: 'error', message: 'in the raw HTML' }]);
         assert.strictEqual(marks.length, 1);
         const [mark] = marks;
         assert.strictEqual(mark.whole, true);

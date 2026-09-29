@@ -28,6 +28,7 @@ import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'p
 import { EditorView } from 'prosemirror-view';
 import type { LinkChoice, LinkedFile } from '../../protocol';
 import { editorSchema } from '../../schema';
+import { textInBand } from '../clearance';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
@@ -37,6 +38,7 @@ import {
     applySpanTransaction, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
     LINK_LOCK, literalRefusal, objectAtSelection, spanLockReason,
 } from '../objects';
+import { insertTableTransaction } from '../tables';
 import {
     MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
     elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
@@ -140,6 +142,7 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
         }
         case 'insert-source':
         case 'insert-wrapper':
+        case 'insert-table':
             return { enabled: true, active: false, reason: null };
         case 'insert-include':
             return { enabled: includes, active: false, reason: includes ? null : NO_INCLUDES_REFUSAL };
@@ -746,6 +749,10 @@ class ToolbarView implements PluginView {
                 view.dispatch(insertWrapperTransaction(view.state, apply));
                 view.focus();
                 return;
+            case 'insert-table':
+                view.dispatch(insertTableTransaction(view.state, apply.columns, apply.rows));
+                view.focus();
+                return;
             case 'insert-include':
                 // VS Code's QuickPick takes the choice; the line comes back as
                 // `includeChosen` and is inserted then, at the selection as it is.
@@ -984,8 +991,15 @@ class ToolbarView implements PluginView {
     /**
      * Over a non-empty text selection in editable text, while the editor (or
      * the bubble) has the focus: above the selection's first line, centred on it
-     * when the selection is on one line — or below its last line when above
-     * would put it under the sticky toolbar. Hidden otherwise.
+     * when the selection is on one line — unless there it would cover content
+     * (the line above, a table's row above) or sit under the sticky toolbar;
+     * then beside the block, just right of its edge on the selection's line,
+     * where the block is narrower than the column — close to what it acts on,
+     * as the mapping between a control and its object weakens with distance —
+     * else below the selection's last line where that is free, else at the
+     * column's right edge on its line, else below: a bar never covers content
+     * where it can help it (`clearance.ts`), and never the row above, which is
+     * what the person reads while choosing. Hidden otherwise.
      */
     private placeBubble(): void {
         const view = this.view;
@@ -1007,12 +1021,38 @@ class ToolbarView implements PluginView {
         const oneLine = Math.abs(start.top - end.top) < 2;
         let x = oneLine ? (start.left + end.right) / 2 - width / 2 : start.left;
         x = Math.max(base.left, Math.min(x, base.right - width));
-        let y = start.top - height - gap;
-        if (y < this.row.getBoundingClientRect().bottom) {
-            y = end.bottom + gap;
+        const ceiling = this.row.getBoundingClientRect().bottom;
+        const free = (left: number, top: number) => !textInBand(view, { left, right: left + width, top, bottom: top + height });
+        const above = start.top - height - gap;
+        const below = end.bottom + gap;
+        // Beside the block: just right of its box, which only a block narrower than the column — a table — leaves room for.
+        const blockDom = sel.$from.depth >= 1 ? view.nodeDOM(sel.$from.before(1)) : null;
+        const blockRight = blockDom instanceof Element ? blockDom.getBoundingClientRect().right : -Infinity;
+        const beside = blockRight + gap;
+        let y: number;
+        if (above >= ceiling && free(x, above)) {
+            y = above;
+        } else if (Number.isFinite(blockRight) && beside + width <= base.right && free(beside, start.top)) {
+            // Close to what it acts on: a narrow table's edge is a few pixels from its cell.
+            x = beside;
+            y = start.top;
+        } else if (free(x, below)) {
+            y = below;
+        } else if (free(base.right - width, start.top)) {
+            // At the column's right edge on the selection's line.
+            x = base.right - width;
+            y = start.top;
+        } else {
+            // Nowhere free: below, never over the row above, which is read while choosing.
+            y = below;
         }
         this.bubble.style.left = `${x - base.left}px`;
         this.bubble.style.top = `${y - base.top}px`;
+    }
+
+    /** Whether the bubble is shown now: while it is, the object toolbar shows no block's bar, so there is one thing at a time. */
+    get bubbleShown(): boolean {
+        return !this.bubble.hidden;
     }
 }
 
@@ -1021,6 +1061,11 @@ const toolbarViews = new WeakMap<EditorView, ToolbarView>();
 /** The status slot at the right end of the view's formatting row; `null` without a toolbar. */
 export function toolbarStatusSlot(view: EditorView): HTMLElement | null {
     return view.dom.parentElement?.querySelector<HTMLElement>(':scope > .mep-toolbar > .mep-row-status') ?? null;
+}
+
+/** Whether the selection bubble of `view` is shown: the object toolbar hides every block's bar meanwhile. */
+export function selectionBubbleShown(view: EditorView): boolean {
+    return toolbarViews.get(view)?.bubbleShown ?? false;
 }
 
 /**

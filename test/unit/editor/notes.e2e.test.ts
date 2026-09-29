@@ -272,7 +272,7 @@ suite('Editor notes and links (e2e)', () => {
 
     test('in a rendered table a plain click on a link selects the block; Ctrl+click posts openLink; VS Code\'s listener sees neither', async function () {
         this.timeout(15000);
-        const source = 'Before.\n\n| Doc | b |\n| - | - |\n| [the spec](spec.md#part) | 2 |\n';
+        const source = 'Before.\n\n| Doc | b |\n| = | = |\n| [the spec](spec.md#part) | 2 |\n';
         await showDocument(source, 'Before');
         await page.waitForSelector('.mep-raw-block table a');
         const clicksBefore = await windowClicks();

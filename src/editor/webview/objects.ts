@@ -17,6 +17,7 @@
  * | `span` | A run of text carrying one `attr_span` mark (`[text]{…}`) | The mark's run in its textblock |
  * | `container` | A `container` node (`::: name`) | The node |
  * | `admonition` | An `admonition` node (`!!! type "Title"`) | The node |
+ * | `table` | A pipe table (`table`), the caret in a cell or cells selected | The node |
  * | `block_attrs` | A top-level block carrying an attribute literal (`attrsSuffix`) | The node |
  * | `heading` | A top-level heading that is no `block_attrs` — a requirement heading is one | The node |
  * | `raw_block` | A source block | The node |
@@ -25,7 +26,7 @@
  *
  * The last three are **block objects**, the rest **caret objects**; the toolbar
  * shows them on different triggers (`objectToolbar.ts`). Of the caret objects,
- * a container, an admonition and a block with attributes are placed like a
+ * a container, an admonition, a table and a block with attributes are placed like a
  * block, at its right edge (`isBlockPlaced`), and so is a heading, which has no
  * verbs of its own: its bar carries only the code actions other extensions
  * offer for it (`isTopLevelBlock`), and shows only when there are some.
@@ -33,6 +34,7 @@
 import { liftTarget } from 'prosemirror-transform';
 import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
+import { CellSelection } from 'prosemirror-tables';
 import { endsWithAttrsLiteral, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { serializeInline } from '../serialize';
@@ -40,7 +42,7 @@ import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 
 const nodes = editorSchema.nodes;
 
-export type NodeObjectKind = 'note' | 'image' | 'badge' | 'container' | 'admonition' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
+export type NodeObjectKind = 'note' | 'image' | 'badge' | 'container' | 'admonition' | 'table' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
 
 export type EditorObject =
     | { kind: 'link'; from: number; to: number; mark: Mark }
@@ -51,7 +53,7 @@ export type EditorObject =
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
 
 /** The caret objects that are blocks: their bar sits at the block's right edge, as a block object's does. */
-const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'block_attrs', 'heading']);
+const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'block_attrs', 'heading']);
 
 export function isBlockObject(object: EditorObject): boolean {
     return BLOCK_OBJECTS.has(object.kind);
@@ -86,6 +88,7 @@ const NODE_KINDS: Readonly<Record<string, NodeObjectKind>> = {
     inline_atom: 'badge',
     container: 'container',
     admonition: 'admonition',
+    table: 'table',
     raw_block: 'raw_block',
     injected_block: 'injected_block',
     front_matter: 'front_matter',
@@ -171,6 +174,15 @@ function wrapperAt(state: EditorState): EditorObject | null {
     return null;
 }
 
+/** The table holding both ends of the selection — a caret or text in its cells, or cells selected across them. */
+function tableObjectAt(state: EditorState): EditorObject | null {
+    const { $from, $to } = state.selection;
+    if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1) || $from.node(1).type !== nodes.table) {
+        return null;
+    }
+    return objectOfNode($from.node(1), $from.before(1));
+}
+
 /** The top-level block with an attribute literal holding both ends of the selection. */
 function blockAttrsAt(state: EditorState): EditorObject | null {
     const { $from, $to } = state.selection;
@@ -194,13 +206,17 @@ function headingAt(state: EditorState): EditorObject | null {
  * The object the selection is on: a node selected as a whole, else — innermost
  * first, so a link inside a note inside an admonition is the link — the link
  * the selection is in, the attribute span, the note both its ends are in, the
- * container or admonition, the top-level block with an attribute literal, and
- * last the top-level heading. `null` in plain text.
+ * container or admonition, the table, the top-level block with an attribute
+ * literal, and last the top-level heading. Cells selected across (a
+ * `CellSelection`) are their table. `null` in plain text.
  */
 export function objectAtSelection(state: EditorState): EditorObject | null {
     const sel = state.selection;
     if (sel instanceof NodeSelection) {
         return objectOfNode(sel.node, sel.from);
+    }
+    if (sel instanceof CellSelection) {
+        return tableObjectAt(state);
     }
     if (!(sel instanceof TextSelection)) {
         return null;
@@ -214,7 +230,7 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     if (from !== null && to !== null && from.noteBefore === to.noteBefore) {
         return objectOfNode(from.note, from.noteBefore);
     }
-    return wrapperAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
+    return wrapperAt(state) ?? tableObjectAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
 }
 
 /** The object at the same place in `state`, if it is still there and still the same kind; verbs act on this, never on a stale one. */

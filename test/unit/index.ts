@@ -7,7 +7,9 @@ export function run(): Promise<void> {
     const mocha = new Mocha({
         ui: 'tdd',
         color: true,
-        timeout: 5000
+        timeout: 5000,
+        // `MOCHA_GREP=…` runs only the suites and tests whose titles match.
+        ...(process.env.MOCHA_GREP ? { grep: process.env.MOCHA_GREP } : {}),
     });
 
     const testsRoot = path.resolve(__dirname);

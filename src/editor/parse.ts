@@ -16,7 +16,7 @@ import {
     injectionMarkOf,
     splitLines,
 } from './blocks';
-import { NOTE_NODES, editorSchema } from './schema';
+import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
 /**
@@ -238,9 +238,14 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             case 'front_matter':
                 stream.push(synthetic('front_matter', { src: block.src ?? '' }));
                 break;
-            case 'raw':
-                stream.push(synthetic('raw_block', { src: block.src ?? '', gap: block.gap, html: render(block) }));
+            case 'raw': {
+                // A table the editor leaves as source says why in its bar: multimd's extensions, or a cell it cannot hold.
+                const [start, end] = block.tokenRange;
+                const table = start < end && tokens[start].type === 'table_open';
+                const construct = table ? (block.reason.includes('(multimd)') ? 'multimd table' : 'table') : null;
+                stream.push(synthetic('raw_block', { src: block.src ?? '', gap: block.gap, html: render(block), construct }));
                 break;
+            }
             case 'injected':
                 stream.push(synthetic('injected_block', {
                     kind: block.injectedKind ?? 'generated',
@@ -303,7 +308,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     const real = (tok: StreamToken) => tok as unknown as Token;
 
     const specs: Record<string, {
-        node?: string; block?: string; mark?: string; noCloseToken?: boolean;
+        node?: string; block?: string; mark?: string; noCloseToken?: boolean; ignore?: boolean;
         getAttrs?: (tok: StreamToken, stream: StreamToken[], i: number) => Attrs | null;
     }> = {
         front_matter: { node: 'front_matter', getAttrs: own },
@@ -391,6 +396,15 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             }),
         },
         list_item: { block: 'list_item' },
+        // A pipe table (`blocks.ts` let only the GFM form through): the rows
+        // are the table's children, `thead` and `tbody` no node of their own;
+        // a cell's alignment is the `style` the plugin set from the delimiter row.
+        table: { block: 'table', getAttrs: tok => ({ ...sourceOf(tok) }) },
+        thead: { ignore: true },
+        tbody: { ignore: true },
+        tr: { block: 'table_row' },
+        th: { block: 'table_header', getAttrs: tok => ({ align: alignOfStyle(attr(real(tok), 'style')) }) },
+        td: { block: 'table_cell', getAttrs: tok => ({ align: alignOfStyle(attr(real(tok), 'style')) }) },
         fence: {
             block: 'code_block',
             noCloseToken: true,

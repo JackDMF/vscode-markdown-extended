@@ -6,9 +6,7 @@ import { conformanceDocument, constructsFixture, hostEngine, readText, topChildr
 /** FR-CON's raw blocks: each one's first line and the reason `blocks.ts` gives. */
 const FR_CON_RAW: [string, string][] = [
     ['<!-- include: legal-notice -->', 'html_block'],
-    ['| Construct | Kept by the default serializer | Owner |', 'table_open'],
     ['<!-- requirement-summary: FR-CON-001 -->', 'html_block'],
-    ['| Field | Value |', 'table_open'],
     ['<details>', 'html_block'],
     ['</details>', 'html_block'],
     ['An authored inline element: press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>V</kbd> to', 'inline html_inline'],
@@ -74,9 +72,9 @@ suite('Editor block classification (FR-CON.md)', () => {
         assert.strictEqual(block('An authored inline element: press <kbd>').type.name, 'raw_block');
     });
 
-    check('the GFM table is raw: tables are not in the stage-1 editable core', () => {
-        assert.strictEqual(block('| Construct |').type.name, 'raw_block');
-        assert.strictEqual(block('| Field | Value |').type.name, 'raw_block');
+    check('the GFM tables are editable tables: a pipe table is native, only multimd\'s extensions stay raw', () => {
+        assert.strictEqual(block('| Construct |').type.name, 'table');
+        assert.strictEqual(block('| Field | Value |').type.name, 'table');
     });
 
     check('the include directive is a raw html_block when no injecting plugin expands it', () => {
@@ -134,7 +132,7 @@ suite('Editor block classification (FR-CON.md)', () => {
         assert.deepStrictEqual(rule.map(b => b.type.name), ['horizontal_rule']);
     });
 
-    check('every block that stays raw, and why: HTML, tables and markup inside a paragraph — the stage-3 constructs are not in this corpus', () => {
+    check('every block that stays raw, and why: HTML and markup inside a paragraph — the stage-3 constructs are not in this corpus', () => {
         const text = readText(fixture.file).replace(/\r\n/g, '\n');
         const { blocks: grouped } = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text));
         const raw = grouped.filter(b => b.kind === 'raw').map(b => [(b.src ?? '').split('\n')[0], b.reason]);
@@ -200,7 +198,15 @@ suite('Editor block classification (constructs.md)', () => {
         assert.deepStrictEqual([p.type.name, literals], ['paragraph', ['{#s1 .accent style="color: red"}', '{class="a b"}']]);
     });
 
-    test('what stays raw, and why: the TOC, a setext heading, tables, footnotes, definition lists, task lists, inline HTML, abbreviations, reference definitions', () => {
+    test('the pipe table is a table node, each column aligned as its delimiter cell says', () => {
+        const table = block('| Left | Centre | Right |').node;
+        assert.strictEqual(table.type.name, 'table');
+        const aligns: unknown[] = [];
+        table.child(0).forEach(cell => aligns.push(cell.attrs.align));
+        assert.deepStrictEqual(aligns, ['left', 'center', 'right']);
+    });
+
+    test('what stays raw, and why: the TOC, a setext heading, footnotes, definition lists, task lists, inline HTML, abbreviations, reference definitions', () => {
         const raw = grouped.filter(b => b.kind === 'raw').map(b => [(b.src ?? '').split('\n')[0], b.reason]);
         assert.deepStrictEqual(raw, CONSTRUCTS_RAW);
     });
@@ -210,7 +216,6 @@ suite('Editor block classification (constructs.md)', () => {
 const CONSTRUCTS_RAW: [string, string][] = [
     ['[[toc]]', 'toc_open'],
     ['Setext heading', 'setext heading: its underline has no place in the heading node'],
-    ['| Left | Centre | Right |', 'table_open'],
     ['A sentence with a footnote.[^first]', 'inline footnote_ref'],
     ['[^first]: The footnote body.', 'source lines no token accounts for'],
     ['Term', 'dl_open'],

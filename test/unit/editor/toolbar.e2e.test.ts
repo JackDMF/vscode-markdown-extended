@@ -323,25 +323,46 @@ suite('Editor toolbar (e2e)', () => {
         assert.ok((await lastEdit())?.text.includes('\nAlpha beta gamma.\n'), (await lastEdit())?.text);
     });
 
-    test('the bubble holds the ten marks and the two notes, appears above a selection, and hides when it collapses or loses the focus', async function () {
+    test('the bubble holds the ten marks and the two notes, appears above a selection where that covers no text and below where it would, and hides when it collapses or loses the focus', async function () {
         this.timeout(10000);
-        await showDocument(SOURCE);
-        await selectText('gamma');
-        const placed = await page.evaluate(() => {
+        const placement = () => page.evaluate(() => {
             const bubble = document.querySelector('.mep-bubble') as HTMLElement;
             const range = (document.getSelection() as Selection).getRangeAt(0).getBoundingClientRect();
             const box = bubble.getBoundingClientRect();
+            // The text of the block before the selection's, which the bubble must leave readable.
+            const block = (document.getSelection() as Selection).anchorNode?.parentElement?.closest('.ProseMirror > *');
+            const before = block?.previousElementSibling;
+            const lineRange = document.createRange();
+            if (before) {
+                lineRange.selectNodeContents(before);
+            }
+            const covers = before ? Array.from(lineRange.getClientRects()).some(r => r.width > 0 && r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top) : false;
             return {
                 hidden: bubble.hidden,
                 above: box.bottom <= range.top + 1,
+                below: box.top >= range.bottom - 1,
                 overlapsHorizontally: box.left < range.right && box.right > range.left,
+                coversTheLineAbove: covers,
                 tools: Array.from(bubble.querySelectorAll('[data-action]')).map(t => (t as HTMLElement).dataset.action),
             };
         });
-        assert.deepStrictEqual(placed, {
-            hidden: false, above: true, overlapsHorizontally: true,
-            tools: ['italic', 'emphasis', 'bold', 'strong', 'code', 'mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'sidenote', 'marginal-note'],
-        });
+        const tools = ['italic', 'emphasis', 'bold', 'strong', 'code', 'mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'sidenote', 'marginal-note'];
+        // Right under a line whose text the bubble would cover: below.
+        const shown = (marker: string) => page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
+        await showDocument('A first paragraph whose one line runs on, well across where the word below it stands.\n\nAlpha beta gamma.\n');
+        await shown('well across');
+        await selectText('gamma');
+        const underText = await placement();
+        assert.deepStrictEqual(underText, { hidden: false, above: false, below: true, overlapsHorizontally: true, coversTheLineAbove: false, tools });
+        // Under a short line that ends before it: above, where the bubble has always been.
+        // (The bubble is wide, and centred on the word: the word stands far enough along that "Short." ends before it.)
+        await showDocument('Short.\n\nAlpha, a longer paragraph whose one line runs on and on, far along, until the word gamma.\n');
+        await shown('far along');
+        await selectText('gamma');
+        const underShort = await placement();
+        assert.deepStrictEqual(underShort, { hidden: false, above: true, below: false, overlapsHorizontally: true, coversTheLineAbove: false, tools });
+        await showDocument(SOURCE);
+        await selectText('gamma');
 
         await page.evaluate(() => (document.getSelection() as Selection).collapseToStart());
         await delay(150);

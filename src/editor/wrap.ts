@@ -3,6 +3,10 @@
  * wrapped at. Both halves live here because they have to agree: the width the
  * parser reads off a paragraph the serializer wrote must make the serializer
  * write that paragraph the same way again, or a block saved twice is two diffs.
+ *
+ * Only paragraphs are wrapped. A table's row is one line whatever its width —
+ * a line break in it would end the row — and its serializer writes whole rows
+ * (`tableLines` in `serialize.ts`), never through here.
  */
 
 /**

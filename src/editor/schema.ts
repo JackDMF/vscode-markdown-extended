@@ -1,4 +1,5 @@
-import { DOMOutputSpec, DOMParser, Fragment, Mark, Node, NodeSpec, Schema } from 'prosemirror-model';
+import { DOMOutputSpec, DOMParser, Fragment, Mark, Node, NodeSpec, Schema, TagParseRule } from 'prosemirror-model';
+import { tableNodes } from 'prosemirror-tables';
 import { ADMONITION_TYPES, NOTE_SYNTAX } from '../syntax/markers';
 import { domAttrsOf } from './attrs';
 
@@ -39,12 +40,15 @@ import { domAttrsOf } from './attrs';
  * span mark's `literal`, a top-level block's `attrsSuffix` — and the element is
  * drawn with the attributes the literal gives (`domAttrsOf`), so the page's
  * stylesheets style it as they style the preview.
+ *
+ * A pipe table is `table` > `table_row` > `table_header` | `table_cell`, the
+ * nodes `prosemirror-tables` works on (see *Tables* below).
  */
 
 /** The top-level editable node types, whose `src` the fidelity plugin clears on change. */
 export const EDITABLE_TOP_NODES: ReadonlySet<string> = new Set([
     'paragraph', 'heading', 'bullet_list', 'ordered_list', 'blockquote', 'code_block', 'horizontal_rule',
-    'container', 'admonition',
+    'container', 'admonition', 'table',
 ]);
 
 /** The nodes that hold blocks and are written around them: a container and an admonition. */
@@ -237,12 +241,102 @@ const MN = NOTE_SYNTAX.marginalNote;
 const LS = NOTE_SYNTAX.leftSidebar;
 const RS = NOTE_SYNTAX.rightSidebar;
 
+// ---------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------
+
+/*
+ * A pipe table — the GFM subset of what markdown-it-multimd-table reads (a
+ * header row, the delimiter row, body rows, one line each, inline content in
+ * the cells; `blocks.ts` leaves every multimd extension a source block) — is
+ * the four nodes `prosemirror-tables` works on, made by its `tableNodes`:
+ * `table` > `table_row` > `table_header` | `table_cell`.
+ *
+ * **A cell is a textblock** (`cellContent` a set of inline nodes), not the
+ * library's default of a cell holding blocks. A pipe table's cell is one line
+ * of inline content and nothing else: a cell of paragraphs would let `Enter`
+ * make a second block in it, which has no Markdown, and would need a node and
+ * a serializer rule that write a paragraph without its blank line. The
+ * library's commands work on either: they fill a new cell with `createAndFill`
+ * and select a cell's content with `TextSelection.between`. What a textblock
+ * cell costs is `Enter`: ProseMirror's `splitBlock` would split the cell into
+ * two cells of one row, so the page takes it (`webview/tables.ts`).
+ *
+ * **What a cell holds** is the paragraph's inline set without two things: a
+ * hard break — a row is one line, `\` at its end continues the row
+ * (markdown-it-multimd-table's multi-line row) and `<br>` is raw HTML — and the
+ * two notes with a reference, whose `|` separator is a cell boundary; escaped
+ * as `\|`, the notes plugin still ends the reference there, backslash and all
+ * (`++ref\|note++` renders the reference `ref\`). The sidebars hold no `|` and
+ * stay. A table holding a note is a source block (`blocks.ts`).
+ *
+ * **The column's alignment is an attribute of every cell of it** (`align`,
+ * `left` | `center` | `right` | `null`), drawn as the plugin draws it,
+ * `style="text-align:…"`, and written back into the delimiter row from the
+ * header cell's (`serialize.ts`); the page keeps a column's cells equal to its
+ * header's (`webview/tables.ts`). Spans are not Markdown here: a pasted
+ * `colspan` or `rowspan` reads as 1, and the library's `fixTables` fills the
+ * holes that leaves. Column widths are not either: `columnResizing` is not
+ * installed and `colwidth` is never set.
+ *
+ * **The DOM is the library's, not the plugin's.** The engine renders
+ * `<table><thead><tr><th>…</th></tr></thead><tbody>…</tbody></table>`; one node
+ * has one content hole, so the editor draws every row inside one `<tbody>`, the
+ * header row's cells `<th>`. A rule keyed on `thead` (`thead th`) does not reach
+ * the header row here, and `tr:nth-child(2n)` counts the header row, so striping
+ * falls on the other rows. `table` is in its own group, `top_block`, so a table
+ * stands at the top level only, where `blocks.ts` reads one.
+ */
+
+/** A column's alignment, as the delimiter row writes it: `:--`, `:-:`, `--:`, or `---` for `null`. */
+export type TableAlign = 'left' | 'center' | 'right' | null;
+
+/** The alignment an engine-rendered or pasted cell carries: its `style`'s `text-align`, else its `align`. */
+export function alignOfStyle(style: string | null | undefined): TableAlign {
+    const m = /text-align\s*:\s*(left|center|right)/i.exec(style ?? '');
+    return m ? (m[1].toLowerCase() as TableAlign) : null;
+}
+
+/** The inline content of a table cell: the paragraph's, without hard breaks and the notes with a reference. */
+export const TABLE_CELL_CONTENT = '(text | image | inline_atom | left_sidebar | right_sidebar)*';
+
+const tableSpecs = tableNodes({
+    tableGroup: 'top_block',
+    cellContent: TABLE_CELL_CONTENT,
+    cellAttributes: {
+        align: {
+            default: null,
+            getFromDOM: dom => alignOfStyle(dom.getAttribute('style')) ?? alignOfStyle(`text-align:${dom.getAttribute('align') ?? ''}`),
+            setDOMAttr: (value, attrs) => {
+                if (value) {
+                    attrs.style = `text-align:${value as string}`;
+                }
+            },
+        },
+    },
+});
+
+/** A cell's parse rule with spans read as 1: a pipe table has none. */
+function spanless(spec: NodeSpec): NodeSpec {
+    const rules = (spec.parseDOM ?? []).map((rule): TagParseRule => {
+        const getAttrs = rule.getAttrs;
+        return {
+            ...rule,
+            getAttrs: (dom: HTMLElement) => {
+                const attrs = typeof getAttrs === 'function' ? getAttrs(dom) : {};
+                return attrs === false ? false : { ...(attrs ?? {}), colspan: 1, rowspan: 1, colwidth: null };
+            },
+        };
+    });
+    return { ...spec, parseDOM: rules };
+}
+
 export const editorSchema = new Schema({
     nodes: {
         doc: {
             // No `block+`: a document holding only front matter must stay one,
             // and a filler paragraph would be written into the file.
-            content: 'front_matter? (block | source)*',
+            content: 'front_matter? (block | source | top_block)*',
         },
         // Listed first among block nodes so it is the one ProseMirror uses to fill.
         paragraph: {
@@ -418,6 +512,13 @@ export const editorSchema = new Schema({
             parseDOM: [{ tag: 'hr' }],
             toDOM(node): DOMOutputSpec { return ['div', ['hr', withSuffix(node)]]; },
         },
+        table: {
+            ...tableSpecs.table,
+            attrs: { ...sourceAttrs },
+        },
+        table_row: tableSpecs.table_row,
+        table_header: spanless(tableSpecs.table_header),
+        table_cell: spanless(tableSpecs.table_cell),
         front_matter: {
             atom: true,
             selectable: true,
@@ -435,6 +536,12 @@ export const editorSchema = new Schema({
                 gap: { default: null as string | null },
                 /** The block rendered by the host's engine, for the node view to show. */
                 html: { default: '' },
+                /**
+                 * What the block is when its bar can say more than "source": `multimd table` for
+                 * a table using markdown-it-multimd-table's extensions, `table` for a pipe table
+                 * holding what a cell cannot hold here; `null` for anything else.
+                 */
+                construct: { default: null as string | null },
             },
             parseDOM: [{
                 tag: 'div[data-mep-raw]',

@@ -194,7 +194,7 @@ export const CONTAINER_CLOSE = 'container_container_close';
 export const EDITABLE_TOP_LEVEL_TOKENS: ReadonlySet<string> = new Set([
     'paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open',
     'blockquote_open', 'fence', 'code_block', 'hr',
-    CONTAINER_OPEN, 'admonition_open',
+    CONTAINER_OPEN, 'admonition_open', 'table_open',
 ]);
 
 /** Every block-level token an editable block may contain, at any depth. */
@@ -391,8 +391,151 @@ function raw(reason: string): Classification {
     return { kind: 'raw', reason, injectedKind: null, mark: null, attrs: null, spanLiterals: [], endLine: null };
 }
 
+// ---------------------------------------------------------------------------
+// Pipe tables
+// ---------------------------------------------------------------------------
+
+/**
+ * The tokens a pipe table is made of. markdown-it-multimd-table emits these
+ * for its extensions too — a colspan is a `td` with a `colspan` attribute, a
+ * multi-line row a `tr` whose map spans lines, holding block tokens — so the
+ * token types say nothing on their own; `pipeTableNotEditableBecause` reads
+ * the shape.
+ */
+const TABLE_TOKENS: ReadonlySet<string> = new Set([
+    'table_open', 'table_close', 'thead_open', 'thead_close', 'tbody_open', 'tbody_close',
+    'tr_open', 'tr_close', 'th_open', 'th_close', 'td_open', 'td_close', 'inline',
+]);
+
+/** The notes whose reference ends at `|`, which in a table is a cell boundary (`schema.ts`, *Tables*). */
+const NOTES_WITH_REFERENCE: ReadonlySet<string> = new Set(['sidenote_open', 'marginal_note_open']);
+
+/** A GFM delimiter cell: dashes, a colon at either end for the alignment. multimd also reads `=` and a trailing `+`. */
+const GFM_DELIMITER_CELL = /^:?-+:?$/;
+
+/** The cells of a delimiter row as written, outer pipes optional: it holds no escape and no code, so a split on `|` is exact. */
+function delimiterCells(line: string): string[] {
+    let row = line.trim();
+    if (row.startsWith('|')) {
+        row = row.slice(1);
+    }
+    if (row.endsWith('|')) {
+        row = row.slice(0, -1);
+    }
+    return row.split('|').map(c => c.trim());
+}
+
+/**
+ * Why a table the multimd plugin read is not a plain pipe table, or `null`
+ * when it is one: the header row, the delimiter row, body rows, one line each,
+ * every cell a plain `th`/`td` holding one line of inline content. Everything
+ * else the plugin reads stays a source block — a colspan (`||`) or rowspan
+ * (`^^`) cell, a multi-line row (`\` at a line's end), a caption (`[…]`), a
+ * headerless table, a second header row, a second body after a blank line, a
+ * `=` or `+` in the delimiter row, a row with a cell count the header does not
+ * have — read from the tokens where they show it (the attributes, the
+ * caption's and `tbody`'s tokens, a `tr`'s map), from the delimiter row's
+ * slice where only the source does (`=`, a delimiter the tokens normalized).
+ * The table is the whole group; attributes on the table itself are
+ * `recoverBlockAttrs`' to refuse.
+ */
+function pipeTableNotEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[]): string | null {
+    let head = 0;
+    let bodies = 0;
+    let section: 'thead' | 'tbody' | null = null;
+    let headerRows = 0;
+    let columns = -1;
+    let cells = 0;
+    let headerLine = -1;
+    for (let i = group.start + 1; i < group.end - 1; i++) {
+        const t = tokens[i];
+        if (!TABLE_TOKENS.has(t.type)) {
+            return t.type.startsWith('caption') ? 'table caption (multimd)' : `${t.type} in a table cell: a multi-line row (multimd)`;
+        }
+        if (injectionMarkOf(t) !== undefined) {
+            return `injected ${t.type} inside a table`;
+        }
+        switch (t.type) {
+            case 'thead_open':
+                head++;
+                section = 'thead';
+                break;
+            case 'tbody_open':
+                bodies++;
+                section = 'tbody';
+                break;
+            case 'thead_close':
+            case 'tbody_close':
+                section = null;
+                break;
+            case 'tr_open':
+                if (!t.map || t.map[1] - t.map[0] !== 1) {
+                    return 'table row on more than one line (multimd)';
+                }
+                if (section === 'thead') {
+                    headerRows++;
+                    headerLine = t.map[0];
+                }
+                cells = 0;
+                break;
+            case 'tr_close':
+                if (columns < 0) {
+                    columns = cells;
+                } else if (cells !== columns) {
+                    return `table row of ${cells} cells under a header of ${columns}`;
+                }
+                break;
+            case 'th_open':
+            case 'td_open': {
+                cells++;
+                const extra = (t.attrs ?? []).filter(([name, value]) => !(name === 'style' && /^text-align:(left|center|right)$/.test(String(value))));
+                if (extra.length > 0) {
+                    return `table cell with ${extra.map(([name]) => name).join(', ')} (multimd)`;
+                }
+                if (tokens[i + 1]?.type !== 'inline' || tokens[i + 2]?.type !== t.type.replace('_open', '_close')) {
+                    return 'table cell holding blocks (multimd)';
+                }
+                break;
+            }
+            case 'inline': {
+                const children = t.children ?? [];
+                const because = inlineNotEditable(children);
+                if (because !== null) {
+                    return `${because} in a table cell`;
+                }
+                for (const child of children) {
+                    if (NOTES_WITH_REFERENCE.has(child.type)) {
+                        return `${child.type} in a table cell: its | is a cell boundary`;
+                    }
+                    if (child.type === 'hardbreak' || child.type === 'softbreak') {
+                        return `${child.type} in a table cell`;
+                    }
+                    if (child.type === 'code_inline' && child.content.includes('|')) {
+                        return 'code holding | in a table cell: the table plugin splits a row at it in some code spans and not in others';
+                    }
+                }
+                break;
+            }
+        }
+    }
+    if (head !== 1 || headerRows !== 1) {
+        return head === 0 ? 'headerless table (multimd)' : 'table with more than one header row (multimd)';
+    }
+    if (bodies > 1) {
+        return 'table with a second body after a blank line (multimd)';
+    }
+    const delimiter = delimiterCells(lines[headerLine + 1]?.text ?? '');
+    if (delimiter.length !== columns || !delimiter.every(c => GFM_DELIMITER_CELL.test(c))) {
+        return 'table delimiter row that is not GFM\'s (multimd)';
+    }
+    return null;
+}
+
 /** Why the group cannot be edited, or `null` when it can. */
 function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[]): string | null {
+    if (tokens[group.start].type === 'table_open') {
+        return pipeTableNotEditableBecause(tokens, group, lines);
+    }
     /** The first line after each enclosing container's or admonition's own lines, innermost last. */
     const wrapperEnds: number[] = [];
     for (let i = group.start; i < group.end; i++) {
@@ -682,6 +825,12 @@ function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly S
     const spanLiterals = recoverSpanLiterals(tokens, group, lines, Math.max(group.map[1], endLine ?? 0));
     if (typeof spanLiterals === 'string') {
         return raw(spanLiterals);
+    }
+    if (first.type === 'table_open' && spanLiterals.some(l => /[|`]/.test(l))) {
+        // A literal is written as it is, and in a row a `|` is a cell boundary and
+        // a backtick opens code: the page could not write the table back
+        // (`unwritableInTable`), so it is not drawn as one it can edit.
+        return raw('attribute span holding | or a backtick in a table cell');
     }
     return { kind: 'editable', reason: first.type, injectedKind: null, mark: null, attrs: recovered.attrs, spanLiterals, endLine };
 }

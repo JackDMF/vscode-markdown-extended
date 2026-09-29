@@ -3,7 +3,8 @@ import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdow
 import { Mark, Node } from 'prosemirror-model';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
 import { NOTE_SYNTAX_CHARS } from './attrs';
-import { NOTE_NODES, SOURCE_NODES, editorSchema } from './schema';
+import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
+import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
 
 /**
@@ -37,6 +38,8 @@ interface StateInternals {
     notePart?: NotePart;
     /** The marker character of the note being written (`+`, `!`), when one is; this module's own field. */
     noteMarker?: string;
+    /** Whether a table cell is being written (`writeTable`); this module's own field. */
+    inTableCell?: boolean;
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
     flushClose(size?: number): void;
 }
@@ -154,7 +157,7 @@ function emphasisDelimiter(mark: Mark, parent: Node, index: number, opening: boo
 }
 
 /** The destination as markdown-it read it, with non-ASCII percent escapes (which it added) decoded back to what the author wrote. */
-function destination(href: string, part?: NotePart, noteMarker?: string): string {
+function destination(href: string, part?: NotePart, noteMarker?: string, inTableCell = false): string {
     const decoded = href.replace(/(?:%[89A-Fa-f][0-9A-Fa-f])+/g, seq => {
         try {
             return decodeURIComponent(seq);
@@ -171,13 +174,18 @@ function destination(href: string, part?: NotePart, noteMarker?: string): string
     // character (`C++`), are percent-encoded: a URL takes no character reference.
     const terminator = part === undefined ? null : PART_TERMINATORS[part];
     const safe = terminator === null ? written : written.split(terminator.raw).join(percent(terminator.raw));
-    return breakMarkerRuns(safe, noteMarker, percent);
+    // In a table cell a `|` is a cell boundary and a backtick opens code for
+    // the table plugin's row scan, backslash or not; a URL takes neither raw.
+    return breakMarkerRuns(inTableCell ? safe.replace(/[|`]/g, percent) : safe, noteMarker, percent);
 }
 
-/** A link's or image's `(destination "title")` content, as a note part can hold it. */
+/** A link's or image's `(destination "title")` content, as a note part and a table cell can hold it. */
 function target(st: StateInternals, href: string, title: string | null): string {
-    const titled = breakMarkerRuns(partText(st.notePart, titlePart(title)), st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
-    return destination(href, st.notePart, st.noteMarker) + titled;
+    // A backtick in a title would open code for the table plugin's row scan; the title takes an escape.
+    // In a table cell a `|` in a title is a boundary to the row scan, and it takes an escape.
+    const titleText = st.inTableCell && title ? title.replace(/[`|]/g, '\\$&') : title;
+    const titled = breakMarkerRuns(partText(st.notePart, titlePart(titleText)), st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
+    return destination(href, st.notePart, st.noteMarker, st.inTableCell) + titled;
 }
 
 function percent(ch: string): string {
@@ -206,11 +214,13 @@ function titlePart(title: string | null): string {
 function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, index: number): LinkForm {
     const node = parent.child(index);
     const markup = mark.attrs.markup as string | null;
-    const { notePart: part, noteMarker } = internals(state);
+    const { notePart: part, noteMarker, inTableCell } = internals(state);
     // Bare and angle forms are written unescaped, which a note part cannot
-    // take when the URL holds its terminator or the note's marker character.
+    // take when the URL holds its terminator or the note's marker character,
+    // nor a table cell when it holds a `|` or a backtick.
+    const spelled = (node.text ?? '') + (mark.attrs.href as string);
     if (markup === null || !node.isText || mark.attrs.title || (part !== undefined && PART_TERMINATORS[part] !== null)
-        || (noteMarker !== undefined && ((node.text ?? '') + (mark.attrs.href as string)).includes(noteMarker))) {
+        || (noteMarker !== undefined && spelled.includes(noteMarker)) || (inTableCell && /[|`]/.test(spelled))) {
         return 'inline';
     }
     if (node.marks[node.marks.length - 1] !== mark) {
@@ -544,18 +554,166 @@ function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string
     state.text(marker, false);
 }
 
-function inlineSerializer(fromBlockStart: boolean): MarkdownSerializer {
+/**
+ * In a table cell a `|` in text is a cell boundary to the table plugin, so it
+ * is escaped where every other character the engine would read as syntax is:
+ * in the text, the alt text and a sidebar's text, as `\|`. What is written
+ * verbatim — code, an attribute span's literal — gets no escape; a `|` there
+ * has no spelling and is not made (`unwritableInTable`).
+ */
+const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, 'g');
+
+function inlineSerializer(fromBlockStart: boolean, inTableCell = false): MarkdownSerializer {
     return new MarkdownSerializer({
         ...inlineNodes,
         paragraph(state, node) {
+            internals(state).inTableCell = inTableCell;
             state.renderInline(node, fromBlockStart);
             state.closeBlock(node);
         },
-    }, marks, { escapeExtraCharacters: ESCAPE_EXTRA });
+    }, marks, { escapeExtraCharacters: inTableCell ? ESCAPE_IN_CELL : ESCAPE_EXTRA });
 }
 
 const inlineAtStart = inlineSerializer(true);
 const inlineMidLine = inlineSerializer(false);
+const inlineInCell = inlineSerializer(false, true);
+
+// ---------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------
+
+/*
+ * A changed pipe table is written in **the tidy form**: the one the
+ * extension's own **Format Table** writes (`src/services/table`), read from
+ * there rather than stated twice, so a table the editor saved and a table the
+ * text editor formatted are the same text:
+ *
+ * - one line per row — the header row, the delimiter row, the body rows — each
+ *   `| cell | cell |`, outer pipes written, one space inside each pipe;
+ * - a column is as wide as its widest cell, counted in monospace columns (a
+ *   CJK character is two), and at least as wide as its delimiter needs — 1
+ *   unaligned, 2 left or right, 3 centred; every cell is padded to it: an
+ *   unaligned or left-aligned column's cells with spaces after the text, a
+ *   right-aligned column's before it, a centred column's on both sides (the
+ *   odd space after);
+ * - the delimiter row carries the alignment: `---` none, `:--` left, `:-:`
+ *   centre, `--:` right, as many dashes as the column is wide;
+ * - a cell is its inline Markdown on one line, trimmed, as the plugin trims
+ *   it: a `|` in its text is escaped as `\|` where the text is escaped
+ *   (`ESCAPE_IN_CELL`); an empty cell is its padding, so never `||`, which
+ *   the plugin reads as a colspan; a cell whose text reads as a delimiter cell
+ *   (`---`, `:-:`) has its first character escaped, or a row of them would
+ *   read as a delimiter row; `^^`, the plugin's rowspan, is escaped as every
+ *   `^` is (`ESCAPE_EXTRA`).
+ *
+ * The plugin finds the cell boundaries in the raw line before any inline
+ * parse: a `|` after a backslash is no boundary, one inside single-backtick
+ * code is none either, one inside a longer fence is. So a cell also writes a
+ * link's destination with `|` and a backtick percent-encoded, and a `|` or a
+ * backtick in a link title escaped (a raw backtick opens code for the row scan); a bare or
+ * angle link holding either is written inline; a backslash right before a code
+ * span (text ending in `\`) is `&#92;`, because the row scan reads `\\` as
+ * escaping the backtick after it and then takes the span's closing backtick
+ * for an opening one. What has no spelling at all — code, or an attribute
+ * span's literal, holding a `|` — is not made (`unwritableInTable`), and a
+ * table the file holds such code in stays a source block (`blocks.ts`).
+ *
+ * An untouched table is its slice, as every block is, so a table written in
+ * any other form stays in it until it is edited.
+ */
+
+/** A backslash pair — a text's escaped `\` — right before a code span opens (`` `…` ``), holds between. */
+const BACKSLASH_BEFORE_CODE = new RegExp(`\\\\\\\\(?=[${HOLD_CLOSE}]*${HOLD_OPEN}\`)`, 'g');
+
+/** A cell's text that the plugin would read as a delimiter cell (GFM's, or multimd's `=` and `+`). */
+const READS_AS_DELIMITER = /^:?(?:-+|=+):?\+?$/;
+
+/** One cell's inline content as the tidy form writes it (see above), unpadded. */
+export function tableCellMarkdown(cell: Node): string {
+    const paragraph = editorSchema.nodes.paragraph.create(null, cell.content);
+    const written = inlineInCell.serialize(editorSchema.topNodeType.create(null, [paragraph]))
+        .replace(BACKSLASH_BEFORE_CODE, '&#92;')
+        .replace(HOLD_RE, '')
+        .replace(/\r?\n/g, ' ')
+        .trim();
+    return READS_AS_DELIMITER.test(written) ? `\\${written}` : written;
+}
+
+/** The formatter's alignment for a column's. */
+const FORMATTER_ALIGN: Readonly<Record<Exclude<TableAlign, null>, MDTableAlign>> = {
+    left: MDTableAlign.Left,
+    center: MDTableAlign.Center,
+    right: MDTableAlign.Right,
+};
+
+/**
+ * The lines of a table in the tidy form. The header row is the first row,
+ * whatever its cells' type, and a column's alignment is its header cell's (the
+ * page keeps the column's other cells equal to it). A cell spanning columns,
+ * which a pipe table has no spelling for and the schema never parses, is
+ * written as itself and empty cells after it, so the rows stay rectangular.
+ */
+export function tableLines(table: Node): string[] {
+    const rows: { text: string; align: TableAlign }[][] = [];
+    table.forEach(row => {
+        const cells: { text: string; align: TableAlign }[] = [];
+        row.forEach(cell => {
+            cells.push({ text: tableCellMarkdown(cell), align: (cell.attrs.align as TableAlign | undefined) ?? null });
+            for (let k = 1; k < ((cell.attrs.colspan as number | undefined) ?? 1); k++) {
+                cells.push({ text: '', align: null });
+            }
+        });
+        rows.push(cells);
+    });
+    const formatted = new MDTable(rows.map(r => r.map(c => c.text)), 1);
+    formatted.aligns = Array.from({ length: formatted.columnCount }, (_, c) => {
+        const align = rows[0]?.[c]?.align ?? null;
+        return align === null ? MDTableAlign.Auto : FORMATTER_ALIGN[align];
+    });
+    return formatted.stringify().split('\n');
+}
+
+/** Why a cell holds no line break: said wherever a hard break is refused, by key (`webview/tables.ts`) or by any other edit. */
+export const CELL_BREAK_REFUSAL = 'A table cell holds one line: a pipe table has no line break inside a cell.';
+
+/**
+ * Why a table between `from` and `to` cannot be written so that it reads back
+ * as itself, or `null` — what the tidy form above has no spelling for, which
+ * the page refuses to make (`webview/tables.ts`), as it refuses an unwritable
+ * note: a hard break in a cell (a sidebar can hold one), code holding a `|`,
+ * an attribute span whose literal holds a `|` or a backtick.
+ */
+export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): string | null {
+    let reason: string | null = null;
+    const start = Math.max(0, Math.min(from, to));
+    const end = Math.min(doc.content.size, Math.max(from, to));
+    doc.nodesBetween(start, end, node => {
+        if (reason !== null) {
+            return false;
+        }
+        if (node.type.name !== 'table') {
+            return !node.isTextblock;
+        }
+        node.descendants(child => {
+            if (reason !== null) {
+                return false;
+            }
+            if (child.type.name === 'hard_break') {
+                reason = CELL_BREAK_REFUSAL;
+            } else if (child.isText && (child.text ?? '').includes('|') && child.marks.some(m => m.type.name === 'code')) {
+                reason = 'Inline code in a table cell cannot hold "|": the table plugin splits the row at it, and nothing escapes it there.';
+            } else {
+                const span = child.marks.find(m => m.type.name === 'attr_span' && /[|`]/.test(m.attrs.literal as string));
+                if (span !== undefined) {
+                    reason = `An attribute span in a table cell cannot hold ${span.attrs.literal as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
+                }
+            }
+            return true;
+        });
+        return false;
+    });
+    return reason;
+}
 
 /** A textblock's inline content as one line of Markdown, hold markers included, hard breaks as `\` + newline. */
 function inlineMarkdown(node: Node, fromBlockStart: boolean): string {
@@ -640,6 +798,11 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
         },
         horizontal_rule(state, node) {
             state.write(String(node.attrs.markup || '---'));
+            state.closeBlock(node);
+        },
+        table(state, node) {
+            // The tidy form (above); never wrapped, since a row is one line.
+            state.text(tableLines(node).join('\n'), false);
             state.closeBlock(node);
         },
         container(state, node) {

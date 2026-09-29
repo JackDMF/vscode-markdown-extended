@@ -16,7 +16,7 @@ const FRONT_AND_HEADING = [
     '',
 ].join('\n');
 const PARAGRAPH = 'A paragraph that stays\nwrapped as it was written.\n';
-const TABLE = '| a | b |\n| - | - |\n| 1 | 2 |\n';
+const TABLE = '| a | b |\n| = | = |\n| 1 | 2 |\n';
 const SOURCE = `${FRONT_AND_HEADING}${PARAGRAPH}\n${TABLE}`;
 
 /** The object toolbar of the selected object, shown. */
@@ -149,7 +149,7 @@ suite('Editor webview (e2e)', () => {
         const value = await page.$eval('.mep-raw-editor', el => (el as HTMLTextAreaElement).value);
         assert.strictEqual(value, TABLE.replace(/\n$/, ''));
         await page.$eval('.mep-raw-editor', el => {
-            (el as HTMLTextAreaElement).value = '| a | b |\n| - | - |\n| 9 | 9 |';
+            (el as HTMLTextAreaElement).value = '| a | b |\n| = | = |\n| 9 | 9 |';
         });
         await page.focus('.mep-raw-editor');
         await page.keyboard.down('Control');
@@ -158,13 +158,13 @@ suite('Editor webview (e2e)', () => {
 
         const render = (await posted()).find((m): m is Extract<WebviewMessage, { type: 'render' }> => m.type === 'render');
         assert.ok(render, 'no render request');
-        assert.strictEqual(render.src, '| a | b |\n| - | - |\n| 9 | 9 |\n');
+        assert.strictEqual(render.src, '| a | b |\n| = | = |\n| 9 | 9 |\n');
         await send({ type: 'rendered', requestId: render.requestId, html: '<p class="mep-test-rendered">rendered</p>' });
         await page.waitForSelector('.mep-raw-block .mep-test-rendered');
 
         await settle();
         const last = (await edits()).pop();
-        assert.ok(last?.text.endsWith('\n| a | b |\n| - | - |\n| 9 | 9 |\n'), last?.text);
+        assert.ok(last?.text.endsWith('\n| a | b |\n| = | = |\n| 9 | 9 |\n'), last?.text);
     });
 
     test('undo returns the file to its exact bytes', async function () {
@@ -348,7 +348,7 @@ suite('Editor webview (e2e)', () => {
             focused: document.activeElement?.classList.contains('mep-raw-editor'),
             value: (document.querySelector('.mep-raw-editor') as HTMLTextAreaElement | null)?.value,
         }));
-        assert.deepStrictEqual(open, { focused: true, value: '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |' }, 'the textarea stays open');
+        assert.deepStrictEqual(open, { focused: true, value: '| a | b |\n| = | = |\n| 1 | 2 |\n| 3 | 4 |' }, 'the textarea stays open');
 
         // Leaving it commits what the save already wrote: no second edit, so
         // the document does not turn dirty again.

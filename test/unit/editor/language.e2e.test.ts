@@ -14,9 +14,9 @@ const SOURCE = [
     '',
     'A paragraph with a stylesheeet typo.',
     '',
-    '| a | b |',
-    '| - | - |',
-    '| 1 | 2 |',
+    '<div class="box">',
+    '  <b>raw</b> html',
+    '</div>',
     '',
 ].join('\n');
 
@@ -204,13 +204,13 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         await send({
             type: 'diagnostics', version, items: [
                 { range: { start: { line: 4, character: 19 }, end: { line: 4, character: 30 } }, severity: 'warning', message: 'Unknown word: stylesheeet', code: 'cSpell', source: 'Spelling' },
-                { range: { start: { line: 7, character: 2 }, end: { line: 7, character: 3 } }, severity: 'error', message: 'The table has no header row', source: 'Lint' },
+                { range: { start: { line: 7, character: 2 }, end: { line: 7, character: 3 } }, severity: 'error', message: 'Raw HTML is not checked', source: 'Lint' },
             ],
         });
         await page.waitForSelector('.mep-diag-warning');
         assert.strictEqual(await page.$eval('.mep-diag-warning', el => el.textContent), 'stylesheeet');
         assert.strictEqual(await page.$$eval('.mep-diag-block-error', els => els.length), 1);
-        assert.ok(await page.$eval('.mep-diag-block-error', el => el.classList.contains('mep-raw-block') || !!el.querySelector('table')), 'the source block');
+        assert.ok(await page.$eval('.mep-diag-block-error', el => !!el.querySelector('.box') || el.classList.contains('box')), 'the source block');
         assert.deepStrictEqual(await page.$$eval('.mep-diag-marker', els => els.map(el => el.getAttribute('aria-label'))), ['1 warning', '1 error']);
         const parts = await page.$$eval('.mep-toolbar .mep-row-status .mep-diag-count .mep-diag-count-part', els => els.map(el => el.textContent));
         assert.deepStrictEqual(parts, ['1', '1'], 'one error, one warning, at the row\'s right end');
@@ -292,5 +292,21 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         await send({ type: 'hoverResult', requestId: asked.requestId, html: '<div class="mep-hover-part"><p>Late</p></div>' });
         await delay(100);
         assert.strictEqual(await cardVisible(), false, 'an answer for a card no longer shown is dropped');
+    });
+
+    test('a squiggle inside a table cell is drawn on the cell\'s text, the table carrying one marker', async function () {
+        this.timeout(20000);
+        const table = ['| Field | Value |', '| - | - |', '| Status | implemnted |', ''].join('\n');
+        await showText(table);
+        await settle();
+        await send({
+            type: 'diagnostics', version, items: [
+                { range: { start: { line: 2, character: 11 }, end: { line: 2, character: 21 } }, severity: 'warning', message: 'Unknown word: implemnted' },
+            ],
+        });
+        await page.waitForSelector('td .mep-diag-warning');
+        assert.strictEqual(await page.$eval('td .mep-diag-warning', el => el.textContent), 'implemnted');
+        assert.strictEqual(await page.$$eval('.mep-diag-marker', els => els.length), 1);
+        assert.strictEqual(await page.$$eval('.mep-diag-block', els => els.length), 0, 'an exact range in a cell is no whole-block mark');
     });
 });

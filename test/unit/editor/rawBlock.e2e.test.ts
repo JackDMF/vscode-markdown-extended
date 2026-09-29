@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
 
-const TABLE = '| a | b |\n| - | - |\n| 1 | 2 |\n';
+const TABLE = '| a | b |\n| = | = |\n| 1 | 2 |\n';
 const SOURCE = [
     '---',
     'title: Page',
@@ -253,7 +253,7 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await showDocument(saved.text);
         const still = await area();
         assert.strictEqual(still.focused, true, 'the box keeps the focus through the host\'s re-post');
-        assert.strictEqual(still.value, '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |');
+        assert.strictEqual(still.value, '| a | b |\n| = | = |\n| 1 | 2 |\n| 3 | 4 |');
         await page.keyboard.type('!');
         assert.ok((await area()).value.endsWith('| 3 | 4 |!'));
         await page.keyboard.press('Escape');

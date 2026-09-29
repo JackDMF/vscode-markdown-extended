@@ -707,6 +707,7 @@ const plugins = [
         openLink: href => port.openLink(href),
         sourceContext,
         flushReparse: () => flush(false, true),
+        requestRender: src => port.requestRender(src),
         codeActionsAt,
         runCodeAction: id => runBehindEdit({ type: 'runAction', id }),
         lensesAt: pos => (view ? lensVerbsAt(view.state, pos) : []),

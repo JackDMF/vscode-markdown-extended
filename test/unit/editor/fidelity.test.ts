@@ -16,7 +16,7 @@ const SOURCE = [
     'Second paragraph.',
     '',
     '| a | b |',
-    '| - | - |',
+    '| = | = |',
     '| 1 | 2 |',
     '',
     'Third paragraph.',

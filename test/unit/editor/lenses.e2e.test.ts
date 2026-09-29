@@ -8,7 +8,7 @@ import { EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness'
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const SOURCE = 'Intro.\n\n# Heading\n\nA paragraph.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n';
+const SOURCE = 'Intro.\n\n# Heading\n\nA paragraph.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n';
 
 /** Rows for SOURCE's blocks: 0 Intro, 1 the heading, 2 the paragraph, 3 the table. */
 const ROWS: LensRow[] = [
@@ -276,7 +276,7 @@ suite('Editor code actions as object verbs (e2e)', () => {
 
     const showDocument = async () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-        const json = parsedDocumentToJSON(parseDocument(md, '# FRS-TST-001: Page\n\nText.\n\n## Plain heading\n\n| a |\n| - |\n| 1 |\n', {}));
+        const json = parsedDocumentToJSON(parseDocument(md, '# FRS-TST-001: Page\n\nText.\n\n## Plain heading\n\n| a |\n| = |\n| 1 |\n', {}));
         // The shape the parser gives it when Req Explorer's badge names the id; Req Explorer is not in the test host.
         const heading = (json.doc.content as { attrs: Record<string, unknown>; content: { text: string }[] }[])[0];
         heading.attrs.reqPrefix = 'FRS-TST-001: ';
