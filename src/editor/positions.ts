@@ -9,8 +9,10 @@ import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize
  * The page holds a ProseMirror document; the host, VS Code and every other
  * extension hold text. Completion, diagnostics, hover and "which requirement is
  * the caret in" all need to cross between the two, and this module is the one
- * answer to it — pure, so the page (the caret it reports), the host (its
- * `toSource`/`toPage`, `host/positions.ts`) and the tests ask the same code.
+ * answer to it — pure, so the page and the tests ask the same code. The page
+ * owns the map, since only it holds the nodes a position is in: it reports its
+ * caret with it and answers the host's `map` requests (`webview/main.ts`),
+ * which is how the session's `toSource`/`toPage` are answered.
  *
  * **The text is the one the page would write.** `serializeLayout` — the loop
  * `serializeDocument` is — gives the document's text and where each top-level
@@ -51,10 +53,23 @@ import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize
  * when that is matched — so the caret after typed text is after that text,
  * before any closing delimiter — else to just before the one after it; one
  * after a matched line break maps before the next character, so a wrapped
- * list item's second line starts after its indentation. Back from the source,
- * the same two rules in the same order. So for every text position the two
- * directions agree, except where the page holds more positions than the source
- * has (two spaces the serializer writes as one).
+ * list item's second line starts after its indentation. "After" a character
+ * is after its whole spelling: an escape's (`\*`) ends with the character, an
+ * entity whose first character it is (`&amp;` for `&`) at its `;`. Back from
+ * the source, the same two rules in the same order. So for every text position
+ * the two directions agree, except where the page holds more positions than the
+ * source has (two spaces the serializer writes as one). A source position
+ * strictly inside a delimiter — inside a line's prefix across a line break
+ * (a wrapped item's indentation, a quote's `> `), where a soft break's space
+ * may have matched one of the prefix's spaces, or inside an entity's tail — is
+ * found by the same rules but answered as approximate.
+ *
+ * **A known limit: ties.** Where a run of the page's text also occurs inside
+ * a delimiter beside it at equal cost — a link's text repeated in its URL, for
+ * one — the alignment cannot tell the copies apart and takes the earlier
+ * match; a position there can land in the delimiter's copy, answered as
+ * exact. The free line prefix settles the common cases (a numbered item whose
+ * text starts with its digit, a heading's `ID: ` prefix); the rest is left.
  *
  * **Atoms map to their whole slice** — a source block, an injected block, the
  * front matter, a rule: the position before one is its slice's start, the one
@@ -145,6 +160,11 @@ export function holdsText(node: Node): boolean {
 const LINE_BREAK = /\r\n|\r|\n/g;
 const NEWLINE = 10;
 const CARRIAGE_RETURN = 13;
+const AMPERSAND = 38;
+/** What a line's prefix is made of, besides the line break: indentation and a quote's `>`. */
+const PREFIX_CHARS: ReadonlySet<number> = new Set([NEWLINE, 32, 9, 62]);
+/** A character reference, as markdown-it's entity rule reads one. */
+const ENTITY = /&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/y;
 
 /** Offsets ↔ lines of one text, broken as VS Code breaks them. */
 class Lines {
@@ -487,6 +507,10 @@ class BlockMap {
     private readonly unitAt = new Map<number, number>();
     private readonly norm: Normalized;
     private readonly alignment: Alignment;
+    /** For each matched source index, where the spelling of its character ends: one past it, or past a whole `&amp;`. */
+    private readonly spellingEnd: Int32Array;
+    /** For each normalized position, whether it stands inside a delimiter: a line's prefix, an entity's tail. */
+    private readonly inside: Uint8Array;
 
     constructor(block: Node, readonly body: string) {
         this.units = collectUnits(block);
@@ -498,6 +522,54 @@ class BlockMap {
         });
         this.norm = normalize(body);
         this.alignment = align(this.norm.src, this.units);
+        const src = this.norm.src;
+        const { toUnit } = this.alignment;
+        this.spellingEnd = new Int32Array(src.length);
+        this.inside = new Uint8Array(src.length + 1);
+        for (let i = 0; i < src.length; i++) {
+            this.spellingEnd[i] = i + 1;
+        }
+        // A run of line-prefix characters across a line break that holds a
+        // character nothing matched is one delimiter — a wrapped line's break
+        // and indentation, a quote's `\n> ` — even where the soft break's
+        // space matched one of its spaces: no place strictly inside it is text.
+        for (let a = 0; a < src.length;) {
+            if (!PREFIX_CHARS.has(src.charCodeAt(a))) {
+                a++;
+                continue;
+            }
+            let b = a;
+            let lineBreak = false;
+            let gap = false;
+            while (b < src.length && PREFIX_CHARS.has(src.charCodeAt(b))) {
+                lineBreak = lineBreak || src.charCodeAt(b) === NEWLINE;
+                gap = gap || toUnit[b] < 0;
+                b++;
+            }
+            if (lineBreak && gap) {
+                this.inside.fill(1, a + 1, b);
+            }
+            a = b;
+        }
+        // A character spelled as an entity whose first character it is
+        // (`&amp;` for `&`) matches that first character: its spelling runs to
+        // the `;`, as an escape's (`\*`) runs to the character.
+        for (let i = 0; i < src.length; i++) {
+            if (src.charCodeAt(i) !== AMPERSAND || toUnit[i] < 0) {
+                continue;
+            }
+            ENTITY.lastIndex = i;
+            const m = ENTITY.exec(src);
+            const end = m === null ? -1 : i + m[0].length;
+            let tail = end > 0;
+            for (let k = i + 1; tail && k < end; k++) {
+                tail = toUnit[k] < 0;
+            }
+            if (tail) {
+                this.spellingEnd[i] = end;
+                this.inside.fill(1, i + 1, end);
+            }
+        }
     }
 
     /** The body offset a position `rel` inside the block stands at. */
@@ -510,14 +582,14 @@ class BlockMap {
         const ns = next === undefined ? -1 : toSource[next];
         let local = -1;
         if (ps >= 0 && src.charCodeAt(ps) !== NEWLINE) {
-            local = ps + 1;
+            local = this.spellingEnd[ps];
         } else if (ns >= 0) {
             local = ns;
         } else if (ps >= 0) {
-            local = ps + 1;
+            local = this.spellingEnd[ps];
         }
         if (local >= 0) {
-            return { offset: this.norm.toBody[local], exact };
+            return { offset: this.norm.toBody[local], exact: exact && this.inside[local] === 0 };
         }
         const near = this.nearestSource(rel);
         return near === null ? null : { offset: this.norm.toBody[near], exact: false };
@@ -532,14 +604,16 @@ class BlockMap {
         const after = l < src.length ? toUnit[l] : -1;
         const beforePos = before >= 0 ? this.units[before].pos : -1;
         const afterPos = after >= 0 ? this.units[after].pos : -1;
+        // Inside a delimiter the place is only near one: the rules below still find it.
+        const within = exact && this.inside[l] === 0;
         if (beforePos >= 0 && src.charCodeAt(l - 1) !== NEWLINE) {
-            return { rel: beforePos + 1, exact };
+            return { rel: beforePos + 1, exact: within };
         }
         if (afterPos >= 0) {
-            return { rel: afterPos, exact };
+            return { rel: afterPos, exact: within };
         }
         if (beforePos >= 0) {
-            return { rel: beforePos + 1, exact };
+            return { rel: beforePos + 1, exact: within };
         }
         const near = this.nearestPage(l);
         return near === null ? null : { rel: near, exact: false };

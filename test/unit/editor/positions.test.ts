@@ -177,6 +177,32 @@ suite('Editor positions: page ↔ source', () => {
         }
     });
 
+    test('a source position inside a line\'s prefix is approximate, even where the soft break matched one of its spaces', () => {
+        const parsed = parseDocument(md, '- two items, the second\n  wrapped onto a line\n\n> A quote that\n> wraps.\n');
+        for (const variant of [parsed, allTouched(parsed)]) {
+            const map = createPositionMap(variant, OPTIONS);
+            const item = sourceOf(map.text, 'wrapped');
+            assert.strictEqual(map.pagePositionOf({ line: item.line, character: 1 })?.approximate, true, 'between the two indentation spaces');
+            assert.strictEqual(map.pagePositionOf({ line: item.line, character: 0 })?.approximate, true, 'before the indentation');
+            assertBothWays(map, pageOf(variant.doc, 'wrapped'), item, 'after the indentation, the text');
+            const quote = sourceOf(map.text, 'wraps');
+            assert.strictEqual(map.pagePositionOf({ line: quote.line, character: 1 })?.approximate, true, 'between > and its space');
+            assertBothWays(map, pageOf(variant.doc, 'wraps'), quote, 'after the quote\'s prefix, the text');
+        }
+    });
+
+    test('after a character is after its whole spelling, an escape\'s and an entity\'s alike', () => {
+        const source = 'A \\* star and &amp; amp.\n';
+        const parsed = parseDocument(md, source);
+        assert.strictEqual(parsed.doc.textContent, 'A * star and & amp.');
+        const map = createPositionMap(parsed, OPTIONS);
+        assertBothWays(map, pageOf(parsed.doc, '* star') + 1, sourceOf(source, ' star'), 'after an escaped *');
+        assertBothWays(map, pageOf(parsed.doc, '& amp') + 1, sourceOf(source, ' amp.'), 'after &amp;');
+        assertBothWays(map, pageOf(parsed.doc, '& amp'), sourceOf(source, '&amp;'), 'before &amp;');
+        const inside = sourceOf(source, 'amp;');
+        assert.strictEqual(map.pagePositionOf({ line: 0, character: inside.character + 1 })?.approximate, true, 'inside the entity');
+    });
+
     test('an inline note: the reference and the body find their columns, a character reference included', () => {
         const source = 'Text ++a ref|the body text++ after, and ++x&#124;y|z++ too.\n';
         const parsed = parseDocument(md, source);
