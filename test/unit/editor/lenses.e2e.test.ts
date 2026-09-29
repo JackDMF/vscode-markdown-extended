@@ -865,13 +865,13 @@ suite('Editor lenses on their surfaces (e2e)', () => {
      * The status lens on the standing row of the table (`data-req-standing`, whatever field states it),
      * with `data-req-field="status"` as the fallback for a Req Explorer older than the attribute.
      */
-    const standingRow = (field: string, standing: boolean) =>
-        `<tr data-req-field="${field}"${standing ? ' data-req-standing' : ''}><th scope="row">${field}</th><td><span class="req-badge req-badge-implemented">implemented</span></td></tr>`;
+    const standingRow = (field: string, standing: 'authored' | 'derived' | null) =>
+        `<tr data-req-field="${field}"${standing ? ` data-req-standing="${standing}"` : ''}><th scope="row">${field}</th><td><span class="req-badge req-badge-implemented">implemented</span></td></tr>`;
     const standingCases: [string, string[], string][] = [
-        ['a Stage row that carries data-req-standing is the status lens\'s row', [standingRow('stage', true)], 'span:stage'],
-        ['a status row that carries data-req-standing still resolves', [standingRow('status', true)], 'span:status'],
-        ['no row carries data-req-standing: the row of the field status, as before', [standingRow('status', false)], 'span:status'],
-        ['a status row without the attribute loses to the row that carries it', [standingRow('status', false), standingRow('stage', true)], 'span:stage'],
+        ['a Stage row that carries data-req-standing is the status lens\'s row', [standingRow('stage', 'derived')], 'span:stage'],
+        ['a status row that carries data-req-standing still resolves', [standingRow('status', 'authored')], 'span:status'],
+        ['no row carries data-req-standing: the row of the field status, as before', [standingRow('status', null)], 'span:status'],
+        ['a status row without the attribute loses to the row that carries it', [standingRow('status', null), standingRow('stage', 'derived')], 'span:stage'],
     ];
     for (const [title, rowsHtml, expected] of standingCases) {
         test(`the status lens goes on the standing row: ${title}`, async function () {
@@ -893,4 +893,31 @@ suite('Editor lenses on their surfaces (e2e)', () => {
             assert.deepStrictEqual(await rows(), []);
         });
     }
+
+    test('the lens on a derived standing row goes (underlined, no dropdown), on an authored one it sets', async function () {
+        this.timeout(15000);
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const show = async (rowHtml: string, field: string) => {
+            const json = parsedDocumentToJSON(parseDocument(md, '# FRS-TST-001: Page\n\nA plain paragraph.\n', {}));
+            const content = json.doc.content as { type: string; attrs: Record<string, unknown>; content?: Record<string, unknown>[] }[];
+            content[0].attrs.reqPrefix = 'FRS-TST-001: ';
+            content[0].content = [{ type: 'text', text: 'Page' }];
+            const html = SUMMARY_HTML.replace('<tbody class="req-summary-fields">', `<tbody class="req-summary-fields">${rowHtml}`);
+            content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html, src: null, gap: null } });
+            version++;
+            await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
+            await page.waitForFunction(f => document.querySelector('.ProseMirror')?.textContent?.includes('A plain paragraph.')
+                && document.querySelectorAll(`.ProseMirror tr[data-req-field="${f}"]`).length === 1, {}, field);
+            await send([{ blockIndex: 0, items: [{ id: 'st', title: 'Show stage', surface: 'status', artifact: 'FRS-TST-001' }] }], 3);
+            await delay(150);
+            const chip = `tr[data-req-field="${field}"] .req-badge`;
+            await page.hover(chip);
+            return { kinds: (await targets()).map(t => t.kind), chip: await dropdownOf(chip), line: (await decorationOf(chip)).line };
+        };
+        const derived = await show(standingRow('stage', 'derived'), 'stage');
+        assert.deepStrictEqual(derived.kinds, ['go']);
+        assert.strictEqual(derived.chip.after, 'none', 'no dropdown affordance on a derived row');
+        assert.strictEqual(derived.line, 'underline');
+        assert.deepStrictEqual((await show(standingRow('status', 'authored'), 'status')).kinds, ['set']);
+    });
 });

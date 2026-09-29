@@ -1077,7 +1077,7 @@ checks the shape — an unknown surface, a missing artifact, a hint that is not 
 argument make a foreign lens; an unknown direction is left out — and `LensItem` carries the
 fields to the page. The argument stays in the command: `runLens` runs the provider's command exactly as
 it was given. On Req Explorer's side, the summary table (`injected_block`, mark
-`{ kind: 'atom', artifact }`) marks its rows `tr[data-req-field="<field>"]` (the standing row also `data-req-standing`) and
+`{ kind: 'atom', artifact }`) marks its rows `tr[data-req-field="<field>"]` (the standing row also `data-req-standing="authored"|"derived"`) and
 `tr[data-req-relation="<relation key>"]` with `data-req-direction="out"|"in"`, and the
 badge is the `inline_atom` with the same mark inside the heading. A lens without `direction`
 (a Req Explorer older than it) takes the relation's first row.
@@ -1094,7 +1094,7 @@ its own badge and table. For every row the host sent:
 - a row with no hinted lens stays a row, on its block;
 - in a row with a hinted lens, each lens is placed on its table, when the table's HTML
   (parsed inert, in a `template`) has the row: `status` on the standing row
-  `tr[data-req-standing]` (any field states it — a change's derived Stage, a release's lifecycle; `tr[data-req-field="status"]`
+  `tr[data-req-standing]` (any field states it — a change's derived Stage, a release's lifecycle; an `authored` row's lens sets, a `derived` one's goes — underlined, no dropdown; `tr[data-req-field="status"]`
   when no row carries the attribute, an older Req Explorer), `priority` on `tr[data-req-field="priority"]`, `links` on the `tr[data-req-relation]` of its
   key — and of that `data-req-direction`, when the lens names one. **The status row comes
   first**: Req Explorer shows the status in the table and draws a badge beside the heading

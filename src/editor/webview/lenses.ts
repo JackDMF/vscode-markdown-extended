@@ -13,7 +13,7 @@
  *
  * | Surface | Placed on | When that is not there |
  * | --- | --- | --- |
- * | `status` | the standing row of the summary table (`injected_block`, mark `artifact`): `tr[data-req-standing]`, or, for a Req Explorer older than the attribute, `tr[data-req-field="status"]`; without either row, the status badge (`inline_atom`, mark `artifact`) in its heading | a verb of the heading |
+ * | `status` | the standing row of the summary table (`injected_block`, mark `artifact`): `tr[data-req-standing]` (`authored`: a `set`; `derived`, a change's stage: a `go`), or, for a Req Explorer older than the attribute, `tr[data-req-field="status"]` (a `set`); without either row, the status badge (`inline_atom`, mark `artifact`) in its heading | a verb of the heading |
  * | `priority` | `tr[data-req-field="priority"]` of that table | a verb of the heading |
  * | `links` | `tr[data-req-relation="<relation>"]` of that table, of its side (`data-req-direction`) when the lens names one | a verb of the heading |
  * | `action` | — | a verb of the heading, in its object toolbar |
@@ -185,9 +185,11 @@ function valueOf(row: HTMLElement): HTMLElement {
  * `set` changes the artifact — its status, its priority — and is drawn as a
  * dropdown; `go` goes somewhere — a relation's picker — and is underlined, as
  * the links beside it are. Two verbs, two signifiers (Daniel, 2026-09-28).
+ * A standing row marked `data-req-standing="derived"` (a change's stage) has
+ * nothing to set: its lens goes to the view that explains it, so it is a `go`.
  */
-function lensKind(target: HeldTarget): 'set' | 'go' {
-    return target.on === 'badge' || target.key.surface !== 'links' ? 'set' : 'go';
+function lensKind(target: HeldTarget, el: HTMLElement): 'set' | 'go' {
+    return (target.on === 'badge' || target.key.surface !== 'links') && el.closest('tr')?.dataset.reqStanding !== 'derived' ? 'set' : 'go';
 }
 
 /**
@@ -459,7 +461,7 @@ function markTarget(el: HTMLElement, target: HeldTarget): void {
     }
     el.classList.add('mep-lens-target');
     el.dataset.lens = target.id;
-    el.dataset.lensKind = lensKind(target);
+    el.dataset.lensKind = lensKind(target, el);
     const title = targetTitle(target.item);
     if (el.title !== title) {
         el.title = title;
