@@ -165,6 +165,15 @@ interface Presentation {
     verbs: Verb[];
 }
 
+/**
+ * An object whose bar would be its label alone, and so is not drawn: a heading
+ * (its verbs are other extensions' lenses and actions) and the front matter
+ * (its own verbs are the properties panel's header), with none offered.
+ */
+function barless(object: EditorObject, presentation: Presentation): boolean {
+    return presentation.verbs.length === 0 && (object.kind === 'heading' || object.kind === 'front_matter');
+}
+
 const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = {
     sidenote: 'Sidenote',
     marginal_note: 'Marginal note',
@@ -782,7 +791,7 @@ class ObjectToolbarView implements PluginView {
             this.cancelPending();
             this.matured = isBlockObject(object) ? null : object;
             const presentation = this.present(object);
-            if (presentation.verbs.length === 0 && object.kind === 'heading') {
+            if (barless(object, presentation)) {
                 // A heading's verbs are other extensions' lenses and actions; with none, no bar.
                 this.selectionBar.hide();
             } else if (isBlockPlaced(object) && selectionBubbleShown(this.view)) {
@@ -920,10 +929,12 @@ class ObjectToolbarView implements PluginView {
 
     private refreshHover(): void {
         const object = this.hoveredObject();
-        if (object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object)) || selectionBubbleShown(this.view)) {
+        const presentation = object === null ? null : this.present(object);
+        if (object === null || presentation === null || barless(object, presentation)
+            || (this.selectionBar.visible && sameObject(object, this.selectionBar.object)) || selectionBubbleShown(this.view)) {
             this.hoverBar.hide();
         } else {
-            this.hoverBar.show(object, this.present(object));
+            this.hoverBar.show(object, presentation);
             this.place(this.hoverBar, object);
         }
         this.syncDecorations();
@@ -1530,7 +1541,8 @@ class ObjectToolbarView implements PluginView {
                 };
             }
             case 'front_matter':
-                return { label: 'Front matter', title: 'Written back exactly as it is; tools such as Req Explorer edit it.', verbs: [] };
+                // Its own verbs are the panel's header (`properties.ts`); the bar carries other extensions' actions only.
+                return { label: 'Properties', title: 'The front matter; its keys are edited in the panel, in place.', verbs: [] };
             case 'heading': {
                 const prefix = object.node.attrs.reqPrefix as string | null;
                 const id = prefix?.replace(/:\s*$/, '') ?? '';

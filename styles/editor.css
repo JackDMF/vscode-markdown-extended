@@ -7,7 +7,7 @@
  * This file styles only what the preview does not have: the editing surface,
  * the outline of a block that is not edited as rich text, the object toolbar,
  * the formatting toolbar and selection bubble (their frame, not their samples),
- * the caret hint, the front-matter panel and the error banner.
+ * the caret hint, the properties panel and the error banner.
  *
  * It is NOT a preview style and is never contributed to markdown.previewStyles
  * or to exports. Colors come from VS Code's --vscode-* variables, which every
@@ -34,11 +34,13 @@
  * textarea sits inside that root, is opened on a selected block, and would
  * inherit both rules: its caret and its text selection would be painted
  * transparent — there, but invisible, so a click seemed to place no caret and a
- * drag to select nothing. The textarea keeps its own.
+ * drag to select nothing. The textarea keeps its own, and so do the properties
+ * panel's fields, which sit in the same root.
  */
-.ProseMirror-hideselection *:not(.mep-raw-editor)::selection { background: transparent; }
+.ProseMirror-hideselection *:not(.mep-raw-editor):not(.mep-prop-input)::selection { background: transparent; }
 .ProseMirror-hideselection { caret-color: transparent; }
-.ProseMirror-hideselection .mep-raw-editor { caret-color: auto; }
+.ProseMirror-hideselection .mep-raw-editor,
+.ProseMirror-hideselection .mep-prop-input { caret-color: auto; }
 .ProseMirror [draggable][contenteditable=false] { user-select: text; }
 .ProseMirror-separator { display: inline !important; border: none !important; margin: 0 !important; }
 
@@ -579,19 +581,224 @@ img.mep-pending-range {
 }
 
 /* ------------------------------------------------------------------------- */
-/* Front matter                                                              */
+/* Front matter: the properties panel (webview/properties.ts)                */
 /* ------------------------------------------------------------------------- */
 
-.mep-front-matter { border-left: 3px solid var(--vscode-descriptionForeground, #888); }
-
-.mep-front-matter > summary {
-    cursor: pointer;
+/*
+ * One box at the top of the document: a header row, then one row per key —
+ * the key in the editor's monospace (it is the key), the value's control
+ * beside it — and a last row to add one. The chrome is the editor's own: the
+ * workbench font and descriptionForeground of the object toolbar, the inline
+ * field's input colours, the focus colour for the focus. Nothing here is the
+ * preview's, so no rule reaches an export.
+ */
+.mep-atom.mep-properties {
+    margin: 0 0 16px;
+    padding: 0;
     font-family: var(--vscode-font-family, sans-serif);
-    font-size: 11px;
+    font-size: var(--vscode-font-size, 13px);
+    line-height: 20px;
+    white-space: normal;
+    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    border-style: solid;
+}
+
+.mep-atom.mep-properties:hover { border-color: var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888)); }
+
+.mep-props-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 4px;
+    color: var(--vscode-descriptionForeground, #888);
+    font-size: 12px;
+}
+
+.mep-properties.mep-expanded > .mep-props-header {
+    border-bottom: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+}
+
+/* The header's two controls and every row's buttons: text buttons of the workbench's font, a surface only on hover. */
+.mep-props-toggle,
+.mep-props-source,
+.mep-prop-source-link,
+.mep-prop-add-button,
+.mep-prop-remove,
+.mep-prop-chip-remove {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 0 6px;
+    cursor: pointer;
+}
+
+.mep-props-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--vscode-foreground, inherit); }
+.mep-props-chevron { width: 1em; text-align: center; color: var(--vscode-descriptionForeground, #888); }
+.mep-props-count { color: var(--vscode-descriptionForeground, #888); }
+
+/* The escape hatch, always in the same place: the header's right. */
+.mep-props-source { margin-left: auto; }
+.mep-props-source,
+.mep-prop-source-link { color: var(--vscode-textLink-foreground, #3794ff); }
+.mep-props-source[aria-pressed="true"] {
+    border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, #0078d4));
+    background: var(--vscode-inputOption-activeBackground, rgba(0, 120, 212, 0.15));
+}
+
+.mep-props-toggle:hover,
+.mep-props-source:hover,
+.mep-prop-add-button:hover,
+.mep-prop-remove:hover,
+.mep-prop-chip-remove:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.mep-prop-source-link:hover { text-decoration: underline; }
+
+.mep-properties button:focus-visible,
+.mep-prop-id:focus-visible,
+.mep-prop-check:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder, #0078d4);
+    outline-offset: -1px;
+}
+
+.mep-props-rows[hidden] { display: none; }
+
+.mep-prop-row {
+    display: grid;
+    grid-template-columns: minmax(7em, 11em) 1fr auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 26px;
+    padding: 1px 4px 1px 10px;
+}
+
+.mep-prop-row + .mep-prop-row { border-top: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888)); }
+
+.mep-prop-key {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
     color: var(--vscode-descriptionForeground, #888);
 }
 
-.mep-front-matter-source { margin: 4px 0 0; }
+.mep-prop-value { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
+
+/* A value's field: the inline field's colours, a border only where it is pointed at or focused, so the rows read as values at rest. */
+.mep-prop-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    margin-left: -5px;
+    padding: 1px 4px;
+    font: inherit;
+    color: var(--vscode-input-foreground, inherit);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    outline: none;
+}
+.mep-prop-input:hover { border-color: var(--vscode-input-border, var(--vscode-editorWidget-border, #8888)); }
+.mep-prop-input:focus {
+    background: var(--vscode-input-background, transparent);
+    border-color: var(--vscode-focusBorder, #0078d4);
+}
+.mep-prop-input::placeholder { color: var(--vscode-input-placeholderForeground, #8888); }
+.mep-prop-input:disabled { opacity: 0.5; }
+/*
+ * A date is its text as the file writes it, and a calendar button beside it
+ * opens the browser's picker, from a date input kept out of sight under the
+ * button (the picker opens where its input is); the picker follows the theme.
+ */
+.mep-prop-row[data-kind="date"] .mep-prop-input { width: 12ch; flex: none; }
+.mep-prop-row[data-kind="date"] .mep-prop-value { position: relative; flex-wrap: nowrap; }
+.mep-prop-date-pick {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 4px;
+    color: var(--vscode-descriptionForeground, #888);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.mep-prop-date-pick:hover { color: var(--vscode-foreground, inherit); background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.mep-prop-date-native {
+    position: absolute;
+    left: 12ch;
+    bottom: 0;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+.vscode-dark .mep-prop-date-native,
+.vscode-high-contrast .mep-prop-date-native { color-scheme: dark; }
+
+.mep-prop-check { margin: 0; accent-color: var(--vscode-focusBorder, #0078d4); }
+
+/* A uid: read-only, in mono and dimmed, copied on a click. */
+.mep-prop-id {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground, #888));
+    cursor: copy;
+    border-radius: 2px;
+    padding: 0 2px;
+    margin-left: -2px;
+}
+.mep-prop-id:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+
+.mep-prop-summary { color: var(--vscode-descriptionForeground, #888); }
+.mep-prop-source-link { padding: 0 2px; }
+
+/* A list's items as chips; `+ add` is a chip with a dashed edge. */
+.mep-prop-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.mep-prop-chip {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    height: 20px;
+    padding: 0 2px 0 8px;
+    font: inherit;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--vscode-foreground, inherit);
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+    border: 1px solid transparent;
+    border-radius: 10px;
+}
+.mep-prop-chip-remove { padding: 0 4px; border-radius: 8px; line-height: 16px; color: var(--vscode-descriptionForeground, #888); }
+.mep-prop-chip-add {
+    padding: 0 8px;
+    color: var(--vscode-descriptionForeground, #888);
+    background: transparent;
+    border: 1px dashed var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    cursor: pointer;
+}
+.mep-prop-chip-add:hover { color: var(--vscode-foreground, inherit); }
+.mep-prop-chip-input.mep-prop-input { width: auto; margin-left: 0; height: 20px; font-size: 12px; }
+
+/* A row's ×: there on hover or while the row has the focus; its place kept, so nothing moves. */
+.mep-prop-remove { visibility: hidden; padding: 0 5px; color: var(--vscode-descriptionForeground, #888); }
+.mep-prop-row:hover > .mep-prop-remove,
+.mep-prop-row:focus-within > .mep-prop-remove { visibility: visible; }
+
+.mep-prop-add { grid-template-columns: minmax(7em, 11em) 1fr auto; }
+.mep-prop-add > .mep-prop-add-button {
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin-left: -6px;
+    color: var(--vscode-descriptionForeground, #888);
+}
+.mep-prop-key-input.mep-prop-input { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+
+.mep-prop-error { grid-template-columns: 1fr; }
+
+.mep-props-rows > .mep-props-editor { display: block; margin: 0; border-width: 0; }
 
 /* ------------------------------------------------------------------------- */
 /* Containers and admonitions                                                */

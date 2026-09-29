@@ -98,7 +98,8 @@ suite('Editor webview (e2e)', () => {
 
     test('the document renders: front matter folded, the id read-only, the table as a raw block', async () => {
         const shape = await page.evaluate(() => ({
-            frontMatter: document.querySelector('details.mep-front-matter pre')?.textContent,
+            frontMatter: document.querySelector('.mep-properties .mep-props-toggle')?.textContent,
+            folded: document.querySelector('.mep-properties .mep-props-toggle')?.getAttribute('aria-expanded'),
             prefix: document.querySelector('h2 .mep-req-prefix')?.textContent,
             prefixEditable: document.querySelector('h2 .mep-req-prefix')?.getAttribute('contenteditable'),
             title: document.querySelector('h2 .mep-heading-text')?.textContent,
@@ -106,8 +107,9 @@ suite('Editor webview (e2e)', () => {
             anchor: document.querySelector('.ProseMirror h2')?.id,
             table: document.querySelectorAll('.mep-raw-block table td').length,
         }));
-        // The block exactly as the file holds it, fences included.
-        assert.strictEqual(shape.frontMatter, '---\nid: FRS-TST-001\ntitle: Page\n---\n');
+        // The properties panel, collapsed by default, with its count of keys.
+        assert.strictEqual(shape.frontMatter, '▸Properties2');
+        assert.strictEqual(shape.folded, 'false');
         assert.strictEqual(shape.prefix, 'FRS-TST-001: ');
         assert.strictEqual(shape.prefixEditable, 'false');
         assert.strictEqual(shape.title, 'Page');

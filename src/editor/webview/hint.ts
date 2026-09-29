@@ -28,9 +28,10 @@ class CaretHint {
         view.dom.parentElement?.append(this.el);
     }
 
-    show(text: string, tone: HintTone): void {
+    show(text: string, tone: HintTone, near?: Element): void {
         const base = (this.el.offsetParent ?? document.body).getBoundingClientRect();
-        const at = this.view.coordsAtPos(this.view.state.selection.head);
+        // Beside the caret, or beside the control that spoke when the focus is in one (a property row).
+        const at = near ? near.getBoundingClientRect() : this.view.coordsAtPos(this.view.state.selection.head);
         this.el.textContent = text;
         this.el.dataset.tone = tone;
         this.el.hidden = false;
@@ -50,9 +51,9 @@ class CaretHint {
 
 const hints = new WeakMap<EditorView, CaretHint>();
 
-/** Show `text` beside the caret of `view`; a no-op for a view built without `hintPlugin`. */
-export function showHint(view: EditorView, text: string, tone: HintTone): void {
-    hints.get(view)?.show(text, tone);
+/** Show `text` beside the caret of `view`, or under `near`; a no-op for a view built without `hintPlugin`. */
+export function showHint(view: EditorView, text: string, tone: HintTone, near?: Element): void {
+    hints.get(view)?.show(text, tone, near);
 }
 
 /** The key that undoes, as the platform names it, for a hint that offers the undo. */

@@ -12,6 +12,7 @@
  * to a stub for that reason (`stubs/markdown-it.ts`).
  */
 import { Node } from 'prosemirror-model';
+import { redo, undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
@@ -24,7 +25,8 @@ import { showHint } from './hint';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
 import { DROP_LOCK, IMAGE_LOCK, insertFilesTransaction, insertLockReason } from './objects';
 import { pendingRangePlugin } from './pendingRange';
-import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
+import { EditorPort, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
+import { PropertiesView } from './properties';
 import { lensPlugin, lensVerbsAt, setLensesTransaction } from './lenses';
 import { linkClickPlugin } from './links';
 import { objectToolbarPlugin } from './objectToolbar';
@@ -107,10 +109,20 @@ const caretReporter = new CaretReporter({
             return undefined;
         }
         const map = pageMap(view.state.doc);
-        return { text: map.text, caret: caretOf(view.state.selection, map) };
+        // A property's field is not a place in the text: no caret while one has the focus.
+        return { text: map.text, caret: inPropertiesPanel() ? null : caretOf(view.state.selection, map) };
     },
     post,
 });
+
+/** Whether the focus is in the front matter's properties panel (`properties.ts`), whose fields are no source caret. */
+function inPropertiesPanel(): boolean {
+    const active = document.activeElement;
+    return active !== null && active.closest('.mep-properties') !== null;
+}
+
+/** The document's uri, as the host wrote it on the page (`html.ts`): what the panel remembers its open state under. */
+const documentKey = mount.dataset.documentUri ?? '';
 
 /**
  * Send the document back now, if it differs from what the host holds — or, for
@@ -252,6 +264,35 @@ const port: EditorPort = {
         return () => {
             openSourceEditors.delete(editor);
         };
+    },
+    commitFrontMatter: (pos, src) => {
+        if (!view) {
+            return;
+        }
+        const node = view.state.doc.nodeAt(pos);
+        if (!node || node.type !== editorSchema.nodes.front_matter || node.attrs.src === src) {
+            return;
+        }
+        // One step, one undo; the serializer writes `src` as it stands, so the
+        // host receives exactly the lines the panel changed.
+        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src }));
+    },
+    history: kind => (view ? (kind === 'undo' ? undo : redo)(view.state, view.dispatch) : false),
+    hint: (text, near) => {
+        if (view) {
+            showHint(view, text, 'neutral', near);
+        }
+    },
+    documentKey: () => documentKey,
+    leaveFrontMatter: () => {
+        if (!view) {
+            return;
+        }
+        const doc = view.state.doc;
+        const first = doc.firstChild;
+        const after = first && first.type === editorSchema.nodes.front_matter ? first.nodeSize : 0;
+        view.focus();
+        view.dispatch(view.state.tr.setSelection(Selection.near(doc.resolve(Math.min(after, doc.content.size)))).scrollIntoView());
     },
 };
 
@@ -643,7 +684,7 @@ const nodeViews: Record<string, NodeViewConstructor> = {
     raw_block: (node, _view, getPos) => new RawBlockView(node, getPos, port),
     injected_block: node => new InjectedBlockView(node, port),
     inline_atom: node => new InlineAtomView(node, port),
-    front_matter: node => new FrontMatterView(node),
+    front_matter: (node, _view, getPos) => new PropertiesView(node, getPos, port),
     heading: node => new HeadingView(node),
     image: node => new ImageView(node, imageSources),
 };
@@ -740,6 +781,9 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     // background) does not blur the window; the pending edit goes now, not
     // after the delay.
     view.dom.addEventListener('focusout', () => flush());
+    // A property's field taking or giving back the focus changes what the caret is (none while in one).
+    view.dom.addEventListener('focusin', () => caretReporter.selectionMoved());
+    view.dom.addEventListener('focusout', () => caretReporter.selectionMoved());
 }
 
 /**

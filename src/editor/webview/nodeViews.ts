@@ -23,6 +23,16 @@ export interface EditorPort {
      * cannot load as it stands.
      */
     showImages(container: HTMLElement): void;
+    /** Replace the front matter's `src` (the properties panel wrote its YAML in place, `properties.ts`). */
+    commitFrontMatter(pos: number, src: string): void;
+    /** The editor's own undo or redo, for a key pressed in the properties panel; false when there was nothing to undo. */
+    history(kind: 'undo' | 'redo'): boolean;
+    /** Say `text` in the caret hint, under `near`. */
+    hint(text: string, near: Element): void;
+    /** What the page remembers per document under (the document's uri; `''` when the page was not told one). */
+    documentKey(): string;
+    /** Put the caret in the text after the front matter and give the editor the focus. */
+    leaveFrontMatter(): void;
 }
 
 /** A raw block's open source editor, as the page sees it. */
@@ -33,7 +43,7 @@ export interface SourceEditor {
 
 type GetPos = () => number | undefined;
 
-function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
+export function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
     const el = document.createElement(tag);
     if (className) {
         el.className = className;
@@ -45,7 +55,7 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: stri
 }
 
 /** Whether the key event is the platform's undo or redo chord. */
-function isUndoRedo(e: KeyboardEvent): boolean {
+export function isUndoRedo(e: KeyboardEvent): boolean {
     return (e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y');
 }
 
@@ -337,31 +347,6 @@ export class InlineAtomView extends AtomView {
     protected render(): void {
         this.dom.innerHTML = this.node.attrs.html as string;
         this.port.showImages(this.dom);
-    }
-}
-
-/**
- * The front matter: collapsed, read-only, the raw YAML. It is written back
- * byte for byte, and only Req Explorer's mutation engine may change it.
- */
-export class FrontMatterView extends AtomView {
-    private readonly body: HTMLElement;
-
-    constructor(node: Node) {
-        super(node, 'details', 'mep-front-matter');
-        this.dom.append(element('summary', undefined, 'Front matter'));
-        this.body = element('pre', 'mep-front-matter-source');
-        this.dom.append(this.body);
-        this.render();
-    }
-
-    protected render(): void {
-        this.body.textContent = this.node.attrs.src as string;
-    }
-
-    /** The browser toggles `<details>` and selects the YAML; ProseMirror stays out of both. */
-    stopEvent(event: Event): boolean {
-        return event.type !== 'dragstart';
     }
 }
 

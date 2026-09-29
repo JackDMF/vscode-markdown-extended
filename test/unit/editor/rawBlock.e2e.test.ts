@@ -175,13 +175,14 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         assert.strictEqual(await page.$eval('.mep-atom-content input[type="checkbox"]', el => (el as HTMLInputElement).checked), false);
     });
 
-    test('a click opens the front matter, and the Show in text editor button still works', async function () {
+    test('a click opens the properties, and the Show in text editor button still works', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
-        await clickAt(await centre('details.mep-front-matter > summary'));
-        assert.strictEqual(await page.$eval('details.mep-front-matter', el => (el as HTMLDetailsElement).open), true);
-        await clickAt(await centre('details.mep-front-matter > summary'));
-        assert.strictEqual(await page.$eval('details.mep-front-matter', el => (el as HTMLDetailsElement).open), false);
+        const expanded = () => page.$eval('.mep-properties .mep-props-toggle', el => el.getAttribute('aria-expanded'));
+        await clickAt(await centre('.mep-properties .mep-props-toggle'));
+        assert.strictEqual(await expanded(), 'true');
+        await clickAt(await centre('.mep-properties .mep-props-toggle'));
+        assert.strictEqual(await expanded(), 'false');
 
         await clickAt(await centre('.mep-raw-block .mep-atom-content table'));
         const show = await page.waitForSelector(`${SELECTED_BLOCK_BAR} [data-verb="show-in-text-editor"]`, { visible: true });

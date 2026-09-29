@@ -125,7 +125,12 @@ export type ActionApply =
      * `pickImage`), its path relative to the document is the `src`, and the
      * inline field asks for the alt text, the file's name prefilled.
      */
-    | { kind: 'insert-image' };
+    | { kind: 'insert-image' }
+    /**
+     * Front matter for a document that has none: `---` twice at the top, the
+     * properties panel opened at the name of a new property (`properties.ts`).
+     */
+    | { kind: 'insert-properties' };
 
 /** A fuller example for the preview card: Markdown, and the top-level elements it renders as. */
 export interface ActionPreview {
@@ -398,6 +403,12 @@ export const INCLUDE_SYNTAX = 'a snippet line, as its extension offers it';
 /** Why **Include…** and **Change snippet…** are disabled; the host's message says the same. */
 export const NO_INCLUDES_REFUSAL = 'No extension offers includes for this document.';
 
+/** Why **Insert → Properties** is off: a document has one front matter, and it is the panel at the top. */
+export const PROPERTIES_PRESENT_REFUSAL = 'The document has properties already: the panel at its top.';
+
+/** What **Insert → Properties** names: the front matter's fences, written at the top of the file. */
+export const PROPERTIES_SYNTAX = '---\nkey: value\n---';
+
 /** The address the link entry's syntax, sample and preview name. */
 const LINK_EXAMPLE_HREF = 'chapter.md#overview';
 
@@ -512,6 +523,16 @@ const insert: ToolbarAction[] = [
         preview: {
             markdown: 'The text of a snippet, shown where its directive line stands.',
             nodes: [el('p', 'The text of a snippet, shown where its directive line stands.')],
+        },
+    },
+    {
+        // Front matter renders nothing in the preview: the entry claims no
+        // example, and the panel it opens is the editor's own chrome.
+        id: 'properties', place: { menu: 'insert' }, label: 'Properties', syntax: PROPERTIES_SYNTAX,
+        sample: el('p', 'Properties'), apply: { kind: 'insert-properties' }, example: '',
+        preview: {
+            markdown: 'Keys and values at the top of the file, as YAML front matter, edited in the properties panel.',
+            nodes: [el('p', 'Keys and values at the top of the file, as YAML front matter, edited in the properties panel.')],
         },
     },
 ];

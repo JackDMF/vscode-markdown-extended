@@ -83,6 +83,14 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                 assert.strictEqual(isSourceAction(action), false, 'it becomes an expansion, not a source block');
                 return;
             }
+            if (action.apply.kind === 'insert-properties') {
+                // Front matter renders nothing in the preview; what it makes is
+                // the panel, and the fences it writes parse as front matter.
+                assert.strictEqual(action.example, '');
+                assert.strictEqual(md.render(`${action.syntax}\n\nText`).trim(), '<p>Text</p>');
+                assert.strictEqual(parseDocument(md, `${action.syntax}\n`, {}).doc.child(0).type.name, 'front_matter');
+                return;
+            }
             assertRendersSample(md.render(action.example), action.sample, action.id);
             if (action.apply.kind === 'mark') {
                 const rendered = /^<(\w+)>/.exec(md.renderInline(action.example));
@@ -155,7 +163,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class']);
         assert.deepStrictEqual(byMenu('annotation'), ['sidenote', 'marginal-note', 'left-sidebar', 'right-sidebar', 'footnote-reference']);
         assert.deepStrictEqual(byMenu('insert'),
-            ['link', 'image', 'horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents', 'include']);
+            ['link', 'image', 'horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents', 'include', 'properties']);
     });
 
     test('the preview card\'s class is the one both stylesheets name', () => {

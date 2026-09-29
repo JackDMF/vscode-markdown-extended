@@ -33,6 +33,7 @@ import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { editRawSourceAt } from '../nodeViews';
+import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
 import {
     applySpanTransaction, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
@@ -40,11 +41,11 @@ import {
 } from '../objects';
 import { insertTableTransaction } from '../tables';
 import {
-    MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
+    MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
     elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
-    SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertSourceTransaction, insertWrapperTransaction, isCurrent,
+    SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertPropertiesTransaction, insertSourceTransaction, insertWrapperTransaction, isCurrent,
     markActive, markRefusal, toggleMarkup, wrapSourceTransaction,
 } from './commands';
 
@@ -146,6 +147,10 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
             return { enabled: true, active: false, reason: null };
         case 'insert-include':
             return { enabled: includes, active: false, reason: includes ? null : NO_INCLUDES_REFUSAL };
+        case 'insert-properties': {
+            const present = state.doc.firstChild?.type === editorSchema.nodes.front_matter;
+            return { enabled: !present, active: false, reason: present ? PROPERTIES_PRESENT_REFUSAL : null };
+        }
         case 'attr-span': {
             const reason = spanLockReason(state);
             return { enabled: reason === null, active: false, reason };
@@ -755,6 +760,15 @@ class ToolbarView implements PluginView {
                 // `includeChosen` and is inserted then, at the selection as it is.
                 this.host.pickInclude();
                 return;
+            case 'insert-properties': {
+                const tr = insertPropertiesTransaction(view.state, this.host.sourceContext().eol);
+                if (tr) {
+                    view.dispatch(tr);
+                    // The panel is drawn: open it at the name of the first property.
+                    addPropertyAt(view.nodeDOM(0));
+                }
+                return;
+            }
             case 'attr-span':
                 this.askSpanLiteral();
                 return;

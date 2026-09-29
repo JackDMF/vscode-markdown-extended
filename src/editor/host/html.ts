@@ -108,7 +108,7 @@ ${codicons}
 ${editorStyle}
 </head>
 <body class="markdown-body vscode-body" style="${escapeAttribute(fontVariables())}">
-<div id="mep-editor" class="mep-editor"></div>
+<div id="mep-editor" class="mep-editor" data-document-uri="${escapeAttribute(documentUri.toString())}"></div>
 <script nonce="${nonce}" src="${escapeAttribute(script.toString())}"></script>
 </body>
 </html>`;
