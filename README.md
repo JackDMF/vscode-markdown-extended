@@ -32,7 +32,7 @@ Export files aim to match the markdown preview, including syntaxes and styles co
 
 Export to Self Contained HTML / PDF / PNG / JPEG with perfect preview fidelity:
 
-- Export current document / workspace
+- Export current document / workspace (the export command takes an optional uri, so a menu or another extension can name the document)
 - Copy exported HTML to clipboard
 - Export matches the preview exactly, pixel for pixel
 - Mermaid diagrams are rendered to inline SVG in the exported file (the Mermaid library is never embedded in the output)
