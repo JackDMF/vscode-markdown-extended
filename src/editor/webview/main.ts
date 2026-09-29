@@ -12,7 +12,7 @@
  * to a stub for that reason (`stubs/markdown-it.ts`).
  */
 import { Node } from 'prosemirror-model';
-import { redo, undo } from 'prosemirror-history';
+import { closeHistory, redo, undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
@@ -276,9 +276,11 @@ const port: EditorPort = {
         if (!node || node.type !== editorSchema.nodes.front_matter || node.attrs.src === src) {
             return;
         }
-        // One step, one undo; the serializer writes `src` as it stands, so the
-        // host receives exactly the lines the panel changed.
-        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src }));
+        // One step, one undo — its own, never merged with an edit made just
+        // before it (`closeHistory`), so "Removed key — Ctrl+Z" undoes exactly
+        // the removal. The serializer writes `src` as it stands, so the host
+        // receives exactly the lines the panel changed.
+        view.dispatch(closeHistory(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src })));
     },
     history: kind => (view ? (kind === 'undo' ? undo : redo)(view.state, view.dispatch) : false),
     hint: (text, near) => {

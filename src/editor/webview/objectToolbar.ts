@@ -956,9 +956,11 @@ class ObjectToolbarView implements PluginView {
 
     private refreshHover(): void {
         const object = this.hoveredObject();
-        const presentation = object === null ? null : this.present(object);
-        if (object === null || presentation === null || barless(object, presentation)
-            || (this.selectionBar.visible && sameObject(object, this.selectionBar.object)) || selectionBubbleShown(this.view)) {
+        // The cheap reasons first: the presentation asks for code actions and lenses.
+        const presentation = object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object)) || selectionBubbleShown(this.view)
+            ? null
+            : this.present(object);
+        if (object === null || presentation === null || barless(object, presentation)) {
             this.hoverBar.hide();
         } else {
             this.hoverBar.show(object, presentation);

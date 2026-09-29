@@ -145,23 +145,40 @@ suite('Editor properties panel (e2e)', () => {
             el.querySelector('.mep-prop-value')?.textContent?.trim(),
         ]));
         assert.deepStrictEqual(rows, [
-            ['workshop', 'text', 'text', ''],
+            ['workshop', 'text', 'text', '×'],
             ['uid', 'id', null, 'cc43a136-8c9f-4869-bbf1-ca74829d615e'],
-            ['date', 'date', 'text', ''],
-            ['stream', 'text', 'text', ''],
-            ['lang', 'choice', 'text', ''],
-            ['draft', 'boolean', 'checkbox', ''],
-            ['attendees', 'list', null, 'Daniel×+ add'],
-            ['sections', 'source', null, '2 items, nested · edit as source'],
+            ['date', 'date', 'text', '×'],
+            ['stream', 'text', 'text', '×'],
+            ['lang', 'choice', 'text', '×'],
+            ['draft', 'boolean', 'checkbox', '×'],
+            ['attendees', 'list', null, 'Daniel×+ add×'],
+            ['sections', 'source', null, '2 items, nested · edit as source×'],
         ]);
         const values = await page.$$eval('.mep-prop-row .mep-prop-input', els => els.map(el => (el as HTMLInputElement).value));
         assert.deepStrictEqual(values.slice(0, 4), ['2026-09-29-workshop-visual-editor-next-round', '2026-09-29', 'UXD', 'en']);
-        // lang offers the values the file uses for it, the current one first.
-        assert.deepStrictEqual(await page.$eval(`${row('lang')} input`, el => Array.from((el as HTMLInputElement).list?.options ?? []).map(o => o.value)), ['en', 'de']);
-        // The uid: mono, dimmed, no field; and the one row without a ×.
-        const uid = await page.$eval(`${row('uid')} .mep-prop-id`, el => ({ font: getComputedStyle(el).fontFamily, removable: el.closest('.mep-prop-row')?.querySelector('.mep-prop-remove') !== null }));
+        // The uid: mono, dimmed, no field, no border; and the one row without a ×.
+        const uid = await page.$eval(`${row('uid')} .mep-prop-id`, el => ({
+            font: getComputedStyle(el).fontFamily,
+            border: getComputedStyle(el).borderTopStyle,
+            removable: el.closest('.mep-prop-row')?.querySelector('.mep-prop-remove') !== null,
+        }));
         assert.match(uid.font, /mono|consolas|courier/i);
+        assert.strictEqual(uid.border, 'none');
         assert.strictEqual(uid.removable, false);
+        // An editable value has a faint border at rest: it looks editable before the pointer finds it.
+        const edge = await page.$eval(`${row('stream')} .mep-prop-input`, el => {
+            const cs = getComputedStyle(el);
+            return { style: cs.borderTopStyle, width: cs.borderTopWidth, color: cs.borderTopColor };
+        });
+        assert.deepStrictEqual([edge.style, edge.width], ['solid', '1px']);
+        assert.ok(!/rgba\(0, 0, 0, 0\)|transparent/.test(edge.color), edge.color);
+        // The × stands right after the value, not at the row's end.
+        const gap = await page.$eval(row('stream'), el => {
+            const input = (el.querySelector('.mep-prop-input') as HTMLElement).getBoundingClientRect();
+            const remove = (el.querySelector('.mep-prop-remove') as HTMLElement).getBoundingClientRect();
+            return remove.left - input.right;
+        });
+        assert.ok(gap >= 0 && gap < 16, `× ${gap}px after the value`);
         // Expanded is remembered for the document.
         assert.strictEqual(await page.evaluate(() => {
             try {
@@ -190,7 +207,7 @@ suite('Editor properties panel (e2e)', () => {
         assert.ok(edit);
         assert.deepStrictEqual(changedLines(SOURCE, edit.text), [['stream: UXD  # the stream the gaps go to', 'stream: DOC  # the stream the gaps go to']]);
         // The field keeps the focus, showing what the file now holds.
-        assert.deepStrictEqual(await page.evaluate(() => [(document.activeElement as HTMLInputElement).value, (document.activeElement as HTMLElement).dataset.slot]), ['DOC', 'value:stream']);
+        assert.deepStrictEqual(await page.evaluate(() => [(document.activeElement as HTMLInputElement).value, (document.activeElement as HTMLElement).dataset.slot]), ['DOC', 'value:3']);
     });
 
     test('Esc reverts a row; nothing is written', async function () {
@@ -218,7 +235,10 @@ suite('Editor properties panel (e2e)', () => {
         const edit = await lastEdit();
         assert.ok(edit);
         assert.deepStrictEqual(changedLines(SOURCE, edit.text), [['stream: UXD  # the stream the gaps go to', 'stream: ARC  # the stream the gaps go to']]);
-        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.slot), 'value:lang');
+        // The row's × is the next stop, named for its key; then the next row.
+        assert.deepStrictEqual(await page.evaluate(() => [(document.activeElement as HTMLElement).dataset.slot, document.activeElement?.getAttribute('aria-label')]), ['remove:3', 'Remove stream']);
+        await page.keyboard.press('Tab');
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.slot), 'value:4');
     });
 
     test('a date is its text as the file writes it: a calendar beside it, and a value that is no date refused with the reason', async function () {
@@ -265,7 +285,7 @@ suite('Editor properties panel (e2e)', () => {
         assert.ok(edit);
         assert.deepStrictEqual(changedLines(SOURCE, edit.text), [['attendees: [Daniel]', 'attendees: [Daniel, Jack]']]);
         // The field stays open for the next item.
-        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.slot), 'add-item:attendees');
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.slot), 'add-item:6');
         await page.keyboard.press('Escape');
         await page.mouse.move(...Object.values(await centre(`${row('attendees')} .mep-prop-chip`)) as [number, number]);
         await clickAt(`${row('attendees')} .mep-prop-chip .mep-prop-chip-remove`);
@@ -366,6 +386,78 @@ suite('Editor properties panel (e2e)', () => {
         assert.ok(edit);
         assert.strictEqual(edit.text, SOURCE);
         assert.ok(await page.$(row('lang')));
+    });
+
+    test('lang offers the file\'s values in the editor\'s completion list, opened on focus and narrowed as typed', async function () {
+        this.timeout(15000);
+        await showDocument(SOURCE);
+        await expand();
+        await clickAt(`${row('lang')} .mep-prop-input`);
+        const list = `${row('lang')} .mep-completions .mep-completion-label`;
+        await page.waitForSelector(list);
+        assert.deepStrictEqual(await page.$$eval(list, els => els.map(el => el.textContent)), ['en', 'de']);
+        assert.strictEqual(await page.$(`${row('lang')} datalist`), null, 'one chrome: no native datalist');
+        await selectAllAndType('d');
+        await delay(50);
+        assert.deepStrictEqual(await page.$$eval(list, els => els.map(el => el.textContent)), ['de']);
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('Enter');
+        await settle();
+        const edit = await lastEdit();
+        assert.ok(edit);
+        assert.deepStrictEqual(changedLines(SOURCE, edit.text), [['lang: en', 'lang: de']]);
+        assert.strictEqual(await page.$(`${row('lang')} .mep-completions`), null, 'the list is gone once a value is set');
+    });
+
+    test('Shift+Delete on a row\'s control removes the row, with the hint', async function () {
+        this.timeout(15000);
+        await showDocument(SOURCE);
+        await expand();
+        await clickAt(`${row('workshop')} .mep-prop-input`);
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('Delete');
+        await page.keyboard.up('Shift');
+        await settle();
+        const edit = await lastEdit();
+        assert.ok(edit);
+        assert.strictEqual(edit.text, SOURCE.replace('workshop: 2026-09-29-workshop-visual-editor-next-round\n', ''));
+        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Removed workshop — (Ctrl|Cmd)\+Z$/);
+    });
+
+    test('typing in one row and then clicking another row\'s × commits the typing and removes that row', async function () {
+        this.timeout(15000);
+        await showDocument(SOURCE);
+        await expand();
+        await clickAt(`${row('stream')} .mep-prop-input`);
+        await selectAllAndType('DOC');
+        await page.mouse.move(...Object.values(await centre(`${row('lang')} .mep-prop-key`)) as [number, number]);
+        // As a person clicks: the button held for a moment, long enough for a blur's commit to redraw the rows.
+        const { x, y } = await centre(`${row('lang')} .mep-prop-remove`);
+        await page.mouse.click(x, y, { delay: 80 });
+        await settle();
+        const edit = await lastEdit();
+        assert.ok(edit);
+        assert.strictEqual(edit.text, SOURCE.replace('stream: UXD', 'stream: DOC').replace('lang: en\n', ''));
+    });
+
+    test('each write is its own undo step: after two quick edits, Ctrl+Z undoes the last one only', async function () {
+        this.timeout(15000);
+        await showDocument(SOURCE);
+        await expand();
+        await clickAt(`${row('stream')} .mep-prop-input`);
+        await selectAllAndType('DOC');
+        await page.keyboard.press('Enter');
+        await page.focus(`${row('lang')} .mep-prop-remove`);
+        await page.keyboard.press('Enter');
+        await delay(50);
+        await page.focus('.mep-props-toggle');
+        await page.keyboard.down('Control');
+        await page.keyboard.press('z');
+        await page.keyboard.up('Control');
+        await settle();
+        const edit = await lastEdit();
+        assert.ok(edit);
+        assert.strictEqual(edit.text, SOURCE.replace('stream: UXD', 'stream: DOC'), 'lang back, the stream edit kept');
     });
 
     test('Insert → Properties puts `---` twice at the top and opens the panel at a new property\'s name', async function () {

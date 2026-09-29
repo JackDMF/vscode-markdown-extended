@@ -666,7 +666,7 @@ img.mep-pending-range {
 
 .mep-prop-row {
     display: grid;
-    grid-template-columns: minmax(7em, 11em) 1fr auto;
+    grid-template-columns: minmax(7em, 11em) 1fr;
     align-items: center;
     gap: 8px;
     min-height: 26px;
@@ -684,23 +684,32 @@ img.mep-pending-range {
     color: var(--vscode-descriptionForeground, #888);
 }
 
-.mep-prop-value { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.mep-prop-value { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
 
-/* A value's field: the inline field's colours, a border only where it is pointed at or focused, so the rows read as values at rest. */
+/*
+ * A value's field: the inline field's colours, as wide as its value (so the
+ * row's × stands right beside it), and a faint border at rest — an editable
+ * value must look editable before the pointer finds it (Daniel, 2026-09-29,
+ * from the screenshots) — drawn fully on hover and in the focus colour on focus.
+ * The read-only uid has none: the difference is the signifier.
+ */
 .mep-prop-input {
+    --mep-prop-edge: color-mix(in srgb, var(--vscode-foreground, #888) 20%, transparent);
     box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
+    width: auto;
+    field-sizing: content;
+    min-width: 8ch;
+    max-width: 100%;
     margin-left: -5px;
     padding: 1px 4px;
     font: inherit;
     color: var(--vscode-input-foreground, inherit);
     background: transparent;
-    border: 1px solid transparent;
+    border: 1px solid var(--mep-prop-edge);
     border-radius: 2px;
     outline: none;
 }
-.mep-prop-input:hover { border-color: var(--vscode-input-border, var(--vscode-editorWidget-border, #8888)); }
+.mep-prop-input:hover { border-color: color-mix(in srgb, var(--vscode-foreground, #888) 60%, transparent); }
 .mep-prop-input:focus {
     background: var(--vscode-input-background, transparent);
     border-color: var(--vscode-focusBorder, #0078d4);
@@ -713,7 +722,7 @@ img.mep-pending-range {
  * button (the picker opens where its input is); the picker follows the theme.
  */
 .mep-prop-row[data-kind="date"] .mep-prop-input { width: 12ch; flex: none; }
-.mep-prop-row[data-kind="date"] .mep-prop-value { position: relative; flex-wrap: nowrap; }
+.mep-prop-row[data-kind="date"] .mep-prop-value { flex-wrap: nowrap; }
 .mep-prop-date-pick {
     display: inline-flex;
     align-items: center;
@@ -777,18 +786,20 @@ img.mep-pending-range {
     padding: 0 8px;
     color: var(--vscode-descriptionForeground, #888);
     background: transparent;
-    border: 1px dashed var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    border: 1px dashed color-mix(in srgb, var(--vscode-foreground, #888) 35%, transparent);
     cursor: pointer;
 }
-.mep-prop-chip-add:hover { color: var(--vscode-foreground, inherit); }
+.mep-prop-chip-add:hover { color: var(--vscode-foreground, inherit); border-color: color-mix(in srgb, var(--vscode-foreground, #888) 60%, transparent); }
 .mep-prop-chip-input.mep-prop-input { width: auto; margin-left: 0; height: 20px; font-size: 12px; }
 
-/* A row's ×: there on hover or while the row has the focus; its place kept, so nothing moves. */
-.mep-prop-remove { visibility: hidden; padding: 0 5px; color: var(--vscode-descriptionForeground, #888); }
-.mep-prop-row:hover > .mep-prop-remove,
-.mep-prop-row:focus-within > .mep-prop-remove { visibility: visible; }
-
-.mep-prop-add { grid-template-columns: minmax(7em, 11em) 1fr auto; }
+/*
+ * A row's ×: right after the value it removes (far from it, the mapping was
+ * lost), there on hover or while the row has the focus — it is a Tab stop, so
+ * focusing it shows it; its place kept, so nothing moves.
+ */
+.mep-prop-remove { opacity: 0; padding: 0 5px; color: var(--vscode-descriptionForeground, #888); }
+.mep-prop-row:hover .mep-prop-remove,
+.mep-prop-row:focus-within .mep-prop-remove { opacity: 1; }
 .mep-prop-add > .mep-prop-add-button {
     grid-column: 1 / -1;
     justify-self: start;

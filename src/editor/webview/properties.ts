@@ -28,15 +28,22 @@
 import { Node } from 'prosemirror-model';
 import { NodeView } from 'prosemirror-view';
 import {
-    FrontMatterParts, Property, PropertiesRead, addItem, addProperty, eolOf, joinFrontMatter, readProperties,
+    FrontMatterParts, KeyRef, Property, PropertiesRead, addItem, addProperty, eolOf, isDate, joinFrontMatter, readProperties,
     removeItem, removeProperty, setBoolean, setText, splitFrontMatter,
 } from '../frontMatter';
+import { CompletionListView } from './completionList';
 import { undoKey } from './hint';
 import { EditorPort, SourceEditor, element, isUndoRedo } from './nodeViews';
 
 type GetPos = () => number | undefined;
 
 let choiceSeq = 0;
+
+/** Set while a redraw gives the focus back: a choice's list opens for a person's focus, not for the redraw's. */
+let restoringFocus = false;
+
+/** The choice list's footer: its keys, as the other completion lists say theirs. */
+const CHOICE_KEYS = '↑↓ choose · ↵ set · Esc close';
 
 /** Where the panel's open state is remembered, per document. */
 const STORAGE_PREFIX = 'markdownExtended.properties.expanded:';
@@ -101,8 +108,8 @@ export class PropertiesView implements NodeView, SourceEditor {
     /** The source box, while it is open. */
     private area: HTMLTextAreaElement | null = null;
     private untrackArea: (() => void) | null = null;
-    /** The list whose **+ add** field is open. */
-    private addingItem: string | null = null;
+    /** The row (by index) of the list whose **+ add** field is open. */
+    private addingItem: number | null = null;
     /** The **+ Add property** row's state while it is open: the name typed, and whether the value is asked now. */
     private adding: { name: string; value: string; stage: 'name' | 'value' } | null = null;
     /** The rows whose typing is not in the document yet, for a save to commit. */
@@ -138,6 +145,16 @@ export class PropertiesView implements NodeView, SourceEditor {
             }
         });
         this.dom.addEventListener('keydown', e => this.onKey(e));
+        // A press on a button or a checkbox while a field holds typing does not
+        // take the focus: the blur would commit the typing and draw the rows
+        // again between the press and the release, and the click would land on
+        // nothing. The action commits the typing itself first (`flushDirty`).
+        this.dom.addEventListener('mousedown', e => {
+            const target = e.target as HTMLElement | null;
+            if (this.dirty.size > 0 && target && !target.closest('input.mep-prop-input, textarea')) {
+                e.preventDefault();
+            }
+        }, true);
         panels.set(this.dom, this);
         this.render();
     }
@@ -184,9 +201,7 @@ export class PropertiesView implements NodeView, SourceEditor {
 
     /** A save: every row's typing and the open source box go into the document now. */
     commitSource(): void {
-        for (const commit of [...this.dirty.values()]) {
-            commit();
-        }
+        this.flushDirty();
         if (this.area) {
             this.writeSource(this.area.value);
         }
@@ -241,59 +256,98 @@ export class PropertiesView implements NodeView, SourceEditor {
         const rows: HTMLElement[] = [];
         if (this.read.error !== null) {
             const row = element('div', 'mep-prop-row mep-prop-error');
-            row.append(element('span', 'mep-prop-summary', `${this.read.error} `), this.sourceLink(null));
+            row.append(element('span', 'mep-prop-summary', `${this.read.error} `), this.sourceLink(null, -1));
             rows.push(row);
         } else {
-            for (const property of this.read.properties) {
-                rows.push(this.row(property));
-            }
+            this.read.properties.forEach((property, index) => rows.push(this.row(property, index)));
             rows.push(this.addRow());
         }
         this.content.replaceChildren(...rows);
         this.restoreFocus(memo);
     }
 
-    private row(property: Property): HTMLElement {
+    /**
+     * The key as the model names it now: row `index` of the current read, when it
+     * still holds `key`. An action looks it up when it runs, not when its row was
+     * drawn — a commit in between (the typing a click made leave) may have moved
+     * every offset after it — and by position as well as name, since `1:` and
+     * `'1':` are two keys that read as one name.
+     */
+    private ref(index: number, key: string): KeyRef | null {
+        const property = this.read.properties[index];
+        return property && property.key === key ? { offset: property.offset, key } : null;
+    }
+
+    /** Write a row's edit, or nothing when the key moved away or the model refused it. */
+    private apply(index: number, key: string, edit: (body: string, ref: KeyRef) => string | null): boolean {
+        const ref = this.ref(index, key);
+        const body = ref === null ? null : edit(this.parts.body, ref);
+        if (body === null || body === this.parts.body) {
+            return false;
+        }
+        this.write(body);
+        return true;
+    }
+
+    private row(property: Property, index: number): HTMLElement {
         const row = element('div', 'mep-prop-row');
         row.dataset.key = property.key;
         row.dataset.kind = property.kind;
         const key = element('span', 'mep-prop-key', property.key);
         key.title = property.key;
         const value = element('div', 'mep-prop-value');
-        value.append(...this.control(property));
+        value.append(...this.control(property, index));
         row.append(key, value);
         if (property.kind !== 'id') {
+            // Beside the value it removes, not at the row's far end; a Tab stop of its own.
             const remove = button('mep-prop-remove', '×', `Remove ${property.key}`);
-            remove.tabIndex = -1;
-            remove.addEventListener('click', () => {
-                const body = removeProperty(this.parts.body, property.key);
-                if (body !== null) {
-                    this.write(body);
-                    this.port.hint(`Removed ${property.key} — ${undoKey()}`, this.header);
+            remove.dataset.slot = `remove:${index}`;
+            remove.addEventListener('click', () => this.removeRow(index, property.key));
+            value.append(remove);
+            // Shift+Delete on any of the row's controls removes the row too (a chip's field keeps its Backspace).
+            row.addEventListener('keydown', e => {
+                if (e.key === 'Delete' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.removeRow(index, property.key);
                 }
             });
-            row.append(remove);
         }
         return row;
     }
 
-    private control(property: Property): HTMLElement[] {
+    private removeRow(index: number, key: string): void {
+        this.flushDirty();
+        if (this.apply(index, key, removeProperty)) {
+            this.port.hint(`Removed ${key} — ${undoKey()}`, this.header);
+            this.focusAfterRemoval(index);
+        }
+    }
+
+    /** After a row went, the focus on the row now in its place, else the one before, else the header. */
+    private focusAfterRemoval(index: number): void {
+        const rows = Array.from(this.content.querySelectorAll<HTMLElement>('.mep-prop-row[data-key]'));
+        const target = rows[index] ?? rows[index - 1];
+        const control = target?.querySelector<HTMLElement>('input, [tabindex="0"], button');
+        (control ?? this.toggle).focus({ preventScroll: true });
+    }
+
+    private control(property: Property, index: number): HTMLElement[] {
         switch (property.kind) {
             case 'text':
             case 'choice':
             case 'date':
-                return this.field(property);
+                return this.field(property, index);
             case 'boolean': {
                 const box = element('input', 'mep-prop-check');
                 box.type = 'checkbox';
                 box.checked = property.text === 'true';
-                box.dataset.slot = `value:${property.key}`;
+                box.dataset.slot = `value:${index}`;
                 box.setAttribute('aria-label', property.key);
                 box.addEventListener('change', () => {
-                    const body = setBoolean(this.parts.body, property.key, box.checked);
-                    if (body !== null) {
-                        this.write(body);
-                    }
+                    const checked = box.checked;
+                    this.flushDirty();
+                    this.apply(index, property.key, (body, ref) => setBoolean(body, ref, checked));
                 });
                 return [box];
             }
@@ -301,7 +355,7 @@ export class PropertiesView implements NodeView, SourceEditor {
                 const id = element('span', 'mep-prop-id', property.text);
                 id.tabIndex = 0;
                 id.setAttribute('role', 'button');
-                id.dataset.slot = `value:${property.key}`;
+                id.dataset.slot = `value:${index}`;
                 id.title = 'Read-only — click to copy';
                 id.setAttribute('aria-label', `${property.key}, read-only: ${property.text}. Copy`);
                 const copy = () => {
@@ -318,51 +372,47 @@ export class PropertiesView implements NodeView, SourceEditor {
                 return [id];
             }
             case 'list':
-                return [this.chips(property)];
+                return [this.chips(property, index)];
             case 'source': {
                 const summary = element('span', 'mep-prop-summary', `${property.text} · `);
-                return [summary, this.sourceLink(property)];
+                return [summary, this.sourceLink(property, index)];
             }
         }
     }
 
     /**
      * A text, date or choice row: a one-line field committing on `Enter` and on
-     * leaving, reverting on `Esc`. A date is a text field too, holding the date
-     * as the file writes it (`YYYY-MM-DD`) — the browser's date input shows it
-     * in the system's locale (`09/29/2026`), a second spelling beside the
-     * file's — with a calendar button (and `Alt+↓`) opening the browser's picker.
+     * leaving, reverting on `Esc`, as wide as its value. A date is a text field
+     * too, holding the date as the file writes it (`YYYY-MM-DD`) — the browser's
+     * date input shows it in the system's locale (`09/29/2026`), a second
+     * spelling beside the file's — with a calendar button (and `Alt+↓`) opening
+     * the browser's picker. A choice (`lang`) lists the values the file uses in
+     * the editor's own completion list under the field, opened on focus and
+     * narrowed as typed.
      */
-    private field(property: Property): HTMLElement[] {
+    private field(property: Property, index: number): HTMLElement[] {
         const input = element('input', 'mep-prop-input');
+        const slot = `value:${index}`;
         input.type = 'text';
         input.value = property.text;
         input.spellcheck = false;
         input.placeholder = property.kind === 'date' ? 'YYYY-MM-DD' : 'empty';
-        input.dataset.slot = `value:${property.key}`;
+        input.dataset.slot = slot;
         input.dataset.committed = property.text;
         input.setAttribute('aria-label', property.key);
+        fitToValue(input);
         const out: HTMLElement[] = [input];
-        if (property.kind === 'choice' && property.choices) {
-            // The values the file uses for the key, offered; any other may be typed.
-            const list = element('datalist');
-            list.id = `mep-prop-choices-${++choiceSeq}`;
-            for (const choice of property.choices) {
-                const option = element('option');
-                option.value = choice;
-                list.append(option);
-            }
-            input.setAttribute('list', list.id);
-            out.push(list);
-        }
         /** Write the field's value; `false` when it cannot be (not a date), the reason said beside it. */
         const commit = (): boolean => {
             if (property.kind === 'date' && input.value !== property.text && !isDate(input.value)) {
                 this.port.hint(`A date is written YYYY-MM-DD — Esc keeps ${property.text}`, input.isConnected ? input : this.header);
                 return false;
             }
-            this.clean(input.dataset.slot as string);
-            this.commitText(property, input.value);
+            this.clean(slot);
+            const text = input.value;
+            if (text !== property.text) {
+                this.apply(index, property.key, (body, ref) => setText(body, ref, text));
+            }
             return true;
         };
         let openPicker: (() => void) | null = null;
@@ -381,6 +431,7 @@ export class PropertiesView implements NodeView, SourceEditor {
             pick.tabIndex = -1;
             pick.append(calendarIcon());
             openPicker = () => {
+                this.flushDirty();
                 native.value = isDate(input.value) ? input.value : '';
                 try {
                     native.showPicker();
@@ -391,14 +442,31 @@ export class PropertiesView implements NodeView, SourceEditor {
             pick.addEventListener('click', () => openPicker?.());
             out.push(pick, native);
         }
-        input.addEventListener('input', () => this.markDirty(input.dataset.slot as string, () => {
-            if (!commit()) {
-                // Leaving with a value that is not a date: the file keeps its own.
-                input.value = property.text;
-                this.clean(input.dataset.slot as string);
+        const choices = property.kind === 'choice' ? new ChoiceList(input, property.key, property.choices ?? [], value => {
+            input.value = value;
+            fitToValue(input);
+            commit();
+        }) : null;
+        input.addEventListener('input', () => {
+            fitToValue(input);
+            choices?.filter();
+            this.markDirty(slot, () => {
+                if (!commit()) {
+                    // Leaving with a value that is not a date: the file keeps its own.
+                    input.value = property.text;
+                    this.clean(slot);
+                }
+            });
+        });
+        input.addEventListener('focus', () => {
+            if (!restoringFocus) {
+                choices?.open();
             }
-        }));
+        });
         input.addEventListener('keydown', e => {
+            if (choices?.handleKey(e)) {
+                return;
+            }
             if (e.key === 'Enter' && !e.isComposing) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -412,45 +480,41 @@ export class PropertiesView implements NodeView, SourceEditor {
                     e.preventDefault();
                     e.stopPropagation();
                     input.value = property.text;
-                    this.clean(input.dataset.slot as string);
+                    fitToValue(input);
+                    this.clean(slot);
                 }
             }
         });
         input.addEventListener('blur', () => {
+            choices?.close();
             if (input.value !== property.text) {
                 // After the focus has moved: the redraw gives it back to where it went.
                 setTimeout(() => {
-                    this.dirty.get(input.dataset.slot as string)?.();
+                    this.dirty.get(slot)?.();
                 }, 0);
             }
         });
         return out;
     }
 
-    private commitText(property: Property, text: string): void {
-        if (text === property.text) {
-            return;
-        }
-        const body = setText(this.parts.body, property.key, text);
-        if (body !== null && body !== this.parts.body) {
-            this.write(body);
-        }
-    }
-
     /** A list as chips, each removable, and **+ add**; the list's own style (flow or block) is the model's to keep. */
-    private chips(property: Property): HTMLElement {
+    private chips(property: Property, index: number): HTMLElement {
         const box = element('div', 'mep-prop-chips');
-        (property.items ?? []).forEach((item, index) => {
+        const items = property.items ?? [];
+        items.forEach((item, at) => {
             const chip = element('span', 'mep-prop-chip');
             chip.append(element('span', 'mep-prop-chip-text', item));
             const remove = button('mep-prop-chip-remove', '×', `Remove ${item}`);
             remove.tabIndex = -1;
-            remove.addEventListener('click', () => this.removeItemAt(property, index, item));
+            remove.addEventListener('click', () => {
+                this.flushDirty();
+                this.removeItemAt(index, property.key, at, item);
+            });
             chip.append(remove);
             box.append(chip);
         });
-        const slot = `add-item:${property.key}`;
-        if (this.addingItem === property.key) {
+        const slot = `add-item:${index}`;
+        if (this.addingItem === index) {
             const input = element('input', 'mep-prop-input mep-prop-chip-input');
             input.type = 'text';
             input.placeholder = 'add';
@@ -465,10 +529,11 @@ export class PropertiesView implements NodeView, SourceEditor {
                 if (value === '') {
                     return false;
                 }
-                const body = addItem(this.parts.body, property.key, value, eolOf(this.node.attrs.src as string));
-                if (body !== null) {
+                const eol = eolOf(this.node.attrs.src as string);
+                if (this.apply(index, property.key, (body, ref) => addItem(body, ref, value, eol))) {
                     input.value = '';
-                    this.write(body);
+                } else {
+                    this.port.hint(`${value} cannot be added to ${property.key} here — edit it as source`, input.isConnected ? input : this.header);
                 }
                 return true;
             };
@@ -487,24 +552,21 @@ export class PropertiesView implements NodeView, SourceEditor {
                     this.clean(slot);
                     this.addingItem = null;
                     this.render();
-                    this.focusSlot(`add-button:${property.key}`);
-                } else if (e.key === 'Backspace' && input.value === '' && (property.items ?? []).length > 0) {
+                    this.focusSlot(`add-button:${index}`);
+                } else if (e.key === 'Backspace' && input.value === '' && items.length > 0) {
                     e.preventDefault();
                     e.stopPropagation();
-                    const last = (property.items ?? []).length - 1;
-                    this.removeItemAt(property, last, (property.items ?? [])[last]);
+                    this.removeItemAt(index, property.key, items.length - 1, items[items.length - 1]);
                 }
             });
             input.addEventListener('blur', () => {
                 setTimeout(() => {
                     // Still adding: the redraw after an item went in gave the new field the focus.
-                    if (this.addingItem !== property.key || (document.activeElement as HTMLElement | null)?.dataset.slot === slot) {
+                    if (this.addingItem !== index || (document.activeElement as HTMLElement | null)?.dataset.slot === slot) {
                         return;
                     }
-                    if (this.dirty.has(slot)) {
-                        commit();
-                    }
-                    if (this.addingItem === property.key) {
+                    this.dirty.get(slot)?.();
+                    if (this.addingItem === index) {
                         this.addingItem = null;
                         this.render();
                     }
@@ -513,9 +575,10 @@ export class PropertiesView implements NodeView, SourceEditor {
             box.append(input);
         } else {
             const add = button('mep-prop-chip mep-prop-chip-add', '+ add', `Add to ${property.key}`);
-            add.dataset.slot = `add-button:${property.key}`;
+            add.dataset.slot = `add-button:${index}`;
             add.addEventListener('click', () => {
-                this.addingItem = property.key;
+                this.flushDirty();
+                this.addingItem = index;
                 this.render();
                 this.focusSlot(slot);
             });
@@ -524,11 +587,13 @@ export class PropertiesView implements NodeView, SourceEditor {
         return box;
     }
 
-    private removeItemAt(property: Property, index: number, item: string): void {
-        const body = removeItem(this.parts.body, property.key, index, eolOf(this.node.attrs.src as string));
-        if (body !== null) {
-            this.write(body);
+    private removeItemAt(index: number, key: string, at: number, item: string): void {
+        const eol = eolOf(this.node.attrs.src as string);
+        if (this.apply(index, key, (body, ref) => removeItem(body, ref, at, eol))) {
             this.port.hint(`Removed ${item} — ${undoKey()}`, this.header);
+        } else {
+            // An anchored item an alias elsewhere names, and the like: the model refuses rather than break the YAML.
+            this.port.hint(`${item} cannot be removed here — edit ${key} as source`, this.header);
         }
     }
 
@@ -539,7 +604,10 @@ export class PropertiesView implements NodeView, SourceEditor {
         if (adding === null) {
             const add = button('mep-prop-add-button', '+ Add property');
             add.dataset.slot = 'add:button';
-            add.addEventListener('click', () => this.startAdding());
+            add.addEventListener('click', () => {
+                this.flushDirty();
+                this.startAdding();
+            });
             row.append(add);
             return row;
         }
@@ -549,6 +617,8 @@ export class PropertiesView implements NodeView, SourceEditor {
         name.spellcheck = false;
         name.value = adding.name;
         name.dataset.slot = 'add:name';
+        // Nothing is committed yet: Ctrl+Z here undoes the typing, not the document.
+        name.dataset.committed = '';
         name.setAttribute('aria-label', 'New property name');
         const value = element('input', 'mep-prop-input');
         value.type = 'text';
@@ -556,13 +626,18 @@ export class PropertiesView implements NodeView, SourceEditor {
         value.spellcheck = false;
         value.value = adding.value;
         value.dataset.slot = 'add:value';
+        value.dataset.committed = '';
         value.setAttribute('aria-label', 'New property value');
         value.disabled = adding.stage === 'name';
+        fitToValue(name);
+        fitToValue(value);
         name.addEventListener('input', () => {
             adding.name = name.value;
+            fitToValue(name);
         });
         value.addEventListener('input', () => {
             adding.value = value.value;
+            fitToValue(value);
         });
         const cancel = () => {
             this.adding = null;
@@ -597,7 +672,10 @@ export class PropertiesView implements NodeView, SourceEditor {
                 e.stopPropagation();
                 const body = addProperty(this.parts.body, adding.name, value.value.trim(), eolOf(this.node.attrs.src as string));
                 if (body === null) {
-                    this.port.hint(`Already a property: ${adding.name}`, name);
+                    const reason = this.read.properties.some(p => p.key === adding.name)
+                        ? `Already a property: ${adding.name}`
+                        : `${adding.name} cannot be added here — edit the YAML as source`;
+                    this.port.hint(reason, name);
                     return;
                 }
                 this.adding = null;
@@ -621,11 +699,16 @@ export class PropertiesView implements NodeView, SourceEditor {
     }
 
     /** *edit as source*: the source box, opened at the property's key (or at the start). */
-    private sourceLink(property: Property | null): HTMLButtonElement {
+    private sourceLink(property: Property | null, index: number): HTMLButtonElement {
         const link = button('mep-prop-source-link', 'edit as source');
-        link.dataset.slot = `source:${property?.key ?? ''}`;
+        link.dataset.slot = `source:${index}`;
         link.title = property ? `Edit ${property.key} as YAML` : 'Edit the YAML as text';
-        link.addEventListener('click', () => this.openSource(property));
+        link.addEventListener('click', () => {
+            this.flushDirty();
+            // The key where it is now: a commit just made may have moved it.
+            const now = property ? this.read.properties[index] : undefined;
+            this.openSource(now && now.key === property?.key ? now : null);
+        });
         return link;
     }
 
@@ -636,9 +719,7 @@ export class PropertiesView implements NodeView, SourceEditor {
         if (this.area) {
             return;
         }
-        for (const commit of [...this.dirty.values()]) {
-            commit();
-        }
+        this.flushDirty();
         const body = this.parts.body;
         const area = element('textarea', 'mep-raw-editor mep-props-editor');
         area.value = body.replace(/\r\n?/g, '\n').replace(/\n$/, '');
@@ -719,6 +800,13 @@ export class PropertiesView implements NodeView, SourceEditor {
         }
     }
 
+    /** Every row's typing into the document now, before an action that reads it. */
+    private flushDirty(): void {
+        for (const commit of [...this.dirty.values()]) {
+            commit();
+        }
+    }
+
     private markDirty(slot: string, commit: () => void): void {
         this.dirty.set(slot, commit);
         if (this.untrackDirty === null) {
@@ -742,7 +830,9 @@ export class PropertiesView implements NodeView, SourceEditor {
             return;
         }
         if (isUndoRedo(e)) {
-            const typing = target instanceof HTMLInputElement && target.type === 'text' && target.value !== (target.dataset.committed ?? target.value);
+            // A field with no committed value of its own (a new property's) is all typing.
+            const typing = target instanceof HTMLInputElement && target.type === 'text'
+                && (target.dataset.committed === undefined || target.value !== target.dataset.committed);
             // Kept from VS Code either way: its undo would revert the document.
             e.stopPropagation();
             if (!typing) {
@@ -786,7 +876,12 @@ export class PropertiesView implements NodeView, SourceEditor {
             this.toggle.focus({ preventScroll: true });
             return;
         }
-        el.focus({ preventScroll: true });
+        restoringFocus = true;
+        try {
+            el.focus({ preventScroll: true });
+        } finally {
+            restoringFocus = false;
+        }
         if (el instanceof HTMLInputElement && el.type === 'text' && memo.value !== null) {
             if (memo.committed === el.dataset.committed && memo.value !== el.value) {
                 el.value = memo.value;
@@ -803,15 +898,6 @@ export class PropertiesView implements NodeView, SourceEditor {
             el.setSelectionRange(el.value.length, el.value.length);
         }
     }
-}
-
-/** A calendar date written `YYYY-MM-DD`: the form and a day the calendar has. */
-function isDate(text: string): boolean {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-        return false;
-    }
-    const date = new Date(`${text}T00:00:00Z`);
-    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text;
 }
 
 /** The calendar glyph, drawn in the text's colour: an inline SVG, so no icon font has to be there. */
@@ -859,5 +945,116 @@ function copyText(text: string): void {
         navigator.clipboard.writeText(text).catch(fallback);
     } catch {
         fallback();
+    }
+}
+
+/**
+ * A field as wide as its value, so what stands beside it (a row's ×) is beside
+ * the value and not at the row's end. `field-sizing: content` does it where the
+ * browser has it (`editor.css`); `size` is the fallback.
+ */
+function fitToValue(input: HTMLInputElement): void {
+    input.size = Math.max(8, Math.min(80, (input.value || input.placeholder).length + 1));
+}
+
+/**
+ * The values a choice row offers (`lang`), in the editor's one completion list
+ * (`completionList.ts`) under the field: opened on focus, narrowed to the
+ * values holding what is typed, `↓`/`↑` choose, `Enter` sets the chosen one
+ * (with none chosen, the typed text), `Esc` closes the list before it reverts
+ * the row. Any other value may be typed; the list offers, it does not constrain.
+ */
+class ChoiceList {
+    private view: CompletionListView | null = null;
+    private shown: readonly string[] = [];
+    private readonly id = `mep-prop-choices-${++choiceSeq}`;
+
+    constructor(
+        private readonly input: HTMLInputElement,
+        private readonly label: string,
+        private readonly values: readonly string[],
+        private readonly pick: (value: string) => void,
+    ) {
+        input.setAttribute('role', 'combobox');
+        input.setAttribute('aria-autocomplete', 'list');
+        input.setAttribute('aria-expanded', 'false');
+        input.setAttribute('aria-controls', this.id);
+        input.autocomplete = 'off';
+    }
+
+    open(): void {
+        this.show(this.values);
+    }
+
+    /** The values holding what is typed; all of them while the field holds one of them exactly. */
+    filter(): void {
+        const q = this.input.value.trim().toLowerCase();
+        this.show(q === '' || this.values.includes(this.input.value) ? this.values : this.values.filter(v => v.toLowerCase().includes(q)));
+    }
+
+    close(): void {
+        this.view?.remove();
+        this.view = null;
+        this.shown = [];
+        this.input.setAttribute('aria-expanded', 'false');
+        this.input.removeAttribute('aria-activedescendant');
+    }
+
+    /** A key the list takes: true when it did. */
+    handleKey(e: KeyboardEvent): boolean {
+        const view = this.view;
+        if (view === null || this.shown.length === 0) {
+            return false;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            if (e.altKey) {
+                return false;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            const n = this.shown.length;
+            const next = e.key === 'ArrowDown' ? (view.chosen + 1) % n : (view.chosen <= 0 ? n - 1 : view.chosen - 1);
+            const option = view.choose(next);
+            if (option) {
+                this.input.setAttribute('aria-activedescendant', option.id);
+            }
+            return true;
+        }
+        if (e.key === 'Enter' && !e.isComposing && view.chosen >= 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            const value = this.shown[view.chosen];
+            this.close();
+            this.pick(value);
+            return true;
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            this.close();
+            return true;
+        }
+        return false;
+    }
+
+    private show(values: readonly string[]): void {
+        if (values.length === 0) {
+            this.close();
+            return;
+        }
+        this.shown = values;
+        const view = this.view ?? new CompletionListView(this.id, this.label, CHOICE_KEYS, i => {
+            const value = this.shown[i];
+            this.close();
+            this.pick(value);
+        });
+        view.render(values.map(value => ({ label: value, value, detail: value === this.input.dataset.committed ? 'current' : undefined })));
+        if (this.view === null) {
+            this.view = view;
+            this.input.after(view.el);
+        }
+        view.el.style.left = `${this.input.offsetLeft}px`;
+        view.el.style.minWidth = `${this.input.offsetWidth}px`;
+        this.input.setAttribute('aria-expanded', 'true');
     }
 }
