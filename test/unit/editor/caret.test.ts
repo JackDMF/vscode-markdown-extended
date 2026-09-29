@@ -60,11 +60,26 @@ suite('Editor positions: the caret the page reports', () => {
         assert.strictEqual(page.posted.length, 0, 'held while the edit is in the delay');
         page.pending = false;
         page.text = 'text edited';
-        reporter.editSent();
+        reporter.editSent(false);
         assert.strictEqual(page.posted.length, 0, 'held while the host holds another text');
         page.held = 'text edited';
-        reporter.editSent();
+        reporter.editSent(false);
         assert.deepStrictEqual(page.posted, [{ type: 'caret', baseVersion: 3, position: { line: 0, character: 1 } }]);
+        reporter.dispose();
+    });
+
+    test('after an edit the host applied, and when the host asks, the same caret is reported again', async () => {
+        const page = new FakeCaretPage();
+        const reporter = new CaretReporter(page, DELAY);
+        reporter.selectionMoved();
+        await delay(DELAY * 3);
+        reporter.editSent(false);
+        assert.strictEqual(page.posted.length, 1, 'no edit went: nothing new to say');
+        reporter.editSent(true);
+        assert.strictEqual(page.posted.length, 2, 'an edit went: the host forgot the caret as it applied it');
+        reporter.reportAgain();
+        await delay(DELAY * 3);
+        assert.deepStrictEqual(page.posted.map(m => m.position), [{ line: 0, character: 1 }, { line: 0, character: 1 }, { line: 0, character: 1 }]);
         reporter.dispose();
     });
 

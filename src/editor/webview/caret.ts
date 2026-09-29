@@ -28,8 +28,9 @@ export interface CaretPort {
  * edit that carries it (`editSent`); the host drops one whose `baseVersion` is
  * not the document it last posted or that arrives while the document holds
  * another text, so a stale caret is never taken. Reports are debounced
- * (`CARET_DELAY_MS`) and sent only when the answer changed; a new document
- * from the host makes the last one stale, and it is reported again.
+ * (`CARET_DELAY_MS`) and sent only when the answer changed — or when the host
+ * forgot it: after every edit sent (the host forgets the caret as it applies
+ * one), after every new document, and when it asks (`reportCaret`).
  */
 export class CaretReporter {
     private timer: ReturnType<typeof setTimeout> | undefined;
@@ -51,9 +52,16 @@ export class CaretReporter {
         }, this.delayMs);
     }
 
-    /** The page's pending edit was sent (or found unchanged): a report held back for it goes now. */
-    editSent(): void {
-        if (this.waiting) {
+    /**
+     * The page flushed its pending edit: a report held back for it goes now.
+     * With `posted`, an edit went to the host, which forgets the caret when it
+     * applies one — the caret is reported after it even if it is the same.
+     */
+    editSent(posted: boolean): void {
+        if (posted) {
+            this.last = undefined;
+        }
+        if (posted || this.waiting) {
             this.waiting = false;
             this.report();
         }
@@ -63,6 +71,12 @@ export class CaretReporter {
     documentShown(): void {
         this.last = undefined;
         this.waiting = false;
+        this.selectionMoved();
+    }
+
+    /** The host asked (`reportCaret`): it forgot the caret, so the same one is news again. */
+    reportAgain(): void {
+        this.last = undefined;
         this.selectionMoved();
     }
 

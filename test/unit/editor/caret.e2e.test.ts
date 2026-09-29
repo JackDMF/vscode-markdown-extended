@@ -64,6 +64,28 @@ suite('Editor caret (e2e)', () => {
         assert.deepStrictEqual((await lastCaret())?.position, { line: 2, character: 'XSecond *paragraph* here.'.length });
     });
 
+    test('a map request is answered from the page\'s own document, after the edit it was typing', async function () {
+        this.timeout(20000);
+        // The page now reads `XSecond *paragraph* here.` on line 2; its paragraph's text starts at 19.
+        await page.click('.ProseMirror > p:nth-of-type(2)');
+        await page.keyboard.press('Home');
+        await page.keyboard.type('Y');
+        await editor?.send({ type: 'map', id: 7, toSource: [22, 10_000], toPage: [{ line: 2, character: 3 }, { line: 2, character: 99 }] });
+        await delay(100);
+        const messages = await posted();
+        const answer = messages.find((m): m is Extract<WebviewMessage, { type: 'mapped' }> => m.type === 'mapped' && m.id === 7);
+        assert.deepStrictEqual(answer, {
+            type: 'mapped',
+            id: 7,
+            baseVersion: 1,
+            toSource: [{ line: 2, character: 3, approximate: false }, null],
+            toPage: [{ pos: 22, approximate: false }, { pos: 19 + 'YXSecond paragraph here.'.length, approximate: true }],
+        });
+        const types = messages.map(m => (m.type === 'mapped' ? `mapped:${m.id}` : m.type));
+        assert.ok(types.lastIndexOf('edit') >= 0 && types.lastIndexOf('edit') < types.indexOf('mapped:7'),
+            `the typed Y went to the host before the answer: ${JSON.stringify(types)}`);
+    });
+
     test('a selected source block is no caret', async function () {
         this.timeout(20000);
         await page.click('.mep-raw-block');
