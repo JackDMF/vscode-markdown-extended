@@ -560,12 +560,12 @@
  * focus, shows what a click does, and its tooltip names the verb. Two verbs,
  * two signifiers (Daniel, 2026-09-28):
  *
- * - `data-lens-kind="set"` — a verb that changes the artifact: the status chip
- *   or badge, the priority value. Drawn as a dropdown: a subtle button
+ * - `data-lens-kind="set"` — a verb that changes the artifact: an authored
+ *   standing (the status chip or badge), the priority value. Drawn as a dropdown: a subtle button
  *   surface, rounded, and a `▾` after the value; no underline, which would say
  *   "link". A chip keeps its own colour, so the surface is a ring around it.
  * - `data-lens-kind="go"` — a verb that goes somewhere: a relation's label,
- *   which opens its picker. Underlined, as the target links beside it are.
+ *   which opens its picker, or a derived standing (a change's stage). Underlined, as the target links beside it are.
  *   The underline is put on every descendant too: a badge drawn as an inline
  *   block, and a row's cells, take none from their parent.
  *

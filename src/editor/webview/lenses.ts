@@ -13,7 +13,7 @@
  *
  * | Surface | Placed on | When that is not there |
  * | --- | --- | --- |
- * | `status` | the standing row of the summary table (`injected_block`, mark `artifact`): `tr[data-req-standing]` (`authored`: a `set`; `derived`, a change's stage: a `go`), or, for a Req Explorer older than the attribute, `tr[data-req-field="status"]` (a `set`); without either row, the status badge (`inline_atom`, mark `artifact`) in its heading | a verb of the heading |
+ * | `status` | the standing row of the summary table (`injected_block`, mark `artifact`): `tr[data-req-standing]` (the agreed contract, workshop 2026-09-29, NEU-UXD-009, arriving with Req Explorer 1.12.0: `authored` is a `set`, `derived`, a change's stage, a `go`), or, for every earlier build, `tr[data-req-field="status"]` (a `set`); without either row, the status badge (`inline_atom`, mark `artifact`) in its heading | a verb of the heading |
  * | `priority` | `tr[data-req-field="priority"]` of that table | a verb of the heading |
  * | `links` | `tr[data-req-relation="<relation>"]` of that table, of its side (`data-req-direction`) when the lens names one | a verb of the heading |
  * | `action` | — | a verb of the heading, in its object toolbar |

@@ -1077,10 +1077,13 @@ checks the shape — an unknown surface, a missing artifact, a hint that is not 
 argument make a foreign lens; an unknown direction is left out — and `LensItem` carries the
 fields to the page. The argument stays in the command: `runLens` runs the provider's command exactly as
 it was given. On Req Explorer's side, the summary table (`injected_block`, mark
-`{ kind: 'atom', artifact }`) marks its rows `tr[data-req-field="<field>"]` (the standing row also `data-req-standing="authored"|"derived"`) and
+`{ kind: 'atom', artifact }`) marks its rows `tr[data-req-field="<field>"]` and
 `tr[data-req-relation="<relation key>"]` with `data-req-direction="out"|"in"`, and the
 badge is the `inline_atom` with the same mark inside the heading. A lens without `direction`
-(a Req Explorer older than it) takes the relation's first row.
+(a Req Explorer older than it) takes the relation's first row. The standing row also carries
+`data-req-standing="authored"|"derived"`: that is the **agreed contract** (workshop 2026-09-29,
+NEU-UXD-009), arriving with Req Explorer 1.12.0; no earlier build emits it, and every earlier build
+exercises the `tr[data-req-field="status"]` path.
 
 *Resolution by artifact* (`place` in `webview/lenses.ts`), against the document the page
 holds when the `lenses` message arrives. The artifact's heading (the top-level heading
@@ -1131,7 +1134,7 @@ a rendering's own link handling: a plain click (not with Ctrl/Cmd, not on a `<su
 not on a link) runs the lens and selects nothing, `mousedown` is prevented so no caret
 moves, and `Enter` or `Space` on the focused element runs it. `editor.css` draws nothing at
 rest. **Two verbs, two signifiers** (Daniel, 2026-09-28: an underline says "link", not
-"set"): the element carries `data-lens-kind`. A `set` lens — `status` or `priority`, a verb
+"set"): the element carries `data-lens-kind`. A `set` lens — an authored standing or `priority`, a verb
 that changes the artifact — is marked on the value it sets (the status chip in the status
 row, else the value cell; the badge where one is drawn) and on hover or keyboard focus is
 drawn as a dropdown: a subtle rounded button surface (`--vscode-button-secondaryBackground`,

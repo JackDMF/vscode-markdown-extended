@@ -451,6 +451,27 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         tabIndex: el.tabIndex,
     })));
 
+    /**
+     * A requirement heading (with its badge, or without) and its summary table `html`, sent as the
+     * document. `tag` goes into the paragraph, so the wait is for *this* document and not for one an
+     * earlier case already rendered; `rowSelector` matching `rowCount` rows says the table is there.
+     */
+    const showRequirement = async (o: { html: string; badge?: boolean; tag: string; rowSelector: string; rowCount: number }) => {
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const paragraph = `A plain paragraph ${o.tag}.`;
+        const json = parsedDocumentToJSON(parseDocument(md, `# FRS-TST-001: Page\n\n${paragraph}\n`, {}));
+        const content = json.doc.content as { type: string; attrs: Record<string, unknown>; content?: Record<string, unknown>[] }[];
+        content[0].attrs.reqPrefix = 'FRS-TST-001: ';
+        content[0].content = o.badge
+            ? [{ type: 'text', text: 'Page ' }, { type: 'inline_atom', attrs: { html: '<span class="req-badge req-badge-implemented">implemented</span>', mark: BADGE_MARK } }]
+            : [{ type: 'text', text: 'Page' }];
+        content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html: o.html, src: null, gap: null } });
+        version++;
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
+        await page.waitForFunction((text, selector, n) => document.querySelector('.ProseMirror')?.textContent?.includes(text)
+            && document.querySelectorAll(`.ProseMirror ${selector}`).length === n, {}, paragraph, o.rowSelector, o.rowCount);
+    };
+
     const decorationOf = (selector: string) => page.$eval(selector, el => {
         const style = getComputedStyle(el);
         return { line: style.textDecorationLine, cursor: style.cursor };
@@ -801,21 +822,9 @@ suite('Editor lenses on their surfaces (e2e)', () => {
 
     test('a status lens goes on the table\'s status row first, and on the badge only where the table has none', async function () {
         this.timeout(15000);
-        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-        /** A requirement heading — with or without its badge — and its table, with or without a status row: three blocks. */
+        /** A requirement heading — with or without its badge — and its table, with or without a status row. */
         const show = async (badge: boolean, statusRow: boolean) => {
-            const json = parsedDocumentToJSON(parseDocument(md, '# FRS-TST-001: Page\n\nA plain paragraph.\n', {}));
-            const content = json.doc.content as { type: string; attrs: Record<string, unknown>; content?: Record<string, unknown>[] }[];
-            content[0].attrs.reqPrefix = 'FRS-TST-001: ';
-            content[0].content = badge
-                ? [{ type: 'text', text: 'Page ' }, { type: 'inline_atom', attrs: { html: '<span class="req-badge req-badge-implemented">implemented</span>', mark: BADGE_MARK } }]
-                : [{ type: 'text', text: 'Page' }];
-            const html = statusRow ? withStatusRow(SUMMARY_HTML) : SUMMARY_HTML;
-            content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html, src: null, gap: null } });
-            version++;
-            await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
-            await page.waitForFunction(v => document.querySelector('.ProseMirror')?.textContent?.includes('A plain paragraph.')
-                && document.querySelectorAll('.ProseMirror tr[data-req-field="status"]').length === v, {}, statusRow ? 1 : 0);
+            await showRequirement({ html: statusRow ? withStatusRow(SUMMARY_HTML) : SUMMARY_HTML, badge, tag: `badge-${badge}-row-${statusRow}`, rowSelector: 'tr[data-req-field="status"]', rowCount: statusRow ? 1 : 0 });
             await send([{ blockIndex: 0, items: [{ id: 'st', title: 'Set status', surface: 'status', artifact: 'FRS-TST-001' }] }], 3);
             // The message is taken asynchronously; the last document's target may still be marked until then.
             await delay(150);
@@ -865,6 +874,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
      * The status lens on the standing row of the table (`data-req-standing`, whatever field states it),
      * with `data-req-field="status"` as the fallback for a Req Explorer older than the attribute.
      */
+    const withRows = (rowsHtml: string[]) => SUMMARY_HTML.replace('<tbody class="req-summary-fields">', `<tbody class="req-summary-fields">${rowsHtml.join('')}`);
     const standingRow = (field: string, standing: 'authored' | 'derived' | null) =>
         `<tr data-req-field="${field}"${standing ? ` data-req-standing="${standing}"` : ''}><th scope="row">${field}</th><td><span class="req-badge req-badge-implemented">implemented</span></td></tr>`;
     const standingCases: [string, string[], string][] = [
@@ -876,17 +886,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
     for (const [title, rowsHtml, expected] of standingCases) {
         test(`the status lens goes on the standing row: ${title}`, async function () {
             this.timeout(15000);
-            const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-            const json = parsedDocumentToJSON(parseDocument(md, '# FRS-TST-001: Page\n\nA plain paragraph.\n', {}));
-            const content = json.doc.content as { type: string; attrs: Record<string, unknown>; content?: Record<string, unknown>[] }[];
-            content[0].attrs.reqPrefix = 'FRS-TST-001: ';
-            content[0].content = [{ type: 'text', text: 'Page' }];
-            const html = SUMMARY_HTML.replace('<tbody class="req-summary-fields">', `<tbody class="req-summary-fields">${rowsHtml.join('')}`);
-            content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html, src: null, gap: null } });
-            version++;
-            await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
-            await page.waitForFunction(n => document.querySelector('.ProseMirror')?.textContent?.includes('A plain paragraph.')
-                && document.querySelectorAll('.ProseMirror tr[data-req-field="stage"], .ProseMirror tr[data-req-field="status"]').length === n, {}, rowsHtml.length);
+            await showRequirement({ html: withRows(rowsHtml), tag: title, rowSelector: 'tr[data-req-field="stage"], .ProseMirror tr[data-req-field="status"]', rowCount: rowsHtml.length });
             await send([{ blockIndex: 0, items: [{ id: 'st', title: 'Set status', surface: 'status', artifact: 'FRS-TST-001' }] }], 3);
             await delay(150);
             assert.deepStrictEqual((await targets()).map(t => [t.el, t.lens]), [[expected, 'st']]);
@@ -896,18 +896,8 @@ suite('Editor lenses on their surfaces (e2e)', () => {
 
     test('the lens on a derived standing row goes (underlined, no dropdown), on an authored one it sets', async function () {
         this.timeout(15000);
-        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const show = async (rowHtml: string, field: string) => {
-            const json = parsedDocumentToJSON(parseDocument(md, '# FRS-TST-001: Page\n\nA plain paragraph.\n', {}));
-            const content = json.doc.content as { type: string; attrs: Record<string, unknown>; content?: Record<string, unknown>[] }[];
-            content[0].attrs.reqPrefix = 'FRS-TST-001: ';
-            content[0].content = [{ type: 'text', text: 'Page' }];
-            const html = SUMMARY_HTML.replace('<tbody class="req-summary-fields">', `<tbody class="req-summary-fields">${rowHtml}`);
-            content.splice(1, 0, { type: 'injected_block', attrs: { kind: 'atom', mark: BADGE_MARK, html, src: null, gap: null } });
-            version++;
-            await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
-            await page.waitForFunction(f => document.querySelector('.ProseMirror')?.textContent?.includes('A plain paragraph.')
-                && document.querySelectorAll(`.ProseMirror tr[data-req-field="${f}"]`).length === 1, {}, field);
+            await showRequirement({ html: withRows([rowHtml]), tag: `go-${field}`, rowSelector: `tr[data-req-field="${field}"]`, rowCount: 1 });
             await send([{ blockIndex: 0, items: [{ id: 'st', title: 'Show stage', surface: 'status', artifact: 'FRS-TST-001' }] }], 3);
             await delay(150);
             const chip = `tr[data-req-field="${field}"] .req-badge`;
@@ -917,6 +907,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         const derived = await show(standingRow('stage', 'derived'), 'stage');
         assert.deepStrictEqual(derived.kinds, ['go']);
         assert.strictEqual(derived.chip.after, 'none', 'no dropdown affordance on a derived row');
+        assert.strictEqual(derived.chip.surface, false, 'and no ring: one signifier, not both');
         assert.strictEqual(derived.line, 'underline');
         assert.deepStrictEqual((await show(standingRow('status', 'authored'), 'status')).kinds, ['set']);
     });
