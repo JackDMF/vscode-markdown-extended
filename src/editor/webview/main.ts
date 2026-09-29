@@ -20,7 +20,10 @@ import type { CodeActionItem, HostMessage, LensRow, LinkChoice, LinkedFile, Webv
 import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
 import { CaretReporter } from './caret';
+import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
+import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { showHint } from './hint';
+import { hoverDocumentShown, hoverMessage, hoverPlugin } from './hover';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
 import { DROP_LOCK, IMAGE_LOCK, insertFilesTransaction, insertLockReason } from './objects';
 import { pendingRangePlugin } from './pendingRange';
@@ -31,7 +34,7 @@ import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
 import { resyncTransaction } from './resync';
 import { changeIncludeTransaction, insertLineTransaction } from './toolbar/commands';
-import { toolbarPlugin } from './toolbar/toolbar';
+import { toolbarPlugin, toolbarStatusSlot } from './toolbar/toolbar';
 
 interface VsCodeApi {
     postMessage(message: WebviewMessage): void;
@@ -346,7 +349,7 @@ function codeActionsAt(pos: number): readonly CodeActionItem[] {
  * write to the document before the typed text arrived, and the host would then
  * refuse that text as computed against a document that has moved on.
  */
-function runBehindEdit(message: Extract<WebviewMessage, { type: 'runLens' | 'runAction' }>): void {
+function runBehindEdit(message: Extract<WebviewMessage, { type: 'runLens' | 'runAction' | 'runHoverCommand' }>): void {
     flush();
     post(message);
 }
@@ -655,7 +658,37 @@ const sourceContext = () => ({
     documentText: view ? serialize(view.state.doc) : '',
 });
 
+/**
+ * What completion and the pointer's card need from the page: the version of
+ * the document shown, the pending edit sent first — every question they ask is
+ * in the text the host holds — and the one position map of the state.
+ */
+const languagePort = {
+    version: () => current?.version,
+    flush: () => flush(),
+    map: () => (view && current ? pageMap(view.state.doc) : undefined),
+    post,
+};
+
+/**
+ * The document's diagnostics, drawn while the page holds the text the host
+ * read them against: its own text, no edit waiting. A page ahead of the host
+ * keeps its marks, mapped through its edits; the host sends afresh once the
+ * edit has landed.
+ */
+function showDiagnostics(version: number, items: Extract<HostMessage, { type: 'diagnostics' }>['items']): void {
+    if (!view || !current || version !== current.version) {
+        return;
+    }
+    if (editTimer !== undefined || committingForSave || serialize(view.state.doc) !== hostText) {
+        return;
+    }
+    view.dispatch(setDiagnosticsTransaction(view.state, pageMap(view.state.doc), items));
+}
+
 const plugins = [
+    // First, before the editor's keymaps: while its list is open, Enter, Tab and the arrows are the list's.
+    completionPlugin(languagePort),
     ...editorPlugins(),
     pendingRangePlugin(),
     linkClickPlugin(href => port.openLink(href)),
@@ -684,6 +717,17 @@ const plugins = [
         linkChoices,
     }),
     lensPlugin(id => runBehindEdit({ type: 'runLens', id })),
+    // After the toolbar, whose row holds the count.
+    diagnosticsPlugin({
+        statusSlot: toolbarStatusSlot,
+        showProblems: () => post({ type: 'showProblems' }),
+    }),
+    hoverPlugin({
+        ...languagePort,
+        openLink: href => port.openLink(href),
+        runAction: id => runBehindEdit({ type: 'runAction', id }),
+        runCommand: id => runBehindEdit({ type: 'runHoverCommand', id }),
+    }),
     fileDropPlugin({
         insertFiles: (uris, gesture) => askFiles({ type: 'insertFiles', uris }, files => insertLinkedFiles(files, gesture)),
         saveImage: saveBitmap,
@@ -730,6 +774,9 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         view.updateState(view.state.apply(resyncTransaction(view.state, doc)));
         sendDeferredActions();
         caretReporter.documentShown();
+        // An open list and a card were about the text before.
+        completionDocumentShown(view);
+        hoverDocumentShown(view);
         return;
     }
     const state = EditorState.create({ doc, plugins });
@@ -900,6 +947,21 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'map':
             answerMap(msg.id, msg.toSource, msg.toPage);
+            break;
+        case 'completions':
+        case 'completionApplied':
+            if (view) {
+                completionMessage(view, msg);
+            }
+            break;
+        case 'diagnostics':
+            showDiagnostics(msg.version, msg.items);
+            break;
+        case 'quickFixes':
+        case 'hoverResult':
+            if (view) {
+                hoverMessage(view, msg);
+            }
             break;
     }
 });

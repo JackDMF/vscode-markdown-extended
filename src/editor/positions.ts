@@ -98,6 +98,24 @@ export interface SourceRange {
     end: SourcePosition;
 }
 
+/** Whether a value the page sent is a position: two non-negative integers. */
+export function validPosition(position: unknown): position is SourcePosition {
+    const p = position as Partial<SourcePosition> | null | undefined;
+    return typeof p === 'object' && p !== null
+        && Number.isInteger(p.line) && Number.isInteger(p.character) && (p.line as number) >= 0 && (p.character as number) >= 0;
+}
+
+/** Whether a value the page sent is a range: two positions. */
+export function validRange(range: unknown): range is SourceRange {
+    const r = range as Partial<SourceRange> | null | undefined;
+    return typeof r === 'object' && r !== null && validPosition(r.start) && validPosition(r.end);
+}
+
+/** A range as the page and the protocol carry it, from anything shaped like one (a `vscode.Range`). */
+export function toSourceRange(range: { start: SourcePosition; end: SourcePosition }): SourceRange {
+    return { start: { line: range.start.line, character: range.start.character }, end: { line: range.end.line, character: range.end.character } };
+}
+
 /** A source position with whether it is only the nearest one found. */
 export interface MappedSourcePosition extends SourcePosition {
     approximate: boolean;

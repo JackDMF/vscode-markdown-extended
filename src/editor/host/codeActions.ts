@@ -72,7 +72,11 @@ export class CodeActionController implements vscode.Disposable {
     private disposed = false;
     private readonly subscriptions: vscode.Disposable[];
 
-    constructor(private readonly host: SessionPort) {
+    constructor(
+        private readonly host: SessionPort,
+        /** `vscode.commands.executeCommand`, unless a test answers for VS Code. */
+        private readonly execute: <T>(command: string, ...args: unknown[]) => Thenable<T> = (command, ...args) => vscode.commands.executeCommand(command, ...args),
+    ) {
         this.subscriptions = [
             // A quick fix is offered for a diagnostic: when the diagnostics
             // change, so may the actions — also of a block nobody edited.
@@ -160,7 +164,7 @@ export class CodeActionController implements vscode.Disposable {
         if (!this.current(version)) {
             return { items: [], stale: true };
         }
-        const found = await vscode.commands.executeCommand<AnyAction[]>(
+        const found = await this.execute<AnyAction[]>(
             'vscode.executeCodeActionProvider', document.uri, rangeOfLines(document, lines), undefined, ACTION_RESOLVE_COUNT,
         ) ?? [];
         // Checked after the await, not before: an edit that landed while the
@@ -168,6 +172,39 @@ export class CodeActionController implements vscode.Disposable {
         if (!this.current(version)) {
             return { items: [], stale: true };
         }
+        return { items: this.register(`${requestId}`, version, found.filter(belongsOnBlock)), stale: false };
+    }
+
+    /**
+     * Answer `quickFixesFor`: the quick fixes VS Code offers for a diagnostic's
+     * range — what its light bulb offers there, `vscode.executeCodeActionProvider`
+     * with the kind `quickfix` — registered as the block's actions are, and run
+     * with the same `runAction`. `range` is `null` when the page asked about a
+     * document it no longer shows (the session checked its version); the
+     * answer is then empty, as it is when the page's text is not the document's.
+     */
+    async quickFixes(requestId: number, range: vscode.Range | null): Promise<void> {
+        let items: CodeActionItem[] = [];
+        try {
+            const document = this.host.document;
+            const version = document.version;
+            if (range !== null && this.host.pageHolds(document.getText())) {
+                const found = await this.execute<AnyAction[]>(
+                    'vscode.executeCodeActionProvider', document.uri, document.validateRange(range), vscode.CodeActionKind.QuickFix.value, ACTION_RESOLVE_COUNT,
+                ) ?? [];
+                if (this.current(version)) {
+                    const fixes = found.filter(a => belongsOnBlock(a) && !isCommand(a) && a.kind !== undefined && vscode.CodeActionKind.QuickFix.contains(a.kind));
+                    items = this.register(`q${requestId}`, version, fixes);
+                }
+            }
+        } catch (error) {
+            this.host.log(`[WARN] Visual Editor: the quick fixes could not be read: ${message(error)}`);
+        }
+        await this.send({ type: 'quickFixes', requestId, items });
+    }
+
+    /** Keep `actions` for `version` under ids with `prefix`, dropping every older version's, and describe them for the page. */
+    private register(prefix: string, version: number, actions: readonly AnyAction[]): CodeActionItem[] {
         // Actions of an older version edit text that is no longer there.
         for (const [id, entry] of this.actions) {
             if (entry.version !== version) {
@@ -175,8 +212,8 @@ export class CodeActionController implements vscode.Disposable {
             }
         }
         const items: CodeActionItem[] = [];
-        found.filter(belongsOnBlock).forEach((action, k) => {
-            const id = `${requestId}.${k}`;
+        actions.forEach((action, k) => {
+            const id = `${prefix}.${k}`;
             this.actions.set(id, { version, action });
             const item: CodeActionItem = { id, title: action.title, kind: isCommand(action) ? '' : action.kind?.value ?? '' };
             if (!isCommand(action) && action.disabled) {
@@ -184,7 +221,7 @@ export class CodeActionController implements vscode.Disposable {
             }
             items.push(item);
         });
-        return { items, stale: false };
+        return items;
     }
 
     /**
@@ -215,7 +252,7 @@ export class CodeActionController implements vscode.Disposable {
             return;
         }
         const start = (command: string, args: readonly unknown[] | undefined) => {
-            void Promise.resolve(vscode.commands.executeCommand(command, ...(args ?? []))).catch(error => {
+            void Promise.resolve(this.execute(command, ...(args ?? []))).catch(error => {
                 this.host.log(`[WARN] Visual Editor: the code action "${action.title}" failed: ${message(error)}`);
             });
         };

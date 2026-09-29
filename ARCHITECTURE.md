@@ -707,6 +707,11 @@ text the other — never a diff:
 | host → page | `imagesResolved { requestId, sources }` | For each asked `src` that names a file, the webview uri to load it from; a `src` left out is shown as written (below) |
 | host → page | `reportCaret` | Report the caret again, the same one included: the host forgot it and no document is on its way (below, *Source positions*) |
 | host → page | `map { id, toSource?, toPage? }` | Map these page positions to source positions and these source positions to page positions, with the page's own document (below) |
+| host → page | `completions { requestId, version, items, incomplete }` | The completions at the caret, `{ label, detail?, kind?, insertText, range?, sortText?, filterText? }` each, VS Code's order, capped; empty when stale (below, *Completion, diagnostics and hover*) |
+| host → page | `completionApplied { requestId, version, caret }` | After the document the applied completion produced: where the caret goes in it, `null` when nothing was applied |
+| host → page | `diagnostics { version, items }` | Every diagnostic VS Code holds for the document, `{ range, severity, message, code?, source? }` each, in the text the host holds for the page |
+| host → page | `quickFixes { requestId, items }` | The quick fixes for a diagnostic's range, `CodeActionItem`s run with `runAction` |
+| host → page | `hoverResult { requestId, html, range? }` | The hover providers' Markdown, rendered by the host with only trusted command links kept (as `data-mep-command` ids), and its source range |
 | page → host | `ready` | Loaded; send the document |
 | page → host | `edit { text, baseVersion, save?, reparse? }` | The whole text as the page would save it (250 ms after the last change); with `save`, the person pressed Ctrl+S and the host saves after applying it; with `reparse`, the host posts the document back after applying it, although it is the page's own text (the toolbar wrote syntax as source) |
 | page → host | `render { requestId, src }` | Render this raw block source |
@@ -725,6 +730,13 @@ text the other — never a diff:
 | page → host | `resolveImages { requestId, srcs }` | Where the page may load these images from (below) |
 | page → host | `caret { baseVersion, position }` | Where the caret is in the text the host holds — 0-based line and UTF-16 character, `null` for none — 100 ms after the selection settles, behind the pending edit (below, *Source positions*) |
 | page → host | `mapped { id, baseVersion, toSource, toPage }` | The answer to `map`, one entry per position asked (`null` for none), behind the pending edit (below) |
+| page → host | `complete { requestId, baseVersion, position, triggerCharacter? }` | Ask the completion providers at the caret: a non-word character was typed, or `Ctrl+Space` (none); behind the pending edit |
+| page → host | `applyCompletion { requestId, index, baseVersion, position }` | Accept item `index`: the host applies its edit to the source and posts the document |
+| page → host | `quickFixesFor { requestId, baseVersion, range }` | The quick fixes for a diagnostic the card shows |
+| page → host | `hover { requestId, baseVersion, position }` | Ask the hover providers where the pointer rested |
+| page → host | `runHoverCommand { id }` | Run a command link of the last `hoverResult` |
+| page → host | `showHoverInEditor { requestId }` | **Show more**: VS Code's hover in the text editor, at that hover's position |
+| page → host | `showProblems` | The toolbar's count was clicked: the Problems view |
 
 A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
 save's own edit when Ctrl+S commits it): what the source now says may no longer be a
@@ -1202,8 +1214,8 @@ puts eight kinds of lens on a requirement heading and quick fixes on what its ch
 with the Visual Editor as a corpus's default, all of it was gone. The decision (Daniel,
 2026-09-25): the editor shows other extensions' lenses where the text editor shows them,
 **with no new API between the extensions** — it asks VS Code, which runs every registered
-provider — and code actions become object verbs the same way. Hovers and completions are
-not carried over.
+provider — and code actions become object verbs the same way. Hovers, completions and
+diagnostics came later the same way (*Completion, diagnostics and hover*, below).
 
 **Lenses** (`host/lenses.ts`). `LensController` calls
 `vscode.executeCodeLensProvider(uri, 500)` — resolved, since the page has no viewport VS
@@ -1416,6 +1428,160 @@ and for its lens verbs alone: its presentation has no verbs of its own, and the 
 bar is hidden while it has none. Inline objects carry no actions yet: the host knew no range for a note or a
 link, and computing one beside the parse would have been a second answer to where the page's text is in the
 file. *Source positions* (below) is now the one answer, and what they would be built on.
+
+### Completion, diagnostics and hover
+
+The decision (Daniel, 2026-09-29, sketches 5–7): the completion, diagnostics and hover
+providers other extensions register for Markdown reach the page as lenses and code actions
+do — **VS Code is asked, no API between the extensions** — and every place they cross
+between the page and the text goes through the page-owned position map (*Source
+positions*, below). The host's half is `LanguageFeatures` (`host/language.ts`), a listener
+on the page's messages beside the session's own, as links and images are, with
+`CompletionController` (`host/completion.ts`), `HoverController` (`host/hover.ts`) and
+`DiagnosticsController` (`host/diagnostics.ts`); the quick fixes are the code-action
+registry's (`CodeActionController.quickFixes`). The page's half is `webview/completion.ts`,
+`webview/diagnostics.ts`, `webview/hover.ts` and the card, `webview/languageCard.ts`.
+`SessionHost.executeCommand` and `diagnostics`/`onDidChangeDiagnostics` default to VS
+Code's, so a test answers for VS Code.
+
+**One rule for every question.** A request names the version of the document the page
+shows (`baseVersion`) and is sent after the page's pending edit, as the caret report is
+(`flush` first); the host answers it from the session's queue, behind that edit, and only
+while `baseVersion` is the document it last posted and the document holds the page's text
+— anything else is answered with nothing. The providers are not awaited in the queue, and
+their answer is checked **after** the await: a document that changed while they computed
+gets an empty answer. The page takes an answer only for its latest question.
+
+**Completion** (sketch 5). A provider's trigger characters are in its registration, and no
+API hands them to another extension, so the page asks with every **non-word character**
+typed (`beforeinput`, so a note's own input handler is covered) — 80 ms after it
+(`COMPLETION_ASK_DELAY_MS`), one question in flight, a question asked meanwhile waiting
+behind it and the older answer then dropped — and on `Ctrl+Space`, kept from VS Code, with
+none: `complete { requestId, baseVersion, position, triggerCharacter? }`, the position being
+`caretOf` the selection (an approximate caret asks nothing). The host calls
+`vscode.executeCompletionItemProvider(uri, position, trigger, 20)` — VS Code calls every
+provider with the trigger in its context; those that do not trigger on it answer nothing —
+and answers `completions { requestId, version, items, incomplete }`, the items in VS Code's
+order for an empty word (`sortText`, else the label), capped at 100, each
+`{ label, detail?, kind?, insertText, range?, sortText?, filterText? }`: the `inserting`
+range (VS Code's default insert mode; an item without a range takes the word before the
+position), a snippet as the text it inserts (`snippetText`: stops empty, placeholders their
+defaults, a choice its first option). An empty answer closes the list. The list stands under
+the caret, left-aligned with the items' range start (`anchor`, mapped through every
+transaction in plugin state), and filters as the person types: the text between the anchor
+and the caret, by prefix of `filterText`, else the label, ignoring case (`filterCompletions`);
+a letter asks again only when the answer was `incomplete`. It is the link field's list
+(`webview/completionList.ts`, one component for both): label, detail dimmed, eight rows before
+it scrolls, the first chosen, one dim line of keys (`↹ ↵ accept · Esc close`); the keys are
+`listKeyAction`'s, taken by a plugin placed before the editor's keymaps. The footer does not
+name the provider: `executeCompletionItemProvider` hands items without the extension they
+came from.
+
+**Accepting applies the provider's edit to the source, not to the page.** The page posts
+`applyCompletion { requestId, index, baseVersion, position }` (after its pending edit) and
+writes nothing. The host kept the newest answer's items (an older question resolving later
+does not replace them) with the text they were computed on; it applies an item only to that
+text, or to one the page changed only by typing at its caret inside the item's range while
+the list filtered — the text before the range and after its end as it was, the range then
+running to the caret the page sent, as the text editor's replace range grows as you type.
+The caret anchors it, not a common prefix and suffix of the two texts: a typed character
+equal to the one after the range would put such a diff after the range. VS Code resolves
+only the first 20 items of an answer; an item further down is asked for again at accept
+time, resolving up to it, and found by its label and what it inserts, for its
+`additionalTextEdits` and command. The item's range and its additional edits (one
+overlapping the range refuses the item) go into one `WorkspaceEdit`, line breaks in the
+document's own ending; then the session posts the document (`repost`, from inside the
+queue) and answers `completionApplied { requestId, version, caret }` — the insertion's end,
+or the snippet's `$0` — which the page, holding that document by then, maps back and puts the
+caret at. The block comes back as another writer's change does, in place (`resync.ts`). An
+item's command is started unless it works on a text editor (`editor.*`, re-triggering
+suggest). A refused item answers `caret: null`, and the hint says the text changed.
+
+**A known limit: a space at a paragraph's end.** The serializer drops trailing white space,
+so a space typed last in a paragraph is not in the text the host holds, and the caret after
+it maps only approximately: no question is asked until something follows it. Req Explorer's
+space trigger answers mid-line only.
+
+**Diagnostics** (sketch 6). The host reads `languages.getDiagnostics(uri)` — what the text
+editor squiggles and the Problems view lists — when `onDidChangeDiagnostics` names the
+document (150 ms, `DIAGNOSTICS_DELAY_MS`) and after every document it posts — **never after
+an edit of the page's it applied**: the providers have not linted the new text yet, and the
+ranges read then are the old text's, which would overwrite the page's marks (mapped
+correctly through the edit) and make a squiggle jump. It sends `diagnostics { version,
+items }`, each `{ range, severity, message, code?, source? }` in range order, only while the
+page holds the text. `version` is the document the host last posted: the page's own edits
+since do not change it. The page draws them only while it holds that text with no edit
+waiting; ahead of the host it keeps its marks, mapped through its edits, until the providers
+publish again.
+`diagnosticMarks` maps each range with `pageRangeOf` — pure, and tested without a page: an
+exact range is a squiggle (`Decoration.inline`, `mep-diag-<severity>`, a wavy underline in
+`--vscode-editorError-foreground`, `…Warning…`, `…Info…`, a hint dotted); a range across
+top-level blocks is split at them, an atom inside it (a table, any source block) marked
+whole; an approximate range — inside a delimiter, on a blank line, in a source block — marks
+its whole top-level block (`Decoration.node`, `mep-diag-block-<severity>`: a 3px bar in the
+severity's colour at the block's left edge, drawn as a shadow in the gutter so it takes no
+room — an outline around a whole table spoke louder than the problem), never nothing; an empty range is widened to the character after it (at
+a textblock's end the one before), as the text editor draws one. Between messages the
+decorations are mapped through every transaction. Each marked block carries one marker, of
+its worst severity, `aria-label` its counts (*1 error, 2 warnings*): in a paragraph or a
+heading a widget at its text's start, absolutely placed in the body's left padding on its
+first line; in any other block a widget at the block's start on a line of no height —
+inside a list item the text's left edge is the item's, and the marker would stand on the
+bullet. The count is at the right end of the formatting row (`.mep-row-status`, the row's
+slot for what the page says about the document as a whole): `$(error) 1 $(warning) 2`, via
+`lensLabelNodes`, infos too, hints not (as VS Code's status bar). VS Code's own tab strip is
+not reachable from a webview, so the toolbar's end is the place. It is a button and says so:
+`title="Open Problems"`, a pointer, its numbers underlined on hover; a click posts
+`showProblems`, and the host runs `workbench.actions.view.problems`.
+
+**Hover and the card** (sketch 7). After the pointer rests `HOVER_DELAY_MS` (500 ms) on a
+character of text (within 12 px of a character boundary; not a lens row, a marker, a bar),
+the card shows the diagnostics drawn there at once — message with its severity's icon and
+code, the source dimmed — and asks, after the pending edit, `quickFixesFor { requestId,
+baseVersion, range }` for each (at most three) — the diagnostic's own range while the page's
+document is the one the marks were placed on, else where its squiggle now is, read back
+through the position map after the flush (a whole block's mark has no such place, and is not
+asked about; the host runs
+`vscode.executeCodeActionProvider(uri, range, 'quickfix', 50)`, keeps the quick fixes alone
+— no source actions, no command acting on a text editor — in the code-action registry, and
+answers `quickFixes`; the fixes follow one *Quick fix(es)* label line, each a link that runs
+with `runAction`, behind the pending edit) and `hover { requestId, baseVersion, position }`. The host calls
+`vscode.executeHoverProvider(uri, position)` and answers `hoverResult { requestId, html,
+range? }`: **the host renders**, because the trust a command link needs is known only there
+and the page has no parser. It renders with a plain markdown-it, not the preview's engine —
+a hover is VS Code's Markdown, which the workbench renders, and the preview's plugins would
+read `++…++` in it as a sidenote — with raw HTML only for a part that allows it
+(`supportHtml`), `file:` links kept as links. Such a part's whole rendering is then sanitized
+on the host (`host/hoverHtml.ts`) to the allowlist VS Code's own hover applies
+(`renderMarkdown`'s tags and attributes): allowed tags rebuilt from their allowed attributes,
+`href`/`src` only with `http`, `https`, `mailto`, `file` or a `data:` image, `script`,
+`style`, `form`, `iframe` and the like dropped with their content, every `on*`, `style`,
+`id` and `data-*` attribute dropped — so raw HTML cannot forge the `data-mep-command` or
+`data-mep-action` a card link runs by. The link rule's own command links pass because it
+marks them with a per-render nonce (`data-mep-nonce`), which raw HTML cannot know and which
+never reaches the page. Images from `https:` stay, as VS Code's hover shows them. Each `MarkdownString` is one
+`div.mep-hover-part` (`data-icons` for `supportThemeIcons`, whose `$(icon)`s the page then
+draws with `lensLabelNodes`). A command link (`command:id?args`, the args
+`JSON.parse(decodeURIComponent(query))`, a non-array the one argument) is kept only when the
+part may run it (`commandLinkAllowed`: `isTrusted: true`, or `{ enabledCommands }` naming it;
+false, absent or a plain `MarkedString` — none); a kept one is registered under an id and
+carries it as `data-mep-command`, and `runHoverCommand { id }` runs the registered command
+with its own arguments, queued behind the pending edit and not awaited. The registry is
+replaced with the newest answer (an older question resolving later does not replace it), so
+an id of an earlier one runs nothing. Every other `command:` link is its text alone. On the
+page, as a second line, a `command:` target left in a hover loses it, and each kind of link
+is taken only where the page puts it: `data-mep-command` in the hover section,
+`data-mep-action` in a diagnostic's. The hover's range, when it has one, is what the card is about.
+
+The card is one component with two contents, diagnostics first as in the text editor's
+hover; one card at a time. It is placed under the range's first character (above it when
+below has no room), in `.mep-editor` so it scrolls with the text, in the hover widget's
+colours. It never scrolls: taller than 280 px it is clipped with a fade and **Show more**
+(`showHoverInEditor { requestId }`: the text editor opens beside at the hover's position and
+`editor.action.showHover` runs there). It closes when the pointer is neither on its range nor
+on the card for 300 ms, on any key (`Esc` stops there), on scroll, on an edit under it, and
+with every document from the host. Every link in it is the page's: a command link, a quick
+fix, anything else followed as a Ctrl+clicked link is (`openLink`).
 
 ### Includes from other extensions
 
@@ -1692,8 +1858,8 @@ edit first, so the answer is in the text the host will hold; the host takes the 
 queue, behind that edit, and only when its `baseVersion` is the document it last posted and the
 document holds the page's text. Otherwise — an answer for an older document, a change on its
 way to the page, the error state, no page, no answer within `MAP_TIMEOUT_MS` (2 s) — the promise
-resolves `undefined`, as it does for a position that is none. They are for what comes next —
-completion, diagnostics and hover in the page — and have no UI yet.
+resolves `undefined`, as it does for a position that is none. Completion, diagnostics and
+hover (above) map with the same `pageMap` on the page, their requests carrying the positions.
 
 **The caret** (`webview/caret.ts`). `caretOf` answers for a text selection whose head is in
 text, `null` for a node selection (an atom, an image, a badge), a gap cursor, Ctrl+A, and a

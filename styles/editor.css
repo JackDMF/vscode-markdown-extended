@@ -801,6 +801,180 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 /* The document cannot be shown without loss                                 */
 /* ------------------------------------------------------------------------- */
 
+/* ------------------------------------------------------------------------- */
+/* Completion, diagnostics and hover: other extensions' providers            */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Completion under the caret: the field's list (above), eight rows of the
+ * suggest widget's 20px lines before it scrolls, positioned by completion.ts
+ * inside .mep-editor so it scrolls with the text.
+ */
+.mep-caret-completions { top: auto; margin-top: 0; min-width: 18em; }
+.mep-caret-completions .mep-completion-options { max-height: 160px; }
+
+/*
+ * A diagnostic's squiggle, in the theme's own colours for the severity; a
+ * hint is dotted, as the text editor draws one. A block marked whole (an
+ * approximate range, a source block) carries a 3px bar in the same colour at
+ * its left edge, drawn in the gutter beside it (a shadow, which takes no room),
+ * next to its margin marker: an outline around a whole table spoke louder than
+ * the problem it stands for.
+ */
+.mep-diag {
+    text-decoration-line: underline;
+    text-decoration-style: wavy;
+    text-decoration-skip-ink: none;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+.mep-diag-error { text-decoration-color: var(--vscode-editorError-foreground, #e51400); }
+.mep-diag-warning { text-decoration-color: var(--vscode-editorWarning-foreground, #bf8803); }
+.mep-diag-info { text-decoration-color: var(--vscode-editorInfo-foreground, #1a85ff); }
+.mep-diag-hint { text-decoration-style: dotted; text-decoration-color: var(--vscode-editorHint-foreground, #6c6c6c); }
+
+.mep-diag-block { --mep-diag-bar: transparent; box-shadow: -6px 0 0 -3px var(--mep-diag-bar); }
+.mep-diag-block-error { --mep-diag-bar: var(--vscode-editorError-foreground, #e51400); }
+.mep-diag-block-warning { --mep-diag-bar: var(--vscode-editorWarning-foreground, #bf8803); }
+.mep-diag-block-info { --mep-diag-bar: var(--vscode-editorInfo-foreground, #1a85ff); }
+.mep-diag-block-hint { --mep-diag-bar: var(--vscode-editorHint-foreground, #6c6c6c); }
+
+/*
+ * The margin marker: one per block with something to say, left of its first
+ * line, in the body's side padding; it takes no room in the text. A block with
+ * no text of its own (a source block) carries it on a zero-height line above.
+ */
+.mep-diag-marker {
+    position: absolute;
+    left: -20px;
+    width: 16px;
+    font-size: 14px;
+    line-height: inherit;
+    text-align: center;
+    text-decoration: none;
+    user-select: none;
+    cursor: default;
+}
+.mep-diag-marker-block { position: relative; left: 0; height: 0; width: auto; }
+/* A lens row's block keeps its margin off when a marker line stands between them. */
+.mep-editor .ProseMirror > .mep-lens-row + .mep-diag-marker-block + * { margin-top: 0; }
+.mep-diag-marker-block > .mep-diag-glyph { position: absolute; left: -20px; top: 2px; width: 16px; }
+.mep-diag-glyph > .codicon { font-size: 14px; vertical-align: middle; }
+.mep-diag-marker-error { color: var(--vscode-editorError-foreground, #e51400); }
+.mep-diag-marker-warning { color: var(--vscode-editorWarning-foreground, #bf8803); }
+.mep-diag-marker-info,
+.mep-diag-marker-hint { color: var(--vscode-editorInfo-foreground, #1a85ff); }
+
+/*
+ * The formatting row's right end: what the page says about the document as a
+ * whole. Pinned to the right while the row scrolls sideways.
+ */
+.mep-row-status {
+    position: sticky;
+    right: 0;
+    display: flex;
+    flex: none;
+    align-items: center;
+    margin-left: auto;
+    padding: 0 4px 0 8px;
+    background: var(--vscode-editor-background, Canvas);
+}
+.mep-row-status:empty { display: none; }
+
+.mep-diag-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    height: 26px;
+    padding: 0 6px;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: 12px;
+    color: var(--vscode-foreground, inherit);
+    border-radius: 3px;
+    cursor: pointer;
+    user-select: none;
+}
+.mep-diag-count[hidden] { display: none; }
+.mep-diag-count:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+/* A button, and it looks like one under the pointer: the numbers underline, as a link's text does. */
+.mep-diag-count:hover .mep-diag-count-part { text-decoration: underline; }
+.mep-diag-count:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: -1px; }
+.mep-diag-count-part { display: inline-flex; align-items: center; gap: 4px; }
+.mep-diag-count-part > .codicon { font-size: 14px; }
+.mep-diag-count-error > .codicon { color: var(--vscode-editorError-foreground, #e51400); }
+.mep-diag-count-warning > .codicon { color: var(--vscode-editorWarning-foreground, #bf8803); }
+.mep-diag-count-info > .codicon { color: var(--vscode-editorInfo-foreground, #1a85ff); }
+
+/*
+ * The card for what the pointer rests on: the diagnostics there, then the
+ * hover. VS Code's hover widget colours; sections divided by a hairline. It
+ * never scrolls: taller content is clipped with a fade, and "Show more" opens
+ * the text editor's own hover.
+ */
+.mep-language-card {
+    position: absolute;
+    z-index: 25;
+    box-sizing: border-box;
+    max-width: min(520px, calc(100% - 8px));
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground, inherit));
+    background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background, #f3f3f3));
+    border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, #c8c8c8));
+    border-radius: 4px;
+    box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+}
+.mep-language-card[hidden] { display: none; }
+
+.mep-card-body {
+    max-height: 280px;
+    overflow: hidden;
+}
+.mep-language-card.mep-card-clipped .mep-card-body {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent);
+}
+.mep-card-more { display: none; padding: 2px 10px 6px; font-size: 12px; }
+.mep-language-card.mep-card-clipped .mep-card-more { display: block; }
+
+.mep-card-section { padding: 6px 10px; }
+.mep-card-section + .mep-card-section { border-top: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, #c8c8c8)); }
+.mep-card-message { display: flex; gap: 6px; align-items: baseline; }
+.mep-card-severity > .codicon { font-size: 14px; vertical-align: text-bottom; }
+.mep-card-severity-error { color: var(--vscode-editorError-foreground, #e51400); }
+.mep-card-severity-warning { color: var(--vscode-editorWarning-foreground, #bf8803); }
+.mep-card-severity-info,
+.mep-card-severity-hint { color: var(--vscode-editorInfo-foreground, #1a85ff); }
+.mep-card-text { flex: 1 1 auto; white-space: pre-wrap; }
+.mep-card-code {
+    flex: none;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, #888);
+}
+.mep-card-source { padding-left: 20px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
+.mep-card-fixes-label { padding-left: 20px; margin-top: 2px; font-size: 12px; color: var(--vscode-descriptionForeground, #888); }
+.mep-card-fix { padding-left: 20px; }
+.mep-language-card a {
+    color: var(--vscode-textLink-foreground, #006ab1);
+    text-decoration: none;
+    cursor: pointer;
+}
+.mep-language-card a:hover { color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground, #006ab1)); text-decoration: underline; }
+.mep-language-card a:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: 1px; }
+.mep-card-action.mep-disabled { opacity: 0.5; cursor: default; }
+:is(.mep-card-action, .mep-hover-part) .codicon { font-size: inherit; vertical-align: text-bottom; margin-inline-end: 0.25em; }
+
+/* The hover's Markdown: the card's own measure, not the document's. */
+.mep-card-hover > .mep-hover-part + .mep-hover-part { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--vscode-editorHoverWidget-border, #c8c8c8); }
+.mep-card-hover :is(p, ul, ol, pre, blockquote, table) { margin: 0 0 6px; }
+.mep-card-hover :is(p, ul, ol, pre, blockquote, table):last-child { margin-bottom: 0; }
+.mep-card-hover :is(h1, h2, h3, h4, h5, h6) { margin: 0 0 4px; font-size: 1em; font-weight: 600; border: none; padding: 0; }
+.mep-card-hover pre { padding: 4px 6px; overflow: hidden; white-space: pre-wrap; }
+.mep-card-hover code { font-size: 12px; }
+.mep-card-hover hr { margin: 6px 0; border: none; border-top: 1px solid var(--vscode-editorHoverWidget-border, #c8c8c8); }
+
 .mep-error {
     margin: 16px 0;
     padding: 8px 12px;

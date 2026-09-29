@@ -305,6 +305,9 @@ class ToolbarView implements PluginView {
             }
             row.append(box);
         }
+        // The row's right end: what the page says about the document as a
+        // whole (the diagnostics count, `diagnostics.ts`), not a control of the text.
+        row.append(div('mep-row-status'));
         return row;
     }
 
@@ -1056,6 +1059,11 @@ class ToolbarView implements PluginView {
 }
 
 const toolbarViews = new WeakMap<EditorView, ToolbarView>();
+
+/** The status slot at the right end of the view's formatting row; `null` without a toolbar. */
+export function toolbarStatusSlot(view: EditorView): HTMLElement | null {
+    return view.dom.parentElement?.querySelector<HTMLElement>(':scope > .mep-toolbar > .mep-row-status') ?? null;
+}
 
 /** Whether the selection bubble of `view` is shown: the object toolbar hides every block's bar meanwhile. */
 export function selectionBubbleShown(view: EditorView): boolean {
