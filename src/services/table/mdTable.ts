@@ -56,6 +56,9 @@ export class MDTable {
         if (this._data[0].length !== aligns.length)
             {throw new Error("Align settings count and column count mismatch!");}
         this._aligns = aligns;
+        // A column's width floor is its delimiter's (`:-`, `:-:`); computed with
+        // the old alignments, a narrow aligned column wrote `:` alone, no delimiter.
+        this._columnWidths = this.calcColumnWidths();
     }
     public get indentation(): string {
         return this._indentation;
