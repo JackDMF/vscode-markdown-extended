@@ -24,8 +24,8 @@ function fontVariables(): string {
 }
 
 /**
- * The folders the webview may load from: this extension (the script and the
- * editor's stylesheet), the built-in Markdown extension (the preview's
+ * The folders the webview may load from: this extension (the script, the
+ * editor's stylesheet and the codicon font under `dist/codicons`), the built-in Markdown extension (the preview's
  * stylesheets) and the workspace folders, for what a rendered block links to.
  */
 export function localResourceRoots(extensionUri: vscode.Uri): vscode.Uri[] {
@@ -74,6 +74,8 @@ export function editorPage(webview: vscode.Webview, extensionUri: vscode.Uri, do
         : '';
     const contributed = ContributesService.instance.styles.contributed();
     const userStyles = ContributesService.instance.styles.user(documentUri);
+    // The codicon font, copied beside the script by the build (esbuild.js): `$(icon)` in a lens or code-action title.
+    const codicons = link(vscode.Uri.joinPath(extensionUri, 'dist', 'codicons', 'codicon.css'));
     const editorStyle = link(vscode.Uri.joinPath(extensionUri, 'styles', 'editor.css'));
     const script = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'editor-webview.js'));
 
@@ -87,6 +89,7 @@ ${previewStyles}
 ${contributed.official}
 ${contributed.thirdParty}
 ${userStyles}
+${codicons}
 ${editorStyle}
 </head>
 <body class="markdown-body vscode-body" style="${escapeAttribute(fontVariables())}">

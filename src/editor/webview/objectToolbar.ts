@@ -49,7 +49,7 @@ import {
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import type { CodeActionItem, LensItem } from '../protocol';
-import { lensLabel } from './lenses';
+import { lensLabel, lensLabelNodes } from './lenses';
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -102,6 +102,7 @@ const GAP = 4;
 interface Verb {
     /** `data-verb`: what tests and stylesheets name it by. */
     id: string;
+    /** As its owner titled it: `$(icon)` references are drawn as icons, and `lensLabel` gives the plain text. */
     label: string;
     title: string;
     /** Why it cannot be chosen here, shown in its tooltip; `null` when it can. */
@@ -225,7 +226,7 @@ class ObjectBar {
             el.type = 'button';
             el.className = 'mep-object-verb';
             el.dataset.verb = verb.id;
-            el.textContent = verb.label;
+            el.replaceChildren(...lensLabelNodes(verb.label));
             el.tabIndex = -1;
             el.title = verb.refusal ? `${verb.title}\n${verb.refusal}` : verb.title;
             el.setAttribute('aria-disabled', String(Boolean(verb.refusal)));
@@ -657,7 +658,7 @@ class ObjectToolbarView implements PluginView {
         const actions = this.host.codeActionsAt(object.from).map((item, k): Verb => ({
             id: `code-action:${item.id}`,
             label: item.title,
-            title: item.kind ? `${item.title} (${item.kind}, from another extension)` : `${item.title} (from another extension)`,
+            title: item.kind ? `${lensLabel(item.title)} (${item.kind}, from another extension)` : `${lensLabel(item.title)} (from another extension)`,
             refusal: item.refusal ?? null,
             separated: k === 0 && before > 0,
             run: () => {
@@ -684,7 +685,7 @@ class ObjectToolbarView implements PluginView {
             const id = item.id;
             return {
                 id: `lens:${id ?? `text-${k}`}`,
-                label,
+                label: item.title,
                 title: `${item.tooltip ?? label} (from another extension)`,
                 refusal: id === undefined ? 'The extension that shows it gave it no command.' : null,
                 run: () => {

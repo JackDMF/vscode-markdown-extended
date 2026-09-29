@@ -768,6 +768,31 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'lens:n.0']);
     });
 
+    test('a title\'s $(icon) is a codicon span before the text; a title without one is text only; a modifier is ignored; the tooltip is plain text', async function () {
+        this.timeout(10000);
+        await showDocument();
+        await send([{ blockIndex: 0, items: [
+            { id: 'i.0', title: '$(add) Add reference\u2026', surface: 'action', artifact: 'FRS-TST-001' },
+            { id: 'i.1', title: 'Plain verb', surface: 'action', artifact: 'FRS-TST-001' },
+            { id: 'i.2', title: '$(sync~spin) Syncing', surface: 'action', artifact: 'FRS-TST-001' },
+        ] }]);
+        await delay(80);
+        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'lens:i.0', 'lens:i.1', 'lens:i.2']);
+        const verb = (id: string) => page.$eval(`${BAR} [data-verb="lens:${id}"]`, el => ({
+            nodes: Array.from(el.childNodes, n => n.nodeType === Node.TEXT_NODE ? `#text ${n.textContent}` : (n as HTMLElement).className),
+            text: el.textContent,
+            title: (el as HTMLElement).title,
+        }));
+        const add = await verb('i.0');
+        assert.deepStrictEqual(add.nodes, ['codicon codicon-add', '#text Add reference\u2026']);
+        assert.strictEqual(add.text, 'Add reference\u2026');
+        assert.strictEqual(add.title, 'Add reference\u2026 (from another extension)', 'the tooltip has no icon syntax');
+        assert.deepStrictEqual((await verb('i.1')).nodes, ['#text Plain verb'], 'no icon, one text node');
+        const spin = await verb('i.2');
+        assert.deepStrictEqual(spin.nodes, ['codicon codicon-sync', '#text Syncing']);
+        assert.strictEqual(spin.title, 'Syncing (from another extension)', 'the tooltip is the plain text of the title');
+    });
+
     test('lenses naming no side take a relation\'s first row, one each: a second for the same row is a verb, not unreachable', async function () {
         this.timeout(10000);
         await send([{

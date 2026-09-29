@@ -96,17 +96,52 @@ export const lensPluginKey = new PluginKey<LensState>('mepLenses');
 
 let received = 0;
 
+/** `$(name)` and `$(name~modifier)`: VS Code's codicon syntax in a title. */
+const ICON_REFERENCE = /\$\(([a-z0-9-]+)(?:~[a-z]+)?\)/gi;
+
 /**
- * A lens title as the page draws it: its `$(icon)` references — VS Code's
- * codicon syntax — left out. The page has no access to the workbench's icon
- * font, and a stand-in character reads as a broken icon, which is worse than
- * none.
+ * A lens or code-action title as plain text: its `$(icon)` references — VS
+ * Code's codicon syntax — left out. For a tooltip, an accessible name, a
+ * `<option>` (which holds no elements) and every comparison of text; where a
+ * title is drawn, `lensLabelNodes` renders the icons.
  */
 export function lensLabel(title: string): string {
     return title
-        .replace(/\$\([a-z0-9-]+(?:~[a-z]+)?\)/gi, '')
+        .replace(ICON_REFERENCE, '')
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+/**
+ * A title as the page draws it: each `$(name)` a `<span class="codicon
+ * codicon-name">` — the font is `codicon.css`, linked by the host's page — and
+ * the text between them as text nodes. A `~modifier` (`~spin`) is ignored: an
+ * icon does not animate here. The name is not checked against the font; an
+ * unknown one is an empty span. Whitespace beside an icon is dropped (the
+ * stylesheet spaces it); a title with no icon is one text node, `lensLabel`'s.
+ */
+export function lensLabelNodes(title: string): globalThis.Node[] {
+    if (!new RegExp(ICON_REFERENCE.source, 'i').test(title)) {
+        return [document.createTextNode(lensLabel(title))];
+    }
+    const nodes: globalThis.Node[] = [];
+    let last = 0;
+    const text = (from: number, to: number) => {
+        const piece = title.slice(from, to).replace(/\s+/g, ' ').trim();
+        if (piece !== '') {
+            nodes.push(document.createTextNode(piece));
+        }
+    };
+    for (const match of title.matchAll(ICON_REFERENCE)) {
+        text(last, match.index ?? 0);
+        const icon = document.createElement('span');
+        icon.className = `codicon codicon-${match[1].toLowerCase()}`;
+        icon.setAttribute('aria-hidden', 'true');
+        nodes.push(icon);
+        last = (match.index ?? 0) + match[0].length;
+    }
+    text(last, title.length);
+    return nodes;
 }
 
 /** What a placed element's tooltip says: the verb, then the provider's own tooltip where it says more. */
@@ -385,7 +420,7 @@ function rowDOM(items: readonly LensItem[], run: (id: string) => void): HTMLElem
         if (id === undefined) {
             const text = document.createElement('span');
             text.className = 'mep-lens-text';
-            text.textContent = label;
+            text.replaceChildren(...lensLabelNodes(item.title));
             if (item.tooltip) {
                 text.title = item.tooltip;
             }
@@ -396,7 +431,7 @@ function rowDOM(items: readonly LensItem[], run: (id: string) => void): HTMLElem
         button.type = 'button';
         button.className = 'mep-lens';
         button.dataset.lens = id;
-        button.textContent = label;
+        button.replaceChildren(...lensLabelNodes(item.title));
         button.title = item.tooltip ?? label;
         button.addEventListener('click', e => {
             e.preventDefault();
