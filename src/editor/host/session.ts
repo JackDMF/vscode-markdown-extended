@@ -9,6 +9,8 @@ import { CodeActionController } from './codeActions';
 import { message } from './errors';
 import { IncludeController, IncludePicker, IncludeProvider, collectIncludeProviders } from './includes';
 import { LensController, SessionPort } from './lenses';
+import { FileLister } from './linkChoices';
+import { LinksAndImages } from './linksImages';
 import { fragmentLine, headingAnchors, resolveLinkTarget } from './links';
 import { minimalReplacement } from './minimalEdit';
 import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
@@ -28,6 +30,10 @@ export interface SessionHost {
     includeProviders?(): Promise<IncludeProvider[]>;
     /** VS Code's QuickPick and information message (the default); a test answers for the person. */
     includePicker?: IncludePicker;
+    /** The files a link's field completes with (`workspaceFiles`, the default); a test lists its own. */
+    linkFiles?: FileLister;
+    /** VS Code's open dialog (the default) for **Insert → Image…**; a test answers for the person. */
+    openDialog?(options: vscode.OpenDialogOptions): Thenable<vscode.Uri[] | undefined>;
     /** How long `toSource`/`toPage` wait for the page's answer (`MAP_TIMEOUT_MS`, the default). */
     mapTimeoutMs?: number;
 }
@@ -36,6 +42,8 @@ export interface SessionHost {
 export interface SessionWebview {
     postMessage(message: HostMessage): Thenable<boolean>;
     onDidReceiveMessage: vscode.Event<WebviewMessage>;
+    /** The address the page loads a local file from; without it, no image `src` is resolved. */
+    asWebviewUri?(uri: vscode.Uri): vscode.Uri;
 }
 
 /** How long a burst of changes from another writer (typing in the text editor) is left to settle before re-parsing. */
@@ -103,6 +111,8 @@ export class VisualEditorSession implements vscode.Disposable {
     private readonly codeActions: CodeActionController;
     /** Include insertion: the choices other extensions offer, picked in VS Code's QuickPick. */
     private readonly includes: IncludeController;
+    /** Links and images: completion, the open dialog, dropped and pasted files, where an image loads from. */
+    private readonly linksAndImages: LinksAndImages;
     private readonly subscriptions: vscode.Disposable[];
     /** A fragment to bring into view once the page has the document (`reveal`). */
     private pendingReveal: Reveal | undefined;
@@ -131,11 +141,20 @@ export class VisualEditorSession implements vscode.Disposable {
         this.codeActions = new CodeActionController(port);
         const includeProviders = host.includeProviders?.bind(host) ?? (() => collectIncludeProviders(undefined, line => this.host.log(line)));
         this.includes = new IncludeController(port, includeProviders, host.includePicker);
+        this.linksAndImages = new LinksAndImages({
+            port,
+            engine: () => this.host.engine(),
+            enqueue: work => this.enqueue(work),
+            asWebviewUri: webview.asWebviewUri?.bind(webview),
+            linkFiles: host.linkFiles,
+            openDialog: host.openDialog?.bind(host),
+        });
         this.subscriptions = [
             this.lenses,
             this.codeActions,
             this.caretChanged,
             webview.onDidReceiveMessage(msg => this.receive(msg)),
+            webview.onDidReceiveMessage(msg => this.linksAndImages.receive(msg)),
             vscode.workspace.onDidChangeTextDocument(e => {
                 if (e.document.uri.toString() === this.document.uri.toString()) {
                     this.documentChanged();

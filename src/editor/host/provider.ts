@@ -35,9 +35,20 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
         const webview = panel.webview;
         webview.options = {
             enableScripts: true,
-            localResourceRoots: localResourceRoots(this.extensionUri),
+            localResourceRoots: localResourceRoots(this.extensionUri, document.uri),
         };
         webview.html = editorPage(webview, this.extensionUri, document.uri);
+        // A folder added to or removed from the workspace changes what the page
+        // may load (its images). VS Code rebuilds the page for new options, so
+        // they are set only when the roots differ; the page asks for the
+        // document again, its undo history starting afresh.
+        const roots = (list: readonly vscode.Uri[]) => list.map(r => r.toString()).join('\n');
+        const folders = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            const next = localResourceRoots(this.extensionUri, document.uri);
+            if (roots(next) !== roots(webview.options.localResourceRoots ?? [])) {
+                webview.options = { ...webview.options, localResourceRoots: next };
+            }
+        });
         const session = new VisualEditorSession(document, webview, {
             engine: () => this.engines.get(),
             onDidChangeEngine: this.engines.onDidChange,
@@ -46,6 +57,7 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
         });
         const tracking = this.tracker?.track(panel, session);
         panel.onDidDispose(() => {
+            folders.dispose();
             tracking?.dispose();
             session.dispose();
         });

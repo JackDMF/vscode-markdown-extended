@@ -137,6 +137,28 @@ export type HostMessage =
      */
     | { type: 'includeChosen'; requestId: number; insert?: string }
     /**
+     * The answer to `linkChoices`: what a link's (or an image's) field may
+     * complete its value with, best first and capped (`host/linkChoices.ts`).
+     * The field shows the answer to its latest query only.
+     */
+    | { type: 'linkChoicesResult'; requestId: number; items: LinkChoice[] }
+    /**
+     * The answer to `pickImage`, `insertFiles` and `saveImage`: each file as
+     * the page inserts it, its path relative to the document (`LinkedFile`) —
+     * for `saveImage`, the file the host wrote. Empty when the dialog was
+     * dismissed, no file could be linked, or the bitmap could not be written
+     * (the host says why in its log and a message).
+     */
+    | { type: 'filesChosen'; requestId: number; files: LinkedFile[] }
+    /**
+     * The answer to `resolveImages`: for each asked `src` the host could
+     * resolve to a file, the address the page loads it from
+     * (`webview.asWebviewUri`). A `src` left out is shown as written — a web
+     * address, a `data:` image, one that names no file. Display only: the
+     * node keeps the `src` the file holds.
+     */
+    | { type: 'imagesResolved'; requestId: number; sources: Record<string, string> }
+    /**
      * Report the caret again, although the page's last report may be the same:
      * the host forgot it (another writer's change came and went without a new
      * document) and has nothing to offer until the page speaks.
@@ -149,6 +171,31 @@ export type HostMessage =
      * the page's pending edit, so the answer is in the text the host holds.
      */
     | { type: 'map'; id: number; toSource?: number[]; toPage?: SourcePosition[] };
+
+/**
+ * One completion of a link's field: `value` is what the field then holds — a
+ * path relative to the document, percent-encoded as a destination is written,
+ * or `#anchor` after one — `label` what the list shows, `detail` a heading's
+ * text. `kind` says what it names.
+ */
+export interface LinkChoice {
+    value: string;
+    label: string;
+    detail?: string;
+    kind: 'file' | 'heading';
+}
+
+/**
+ * A file the page links to: `src` its path relative to the document (POSIX
+ * separators, percent-encoded as a destination is written), `alt` its name
+ * without the extension, `image` whether it is inserted as an image — any
+ * other file becomes a link named by its file name.
+ */
+export interface LinkedFile {
+    src: string;
+    alt: string;
+    image: boolean;
+}
 
 /** Webview → host. */
 export type WebviewMessage =
@@ -206,6 +253,33 @@ export type WebviewMessage =
      * reads the document reads the page's text.
      */
     | { type: 'pickInclude'; requestId: number; replace?: { blockIndex: number } }
+    /**
+     * Completions for a link's field holding `query`: workspace files relative
+     * to the document (Markdown first), the current document's headings for a
+     * `#…`, a target file's headings for `path#…`. With `images`, image files
+     * only (an image's path). Answered with `linkChoicesResult`.
+     */
+    | { type: 'linkChoices'; requestId: number; query: string; images?: true }
+    /** Ask for an image file in VS Code's open dialog (**Insert → Image…**); answered with `filesChosen`. */
+    | { type: 'pickImage'; requestId: number }
+    /**
+     * Files dropped into the page from VS Code's Explorer view — its
+     * `resourceurls`, or the `file:` lines of a `text/uri-list` — as uris; the
+     * host makes each relative to the document. Answered with `filesChosen`.
+     */
+    | { type: 'insertFiles'; requestId: number; uris: string[] }
+    /**
+     * A bitmap with no file behind it, `bytes` base64: a screenshot pasted from
+     * the clipboard, or an image dropped from the system (the webview is given
+     * its bytes and name, never its path, so it is copied). The host writes it
+     * beside the document — where `markdown.copyFiles.destination` says, else
+     * `images/<suggestedName>` for a dropped file and
+     * `images/<document>-<yyyymmdd-hhmmss>.<ext>` for a screenshot — and answers
+     * with `filesChosen`.
+     */
+    | { type: 'saveImage'; requestId: number; bytes: string; suggestedName: string }
+    /** Where the page may load these images' `src` from; answered with `imagesResolved`. */
+    | { type: 'resolveImages'; requestId: number; srcs: string[] }
     /**
      * Where the caret is, in the text of the document of version `baseVersion`
      * as the host holds it: a 0-based line and UTF-16 character

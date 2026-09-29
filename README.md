@@ -442,9 +442,9 @@ never covers the line you are typing on.
 | ------ | ------------- | ----- |
 | Sidenote, marginal note | while the caret is inside, after a moment | **Remove note, keep text** · **Convert to marginal note** / **Convert to sidenote** · **Edit source** |
 | Left or right sidebar | while the caret is inside, after a moment | **Remove sidebar, keep text** · **Move to right** / **Move to left** · **Edit source** |
-| Link | while the caret is in its text, after a moment | **Open** · **Change URL** · **Remove link** |
+| Link | while the caret is in its text, after a moment | **Open** · **Edit link…** · **Remove link** |
 | Span (`[text]{…}`) | while the caret is in its text, after a moment | **Edit attributes** · **Remove attributes, keep text** |
-| Image | when you click it, after a moment | **Change source** · **Remove image** |
+| Image | when you click it, after a moment | **Edit image…** (its alt text, then its path) · **Open file** · **Remove image** |
 | Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Remove admonition, keep content** |
 | Container | while the caret is in it, after a moment | **Change name/info** · **Remove container, keep content** |
 | A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Edit block attributes** (empty removes them) |
@@ -465,9 +465,10 @@ have for that block**, after its own verbs (see below).
 - **A removal says so.** Something disappearing is easy to miss, so a removal or deletion
   is announced beside the caret for a moment — *Note removed — Ctrl+Z* — and one `Ctrl+Z`
   brings it back.
-- **Edit source, Change URL, Change source, Edit attributes, Edit title, Change
-  name/info** open a one-line field in the bar, filled in: `Enter` applies, `Esc` or
-  clicking away cancels. An attribute field takes a `{…}` as markdown-it-attrs reads it
+- **Edit source, Edit link…, Edit image…, Edit attributes, Edit title, Change
+  name/info** open a one-line field in the bar, filled in: `Enter` applies (or goes on to
+  the next field — *Edit image…* asks for the alt text, then the path), `Esc` or clicking
+  away cancels. A link's address and an image's path complete as you type (below, *Links*). An attribute field takes a `{…}` as markdown-it-attrs reads it
   (`{.a .b}`, `{#id}`, `{key="value"}`) and refuses anything else, saying why beside the
   caret. **Change type** opens a list of the admonition types instead. A note's field holds its Markdown
   (`++reference|note++`); what you type is read by the same parser as the preview, so it
@@ -556,6 +557,40 @@ window; in the Visual Editor it is scrolled to below the toolbar and the caret p
 a link to a heading of the same document scrolls there. A fragment the file does not have
 opens it at the top.
 
+**`Ctrl+K` makes a link** (`Cmd+K` on macOS; also **Insert → Link…**). With text selected,
+a field under it asks for the address and the text is linked; at the caret it asks for the
+text first, then the address (leave the text empty and the address is the text); in a link,
+it changes that link's address, as **Edit link…** does. The address field completes as you
+type, from the files of the workspace — relative to the document, Markdown files first,
+spaces written `%20` — and from headings: `#` lists this document's headings, a Markdown
+file's path followed by `#` that file's, each as the anchor a link lands on (`{#id}`, else
+the heading's slug). `↓`/`↑` choose, `Tab` takes a choice into the field and goes on (a file,
+then `#` for its headings), `Enter` applies — the list's last line says so. Once a path is
+followed by `#`, the list shows each `#anchor` with its heading beside it. Files and folders
+your `files.exclude` and `search.exclude` leave out are not offered. While the field is open,
+the text it will link stays highlighted.
+
+**Images.** **Insert → Image…** opens VS Code's file dialog in the document's folder; the
+image goes in at the caret as `![name](relative/path.png)` — a path relative to the document,
+with `/`, spaces as `%20` — and a field asks for its alt text, the file's name filled in.
+**Dropping files:**
+
+- **From VS Code's Explorer view** (hold `Shift` while dropping into the editor) a file is
+  *linked*: an image goes in as an image by its relative path, any other file as a link named
+  by its file name. Nothing is copied.
+- **From your system's file manager** an image is *copied*: the editor is given its contents
+  and name but not its location, so the image is saved beside the document under its own name
+  (`images/diagram.png`, or `diagram-1.png` when that is taken) and inserted by that path.
+  Another kind of file cannot be linked from there; the editor says to drop it from the
+  Explorer view.
+
+A **pasted screenshot** (an image on the clipboard with no file) is saved the same way, as
+`images/<document>-<yyyymmdd-hhmmss>.png`. Where VS Code's own `markdown.copyFiles.destination`
+setting names a place for the document, copies go there instead. Nothing is saved where it
+could not be inserted — dropping onto code, say, is refused and says so. Images with a relative
+path show as in the preview: the editor loads them from the document's folder and the
+workspace, while the file keeps the path as you wrote it.
+
 ### Toolbar
 
 A toolbar stays at the top of the page, one line of controls:
@@ -593,7 +628,7 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   selected — a note needs one). A sidebar takes the selected text as its own. A footnote
   is written after the selection with the first free number (`[^2]`), and its definition
   goes below the paragraph with its source open for the text.
-- **Insert** — horizontal rule; admonition, a submenu of every type the admonition plugin
+- **Insert** — **Link…** and **Image…** (above, *Links*); horizontal rule; admonition, a submenu of every type the admonition plugin
   knows, each drawn as its box; container; table, task list, definition list, abbreviation
   and table of contents, from the same templates as this extension's snippets where one
   exists; **Include…** (below). An admonition (titled with its type's name) and a container
@@ -723,10 +758,9 @@ rather than a second heading, so the id and the anchor are never written twice.
   Set `"markdown.math.enabled": false` in a workspace that uses sidebars (see
   [Sidebars](#sidebars)); you lose `$…$` and `$$…$$` math there. The editor follows the
   setting without reopening. Right sidebars (`@…@`) are not affected.
-- **No button makes a new link or image yet.** Write one in the text editor; an existing
-  one's bar changes where it points, or removes it.
-- **Relative images are not resolved** in the editor yet; they show as broken images.
-  The file is unaffected.
+- **An image outside the document's folder and the workspace does not show** — the editor
+  may load only from those — and the file is unaffected. An image dropped from another
+  drive than the document's is not inserted: no relative path reaches it.
 - **Desktop only.** In vscode.dev the command and menu entries are hidden; **Open With…**
   still lists the editor there, and choosing it fails.
 - There is no merge. The editor sends what you typed a quarter of a second after the

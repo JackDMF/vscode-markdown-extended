@@ -112,7 +112,20 @@ export type ActionApply =
      * block after the current block and parsed again by the host, which turns
      * it into the expansion. The syntax is the provider's; nothing here knows it.
      */
-    | { kind: 'insert-include' };
+    | { kind: 'insert-include' }
+    /**
+     * A link at the selection (`Ctrl+K` too): the inline field asks for the
+     * address, with completion from the host (the workspace's files, the
+     * headings of this document or the one typed); at a caret it asks for the
+     * text first. In a link already, it changes that link's address.
+     */
+    | { kind: 'insert-link' }
+    /**
+     * An image at the caret: VS Code's open dialog chooses the file (the host,
+     * `pickImage`), its path relative to the document is the `src`, and the
+     * inline field asks for the alt text, the file's name prefilled.
+     */
+    | { kind: 'insert-image' };
 
 /** A fuller example for the preview card: Markdown, and the top-level elements it renders as. */
 export interface ActionPreview {
@@ -159,6 +172,16 @@ export function menuOf(action: ToolbarAction): ToolbarMenu | null {
 
 export function submenuOf(action: ToolbarAction): ToolbarSubmenu | null {
     return 'menu' in action.place ? action.place.submenu ?? null : null;
+}
+
+/**
+ * Markdown as the preview card prints it: a `data:` URI's payload elided
+ * (`(data:image/png;base64,…)`), since a picture spelled out in base64 is
+ * noise to read. Only the printed line: the card's rendering and the sample
+ * keep the real URI, and the check renders the real Markdown.
+ */
+export function elideDataUris(markdown: string): string {
+    return markdown.replace(/\(data:([^,)\s]*),[^)\s]*\)/g, '(data:$1,…)');
 }
 
 /** The action's tooltip: its name, the syntax it writes, and the source footnote where it applies. */
@@ -375,12 +398,45 @@ export const INCLUDE_SYNTAX = 'a snippet line, as its extension offers it';
 /** Why **Include…** and **Change snippet…** are disabled; the host's message says the same. */
 export const NO_INCLUDES_REFUSAL = 'No extension offers includes for this document.';
 
+/** The address the link entry's syntax, sample and preview name. */
+const LINK_EXAMPLE_HREF = 'chapter.md#overview';
+
+/** The path the image entry's syntax names. */
+const IMAGE_EXAMPLE_SRC = 'images/overview.png';
+
+/** The image entry's sample: a 24×16 landscape, sky, hill and sun, as a PNG. */
+const SAMPLE_PICTURE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAQCAIAAACDRijCAAAASUlEQVR42mOooBJgAOJ5x99RiAbUoG9HXCCIIoPgpqCZNQwMoloYDcroJ2xQ2IIYXIgEg/CYQoxZUIMImkLQLNIMwmMc1CCqAADnhP+yQhhAvwAAAABJRU5ErkJggg==';
+
 /** The class a new container is given; its object toolbar's Change name/info renames it. */
 export const NEW_CONTAINER_NAME = 'container';
 
 const checkbox = (checked: boolean): SampleSpec => withAttrs(el('input'), checked ? { type: 'checkbox', checked: 'true' } : { type: 'checkbox' });
 
 const insert: ToolbarAction[] = [
+    {
+        // A mark on text, made native; the address is asked for in the inline field.
+        // The sample carries no href: VS Code's webview follows a clicked <a href> from
+        // its window, whatever the menu entry does with the click.
+        id: 'link', place: { menu: 'insert' }, label: 'Link…', syntax: `[text](${LINK_EXAMPLE_HREF})`,
+        sample: el('a', 'link'), apply: { kind: 'insert-link' },
+        example: `[link](${LINK_EXAMPLE_HREF})`,
+        preview: {
+            markdown: `See [the other chapter](${LINK_EXAMPLE_HREF}) for more.`,
+            nodes: [el('p', 'See ', el('a', 'the other chapter'), ' for more.')],
+        },
+    },
+    {
+        // A real <img> showing a real picture: a small one inline, as `data:`
+        // (which the CSP admits and markdown-it passes for PNG), so the entry's
+        // example renders the very element the entry draws.
+        id: 'image', place: { menu: 'insert' }, label: 'Image…', syntax: `![alt](${IMAGE_EXAMPLE_SRC})`,
+        sample: withAttrs(el('img'), { src: SAMPLE_PICTURE }), apply: { kind: 'insert-image' },
+        example: `![image](${SAMPLE_PICTURE})`,
+        preview: {
+            markdown: `A figure: ![A landscape](${SAMPLE_PICTURE})`,
+            nodes: [el('p', 'A figure: ', withAttrs(el('img'), { src: SAMPLE_PICTURE }))],
+        },
+    },
     {
         id: 'horizontal-rule', place: { menu: 'insert' }, label: 'Horizontal rule', syntax: '---',
         sample: el('hr'),

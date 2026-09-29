@@ -445,7 +445,10 @@ suite('Editor toolbar (e2e)', () => {
         await page.mouse.click(WIDE - 20, 880);
         await page.focus(face('insert'));
         await page.keyboard.press('ArrowDown');
-        await page.waitForSelector(`.${PREVIEW_CARD_CLASS}[data-action="horizontal-rule"]:not([hidden])`, { timeout: 2000 });
+        // The first entry the selection allows: Link… and Image… need a caret in text.
+        const first = await page.$eval('.mep-menu[data-menu="insert"]', menu =>
+            (menu.querySelector('[data-action]:not([aria-disabled="true"])') as HTMLElement).dataset.action);
+        await page.waitForSelector(`.${PREVIEW_CARD_CLASS}[data-action="${first}"]:not([hidden])`, { timeout: 2000 });
     });
 
     test(`at ${WIDE}px, wider than the notes' breakpoint, every Annotation preview stays inside its card`, async function () {

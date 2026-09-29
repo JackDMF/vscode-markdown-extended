@@ -57,7 +57,7 @@ export const PROBING_CLASS = 'mep-probing';
  * an empty one too, since a cell is the table's content and the page draws it
  * to be seen (`editor.css`) — an image, and an atom of any kind.
  */
-const OCCUPIED = '.ProseMirror > table td, .ProseMirror > table th, img, .mep-atom, .mep-inline-atom';
+const OCCUPIED = '.ProseMirror > table td, .ProseMirror > table th, img:not(.ProseMirror-separator), .mep-atom, .mep-inline-atom';
 
 function textAt(view: EditorView, x: number, y: number): boolean {
     const element = document.elementFromPoint(x, y);

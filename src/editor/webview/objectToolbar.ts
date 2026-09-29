@@ -39,11 +39,12 @@ import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
-import { InlineChoice, InlineField } from './inlineField';
+import { FieldStep, InlineChoice, InlineField, fieldHeading } from './inlineField';
 import { NoteNodeName, unwrapNote } from './notes';
+import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     EditorObject, NOTE_CONVERSION, NodeObjectKind, blockAttrsRefusal, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction,
-    changeImageTransaction, changeLinkTransaction, changeSpanTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
+    changeLinkTransaction, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
@@ -56,7 +57,7 @@ import {
     deleteRowTransaction, tableSourceTransaction,
 } from './tables';
 import { TableAlign } from '../schema';
-import type { CodeActionItem, LensItem } from '../protocol';
+import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { lensLabelNodes, lensName } from './lenses';
 
 /** What the verbs need from the page. */
@@ -89,6 +90,8 @@ export interface ObjectToolbarHost {
     includesOffered(): boolean;
     /** Ask the host for an include line to replace the directive of the expansion at `pos` with (`main.ts`). */
     pickInclude(pos: number): void;
+    /** What a link's (with `images`, an image's) path may complete to: the host's answer to `linkChoices`. */
+    linkChoices(query: string, images: boolean): Promise<LinkChoice[]>;
 }
 
 /**
@@ -98,6 +101,13 @@ export interface ObjectToolbarHost {
  * is a row again.
  */
 export const LENS_VERBS_INLINE = 4;
+
+/**
+ * The objects whose range stays drawn while their field is open: the inline
+ * ones, whose text the field is about. A block's field (a container's name, an
+ * admonition's title) names its block by the bar beside it.
+ */
+const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'note', 'image']);
 
 /** How long the caret rests in an inline object before its toolbar shows. */
 export const INLINE_DELAY_MS = 400;
@@ -119,8 +129,8 @@ interface Verb {
     refusal?: string | null;
     /** A verb that runs at once. */
     run?(): void;
-    /** A verb that asks for a value first, in the inline field. */
-    field?: { value: string; label: string; commit(value: string): void };
+    /** A verb that asks for a value first, in the inline field — and, when its commit names another step, for that one next. */
+    field?: FieldStep;
     /** A verb that asks for one of a list of values, in the inline choice. */
     choice?: { value: string; label: string; options: readonly { value: string; label: string }[]; commit(value: string): void };
     /**
@@ -280,6 +290,16 @@ function isSidebar(name: NoteNodeName): boolean {
     return name === 'left_sidebar' || name === 'right_sidebar';
 }
 
+/** What a bar tells the view about its field. */
+interface BarEvents {
+    escape(): void;
+    /** A field opened for `object`: what it acts on is drawn (`pendingRange.ts`). */
+    fieldOpened(object: EditorObject): void;
+    fieldClosed(committed: boolean): void;
+    /** The bar went with its field open: the view hides it from inside an update, so the drawing goes after it. */
+    fieldDropped(): void;
+}
+
 /** One bar: a label and verbs, or a label and the inline field. */
 class ObjectBar {
     readonly el: HTMLElement;
@@ -292,7 +312,7 @@ class ObjectBar {
     /** A set-verb's open menu: its panel, the verb's button, its entries. */
     private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
 
-    constructor(trigger: 'selection' | 'hover', private readonly events: { escape(): void; fieldClosed(committed: boolean): void }) {
+    constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents) {
         this.el = document.createElement('div');
         this.el.className = 'mep-object-toolbar';
         this.el.dataset.trigger = trigger;
@@ -338,7 +358,10 @@ class ObjectBar {
 
     hide(): void {
         this.closeMenu(false);
-        this.field?.dispose();
+        if (this.field) {
+            this.field.dispose();
+            this.events.fieldDropped();
+        }
         this.field = null;
         this.object = null;
         this.room = null;
@@ -541,19 +564,28 @@ class ObjectBar {
         }
     }
 
-    /** The verb's field — or its choice, for a verb with `options` — in place of the verbs, beside the label. */
+    /**
+     * The verb's field — or its choice, for a verb with `options` — in place of
+     * the verbs, beside the label. A field whose commit names a next step
+     * (**Edit image…**: the alt text, then the path) shows that field next, in
+     * the same place; the bar is redrawn once the last one is in.
+     */
     private openField(verb: Verb, spec: NonNullable<Verb['field']> | NonNullable<Verb['choice']>): void {
         const label = this.el.querySelector('.mep-object-label');
         const make = 'options' in spec
             ? (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
                 new InlineChoice({ choices: spec.options, value: spec.value, label: spec.label, ...callbacks })
             : (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
-                new InlineField({ value: spec.value, label: spec.label, ...callbacks });
+                new InlineField({ value: spec.value, caret: spec.caret, label: spec.label, placeholder: spec.placeholder, complete: spec.complete, ...callbacks });
         const field = make({
             onCommit: value => {
                 this.field = null;
                 this.signature = '';
-                spec.commit(value);
+                const next = spec.commit(value);
+                if (next) {
+                    this.openField(verb, next);
+                    return;
+                }
                 this.events.fieldClosed(true);
             },
             onCancel: reason => {
@@ -567,8 +599,15 @@ class ObjectBar {
         });
         field.el.dataset.verb = verb.id;
         this.field = field;
+        if (label) {
+            // A prefilled field shows no placeholder: the label says what the value is.
+            label.textContent = fieldHeading(this.el.getAttribute('aria-label') ?? '', spec.label);
+        }
         this.el.replaceChildren(...(label ? [label] : []), field.el);
         field.focus();
+        if (this.object) {
+            this.events.fieldOpened(this.object);
+        }
     }
 
     private onKey(e: KeyboardEvent): void {
@@ -643,9 +682,22 @@ class ObjectToolbarView implements PluginView {
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
-        const events = {
+        const events: BarEvents = {
             escape: () => this.view.focus(),
-            fieldClosed: () => this.refresh(),
+            fieldOpened: object => {
+                if (PENDING_OBJECTS.has(object.kind)) {
+                    showPendingRange(this.view, object.from, object.to);
+                }
+            },
+            fieldClosed: () => {
+                clearPendingRange(this.view);
+                this.refresh();
+            },
+            fieldDropped: () => setTimeout(() => {
+                if (!this.destroyed) {
+                    clearPendingRange(this.view);
+                }
+            }, 0),
         };
         this.selectionBar = new ObjectBar('selection', events);
         this.hoverBar = new ObjectBar('hover', events);
@@ -1223,12 +1275,14 @@ class ObjectToolbarView implements PluginView {
                     verbs: [
                         { id: 'open-link', label: 'Open', title: `Open ${href} (as Ctrl+click does).`, run: () => host.openLink(href) },
                         {
-                            id: 'change-url',
-                            label: 'Change URL',
-                            title: 'Link the text to another address (Enter to apply, Esc to cancel).',
+                            // The field Ctrl+K and Insert → Link… open in a link, with the same completion.
+                            id: 'edit-link',
+                            label: 'Edit link…',
+                            title: 'Link the text to another address: a file, a #heading, a web address (Enter to apply, Esc to cancel).',
                             field: {
                                 value: href,
-                                label: 'URL',
+                                label: 'Address',
+                                complete: query => host.linkChoices(query, false),
                                 commit: value => this.act(object, current => {
                                     const tr = current.kind === 'link' ? changeLinkTransaction(view.state, current, value) : null;
                                     if (tr) {
@@ -1255,26 +1309,33 @@ class ObjectToolbarView implements PluginView {
             }
             case 'image': {
                 const src = object.node.attrs.src as string;
+                const alt = (object.node.attrs.alt as string | null) ?? '';
                 return {
                     label: 'Image',
-                    title: src,
+                    title: alt === '' ? src : `${alt}: ${src}`,
                     verbs: [
                         {
-                            id: 'change-source',
-                            label: 'Change source',
-                            title: 'Show another image here, its alt text kept (Enter to apply, Esc to cancel).',
+                            id: 'edit-image',
+                            label: 'Edit image…',
+                            title: 'Its alt text, then its path, each in the field (Enter to go on and apply, Esc to cancel).',
                             field: {
-                                value: src,
-                                label: 'Image source',
-                                commit: value => this.act(object, current => {
-                                    const tr = changeImageTransaction(view.state, current.from, value);
-                                    if (tr) {
-                                        dispatch(tr);
-                                    }
-                                    return tr !== null;
+                                value: alt,
+                                label: 'Alt text',
+                                commit: nextAlt => ({
+                                    value: src,
+                                    label: 'Image path',
+                                    complete: query => host.linkChoices(query, true),
+                                    commit: nextSrc => this.act(object, current => {
+                                        const tr = editImageTransaction(view.state, current.from, nextAlt, nextSrc);
+                                        if (tr) {
+                                            dispatch(tr);
+                                        }
+                                        return tr !== null;
+                                    }),
                                 }),
                             },
                         },
+                        { id: 'open-image', label: 'Open file', title: `Open ${src} (as Ctrl+click on a link does).`, run: () => host.openLink(src) },
                         { id: 'remove-image', label: 'Remove image', title: 'The image goes from the text.', run: () => this.remove(object, 'Image removed') },
                     ],
                 };

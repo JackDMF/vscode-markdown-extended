@@ -26,17 +26,22 @@
  */
 import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import type { LinkChoice, LinkedFile } from '../../protocol';
 import { editorSchema } from '../../schema';
 import { textInBand } from '../clearance';
 import { showHint } from '../hint';
-import { InlineField } from '../inlineField';
+import { FieldStep, InlineField, fieldHeading } from '../inlineField';
+import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { editRawSourceAt } from '../nodeViews';
 import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
-import { applySpanTransaction, literalRefusal, spanLockReason } from '../objects';
+import {
+    applySpanTransaction, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
+    LINK_LOCK, literalRefusal, objectAtSelection, spanLockReason,
+} from '../objects';
 import { insertTableTransaction } from '../tables';
 import {
     MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
-    inBubble, inRow, menuOf, submenuOf, tooltipOf,
+    elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertSourceTransaction, insertWrapperTransaction, isCurrent,
@@ -54,6 +59,10 @@ export interface ToolbarHost {
     includesOffered(): boolean;
     /** Ask the host for an include line; the page inserts the answer after the current block (`main.ts`). */
     pickInclude(): void;
+    /** What a link's (with `images`, an image's) path may complete to: the host's answer to `linkChoices`. */
+    linkChoices(query: string, images: boolean): Promise<LinkChoice[]>;
+    /** Ask the host for an image file (VS Code's open dialog); `chosen` gets it, as the page inserts it, unless the page moved on. */
+    pickImage(chosen: (files: LinkedFile[]) => void): void;
 }
 
 /** How long the pointer or the focus rests on an entry before its preview card shows. */
@@ -141,6 +150,14 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
             const reason = spanLockReason(state);
             return { enabled: reason === null, active: false, reason };
         }
+        case 'insert-link': {
+            const reason = objectAtSelection(state)?.kind === 'link' ? null : insertLockReason(state, LINK_LOCK);
+            return { enabled: reason === null, active: false, reason };
+        }
+        case 'insert-image': {
+            const reason = insertLockReason(state, IMAGE_LOCK);
+            return { enabled: reason === null, active: false, reason };
+        }
     }
 }
 
@@ -185,8 +202,8 @@ class ToolbarView implements PluginView {
     private readonly menus: Menu[] = [];
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
     private cardTimer: ReturnType<typeof setTimeout> | undefined;
-    /** The span action's field, while it is open. */
-    private spanField: { bar: HTMLElement; field: InlineField } | null = null;
+    /** The field an action asked for a value in (a span's literal, a link's address, an image's alt text), while it is open. */
+    private fieldBar: { bar: HTMLElement; field: InlineField } | null = null;
 
     constructor(private readonly view: EditorView, private readonly host: ToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -255,7 +272,7 @@ class ToolbarView implements PluginView {
 
     destroy(): void {
         clearTimeout(this.cardTimer);
-        this.closeSpanField();
+        this.closeFieldBar();
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
         }
@@ -651,7 +668,7 @@ class ToolbarView implements PluginView {
             body.append(renderSample(node));
         }
         const syntax = div('mep-preview-syntax');
-        syntax.textContent = preview.markdown;
+        syntax.textContent = elideDataUris(preview.markdown);
         this.card.replaceChildren(body, syntax);
         this.card.dataset.action = action.id;
         this.card.dataset.menu = menu.id;
@@ -741,6 +758,14 @@ class ToolbarView implements PluginView {
             case 'attr-span':
                 this.askSpanLiteral();
                 return;
+            case 'insert-link':
+                this.askLink();
+                return;
+            case 'insert-image':
+                // VS Code's open dialog takes the choice; the file comes back as
+                // `filesChosen` and goes in then, at the selection as it is.
+                this.host.pickImage(files => this.insertPicked(files));
+                return;
         }
     }
 
@@ -755,28 +780,15 @@ class ToolbarView implements PluginView {
      * the text it was opened for.
      */
     private askSpanLiteral(): void {
-        this.closeSpanField();
         const view = this.view;
         if (spanLockReason(view.state) !== null) {
             return;
         }
-        const bar = div('mep-object-toolbar');
-        bar.dataset.trigger = 'toolbar';
-        bar.dataset.object = 'span';
-        bar.setAttribute('role', 'toolbar');
-        bar.setAttribute('aria-label', 'Span with class');
-        const close = () => {
-            if (this.spanField?.bar === bar) {
-                this.spanField = null;
-            }
-            bar.remove();
-        };
-        const field = new InlineField({
+        this.openFieldBar('span', 'Span attributes', 'span-attributes', {
             value: SPAN_FIELD_PREFILL.value,
             caret: SPAN_FIELD_PREFILL.caret,
             label: 'Attributes',
-            onCommit: value => {
-                close();
+            commit: value => {
                 view.focus();
                 const refusal = literalRefusal(value, 'span');
                 const tr = refusal === null ? applySpanTransaction(view.state, value) : null;
@@ -786,23 +798,165 @@ class ToolbarView implements PluginView {
                 }
                 view.dispatch(tr);
             },
-            onCancel: reason => {
-                close();
-                if (reason === 'escape') {
+        });
+    }
+
+    // -- links and images ------------------------------------------------------
+
+    /**
+     * **Insert → Link…** and `Ctrl+K`. In a link, its address, prefilled — the
+     * object toolbar's **Edit link…** does the same. Over selected text, the
+     * address; at a caret, the text first and then the address (an empty text
+     * is the address itself). The address field completes from the host: the
+     * workspace's files relative to the document, `#` headings of this document
+     * or of the file typed before the `#`. False where no link can be made.
+     */
+    askLink(): boolean {
+        const view = this.view;
+        const complete = (query: string) => this.host.linkChoices(query, false);
+        const object = objectAtSelection(view.state);
+        if (object?.kind === 'link') {
+            this.openFieldBar('link', 'Link', 'link-address', {
+                value: object.mark.attrs.href as string,
+                label: 'Address',
+                complete,
+                commit: value => {
                     view.focus();
+                    const current = currentObject(view.state, object);
+                    const tr = current?.kind === 'link' ? changeLinkTransaction(view.state, current, value) : null;
+                    if (tr) {
+                        view.dispatch(tr);
+                    }
+                },
+            }, { from: object.from, to: object.to });
+            return true;
+        }
+        const reason = insertLockReason(view.state, LINK_LOCK);
+        if (reason !== null) {
+            showHint(view, reason, 'refusal');
+            return false;
+        }
+        const address = (text: string): FieldStep => ({
+            value: '',
+            label: 'Address',
+            complete,
+            commit: href => {
+                view.focus();
+                if (href.trim() === '') {
+                    return;
+                }
+                const tr = insertLinkTransaction(view.state, text, href);
+                if (tr === null) {
+                    showHint(view, 'The link cannot be made here: the note around it could not be written back with it.', 'refusal');
+                    return;
+                }
+                view.dispatch(tr);
+            },
+        });
+        this.openFieldBar('link', 'Link', 'link-address', view.state.selection.empty
+            ? { value: '', label: 'Text', placeholder: 'Text — empty: the address', commit: text => address(text) }
+            : address(''));
+        return true;
+    }
+
+    /**
+     * The files the host chose (**Insert → Image…**) put at the selection as
+     * it is now; one image is then selected and its alt text asked for in the
+     * field, the file's name prefilled — `Esc` keeps that name.
+     */
+    private insertPicked(files: readonly LinkedFile[]): void {
+        const view = this.view;
+        view.focus();
+        if (files.length === 0) {
+            return;
+        }
+        const tr = insertFilesTransaction(view.state, files);
+        if (tr === null) {
+            showHint(view, insertLockReason(view.state, IMAGE_LOCK) ?? 'The image cannot be inserted here.', 'refusal');
+            return;
+        }
+        view.dispatch(tr);
+        const sel = view.state.selection;
+        if (!(sel instanceof NodeSelection) || sel.node.type !== editorSchema.nodes.image) {
+            return;
+        }
+        const at = sel.from;
+        const node = sel.node;
+        this.openFieldBar('image', 'Image', 'image-alt', {
+            value: (node.attrs.alt as string | null) ?? '',
+            label: 'Alt text',
+            commit: alt => {
+                view.focus();
+                const now = view.state.doc.nodeAt(at);
+                const tr2 = now && now.type === node.type && now.attrs.src === node.attrs.src
+                    ? editImageTransaction(view.state, at, alt, now.attrs.src as string) : null;
+                if (tr2) {
+                    view.dispatch(tr2);
                 }
             },
         });
-        field.el.dataset.verb = 'span-attributes';
+    }
+
+    /**
+     * A bar of the object toolbar's kind under the selection, holding the
+     * inline field for `step` — and, when its commit names another step, the
+     * next field in its place. The selection stays in the state while the
+     * field has the focus; a re-sync meanwhile maps it, so the commit applies
+     * where the field was opened.
+     */
+    private openFieldBar(object: string, barLabel: string, verb: string, first: FieldStep, range?: { from: number; to: number }): void {
+        this.closeFieldBar();
+        const view = this.view;
+        const bar = div('mep-object-toolbar');
+        bar.dataset.trigger = 'toolbar';
+        bar.dataset.object = object;
+        bar.setAttribute('role', 'toolbar');
+        bar.setAttribute('aria-label', barLabel);
         bar.addEventListener('mousedown', e => {
-            if (e.target !== field.el) {
+            if (!(e.target instanceof HTMLInputElement)) {
                 e.preventDefault();
             }
         });
-        bar.append(span('mep-object-label', 'Span attributes'), field.el);
+        const label = span('mep-object-label', barLabel);
+        const close = () => {
+            if (this.fieldBar?.bar === bar) {
+                this.fieldBar = null;
+            }
+            bar.remove();
+            clearPendingRange(view);
+        };
+        const open = (step: FieldStep) => {
+            const field = new InlineField({
+                value: step.value,
+                caret: step.caret,
+                label: step.label,
+                placeholder: step.placeholder,
+                complete: step.complete,
+                onCommit: value => {
+                    const next = step.commit(value);
+                    if (next) {
+                        open(next).focus();
+                        return;
+                    }
+                    close();
+                },
+                onCancel: reason => {
+                    close();
+                    if (reason === 'escape') {
+                        view.focus();
+                    }
+                },
+            });
+            field.el.dataset.verb = verb;
+            label.textContent = fieldHeading(barLabel, step.label);
+            bar.replaceChildren(label, field.el);
+            this.fieldBar = { bar, field };
+            return field;
+        };
         this.mount.append(bar);
-        this.spanField = { bar, field };
-        // Under the selection's last line: the bubble is above it.
+        const field = open(first);
+        // Under the selection's last line: the bubble is above it. Placed
+        // before the field takes the focus, which scrolls it into view.
         const sel = view.state.selection;
         const start = view.coordsAtPos(sel.from, 1);
         const end = view.coordsAtPos(sel.to, -1);
@@ -810,13 +964,15 @@ class ToolbarView implements PluginView {
         const x = Math.max(base.left, Math.min(start.left, base.right - bar.offsetWidth));
         bar.style.left = `${x - base.left}px`;
         bar.style.top = `${end.bottom + 6 - base.top}px`;
+        // What the field acts on stays visible while the field has the focus.
+        showPendingRange(view, range?.from ?? sel.from, range?.to ?? sel.to);
         field.focus();
     }
 
-    private closeSpanField(): void {
-        this.spanField?.field.dispose();
-        this.spanField?.bar.remove();
-        this.spanField = null;
+    private closeFieldBar(): void {
+        this.fieldBar?.field.dispose();
+        this.fieldBar?.bar.remove();
+        this.fieldBar = null;
     }
 
     // -- the bubble ------------------------------------------------------------
@@ -904,13 +1060,28 @@ export function selectionBubbleShown(view: EditorView): boolean {
     return toolbarViews.get(view)?.bubbleShown ?? false;
 }
 
-/** The toolbar and the bubble, as a plugin: its view is built with the editor's and follows every state it takes. */
+/**
+ * The toolbar and the bubble, as a plugin: its view is built with the editor's
+ * and follows every state it takes. `Ctrl+K` (`Cmd+K`) is **Insert → Link…**;
+ * the key is kept from VS Code, whose `Ctrl+K` starts a chord.
+ */
 export function toolbarPlugin(host: ToolbarHost): Plugin {
     return new Plugin({
         view: view => {
             const toolbar = new ToolbarView(view, host);
             toolbarViews.set(view, toolbar);
             return toolbar;
+        },
+        props: {
+            handleKeyDown(view, event) {
+                if (event.key.toLowerCase() !== 'k' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) {
+                    return false;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                toolbarViews.get(view)?.askLink();
+                return true;
+            },
         },
     });
 }

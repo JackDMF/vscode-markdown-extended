@@ -79,7 +79,12 @@ export const plugins: MarkdownItPlugin[] = [
     $('markdown-it-deflist'),
     $('markdown-it-emoji'),
     $('markdown-it-multimd-table', { multiline: true, rowspan: true, headerless: true }),
-    $('markdown-it-html5-embed', { html5embed: { useImageSyntax: true, useLinkSyntax: true } }),
+    // Registered once per syntax: markdown-it-html5-embed 0.3.3 keeps the
+    // default image rule and the default link rule in one hoisted `var`, so
+    // with both options in one call every image is rendered by the link's
+    // default and loses its alt text (`<img alt="">`).
+    $('markdown-it-html5-embed', { html5embed: { useImageSyntax: true } }),
+    $('markdown-it-html5-embed', { html5embed: { useLinkSyntax: true } }),
     $('markdown-it-sidenote'),
     $('markdown-it-helper'),
     $('markdown-it-bracketed-spans'),

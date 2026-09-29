@@ -12,7 +12,8 @@ import {
 } from '../../../src/editor/host/includes';
 import { blockIndexForLine, lensHintOf, lensRows } from '../../../src/editor/host/lenses';
 import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
-import { SessionWebview, VisualEditorSession, revealInVisualEditor } from '../../../src/editor/host/session';
+import { SessionHost, SessionWebview, VisualEditorSession, revealInVisualEditor } from '../../../src/editor/host/session';
+import { fillDestination } from '../../../src/editor/host/images';
 import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
 import { GITHUB_SLUG_REPLACE } from '../../../src/editor/host/githubSlugRegex';
 import { blockLineRanges } from '../../../src/editor/parse';
@@ -87,6 +88,15 @@ suite('Editor host: engine', () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         assert.ok(!md.render('see example.com', {}).includes('<a '));
         assert.ok(md.render('see https://example.com', {}).includes('<a '));
+    });
+
+    test('an image keeps its alt text, and a media link or image still embeds', async () => {
+        // markdown-it-html5-embed 0.3.3 rendered every image by the link rule's
+        // default when both of its syntaxes were on in one registration.
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        assert.ok(md.render('![A diagram](a.png)', {}).includes('alt="A diagram"'), md.render('![A diagram](a.png)', {}));
+        assert.ok(md.render('![clip](v.mp4)', {}).includes('<video'));
+        assert.ok(md.render('[talk](t.mp3)', {}).includes('<audio'));
     });
 });
 
@@ -1423,5 +1433,229 @@ suite('Editor host: the active Visual Editor', () => {
         } finally {
             fs.rmSync(uri.fsPath, { force: true });
         }
+    });
+});
+
+/** A webview that says where it loads a file from, as VS Code's `asWebviewUri` does. */
+class ResolvingWebview extends FakeWebview {
+    asWebviewUri(uri: vscode.Uri): vscode.Uri {
+        return vscode.Uri.parse(`https://webview.test${uri.path}`);
+    }
+
+    answer<T extends HostMessage['type']>(type: T): Promise<Extract<HostMessage, { type: T }> | undefined> {
+        return until(() => this.posted.find((m): m is Extract<HostMessage, { type: T }> => m.type === type), 5000);
+    }
+}
+
+/**
+ * Links and images on the host: completion for a link's field, the paths an
+ * inserted image or a dropped file is written with, a pasted bitmap written
+ * beside the document, and where the page loads an image from. A folder of
+ * its own holds the document and the files it links to; the file list is the
+ * test's (the test host opens no workspace folder).
+ */
+suite('Editor host: links and images', () => {
+    let dir: string;
+    let docUri: vscode.Uri;
+    let document: vscode.TextDocument;
+    const engineChanged = new vscode.EventEmitter<void>();
+    const TEXT = '# Intro\n\nText.\n\n## Scope {#scope-id}\n\nMore.\n';
+
+    suiteSetup(async function () {
+        this.timeout(20000);
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mep-links-'));
+        fs.mkdirSync(path.join(dir, 'docs'));
+        fs.mkdirSync(path.join(dir, 'pictures'));
+        fs.writeFileSync(path.join(dir, 'doc.md'), TEXT, 'utf8');
+        fs.writeFileSync(path.join(dir, 'docs', 'other file.md'), '# Other Heading\n\nText.\n', 'utf8');
+        fs.writeFileSync(path.join(dir, 'pictures', 'my pic.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+        fs.writeFileSync(path.join(dir, 'z.txt'), 'z', 'utf8');
+        docUri = vscode.Uri.file(path.join(dir, 'doc.md'));
+        document = await vscode.workspace.openTextDocument(docUri);
+    });
+
+    suiteTeardown(() => {
+        engineChanged.dispose();
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    const files = () => [
+        vscode.Uri.file(path.join(dir, 'z.txt')),
+        vscode.Uri.file(path.join(dir, 'pictures', 'my pic.png')),
+        docUri,
+        vscode.Uri.file(path.join(dir, 'docs', 'other file.md')),
+    ];
+
+    const open = (extra: Partial<SessionHost> = {}) => {
+        const webview = new ResolvingWebview();
+        const session = new VisualEditorSession(document, webview, {
+            engine: () => buildEditorEngine(EXTENSION_ID, () => undefined),
+            onDidChangeEngine: engineChanged.event,
+            log: () => undefined,
+            linkFiles: async () => files(),
+            ...extra,
+        });
+        return { webview, session };
+    };
+
+    const choices = async (query: string, images = false) => {
+        const { webview, session } = open();
+        try {
+            webview.send({ type: 'linkChoices', requestId: 5, query, ...(images ? { images: true as const } : {}) });
+            const answer = await webview.answer('linkChoicesResult');
+            assert.ok(answer, `an answer to ${query}`);
+            assert.strictEqual(answer.requestId, 5);
+            return answer.items;
+        } finally {
+            session.dispose();
+        }
+    };
+
+    test('a link\'s field completes with the files relative to the document, Markdown first, encoded as a destination; the document itself is not offered', async function () {
+        this.timeout(10000);
+        assert.deepStrictEqual((await choices('')).map(c => [c.value, c.label, c.kind]), [
+            ['docs/other%20file.md', 'docs/other file.md', 'file'],
+            ['z.txt', 'z.txt', 'file'],
+            ['pictures/my%20pic.png', 'pictures/my pic.png', 'file'],
+        ]);
+        assert.deepStrictEqual((await choices('my%20p')).map(c => c.value), ['pictures/my%20pic.png'], 'a typed escape matches the name');
+        assert.deepStrictEqual((await choices('', true)).map(c => c.value), ['pictures/my%20pic.png'], 'an image\'s path: images only');
+        assert.deepStrictEqual(await choices('https://exa'), [], 'a web address completes to nothing');
+    });
+
+    test('#… completes with this document\'s headings — an explicit {#id} as written, else the slug — and path#… with that file\'s', async function () {
+        this.timeout(10000);
+        assert.deepStrictEqual((await choices('#')).map(c => [c.value, c.detail, c.kind]), [
+            ['#intro', 'Intro', 'heading'],
+            ['#scope-id', 'Scope', 'heading'],
+        ]);
+        assert.deepStrictEqual((await choices('#sco')).map(c => c.value), ['#scope-id'], 'filtered by anchor or text');
+        assert.deepStrictEqual((await choices('docs/other%20file.md#')).map(c => [c.value, c.label]), [['docs/other%20file.md#other-heading', '#other-heading']],
+            'the path is fixed once # is typed: the list shows the anchor, the value is the whole destination');
+        assert.deepStrictEqual(await choices('z.txt#'), [], 'a file that is not Markdown has no headings to offer');
+    });
+
+    test('Insert → Image… asks VS Code\'s open dialog in the document\'s folder for an image, and answers its path relative to the document, POSIX, spaces encoded, its stem the alt text', async function () {
+        this.timeout(10000);
+        const asked: vscode.OpenDialogOptions[] = [];
+        const { webview, session } = open({
+            openDialog: options => {
+                asked.push(options);
+                return Promise.resolve([vscode.Uri.file(path.join(dir, 'pictures', 'my pic.png'))]);
+            },
+        });
+        try {
+            webview.send({ type: 'pickImage', requestId: 9 });
+            const answer = await webview.answer('filesChosen');
+            assert.deepStrictEqual(answer, { type: 'filesChosen', requestId: 9, files: [{ src: 'pictures/my%20pic.png', alt: 'my pic', image: true }] });
+            assert.strictEqual(asked.length, 1);
+            assert.strictEqual(asked[0].defaultUri?.toString(), vscode.Uri.file(dir).toString());
+            assert.strictEqual(asked[0].canSelectMany, false);
+            assert.ok(asked[0].filters?.Images.includes('png'));
+        } finally {
+            session.dispose();
+        }
+    });
+
+    test('a dismissed dialog answers with no file', async function () {
+        this.timeout(10000);
+        const { webview, session } = open({ openDialog: () => Promise.resolve(undefined) });
+        try {
+            webview.send({ type: 'pickImage', requestId: 10 });
+            assert.deepStrictEqual(await webview.answer('filesChosen'), { type: 'filesChosen', requestId: 10, files: [] });
+        } finally {
+            session.dispose();
+        }
+    });
+
+    test('dropped files are answered relative to the document: an image as an image, another file as a link named by its name; a uri or a path', async function () {
+        this.timeout(10000);
+        const { webview, session } = open();
+        try {
+            const outside = path.join(path.dirname(dir), 'spec sheet.pdf');
+            webview.send({ type: 'insertFiles', requestId: 11, uris: [vscode.Uri.file(path.join(dir, 'pictures', 'my pic.png')).toString(), outside] });
+            assert.deepStrictEqual(await webview.answer('filesChosen'), {
+                type: 'filesChosen', requestId: 11, files: [
+                    { src: 'pictures/my%20pic.png', alt: 'my pic', image: true },
+                    { src: '../spec%20sheet.pdf', alt: 'spec sheet.pdf', image: false },
+                ],
+            });
+        } finally {
+            session.dispose();
+        }
+    });
+
+    test('a pasted screenshot is written to images/<document>-<yyyymmdd-hhmmss>.png beside the document, and answered as the image the page inserts', async function () {
+        this.timeout(10000);
+        const { webview, session } = open();
+        try {
+            const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+            webview.send({ type: 'saveImage', requestId: 12, bytes: bytes.toString('base64'), suggestedName: 'image.png' });
+            const answer = await webview.answer('filesChosen');
+            assert.ok(answer, 'answered');
+            assert.strictEqual(answer.requestId, 12);
+            assert.strictEqual(answer.files.length, 1, JSON.stringify(answer));
+            const [file] = answer.files;
+            assert.match(file.src, /^images\/doc-\d{8}-\d{6}\.png$/);
+            assert.strictEqual(file.alt, file.src.slice('images/'.length, -'.png'.length), 'its file\'s stem, from the host');
+            assert.strictEqual(file.image, true);
+            assert.deepStrictEqual(fs.readFileSync(path.join(dir, ...file.src.split('/'))), bytes, 'the bytes the page sent');
+        } finally {
+            session.dispose();
+        }
+    });
+
+    test('images dropped from the system keep their name, and two saves at once of one name write two files, one after the other', async function () {
+        this.timeout(10000);
+        const { webview, session } = open();
+        try {
+            const first = Buffer.from([1, 2, 3]);
+            const second = Buffer.from([4, 5, 6]);
+            webview.send({ type: 'saveImage', requestId: 21, bytes: first.toString('base64'), suggestedName: 'my diagram.png' });
+            webview.send({ type: 'saveImage', requestId: 22, bytes: second.toString('base64'), suggestedName: 'my diagram.png' });
+            await until(() => webview.posted.filter(m => m.type === 'filesChosen' && (m.requestId === 21 || m.requestId === 22)).length === 2 ? true : undefined, 5000);
+            const answers = webview.posted.filter((m): m is Extract<HostMessage, { type: 'filesChosen' }> => m.type === 'filesChosen' && (m.requestId === 21 || m.requestId === 22));
+            assert.deepStrictEqual(answers.map(a => [a.requestId, a.files.map(f => [f.src, f.alt])]), [
+                [21, [['images/my%20diagram.png', 'my diagram']]],
+                [22, [['images/my%20diagram-1.png', 'my diagram-1']]],
+            ]);
+            assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'images', 'my diagram.png')), first);
+            assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'images', 'my diagram-1.png')), second, 'not written over the first');
+        } finally {
+            session.dispose();
+        }
+    });
+
+    test('markdown.copyFiles.destination\'s variables are filled in as the built-in fills them', () => {
+        const ctx = { documentUri: vscode.Uri.file('/ws/docs/guide.md'), workspaceFolder: vscode.Uri.file('/ws'), fileName: 'image.png', now: new Date(0) };
+        assert.strictEqual(fillDestination('assets/${documentBaseName}/', ctx), 'assets/guide/image.png', 'a trailing / takes the file name');
+        assert.strictEqual(fillDestination('/media/${fileName}', ctx), `${vscode.Uri.file('/ws').path}/media/image.png`, 'a leading / is the workspace folder');
+        assert.strictEqual(fillDestination('${documentRelativeDirName}/${fileExtName}-\\$x', ctx), 'docs/png-$x');
+        assert.strictEqual(fillDestination('${fileName/(.*)\\.png/$1.jpg/}', ctx), 'image.jpg', 'a ${name/regex/replacement/} transform');
+        assert.strictEqual(fillDestination('', ctx), 'image.png');
+    });
+
+    test('an image\'s src is resolved against the document to the address the webview loads it from; a web address and a data: image are shown as written', async function () {
+        this.timeout(10000);
+        const { webview, session } = open();
+        try {
+            const srcs = ['pictures/my%20pic.png', 'https://example.com/a.png', 'http://example.com/b.png', 'data:image/png;base64,AAAA'];
+            webview.send({ type: 'resolveImages', requestId: 13, srcs });
+            const answer = await webview.answer('imagesResolved');
+            assert.ok(answer);
+            const file = vscode.Uri.file(path.join(dir, 'pictures', 'my pic.png'));
+            assert.deepStrictEqual(Object.keys(answer.sources), ['pictures/my%20pic.png']);
+            assert.strictEqual(answer.sources['pictures/my%20pic.png'], vscode.Uri.parse(`https://webview.test${file.path}`).toString());
+        } finally {
+            session.dispose();
+        }
+    });
+
+    test('the webview may load from the document\'s folder', () => {
+        const extension = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(extension);
+        const roots = localResourceRoots(extension.extensionUri, docUri).map(r => r.toString());
+        assert.ok(roots.includes(vscode.Uri.file(dir).toString()), roots.join(', '));
+        assert.ok(!localResourceRoots(extension.extensionUri).map(r => r.toString()).includes(vscode.Uri.file(dir).toString()), 'only for its document');
     });
 });

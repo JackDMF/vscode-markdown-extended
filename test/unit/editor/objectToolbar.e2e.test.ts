@@ -205,14 +205,14 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(edit?.text, 'Alpha ++beta ref|a new body++ gamma.\n');
     });
 
-    test('the caret in a link: Open, Change URL and Remove link; the new URL and the kept text are what is posted', async function () {
+    test('the caret in a link: Open, Edit link… and Remove link; Edit link… is prefilled; the new URL and the kept text are what is posted', async function () {
         this.timeout(15000);
         await showDocument('See [the spec](spec.md) here.\n', 'See');
         await clickBefore('spec', 1);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'change-url', 'remove-link'] });
+        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'remove-link'] });
 
-        await clickVerb('change-url');
+        await clickVerb('edit-link');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'spec.md');
         await page.keyboard.type('other.md#part');
         await page.keyboard.press('Enter');
@@ -230,12 +230,12 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await hint()).text, 'Link removed — Ctrl+Z');
     });
 
-    test('a Change URL commit keeps the bar shown throughout: it does not blink out and wait for the delay again', async function () {
+    test('an Edit link… commit keeps the bar shown throughout: it does not blink out and wait for the delay again', async function () {
         this.timeout(15000);
         await showDocument('See [the spec](spec.md) here.\n', 'See');
         await clickBefore('spec', 1);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        await clickVerb('change-url');
+        await clickVerb('edit-link');
         // Every state the selection's bar takes from here on.
         await page.evaluate(() => {
             const bar = document.querySelector('.mep-object-toolbar[data-trigger="selection"]') as HTMLElement;
@@ -247,7 +247,7 @@ suite('Editor object toolbar (e2e)', () => {
         await page.keyboard.press('Enter');
         await delay(INLINE_DELAY_MS + 200);
         assert.deepStrictEqual(await page.evaluate(() => (window as unknown as { barHidden: boolean[] }).barHidden.filter(h => h)), [], 'never hidden');
-        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'change-url', 'remove-link'] });
+        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'remove-link'] });
         assert.strictEqual((await active()).editor, true, 'the focus is back in the text');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'See [the spec](other.md) here.\n');
@@ -257,7 +257,7 @@ suite('Editor object toolbar (e2e)', () => {
         this.timeout(15000);
         await showDocument('See [the spec](spec.md) here.\n', 'See');
         await clickBefore('spec', 1);
-        await clickVerb('change-url');
+        await clickVerb('edit-link');
         await page.keyboard.type('half');
         // What Alt+Tab to another application does: the document loses the
         // focus, the field is blurred, and the window gets `blur`; later `focus`.
@@ -283,7 +283,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'See [the spec](half.md) here.\n');
 
         // Within the page, the focus moving elsewhere is a cancel.
-        await clickVerb('change-url');
+        await clickVerb('edit-link');
         await page.keyboard.type('never');
         const before = (await (editor as EditorPage).edits()).length;
         await clickBefore('here', 2);
@@ -293,7 +293,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing was edited');
     });
 
-    test('after Change source and an undo, the image\'s bar offers the source the document holds again', async function () {
+    test('after Edit image… and an undo, the image\'s bar offers the alt text and the source the document holds again', async function () {
         this.timeout(15000);
         await showDocument('An ![pic](p.png) here.\n', 'An');
         // A broken image has no size of its own; give it one to click.
@@ -302,8 +302,11 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(img);
         await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
         await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
-        await clickVerb('change-source');
-        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'p.png');
+        assert.deepStrictEqual((await barState()).verbs, ['edit-image', 'open-image', 'remove-image']);
+        await clickVerb('edit-image');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'pic', 'the alt text first');
+        await page.keyboard.press('Enter');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'p.png', 'then the path');
         await page.keyboard.down('Control');
         await page.keyboard.press('a');
         await page.keyboard.up('Control');
@@ -318,7 +321,8 @@ suite('Editor object toolbar (e2e)', () => {
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png) here.\n');
         await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
-        await clickVerb('change-source');
+        await clickVerb('edit-image');
+        await page.keyboard.press('Enter');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'p.png', 'not the undone q.png');
         await page.keyboard.press('Escape');
     });

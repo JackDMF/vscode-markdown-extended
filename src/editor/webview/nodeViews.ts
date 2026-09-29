@@ -17,6 +17,12 @@ export interface EditorPort {
      * when it closes. The page asks every open one to commit before it saves.
      */
     trackSourceEditor(editor: SourceEditor): () => void;
+    /**
+     * A rendering's images drawn from where the host says they are
+     * (`images.ts`): the rendered HTML's `src` is the file's, which the page
+     * cannot load as it stands.
+     */
+    showImages(container: HTMLElement): void;
 }
 
 /** A raw block's open source editor, as the page sees it. */
@@ -136,6 +142,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
         const html = this.node.attrs.html as string;
         if (html) {
             this.content.innerHTML = html;
+            this.port.showImages(this.content);
         } else {
             this.content.replaceChildren(element('pre', 'mep-raw-source', this.node.attrs.src as string));
         }
@@ -293,7 +300,7 @@ export function withSourceTerminators(value: string, original: string, eol: '\n'
 export class InjectedBlockView extends AtomView {
     private readonly content: HTMLElement;
 
-    constructor(node: Node, port: EditorPort) {
+    constructor(node: Node, private readonly port: EditorPort) {
         super(node, 'div', 'mep-injected-block');
         this.content = element('div', 'mep-atom-content');
         this.dom.append(this.content);
@@ -309,6 +316,7 @@ export class InjectedBlockView extends AtomView {
     protected render(): void {
         this.dom.dataset.kind = this.node.attrs.kind as string;
         this.content.innerHTML = this.node.attrs.html as string;
+        this.port.showImages(this.content);
     }
 }
 
@@ -320,7 +328,7 @@ function isReadModel(node: Node): boolean {
 
 /** An inline injected atom — Req Explorer's status badge on a heading. */
 export class InlineAtomView extends AtomView {
-    constructor(node: Node, port: EditorPort) {
+    constructor(node: Node, private readonly port: EditorPort) {
         super(node, 'span', 'mep-inline-atom');
         followLinksIn(this.dom, href => port.openLink(href));
         this.render();
@@ -328,6 +336,7 @@ export class InlineAtomView extends AtomView {
 
     protected render(): void {
         this.dom.innerHTML = this.node.attrs.html as string;
+        this.port.showImages(this.dom);
     }
 }
 

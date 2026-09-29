@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import { ContributesService } from '../../services/contributes/contributesService';
 import { BUILTIN_MARKDOWN_EXTENSION } from './engineHost';
+import { lowerDrive } from './images';
 
 function escapeAttribute(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
@@ -26,9 +27,11 @@ function fontVariables(): string {
 /**
  * The folders the webview may load from: this extension (the script, the
  * editor's stylesheet and the codicon font under `dist/codicons`), the built-in Markdown extension (the preview's
- * stylesheets) and the workspace folders, for what a rendered block links to.
+ * stylesheets), the workspace folders and the document's own folder — for the
+ * images the document shows, whose `src` the page loads through
+ * `asWebviewUri` (`host/images.ts`), a document outside any workspace included.
  */
-export function localResourceRoots(extensionUri: vscode.Uri): vscode.Uri[] {
+export function localResourceRoots(extensionUri: vscode.Uri, documentUri?: vscode.Uri): vscode.Uri[] {
     const roots = [extensionUri];
     const builtin = vscode.extensions.getExtension(BUILTIN_MARKDOWN_EXTENSION);
     if (builtin) {
@@ -36,6 +39,18 @@ export function localResourceRoots(extensionUri: vscode.Uri): vscode.Uri[] {
     }
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
         roots.push(folder.uri);
+    }
+    if (documentUri) {
+        const dir = vscode.Uri.joinPath(documentUri, '..');
+        const dirPath = lowerDrive(dir.path);
+        const inside = (root: vscode.Uri) => {
+            const rootPath = lowerDrive(root.path);
+            return root.scheme === dir.scheme && root.authority === dir.authority
+                && (dirPath === rootPath || dirPath.startsWith(rootPath.endsWith('/') ? rootPath : `${rootPath}/`));
+        };
+        if (!roots.some(inside)) {
+            roots.push(dir);
+        }
     }
     return roots;
 }
