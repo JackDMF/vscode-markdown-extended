@@ -1,9 +1,8 @@
 import * as vscode from 'vscode';
-import type { SourcePosition, SourceRange } from '../positions';
+import { SourcePosition, toSourceRange, validPosition } from '../positions';
 import type { CompletionEntry } from '../protocol';
 import { message } from './errors';
 import type { LanguageHost } from './language';
-import { minimalReplacement } from './minimalEdit';
 
 /** How many completions the page is sent: the list shows eight rows and filters as the person types. */
 export const COMPLETION_CAP = 100;
@@ -12,7 +11,7 @@ export const COMPLETION_CAP = 100;
 export const COMPLETION_RESOLVE_COUNT = 20;
 
 /** Commands that act on the active text editor (re-trigger suggest, parameter hints), of which the Visual Editor is none. */
-const TEXT_EDITOR_COMMAND = /^(editor\.action\.|editor\.|inlineChat\.)/;
+const TEXT_EDITOR_COMMAND = /^(editor\.|inlineChat\.)/;
 
 /**
  * A snippet (`SnippetString.value`, TextMate syntax) as the text it inserts
@@ -42,8 +41,8 @@ export function snippetText(snippet: string): { text: string; cursor: number } {
         i += m[0].length;
         return m[0];
     };
-    /** Text up to an unescaped `until` (not consumed), placeholders inside expanded. */
-    const body = (until: string | null): string => {
+    /** Text up to an unescaped `until` (not consumed), placeholders inside expanded; `base` is where it starts in the whole text. */
+    const body = (until: string | null, base: number): string => {
         let text = '';
         while (i < snippet.length) {
             const c = snippet[i];
@@ -56,7 +55,7 @@ export function snippetText(snippet: string): { text: string; cursor: number } {
                 continue;
             }
             if (c === '$') {
-                text += dollar(text);
+                text += dollar(base + text.length);
                 continue;
             }
             text += c;
@@ -64,14 +63,14 @@ export function snippetText(snippet: string): { text: string; cursor: number } {
         }
         return text;
     };
-    /** A `$…` construct at `i`; `before` is the text of the enclosing body so far, for where `$0` stands. */
-    const dollar = (before: string): string => {
+    /** A `$…` construct at `i`; `at` is where its text starts in the whole text, for where `$0` stands. */
+    const dollar = (at: number): string => {
         const start = i;
         i++;
         const stop = digits();
         if (stop !== '') {
             if (stop === '0' && cursor < 0) {
-                cursor = out.length + before.length;
+                cursor = at;
             }
             return '';
         }
@@ -92,16 +91,16 @@ export function snippetText(snippet: string): { text: string; cursor: number } {
         if (snippet[i] === '}') {
             i++;
             if (id === '0' && cursor < 0) {
-                cursor = out.length + before.length;
+                cursor = at;
             }
             return '';
         }
         if (snippet[i] === ':') {
             i++;
             if (isStop && id === '0' && cursor < 0) {
-                cursor = out.length + before.length;
+                cursor = at;
             }
-            const text = body('}');
+            const text = body('}', at);
             i++;
             return text;
         }
@@ -131,7 +130,7 @@ export function snippetText(snippet: string): { text: string; cursor: number } {
     };
 
     while (i < snippet.length) {
-        out += body(null);
+        out += body(null, out.length);
     }
     return { text: out, cursor: cursor < 0 ? out.length : cursor };
 }
@@ -184,22 +183,24 @@ export function insertionOf(item: vscode.CompletionItem): { text: string; cursor
     return { text, cursor: text.length };
 }
 
+/** One item as the page lists it, with its place in the provider's answer (`k`), which decides whether VS Code resolved it. */
+export interface OrderedItem {
+    item: vscode.CompletionItem;
+    k: number;
+}
+
 /** The items as the page lists them: VS Code's order for an empty word — `sortText`, else the label — capped. */
-export function orderedItems(items: readonly vscode.CompletionItem[]): vscode.CompletionItem[] {
+export function orderedItems(items: readonly vscode.CompletionItem[]): OrderedItem[] {
     return items
         .map((item, k) => ({ item, k, key: item.sortText ?? labelOf(item) }))
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.k - b.k))
         .slice(0, COMPLETION_CAP)
-        .map(({ item }) => item);
+        .map(({ item, k }) => ({ item, k }));
 }
 
-function sourceRange(range: vscode.Range): SourceRange {
-    return { start: { line: range.start.line, character: range.start.character }, end: { line: range.end.line, character: range.end.character } };
-}
-
-/** One item as the page lists it (`CompletionEntry`). */
-export function completionEntry(item: vscode.CompletionItem, document: vscode.TextDocument, position: vscode.Position): CompletionEntry {
-    const entry: CompletionEntry = { label: labelOf(item), insertText: insertionOf(item).text, range: sourceRange(rangeOf(item, document, position)) };
+/** One item as the page lists it (`CompletionEntry`), its range the one it replaces. */
+export function completionEntry(item: vscode.CompletionItem, range: vscode.Range): CompletionEntry {
+    const entry: CompletionEntry = { label: labelOf(item), insertText: insertionOf(item).text, range: toSourceRange(range) };
     const detail = item.detail ?? (typeof item.label === 'string' ? undefined : item.label.description ?? item.label.detail);
     if (detail) {
         entry.detail = detail;
@@ -216,27 +217,39 @@ export function completionEntry(item: vscode.CompletionItem, document: vscode.Te
     return entry;
 }
 
+/** The value an item inserts, as written — for finding the same item in a second answer. */
+function insertKey(item: vscode.CompletionItem): string {
+    const insert = item.insertText;
+    return insert instanceof vscode.SnippetString ? `s:${insert.value}` : `t:${typeof insert === 'string' ? insert : labelOf(item)}`;
+}
+
 /** The items of one `completions` answer, kept to apply the chosen one to the text it was offered for. */
 interface Offered {
     requestId: number;
     version: number;
     text: string;
     position: vscode.Position;
-    items: vscode.CompletionItem[];
+    trigger: string | undefined;
+    items: (OrderedItem & { range: vscode.Range })[];
 }
+
+/** How many items a second question at accept time may ask VS Code to resolve, to reach the chosen one. */
+const RESOLVE_AT_ACCEPT_CAP = 500;
 
 /**
  * Completion at the page's caret (ARCHITECTURE.md, *Completion, diagnostics
  * and hover*): VS Code runs every completion provider registered for the
  * document (`vscode.executeCompletionItemProvider`) at the caret's source
  * position, and the items stay here — an item's edit is applied to the source
- * by the host, never guessed at by the page. The latest answer is kept, with
- * the document text it was computed on; an item is applied only to that text,
- * or to one that differs from it only inside the item's range (what the page
- * typed while the list filtered), its range then extended over the typing.
+ * by the host, never guessed at by the page. The newest answer is kept, with
+ * the document text it was computed on; an item is applied to that text, or to
+ * one the page changed only by typing at its caret inside the item's range
+ * while the list filtered — the range then runs to the caret the page sent.
  */
 export class CompletionController {
     private offered: Offered | undefined;
+    /** The newest question whose answer is kept: an older one resolving later does not replace it. */
+    private latestAnswered = 0;
 
     constructor(private readonly host: LanguageHost) { }
 
@@ -273,72 +286,109 @@ export class CompletionController {
             'vscode.executeCompletionItemProvider', document.uri, at, trigger, COMPLETION_RESOLVE_COUNT,
         );
         // Checked after the await: an edit that landed meanwhile moved the text the ranges point into.
-        if (document.version !== version || !this.host.port.pageHolds(text)) {
+        if (document.version !== version || !this.host.port.pageHolds(text) || requestId <= this.latestAnswered) {
             return none;
         }
-        const items = orderedItems(list?.items ?? []);
-        this.offered = { requestId, version, text, position: at, items };
-        return { items: items.map(item => completionEntry(item, document, at)), incomplete: list?.isIncomplete === true };
+        this.latestAnswered = requestId;
+        const items = orderedItems(list?.items ?? []).map(o => ({ ...o, range: rangeOf(o.item, document, at) }));
+        this.offered = { requestId, version, text, position: at, trigger, items };
+        return { items: items.map(o => completionEntry(o.item, o.range)), incomplete: list?.isIncomplete === true };
     }
 
     /**
      * Apply item `index` of the answer `requestId` to the source: its range
      * replaced by what it inserts, its additional edits with it, in one
      * `WorkspaceEdit`; then the document is posted, and the caret's place in it
-     * — the end of the insertion, a snippet's `$0` — follows. The item's
-     * command is started, not awaited, unless it works on a text editor.
+     * — the end of the insertion, a snippet's `$0` — follows. `position` is the
+     * page's caret now. The item's command is started, not awaited, unless it
+     * works on a text editor.
      */
-    async apply(requestId: number, index: number, baseVersion: number): Promise<void> {
+    async apply(requestId: number, index: number, baseVersion: number, position: SourcePosition): Promise<void> {
         let caret: SourcePosition | null = null;
         try {
-            caret = await this.applyItem(requestId, index, baseVersion);
+            caret = await this.applyItem(requestId, index, baseVersion, position);
         } catch (error) {
             this.host.port.log(`[WARN] Visual Editor: the completion could not be applied: ${message(error)}`);
         }
         await this.host.send({ type: 'completionApplied', requestId, version: this.host.postedVersion(), caret });
     }
 
-    private async applyItem(requestId: number, index: number, baseVersion: number): Promise<SourcePosition | null> {
+    /**
+     * The chosen item's `additionalTextEdits` and `command`, which VS Code
+     * computes only for the items it resolved (the first
+     * `COMPLETION_RESOLVE_COUNT` of the provider's answer). A later one is
+     * asked for again at the same position, resolving up to it, and found by
+     * its label and what it inserts; the edits it then carries are in the
+     * text as it is now. `null` when the text changed during that question.
+     */
+    private async resolvedExtras(offered: Offered, chosen: OrderedItem, text: string): Promise<{ edits: readonly vscode.TextEdit[]; command?: vscode.Command; now: boolean } | null> {
+        const fallback = { edits: chosen.item.additionalTextEdits ?? [], command: chosen.item.command, now: false };
+        if (chosen.k < COMPLETION_RESOLVE_COUNT) {
+            return fallback;
+        }
+        const document = this.host.port.document;
+        const list = await this.host.execute<vscode.CompletionList | undefined>(
+            'vscode.executeCompletionItemProvider', document.uri, offered.position, offered.trigger, Math.min(chosen.k + 1, RESOLVE_AT_ACCEPT_CAP),
+        );
+        if (document.getText() !== text) {
+            return null;
+        }
+        const key = insertKey(chosen.item);
+        const match = (list?.items ?? []).find(i => labelOf(i) === labelOf(chosen.item) && insertKey(i) === key);
+        return match ? { edits: match.additionalTextEdits ?? [], command: match.command, now: true } : fallback;
+    }
+
+    private async applyItem(requestId: number, index: number, baseVersion: number, position: SourcePosition): Promise<SourcePosition | null> {
         const offered = this.offered;
-        const item = offered && offered.requestId === requestId && Number.isInteger(index) ? offered.items[index] : undefined;
-        if (!offered || !item) {
+        const chosen = offered && offered.requestId === requestId && Number.isInteger(index) ? offered.items[index] : undefined;
+        if (!offered || !chosen) {
             this.host.port.log(`[WARN] Visual Editor: the completion ${requestId}.${index} is no longer current; nothing was applied.`);
             return null;
         }
         if (!this.current(baseVersion)) {
             return null;
         }
+        const { item, range } = chosen;
         const document = this.host.port.document;
         const text = document.getText();
-        const range = rangeOf(item, document, offered.position);
         const start = offsetIn(offered.text, range.start);
         const end = offsetIn(offered.text, range.end);
-        // What the page typed while the list filtered: allowed only inside the item's range, which grows over it.
-        let delta = 0;
+        // What the page typed at its caret while the list filtered: the text before the range and
+        // after its end is as it was, and the range runs to the caret the page sent.
+        let newEnd = end;
         if (text !== offered.text) {
-            const change = minimalReplacement(offered.text, text);
-            if (change === null || change.start < start || change.end > end) {
+            const caret = validPosition(position) ? offsetIn(text, position) : -1;
+            const typedInside = caret >= start
+                && text.slice(0, start) === offered.text.slice(0, start)
+                && text.slice(caret) === offered.text.slice(end);
+            if (!typedInside) {
                 this.host.port.log(`[WARN] Visual Editor: "${labelOf(item)}" was offered for a text that changed outside its range; nothing was applied.`);
                 return null;
             }
-            delta = change.text.length - (change.end - change.start);
+            newEnd = caret;
+        }
+        const delta = newEnd - end;
+        const extras = await this.resolvedExtras(offered, chosen, text);
+        if (extras === null || !this.current(baseVersion)) {
+            return null;
         }
         const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
         const normalize = (value: string) => value.replace(/\r\n|\r|\n/g, eol);
         const insertion = insertionOf(item);
         const inserted = normalize(insertion.text);
         const cursor = normalize(insertion.text.slice(0, insertion.cursor)).length;
-        const edits: { start: number; end: number; text: string }[] = [{ start, end: end + delta, text: inserted }];
+        const edits: { start: number; end: number; text: string }[] = [{ start, end: newEnd, text: inserted }];
         let before = 0;
-        for (const extra of item.additionalTextEdits ?? []) {
-            const s = offsetIn(offered.text, extra.range.start);
-            const e = offsetIn(offered.text, extra.range.end);
+        for (const extra of extras.edits) {
+            // In the offered text, shifted past the range by the typing; or, asked again, in the text as it is.
+            const s = offsetIn(extras.now ? text : offered.text, extra.range.start);
+            const e = offsetIn(extras.now ? text : offered.text, extra.range.end);
             const value = normalize(extra.newText);
             if (e <= start) {
                 edits.push({ start: s, end: e, text: value });
                 before += value.length - (e - s);
-            } else if (s >= end) {
-                edits.push({ start: s + delta, end: e + delta, text: value });
+            } else if (s >= (extras.now ? newEnd : end)) {
+                edits.push({ start: extras.now ? s : s + delta, end: extras.now ? e : e + delta, text: value });
             } else {
                 this.host.port.log(`[WARN] Visual Editor: "${labelOf(item)}" has an additional edit overlapping its own; nothing was applied.`);
                 return null;
@@ -355,7 +405,7 @@ export class CompletionController {
         this.offered = undefined;
         // The page takes the source as it now is, as it takes any writer's change.
         await this.host.repost();
-        const command = item.command;
+        const command = extras.command;
         if (command && command.command && !TEXT_EDITOR_COMMAND.test(command.command)) {
             void Promise.resolve(this.host.execute(command.command, ...(command.arguments ?? []))).catch(error => {
                 this.host.port.log(`[WARN] Visual Editor: the command of "${labelOf(item)}" failed: ${message(error)}`);

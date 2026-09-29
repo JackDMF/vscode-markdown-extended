@@ -227,8 +227,9 @@ export type HostMessage =
      * Every diagnostic VS Code holds for the document, in the text the host
      * holds for the page of `version` (the document it last posted — the
      * page's own edits since included). Sent when the diagnostics change
-     * (debounced), after every document and after every edit of the page's the
-     * host applies; never while a change the page has not seen is on its way.
+     * (debounced) and after every document — not after an edit of the page's,
+     * which the providers have not linted yet; never while a change the page
+     * has not seen is on its way.
      */
     | { type: 'diagnostics'; version: number; items: DiagnosticEntry[] }
     /** The answer to `quickFixesFor`: the quick fixes VS Code offers for that range, run with `runAction`. */
@@ -387,7 +388,8 @@ export type WebviewMessage =
      * Accept item `index` of the `completions` answer `requestId`: the host
      * applies its edit to the source — the item's range, extended over what
      * the page typed since the answer, and its additional edits — and posts
-     * the document; `position` is the caret now. Sent after the pending edit.
+     * the document; `position` is the caret now, where a range the page typed
+     * into since the answer ends. Sent after the pending edit.
      */
     | { type: 'applyCompletion'; requestId: number; index: number; baseVersion: number; position: SourcePosition }
     /** The quick fixes for a diagnostic's source `range`, in the text of `baseVersion`; answered with `quickFixes`. */

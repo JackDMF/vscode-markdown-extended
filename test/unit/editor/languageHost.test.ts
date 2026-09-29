@@ -69,6 +69,28 @@ suite('Editor language features: snippets and trusted command links', () => {
         assert.deepStrictEqual(snippetText('${1|one,two|} ${TM_FILENAME} \\$5 \\}'), { text: 'one  $5 }', cursor: 9 });
         assert.deepStrictEqual(snippetText('${1:outer ${2:inner}}!'), { text: 'outer inner!', cursor: 12 });
         assert.deepStrictEqual(snippetText('cost: $'), { text: 'cost: $', cursor: 7 });
+        assert.deepStrictEqual(snippetText('a ${1:b$0c}'), { text: 'a bc', cursor: 3 }, 'a $0 inside a placeholder counts the text before it');
+    });
+
+    test('raw HTML keeps VS Code\'s hover allowlist only: no forged page attribute, no style, form or handler', () => {
+        const forged = new vscode.MarkdownString([
+            '<a href="#" data-mep-action="q1.0" data-mep-command="7.0" onclick="x()">Looks like a fix</a>',
+            '<style>body { display: none }</style><form action="https://evil.example"><input name="q"></form>',
+            '<img src="https://example.com/x.png" onerror="x()" alt="pic"> <span class="c" style="position:fixed" id="i">t</span>',
+            '<a href="jav&#x61;script:alert(1)">js</a> <script>alert(1)</script>',
+            '',
+            '[Real](command:a.run)',
+        ].join('\n'));
+        forged.supportHtml = true;
+        forged.isTrusted = true;
+        const out = renderHoverParts(hoverParts([new vscode.Hover([forged])]), () => 'registered');
+        assert.strictEqual((out.match(/data-mep-command="registered"/g) ?? []).length, 1, `the link rule's command link alone keeps its id: ${out}`);
+        assert.ok(!/data-mep-action|data-mep-nonce|data-mep-command="7\.0"/.test(out), `no forged data-mep-* from raw HTML: ${out}`);
+        assert.ok(!/<style|display: none|<form|<input|<script|alert/.test(out), out);
+        assert.ok(!/onclick|onerror|style=|id=|javascript/i.test(out), out);
+        assert.ok(out.includes('Looks like a fix'), 'the text stays');
+        assert.ok(out.includes('<span class="c">t</span>'), out);
+        assert.ok(out.includes('<img src="https://example.com/x.png" alt="pic">'), 'an image, as VS Code\'s hover allows one');
     });
 
     test('an offset is read as VS Code breaks lines; a character past a line\'s end is its end', () => {
@@ -388,6 +410,93 @@ suite('Editor host: completion, diagnostics and hover', () => {
         webview.send({ type: 'quickFixesFor', requestId: 12, baseVersion: version() - 1, range: { start: { line: 2, character: 4 }, end: { line: 2, character: 8 } } });
         const stale = await until(() => webview.last('quickFixes', m => m.requestId === 12), 8000);
         assert.deepStrictEqual(stale?.items, []);
+    });
+
+    test('a typed character equal to the one after the item\'s range is still inside the range: the caret the page sent says so', async function () {
+        this.timeout(10000);
+        answers.set('vscode.executeCompletionItemProvider', () => idItems());
+        webview.send({ type: 'complete', requestId: 20, baseVersion: version(), position: { line: 2, character: 8 } });
+        assert.ok(await until(() => webview.last('completions', m => m.requestId === 20), 8000));
+        // A space typed at the range's end, where a space already follows: a common prefix would put the change after the range.
+        webview.send({ type: 'edit', text: SOURCE.replace('See FRS- for', 'See FRS-  for'), baseVersion: version() });
+        webview.send({ type: 'applyCompletion', requestId: 20, index: 1, baseVersion: version(), position: { line: 2, character: 9 } });
+        const applied = await until(() => webview.last('completionApplied', m => m.requestId === 20), 8000);
+        assert.deepStrictEqual(applied?.caret, { line: 2, character: 'See FRS-RXE-057'.length });
+        assert.strictEqual(document.getText(), SOURCE.replace('See FRS- for', 'See FRS-RXE-057 for'));
+        await reset();
+    });
+
+    test('an older question answered after a newer one does not replace the items kept', async function () {
+        this.timeout(10000);
+        let calls = 0;
+        answers.set('vscode.executeCompletionItemProvider', async () => {
+            const n = ++calls;
+            if (n === 1) {
+                await delay(400);
+                return new vscode.CompletionList([new vscode.CompletionItem('Stale')]);
+            }
+            return idItems();
+        });
+        webview.send({ type: 'complete', requestId: 21, baseVersion: version(), position: { line: 2, character: 8 } });
+        webview.send({ type: 'complete', requestId: 22, baseVersion: version(), position: { line: 2, character: 8 } });
+        assert.ok(await until(() => webview.last('completions', m => m.requestId === 22), 8000));
+        const stale = await until(() => webview.last('completions', m => m.requestId === 21), 8000);
+        assert.deepStrictEqual(stale?.items, [], 'the older answer, resolving last, is empty');
+        webview.send({ type: 'applyCompletion', requestId: 22, index: 0, baseVersion: version(), position: { line: 2, character: 8 } });
+        const applied = await until(() => webview.last('completionApplied', m => m.requestId === 22), 8000);
+        assert.ok(applied?.caret, 'the newer answer\'s items are still the ones kept');
+        await reset();
+    });
+
+    test('an item past the ones VS Code resolved is asked for again at accept time, for its additional edits', async function () {
+        this.timeout(10000);
+        const many = () => {
+            const items = Array.from({ length: 30 }, (_, k) => {
+                const item = new vscode.CompletionItem(`Item ${k}`);
+                item.range = new vscode.Range(2, 4, 2, 8);
+                item.sortText = `b${String(k).padStart(2, '0')}`;
+                return item;
+            });
+            // The provider's 26th item, listed first by its sortText.
+            items[25].sortText = 'a';
+            return items;
+        };
+        const counts: unknown[] = [];
+        answers.set('vscode.executeCompletionItemProvider', args => {
+            counts.push(args[3]);
+            const items = many();
+            if (counts.length > 1) {
+                items[25].additionalTextEdits = [vscode.TextEdit.insert(new vscode.Position(4, 0), 'Resolved: ')];
+            }
+            return new vscode.CompletionList(items);
+        });
+        webview.send({ type: 'complete', requestId: 23, baseVersion: version(), position: { line: 2, character: 8 } });
+        const answer = await until(() => webview.last('completions', m => m.requestId === 23), 8000);
+        assert.strictEqual(answer?.items[0].label, 'Item 25');
+        webview.send({ type: 'applyCompletion', requestId: 23, index: 0, baseVersion: version(), position: { line: 2, character: 8 } });
+        assert.ok(await until(() => webview.last('completionApplied', m => m.requestId === 23), 8000));
+        assert.deepStrictEqual(counts, [20, 26], 'asked again, resolving up to the chosen item');
+        assert.strictEqual(document.getText(), SOURCE.replace('See FRS- for', 'See Item 25 for').replace('A second', 'Resolved: A second'));
+        await reset();
+    });
+
+    test('an edit of the page\'s applied does not re-send diagnostics read before the providers re-linted', async function () {
+        this.timeout(10000);
+        diagnostics = [new vscode.Diagnostic(new vscode.Range(2, 4, 2, 8), 'old range', vscode.DiagnosticSeverity.Warning)];
+        const before = webview.posted.length;
+        webview.send({ type: 'edit', text: SOURCE.replace('See', 'Seen'), baseVersion: version() });
+        await delay(500);
+        await session.settled();
+        assert.ok(!webview.posted.slice(before).some(m => m.type === 'diagnostics'), 'only a change of the diagnostics, or a document, sends them');
+        diagnostics = [];
+        await reset();
+    });
+
+    test('a quick-fix question whose range is no range is answered with nothing, not left waiting', async function () {
+        this.timeout(10000);
+        webview.send({ type: 'quickFixesFor', requestId: 24, baseVersion: version(), range: null as unknown as { start: { line: number; character: number }; end: { line: number; character: number } } });
+        const answer = await until(() => webview.last('quickFixes', m => m.requestId === 24), 8000);
+        assert.deepStrictEqual(answer?.items, []);
     });
 
     test('the count\'s click shows the Problems view', async function () {

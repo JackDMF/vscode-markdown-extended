@@ -44,8 +44,10 @@ export function diagnosticEntries(diagnostics: readonly vscode.Diagnostic[]): Di
  * The document's diagnostics for the page to draw (ARCHITECTURE.md,
  * *Completion, diagnostics and hover*): read from where they are true —
  * `languages.getDiagnostics(uri)`, what the text editor and the Problems view
- * show — when they change (debounced), after every document the session
- * posts and after every edit of the page's it applies. Sent only while the
+ * show — when they change (debounced) and after every document the session
+ * posts. Not after an edit of the page's the session applied: the providers
+ * have not linted the new text then, and the old text's ranges would move the
+ * page's marks, which it maps through its own edits. Sent only while the
  * page holds the document's text: a change on its way to the page is followed
  * by a document, which schedules a send of its own.
  */

@@ -3,7 +3,7 @@ import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { Config } from '../../services/common/config';
 import { escapeHtml } from '../../services/exporter/shared';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
-import type { MappedPagePosition, SourcePosition } from '../positions';
+import { MappedPagePosition, SourcePosition, validPosition, validRange } from '../positions';
 import { HostMessage, WebviewMessage } from '../protocol';
 import { CodeActionController } from './codeActions';
 import { message } from './errors';
@@ -430,9 +430,7 @@ export class VisualEditorSession implements vscode.Disposable {
         if (this.broken || baseVersion !== this.postedVersion || this.document.getText() !== this.webviewText) {
             return;
         }
-        const valid = position !== null && Number.isInteger(position.line) && Number.isInteger(position.character)
-            && position.line >= 0 && position.character >= 0;
-        this.setCaret(valid ? new vscode.Position(position.line, position.character) : undefined);
+        this.setCaret(validPosition(position) ? new vscode.Position(position.line, position.character) : undefined);
     }
 
     private setCaret(caret: vscode.Position | undefined): void {
@@ -635,8 +633,6 @@ export class VisualEditorSession implements vscode.Disposable {
         // And its code actions: those of a block the edit did not touch are
         // registered for the previous version, and may no longer be offered.
         this.codeActions.invalidate();
-        // And its diagnostics, in the text the page now holds.
-        this.language.editApplied();
     }
 
     /**
@@ -709,12 +705,6 @@ export class VisualEditorSession implements vscode.Disposable {
         });
         editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
     }
-}
-
-/** Whether a range the page sent is one: four non-negative integers. */
-function validRange(range: { start?: SourcePosition; end?: SourcePosition } | undefined): range is { start: SourcePosition; end: SourcePosition } {
-    const ok = (p: SourcePosition | undefined) => p !== undefined && Number.isInteger(p.line) && Number.isInteger(p.character) && p.line >= 0 && p.character >= 0;
-    return range !== undefined && ok(range.start) && ok(range.end);
 }
 
 /** The `path` of every resolved include expansion in a document's JSON. */

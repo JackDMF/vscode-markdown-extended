@@ -55,11 +55,6 @@ export class LanguageFeatures implements vscode.Disposable {
         this.diagnostics.schedule();
     }
 
-    /** The session applied an edit of the page's: diagnostics are sent for the text it now holds. */
-    editApplied(): void {
-        this.diagnostics.schedule();
-    }
-
     receive(msg: WebviewMessage): void {
         switch (msg.type) {
             case 'complete':
@@ -71,7 +66,7 @@ export class LanguageFeatures implements vscode.Disposable {
                 break;
             case 'applyCompletion':
                 // In the queue and waited for: the edit goes before any the page sends after it.
-                this.host.enqueue(() => this.completion.apply(msg.requestId, msg.index, msg.baseVersion));
+                this.host.enqueue(() => this.completion.apply(msg.requestId, msg.index, msg.baseVersion, msg.position));
                 break;
             case 'hover':
                 this.host.enqueue(async () => {
