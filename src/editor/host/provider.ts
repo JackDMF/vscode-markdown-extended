@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { Command } from '../../commands/command';
+import { ActiveVisualEditorTracker } from './activeEditor';
 import { EditorEngineHost } from './engineHost';
 import { editorPage, localResourceRoots } from './html';
 import { collectIncludeProviders } from './includes';
@@ -26,6 +27,8 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
         private readonly engines: EditorEngineHost,
         private readonly log: (line: string) => void,
         private readonly selfId?: string,
+        /** Told about every panel, so other extensions can ask which editor is active (`activeEditor.ts`). */
+        private readonly tracker?: ActiveVisualEditorTracker,
     ) { }
 
     resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): void {
@@ -41,7 +44,11 @@ export class VisualEditorProvider implements vscode.CustomTextEditorProvider {
             log: this.log,
             includeProviders: () => collectIncludeProviders(this.selfId, this.log),
         });
-        panel.onDidDispose(() => session.dispose());
+        const tracking = this.tracker?.track(panel, session);
+        panel.onDidDispose(() => {
+            tracking?.dispose();
+            session.dispose();
+        });
     }
 }
 
@@ -74,11 +81,14 @@ export class CommandOpenVisualEditor extends Command {
  * `retainContextWhenHidden` keeps the webview alive in a background tab: the
  * ProseMirror state holds the undo history and an edit still inside its
  * debounce, and both would be lost if VS Code tore the page down on every tab
- * switch.
+ * switch. `tracker` follows which editor has the focus, for the API `activate`
+ * exports.
  */
-export function registerVisualEditor(context: vscode.ExtensionContext, log: (line: string) => void): vscode.Disposable {
+export function registerVisualEditor(
+    context: vscode.ExtensionContext, log: (line: string) => void, tracker?: ActiveVisualEditorTracker,
+): vscode.Disposable {
     const engines = new EditorEngineHost(context.extension.id, log);
-    const provider = new VisualEditorProvider(context.extensionUri, engines, log, context.extension.id);
+    const provider = new VisualEditorProvider(context.extensionUri, engines, log, context.extension.id, tracker);
     return vscode.Disposable.from(
         engines,
         vscode.window.registerCustomEditorProvider(VISUAL_EDITOR_VIEW_TYPE, provider, {

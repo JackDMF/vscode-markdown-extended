@@ -10,6 +10,7 @@ import { CommandFormateTable } from './commands/formateTable';
 import { commandToggles } from './commands/toggleFormats';
 import { commandTableEdits } from './commands/tableEdits';
 import { ExtensionContext } from './services/common/extensionContext';
+import { ActiveVisualEditorTracker } from './editor/host/activeEditor';
 
 // Deprecated: Use ExtensionContext.current.markdown instead
 // @deprecated
@@ -48,9 +49,15 @@ export function activate(ctx: vscode.ExtensionContext) {
         webUnavailable('markdownExtended.installBrowser'),
     ].filter(Boolean);
 
+    // The Visual Editor is desktop-only (extension.ts), so no editor is ever
+    // active here; the export has the same shape on both builds.
+    const visualEditors = new ActiveVisualEditorTracker();
+    subscriptions.push(visualEditors);
+
     ctx.subscriptions.push(...subscriptions);
 
     return {
+        visualEditor: visualEditors.api,
         extendMarkdownIt(md: markdownIt.MarkdownIt) {
             plugins
                 .filter(p => p && typeof p.plugin === 'function')

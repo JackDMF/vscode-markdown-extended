@@ -1,4 +1,5 @@
 import type { ParsedDocumentJSON } from './parse';
+import type { MappedPagePosition, MappedSourcePosition, SourcePosition } from './positions';
 
 /**
  * The messages between the rich editor's webview and the extension host.
@@ -134,7 +135,20 @@ export type HostMessage =
      * extension offering it wrote it (`IncludeChoice.insert`, one line without
      * its terminator); absent when they dismissed the pick or nothing was offered.
      */
-    | { type: 'includeChosen'; requestId: number; insert?: string };
+    | { type: 'includeChosen'; requestId: number; insert?: string }
+    /**
+     * Report the caret again, although the page's last report may be the same:
+     * the host forgot it (another writer's change came and went without a new
+     * document) and has nothing to offer until the page speaks.
+     */
+    | { type: 'reportCaret' }
+    /**
+     * Map positions with the page's own document (`positions.ts`), which owns
+     * the mapping: each of `toSource` a ProseMirror position, each of `toPage`
+     * a position in the text. Answered with `mapped` of the same `id`, after
+     * the page's pending edit, so the answer is in the text the host holds.
+     */
+    | { type: 'map'; id: number; toSource?: number[]; toPage?: SourcePosition[] };
 
 /** Webview → host. */
 export type WebviewMessage =
@@ -191,7 +205,32 @@ export type WebviewMessage =
      * **Change snippet…**). Sent after any pending edit, so a provider that
      * reads the document reads the page's text.
      */
-    | { type: 'pickInclude'; requestId: number; replace?: { blockIndex: number } };
+    | { type: 'pickInclude'; requestId: number; replace?: { blockIndex: number } }
+    /**
+     * Where the caret is, in the text of the document of version `baseVersion`
+     * as the host holds it: a 0-based line and UTF-16 character
+     * (`positions.ts`), `null` when there is none to report — a selected atom,
+     * a gap cursor, a mapping that is only approximate. Sent 100 ms after the
+     * selection settles, and only while the host holds the page's text (after
+     * the pending edit, never before it); the host drops one whose
+     * `baseVersion` is not the document it last posted, or that arrives while
+     * the document holds another text.
+     */
+    | { type: 'caret'; baseVersion: number; position: SourcePosition | null }
+    /**
+     * The answer to `map`: one entry per position asked, in order, `null` for
+     * one that is none. `baseVersion` is the document the page shows, `-1`
+     * without one; sent after the page's pending edit. The host takes it in
+     * its queue, behind that edit, and only for the document it last posted
+     * while the document holds the page's text — any other answer is dropped.
+     */
+    | {
+        type: 'mapped';
+        id: number;
+        baseVersion: number;
+        toSource: (MappedSourcePosition | null)[];
+        toPage: (MappedPagePosition | null)[];
+    };
 
 /**
  * What an extension offering includes exports beside `extendMarkdownIt`

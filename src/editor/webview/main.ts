@@ -15,9 +15,11 @@ import { Node } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
+import { PositionMap, SourcePosition, caretOf, createPositionMap } from '../positions';
 import type { CodeActionItem, HostMessage, LensRow, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import { serializeDocument } from '../serialize';
+import { CaretReporter } from './caret';
 import { showHint } from './hint';
 import { EditorPort, FrontMatterView, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
 import { lensPlugin, lensVerbsAt, setLensesTransaction } from './lenses';
@@ -66,10 +68,46 @@ function post(message: WebviewMessage): void {
     vscodeApi.postMessage(message);
 }
 
-function serialize(doc: Node): string {
+/**
+ * The position map of each document the page has held (`positions.ts`), made
+ * once per document and the facts it was shown with: the caret report, the
+ * host's `map` requests and every serialization read the same one, so a block
+ * edited since the host's parse is serialized once per state, not per question.
+ */
+const pageMaps = new WeakMap<Node, { meta: Current; map: PositionMap }>();
+
+function pageMap(doc: Node): PositionMap {
     const meta = current as Current;
-    return serializeDocument({ doc, eol: meta.eol, tail: meta.tail }, { defaultWrap: meta.defaultWrap });
+    const known = pageMaps.get(doc);
+    if (known && known.meta === meta) {
+        return known.map;
+    }
+    const map = createPositionMap({ doc, eol: meta.eol, tail: meta.tail }, { defaultWrap: meta.defaultWrap });
+    pageMaps.set(doc, { meta, map });
+    return map;
 }
+
+function serialize(doc: Node): string {
+    return pageMap(doc).text;
+}
+
+/**
+ * The caret, reported to the host as a source position (`caret.ts`): behind
+ * the pending edit, so the host reads it against the text it holds.
+ */
+const caretReporter = new CaretReporter({
+    version: () => current?.version,
+    editPending: () => editTimer !== undefined || committingForSave,
+    hostText: () => hostText,
+    measure: () => {
+        if (!view || !current) {
+            return undefined;
+        }
+        const map = pageMap(view.state.doc);
+        return { text: map.text, caret: caretOf(view.state.selection, map) };
+    },
+    post,
+});
 
 /**
  * Send the document back now, if it differs from what the host holds — or, for
@@ -88,7 +126,8 @@ function flush(save = false, reparse = false): void {
     }
     reparse = reparse || reparseWanted;
     const text = serialize(view.state.doc);
-    if (text !== hostText || save || reparse) {
+    const posted = text !== hostText || save || reparse;
+    if (posted) {
         reparseWanted = false;
         hostText = text;
         post({
@@ -101,6 +140,30 @@ function flush(save = false, reparse = false): void {
     }
     // Behind the edit, so the host looks the blocks up in this text.
     sendDeferredActions();
+    // And the caret, which the host reads against it too.
+    caretReporter.editSent(posted);
+}
+
+/**
+ * The host's `map` request, answered from the page's own document: the page
+ * owns the mapping, since only it holds the nodes the positions are in. The
+ * pending edit goes first, so the answer is in the text the host holds by the
+ * time it reads it, and carries the version the host checks it against.
+ */
+function answerMap(id: number, toSource: readonly number[] = [], toPage: readonly SourcePosition[] = []): void {
+    if (!view || !current) {
+        post({ type: 'mapped', id, baseVersion: -1, toSource: toSource.map(() => null), toPage: toPage.map(() => null) });
+        return;
+    }
+    flush();
+    const map = pageMap(view.state.doc);
+    post({
+        type: 'mapped',
+        id,
+        baseVersion: current.version,
+        toSource: toSource.map(pos => map.sourcePositionOf(pos)),
+        toPage: toPage.map(position => map.pagePositionOf(position)),
+    });
 }
 
 function scheduleFlush(): void {
@@ -516,6 +579,9 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
     if (tr.docChanged) {
         scheduleFlush();
     }
+    if (tr.docChanged || tr.selectionSet) {
+        caretReporter.selectionMoved();
+    }
 }
 
 function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: number, includes: boolean): void {
@@ -544,10 +610,12 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         // replaced blocks stays where it was.
         view.updateState(view.state.apply(resyncTransaction(view.state, doc)));
         sendDeferredActions();
+        caretReporter.documentShown();
         return;
     }
     const state = EditorState.create({ doc, plugins });
     view = new EditorView(mount, { state, nodeViews, dispatchTransaction, scrollMargin: SCROLL_MARGIN });
+    caretReporter.documentShown();
     view.dom.addEventListener('keydown', onEditorKeydown);
     // Focus leaving the editor for the page around it (a click on the
     // background) does not blur the window; the pending edit goes now, not
@@ -616,6 +684,7 @@ function showError(message: string): void {
         clearTimeout(editTimer);
         editTimer = undefined;
     }
+    caretReporter.dispose();
     view?.destroy();
     view = undefined;
     current = undefined;
@@ -692,6 +761,12 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             break;
         case 'includeChosen':
             applyInclude(msg.requestId, msg.insert);
+            break;
+        case 'reportCaret':
+            caretReporter.reportAgain();
+            break;
+        case 'map':
+            answerMap(msg.id, msg.toSource, msg.toPage);
             break;
     }
 });

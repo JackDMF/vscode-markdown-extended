@@ -3,6 +3,7 @@ import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { Config } from '../../services/common/config';
 import { escapeHtml } from '../../services/exporter/shared';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
+import type { MappedPagePosition, SourcePosition } from '../positions';
 import { HostMessage, WebviewMessage } from '../protocol';
 import { CodeActionController } from './codeActions';
 import { message } from './errors';
@@ -27,6 +28,8 @@ export interface SessionHost {
     includeProviders?(): Promise<IncludeProvider[]>;
     /** VS Code's QuickPick and information message (the default); a test answers for the person. */
     includePicker?: IncludePicker;
+    /** How long `toSource`/`toPage` wait for the page's answer (`MAP_TIMEOUT_MS`, the default). */
+    mapTimeoutMs?: number;
 }
 
 /** The part of a `vscode.Webview` a session talks to. */
@@ -37,6 +40,11 @@ export interface SessionWebview {
 
 /** How long a burst of changes from another writer (typing in the text editor) is left to settle before re-parsing. */
 const RESYNC_DELAY_MS = 100;
+
+/** How long a `map` request waits for the page's answer before it answers `undefined`. */
+export const MAP_TIMEOUT_MS = 2000;
+
+type MappedMessage = Extract<WebviewMessage, { type: 'mapped' }>;
 
 /** A fragment to bring into view in a page: see the `revealAnchor` message. */
 export interface Reveal {
@@ -98,6 +106,14 @@ export class VisualEditorSession implements vscode.Disposable {
     private readonly subscriptions: vscode.Disposable[];
     /** A fragment to bring into view once the page has the document (`reveal`). */
     private pendingReveal: Reveal | undefined;
+    /** The page's caret in the document's text, as it last reported it (`caret`). */
+    private caretPosition: vscode.Position | undefined;
+    private readonly caretChanged = new vscode.EventEmitter<vscode.Position | undefined>();
+    /** Fires when the caret the page reported changes, or stops being known. */
+    readonly onDidChangeCaret = this.caretChanged.event;
+    /** The `map` requests waiting for the page's `mapped`, by id. */
+    private readonly pendingMaps = new Map<number, (answer: MappedMessage | undefined) => void>();
+    private mapSeq = 0;
 
     constructor(
         private readonly document: vscode.TextDocument,
@@ -118,6 +134,7 @@ export class VisualEditorSession implements vscode.Disposable {
         this.subscriptions = [
             this.lenses,
             this.codeActions,
+            this.caretChanged,
             webview.onDidReceiveMessage(msg => this.receive(msg)),
             vscode.workspace.onDidChangeTextDocument(e => {
                 if (e.document.uri.toString() === this.document.uri.toString()) {
@@ -163,6 +180,82 @@ export class VisualEditorSession implements vscode.Disposable {
         }
     }
 
+    /** The document this editor shows. */
+    get uri(): vscode.Uri {
+        return this.document.uri;
+    }
+
+    /**
+     * Where the page's caret is in the document's text: a 0-based line and
+     * UTF-16 character. `undefined` when the page has reported none — a
+     * selected atom, a gap cursor, a mapping that is only approximate — and
+     * whenever the document holds a text the page has not got yet (another
+     * writer's change on its way, the error state): a caret that may be wrong
+     * is not handed out.
+     */
+    get caret(): vscode.Position | undefined {
+        return this.caretPosition;
+    }
+
+    /**
+     * Where page position `pos` stands in the document's text, and whether that
+     * is only the nearest place — asked of the page, which owns the mapping
+     * (`positions.ts`, over its own document). `undefined` for a position
+     * outside the page's document, and whenever the answer could be for
+     * another text: the page shows no document, a change the page has not
+     * seen is on its way, the answer was for an older document, or none came.
+     */
+    async toSource(pos: number): Promise<{ position: vscode.Position; approximate: boolean } | undefined> {
+        const mapped = (await this.askPage({ toSource: [pos] }))?.toSource[0];
+        return mapped ? { position: new vscode.Position(mapped.line, mapped.character), approximate: mapped.approximate } : undefined;
+    }
+
+    /** The page position a position of the document's text stands at, or the nearest one — asked of the page; `undefined` as for `toSource`. */
+    async toPage(position: vscode.Position): Promise<MappedPagePosition | undefined> {
+        const mapped = (await this.askPage({ toPage: [{ line: position.line, character: position.character }] }))?.toPage[0];
+        return mapped ?? undefined;
+    }
+
+    /** Post a `map` request; its answer, or `undefined` when the page shows none, drops it or does not answer in time. */
+    private askPage(request: { toSource?: number[]; toPage?: SourcePosition[] }): Promise<MappedMessage | undefined> {
+        if (this.broken || this.postedVersion < 0) {
+            return Promise.resolve(undefined);
+        }
+        const id = ++this.mapSeq;
+        return new Promise(resolve => {
+            const timer = setTimeout(() => settle(undefined), this.host.mapTimeoutMs ?? MAP_TIMEOUT_MS);
+            const settle = (answer: MappedMessage | undefined) => {
+                clearTimeout(timer);
+                this.pendingMaps.delete(id);
+                resolve(answer);
+            };
+            this.pendingMaps.set(id, settle);
+            Promise.resolve(this.webview.postMessage({ type: 'map', id, ...request })).then(
+                delivered => {
+                    if (!delivered) {
+                        settle(undefined);
+                    }
+                },
+                () => settle(undefined),
+            );
+        });
+    }
+
+    /**
+     * The page's answer to `map`, in the queue behind the edit the page sent
+     * before it, and taken only for the document the host last posted while
+     * the document holds the page's text; any other resolves as `undefined`.
+     */
+    private takeMapped(answer: MappedMessage): void {
+        const settle = this.pendingMaps.get(answer.id);
+        if (settle === undefined) {
+            return;
+        }
+        const current = !this.broken && answer.baseVersion === this.postedVersion && this.document.getText() === this.webviewText;
+        const complete = Array.isArray(answer.toSource) && Array.isArray(answer.toPage);
+        settle(current && complete ? answer : undefined);
+    }
+
     /** Resolves when every message received so far has been handled. For tests. */
     settled(): Promise<void> {
         return Promise.all([this.queue, this.saving]).then(() => undefined);
@@ -175,6 +268,7 @@ export class VisualEditorSession implements vscode.Disposable {
         if (sessions.get(this.document.uri.toString()) === this) {
             sessions.delete(this.document.uri.toString());
         }
+        [...this.pendingMaps.values()].forEach(settle => settle(undefined));
         this.subscriptions.forEach(d => d.dispose());
     }
 
@@ -248,6 +342,15 @@ export class VisualEditorSession implements vscode.Disposable {
                 // click; `run` waits only for the action's own edit.
                 this.enqueue(() => this.codeActions.run(msg.id));
                 break;
+            case 'caret':
+                // In the queue, behind the edit the page sent before it: the
+                // position is in the text that edit leaves.
+                this.enqueue(async () => this.takeCaret(msg.baseVersion, msg.position));
+                break;
+            case 'mapped':
+                // Behind the edit the page flushed before answering, likewise.
+                this.enqueue(async () => this.takeMapped(msg));
+                break;
             case 'pickInclude':
                 // In the queue, behind the edit the page flushed before asking,
                 // so a provider that reads the document reads the page's text;
@@ -258,6 +361,29 @@ export class VisualEditorSession implements vscode.Disposable {
                 });
                 break;
         }
+    }
+
+    /**
+     * A caret the page reported, taken only for the document it last posted
+     * and while the document holds the page's text; any other is stale and
+     * dropped, and the page reports again after the document it is sent.
+     */
+    private takeCaret(baseVersion: number, position: SourcePosition | null): void {
+        if (this.broken || baseVersion !== this.postedVersion || this.document.getText() !== this.webviewText) {
+            return;
+        }
+        const valid = position !== null && Number.isInteger(position.line) && Number.isInteger(position.character)
+            && position.line >= 0 && position.character >= 0;
+        this.setCaret(valid ? new vscode.Position(position.line, position.character) : undefined);
+    }
+
+    private setCaret(caret: vscode.Position | undefined): void {
+        const same = caret === undefined ? this.caretPosition === undefined : this.caretPosition?.isEqual(caret) === true;
+        if (same) {
+            return;
+        }
+        this.caretPosition = caret;
+        this.caretChanged.fire(caret);
     }
 
     /** A followed link: resolved against this document, opened by VS Code or the system. */
@@ -369,6 +495,8 @@ export class VisualEditorSession implements vscode.Disposable {
         this.broken = false;
         this.webviewText = text;
         this.postedVersion = version;
+        // A caret reported for the text before is stale; the page reports it again for this one.
+        this.setCaret(undefined);
         await this.webview.postMessage({
             type: 'document',
             json,
@@ -381,9 +509,19 @@ export class VisualEditorSession implements vscode.Disposable {
         this.lenses.schedule();
     }
 
+    /** Post a message whose loss only costs a stale answer; a disposed webview is logged, not thrown. */
+    private async postQuietly(msg: HostMessage): Promise<void> {
+        try {
+            await this.webview.postMessage(msg);
+        } catch (error) {
+            this.host.log(`[WARN] Visual Editor: could not post ${msg.type}: ${message(error)}`);
+        }
+    }
+
     private fail(reason: string): void {
         this.broken = true;
         this.webviewText = undefined;
+        this.setCaret(undefined);
         this.host.log(`[WARN] Visual Editor: ${this.document.uri.toString()} stays in the text editor: ${reason}`);
         void this.webview.postMessage({ type: 'error', message: reason });
     }
@@ -416,6 +554,10 @@ export class VisualEditorSession implements vscode.Disposable {
         // Set before applying: the change event fires while the edit applies,
         // and must see its own text.
         this.webviewText = text;
+        // And the caret is forgotten before it: it was a position in the text
+        // before the edit, which a listener to the change must not be handed.
+        // The page reports it again right after the edit (`editSent`).
+        this.setCaret(undefined);
         const edit = new vscode.WorkspaceEdit();
         edit.replace(
             this.document.uri,
@@ -455,6 +597,8 @@ export class VisualEditorSession implements vscode.Disposable {
         if (this.document.getText() === this.webviewText) {
             return;
         }
+        // Another writer's change: the caret was a position in the text before it.
+        this.setCaret(undefined);
         if (this.resyncTimer !== undefined) {
             clearTimeout(this.resyncTimer);
         }
@@ -463,6 +607,10 @@ export class VisualEditorSession implements vscode.Disposable {
             this.enqueue(async () => {
                 if (this.document.getText() !== this.webviewText) {
                     await this.post();
+                } else if (this.caretPosition === undefined && !this.broken) {
+                    // The change came and went: no document is posted, and the
+                    // page, whose caret did not move, would not report it again.
+                    await this.postQuietly({ type: 'reportCaret' });
                 }
             });
         }, RESYNC_DELAY_MS);
