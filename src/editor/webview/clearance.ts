@@ -1,8 +1,15 @@
 /**
- * Where a floating bar may go: never over text (Daniel, 2026-09-29). The
- * selection bubble asks here whether the band above the selection holds text,
- * and the object toolbar where a block's first line ends. DOM geometry only,
- * read from the view, so both bars answer "is there text here" the same way.
+ * Where a floating bar may go: never over content (Daniel, 2026-09-29). Every
+ * bar of the page — an object's bar, a block's, the selection bubble, the
+ * toolbar's field bar — says only where it could stand, in order of
+ * preference, and `firstFree` answers which of those places is free, by one
+ * notion of free for all of them: under the sticky formatting row and past
+ * the window's bottom is not; over the selection bubble is not (for any bar
+ * but the bubble); over content is not (`OCCUPIED`, text). Three ladders with
+ * three notions of free had drifted apart — one bar pinned under the row, one
+ * blind to images, one to lens rows — so the notion lives here, once.
+ *
+ * DOM geometry only, read from the view.
  */
 import { EditorView } from 'prosemirror-view';
 
@@ -14,52 +21,105 @@ export interface Band {
     bottom: number;
 }
 
+/**
+ * One place a bar could stand: its top left corner, and — when it stands
+ * inside a rendered block (a source block's top right) — that block, whose own
+ * content is probed instead of the page's. `when` is the bar's own condition
+ * (it fits the column, it is off the caret's line).
+ */
+export interface Place {
+    x: number;
+    y: number;
+    within?: Element;
+    when?: () => boolean;
+}
+
 /** How far apart the points are that a band is probed at. */
 const PROBE_STEP = 16;
 
-/**
- * Whether anything the page shows as content lies in `band`: a character of a
- * textblock, a cell of an editable table (empty or not), an image, or an atom —
- * a rendered block (a source block, injected content) or a badge, whose box is
- * content as far as a reader is concerned (`OCCUPIED`). Probed at points across the band's middle and
- * near its edges: a point over a line of text resolves to a position whose
- * character stands at that point; a point beside a short line, or between
- * blocks, resolves to a position somewhere else, which is no text there.
- */
-export function textInBand(view: EditorView, band: Band): boolean {
-    if (band.right <= band.left || band.bottom <= band.top) {
-        return false;
-    }
-    // The page's floating chrome — a bar, the bubble, a menu — may stand over the
-    // band where it was last put; the probe looks through it (`editor.css`).
-    const root = document.documentElement;
-    root.classList.add(PROBING_CLASS);
-    try {
-        const rows = [band.top + 2, (band.top + band.bottom) / 2, band.bottom - 2];
-        for (const y of rows) {
-            for (let x = band.left + 2; x <= band.right - 2; x += PROBE_STEP) {
-                if (textAt(view, x, y)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    } finally {
-        root.classList.remove(PROBING_CLASS);
-    }
-}
-
-/** On the root while `textInBand` probes: the page's floating chrome takes no hit then. */
+/** On the mount while `firstFree` probes: the page's floating chrome takes no hit then (`editor.css`). */
 export const PROBING_CLASS = 'mep-probing';
 
 /**
  * What counts as occupied besides text: a cell of a table the editor edits —
  * an empty one too, since a cell is the table's content and the page draws it
- * to be seen (`editor.css`) — an image, and an atom of any kind.
+ * to be seen (`editor.css`) — an image, an atom of any kind, and another
+ * extension's lens row above a block.
  */
-const OCCUPIED = '.ProseMirror > table td, .ProseMirror > table th, img:not(.ProseMirror-separator), .mep-atom, .mep-inline-atom';
+const OCCUPIED = '.ProseMirror > table td, .ProseMirror > table th, img:not(.ProseMirror-separator), .mep-atom, .mep-inline-atom, .mep-lens-row';
 
-function textAt(view: EditorView, x: number, y: number): boolean {
+/** What counts as content inside a rendered block, besides its text. */
+const OCCUPIED_WITHIN = 'img:not(.ProseMirror-separator), td, th, .mep-inline-atom';
+
+/** The bottom of the sticky formatting row in `mount`: nothing is placed under it. */
+export function stickyCeiling(mount: HTMLElement): number {
+    const row = mount.querySelector(':scope > .mep-toolbar');
+    return Math.max(0, row ? row.getBoundingClientRect().bottom : 0);
+}
+
+function overlaps(a: Band, b: Band): boolean {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+/**
+ * The first of `places` where a bar of `size` is free, or `null`. The probing
+ * class is set on the mount once around the whole search — one style change,
+ * not one per probe. `self` is the bar being placed, which is looked through
+ * when it is the bubble (the other bars keep out of the bubble).
+ */
+export function firstFree(
+    view: EditorView, mount: HTMLElement, places: readonly Place[], size: { width: number; height: number }, self?: Element,
+): Place | null {
+    const ceiling = stickyCeiling(mount);
+    const bubbleEl = mount.querySelector<HTMLElement>(':scope > .mep-bubble');
+    const bubble = bubbleEl && !bubbleEl.hidden && bubbleEl !== self ? bubbleEl.getBoundingClientRect() : null;
+    mount.classList.add(PROBING_CLASS);
+    try {
+        for (const place of places) {
+            const band = { left: place.x, right: place.x + size.width, top: place.y, bottom: place.y + size.height };
+            if (!Number.isFinite(band.left) || band.top < ceiling || band.bottom > window.innerHeight) {
+                continue;
+            }
+            if (place.when && !place.when()) {
+                continue;
+            }
+            if (bubble && overlaps(bubble, band)) {
+                continue;
+            }
+            if (place.within ? contentWithin(place.within, band) : contentIn(view, band)) {
+                continue;
+            }
+            return place;
+        }
+        return null;
+    } finally {
+        mount.classList.remove(PROBING_CLASS);
+    }
+}
+
+/**
+ * Whether anything the page shows as content lies in `band`: a character of a
+ * textblock, or what `OCCUPIED` names. Probed at points across the band's
+ * middle and near its edges: a point over a line of text resolves to a
+ * position whose character stands at that point; a point beside a short line,
+ * or between blocks, resolves to a position somewhere else, which is no text.
+ */
+function contentIn(view: EditorView, band: Band): boolean {
+    if (band.right <= band.left || band.bottom <= band.top) {
+        return false;
+    }
+    const rows = [band.top + 2, (band.top + band.bottom) / 2, band.bottom - 2];
+    for (const y of rows) {
+        for (let x = band.left + 2; x <= band.right - 2; x += PROBE_STEP) {
+            if (contentAt(view, x, y)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function contentAt(view: EditorView, x: number, y: number): boolean {
     const element = document.elementFromPoint(x, y);
     if (element !== null && view.dom.contains(element) && element.closest(OCCUPIED) !== null) {
         return true;
@@ -99,30 +159,48 @@ function textAt(view: EditorView, x: number, y: number): boolean {
     return false;
 }
 
-/**
- * The right edge of the first line of `dom`'s content, and that line's top:
- * where a block's text ends on its first line, as its line boxes say. `null`
- * for an element that shows no text.
- */
-export function firstLineOf(dom: Element): { top: number; bottom: number; right: number } | null {
-    const range = document.createRange();
-    range.selectNodeContents(dom);
-    const rects = Array.from(range.getClientRects()).filter(r => r.width > 0 && r.height > 0);
-    if (rects.length === 0) {
-        return null;
-    }
-    const top = Math.min(...rects.map(r => r.top));
-    const first = rects.filter(r => r.top < top + Math.min(...rects.map(q => q.height)) / 2 + 1);
-    return { top, bottom: Math.max(...first.map(r => r.bottom)), right: Math.max(...first.map(r => r.right)) };
+/** Whether a rendered block's own content lies in `band`: its text, and its images, cells and badges. */
+function contentWithin(root: Element, band: Band): boolean {
+    return textRects(root).some(r => overlaps(r, band))
+        || Array.from(root.querySelectorAll(OCCUPIED_WITHIN)).some(el => overlaps(el.getBoundingClientRect(), band));
 }
 
-/** The line boxes of the text inside `root` (whitespace-only text left out). */
+/**
+ * The top of the first line of `dom`'s content: where a block's text starts,
+ * as its line boxes say — a floated note body left out. `null` for an element
+ * that shows no text.
+ */
+export function firstLineTop(dom: Element): number | null {
+    const rects = textRects(dom);
+    return rects.length === 0 ? null : Math.min(...rects.map(r => r.top));
+}
+
+/**
+ * The line boxes of the text inside `root`, whitespace-only text left out, and
+ * text in a floated element (a note body set into the margin) too: it is no
+ * part of the line it hangs beside, as `anchor()` in `objectToolbar.ts` keeps
+ * to a note's reference for the same reason.
+ */
 function textRects(root: Element): DOMRect[] {
     const rects: DOMRect[] = [];
+    const floated = new Map<Element, boolean>();
+    const isFloated = (el: Element | null): boolean => {
+        for (let at = el; at !== null && at !== root; at = at.parentElement) {
+            let known = floated.get(at);
+            if (known === undefined) {
+                known = getComputedStyle(at).float !== 'none';
+                floated.set(at, known);
+            }
+            if (known) {
+                return true;
+            }
+        }
+        return false;
+    };
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const range = document.createRange();
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        if ((node.textContent ?? '').trim() === '') {
+        if ((node.textContent ?? '').trim() === '' || isFloated(node.parentElement)) {
             continue;
         }
         range.selectNodeContents(node);
@@ -148,9 +226,4 @@ export function rightEdgeIn(dom: Element, top: number, bottom: number): number {
         }
     }
     return right;
-}
-
-/** Whether any text inside `root` lies in `band` — a rendered block's own text, which `textInBand` sees only as the block. */
-export function textInElement(root: Element, band: Band): boolean {
-    return textRects(root).some(r => r.left < band.right && r.right > band.left && r.top < band.bottom && r.bottom > band.top);
 }

@@ -610,7 +610,9 @@ focus colour at 40 %, 1px, no offset — the table looks editable before its bar
 cell of an edited table at least a line high and 1.5em wide with a faint inner line, since VS
 Code's `markdown.css` draws no cell border and a new table of empty rows showed as two
 hairlines; the cells a verb just made highlighted and faded over 600 ms (`FLASH_MS`, held
-without the fade under `prefers-reduced-motion`); and after a delete the caret in the cell now
+without the fade under `prefers-reduced-motion`; only the verb's transaction arms the timer,
+and any other change — typing, an undo — ends the flash rather than carrying it onto cells it
+may no longer mean); and after a delete the caret in the cell now
 standing where the deleted one stood, so the edit shows where it left the person. None of it
 reaches a table another extension renders (a summary table): the rules are on the editor's
 own `table` nodes.
@@ -928,7 +930,7 @@ The layers:
   narrower than the column (a table): close to what it acts on, since the mapping between a
   control and its object weakens with distance — else below it where that is free, else at the
   column's right edge on its line, else below — never over the row above, which is read
-  while choosing; "covers content" is `textInBand` in `webview/clearance.ts`, the one answer
+  while choosing; "covers content" is `firstFree` in `webview/clearance.ts`, the one answer
   the object toolbar asks too).
 
 **The syntax is read from where it is true.** `src/syntax/markers.ts` states the
@@ -1048,16 +1050,26 @@ is short); below it, right-aligned. Where none is free, the bar goes above the b
 the block is given while the bar shows — a widget of the bar's height before it (and before
 its lens row), `Room` in the plugin's state — so the line above stays readable; once given, a
 room stays while that bar shows, since the band it makes is free and taking it back would move
-the block back under the bar. A room moves what is below it, so the view scrolls by its height
+the block back under the bar — but a given room is only tried first, not trusted: when its band
+is not free (scrolled under the sticky row), the ladder is tried again, and the bar stays in
+its room, covering nothing, only when nothing else is free. A room moves what is below it, so the view scrolls by its height
 at once, keeping what the person is at — the pointed-at block, else the caret's line — where it
 was: a pointed-at block that slid down as its bar appeared would leave the pointer, and a click
 aimed at it would land on the block above (the real-mouse tests caught exactly that). The places
-before the room move nothing, which is why they come first. "Holds content" is
-`textInBand`/`textInElement` (`webview/clearance.ts`): the page's text probed with
-`posAtCoords` at points across the band, and occupied besides text wherever the probe lands
-in a cell of an editable table (an empty one too — the cell is the table's content, drawn to
-be seen), an image or an atom; a rendered block's own text by its line boxes; the floating
-chrome looked through while probing. **An inline object's bar follows the same rule with the
+before the room move nothing, which is why they come first. **One ladder, one notion of free**
+(`firstFree` in `webview/clearance.ts`): every bar — an object's, a block's, the selection
+bubble, the toolbar's field bar — gives only its candidate places in order, and `firstFree`
+refuses, the same way for all, a place under the sticky row or past the window's bottom, over
+the selection bubble (for any bar but the bubble), and over content: the page's text probed
+with `posAtCoords` at points across the band — a floated note body is no part of its line —
+and, wherever the probe lands, a cell of an editable table (an empty one too — the cell is the
+table's content, drawn to be seen), an image, an atom, or another extension's lens row
+(`OCCUPIED`); a place inside a rendered block probes that block's own text, images and cells.
+The floating chrome is looked through while probing, by one class on the mount around the
+whole search; bars are placed again on scroll and resize once per animation frame. Three
+ladders with three notions of free had drifted apart (a bar pinned over its block under the
+sticky row, a place blind to images, a bubble over a lens row), which is why it is one now.
+**An inline object's bar follows the same rule with the
 same helper**: above the object's first line at its start where that holds no content, else
 beside that line — just right of its textblock's text on it — else below its last line; the
 start is found from its element's own line boxes (`getClientRects` of the note's

@@ -374,6 +374,17 @@ suite('Editor pipe tables (e2e)', () => {
         assert.strictEqual((await barState()).object, 'container');
         assert.deepStrictEqual(await coveredText(BAR), [], 'the bar stands in the room, over no text');
         assert.ok(Math.abs((await caretTop()) - before) < 1.5, 'the room moved the content above, not the line being typed');
+        // The room scrolled under the sticky row: the bar is placed again, and still covers nothing.
+        const underRow = await page.evaluate(() => {
+            const room = (document.querySelector('.mep-bar-room') as HTMLElement).getBoundingClientRect();
+            const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
+            return room.bottom - row.bottom + 4;
+        });
+        await page.evaluate(by => window.scrollBy(0, by), underRow);
+        await delay(100);
+        assert.deepStrictEqual(await coveredText(BAR), [], 'with its room under the row the bar covers no content, the container\'s first line included');
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await delay(100);
         await clickAt('Right-aligned', 2);
         await delay(100);
         assert.strictEqual(await page.$('.mep-bar-room'), null, 'the room goes with the bar');
@@ -402,6 +413,15 @@ suite('Editor pipe tables (e2e)', () => {
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-cell-new', els => els.length), 3, 'the new row\'s cells are highlighted');
         await delay(700);
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-cell-new', els => els.length), 0, 'for 600 ms');
+        // Typing ends a flash at once rather than carrying it along; the typed text is taken back.
+        await choose('row', 'insert-row-below');
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-cell-new', els => els.length), 3);
+        await page.keyboard.type('z');
+        await delay(30);
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-cell-new', els => els.length), 0, 'a keystroke ends the flash');
+        await press('Backspace');
+        await choose('row', 'delete-row');
+        await delay(50);
         await barFor('first');
         // The shot while the new column still shows its highlight: the animation, held.
         await page.addStyleTag({ content: '.ProseMirror .mep-cell-new { animation-play-state: paused !important; }' });

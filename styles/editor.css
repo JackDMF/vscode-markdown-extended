@@ -432,9 +432,10 @@ img.mep-pending-range {
     text-overflow: ellipsis;
 }
 
-/* While the page asks where text is (`clearance.ts`), its floating chrome is looked through. */
+/* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through. */
 .mep-probing .mep-object-toolbar,
 .mep-probing .mep-bubble,
+.mep-probing .mep-toolbar-layer,
 .mep-probing .mep-hint { pointer-events: none !important; }
 
 /* The room above a block whose bar has no place beside it: empty, the bar's height, while the bar shows. */

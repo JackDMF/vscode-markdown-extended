@@ -48,7 +48,7 @@ import {
     deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
-import { Band, firstLineOf, rightEdgeIn, textInBand, textInElement } from './clearance';
+import { Place, firstFree, firstLineTop, rightEdgeIn } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { selectionBubbleShown } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
@@ -349,9 +349,18 @@ class ObjectBar {
                 v.menu?.map(m => [m.id, m.label, m.title, m.keys ?? null, m.checked ?? null, m.refusal ?? null]) ?? null,
             ]),
         ]);
-        if (!this.field && !this.menu && signature !== this.signature) {
+        if (!this.field && signature !== this.signature) {
+            // An open set-verb menu whose entries changed under it (the table
+            // changed, an undo) is rebuilt: its entries act on the object as it
+            // is, and a stale "Delete row" would say so of a row that is gone.
+            // (An open menu holds the focus — it closes when the focus leaves it — so the rebuilt one takes it.)
+            const reopen = this.menu ? this.menu.button.dataset.verb : undefined;
             this.signature = signature;
             this.render(presentation);
+            const again = reopen === undefined ? undefined : this.buttons.find(b => b.verb.id === reopen);
+            if (again?.verb.menu && !again.verb.refusal) {
+                this.openMenu(again.verb.menu, again.el);
+            }
         }
         this.el.hidden = false;
     }
@@ -709,9 +718,24 @@ class ObjectToolbarView implements PluginView {
         const later = () => setTimeout(() => this.refresh(), 0);
         this.listen(document, 'focusin', later);
         this.listen(document, 'focusout', later);
-        this.listen(window, 'scroll', () => this.placeAll(), true);
-        this.listen(window, 'resize', () => this.placeAll());
+        // A scroll fires many times a frame, and placing probes the layout: once per frame.
+        this.listen(window, 'scroll', () => this.placeAllInFrame(), true);
+        this.listen(window, 'resize', () => this.placeAllInFrame());
         this.refresh();
+    }
+
+    /** The frame a `placeAll` is waiting for, or `undefined`. */
+    private placeFrame: number | undefined;
+
+    private placeAllInFrame(): void {
+        if (this.placeFrame === undefined) {
+            this.placeFrame = requestAnimationFrame(() => {
+                this.placeFrame = undefined;
+                if (!this.destroyed) {
+                    this.placeAll();
+                }
+            });
+        }
     }
 
     update(): void {
@@ -720,6 +744,9 @@ class ObjectToolbarView implements PluginView {
 
     destroy(): void {
         this.destroyed = true;
+        if (this.placeFrame !== undefined) {
+            cancelAnimationFrame(this.placeFrame);
+        }
         this.cancelPending();
         clearTimeout(this.hoverTimer);
         for (const [target, type, listener, capture] of this.listeners) {
@@ -961,10 +988,11 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * Above the object's first line; below its last when above would be under
-     * the sticky row or off the top of the window; on whichever side does not
-     * cover the caret's line. While text is selected, below first: the
-     * selection bubble is above.
+     * An inline object's bar (a note, a link, a span, an image, a badge):
+     * above the object's first line at its start, else beside that line —
+     * just right of its textblock's text on it — else below its last line;
+     * the first of these `firstFree` finds free, above and below never on the
+     * caret's line. Where none is free, below.
      */
     private place(bar: ObjectBar, object: EditorObject): void {
         if (isBlockPlaced(object)) {
@@ -973,37 +1001,30 @@ class ObjectToolbarView implements PluginView {
         }
         bar.room = null;
         const el = bar.el;
+        const view = this.view;
         const base = this.mount.getBoundingClientRect();
         const anchor = this.anchor(object);
         const width = el.offsetWidth;
         const height = el.offsetHeight;
-        const view = this.view;
-        const ceiling = this.ceiling();
         const sel = view.state.selection;
         const typing = bar === this.selectionBar && sel instanceof TextSelection;
         const caret = typing ? view.coordsAtPos(sel.head) : null;
-        const covers = (y: number) => caret !== null && y < caret.bottom && y + height > caret.top;
-        // The bubble is a bar too: an inline bar keeps out of it, as out of text.
-        const bubble = selectionBubbleShown(view) ? this.mount.querySelector(':scope > .mep-bubble')?.getBoundingClientRect() ?? null : null;
-        const band = (left: number, top: number): Band => ({ left, right: left + width, top, bottom: top + height });
-        const free = (b: Band) => b.top >= ceiling && !textInBand(view, b)
-            && !(bubble && bubble.left < b.right && bubble.right > b.left && bubble.top < b.bottom && bubble.bottom > b.top);
+        const offCaret = (y: number) => () => caret === null || y >= caret.bottom || y + height <= caret.top;
         const x0 = Math.max(base.left, Math.min(anchor.left ?? base.right - width, base.right - width));
         const aboveY = this.clearOfLensRows(anchor.top - GAP - height, height, true);
         const belowY = this.clearOfLensRows(anchor.bottom + GAP, height, false);
-        // Beside: right of the text of the object's line, in its textblock.
         const block = this.textblockDOM(object.from);
         const lineRight = block ? rightEdgeIn(block, anchor.top, anchor.top + height) : -Infinity;
         const besideX = lineRight + GAP;
-        const places: { x: number; y: number; ok: () => boolean }[] = [
-            { x: x0, y: aboveY, ok: () => !covers(aboveY) && free(band(x0, aboveY)) },
-            { x: besideX, y: anchor.top, ok: () => Number.isFinite(lineRight) && besideX + width <= base.right && free(band(besideX, anchor.top)) },
-            { x: x0, y: belowY, ok: () => !covers(belowY) && free(band(x0, belowY)) },
+        const places: Place[] = [
+            { x: x0, y: aboveY, when: offCaret(aboveY) },
+            { x: besideX, y: anchor.top, when: () => besideX + width <= base.right },
+            { x: x0, y: belowY, when: offCaret(belowY) },
         ];
-        const found = places.find(p => p.ok());
+        const found = firstFree(view, this.mount, places, { width, height });
         let x = found?.x ?? x0;
         let y = found?.y ?? belowY;
-        if (!found && covers(y) && caret !== null) {
+        if (!found && caret !== null && !offCaret(y)()) {
             y = caret.bottom + GAP;
         }
         x = Math.max(base.left, Math.min(x, base.right - width));
@@ -1023,16 +1044,11 @@ class ObjectToolbarView implements PluginView {
         return null;
     }
 
-    /** The bottom of the sticky formatting row: nothing is placed under it. */
-    private ceiling(): number {
-        const row = this.mount.querySelector(':scope > .mep-toolbar');
-        return Math.max(0, row ? row.getBoundingClientRect().bottom : 0);
-    }
-
     /**
      * `y` moved past another extension's lens rows (`lenses.ts`), which sit
      * right above a block's first line, where a bar goes too — above a row
-     * when going up, below it going down — so the two never overlap.
+     * when going up, below it going down — so a candidate place is not one
+     * that `firstFree` must refuse for the row (a lens row is `OCCUPIED`).
      */
     private clearOfLensRows(y: number, height: number, up: boolean): number {
         const rows = Array.from(this.view.dom.querySelectorAll(':scope > .mep-lens-row'), r => r.getBoundingClientRect());
@@ -1044,8 +1060,8 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * A block's bar never covers text (Daniel, 2026-09-29). The first of these
-     * places that holds no text is where it goes:
+     * A block's bar never covers content (Daniel, 2026-09-29). The first of
+     * these places `firstFree` finds free is where it goes:
      *
      * 1. beside the block's first line, outside it, top-aligned with it — where
      *    the block ends short of the text column's right edge (a table, a short
@@ -1053,13 +1069,19 @@ class ObjectToolbarView implements PluginView {
      * 2. above the block, right-aligned to the column — where the line above
      *    ends short of it, or a margin is there;
      * 3. inside the block's own box at its top right — a source block, a
-     *    container or an admonition whose first line is short;
+     *    container or an admonition whose first line is short — probing the
+     *    block's own content;
      * 4. below the block, right-aligned to the column;
      * 5. above the block, in room the block is given while the bar shows
      *    (`Room`, a widget of the bar's height before it), so the line above
-     *    stays readable. Once given, a room is kept while the bar shows: the
-     *    band it makes is free, and taking it away for that would move the
-     *    block back under the bar, and give it again.
+     *    stays readable.
+     *
+     * A room once given is kept while the bar shows — taking it back would move
+     * the block under the pointer — and its band is tried first. When that band
+     * is not free (scrolled under the sticky row, right after the scroll that
+     * keeps what the person is at in place), the ladder is tried again, so a
+     * bar is never pinned over the block's own first line; with nothing free
+     * it stays in its room, where it covers no content.
      *
      * The places before the room move nothing: a pointed-at block that shifted
      * down as its bar appeared would leave the pointer. Where the room is made,
@@ -1084,35 +1106,35 @@ class ObjectToolbarView implements PluginView {
         const style = getComputedStyle(view.dom);
         const columnRight = view.dom.getBoundingClientRect().right - (parseFloat(style.paddingRight) || 0);
         const textual = object.kind === 'heading' || object.kind === 'block_attrs';
-        const line = textual ? firstLineOf(dom) : null;
-        const top = line?.top ?? box.top;
+        const top = (textual ? firstLineTop(dom) : null) ?? box.top;
         const right = textual
             ? rightEdgeIn(dom, top, top + height)
             : box.right - (isBlockObject(object) ? ATOM_INSET : 0);
-        const ceiling = this.ceiling();
-        const band = (left: number, bandTop: number) => ({ left, right: left + width, top: bandTop, bottom: bandTop + height });
         const given = (decorKey.getState(view.state) ?? NO_DECOR).rooms.some(r => r.pos === object.from);
         const edge = columnRight - width;
         const aboveY = this.clearOfLensRows(box.top - GAP - height, height, true);
         const insideRight = box.right - (isBlockObject(object) ? ATOM_INSET : 0) - GAP;
         const insideY = box.top + (isBlockObject(object) ? ATOM_INSET : GAP);
         const belowY = this.clearOfLensRows(box.bottom + GAP, height, false);
-        const places: { x: number; y: number; free: () => boolean }[] = [
-            { x: right + GAP, y: top, free: () => Number.isFinite(right) && right + GAP + width <= columnRight },
-            { x: edge, y: aboveY, free: () => !textInBand(view, band(edge, aboveY)) },
-            ...(textual || object.kind === 'table' ? [] : [{ x: insideRight - width, y: insideY, free: () => !textInElement(dom, band(insideRight - width, insideY)) }]),
-            { x: edge, y: belowY, free: () => belowY + height <= window.innerHeight && !textInBand(view, band(edge, belowY)) },
+        const ladder: Place[] = [
+            { x: right + GAP, y: top, when: () => right + GAP + width <= columnRight },
+            { x: edge, y: aboveY },
+            ...(textual || object.kind === 'table' ? [] : [{ x: insideRight - width, y: insideY, within: dom }]),
+            { x: edge, y: belowY },
         ];
-        const found = given ? undefined : places.find(p => p.y >= ceiling && p.free());
+        // With a room given, the place above the block is its room: tried first, then the rest again.
+        const order = given ? [ladder[1], ladder[0], ...ladder.slice(2)] : ladder;
+        const found = firstFree(view, this.mount, order, { width, height });
         let x: number;
         let y: number;
         if (found) {
-            bar.room = null;
+            // The room stays while the bar shows, even when the bar stands elsewhere now.
+            bar.room = given ? { pos: object.from, height: height + 2 * GAP } : null;
             ({ x, y } = found);
         } else {
             bar.room = { pos: object.from, height: height + 2 * GAP };
             x = edge;
-            y = Math.max(aboveY, ceiling);
+            y = aboveY;
         }
         x = Math.max(base.left, Math.min(x, base.right - width));
         el.style.left = `${x - base.left}px`;
