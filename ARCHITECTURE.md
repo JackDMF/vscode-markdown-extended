@@ -329,7 +329,8 @@ and a second one from this extension conflicts with it (see the comment on
 `plugins`). The editor engine is built from scratch, so nothing registers one for
 it: without `markdown-it-front-matter` the YAML block would tokenize as a thematic
 break and a setext heading — and front matter is the one block Req Explorer
-requires to leave the editor exactly as it entered.
+requires to leave the editor exactly as it entered — untouched, it does; the properties panel
+changes only the characters a person edits (below, *Properties*).
 
 ### The block model
 
@@ -339,7 +340,7 @@ block (`gap`). Every block is one of four kinds:
 
 | Kind | What | Node | Written back as |
 | --- | --- | --- | --- |
-| `front_matter` | The YAML block at the top | `front_matter` (atom) | Its `src`, always |
+| `front_matter` | The YAML block at the top | `front_matter` (atom), drawn as the properties panel | Its `src`: the slice, or what the panel set it to (below, *Properties*) |
 | `editable` | The core: paragraph, heading, lists, blockquote, code, rule, container, admonition, pipe table — with the inline constructs and the attribute literals below | The matching node, with `src` and `gap` | Its `src` while untouched; serialized by rule once changed |
 | `raw` | Anything else — a table using markdown-it-multimd-table's extensions, HTML, the TOC, footnotes, definition and task lists, abbreviations, reference definitions, a setext heading, a note inside a note, an attribute literal the editor cannot write back where it stands, a container or admonition nested past one level, lines no token covers | `raw_block` (atom, `html` rendered by the host) | Its `src`, which only an explicit source edit changes |
 | `injected` | Content the file does not hold at this place | `injected_block` (atom) | An expansion's directive line, or nothing |
@@ -645,6 +646,144 @@ delimiter row's `|`s, one per boundary of the header's cells, after a line break
 and the dashes are delimiter runs. So a position after a cell's text
 maps before its padding, and back. A code lens on any of a table's lines goes on the table
 block, as on any block (`blockIndexForLine`).
+
+### Properties
+
+**The front matter is a properties panel, edited in place** (Daniel, 2026-09-29, sketch 8:
+collapsed by default, `uid` read-only, a nested key one row that opens the source; a
+generic panel for Markdown Extended Pro, never a Req Explorer form). The node is still the
+`front_matter` atom its slice made, and its `src` is still what the serializer writes; what
+changed is that the page can now set that `src` — from a row of the panel, in one
+transaction (`commitFrontMatter` in `webview/main.ts`, a `setNodeMarkup`), so every edit is
+one undo step and is posted like any block edit. `fidelity.ts` never clears a source node's
+`src`, so nothing else is needed for "no longer untouched": the new `src` *is* the
+serialization of the model.
+
+**The model** (`frontMatter.ts`, pure, loaded by the page and the tests alike).
+`splitFrontMatter` cuts the `src` into its opening line, the YAML and its closing line
+(`---` or `...`; none for a front matter the end of the file closed), each with its
+terminator, and `joinFrontMatter` puts them back exactly. `readProperties` reads the YAML
+with the `yaml` package's `parseDocument` (`uniqueKeys`) — the parser of the family VS
+Code's own YAML tooling is built on — and gives one `Property` per top-level key. The kinds,
+as the module states them:
+
+- a scalar that is `true` or `false` (any case YAML reads as a boolean) — `boolean`, a checkbox;
+- `uid`, or a key ending in `uid` or `id` whose value is a UUID — `id`, read-only;
+- a string that is a date, `YYYY-MM-DD` — `date`;
+- `lang` — `choice`, a text field offering the values `lang` has anywhere in the file;
+- any other one-line scalar (a string, a number, an empty value) — `text`;
+- a sequence whose items are all one-line scalars — `list`, chips, in its own style: a
+  flow sequence (`[a, b]`) stays flow, a block one (`- a`) block;
+- anything else — a map, a sequence holding a map or a list, a multi-line string, an
+  alias — `source`: one row saying what it holds, whose value is edited as YAML in the
+  block's source.
+
+No enumeration is guessed from values beyond `lang` (`ENUMERATED_KEYS`), and no schema is
+read. A YAML the parser refuses (a syntax error, a duplicate key) or whose top level is not
+a map is one row saying why, beside *edit as source*.
+
+**In place, not round-tripped.** An edit is a text splice at the offsets `parseDocument`
+reports for the node it changes — `setText` and `setBoolean` replace a scalar's value
+characters (an anchor before it, a comment after it stay), `addItem` and `removeItem` add or
+delete a block list item's line with the prefix of the line before it, `removeProperty`
+deletes a pair's lines, `addProperty` appends `key: value` at the end — and the document is
+never written back through `yaml`'s stringifier, which would normalize indentation, spacing
+and the blank lines between keys. Key order, comments, quoting, anchors, block scalars,
+blank lines and line endings of every key not edited are therefore the file's bytes; a new
+line is terminated with the front matter's own line ending (`eolOf`). A value keeps its
+scalar's quoting: a double- or single-quoted one stays so; a plain one stays plain where
+plain text reads back as the same kind of value (`readsAsPlainString`: a number as a
+number, a string as that exact string), and is single-quoted otherwise, so `true`, `42`,
+`a # b` or `a: b` typed into a text row stay text. A new key's value is written as typed
+where it reads as one plain scalar or a flow list of scalars (`2026-10-01`, `true`,
+`[a, b]`) — typed from its value, as every other row — else quoted. An edit whose key is not
+there, or not of its kind, returns `null` rather than guess. `frontMatter.test.ts` holds a
+YAML with comments, an anchor and its alias, a block scalar, both list styles and a nested
+list of maps to "one scalar changed, one line changed", every other kind of edit to the same,
+LF and CRLF, and Req Explorer's conformance documents (`FR-CON.md`, `FR-CON.de.md`) to one
+line changed and a parse with the same blocks.
+
+*Its limits, as built:* a flow list is written again from its items' own text when an item
+goes in or out, so a comment inside the brackets is lost and a flow list spread over
+lines becomes one line; removing a key leaves a comment line above it, which may have been
+about it; a new key goes at the end, never beside a related one; the last item of a block
+list removed leaves `key: []`, since a block list cannot be empty.
+
+**The panel** (`webview/properties.ts`, `PropertiesView`, the `front_matter` node view).
+A header `▸ Properties  <n>` — the count of top-level keys — and **Edit as source** at its
+right, collapsed by default; the state is remembered per document in `localStorage` under
+the document's uri, which the host writes on the page's mount element
+(`data-document-uri`, `host/html.ts`) — a page without storage opens collapsed. Expanded,
+one row per key: the key in the editor's monospace, since it *is* the key, and the control
+of its kind — a text field (the inline field's colours, a border only on hover and focus, so
+the rows read as values at rest); a date as its text as the file writes it, with a calendar
+button that opens the browser's picker from a date input kept out of sight (`showPicker`,
+`Alt+↓` in the field too) — `<input type="date">` itself shows the system locale's
+`09/29/2026` beside the file's `2026-09-29`, a second spelling of one value — and a text that
+is no date refused with the reason; `lang` a text field with a `datalist` of the file's
+values; a checkbox; chips with `×` and a dashed **+ add**; a uid in mono, dimmed, copied on a
+click (`navigator.clipboard`, else `execCommand('copy')`); a source row *`<n>` items, nested ·
+edit as source*. The last row is **+ Add property**: the name, then the value. A row's `×`
+shows on hover or while the row has the focus, keeps its place so nothing moves, and removes
+the key — *Removed `key` — Ctrl+Z*, in the caret hint, which `showHint` can now place under
+an element (`near`) since the caret is not where the panel is. A uid row has no `×`:
+read-only is read-only.
+
+*The keys.* `Enter` commits a row, `Esc` reverts it, a second `Esc` puts the caret in the text
+after the front matter (`leaveFrontMatter`). `Tab` goes through the rows in the browser's
+order (each row's control, a list's **+ add**, then **+ Add property**; the `×`s are not
+stops). A row is committed when the focus leaves it too — a deliberate difference from the
+inline field, which is gone once it loses the focus: a row stays and shows its value, and a
+value that showed typed and then silently reverted would say something the file does not
+hold. `Ctrl+Z` in a field with typing of its own undoes the typing; anywhere else in the
+panel it runs the editor's `undo` (`history` on the port), and is kept from VS Code either
+way. Rows with typing not yet committed register with the page as a `SourceEditor`, so
+`Ctrl+S` commits them before it saves, as it commits an open source box.
+
+*A redraw keeps the focus.* Every commit sets the node's `src`, ProseMirror calls `update`,
+and the panel draws its rows again (only when `src` changed). The focused control is found
+again by its slot (`data-slot`: `value:key`, `add-item:key`, `add:name`, …) and focused, with
+typing that had not been committed restored where the value under it did not change — so
+`Tab` after typing lands on the next row although the commit redrew the panel under it (the
+commit runs on a zero-delay timer after the blur, once the focus has moved), and a re-sync
+from the host while a field is being typed in does not wipe it.
+
+*The source box.* **Edit as source** and a source row's link open the YAML between the fences
+in the raw block's textarea chrome (`mep-raw-editor`), `Ctrl+Enter` or leaving applies, `Esc`
+cancels, as a source block's box; from a row it opens with the caret at that key and the page
+scrolled so the key's line is in view. The fences are not in the box: they are what makes the
+block front matter, and a box that could delete one would turn the YAML into a rule and a
+setext heading on the next parse. An emptied box leaves `---` twice.
+
+*The caret, positions and the bar.* The node is still an atom for `positions.ts`: the
+position before it is its slice's start, one inside it maps before it. A field is not a place
+in the text, so while one has the focus the page reports the caret as none (`inPropertiesPanel`
+in `main.ts`, and a `focusin`/`focusout` listener that reports again) and
+`visualEditor.active()` answers `caret: undefined`. The object toolbar draws no bar for the
+front matter's label alone (`barless`, which a heading shares): its verbs are the panel's
+header, and the bar carries only other extensions' code actions, when there are some.
+
+**Insert → Properties** (`insert-properties`, `insertPropertiesTransaction`) inserts a
+`front_matter` node holding `---` twice, in the document's line ending, as the first node,
+and opens the panel at the name of a new property (`addPropertyAt`). The block after it now
+follows something else, so the fidelity plugin clears its gap and it is written a blank line
+below. The entry is disabled, saying why, in a document that has front matter; the toolbar's
+test holds the entry's syntax to parse as front matter and render nothing.
+
+**Req Explorer.** Nothing in the contract changes. Its marks and lenses read line numbers
+from the text the host holds, and an edit to the front matter shifts the lines below it
+exactly as typing a line into a paragraph does: the host maps a lens by the block's lines in
+its own parse of the page's text, and the re-sync takes any document it posts back in place.
+The conformance suite (`REQ_EXPLORER_ROOT=… npm test`) runs `FR-CON.md` and `FR-CON.de.md`
+through the panel's edit — the model's `setText` on `lang`, set as the node's `src` — to one line
+changed, LF and CRLF, and a parse of the result with the same blocks.
+
+*Left for later: a schema.* The typing reads the value alone. The hook for more is
+`ENUMERATED_KEYS` and `propertyOf` in `frontMatter.ts`: a later step lets an extension say
+what a key is — a closed set of values, a date, an id minted elsewhere — through the same
+kind of exported function the includes use, and the panel would type a row from that before
+its value. Not built: which extension may type which keys, and what the panel does when two
+disagree, are questions of their own.
 
 ### Injected content
 
@@ -1109,7 +1248,8 @@ of thing, two triggers and two places.
   leaves as source;
 - expansion — *Open snippet* (only with `mark.path`), *Show in text editor*, *Delete
   directive* (the node deleted, and with it the one line it writes);
-- badge, other injected content, front matter — the label alone;
+- badge, other injected content — the label alone; the front matter no bar of its own (its verbs are the
+  properties panel's header), only other extensions' actions when there are some;
 - heading — the label alone (*Requirement FRS-…* for a requirement heading), and so no bar
   at all unless another extension offers code actions for it (below).
 
@@ -1717,7 +1857,8 @@ visualEditor: {
 `caret` is a position in the document's text: 0-based line and UTF-16 character, as every
 `vscode.Position`, so it can be handed to `document.offsetAt` or compared with a symbol's range
 unchanged. It is `undefined` when the selection is in an atom (a source block, an injected
-block, the front matter, a badge) or is no caret (Ctrl+A, a gap cursor), when the mapping is
+block, the front matter, a badge) or is no caret (Ctrl+A, a gap cursor), while a field of the
+properties panel has the focus, when the mapping is
 only approximate, and while a change the page has not seen is on its way to it (above).
 `active()` is `undefined` when no Visual Editor has the focus — a text editor has it, or
 nothing does — and `onDidChangeActive` fires when another Visual Editor or none takes the focus,

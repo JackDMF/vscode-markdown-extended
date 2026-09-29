@@ -16,7 +16,7 @@ Markdown Extended Pro is a comprehensive extension that extends syntaxes and abi
 - 🌗 **Theme-Aware & Accessible Exports** - Light / dark / auto export theme with a built-in, accessible base stylesheet (overridable by your own CSS)
 - 🧜 **Mermaid in Exports** - Diagrams shown in VS Code's preview are rendered to inline SVG in exported files
 - ✏️ **Editing Helpers** - Table formatting, text formatting toggles, and more
-- 🖋️ **Visual Editor (experimental)** - Edit as rendered text; untouched blocks are saved byte for byte ([details](#visual-editor-experimental))
+- 🖋️ **Visual Editor (experimental)** - Edit as rendered text; untouched blocks are saved byte for byte, and the front matter is a properties panel edited in place ([details](#visual-editor-experimental))
 - 🌐 **Web Extension** - Works in [vscode.dev](https://vscode.dev) and [github.dev](https://github.dev) (preview & editing; export requires desktop)
 - 🏗️ **TypeScript Codebase** - Built with TypeScript, unit tests, and error recovery
 
@@ -451,7 +451,8 @@ never covers the line you are typing on.
 | Table | while the caret is in it, after a moment; the caret's column is tinted | **Row ▾** (insert above, insert below, delete) · **Column ▾** (insert left, insert right, delete) · **Align ▾** (left, center, right; the current one marked) · **Edit source** · **Delete table** |
 | Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
 | Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Change snippet…** · **Show in text editor** · **Delete directive** |
-| Front matter, a status badge, a summary table | as above | its name only |
+| A status badge, a summary table | as above | its name only |
+| Front matter | — | its verbs are the properties panel's header (below); the bar shows only for other extensions' actions |
 | Heading | while the caret is in it, after a moment — only when another extension offers actions for it | the actions alone; a requirement heading is named by its id |
 
 A block's bar — a source block, a snippet, the front matter, a heading, a container, an
@@ -672,15 +673,47 @@ changes nothing. An extension offers includes by exporting `listIncludeChoices` 
 the block-type menu is disabled, and its tooltip says why: changing the type would rebuild
 the heading and lose the id and the anchor. Its title can still be formatted.
 
+### Properties (the front matter)
+
+The YAML front matter at the top of a file is a **Properties** panel: a header,
+`▸ Properties 7`, with **Edit as source** at its right. It is collapsed when a file opens,
+so the document still starts at its heading; a click opens it, and it stays open or closed
+for that file the next time. Open, it has one row per key — the key in the editor's
+monospace, since it *is* the key — and a control that fits the value it holds:
+
+| The value | The row |
+| --------- | ------- |
+| Text, a number, nothing | a text field |
+| A date written `YYYY-MM-DD` | the date as text, a calendar button beside it (`Alt+↓` opens it too); a value that is no date is refused, saying so |
+| `true` / `false` | a checkbox |
+| A list of short values (`[a, b]` or `- a` lines) | chips, each with `×`, and **+ add** (`Enter` adds and stays for the next, `Backspace` in the empty field takes the last one back) |
+| `lang` | a text field offering the values `lang` has anywhere in the file |
+| `uid`, or a key ending in `uid`/`id` holding a UUID | read-only, in mono and dimmed; a click copies it |
+| Anything nested — a map, a list of maps, a multi-line text | one row, *5 items, nested · edit as source*, which opens the YAML at that key |
+
+`Enter` applies a row, `Esc` puts it back, `Tab` applies it and goes to the next, and
+leaving a row applies it too — a row shows its value, and a value you typed should not
+silently turn back. A second `Esc` puts the caret in the text below. **+ Add property**, the
+last row, asks for the name and then the value; the value is typed from what you write
+(`2026-10-01`, `true`, `[a, b]`). Pointing at a row shows a small `×` that removes the key,
+announced as *Removed key — Ctrl+Z*; `Ctrl+Z` in the panel is the editor's undo, so the key
+comes back. **Edit as source** and a nested row's link open the YAML between the `---`
+lines in a box (`Ctrl+Enter` or clicking away applies, `Esc` cancels). A document without
+front matter has no panel; **Insert → Properties** adds one at the top and asks for the
+first key.
+
+**The file is edited in place.** A change rewrites only the characters of what changed —
+one value, one list item's line, one key's lines — so key order, comments, quoting,
+anchors, blank lines and line endings of everything else stay as you wrote them. A value
+that would read back as something else is quoted (`'true'` stays text; `'a: b'` stays one
+value). The panel knows YAML, not what a key means: nothing is guessed from a key's name
+beyond `lang` and the ids, and no schema is read.
+
 ### What is shown, not edited as rich text
 
 Some blocks appear as they do in the preview, outlined, and are not edited as text in
 place — each for a reason:
 
-- **Front matter** is a collapsed, read-only panel with the YAML exactly as written. It
-  is written back byte for byte, line endings included: tools such as Req Explorer own
-  it and edit it with their own commands, and a rich editor that re-wrote the YAML
-  would reorder keys and lose comments.
 - **Content another extension injects** — Req Explorer's status badges and summary
   tables, a snippet expanded from `<!-- include: … -->` — is not in the file at that
   place, so it cannot be edited there. An expanded snippet's bar offers **Open snippet**,
