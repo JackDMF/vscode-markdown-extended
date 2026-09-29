@@ -539,6 +539,19 @@ export function inlineSourceTransaction(
 }
 
 /**
+ * **Insert → Properties**: an empty front matter (`---` twice, in the
+ * document's line ending) as the first node, or `null` when the document has one.
+ * The block after it loses its gap — it follows something else now — and is
+ * written a blank line below.
+ */
+export function insertPropertiesTransaction(state: EditorState, eol: '\n' | '\r\n'): Transaction | null {
+    if (state.doc.firstChild?.type === editorSchema.nodes.front_matter) {
+        return null;
+    }
+    return state.tr.insert(0, editorSchema.nodes.front_matter.create({ src: `---${eol}---${eol}` })).scrollIntoView();
+}
+
+/**
  * The transaction an `insert-wrapper` action makes: a new container or
  * admonition after the block the selection is in (`insertionPoint`), holding
  * one empty paragraph with the caret in it — typed text is its body at once.
