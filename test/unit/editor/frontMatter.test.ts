@@ -239,6 +239,55 @@ suite('Front matter as properties: edits in place', () => {
     });
 });
 
+suite('Front matter as properties: the cases a review found', () => {
+    test('an empty value with a trailing comment is written after the colon, the comment kept a comment', () => {
+        const after = setText('empty:   # note\nq: 1\n', 'empty', 'x') as string;
+        assert.strictEqual(after, 'empty: x   # note\nq: 1\n');
+        assert.strictEqual(readProperties(after).properties[0].text, 'x');
+        assert.strictEqual(setText('empty:\n', 'empty', 'x'), 'empty: x\n');
+        assert.strictEqual(setText('empty: ~\n', 'empty', 'x'), 'empty: x\n', 'an explicit null is replaced');
+    });
+
+    test('a flow list is spliced, not written again: anchors, tags and aliases survive, and an anchored item an alias names is not removed', () => {
+        const flow = 't: [&x a, !!str b]\nr: *x\n';
+        assert.strictEqual(addItem(flow, 't', 'c', '\n'), 't: [&x a, !!str b, c]\nr: *x\n');
+        assert.strictEqual(removeItem(flow, 't', 1, '\n'), 't: [&x a]\nr: *x\n');
+        assert.strictEqual(removeItem(flow, 't', 0, '\n'), null, 'removing &x would leave *x naming nothing');
+        assert.strictEqual(removeItem('t: [&x a, !!str b, c]\n', 't', 0, '\n'), 't: [!!str b, c]\n');
+        assert.strictEqual(removeItem('t: [a, !!str b, c]\n', 't', 1, '\n'), 't: [a, c]\n');
+        assert.strictEqual(addItem('t: [ ]\n', 't', 'a', '\n'), 't: [ a]\n');
+    });
+
+    test('a block list item is added with the indentation and `- ` alone, not the last item\'s anchor or tag, also after a bare `-`', () => {
+        assert.strictEqual(addItem('p:\n  - &a x\n', 'p', 'Eve', '\n'), 'p:\n  - &a x\n  - Eve\n');
+        assert.strictEqual(addItem('p:\n  - !!str x\n', 'p', 'Eve', '\n'), 'p:\n  - !!str x\n  - Eve\n');
+        assert.strictEqual(addItem('p:\n  - a\n  -\nq: 1\n', 'p', 'Eve', '\n'), 'p:\n  - a\n  -\n  - Eve\nq: 1\n');
+        assert.strictEqual(removeItem('p:\n  - a\n  -\nq: 1\n', 'p', 1, '\n'), 'p:\n  - a\nq: 1\n');
+        assert.strictEqual(removeItem('p:\n  - &a x\n  - y\nr: *a\n', 'p', 0, '\n'), null);
+    });
+
+    test('a property is added only to a block mapping, with a key that reads back as itself', () => {
+        assert.strictEqual(addProperty('{a: 1}\n', 'b', '2', '\n'), null, 'a flow map');
+        assert.strictEqual(addProperty('- a\n', 'b', '2', '\n'), null, 'a list');
+        assert.strictEqual(addProperty('a: [1\n', 'b', '2', '\n'), null, 'a syntax error');
+        assert.strictEqual(addProperty('a: 1\n', 'x: y', '2', '\n'), 'a: 1\n\'x: y\': 2\n');
+        assert.strictEqual(addProperty('a: 1\n', '-x', '2', '\n'), 'a: 1\n\'-x\': 2\n');
+        assert.strictEqual(addProperty('a: 1\n', '#x', '2', '\n'), 'a: 1\n\'#x\': 2\n');
+        assert.strictEqual(addProperty('a: 1\n', 'a\nb', '2', '\n'), null, 'a line break in a key');
+        assert.strictEqual(addProperty('# only a comment\n', 'a', '1', '\n'), '# only a comment\na: 1\n');
+    });
+
+    test('two keys that read as one name are told apart by where they stand', () => {
+        const body = '1: one\n\'1\': quoted\n';
+        const read = readProperties(body);
+        assert.strictEqual(read.error, null);
+        assert.deepStrictEqual(read.properties.map(p => [p.key, p.offset]), [['1', 0], ['1', 7]]);
+        assert.strictEqual(setText(body, { key: '1', offset: 7 }, 'Q'), '1: one\n\'1\': Q\n');
+        assert.strictEqual(removeProperty(body, { key: '1', offset: 0 }), '\'1\': quoted\n');
+        assert.strictEqual(setText(body, { key: '1', offset: 3 }, 'Q'), null, 'no key stands there');
+    });
+});
+
 suite('Front matter as properties: the document around it', () => {
     const md = hostEngine();
     const options = { defaultWrap: 90 };

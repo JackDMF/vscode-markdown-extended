@@ -71,7 +71,7 @@ export interface FrontMatterParts {
 /** The keys whose values are offered from the file's own vocabulary. The hook for more (a schema) is a later step. */
 export const ENUMERATED_KEYS: ReadonlySet<string> = new Set(['lang']);
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FENCE = /^(?:-{3,}|\.{3})[ \t]*$/;
 
@@ -207,118 +207,153 @@ function valuesOf(doc: Document.Parsed, key: string, current: string): string[] 
 
 // ---------------------------------------------------------------------------
 // Edits: each returns the new body, or `null` when the key is not there (or not
-// of the kind the edit needs) in the body it was given.
+// of the kind the edit needs) in the body it was given, or when the result would
+// not parse — a removed item whose anchor an alias names, say. Nothing is guessed.
 // ---------------------------------------------------------------------------
 
+/**
+ * Which key an edit is for: its name, the first key that stringifies so; or, as
+ * the panel passes it, the key at `offset` in the body, which must still be
+ * named `key` — `1:` and `'1':` are two keys that stringify alike.
+ */
+export type KeyRef = string | { offset: number; key: string };
+
 /** A text, date or choice property's new value, written in the scalar's own quoting style where it reads back as that value. */
-export function setText(body: string, key: string, text: string): string | null {
-    const pair = findPair(body, key);
+export function setText(body: string, ref: KeyRef, text: string): string | null {
+    const pair = findPair(body, ref);
     if (!pair) {
         return null;
     }
     const value = pair.value;
-    if (value === null || value === undefined) {
-        const colon = colonAfterKey(body, pair);
-        return colon < 0 || text === '' ? null : splice(body, colon + 1, colon + 1, ` ${newScalarSource(text)}`);
-    }
-    if (!isScalar(value) || !value.range) {
+    if (value !== null && value !== undefined && (!isScalar(value) || !value.range)) {
         return null;
     }
-    if (scalarText(body, value) === text) {
+    const scalar = value as Scalar | null | undefined;
+    if (!scalar || (scalar.value === null && scalar.range && scalar.range[0] === scalar.range[1])) {
+        // An empty value: written right after the colon, whatever follows it (`key:   # note`).
+        const colon = colonAfterKey(body, pair);
+        return text === '' ? body : colon < 0 ? null : checked(splice(body, colon + 1, colon + 1, ` ${newScalarSource(text)}`));
+    }
+    if (scalarText(body, scalar) === text) {
         return body;
     }
-    const [start, end] = value.range;
-    if (value.value === null && text === '') {
-        return body;
-    }
-    const written = scalarSource(text, value);
-    // An empty value stands right after the colon: the new one needs its space.
-    const lead = start === end && start > 0 && !/\s/.test(body[start - 1]) ? ' ' : '';
-    return splice(body, start, end, lead + written);
+    const [start, end] = scalar.range as [number, number, number];
+    return checked(splice(body, start, end, scalarSource(text, scalar)));
 }
 
 /** A boolean property set, in the case the file writes it (`true`, `True`, `TRUE`). */
-export function setBoolean(body: string, key: string, checked: boolean): string | null {
-    const pair = findPair(body, key);
+export function setBoolean(body: string, ref: KeyRef, checkedValue: boolean): string | null {
+    const pair = findPair(body, ref);
     const value = pair?.value;
     if (!pair || !isScalar(value) || typeof value.value !== 'boolean' || !value.range) {
         return null;
     }
     const [start, end] = value.range;
     const was = body.slice(start, end);
-    let written = checked ? 'true' : 'false';
+    let written = checkedValue ? 'true' : 'false';
     if (was === was.toUpperCase()) {
         written = written.toUpperCase();
     } else if (was[0] === was[0].toUpperCase()) {
         written = written[0].toUpperCase() + written.slice(1);
     }
-    return splice(body, start, end, written);
+    return checked(splice(body, start, end, written));
 }
 
-/** An item added at the end of a list, in the list's style. */
-export function addItem(body: string, key: string, item: string, eol: '\n' | '\r\n'): string | null {
-    const pair = findPair(body, key);
+/** An item added at the end of a list, in the list's style; every other item's text — anchors, tags, comments — stays. */
+export function addItem(body: string, ref: KeyRef, item: string, eol: '\n' | '\r\n'): string | null {
+    const pair = findPair(body, ref);
     const seq = pair?.value;
     if (!pair || !isSeq(seq) || !seq.range) {
         return null;
     }
     const written = newScalarSource(item, true);
+    const items = seq.items as Scalar[];
     if (seq.flow) {
-        return rewriteFlow(body, seq.range, [...(seq.items as Scalar[]).map(i => itemSource(body, i)), written]);
+        const last = items[items.length - 1];
+        if (last?.range) {
+            return checked(splice(body, last.range[1], last.range[1], `, ${written}`));
+        }
+        // Empty: inside the brackets, before the `]`.
+        const close = body.lastIndexOf(']', seq.range[1] - 1);
+        return close < seq.range[0] ? null : checked(splice(body, close, close, written));
     }
-    const last = seq.items[seq.items.length - 1] as Scalar;
-    if (!last?.range) {
+    const indicators = blockIndicators(seq);
+    const last = items[items.length - 1];
+    const indicator = indicators[indicators.length - 1];
+    if (!last || indicator === undefined) {
         return null;
     }
-    const lineStart = startOfLine(body, last.range[0]);
-    const prefix = body.slice(lineStart, last.range[0]);
-    const at = lineEndAfter(body, last.range[1]);
+    // The new line's prefix is the last item's indentation and `- `: not its anchor or tag.
+    const prefix = `${body.slice(startOfLine(body, indicator), indicator)}- `;
+    const at = lineEndAfter(body, Math.max(indicator, last.range ? last.range[1] : indicator));
     const terminated = at > 0 && body[at - 1] === '\n';
-    return splice(body, at, at, `${terminated ? '' : eol}${prefix}${written}${terminated ? eol : ''}`);
+    return checked(splice(body, at, at, `${terminated ? '' : eol}${prefix}${written}${terminated ? eol : ''}`));
 }
 
-/** The list's item at `index` removed; the last one leaves an empty flow list (`[]`), since a block list cannot be empty. */
-export function removeItem(body: string, key: string, index: number, eol: '\n' | '\r\n'): string | null {
-    const pair = findPair(body, key);
+/** The list's item at `index` removed with its own text only; the last one leaves an empty flow list (`[]`), since a block list cannot be empty. */
+export function removeItem(body: string, ref: KeyRef, index: number, eol: '\n' | '\r\n'): string | null {
+    const pair = findPair(body, ref);
     const seq = pair?.value;
     if (!pair || !isSeq(seq) || !seq.range || index < 0 || index >= seq.items.length) {
         return null;
     }
     const items = seq.items as Scalar[];
     if (seq.flow) {
-        return rewriteFlow(body, seq.range, items.filter((_, i) => i !== index).map(i => itemSource(body, i)));
+        if (items.length === 1) {
+            return checked(splice(body, seq.range[0], seq.range[1], '[]'));
+        }
+        const starts = flowItemStarts(seq);
+        if (index === 0) {
+            // From the first item's properties to the next one's.
+            return checked(splice(body, starts[0], starts[1], ''));
+        }
+        // From the end of the item before (so its comma goes) to the end of this one.
+        const before = items[index - 1].range;
+        const own = items[index].range;
+        return before && own ? checked(splice(body, before[1], own[1], '')) : null;
     }
-    const item = items[index];
-    if (!item.range) {
+    const indicators = blockIndicators(seq);
+    const indicator = indicators[index];
+    if (indicator === undefined) {
         return null;
     }
+    const item = items[index];
+    const end = lineEndAfter(body, Math.max(indicator, item.range ? item.range[1] : indicator));
     if (items.length === 1) {
         const colon = colonAfterKey(body, pair);
-        const end = lineEndAfter(body, item.range[1]);
         const terminated = end > 0 && body[end - 1] === '\n';
-        return colon < 0 ? null : splice(body, colon, end, `: []${terminated ? eol : ''}`);
+        return colon < 0 ? null : checked(splice(body, colon, end, `: []${terminated ? eol : ''}`));
     }
-    return splice(body, startOfLine(body, item.range[0]), lineEndAfter(body, item.range[1]), '');
+    return checked(splice(body, startOfLine(body, indicator), end, ''));
 }
 
 /**
  * A new key at the end of the YAML. The value is written as typed where it
  * reads back as one scalar or a flow list of scalars (`2026-09-29`, `true`,
  * `[a, b]`), so a new row is typed from its value as every other; anything else
- * is quoted. `null` when the key is there already.
+ * is quoted, and so is a key that plain would not read back as itself. `null`
+ * when the key is there already, holds a line break, or the YAML is not a block
+ * mapping (a flow map, a list, a syntax error), where a line appended would not
+ * be a key of it.
  */
 export function addProperty(body: string, key: string, value: string, eol: '\n' | '\r\n'): string | null {
-    if (key === '' || findPair(body, key) !== null) {
+    if (key.trim() === '' || /[\r\n]/.test(key) || findPair(body, key) !== null) {
         return null;
     }
-    const line = `${newScalarSource(key)}:${value === '' ? '' : ` ${newValueSource(value)}`}`;
+    const doc = parse(body);
+    const contents = doc.contents;
+    const empty = contents === null || (isScalar(contents) && contents.value === null && contents.range?.[0] === contents.range?.[1]);
+    if (doc.errors.length > 0 || !(empty || (isMap(contents) && !contents.flow))) {
+        return null;
+    }
+    const line = `${keySource(key)}:${value === '' ? '' : ` ${newValueSource(value)}`}`;
     const lead = body === '' || body.endsWith('\n') || body.endsWith('\r') ? '' : eol;
-    return body + lead + line + eol;
+    return checked(body + lead + line + eol);
 }
 
 /** A key removed with its value: its lines, a trailing comment on them included. */
-export function removeProperty(body: string, key: string): string | null {
-    const pair = findPair(body, key);
+export function removeProperty(body: string, ref: KeyRef): string | null {
+    const pair = findPair(body, ref);
     if (!pair || !isScalar(pair.key) || !pair.key.range) {
         return null;
     }
@@ -326,26 +361,82 @@ export function removeProperty(body: string, key: string): string | null {
     const value = pair.value as { range?: [number, number, number] | null } | null;
     let end = value?.range ? value.range[1] : pair.key.range[1];
     end = end > start && body[end - 1] === '\n' ? end : lineEndAfter(body, end);
-    return splice(body, start, end, '');
+    return checked(splice(body, start, end, ''));
+}
+
+/** A calendar date written `YYYY-MM-DD`: the form the date kind reads, and a day the calendar has. */
+export function isDate(text: string): boolean {
+    if (!DATE.test(text)) {
+        return false;
+    }
+    const date = new Date(`${text}T00:00:00Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text;
 }
 
 // ---------------------------------------------------------------------------
 
 function parse(body: string): Document.Parsed {
-    return parseDocument(body, { uniqueKeys: true });
+    return parseDocument(body, { uniqueKeys: true, keepSourceTokens: true });
 }
 
-function findPair(body: string, key: string): Pair | null {
+/**
+ * The edit's result, or `null` when it would not parse or would leave an alias
+ * naming no anchor (an anchored item removed): a refusal, never a file the next
+ * read cannot show. The parser reports the second only when the value is read,
+ * so it is looked for here.
+ */
+function checked(result: string): string | null {
+    const doc = parse(result);
+    if (doc.errors.length > 0) {
+        return null;
+    }
+    let dangling = false;
+    visit(doc, {
+        // eslint-disable-next-line @typescript-eslint/naming-convention -- the visitor's key is the node type's name
+        Alias(_, alias) {
+            if (alias.resolve(doc) === undefined) {
+                dangling = true;
+                return visit.BREAK;
+            }
+            return undefined;
+        },
+    });
+    return dangling ? null : result;
+}
+
+function findPair(body: string, ref: KeyRef): Pair | null {
     const doc = parse(body);
     if (doc.errors.length > 0 || !isMap(doc.contents)) {
         return null;
     }
     for (const pair of doc.contents.items) {
-        if (isScalar(pair.key) && String(pair.key.value) === key) {
+        if (!isScalar(pair.key)) {
+            continue;
+        }
+        const named = String(pair.key.value);
+        if (typeof ref === 'string' ? named === ref : named === ref.key && pair.key.range?.[0] === ref.offset) {
             return pair as Pair;
         }
     }
     return null;
+}
+
+interface CstToken { type: string; offset: number }
+interface CstItem { start: CstToken[]; value?: CstToken }
+
+/** The offset of each block list item's `-`, from the parser's source tokens. */
+function blockIndicators(seq: { srcToken?: unknown }): number[] {
+    const token = seq.srcToken as { type?: string; items?: CstItem[] } | undefined;
+    return (token?.items ?? []).map(item => item.start.find(t => t.type === 'seq-item-ind')?.offset ?? -1).filter(o => o >= 0);
+}
+
+/** Where each flow list item's own text starts — its anchor or tag, else its value — from the parser's source tokens. */
+function flowItemStarts(seq: { srcToken?: unknown }): number[] {
+    const token = seq.srcToken as { items?: CstItem[] } | undefined;
+    return (token?.items ?? []).map(item => {
+        const own = item.start.find(t => t.type !== 'comma' && t.type !== 'space' && t.type !== 'newline' && t.type !== 'comment');
+        return own?.offset ?? item.value?.offset ?? -1;
+    });
 }
 
 function colonAfterKey(body: string, pair: Pair): number {
@@ -372,16 +463,9 @@ function startOfLine(text: string, pos: number): number {
     return text.lastIndexOf('\n', pos - 1) + 1;
 }
 
-function itemSource(body: string, item: Scalar): string {
-    return item.range ? body.slice(item.range[0], item.range[1]) : newScalarSource(String(item.value), true);
-}
-
-/** A flow list written again from its items' own text, its inner padding (`[ a ]`) kept. */
-function rewriteFlow(body: string, range: [number, number, number], items: readonly string[]): string {
-    const was = body.slice(range[0], range[1]);
-    const pad = /^\[[ \t]/.test(was) ? ' ' : '';
-    const written = items.length === 0 ? '[]' : `[${pad}${items.join(', ')}${pad}]`;
-    return splice(body, range[0], range[1], written);
+/** A new key: plain where plain reads back as that string and cannot be read as anything else at a line's start, else single-quoted. */
+function keySource(key: string): string {
+    return /^[-?:#&*!|>'"%@`[\]{},\s]|:|#|\s$/.test(key) || !readsAsPlainString(key) ? singleQuoted(key) : key;
 }
 
 /** Whether `text` written plain reads back as exactly that string (not a number, a boolean, a comment, a map). */
