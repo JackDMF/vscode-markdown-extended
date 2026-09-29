@@ -13,7 +13,7 @@
  *
  * | Surface | Placed on | When that is not there |
  * | --- | --- | --- |
- * | `status` | `tr[data-req-field="status"]` of the summary table (`injected_block`, mark `artifact`); without that row, the status badge (`inline_atom`, mark `artifact`) in its heading | a verb of the heading |
+ * | `status` | the standing row of the summary table (`injected_block`, mark `artifact`): `tr[data-req-standing]`, or, for a Req Explorer older than the attribute, `tr[data-req-field="status"]`; without either row, the status badge (`inline_atom`, mark `artifact`) in its heading | a verb of the heading |
  * | `priority` | `tr[data-req-field="priority"]` of that table | a verb of the heading |
  * | `links` | `tr[data-req-relation="<relation>"]` of that table, of its side (`data-req-direction`) when the lens names one | a verb of the heading |
  * | `action` | — | a verb of the heading, in its object toolbar |
@@ -132,6 +132,11 @@ function artifactOf(mark: unknown): string | null {
  * without (a Req Explorer older than the field) takes the relation's first.
  */
 function tableRowIn(root: ParentNode, key: RowKey): HTMLElement | null {
+    if (key.surface === 'status') {
+        // The standing row, whatever field states it (a Status, a release's lifecycle, a change's derived Stage);
+        // a Req Explorer older than `data-req-standing` marks only the field named `status`.
+        return root.querySelector<HTMLElement>('tr[data-req-standing]') ?? root.querySelector<HTMLElement>('tr[data-req-field="status"]');
+    }
     if (key.surface !== 'links') {
         return root.querySelector<HTMLElement>(`tr[data-req-field="${key.surface}"]`);
     }
