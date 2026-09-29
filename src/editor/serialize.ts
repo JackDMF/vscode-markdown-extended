@@ -789,8 +789,38 @@ export function serializeNode(node: Node, options: SerializeOptions): string {
  * one, so a changed last line of a file that had no final newline gains one.
  */
 export function serializeDocument(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions): string {
+    return serializeLayout(parsed, options).text;
+}
+
+/** Where one top-level node's text stands in the text `serializeLayout` writes. */
+export interface BlockSpan {
+    /** The offset of the node's body in the text: after its gap and any separator. */
+    start: number;
+    /**
+     * The body as written — its `src`, or its serialization with the document's
+     * `eol` and a final one — and `''` for a node that writes nothing (an
+     * injected atom, an editable node left empty), whose `start` is where it
+     * would have stood.
+     */
+    body: string;
+}
+
+/** The document's text and, for every top-level node in order, where its body stands in it. */
+export interface SerializedLayout {
+    text: string;
+    blocks: BlockSpan[];
+}
+
+/**
+ * `serializeDocument`, with the place of every top-level node's body in the
+ * result: the one loop that decides the text, so the position mapping
+ * (`positions.ts`) reads the offsets from where they are made rather than
+ * counting them a second time.
+ */
+export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions): SerializedLayout {
     const { doc, eol, tail } = parsed;
     const serializer = blockSerializer(options);
+    const blocks: BlockSpan[] = [];
     let out = '';
     const atLineStart = () => out === '' || out.endsWith('\n') || out.endsWith('\r');
     doc.forEach(node => {
@@ -804,6 +834,7 @@ export function serializeDocument(parsed: { doc: Node; eol: '\n' | '\r\n'; tail:
             body = text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
         }
         if (body === '') {
+            blocks.push({ start: out.length, body: '' });
             return;
         }
         if (!atLineStart()) {
@@ -811,10 +842,11 @@ export function serializeDocument(parsed: { doc: Node; eol: '\n' | '\r\n'; tail:
         }
         const gap = node.attrs.gap as string | null | undefined;
         out += gap === null || gap === undefined ? (out === '' ? '' : eol) : gap;
+        blocks.push({ start: out.length, body });
         out += body;
     });
     if (tail !== '' && !atLineStart()) {
         out += eol;
     }
-    return out + tail;
+    return { text: out + tail, blocks };
 }
