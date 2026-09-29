@@ -3,6 +3,7 @@ import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { Config } from '../../services/common/config';
 import { escapeHtml } from '../../services/exporter/shared';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
+import type { MappedPagePosition, SourcePosition } from '../positions';
 import { HostMessage, WebviewMessage } from '../protocol';
 import { CodeActionController } from './codeActions';
 import { message } from './errors';
@@ -10,6 +11,7 @@ import { IncludeController, IncludePicker, IncludeProvider, collectIncludeProvid
 import { LensController, SessionPort } from './lenses';
 import { fragmentLine, headingAnchors, resolveLinkTarget } from './links';
 import { minimalReplacement } from './minimalEdit';
+import { HostPositions, toPage, toSource } from './positions';
 import { VISUAL_EDITOR_VIEW_TYPE } from './viewType';
 
 /** What a session needs from the extension, injected so a test can drive one without a webview. */
@@ -98,6 +100,13 @@ export class VisualEditorSession implements vscode.Disposable {
     private readonly subscriptions: vscode.Disposable[];
     /** A fragment to bring into view once the page has the document (`reveal`). */
     private pendingReveal: Reveal | undefined;
+    /** The page's caret in the document's text, as it last reported it (`caret`). */
+    private caretPosition: vscode.Position | undefined;
+    private readonly caretChanged = new vscode.EventEmitter<vscode.Position | undefined>();
+    /** Fires when the caret the page reported changes, or stops being known. */
+    readonly onDidChangeCaret = this.caretChanged.event;
+    /** Page ↔ source positions over the text the page holds (`host/positions.ts`). */
+    private readonly positions: HostPositions;
 
     constructor(
         private readonly document: vscode.TextDocument,
@@ -115,9 +124,14 @@ export class VisualEditorSession implements vscode.Disposable {
         this.codeActions = new CodeActionController(port);
         const includeProviders = host.includeProviders?.bind(host) ?? (() => collectIncludeProviders(undefined, line => this.host.log(line)));
         this.includes = new IncludeController(port, includeProviders, host.includePicker);
+        this.positions = new HostPositions(
+            async text => parseDocument(await this.host.engine(), text, this.env()),
+            () => Config.instance.editorWrapColumn(this.document.uri),
+        );
         this.subscriptions = [
             this.lenses,
             this.codeActions,
+            this.caretChanged,
             webview.onDidReceiveMessage(msg => this.receive(msg)),
             vscode.workspace.onDidChangeTextDocument(e => {
                 if (e.document.uri.toString() === this.document.uri.toString()) {
@@ -133,7 +147,11 @@ export class VisualEditorSession implements vscode.Disposable {
                     e.waitUntil(this.queue);
                 }
             }),
-            host.onDidChangeEngine(() => this.enqueue(() => this.post())),
+            host.onDidChangeEngine(() => {
+                // Another engine may parse the same text into other nodes.
+                this.positions.forget();
+                this.enqueue(() => this.post());
+            }),
         ];
         const key = document.uri.toString();
         sessions.set(key, this);
@@ -161,6 +179,45 @@ export class VisualEditorSession implements vscode.Disposable {
         if (reveal) {
             await this.webview.postMessage({ type: 'revealAnchor', anchor: reveal.anchor, line: reveal.line });
         }
+    }
+
+    /** The document this editor shows. */
+    get uri(): vscode.Uri {
+        return this.document.uri;
+    }
+
+    /**
+     * Where the page's caret is in the document's text: a 0-based line and
+     * UTF-16 character. `undefined` when the page has reported none — a
+     * selected atom, a gap cursor, a mapping that is only approximate — and
+     * whenever the document holds a text the page has not got yet (another
+     * writer's change on its way, the error state): a caret that may be wrong
+     * is not handed out.
+     */
+    get caret(): vscode.Position | undefined {
+        return this.caretPosition;
+    }
+
+    /**
+     * Where page position `pos` stands in the document's text, and whether that
+     * is only the nearest place. `undefined` while the page does not hold the
+     * document's text, or for a position outside the page's document.
+     */
+    async toSource(pos: number): Promise<{ position: vscode.Position; approximate: boolean } | undefined> {
+        const text = this.pageText();
+        return text === undefined ? undefined : toSource(await this.positions.mapFor(text), pos);
+    }
+
+    /** The page position a position of the document's text stands at, or the nearest one; `undefined` as for `toSource`. */
+    async toPage(position: vscode.Position): Promise<MappedPagePosition | undefined> {
+        const text = this.pageText();
+        return text === undefined ? undefined : toPage(await this.positions.mapFor(text), position);
+    }
+
+    /** The document's text when the page holds it, else `undefined`. */
+    private pageText(): string | undefined {
+        const text = this.document.getText();
+        return !this.broken && text === this.webviewText ? text : undefined;
     }
 
     /** Resolves when every message received so far has been handled. For tests. */
@@ -248,6 +305,11 @@ export class VisualEditorSession implements vscode.Disposable {
                 // click; `run` waits only for the action's own edit.
                 this.enqueue(() => this.codeActions.run(msg.id));
                 break;
+            case 'caret':
+                // In the queue, behind the edit the page sent before it: the
+                // position is in the text that edit leaves.
+                this.enqueue(async () => this.takeCaret(msg.baseVersion, msg.position));
+                break;
             case 'pickInclude':
                 // In the queue, behind the edit the page flushed before asking,
                 // so a provider that reads the document reads the page's text;
@@ -258,6 +320,29 @@ export class VisualEditorSession implements vscode.Disposable {
                 });
                 break;
         }
+    }
+
+    /**
+     * A caret the page reported, taken only for the document it last posted
+     * and while the document holds the page's text; any other is stale and
+     * dropped, and the page reports again after the document it is sent.
+     */
+    private takeCaret(baseVersion: number, position: SourcePosition | null): void {
+        if (this.broken || baseVersion !== this.postedVersion || this.document.getText() !== this.webviewText) {
+            return;
+        }
+        const valid = position !== null && Number.isInteger(position.line) && Number.isInteger(position.character)
+            && position.line >= 0 && position.character >= 0;
+        this.setCaret(valid ? new vscode.Position(position.line, position.character) : undefined);
+    }
+
+    private setCaret(caret: vscode.Position | undefined): void {
+        const same = caret === undefined ? this.caretPosition === undefined : this.caretPosition?.isEqual(caret) === true;
+        if (same) {
+            return;
+        }
+        this.caretPosition = caret;
+        this.caretChanged.fire(caret);
     }
 
     /** A followed link: resolved against this document, opened by VS Code or the system. */
@@ -369,6 +454,8 @@ export class VisualEditorSession implements vscode.Disposable {
         this.broken = false;
         this.webviewText = text;
         this.postedVersion = version;
+        // A caret reported for the text before is stale; the page reports it again for this one.
+        this.setCaret(undefined);
         await this.webview.postMessage({
             type: 'document',
             json,
@@ -384,6 +471,7 @@ export class VisualEditorSession implements vscode.Disposable {
     private fail(reason: string): void {
         this.broken = true;
         this.webviewText = undefined;
+        this.setCaret(undefined);
         this.host.log(`[WARN] Visual Editor: ${this.document.uri.toString()} stays in the text editor: ${reason}`);
         void this.webview.postMessage({ type: 'error', message: reason });
     }
@@ -455,6 +543,8 @@ export class VisualEditorSession implements vscode.Disposable {
         if (this.document.getText() === this.webviewText) {
             return;
         }
+        // Another writer's change: the caret was a position in the text before it.
+        this.setCaret(undefined);
         if (this.resyncTimer !== undefined) {
             clearTimeout(this.resyncTimer);
         }

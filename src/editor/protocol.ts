@@ -1,4 +1,5 @@
 import type { ParsedDocumentJSON } from './parse';
+import type { SourcePosition } from './positions';
 
 /**
  * The messages between the rich editor's webview and the extension host.
@@ -191,7 +192,18 @@ export type WebviewMessage =
      * **Change snippet…**). Sent after any pending edit, so a provider that
      * reads the document reads the page's text.
      */
-    | { type: 'pickInclude'; requestId: number; replace?: { blockIndex: number } };
+    | { type: 'pickInclude'; requestId: number; replace?: { blockIndex: number } }
+    /**
+     * Where the caret is, in the text of the document of version `baseVersion`
+     * as the host holds it: a 0-based line and UTF-16 character
+     * (`positions.ts`), `null` when there is none to report — a selected atom,
+     * a gap cursor, a mapping that is only approximate. Sent 100 ms after the
+     * selection settles, and only while the host holds the page's text (after
+     * the pending edit, never before it); the host drops one whose
+     * `baseVersion` is not the document it last posted, or that arrives while
+     * the document holds another text.
+     */
+    | { type: 'caret'; baseVersion: number; position: SourcePosition | null };
 
 /**
  * What an extension offering includes exports beside `extendMarkdownIt`
