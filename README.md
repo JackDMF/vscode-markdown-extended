@@ -455,7 +455,7 @@ never covers the line you are typing on.
 | Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Change snippet…** · **Show in text editor** · **Delete directive** |
 | A status badge, a summary table | as above | its name only |
 | Front matter | — | its verbs are the properties panel's header (below); the bar shows only for other extensions' actions |
-| Heading | while the caret is in it, after a moment — a requirement heading only when another extension offers actions for it | **Attributes…**, then other extensions' actions; a requirement heading has the actions alone, and is named by its id |
+| Heading | while the caret is in it, after a moment — only when another extension offers actions for it, or the heading has attributes | **Attributes…** (not on a requirement heading), then the actions; a requirement heading is named by its id |
 
 A block's bar — a source block, a snippet, the front matter, a heading, a container, an
 admonition, a block with attributes — also offers the **code actions other extensions
