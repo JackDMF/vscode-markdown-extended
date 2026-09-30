@@ -87,9 +87,17 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
             await page.addStyleTag({ path: sheet });
         }
     }
-    for (const sheet of [...(options.styles ?? []), 'editor.css']) {
+    for (const sheet of options.styles ?? []) {
         await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', sheet) });
     }
+    // The codicon font, before the editor's own sheet as the host links it (`html.ts`): the
+    // chevrons and `$(icon)`s are drawn with it. The page has no origin to load the font file
+    // from, so it is given inline.
+    const codicons = codiconCss(extensionPath as string);
+    if (codicons) {
+        await page.addStyleTag({ content: codicons });
+    }
+    await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', 'editor.css') });
     await page.addScriptTag({ path: bundle });
     assert.deepStrictEqual(errors, [], 'the bundle loads without a page error');
 
@@ -123,6 +131,18 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
             }
         },
     };
+}
+
+/** `dist/codicons/codicon.css` with its font as a `data:` URI; `undefined` before a build copied it there. */
+function codiconCss(extensionPath: string): string | undefined {
+    const dir = path.join(extensionPath, 'dist', 'codicons');
+    const css = path.join(dir, 'codicon.css');
+    const font = path.join(dir, 'codicon.ttf');
+    if (!fs.existsSync(css) || !fs.existsSync(font)) {
+        return undefined;
+    }
+    const data = `data:font/ttf;base64,${fs.readFileSync(font).toString('base64')}`;
+    return fs.readFileSync(css, 'utf8').replace(/url\(["']?\.\/codicon\.ttf[^"')]*["']?\)/g, `url("${data}")`);
 }
 
 /** How long a browser may take to close before the harness kills it: inside mocha's 5 s hook timeout. */

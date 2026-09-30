@@ -7,6 +7,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { CELL_BREAK_REFUSAL } from '../../../src/editor/serialize';
 import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle, vscodeMarkdownCss } from './pageHarness';
+import { LIGHT_MODERN, applyTheme } from './themes';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -23,41 +24,6 @@ const TABLE = [
     '| Beta  | second |    22 |',
 ].join('\n');
 const DOC = `Intro paragraph.\n\n${TABLE}\n\nAfter the table.\n`;
-
-/** VS Code's default light theme, as the variables and body style a webview receives. */
-const LIGHT_MODERN = `
-:root {
-    --vscode-font-family: -apple-system, "Segoe WPC", "Segoe UI", sans-serif;
-    --vscode-font-size: 13px;
-    --vscode-editor-font-family: Consolas, "Courier New", monospace;
-    --vscode-editor-background: #ffffff;
-    --vscode-editor-foreground: #3b3b3b;
-    --vscode-foreground: #3b3b3b;
-    --vscode-descriptionForeground: #3b3b3b;
-    --vscode-focusBorder: #005fb8;
-    --vscode-textLink-foreground: #005fb8;
-    --vscode-editorWidget-background: #f8f8f8;
-    --vscode-editorWidget-border: #e5e5e5;
-    --vscode-widget-shadow: rgba(0, 0, 0, 0.16);
-    --vscode-button-border: rgba(0, 0, 0, 0.1);
-    --vscode-button-secondaryBackground: #e5e5e5;
-    --vscode-button-secondaryForeground: #3b3b3b;
-    --vscode-button-secondaryHoverBackground: #cccccc;
-    --vscode-menu-background: #ffffff;
-    --vscode-menu-border: #cecece;
-    --vscode-toolbar-hoverBackground: rgba(184, 184, 184, 0.31);
-    --vscode-inputOption-activeBackground: #bed6ed;
-    --vscode-inputOption-activeBorder: #005fb8;
-    --vscode-editor-selectionBackground: #add6ff;
-    --vscode-editor-inactiveSelectionBackground: #e5ebf1;
-    --vscode-editorCodeLens-foreground: #919191;
-}
-body {
-    background-color: var(--vscode-editor-background);
-    color: var(--vscode-editor-foreground);
-    font-family: var(--vscode-font-family);
-    font-size: var(--vscode-font-size);
-}`;
 
 /** With `MEP_SHOTS_DIR` set, the suite saves a screenshot of each state it names there; without it, none. */
 const SHOTS = process.env.MEP_SHOTS_DIR;
@@ -237,7 +203,7 @@ suite('Editor pipe tables (e2e)', () => {
         page = editor.page;
         // What VS Code gives every webview: its theme's colours as variables — here
         // the default light theme's (Light Modern) — and the body painted with them.
-        await page.addStyleTag({ content: LIGHT_MODERN });
+        await applyTheme(page, LIGHT_MODERN);
     });
 
     suiteTeardown(async () => {
