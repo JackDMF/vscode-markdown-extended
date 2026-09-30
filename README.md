@@ -370,9 +370,11 @@ And these blocks, edited in place with their content as rich text:
   names, outlined in the editor since most class names draw nothing. A container may hold
   another, one level deep; the outer fence is lengthened when it has to be.
 - **Block attributes** — `{.class}` or `{#id}` at the end of a paragraph's last line or on
-  a line of its own under it, under a list, on a fence's opening line, after a rule — are
-  kept verbatim and written back where they stood; the block is drawn with them. A
-  heading's `{#anchor}` stays as it always was.
+  a line of its own under it, under a list, at the end of a list item's first paragraph, as
+  `> {.x}` under a quote's last paragraph, under a table after a blank line, on a fence's
+  opening line, after a rule — are kept verbatim and written back where they stood; the
+  block is drawn with them. A heading's `{#anchor}` stays as it always was.
+  **Formatting → Attributes…** sets them (below).
 - **Pipe tables** — a header row, the delimiter row with its `:` alignment, body rows —
   with each cell's text edited like a paragraph's (emphasis, code, links, images, highlight,
   keys, sidebars). Rows and columns are added, deleted and aligned from the table's bar
@@ -445,15 +447,15 @@ never covers the line you are typing on.
 | Link | while the caret is in its text, after a moment | **Open** · **Edit link…** · **Remove link** |
 | Span (`[text]{…}`) | while the caret is in its text, after a moment | **Edit attributes** · **Remove attributes, keep text** |
 | Image | when you click it, after a moment | **Edit image…** (its alt text, then its path) · **Open file** · **Remove image** |
-| Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Remove admonition, keep content** |
-| Container | while the caret is in it, after a moment | **Change name/info** · **Remove container, keep content** |
-| A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Edit block attributes** (empty removes them) |
-| Table | while the caret is in it, after a moment; the caret's column is tinted | **Row ▾** (insert above, insert below, delete) · **Column ▾** (insert left, insert right, delete) · **Align ▾** (left, center, right; the current one marked) · **Edit source** · **Delete table** |
+| Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Attributes…** (disabled: the plugin gives a `{…}` to the title bar) · **Remove admonition, keep content** |
+| Container | while the caret is in it, after a moment | **Change name/info** · **Attributes…** (disabled: the container's renderer drops a `{…}`) · **Remove container, keep content** |
+| A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Attributes…** (`{}` or empty removes them) |
+| Table | while the caret is in it, after a moment; the caret's column is tinted | **Row ▾** (insert above, insert below, delete) · **Column ▾** (insert left, insert right, delete) · **Align ▾** (left, center, right; the current one marked) · **Attributes…** · **Edit source** · **Delete table** |
 | Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
 | Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Change snippet…** · **Show in text editor** · **Delete directive** |
 | A status badge, a summary table | as above | its name only |
 | Front matter | — | its verbs are the properties panel's header (below); the bar shows only for other extensions' actions |
-| Heading | while the caret is in it, after a moment — only when another extension offers actions for it | the actions alone; a requirement heading is named by its id |
+| Heading | while the caret is in it, after a moment — a requirement heading only when another extension offers actions for it | **Attributes…**, then other extensions' actions; a requirement heading has the actions alone, and is named by its id |
 
 A block's bar — a source block, a snippet, the front matter, a heading, a container, an
 admonition, a block with attributes — also offers the **code actions other extensions
@@ -649,7 +651,15 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   strikethrough (`~~del~~`) and key (`[[Ctrl]]`), each toggled on the selection like bold;
   and **Span with class**, which asks for the attributes in a field under the selection —
   filled in as `{.}` with the caret after the dot, so you type the class name and `Enter` —
-  and makes the selection `[text]{.class}`.
+  and makes the selection `[text]{.class}`; and **Attributes…**, which asks the same way
+  for the `{…}` of the block the caret is in — the field names it (*Paragraph ·
+  Attributes*), shows its literal when it has one, and `{}` removes it. The literal goes
+  where markdown-it-attrs reads it for that block: the end of a paragraph's or a heading's
+  line, the end of a list item's first paragraph (the item, not the list), `> {.x}` under
+  a quote's last paragraph, a line under a table after a blank line, a fence's opening
+  line. A paragraph and a list item have no bar of their own, so this is their way to it;
+  a container and an admonition take none (their renderers drop it), and the entry says
+  so.
 - **Annotation** — sidenote (`++reference|note++`), marginal note (`!!reference|note!!`),
   left and right sidebar (`$left$`, `@right@`) and footnote. A note is made in place: the
   selected text becomes its reference and the note starts as `note`, selected, so what you
