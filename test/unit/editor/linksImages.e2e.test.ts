@@ -6,9 +6,7 @@ import { WebviewMessage } from '../../../src/editor/protocol';
 import { SYSTEM_FILE_LOCK } from '../../../src/editor/webview/images';
 import { COMPLETION_KEYS } from '../../../src/editor/webview/inlineField';
 import { DROP_LOCK } from '../../../src/editor/webview/objects';
-import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
 
 type Posted<T extends WebviewMessage['type']> = Extract<WebviewMessage, { type: T }>;
 
@@ -49,21 +47,7 @@ suite('Editor links and images (e2e)', () => {
         await delay(150);
     };
 
-    const pointAt = async (needle: string, index = 0): Promise<{ x: number; y: number }> => page.evaluate((n, k) => {
-        const root = document.querySelector('.ProseMirror') as HTMLElement;
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-            const at = (node.textContent ?? '').indexOf(n);
-            if (at >= 0) {
-                const range = document.createRange();
-                range.setStart(node, at + k);
-                range.setEnd(node, at + k + 1);
-                const r = range.getBoundingClientRect();
-                return { x: r.left + 1, y: r.top + r.height / 2 };
-            }
-        }
-        throw new Error(`no "${n}" in the document`);
-    }, needle, index);
+    const pointAt = (needle: string, index = 0) => textPoint(page, needle, index);
 
     const clickBefore = async (needle: string, index = 0) => {
         const p = await pointAt(needle, index);

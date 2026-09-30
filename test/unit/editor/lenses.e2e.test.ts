@@ -4,9 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { LensRow, WebviewMessage } from '../../../src/editor/protocol';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
-import { EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+import { delay, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
 
 const SOURCE = 'Intro.\n\n# Heading\n\nA paragraph.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n';
 

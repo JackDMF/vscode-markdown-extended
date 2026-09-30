@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
-import { EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
+import { EditorPage, EXTENSION_ID, openEditorPage, settle, showDiagnostics } from './pageHarness';
 
 const LINE_2 = 'The installer checks the prerequisites before it copies anything.';
 const SOURCE = [
@@ -201,12 +201,10 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         this.timeout(20000);
         await showText(SOURCE);
         await settle();
-        await send({
-            type: 'diagnostics', version, items: [
-                { range: { start: { line: 4, character: 19 }, end: { line: 4, character: 30 } }, severity: 'warning', message: 'Unknown word: stylesheeet', code: 'cSpell', source: 'Spelling' },
-                { range: { start: { line: 7, character: 2 }, end: { line: 7, character: 3 } }, severity: 'error', message: 'Raw HTML is not checked', source: 'Lint' },
-            ],
-        });
+        await showDiagnostics(editor as EditorPage, version, [
+            { range: { start: { line: 4, character: 19 }, end: { line: 4, character: 30 } }, severity: 'warning', message: 'Unknown word: stylesheeet', code: 'cSpell', source: 'Spelling' },
+            { range: { start: { line: 7, character: 2 }, end: { line: 7, character: 3 } }, severity: 'error', message: 'Raw HTML is not checked', source: 'Lint' },
+        ]);
         await page.waitForSelector('.mep-diag-warning');
         assert.strictEqual(await page.$eval('.mep-diag-warning', el => el.textContent), 'stylesheeet');
         assert.strictEqual(await page.$$eval('.mep-diag-block-error', els => els.length), 1);
@@ -299,11 +297,9 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         const table = ['| Field | Value |', '| - | - |', '| Status | implemnted |', ''].join('\n');
         await showText(table);
         await settle();
-        await send({
-            type: 'diagnostics', version, items: [
-                { range: { start: { line: 2, character: 11 }, end: { line: 2, character: 21 } }, severity: 'warning', message: 'Unknown word: implemnted' },
-            ],
-        });
+        await showDiagnostics(editor as EditorPage, version, [
+            { range: { start: { line: 2, character: 11 }, end: { line: 2, character: 21 } }, severity: 'warning', message: 'Unknown word: implemnted' },
+        ]);
         await page.waitForSelector('td .mep-diag-warning');
         assert.strictEqual(await page.$eval('td .mep-diag-warning', el => el.textContent), 'implemnted');
         assert.strictEqual(await page.$$eval('.mep-diag-marker', els => els.length), 1);

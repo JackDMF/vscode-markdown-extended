@@ -4,9 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { NO_INCLUDES_REFUSAL } from '../../../src/editor/webview/toolbar/actions';
-import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
 
 type PickIncludeMessage = Extract<WebviewMessage, { type: 'pickInclude' }>;
 

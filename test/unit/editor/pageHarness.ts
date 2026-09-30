@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import * as vscode from 'vscode';
-import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
+import { DiagnosticEntry, HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 
 export const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
 
@@ -23,6 +23,58 @@ export interface EditorPage {
 
 /** Long enough for the page's typing delay (250 ms) to pass and its edit to be posted. */
 export const settle = () => new Promise(resolve => setTimeout(resolve, 500));
+
+/** Wait `ms` milliseconds. */
+export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/** With `MEP_SHOTS_DIR` set, the suites save a screenshot of each state they name there; without it, none. */
+export const SHOTS_DIR = process.env.MEP_SHOTS_DIR;
+
+/** A screenshot of `page` as `name` in `MEP_SHOTS_DIR`; nothing when it is not set. */
+export async function shot(page: puppeteer.Page, name: string): Promise<void> {
+    if (SHOTS_DIR) {
+        fs.mkdirSync(SHOTS_DIR, { recursive: true });
+        await page.screenshot({ path: path.join(SHOTS_DIR, name) });
+    }
+}
+
+/** The point just inside the left edge of character `index` of the first `needle` in the document's text. */
+export function pointAt(page: puppeteer.Page, needle: string, index = 0): Promise<{ x: number; y: number }> {
+    return page.evaluate((n, k) => {
+        const root = document.querySelector('.ProseMirror') as HTMLElement;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const at = (node.textContent ?? '').indexOf(n);
+            if (at >= 0) {
+                const range = document.createRange();
+                range.setStart(node, at + k);
+                range.setEnd(node, at + k + 1);
+                const r = range.getBoundingClientRect();
+                return { x: r.left + 1, y: r.top + r.height / 2 };
+            }
+        }
+        throw new Error(`no "${n}" in the document`);
+    }, needle, index);
+}
+
+/** A real click just inside the left edge of character `index` of `needle`, given time for ProseMirror to read the selection. */
+export async function clickText(page: puppeteer.Page, needle: string, index = 0): Promise<void> {
+    const p = await pointAt(page, needle, index);
+    await page.mouse.click(p.x, p.y);
+    await delay(80);
+}
+
+/** A `#rrggbb` colour as the browser computes it (`rgb(r, g, b)`); anything else as given — for comparing with a computed style. */
+export function computedColour(colour: string): string {
+    const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(colour);
+    return hex ? `rgb(${parseInt(hex[1], 16)}, ${parseInt(hex[2], 16)}, ${parseInt(hex[3], 16)})` : colour;
+}
+
+/** Post `items` as the host's diagnostics for `version`, and wait until the page has drawn them (the row's count shows). */
+export async function showDiagnostics(editor: EditorPage, version: number, items: DiagnosticEntry[]): Promise<void> {
+    await editor.send({ type: 'diagnostics', version, items });
+    await editor.page.waitForSelector(items.length > 0 ? '.mep-diag-count:not([hidden])' : '.mep-diag-count[hidden]');
+}
 
 /**
  * The page bundle (`dist/editor-webview.js`) loaded into headless Chromium, with

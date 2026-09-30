@@ -4,9 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { hostEngine } from './helpers';
-import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
 
 /** Narrower than the notes' 1280px breakpoint: the notes render stacked, in the text flow, where a click reaches them. */
 const NARROW = 1000;
@@ -39,21 +37,7 @@ suite('Editor notes and links (e2e)', () => {
     };
 
     /** The point just inside the left edge of character `index` of the first `needle` in the document. */
-    const pointAt = async (needle: string, index = 0): Promise<{ x: number; y: number }> => page.evaluate((n, k) => {
-        const root = document.querySelector('.ProseMirror') as HTMLElement;
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-            const at = (node.textContent ?? '').indexOf(n);
-            if (at >= 0) {
-                const range = document.createRange();
-                range.setStart(node, at + k);
-                range.setEnd(node, at + k + 1);
-                const r = range.getBoundingClientRect();
-                return { x: r.left + 1, y: r.top + r.height / 2 };
-            }
-        }
-        throw new Error(`no "${n}" in the document`);
-    }, needle, index);
+    const pointAt = (needle: string, index = 0) => textPoint(page, needle, index);
 
     /** A click with the real mouse right before character `index` of `needle`, given time for ProseMirror to read the selection. */
     const clickBefore = async (needle: string, index = 0) => {

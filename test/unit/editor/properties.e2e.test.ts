@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
+import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
 
 /** A Req Explorer workshop note's front matter, as that corpus writes one, shortened. */
 const FRONT = [
@@ -27,8 +27,6 @@ const FRONT = [
     '',
 ].join('\n');
 const SOURCE = `${FRONT}\n# Workshop: the Visual Editor's next round\n\nThe plan agreed on 2026-09-25 is built.\n`;
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /** The lines of `after` that differ from `before`'s, as `[before, after]`, when both have as many lines. */
 function changedLines(before: string, after: string): [string, string][] {

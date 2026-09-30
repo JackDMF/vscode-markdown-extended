@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
+import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
 
 const TABLE = '| a | b |\n| = | = |\n| 1 | 2 |\n';
 const SOURCE = [
@@ -16,8 +16,6 @@ const SOURCE = [
     '- [ ] open task',
     '',
 ].join('\n');
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /** The object toolbar showing the selected source block's verbs. */
 const SELECTED_BLOCK_BAR = '.mep-object-toolbar[data-trigger="selection"][data-object="raw_block"]:not([hidden])';
