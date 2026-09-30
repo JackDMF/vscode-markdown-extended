@@ -1,7 +1,7 @@
 import { Mark, Node } from 'prosemirror-model';
 import { Plugin, PluginKey, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES } from './schema';
-import { itemTakesLiteral, quoteTakesLiteral } from './serialize';
+import { itemTakesLiteral, quoteLostLiteral } from './serialize';
 
 export const fidelityPluginKey = new PluginKey('mepFidelity');
 
@@ -233,9 +233,10 @@ export function fidelityPlugin(): Plugin {
                 stripDuplicatedIds(after, ancestor, set);
                 stripCopiedSuffixes(after, from, set);
                 after.forEach((c, j) => {
-                    // A quote whose last block an edit made other than a paragraph has no `> {…}` line left.
+                    // A quote an edit left ending in another block than a paragraph has no `> {…}` line left;
+                    // one whose paragraphs are only empty for now (Enter, text deleted to be retyped) keeps it.
                     if (!present.has(c.node) && c.node.type.name === 'blockquote' && (c.node.attrs.attrsSuffix ?? null) !== null
-                        && !quoteTakesLiteral(c.node)) {
+                        && quoteLostLiteral(c.node)) {
                         set(j, 'attrsSuffix', null);
                         set(j, 'attrsPlacement', null);
                     }
@@ -310,9 +311,10 @@ function nestedSuffixes(after: TopLevelChild[], present: ReadonlySet<Node>): num
  * as it stands, by position: one on an item that descends from no old item —
  * the second half of a split item copies its attributes, and `{#id}` written
  * twice is two elements with one id; the half that starts where the item
- * started keeps it, as a pasted item does not — and one on an item that no
- * longer starts with a paragraph ending in text (`itemTakesLiteral`), where it
- * cannot be written. An item descends from an old one when an old item started
+ * started keeps it (at the start of its text, the empty first half), as a
+ * pasted item does not — and one on an item that no longer starts with a
+ * paragraph (`itemTakesLiteral`), where it cannot be written; an empty one
+ * keeps it (`- {.a}`), so deleting the text to retype it loses nothing. An item descends from an old one when an old item started
  * at the position its start maps to; setting a literal keeps the item's start.
  */
 function strayItemLiterals(transactions: readonly Transaction[], before: Node, after: TopLevelChild[], present: ReadonlySet<Node>): number[] {

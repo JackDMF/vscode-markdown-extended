@@ -3,6 +3,7 @@ import { Node } from 'prosemirror-model';
 import { undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { splitListItem } from 'prosemirror-schema-list';
+import { splitBlock } from 'prosemirror-commands';
 import { parseDocument, serializeDocument } from '../../../src/editor';
 import { editorSchema } from '../../../src/editor/schema';
 import {
@@ -162,10 +163,29 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
         assert.strictEqual(text(set(caretAt(again, '2'), '{}')), `${table}\nAfter.\n`);
     });
 
-    test('a table whose literal stood right under it is written with the blank line once changed', () => {
+    test('a table whose literal stood right under it keeps it there once changed', () => {
         const state = stateOf('| a |\n| - |\n| 1 |\n{.x}\n\nAfter.\n');
         assert.deepStrictEqual(literals(state), ['{.x}']);
-        assert.strictEqual(text(set(caretAt(state, '1'), '{.y}')), '| a |\n| - |\n| 1 |\n\n{.y}\n\nAfter.\n');
+        assert.strictEqual(text(set(caretAt(state, '1'), '{.y}')), '| a |\n| - |\n| 1 |\n{.y}\n\nAfter.\n');
+    });
+
+    test('a literal line is never glued to the next block: a blank line goes between them when the gap is empty', () => {
+        // A table ends where a heading starts, with no blank line; its literal must not become the heading's paragraph.
+        for (const [source, expected] of [
+            ['| a |\n| - |\n| 1 |\n# After\n', '| a |\n| - |\n| 1 |\n\n{.wide}\n\n# After\n'],
+        ] as const) {
+            const out = written(source, '1', '{.wide}').out;
+            assert.strictEqual(out, expected);
+            assert.match(hostEngine().render(out), /<table class="wide">/);
+        }
+        // A gap the parse gave as empty, kept by the edit, still gets its blank line.
+        const state = stateOf('| a |\n| - |\n| 1 |\n\n{.wide}\n\nAfter.\n');
+        const after = state.doc.child(1);
+        const glued = state.apply(state.tr.setNodeMarkup(state.doc.child(0).nodeSize, undefined, { ...after.attrs, gap: '' }));
+        const edited = set(caretAt(glued, '1'), '{.wider}');
+        const out = text(edited);
+        assert.strictEqual(out, '| a |\n| - |\n| 1 |\n\n{.wider}\n\nAfter.\n');
+        assert.match(hostEngine().render(out), /<table class="wider">[\s\S]*<p>After\.<\/p>/);
     });
 
     test('a fenced code block: after the opening fence\'s info string; an indented one is refused', () => {
@@ -264,5 +284,63 @@ suite('Editor Attributes…: what an edit leaves of a literal', () => {
         state = state.apply(state.tr.replaceWith(at, at + lastPara.nodeSize, list));
         assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, null);
         assert.strictEqual(text(state), '> First.\n>\n> - Last.\n');
+    });
+});
+
+suite('Editor Attributes…: transient states, splits and braces that are text (review)', () => {
+    test('Enter at the end of a quote\'s last paragraph keeps its literal, and typing on writes it under the new text', () => {
+        let state = caretAt(stateOf('> Quoted.\n> {.pull}\n'), 'Quoted.', 'Quoted.'.length);
+        splitBlock(state, tr => {
+            state = state.apply(tr);
+        });
+        assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, '{.pull}', 'kept through the empty paragraph');
+        assert.strictEqual(text(state), '> Quoted.\n> {.pull}\n', 'an empty last paragraph writes nothing after it');
+        state = state.apply(state.tr.insertText('More.'));
+        assert.strictEqual(text(state), '> Quoted.\n>\n> More.\n> {.pull}\n');
+    });
+
+    test('an item whose text is deleted and typed again keeps its literal: an empty item is written - {.x}', () => {
+        let state = stateOf('- alpha {.x}\n- beta\n');
+        const from = posOf(state.doc, 'alpha');
+        state = state.apply(state.tr.delete(from, from + 'alpha'.length));
+        assert.strictEqual(text(state), '- {.x}\n- beta\n');
+        assert.match(hostEngine().render(text(state)), /<li class="x"><\/li>/);
+        state = state.apply(state.tr.insertText('gamma', from));
+        assert.strictEqual(text(state), '- gamma {.x}\n- beta\n');
+    });
+
+    test('Shift+Enter at the end of an item keeps its literal', () => {
+        let state = caretAt(stateOf('- alpha {.x}\n'), 'alpha', 5);
+        state = state.apply(state.tr.replaceSelectionWith(editorSchema.nodes.hard_break.create()));
+        assert.deepStrictEqual(literals(state), ['{.x}']);
+        state = state.apply(state.tr.insertText('more'));
+        const out = text(state);
+        assert.strictEqual(out, '- alpha\\\n  more {.x}\n');
+        assert.match(hostEngine().render(out), /<li class="x">/);
+    });
+
+    test('an item split at the start of its text keeps the literal on the half that stays where it was', () => {
+        let state = caretAt(stateOf('- alpha {#a}\n'), 'alpha');
+        splitListItem(editorSchema.nodes.list_item)(state, tr => {
+            state = state.apply(tr);
+        });
+        assert.deepStrictEqual(literals(state), ['{#a}'], 'on one half, not on both, not on none');
+        assert.strictEqual(state.doc.child(0).child(0).attrs.literal, '{#a}');
+    });
+
+    test('text ending in braces stays text: its braces are escaped, with a literal after it and once it is removed', () => {
+        const source = 'Set notation \\{x\\}\n';
+        const state = stateOf(source);
+        assert.strictEqual(state.doc.child(0).textContent, 'Set notation {x}');
+        const withLiteral = set(caretAt(state, 'notation'), '{.math}');
+        const out = text(withLiteral);
+        assert.strictEqual(out, 'Set notation \\{x\\} {.math}\n');
+        assert.match(hostEngine().render(out), /<p class="math">Set notation \{x\}<\/p>/);
+        const removed = text(set(caretAt(stateOf(out), 'notation'), '{}'));
+        assert.strictEqual(removed, source);
+        assert.match(hostEngine().render(removed), /<p>Set notation \{x\}<\/p>/);
+        // A heading and an item likewise.
+        assert.strictEqual(written('## Sets \\{x\\}\n', 'Sets', '{.s}').out, '## Sets \\{x\\} {.s}\n');
+        assert.strictEqual(written('- Sets \\{x\\}\n', 'Sets', '{.s}').out, '- Sets \\{x\\} {.s}\n');
     });
 });

@@ -130,7 +130,17 @@ export function isContainerClose(line: string | undefined, markup: string): bool
 
 /** The same test on a line inside a quote or a list item, whose prefix (`> `, indentation) is stripped first. */
 function isNestedContainerClose(line: string | undefined, markup: string): boolean {
-    return line !== undefined && isContainerClose(line.replace(/^[\s>]*/, ''), markup);
+    return line !== undefined && isContainerClose(withoutBlockPrefix(line), markup);
+}
+
+/**
+ * A line without what the blocks around it put before its own text: the
+ * indentation and every quote's `>` — `  > {.a}` is `{.a}`. What a container's
+ * closing fence, a quote's literal and a list item's lone literal line are
+ * read from.
+ */
+function withoutBlockPrefix(line: string): string {
+    return line.replace(/^[\s>]*/, '');
 }
 
 // ---------------------------------------------------------------------------
@@ -662,9 +672,17 @@ const SUFFIX_BLOCKS: ReadonlySet<string> = new Set([
     'paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'fence', 'hr', 'blockquote_open', 'table_open',
 ]);
 
-/** A quote's line without its `>` marker: `> {.a}` is `{.a}`, and so is a lazy `{.a}`. */
-function unquoted(line: string): string {
-    return line.replace(/^[ \t]{0,3}>[ \t]?/, '').trim();
+/**
+ * The first line after `last` that is not blank, before `nextStart` (the first
+ * line a later block's tokens claim), with its text trimmed: where a list's or
+ * a table's literal stands when no token's map holds it. `null` when there is none.
+ */
+function lineAfter(lines: readonly SourceLine[], last: number, nextStart: number): { at: number; text: string } | null {
+    let k = last + 1;
+    while (k < nextStart && isBlankLine(lines[k])) {
+        k++;
+    }
+    return k < nextStart && lines[k] !== undefined ? { at: k, text: lines[k].text.trim() } : null;
 }
 
 /** The index of the opening token matching the closing one at `close`, by nesting. */
@@ -744,7 +762,7 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
                 return where;
             }
             const literalLine = trimTrailingBlank(lines, paragraph.map[0], paragraph.map[1]) - 1;
-            const literal = unquoted(lines[literalLine]?.text ?? '');
+            const literal = withoutBlockPrefix(lines[literalLine]?.text ?? '').trim();
             return literalLine === last && literalLine > paragraph.map[0] && reads(literal)
                 ? { attrs: { suffix: literal, placement: 'line' }, endLine: null }
                 : where;
@@ -752,13 +770,9 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
         case 'table_open': {
             // Under the table, or under a blank line after it: the plugin
             // removes the paragraph the literal was, so no token's map holds it.
-            let k = last + 1;
-            while (k < nextStart && isBlankLine(lines[k])) {
-                k++;
-            }
-            const candidate = lines[k]?.text.trim() ?? null;
-            if (k < nextStart && reads(candidate)) {
-                return { attrs: { suffix: candidate, placement: k > last + 1 ? 'blank' : 'line' }, endLine: k + 1 };
+            const after = lineAfter(lines, last, nextStart);
+            if (after !== null && reads(after.text)) {
+                return { attrs: { suffix: after.text, placement: after.at > last + 1 ? 'blank' : 'line' }, endLine: after.at + 1 };
             }
             return where;
         }
@@ -767,13 +781,9 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
             if (last > start && reads(lastText)) {
                 return { attrs: { suffix: lastText, placement: 'line' }, endLine: null };
             }
-            let k = last + 1;
-            while (k < nextStart && isBlankLine(lines[k])) {
-                k++;
-            }
-            const candidate = lines[k]?.text.trim() ?? null;
-            if (k > last + 1 && k < nextStart && reads(candidate)) {
-                return { attrs: { suffix: candidate, placement: 'blank' }, endLine: k + 1 };
+            const after = lineAfter(lines, last, nextStart);
+            if (after !== null && after.at > last + 1 && reads(after.text)) {
+                return { attrs: { suffix: after.text, placement: 'blank' }, endLine: after.at + 1 };
             }
             return where;
         }
@@ -801,13 +811,15 @@ function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines:
         if (paragraph?.type !== 'paragraph_open' || !paragraph.map) {
             return 'list item attributes not at the end of its first paragraph';
         }
-        // What `itemTakesLiteral` asks of the node: text before the literal, no hard break ending it.
+        // An empty item (`- {.a}`) is written back as it is; a literal after a hard break
+        // is the item's too, but the serializer writes no trailing hard break, so the
+        // text would change: that item stays a source block.
         const children = (tokens[i + 2]?.children ?? []).filter(c => c.type !== 'text' || c.content !== '');
-        if (children.length === 0 || children[children.length - 1].type === 'hardbreak') {
-            return 'list item attributes after no text, or after a line break';
+        if (children.length > 0 && children[children.length - 1].type === 'hardbreak') {
+            return 'list item attributes after a line break';
         }
         let line = trimTrailingBlank(lines, paragraph.map[0], paragraph.map[1]) - 1;
-        const bare = (lines[line]?.text ?? '').replace(/^[\s>]*/, '').trim();
+        const bare = withoutBlockPrefix(lines[line]?.text ?? '').trim();
         if (line > paragraph.map[0] && parseAttrsLiteral(bare) !== null) {
             line--;
         }
