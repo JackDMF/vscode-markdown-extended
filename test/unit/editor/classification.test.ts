@@ -184,6 +184,12 @@ suite('Editor block classification (constructs.md)', () => {
         assert.deepStrictEqual(suffix('A class on its own line'), ['paragraph', '{.aside}', 'line']);
         assert.deepStrictEqual(suffix('- A list\n- with a class'), ['bullet_list', '{.checklist}', 'line']);
         assert.deepStrictEqual(suffix('```js {.numbered}'), ['code_block', '{.numbered}', 'end']);
+        assert.deepStrictEqual(suffix('> A quote with a class'), ['blockquote', '{.pull}', 'line']);
+        assert.deepStrictEqual(suffix('> A quote whose class stands lazily'), ['blockquote', '{.pull-lazy}', 'line']);
+        assert.deepStrictEqual(suffix('| Table | with a class right under it'), ['table', '{.line-table}', 'line']);
+        assert.deepStrictEqual(suffix('| Table | with a class after a blank line'), ['table', '{.blank-table}', 'blank']);
+        const list = block('+ A list item with a class').node;
+        assert.deepStrictEqual([list.type.name, list.child(0).attrs.literal, list.child(1).attrs.literal], ['bullet_list', '{.done}', null]);
     });
 
     test('attribute spans are rich text, each literal as written', () => {

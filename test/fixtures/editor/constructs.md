@@ -87,6 +87,26 @@ A class on its own line under the paragraph
 - with a class
 {.checklist}
 
++ A list item with a class {.done}
++ and one without
+
+> A quote with a class
+> {.pull}
+
+> A quote whose class stands lazily
+{.pull-lazy}
+
+| Table | with a class right under it |
+| ----- | --------------------------- |
+| a     | b                           |
+{.line-table}
+
+| Table | with a class after a blank line |
+| ----- | ------------------------------- |
+| c     | d                               |
+
+{.blank-table}
+
 An autolinked URL https://example.com/path and an angle one <https://example.org>.
 
 ![An image](images/logo.png "Logo")

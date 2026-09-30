@@ -331,7 +331,7 @@ suite('Editor code actions as object verbs (e2e)', () => {
         assert.strictEqual((await actionRequests()).length, 1, 'the answer is kept for the node: not asked again');
     });
 
-    test('a heading without actions shows no bar', async function () {
+    test('a plain heading without actions shows no bar: Attributes… alone does not make one', async function () {
         this.timeout(10000);
         await clickText('Plain heading');
         await delay(INLINE_DELAY_MS + 150);

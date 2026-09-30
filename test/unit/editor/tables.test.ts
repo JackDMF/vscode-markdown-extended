@@ -203,7 +203,7 @@ suite('Editor pipe tables', () => {
         ['+ in the delimiter row (a wrapped column)', '| a | b |\n| --- | ---+ |\n| x | y |\n', 'class'],
         ['a row of fewer cells than the header', '| a | b |\n| --- | --- |\n| x |\n', 'cells under a header'],
         ['a row of more cells than the header', '| a | b |\n| --- | --- |\n| x | y | z |\n', 'cells under a header'],
-        ['attributes on the table', '| a | b |\n| --- | --- |\n| x | y |\n{.wide}\n', 'attributes'],
+        // Attributes on the table itself (`{.wide}` under it) are native since Attributes… (`attributes.test.ts`).
         ['a sidenote in a cell', '| a | b |\n| --- | --- |\n| ++ref\\|note++ | y |\n', 'sidenote_open'],
         ['code holding | in a cell', '| a | b |\n| --- | --- |\n| `x|y` | y |\n', 'code holding |'],
         ['inline HTML in a cell', '| a | b |\n| --- | --- |\n| x<br>y | y |\n', 'html_inline'],

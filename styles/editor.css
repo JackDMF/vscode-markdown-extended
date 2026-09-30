@@ -458,6 +458,15 @@ img.mep-pending-range {
     color: var(--vscode-descriptionForeground, GrayText);
 }
 
+/* Why a disabled entry is disabled, under its syntax: the reason its tooltip gives. */
+.mep-preview-refusal {
+    margin-top: 6px;
+    padding-left: 8px;
+    border-left: 2px solid var(--vscode-editorWarning-foreground, #bf8803);
+    font-size: 12px;
+    color: var(--vscode-foreground, inherit);
+}
+
 /* ------------------------------------------------------------------------- */
 /* Editor widgets: the selection bubble and the object toolbar               */
 /* ------------------------------------------------------------------------- */
@@ -582,6 +591,16 @@ img.mep-pending-range {
 }
 .mep-error-button:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.2)); }
 .mep-error-button:focus-visible { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: -1px; }
+
+/* What a field takes and its keys, at its right in the bar: dimmed, never a control — the widget's separator, its description colour. */
+.mep-field-keys {
+    margin-left: 6px;
+    padding-left: 6px;
+    border-left: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, transparent));
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
 
 /* The inline field: one line, prefilled, in the bar in place of the verbs — the control's 22px, the input's colours. */
 .mep-inline-field {

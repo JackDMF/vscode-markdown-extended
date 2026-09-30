@@ -258,7 +258,7 @@ suite('Editor chrome (e2e)', () => {
             await delay(100);
             const chevrons = await page.$$eval(`${BAR} .mep-object-verb`, els => els.map(e => [(e as HTMLElement).dataset.verb, e.textContent, e.querySelector('.mep-menu-caret .codicon-chevron-down') !== null]));
             assert.deepStrictEqual(chevrons, [
-                ['row', 'Row', true], ['column', 'Column', true], ['align', 'Align', true], ['edit-source', 'Edit source', false], ['delete-table', 'Delete table', false],
+                ['row', 'Row', true], ['column', 'Column', true], ['align', 'Align', true], ['block-attributes', 'Attributes…', false], ['edit-source', 'Edit source', false], ['delete-table', 'Delete table', false],
             ]);
             const heights = await page.$$eval(`${BAR} .mep-object-verb`, els => els.map(e => e.getBoundingClientRect().height));
             assert.ok(heights.every(h => h === 22), `22px verbs: ${heights.join(', ')}`);
@@ -270,6 +270,20 @@ suite('Editor chrome (e2e)', () => {
             const menu = await style(`${BAR} .mep-object-menu`, 'background-color', 'border-top-left-radius');
             assert.deepStrictEqual(menu, { 'background-color': computed(theme.variables['menu-background']), 'border-top-left-radius': '5px' }, 'the Row menu is the same menu');
             await shot(`04-table-row-menu-${suffix}.png`);
+            await page.keyboard.press('Escape');
+            await delay(80);
+
+            // Attributes… opens the field: the input's colours, and its keys dimmed beside it.
+            const attributes = await (await page.$(`${BAR} [data-verb="block-attributes"]`))?.boundingBox();
+            assert.ok(attributes);
+            await page.mouse.click(attributes.x + attributes.width / 2, attributes.y + attributes.height / 2);
+            await page.waitForSelector(`${BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+            await delay(80);
+            assert.deepStrictEqual(await style(`${BAR} .mep-inline-field`, 'background-color', 'color'), {
+                'background-color': computed(theme.variables['input-background']), 'color': computed(theme.variables['input-foreground']),
+            }, 'the field is an input');
+            assert.deepStrictEqual(await style(`${BAR} .mep-field-keys`, 'color'), { 'color': computed(theme.variables['descriptionForeground']) }, 'its keys in the description colour');
+            await shot(`04-table-attributes-field-${suffix}.png`);
             await page.keyboard.press('Escape');
             await delay(80);
         }

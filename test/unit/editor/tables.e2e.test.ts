@@ -270,13 +270,13 @@ suite('Editor pipe tables (e2e)', () => {
         ].join('\n'));
     });
 
-    test('the table\'s bar: Row ▾, Column ▾, Align ▾, a gap, Edit source and Delete table; the caret\'s column tinted while it shows', async function () {
+    test('the table\'s bar: Row ▾, Column ▾, Align ▾, a gap, Attributes…, Edit source and Delete table; the caret\'s column tinted while it shows', async function () {
         this.timeout(15000);
         await showDocument(DOC, 'Alpha');
         await barFor('first');
-        assert.deepStrictEqual(await barState(), { object: 'table', label: 'Table', verbs: ['row', 'column', 'align', 'edit-source', 'delete-table'] });
+        assert.deepStrictEqual(await barState(), { object: 'table', label: 'Table', verbs: ['row', 'column', 'align', 'block-attributes', 'edit-source', 'delete-table'] });
         const layout = await page.$eval(BAR, bar => Array.from(bar.children).map(c => (c as HTMLElement).dataset.verb ?? c.className));
-        assert.deepStrictEqual(layout, ['mep-object-label', 'row', 'column', 'align', 'mep-object-separator', 'edit-source', 'delete-table']);
+        assert.deepStrictEqual(layout, ['mep-object-label', 'row', 'column', 'align', 'mep-object-separator', 'block-attributes', 'edit-source', 'delete-table']);
         await page.waitForSelector('.mep-table-column', { timeout: 1000 });
         const tinted = await page.$$eval('.ProseMirror .mep-table-column', els => els.map(e => e.textContent));
         assert.deepStrictEqual(tinted, ['Kind', 'first', 'second'], 'the caret\'s column, every row of it');
@@ -370,7 +370,8 @@ suite('Editor pipe tables (e2e)', () => {
             '| FRS-001 | The editor shows the document as the preview renders it, block for block, with nothing added and nothing taken away, whatever the width of the window it is shown in. | Inspection of every construct |',
             '| FRS-002 | A bar that appears for an object never moves the text around it, so the reader keeps their place. | Page test |',
         ].join('\n');
-        const intro = 'The table below is as wide as the column, so no place beside it is free for its bar. The paragraph above it ends short of the right edge.';
+        // Short, so the end of its line leaves the bar a free place above the table.
+        const intro = 'The table below is as wide as the column; nothing beside it is free.';
         await showDocument(`${intro}\n\n${wide}\n\nAfter the table, a closing paragraph that also runs across most of the column so the place below is taken as well.\n`, 'FRS-001');
         const tableTop = () => page.evaluate(() => ({
             table: (document.querySelector('.ProseMirror > table') as HTMLElement).getBoundingClientRect().top,

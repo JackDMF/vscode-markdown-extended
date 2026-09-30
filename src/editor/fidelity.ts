@@ -1,6 +1,7 @@
 import { Mark, Node } from 'prosemirror-model';
 import { Plugin, PluginKey, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES } from './schema';
+import { itemTakesLiteral, quoteLostLiteral } from './serialize';
 
 export const fidelityPluginKey = new PluginKey('mepFidelity');
 
@@ -231,6 +232,15 @@ export function fidelityPlugin(): Plugin {
             if (!undo) {
                 stripDuplicatedIds(after, ancestor, set);
                 stripCopiedSuffixes(after, from, set);
+                after.forEach((c, j) => {
+                    // A quote an edit left ending in another block than a paragraph has no `> {…}` line left;
+                    // one whose paragraphs are only empty for now (Enter, text deleted to be retyped) keeps it.
+                    if (!present.has(c.node) && c.node.type.name === 'blockquote' && (c.node.attrs.attrsSuffix ?? null) !== null
+                        && quoteLostLiteral(c.node)) {
+                        set(j, 'attrsSuffix', null);
+                        set(j, 'attrsPlacement', null);
+                    }
+                });
             }
 
             let tr: Transaction | null = null;
@@ -246,6 +256,11 @@ export function fidelityPlugin(): Plugin {
                     tr = tr ?? newState.tr;
                     const node = tr.doc.nodeAt(pos) as Node;
                     tr.setNodeMarkup(pos, undefined, { ...node.attrs, attrsSuffix: null, attrsPlacement: null });
+                }
+                for (const pos of strayItemLiterals(transactions, oldState.doc, after, present)) {
+                    tr = tr ?? newState.tr;
+                    const node = tr.doc.nodeAt(pos) as Node;
+                    tr.setNodeMarkup(pos, undefined, { ...node.attrs, literal: null });
                 }
             }
             return tr;
@@ -284,6 +299,44 @@ function nestedSuffixes(after: TopLevelChild[], present: ReadonlySet<Node>): num
         c.node.descendants((node, pos) => {
             if ((node.attrs.attrsSuffix ?? null) !== null && node.type.name !== 'heading') {
                 out.push(c.offset + 1 + pos);
+            }
+            return !node.isTextblock;
+        });
+    }
+    return out;
+}
+
+/**
+ * List items of a changed top-level node whose literal the file will not hold
+ * as it stands, by position: one on an item that descends from no old item —
+ * the second half of a split item copies its attributes, and `{#id}` written
+ * twice is two elements with one id; the half that starts where the item
+ * started keeps it (at the start of its text, the empty first half), as a
+ * pasted item does not — and one on an item that no longer starts with a
+ * paragraph (`itemTakesLiteral`), where it cannot be written; an empty one
+ * keeps it (`- {.a}`), so deleting the text to retype it loses nothing. An item descends from an old one when an old item started
+ * at the position its start maps to; setting a literal keeps the item's start.
+ */
+function strayItemLiterals(transactions: readonly Transaction[], before: Node, after: TopLevelChild[], present: ReadonlySet<Node>): number[] {
+    const starts = new Set<number>();
+    before.descendants((node, pos) => {
+        if (node.type.name === 'list_item') {
+            // Where the item starts now. Not asked whether it was deleted: setting
+            // its markup replaces its opening token, which maps as a deletion.
+            starts.add(transactions.reduce((at, tr) => tr.mapping.map(at, 1), pos));
+        }
+        return !node.isTextblock;
+    });
+    const out: number[] = [];
+    for (const c of after) {
+        if (present.has(c.node) || c.node.isTextblock || c.node.isAtom) {
+            continue;
+        }
+        c.node.descendants((node, pos) => {
+            const literal = node.type.name === 'list_item' ? (node.attrs.literal as string | null) : null;
+            const at = c.offset + 1 + pos;
+            if (literal !== null && (!starts.has(at) || !itemTakesLiteral(node))) {
+                out.push(at);
             }
             return !node.isTextblock;
         });

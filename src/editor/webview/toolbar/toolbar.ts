@@ -30,16 +30,17 @@ import type { LinkChoice, LinkedFile } from '../../protocol';
 import { editorSchema } from '../../schema';
 import { firstFree } from '../clearance';
 import { showHint } from '../hint';
-import { FieldStep, InlineField, fieldHeading } from '../inlineField';
+import { FieldStep, InlineField, fieldHeading, fieldKeys } from '../inlineField';
 import { chevronNode } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
 import {
-    applySpanTransaction, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
+    applySpanTransaction, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
     LINK_LOCK, literalRefusal, objectAtSelection, spanLockReason,
 } from '../objects';
+import { ATTRIBUTES_FIELD_KEYS, attributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
     MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
@@ -168,6 +169,10 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
         case 'attr-span': {
             const reason = spanLockReason(state);
             return { enabled: reason === null, active: false, reason };
+        }
+        case 'block-attrs': {
+            const target = attributesTargetAt(state);
+            return 'refusal' in target ? { enabled: false, active: false, reason: target.refusal } : { enabled: true, active: false, reason: null };
         }
         case 'insert-link': {
             const reason = objectAtSelection(state)?.kind === 'link' ? null : insertLockReason(state, LINK_LOCK);
@@ -705,6 +710,13 @@ class ToolbarView implements PluginView {
         const syntax = div('mep-preview-syntax');
         syntax.textContent = elideDataUris(preview.markdown);
         this.card.replaceChildren(body, syntax);
+        // A disabled entry says why where the eye already is, not only in its tooltip.
+        const now = evaluate(action, this.view.state, this.host.includesOffered());
+        if (!now.enabled && now.reason) {
+            const why = div('mep-preview-refusal');
+            why.textContent = now.reason;
+            this.card.append(why);
+        }
         this.card.dataset.action = action.id;
         this.card.dataset.menu = menu.id;
         this.card.hidden = false;
@@ -802,6 +814,9 @@ class ToolbarView implements PluginView {
             case 'attr-span':
                 this.askSpanLiteral();
                 return;
+            case 'block-attrs':
+                this.askBlockAttributes();
+                return;
             case 'insert-link':
                 this.askLink();
                 return;
@@ -832,6 +847,7 @@ class ToolbarView implements PluginView {
             value: SPAN_FIELD_PREFILL.value,
             caret: SPAN_FIELD_PREFILL.caret,
             label: 'Attributes',
+            keys: ATTRIBUTES_FIELD_KEYS,
             commit: value => {
                 view.focus();
                 const refusal = literalRefusal(value, 'span');
@@ -843,6 +859,21 @@ class ToolbarView implements PluginView {
                 view.dispatch(tr);
             },
         });
+    }
+
+    /**
+     * **Attributes…**: the inline field, in a bar at the block the caret is in,
+     * labelled with that block's name (`Paragraph · Attributes`) and prefilled
+     * with its literal — or `{.}`, the caret after the dot — and `Enter` sets it
+     * where markdown-it-attrs reads it for that block (`commitAttributes`).
+     */
+    private askBlockAttributes(): void {
+        const target = attributesTargetAt(this.view.state);
+        if ('refusal' in target) {
+            showHint(this.view, target.refusal, 'refusal');
+            return;
+        }
+        this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target));
     }
 
     // -- links and images ------------------------------------------------------
@@ -993,7 +1024,7 @@ class ToolbarView implements PluginView {
             });
             field.el.dataset.verb = verb;
             label.textContent = fieldHeading(barLabel, step.label);
-            bar.replaceChildren(label, field.el);
+            bar.replaceChildren(label, field.el, ...(step.keys ? [fieldKeys(step.keys)] : []));
             this.fieldBar = { bar, field };
             return field;
         };

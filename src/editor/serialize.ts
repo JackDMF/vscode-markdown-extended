@@ -2,7 +2,7 @@
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
-import { NOTE_SYNTAX_CHARS } from './attrs';
+import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
@@ -734,6 +734,9 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
             const lines = wrapInline(inlineMarkdown(node, true), limit - column, limit - width(st.delim));
+            if (endsInLiteralText(node)) {
+                lines[lines.length - 1] = escapeTrailingLiteral(lines[lines.length - 1]);
+            }
             state.text(lines.join('\n'), false);
             state.closeBlock(node);
         },
@@ -744,6 +747,9 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             if (suffix === null && /(^| )#+$/.test(text)) {
                 // A trailing ` #` run is an ATX closing sequence and would be dropped.
                 text = text.replace(/#+$/, run => '\\' + run);
+            }
+            if (endsInLiteralText(node)) {
+                text = escapeTrailingLiteral(text);
             }
             const line = '#'.repeat(node.attrs.level as number) + ' ' + ((node.attrs.reqPrefix as string | null) ?? '') + text;
             state.write(suffix === null ? line.replace(/\s+$/, '') : line.replace(/\s+$/, '') + ' ' + suffix);
@@ -767,7 +773,20 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             });
         },
         list_item(state, node) {
-            state.renderContent(node);
+            const literal = node.attrs.literal as string | null;
+            if (literal === null || !itemTakesLiteral(node)) {
+                state.renderContent(node);
+                return;
+            }
+            // `- text {.a}`: after a space at the end of the first paragraph's
+            // last line, where markdown-it-attrs gives it to the item; not wrapped.
+            node.forEach((child, _offset, i) => {
+                state.render(child, node, i);
+                if (i === 0) {
+                    const st = internals(state);
+                    st.out = `${st.out.replace(/[ \t]+$/, '')} ${literal}`;
+                }
+            });
         },
         code_block(state, node) {
             const content = node.textContent;
@@ -900,14 +919,98 @@ function listTakesLineLiteral(list: Node): boolean {
 }
 
 /**
+ * Whether a textblock ends in plain text that reads as a `{…}` literal itself
+ * (`text \{x\}` in the file, `text {x}` in the node): written as it is, the
+ * plugin would take it for attributes — at once, or once a literal after it is
+ * removed — so its braces are escaped (`escapeTrailingLiteral`).
+ */
+function endsInLiteralText(node: Node): boolean {
+    const last = node.lastChild;
+    return last !== null && last.isText && last.marks.length === 0 && endsWithAttrsLiteral(last.text ?? '');
+}
+
+/** The line's trailing `{…}` as text, `\{x\}`, which the plugin reads as no literal. */
+function escapeTrailingLiteral(line: string): string {
+    const trimmed = line.replace(/[ \t]+$/, '');
+    const start = trimmed.lastIndexOf('{');
+    return start < 0 || !trimmed.endsWith('}') ? line : `${trimmed.slice(0, start)}\\{${trimmed.slice(start + 1, -1)}\\}`;
+}
+
+/** Whether a node is a paragraph holding nothing: what `Enter` leaves, or text deleted to be typed again. */
+function isEmptyParagraph(node: Node): boolean {
+    return node.type.name === 'paragraph' && node.content.size === 0;
+}
+
+/**
+ * The block a quote's `> {…}` line would follow: its last block that is not an
+ * empty paragraph — an empty one writes a bare `>` line, which reads back as
+ * nothing, so the literal is written before it — or `null` when there is none.
+ */
+function quoteLiteralHost(quote: Node): Node | null {
+    for (let i = quote.childCount - 1; i >= 0; i--) {
+        if (!isEmptyParagraph(quote.child(i))) {
+            return quote.child(i);
+        }
+    }
+    return null;
+}
+
+/**
+ * Whether a quote can carry a literal: markdown-it-attrs gives a `> {…}` line
+ * to the quote only through the soft break of the paragraph it ends — after a
+ * list, code or a nested quote the same line is that block's. The serializer
+ * writes it only when that paragraph has text, and the page gives a literal
+ * only to such a quote.
+ */
+export function quoteTakesLiteral(quote: Node): boolean {
+    return quoteLiteralHost(quote)?.type.name === 'paragraph';
+}
+
+/**
+ * Whether a quote has lost the place for its literal for good: it ends in a
+ * block other than a paragraph. A quote holding only empty paragraphs keeps its
+ * literal — its text was deleted to be typed again — though it is written only
+ * once there is text again. The fidelity plugin drops a quote's literal on this.
+ */
+export function quoteLostLiteral(quote: Node): boolean {
+    const host = quoteLiteralHost(quote);
+    return host !== null && host.type.name !== 'paragraph';
+}
+
+/**
+ * Whether a list item can carry a literal: it is written at the end of the
+ * item's first paragraph (`- text {.a}`), so the item must start with one —
+ * an empty one (`- {.a}`) or one ending in a hard break too, which the plugin
+ * reads as the item's all the same. Read by the serializer, the fidelity
+ * plugin and the page alike.
+ */
+export function itemTakesLiteral(item: Node): boolean {
+    return item.firstChild?.type.name === 'paragraph';
+}
+
+/**
+ * Whether a block's text, as written, ends in a `{…}` line of its own — a
+ * list's, a table's, a quote's `> {…}`, a paragraph's `line` literal. The next
+ * block's first line straight after it would continue it, so the writer puts a
+ * blank line between them (`serializeLayout`).
+ */
+function endsInLiteralLine(text: string): boolean {
+    const last = text.replace(/\s+$/, '').split('\n').pop() ?? '';
+    return parseAttrsLiteral(last.replace(/^[ \t]{0,3}>?[ \t]*/, '')) !== null;
+}
+
+/**
  * A changed top-level block's text with its attribute literal where it stood
  * (`attrsPlacement`, see `AttrsPlacement` in `blocks.ts`): after a space at the
  * end of its last line, on a line of its own under it, or — for a list — under a
  * blank line. A list whose last item the literal would no longer reach through
  * a lazy line (a second block in it, a nested list the plugin would hand the
  * literal to) takes the blank-line form, which the plugin always gives the
- * list. A heading and a fence write theirs themselves; an empty paragraph is
- * the literal alone, which the plugin reads as the same empty paragraph.
+ * list. A quote's is `> {…}` under its last paragraph with text, inside it; a
+ * table's is under it or under a blank line, as it stood. A `{…}` line of its
+ * own is never followed straight by the next block's first line (`serializeLayout`).
+ * A heading and a fence write theirs themselves; an empty paragraph is the
+ * literal alone, which the plugin reads as the same empty paragraph.
  */
 function withBlockSuffix(node: Node, text: string): string {
     const suffix = node.attrs.attrsSuffix as string | null | undefined;
@@ -921,6 +1024,13 @@ function withBlockSuffix(node: Node, text: string): string {
     const placement = (node.attrs.attrsPlacement as string | null) ?? 'end';
     if (name === 'bullet_list' || name === 'ordered_list') {
         return text + (placement === 'line' && listTakesLineLiteral(node) ? '\n' : '\n\n') + suffix;
+    }
+    if (name === 'blockquote') {
+        // Before the bare `>` lines trailing empty paragraphs write, which read back as nothing.
+        return quoteTakesLiteral(node) ? `${text.replace(/(\n>[ \t]*)+$/, '')}\n> ${suffix}` : text;
+    }
+    if (name === 'table') {
+        return `${text}${placement === 'line' ? '\n' : '\n\n'}${suffix}`;
     }
     return placement === 'end' ? `${text.replace(/[ \t]+$/, '')} ${suffix}` : `${text}\n${suffix}`;
 }
@@ -985,6 +1095,7 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
     const serializer = blockSerializer(options);
     const blocks: BlockSpan[] = [];
     let out = '';
+    let literalLineBefore = false;
     const atLineStart = () => out === '' || out.endsWith('\n') || out.endsWith('\r');
     doc.forEach(node => {
         const name = node.type.name;
@@ -1005,8 +1116,13 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
         }
         const gap = node.attrs.gap as string | null | undefined;
         out += gap === null || gap === undefined ? (out === '' ? '' : eol) : gap;
+        if (literalLineBefore && gap === '') {
+            // `{.wide}` straight above `After.` is one paragraph of text: the literal would be lost.
+            out += eol;
+        }
         blocks.push({ start: out.length, body });
         out += body;
+        literalLineBefore = endsInLiteralLine(body);
     });
     if (tail !== '' && !atLineStart()) {
         out += eol;

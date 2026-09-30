@@ -445,7 +445,8 @@ editor's `data-mep-*` bookkeeping apart.
 | Construct | Schema | Drawn as | Written back |
 | --- | --- | --- | --- |
 | `[text]{…}` (markdown-it-bracketed-spans + markdown-it-attrs) | mark `attr_span`, attr `literal` | `span` with the literal's attributes (`domAttrsOf`) | `[` … `]` + the literal, held so no line break falls inside |
-| `{…}` on a top-level paragraph, list, fence or rule | `attrsSuffix` + `attrsPlacement` on the node | the node's element with the literal's attributes (a fence's on its `<code>`) | where it stood (below) |
+| `{…}` on a top-level paragraph, list, quote, table, fence or rule | `attrsSuffix` + `attrsPlacement` on the node | the node's element with the literal's attributes (a fence's on its `<code>`) | where it stood (below) |
+| `{…}` at the end of a list item's first paragraph, at any depth | attr `literal` on `list_item` | `li` with the literal's attributes | after a space at the end of that paragraph's last line |
 | `::: name info` … `:::` (markdown-it-container) | node `container` (`block+`), attrs `name`, `info`, `markup` | `div` whose `class` is the trimmed info, as `markdownItContainer.ts` renders it | fence, name, info verbatim, body, fence |
 | `!!! type "Title"` (`markdownItAdmonition.ts`) | node `admonition` (`block+`), attrs `type`, `title`, `markup`, `header` | `div.admonition.<type>`, first child `p.admonition-title` | the header as written, else `!!! type "Title"`; body indented by four |
 
@@ -499,6 +500,89 @@ page never draws a class the file will not hold; a block-type change carries it 
 (`keepingLiterals`). A requirement heading keeps its existing rule — any trailing `{…}` on
 its line is its `attrsSuffix`, the id its `anchor`.
 
+**A quote, a table and a list item** carry theirs too, each where markdown-it-attrs reads
+it (checked against the plugin's `patterns.js` and the engine, not guessed). A quote's is
+`line` inside it — `> {.a}` under its last paragraph, or a lazy `{.a}` there — which the
+plugin takes through that paragraph's soft break and gives to the outermost block the
+closing tokens after it end: the quote, but only while its last block is a paragraph;
+after a list, code or a nested quote the same line belongs to that block. `serialize.ts`
+states that rule once, in two predicates over one helper (`quoteLiteralHost`: the last
+block that is not an empty paragraph, since an empty one writes a bare `>` line that
+reads back as nothing). `quoteTakesLiteral` — that block is a paragraph with text — is
+when the serializer writes the line, before any trailing `>` lines, and when the page
+gives a quote a literal. `quoteLostLiteral` — that block is not a paragraph — is when the
+fidelity plugin takes the literal off: a quote whose paragraphs are only empty for now
+(`Enter` at the end of the last one, its text deleted to be typed again) keeps it, and it
+is written again as soon as there is text. A table's is under it, in no token's map like
+a list's `blank` one: `line` (right under the last row) or `blank`, read and written as
+it stood; a new one is `blank`, the form the plugin's README gives. A `{…}` line of its
+own — a table's, a list's, a quote's `> {…}`, a paragraph's `line` one — is never
+followed straight by the next block's first line: where the next block's gap is empty,
+`serializeLayout` puts a blank line between them, or `{.wide}` + `After.` would be one
+paragraph of text. A list item's is not a top-level block's `attrsSuffix` but the item's
+own `literal`, at any depth, at the end of its first paragraph (`- text {.a}`, the
+plugin's "list item end" rule; `recoverItemLiterals`), where the serializer writes it back
+after the paragraph is wrapped. The item must start with a paragraph (`itemTakesLiteral`),
+empty or not: `- {.a}` is the plugin's empty item with the literal, and after a hard break
+at the end of the text (`Shift+Enter`) the literal follows on the continuation line, the
+item's still. Only when the file is read is a literal after a trailing hard break left a
+source block, since the serializer writes no trailing hard break and the text would change.
+A lone `{…}` line closing the first paragraph is the list's (`- a` + `{.b}`), so the item's
+literal is read from the line before it, and both are kept. The fidelity plugin drops an
+item's literal when the item descends from no old item — the second half of a split,
+which copies the attributes, a pasted item — judged by where the old items' starts map
+to (split at the start of its text, the empty first half keeps it), and when the item no
+longer starts with a paragraph.
+
+**Braces that are text.** A textblock whose text ends in what reads as a literal (`Set
+notation \{x\}` in the file, `{x}` in the node) has the braces of that end written
+escaped (`escapeTrailingLiteral` in `serialize.ts`) — with a literal after it and without
+one — so removing a block's literal never turns the text before it into attributes.
+
+**Attributes…** (`webview/attributes.ts`, Daniel, 2026-09-30 from a sketch) sets the
+literal of the block at the caret: **Formatting → Attributes…**, right after *Span with
+class*, and the verb of the same name on the bars of a table, a container and an
+admonition (refused there), any block already carrying a literal (*Paragraph attributes*,
+*Quote attributes*, …) and a heading whose bar shows for other verbs. A bar whose one verb
+would be *Attributes…* on a block with no literal yet — every plain heading — is not drawn
+(`barless`): that would be chrome on every such block (Daniel, 2026-09-30). A paragraph, a
+quote and a list item without a literal, and a plain heading with no lenses or actions,
+reach it through the menu only. Both surfaces open the same field step (`attributesStep`) and commit through the same
+rule (`commitAttributes` in `objects.ts`), so they cannot prefill, refuse or announce
+differently. The field is labelled with the block's name (*Paragraph · Attributes*),
+placed at the block by the bars' ladder, prefilled with the literal — or `{.}` with the
+caret after the dot when there is none — and takes the whole literal (`.class`, `#id`,
+`key=value`, `key="a value"`); at its right the bar says so, `↵ set · Esc cancel ·
+{.class #id key=value}` (`FieldStep.keys`), and **Span with class**'s field says the same. `Enter` sets it in one transaction, so one undo step, and
+the hint says *Attributes set — Ctrl+Z*; `{}` or an empty field removes it (*Attributes
+removed — Ctrl+Z*); `Esc` changes nothing. A literal markdown-it-attrs would not read
+back whole is refused beside the caret with the reason (`literalRefusal`, the stage-3
+reader). The block is the innermost list item holding the selection, else the top-level
+block: a nested paragraph's literal is not written, so the caret in a paragraph in a quote
+gives the quote its attributes, and the field's label says which block it is.
+
+| Block | Written | The plugin gives it to |
+| --- | --- | --- |
+| Paragraph (an image alone in one too) | after a space at the end of its last line: `text {.x}` | the `<p>` |
+| Heading | at the end of its line: `## Title {.x}`; its `#id` is the heading's anchor | the `<hN>` |
+| List item | at the end of its first paragraph, at any depth: `- text {.x}` | the `<li>` |
+| Quote | a line of its own under its last paragraph, inside it: `> {.x}` | the `<blockquote>` |
+| Table | a line of its own under a blank line after it: `{.x}` (one right under it stays there) | the `<table>` |
+| Fenced code | after the opening fence's info string: ```` ```js {.x} ```` | the `<code>` |
+| Rule (selected) | after the rule: `--- {.x}` | the `<hr>` |
+| List (one it has already) | where it stood: under its last line, or under a blank line | the `<ul>`/`<ol>` |
+
+Where no literal can go the entry is disabled and says why — in its tooltip, and on its
+preview card, where the eye already is — rather than writing one the file would not keep:
+a container (markdown-it-attrs takes a literal off the `:::` line and the container's
+renderer drops it; its classes are its name and info), an admonition (the plugin gives a
+literal on the `!!!` line to the title bar), a quote ending in another block, a list item
+not starting with a paragraph that ends in text, a requirement heading (its anchor is Req
+Explorer's), an indented code block (no opening line), a source block, the front matter,
+injected content. A block that already has a literal stays a native block with the literal
+edited in place; a literal the reader refuses when the file is opened leaves its block a
+source block, as above.
+
 **Containers and admonitions.** Both are one top-level block: untouched, their slice;
 changed, the wrapper is written by rule around its blocks, which carry no `src`. A
 container's `info` is the rest of its opening line after the name, verbatim; the fence is
@@ -533,7 +617,8 @@ splitting the wrapper in two, as ProseMirror's `liftEmptyBlock` would; `Backspac
 start of an empty first paragraph lifts the wrapper's blocks out (`unwrapTransaction`, the
 same transaction as the bars' *Remove …, keep content*). The toolbar inserts both natively
 (`insertWrapperTransaction`, `insert-wrapper`), and **Span with class** (`attr-span`) asks
-for the literal in the inline field, prefilled `{.}` with the caret after the dot.
+for the literal in the inline field, prefilled `{.}` with the caret after the dot;
+**Attributes…** (`block-attrs`) does the same for the block at the caret (above).
 
 ### Tables
 
@@ -1332,13 +1417,19 @@ of thing, two triggers and two places.
   *Remove attributes, keep text*;
 - container — *Change name/info* (first word the name, the rest the info, verbatim; a
   trailing `{…}` refused, since markdown-it-attrs would take it off the info),
+  *Attributes…* (refused, with the reason: the container's renderer drops a literal),
   *Remove container, keep content* (`unwrapTransaction`: the blocks lifted, the caret kept);
 - admonition — *Change type* (the inline choice, a `<select>` of `ADMONITION_TYPES`),
-  *Edit title* (empty: no title bar), *Remove admonition, keep content*; both changes clear
+  *Edit title* (empty: no title bar), *Attributes…* (refused: the plugin gives a literal on
+  the `!!!` line to the title bar), *Remove admonition, keep content*; both changes clear
   `header`;
-- block with attributes — *Edit block attributes* (the literal replaced in place, its
-  placement kept; empty removes it; a heading's anchor follows the literal's id);
-- table — `Row`, `Column`, `Align`, *Edit source*, *Delete table* (above, "Tables"): a
+- block with attributes — *Attributes…* (the literal replaced in place, its placement
+  kept; `{}` or empty removes it; a heading's anchor follows the literal's id), the field
+  the Formatting menu's entry opens (above, *Attributes…*);
+- heading that is no requirement heading — *Attributes…*, then other extensions' lenses and
+  actions, the bar shown only when there are some or the heading has a literal; a
+  requirement heading has no verb of its own, only theirs;
+- table — `Row`, `Column`, `Align`, *Attributes…*, *Edit source*, *Delete table* (above, "Tables"): a
   verb may be a **set-verb**, a menu of related actions that opens under it (`Verb.menu`),
   in the formatting toolbar's menu chrome, keyboard-navigable, the current value of a
   choice marked;
@@ -1638,9 +1729,10 @@ so a quick fix for a diagnostic an edit elsewhere removed is not offered on an u
 block, lenses on or off. An answer kept past its epoch is shown while it is asked again, so
 the bar does not blink; running it is guarded by the host's version check. Every post of an
 answer or an invalidation is guarded: a webview disposed meanwhile is a logged warning. The answer's arrival dispatches an
-empty transaction, and the toolbar redraws with the verbs. A heading is an object for this
+empty transaction, and the toolbar redraws with the verbs. A requirement heading is an object for this
 and for its lens verbs alone: its presentation has no verbs of its own, and the selection's
-bar is hidden while it has none. Inline objects carry no actions yet: the host knew no range for a note or a
+bar is hidden while it has none. Any other heading has one, *Attributes…*, which alone
+does not make a bar either: it joins one the lenses, the actions or a literal make. Inline objects carry no actions yet: the host knew no range for a note or a
 link, and computing one beside the parse would have been a second answer to where the page's text is in the
 file. *Source positions* (below) is now the one answer, and what they would be built on.
 
