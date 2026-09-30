@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import * as puppeteer from 'puppeteer';
-import { applyPrintDate, exportLocale } from '../../../../src/services/exporter/puppeteer';
+import { applyPrintDate, exportLocale } from '../../../../src/services/exporter/printDate';
 
 /**
  * The one test that proves the feature: a PDF printed through `page.pdf` with a `date` footer,

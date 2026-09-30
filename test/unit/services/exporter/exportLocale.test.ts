@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { exportLocale, formatPrintDate, fillPrintDate, applyPrintDate } from '../../../../src/services/exporter/puppeteer';
+import { exportLocale, formatPrintDate, fillPrintDate, applyPrintDate } from '../../../../src/services/exporter/printDate';
 
 suite('exportLocale', () => {
     test('the setting wins over VS Code\'s language', () => {
