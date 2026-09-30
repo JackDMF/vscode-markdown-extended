@@ -231,6 +231,11 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     const headingPrefix = new WeakMap<object, string>();
     const admonitionTitle = new WeakMap<object, string>();
     const spanLiteral = new WeakMap<object, string>();
+    const itemLiteral = new WeakMap<object, string>();
+    // A nested paragraph whose lines hold a literal that is not its own — a list
+    // item's at its end, a quote's under it — measured without it, as a
+    // paragraph's own is: the literal is not wrapped.
+    const foreignLiteral = new WeakMap<object, BlockAttrs>();
     const stream: StreamToken[] = [];
 
     for (const [k, block] of blocks.entries()) {
@@ -260,10 +265,23 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 topAttrs.set(tokens[start], { src: block.src, gap: block.gap });
                 if (block.attrs !== null) {
                     blockAttrs.set(tokens[start], block.attrs);
+                    if (tokens[start].type === 'blockquote_open' && tokens[end - 2]?.type === 'paragraph_close') {
+                        let p = end - 2;
+                        while (p > start && tokens[p].type !== 'paragraph_open') {
+                            p--;
+                        }
+                        foreignLiteral.set(tokens[p], block.attrs);
+                    }
                 }
                 let span = 0;
+                let item = 0;
                 for (let i = start; i < end; i++) {
                     const t = tokens[i];
+                    if (t.type === 'list_item_open' && (t.attrs ?? []).length > 0 && item < block.itemLiterals.length) {
+                        const literal = block.itemLiterals[item++];
+                        itemLiteral.set(t, literal);
+                        foreignLiteral.set(tokens[i + 1], { suffix: literal, placement: 'end' });
+                    }
                     if (t.type === 'admonition_title_open') {
                         // The title is the admonition's attribute, not a block of its body.
                         admonitionTitle.set(tokens[i - 1], (tokens[i + 1]?.content ?? '').trim());
@@ -324,7 +342,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 let content = (s[i + 1]?.type === 'inline' ? s[i + 1].content : '').split('\n');
                 // The width is the text's: the attribute literal is written after
                 // it is wrapped (`serialize.ts`), so it is no evidence of the width.
-                const literal = blockAttrs.get(tok);
+                const literal = blockAttrs.get(tok) ?? foreignLiteral.get(tok);
                 if (literal?.placement === 'line') {
                     source = source.slice(0, -1);
                     content = content.slice(0, -1);
@@ -356,7 +374,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 };
             },
         },
-        blockquote: { block: 'blockquote', getAttrs: tok => ({ ...sourceOf(tok) }) },
+        blockquote: { block: 'blockquote', getAttrs: tok => ({ ...sourceOf(tok), ...suffixOf(tok) }) },
         container_container: {
             block: 'container',
             getAttrs: tok => {
@@ -395,11 +413,11 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 ...suffixOf(tok),
             }),
         },
-        list_item: { block: 'list_item' },
+        list_item: { block: 'list_item', getAttrs: tok => ({ literal: itemLiteral.get(tok) ?? null }) },
         // A pipe table (`blocks.ts` let only the GFM form through): the rows
         // are the table's children, `thead` and `tbody` no node of their own;
         // a cell's alignment is the `style` the plugin set from the delimiter row.
-        table: { block: 'table', getAttrs: tok => ({ ...sourceOf(tok) }) },
+        table: { block: 'table', getAttrs: tok => ({ ...sourceOf(tok), ...suffixOf(tok) }) },
         thead: { ignore: true },
         tbody: { ignore: true },
         tr: { block: 'table_row' },

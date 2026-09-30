@@ -767,7 +767,20 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             });
         },
         list_item(state, node) {
-            state.renderContent(node);
+            const literal = node.attrs.literal as string | null;
+            if (literal === null || !itemTakesLiteral(node)) {
+                state.renderContent(node);
+                return;
+            }
+            // `- text {.a}`: after a space at the end of the first paragraph's
+            // last line, where markdown-it-attrs gives it to the item; not wrapped.
+            node.forEach((child, _offset, i) => {
+                state.render(child, node, i);
+                if (i === 0) {
+                    const st = internals(state);
+                    st.out = `${st.out.replace(/[ \t]+$/, '')} ${literal}`;
+                }
+            });
         },
         code_block(state, node) {
             const content = node.textContent;
@@ -900,14 +913,46 @@ function listTakesLineLiteral(list: Node): boolean {
 }
 
 /**
+ * Whether a paragraph ends where a literal can be added after a space on its
+ * last line: it has text, and no hard break ends it — after one the literal
+ * would open a line of its own, which the plugin reads as another block's.
+ */
+function endsInText(paragraph: Node | null): boolean {
+    return paragraph !== null && paragraph.type.name === 'paragraph' && paragraph.content.size > 0
+        && paragraph.lastChild?.type.name !== 'hard_break';
+}
+
+/**
+ * Whether a quote can carry a literal: markdown-it-attrs gives a `> {…}` line
+ * to the quote only through the soft break of the paragraph it ends — a quote
+ * whose last block is a list, code or a nested quote would hand it to that.
+ * The serializer writes it only then, the fidelity plugin takes it off a quote
+ * an edit left without one, and the page refuses to give one to such a quote.
+ */
+export function quoteTakesLiteral(quote: Node): boolean {
+    return endsInText(quote.lastChild);
+}
+
+/**
+ * Whether a list item can carry a literal: it is written at the end of the
+ * item's first paragraph (`- text {.a}`), so the item must start with one that
+ * ends in text. Read by the serializer, the fidelity plugin and the page alike.
+ */
+export function itemTakesLiteral(item: Node): boolean {
+    return endsInText(item.firstChild);
+}
+
+/**
  * A changed top-level block's text with its attribute literal where it stood
  * (`attrsPlacement`, see `AttrsPlacement` in `blocks.ts`): after a space at the
  * end of its last line, on a line of its own under it, or — for a list — under a
  * blank line. A list whose last item the literal would no longer reach through
  * a lazy line (a second block in it, a nested list the plugin would hand the
  * literal to) takes the blank-line form, which the plugin always gives the
- * list. A heading and a fence write theirs themselves; an empty paragraph is
- * the literal alone, which the plugin reads as the same empty paragraph.
+ * list. A quote's is `> {…}` under its last paragraph, inside it; a table's is
+ * always under a blank line, the one form the plugin reads whatever follows.
+ * A heading and a fence write theirs themselves; an empty paragraph is the
+ * literal alone, which the plugin reads as the same empty paragraph.
  */
 function withBlockSuffix(node: Node, text: string): string {
     const suffix = node.attrs.attrsSuffix as string | null | undefined;
@@ -921,6 +966,12 @@ function withBlockSuffix(node: Node, text: string): string {
     const placement = (node.attrs.attrsPlacement as string | null) ?? 'end';
     if (name === 'bullet_list' || name === 'ordered_list') {
         return text + (placement === 'line' && listTakesLineLiteral(node) ? '\n' : '\n\n') + suffix;
+    }
+    if (name === 'blockquote') {
+        return quoteTakesLiteral(node) ? `${text}\n> ${suffix}` : text;
+    }
+    if (name === 'table') {
+        return `${text}\n\n${suffix}`;
     }
     return placement === 'end' ? `${text.replace(/[ \t]+$/, '')} ${suffix}` : `${text}\n${suffix}`;
 }

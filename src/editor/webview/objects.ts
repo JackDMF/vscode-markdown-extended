@@ -37,7 +37,7 @@ import { EditorState, NodeSelection, Selection, TextSelection, Transaction } fro
 import { CellSelection } from 'prosemirror-tables';
 import { endsWithAttrsLiteral, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
-import { serializeInline } from '../serialize';
+import { itemTakesLiteral, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 
 const nodes = editorSchema.nodes;
@@ -593,22 +593,196 @@ export function blockAttrsRefusal(node: Node): string | null {
 }
 
 /**
+ * Where a block given a literal for the first time writes it (`AttrsPlacement`
+ * in `blocks.ts`): a quote's under its last paragraph, a list's and a table's
+ * under the block, anything else's at the end of its line.
+ */
+function newPlacement(node: Node): string {
+    switch (node.type.name) {
+        case 'blockquote':
+        case 'bullet_list':
+        case 'ordered_list':
+            return 'line';
+        case 'table':
+            return 'blank';
+        default:
+            return 'end';
+    }
+}
+
+/** Why a quote cannot be given a literal: the plugin gives a `> {…}` line to the block it ends. */
+export const QUOTE_ATTRS_REFUSAL = 'A quote\'s {…} stands on a line under its last paragraph, and this quote ends in another block: markdown-it-attrs would give the literal to that block.';
+
+/**
  * The top-level block at `pos` with `literal` as its attribute literal, where
- * it stood before; `''` removes it. A heading's anchor follows the literal's id.
- * `null` when unchanged, refused (`blockAttrsRefusal`) or unreadable.
+ * it stood before (a new one where `newPlacement` says); `''` removes it. A
+ * heading's anchor follows the literal's id. `null` when unchanged, refused
+ * (`blockAttrsRefusal`, a quote that cannot carry one) or unreadable.
  */
 export function changeBlockAttrsTransaction(state: EditorState, pos: number, literal: string): Transaction | null {
     const node = state.doc.nodeAt(pos);
     const value = literal.trim();
     if (!node || !SUFFIX_NODES.has(node.type.name) || blockAttrsRefusal(node) !== null
-        || value === (node.attrs.attrsSuffix ?? '') || (value !== '' && literalRefusal(value, literalPlaceOf(node)) !== null)) {
+        || value === (node.attrs.attrsSuffix ?? '') || (value !== '' && literalRefusal(value, literalPlaceOf(node)) !== null)
+        || (value !== '' && node.type === nodes.blockquote && !quoteTakesLiteral(node))) {
         return null;
     }
     const attrs: Record<string, unknown> = { ...node.attrs, attrsSuffix: value === '' ? null : value };
     if (node.type === nodes.heading) {
         attrs.anchor = value === '' ? null : (parseAttrsLiteral(value) ?? []).filter(([n]) => n === 'id').map(([, v]) => v).pop() ?? null;
     } else {
-        attrs.attrsPlacement = value === '' ? null : (node.attrs.attrsPlacement as string | null) ?? 'end';
+        attrs.attrsPlacement = value === '' ? null : (node.attrs.attrsPlacement as string | null) ?? newPlacement(node);
     }
     return state.tr.setNodeMarkup(pos, undefined, attrs).scrollIntoView();
+}
+
+// ---------------------------------------------------------------------------
+// Attributes… — the literal of the block at the caret
+// ---------------------------------------------------------------------------
+
+/**
+ * What each block is called where its attributes are asked for: the field's
+ * label (`Paragraph · Attributes`) and a block-attributes bar's.
+ */
+export const BLOCK_NAMES: Readonly<Record<string, string>> = {
+    paragraph: 'Paragraph',
+    heading: 'Heading',
+    blockquote: 'Quote',
+    bullet_list: 'List',
+    ordered_list: 'List',
+    list_item: 'List item',
+    code_block: 'Code block',
+    horizontal_rule: 'Rule',
+    table: 'Table',
+};
+
+/** Why a container is given no literal: markdown-it-container's renderer here draws none. */
+export const CONTAINER_ATTRS_REFUSAL = 'A container takes no {…}: markdown-it-attrs reads a literal on its ::: line, and the container\'s renderer drops it. Its classes are its name and info (Change name/info).';
+
+/** Why an admonition is given no literal: the plugin hands it to the title bar. */
+export const ADMONITION_ATTRS_REFUSAL = 'An admonition takes no {…}: markdown-it-attrs gives a literal on its !!! line to the title bar, not to the box. Its class is its type (Change type).';
+
+/** Why an indented code block is given no literal: it has no opening line. */
+export const INDENTED_CODE_ATTRS_REFUSAL = 'An indented code block has no opening line to carry a {…}: make it a fenced one first.';
+
+/** Why a list item is given no literal: it is written at the end of the item's first paragraph. */
+export const ITEM_ATTRS_REFUSAL = 'A list item\'s {…} stands at the end of its first paragraph, and this item does not start with a paragraph ending in text.';
+
+/** Why nothing at the selection takes a literal. */
+export const NO_BLOCK_ATTRS_REFUSAL = 'Put the caret in one paragraph, heading, list item, quote, table or code block to give it attributes.';
+
+/**
+ * The block **Attributes…** acts on: a top-level block of `SUFFIX_NODES`, or a
+ * list item at any depth; `name` is what the field calls it.
+ */
+export interface AttributesTarget {
+    pos: number;
+    node: Node;
+    name: string;
+}
+
+/** The literal the target carries now, or `null`. */
+export function literalOf(node: Node): string | null {
+    const literal = node.type === nodes.list_item ? node.attrs.literal : node.attrs.attrsSuffix;
+    return typeof literal === 'string' ? literal : null;
+}
+
+/** A top-level block as a target, or why it is none. */
+function topLevelTarget(node: Node, pos: number): AttributesTarget | { refusal: string } {
+    switch (node.type.name) {
+        case 'container':
+            return { refusal: CONTAINER_ATTRS_REFUSAL };
+        case 'admonition':
+            return { refusal: ADMONITION_ATTRS_REFUSAL };
+        case 'raw_block':
+            return { refusal: 'A source block is edited as Markdown: write its {…} there (Edit source).' };
+        case 'front_matter':
+            return { refusal: 'The front matter is YAML: it renders nothing that could carry attributes.' };
+        case 'injected_block':
+            return { refusal: 'Injected content is not in the file: there is no block here to give attributes to.' };
+    }
+    const refusal = blockAttrsRefusal(node)
+        ?? (node.type === nodes.code_block && node.attrs.markup === '' ? INDENTED_CODE_ATTRS_REFUSAL : null)
+        ?? (node.type === nodes.blockquote && literalOf(node) === null && !quoteTakesLiteral(node) ? QUOTE_ATTRS_REFUSAL : null);
+    if (refusal !== null) {
+        return { refusal };
+    }
+    return SUFFIX_NODES.has(node.type.name) ? { pos, node, name: BLOCK_NAMES[node.type.name] ?? 'Block' } : { refusal: NO_BLOCK_ATTRS_REFUSAL };
+}
+
+/**
+ * The block the selection gives attributes to, or why there is none — what
+ * **Formatting → Attributes…** is enabled by and acts on. Innermost first: the
+ * list item holding both ends of the selection (a literal the item writes at
+ * the end of its first paragraph, at any depth), else the top-level block
+ * holding them — a nested paragraph's or quote's literal is not written
+ * (`fidelity.ts`), so a paragraph in a quote gives the quote its attributes and
+ * a paragraph in a container meets the container's refusal. A selected block
+ * (a rule, a source block) is itself; a selected image, its paragraph.
+ */
+export function attributesTargetAt(state: EditorState): AttributesTarget | { refusal: string } {
+    const sel = state.selection;
+    if (sel instanceof NodeSelection && sel.$from.depth === 0) {
+        return topLevelTarget(sel.node, sel.from);
+    }
+    const { $from, $to } = sel;
+    if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1)) {
+        return { refusal: NO_BLOCK_ATTRS_REFUSAL };
+    }
+    for (let d = $from.depth; d > 1; d--) {
+        const node = $from.node(d);
+        if (node.type === nodes.list_item && $to.depth >= d && $to.node(d) === node) {
+            return literalOf(node) === null && !itemTakesLiteral(node)
+                ? { refusal: ITEM_ATTRS_REFUSAL }
+                : { pos: $from.before(d), node, name: BLOCK_NAMES.list_item };
+        }
+    }
+    return topLevelTarget($from.node(1), $from.before(1));
+}
+
+/** The target as it is in `state`: the same kind of node at the same place, or `null` when it is gone. */
+export function currentTarget(state: EditorState, target: AttributesTarget): AttributesTarget | null {
+    const node = target.pos < state.doc.content.size ? state.doc.nodeAt(target.pos) : null;
+    return node !== null && node.type === target.node.type ? { ...target, node } : null;
+}
+
+/** What a literal typed into the Attributes field does: a transaction and whether it removed the literal, a refusal, or nothing (unchanged). */
+export type AttributesCommit = { tr: Transaction; removed: boolean } | { refusal: string } | null;
+
+/**
+ * The target given `literal` — `{}` or nothing removes its literal — as the
+ * menu entry and every bar's **Attributes…** commit it: one rule for both.
+ * A literal markdown-it-attrs would not read back whole is refused with the
+ * reason (`literalRefusal`); an unchanged one does nothing.
+ */
+export function commitAttributes(state: EditorState, target: AttributesTarget, literal: string): AttributesCommit {
+    const current = currentTarget(state, target);
+    if (current === null) {
+        return null;
+    }
+    const value = literal.trim();
+    const removed = value === '' || value === '{}';
+    const node = current.node;
+    if (!removed) {
+        const refusal = literalRefusal(value, literalPlaceOf(node))
+            ?? (node.type === nodes.list_item && !itemTakesLiteral(node) ? ITEM_ATTRS_REFUSAL : null);
+        if (refusal !== null) {
+            return { refusal };
+        }
+    }
+    const next = removed ? null : value;
+    if (next === literalOf(node)) {
+        return null;
+    }
+    let tr: Transaction | null;
+    if (node.type === nodes.list_item) {
+        tr = state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, literal: next }).scrollIntoView();
+    } else {
+        const refusal = blockAttrsRefusal(node) ?? (next !== null && node.type === nodes.blockquote && !quoteTakesLiteral(node) ? QUOTE_ATTRS_REFUSAL : null);
+        if (refusal !== null) {
+            return { refusal };
+        }
+        tr = changeBlockAttrsTransaction(state, current.pos, next ?? '');
+    }
+    return tr === null ? null : { tr, removed };
 }

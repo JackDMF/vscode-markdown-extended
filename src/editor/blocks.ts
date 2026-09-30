@@ -100,9 +100,16 @@ export function findEndLiteral(line: string): string | null {
  *   ```` ```js {.a} ````, a rule's `--- {#id}`;
  * - `line` — on a line of its own right after the block's last line: a
  *   paragraph's or a list's `{.a}` below its text, which the plugin reads
- *   through the soft break before it;
+ *   through the soft break before it; a quote's `> {.a}` under its last
+ *   paragraph, inside the quote; a table's `{.a}` right under its last row;
  * - `blank` — on a line of its own after a blank line, which the plugin reads
- *   for a list only (a paragraph there would be a paragraph of its own).
+ *   for a list and a table only (a paragraph there would be a paragraph of its
+ *   own). A changed table is always written so: the `line` form is read only
+ *   while nothing follows it on the next line.
+ *
+ * A list item's literal is none of these: it stands at the end of the item's
+ * first paragraph, at any depth (`recoverItemLiterals`), and is the item's
+ * `literal`, not a top-level block's `attrsSuffix`.
  */
 export type AttrsPlacement = 'end' | 'line' | 'blank';
 
@@ -333,6 +340,8 @@ export interface SourceBlock {
     attrs: BlockAttrs | null;
     /** For an editable block: the literal of each attribute span in it, in token order (`recoverSpanLiterals`). */
     spanLiterals: string[];
+    /** For an editable block: the literal of each list item carrying one, in token order (`recoverItemLiterals`). */
+    itemLiterals: string[];
 }
 
 export interface GroupedBlocks {
@@ -383,12 +392,14 @@ interface Classification {
     attrs: BlockAttrs | null;
     /** The literal of every attribute span in the block, in token order. */
     spanLiterals: string[];
-    /** Where the block's lines end when that is past its tokens' map: a container's closing fence, a list's literal after a blank line. */
+    /** The literal of every list item in the block that carries one, in token order. */
+    itemLiterals: string[];
+    /** Where the block's lines end when that is past its tokens' map: a container's closing fence, a list's or a table's literal after it. */
     endLine: number | null;
 }
 
 function raw(reason: string): Classification {
-    return { kind: 'raw', reason, injectedKind: null, mark: null, attrs: null, spanLiterals: [], endLine: null };
+    return { kind: 'raw', reason, injectedKind: null, mark: null, attrs: null, spanLiterals: [], itemLiterals: [], endLine: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -576,8 +587,8 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
         if (injectionMarkOf(t) !== undefined) {
             return `injected ${t.type} nested inside an authored block`;
         }
-        // The top-level opener's literal is `recoverBlockAttrs`'s.
-        if (i !== group.start && t.type !== 'heading_open' && !attrsAllowed(t)) {
+        // The top-level opener's literal is `recoverBlockAttrs`'s, a list item's `recoverItemLiterals`'.
+        if (i !== group.start && t.type !== 'heading_open' && t.type !== 'list_item_open' && !attrsAllowed(t)) {
             return `attributes on ${t.type}`;
         }
         if (t.type !== 'inline') {
@@ -647,7 +658,26 @@ function inlineNotEditable(children: readonly Token[]): string | null {
 }
 
 /** The top-level openers whose `{…}` the editor keeps as `attrsSuffix`, written back where it stood. */
-const SUFFIX_BLOCKS: ReadonlySet<string> = new Set(['paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'fence', 'hr']);
+const SUFFIX_BLOCKS: ReadonlySet<string> = new Set([
+    'paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'fence', 'hr', 'blockquote_open', 'table_open',
+]);
+
+/** A quote's line without its `>` marker: `> {.a}` is `{.a}`, and so is a lazy `{.a}`. */
+function unquoted(line: string): string {
+    return line.replace(/^[ \t]{0,3}>[ \t]?/, '').trim();
+}
+
+/** The index of the opening token matching the closing one at `close`, by nesting. */
+function openingIndex(tokens: readonly Token[], close: number): number {
+    let depth = 0;
+    for (let i = close; i >= 0; i--) {
+        depth += tokens[i].nesting;
+        if (depth === 0) {
+            return i;
+        }
+    }
+    return 0;
+}
 
 /**
  * The attribute literal of a top-level block, recovered verbatim from its lines
@@ -699,6 +729,39 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
             const literal = findEndLiteral(lines[last]?.text ?? '');
             return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
         }
+        case 'blockquote_open': {
+            // The `{…}` line under the quote's last paragraph (`> {.a}`, or a
+            // lazy `{.a}`): the plugin takes it through the soft break before it
+            // and gives it to the outermost block the closing tokens after it
+            // end — the quote, when that paragraph is its own last block.
+            const close = group.end - 1;
+            const paragraphClose = close - 1;
+            if (tokens[paragraphClose]?.type !== 'paragraph_close' || tokens[paragraphClose].level !== open.level + 1) {
+                return where;
+            }
+            const paragraph = tokens[openingIndex(tokens, paragraphClose)];
+            if (!paragraph.map) {
+                return where;
+            }
+            const literalLine = trimTrailingBlank(lines, paragraph.map[0], paragraph.map[1]) - 1;
+            const literal = unquoted(lines[literalLine]?.text ?? '');
+            return literalLine === last && literalLine > paragraph.map[0] && reads(literal)
+                ? { attrs: { suffix: literal, placement: 'line' }, endLine: null }
+                : where;
+        }
+        case 'table_open': {
+            // Under the table, or under a blank line after it: the plugin
+            // removes the paragraph the literal was, so no token's map holds it.
+            let k = last + 1;
+            while (k < nextStart && isBlankLine(lines[k])) {
+                k++;
+            }
+            const candidate = lines[k]?.text.trim() ?? null;
+            if (k < nextStart && reads(candidate)) {
+                return { attrs: { suffix: candidate, placement: k > last + 1 ? 'blank' : 'line' }, endLine: k + 1 };
+            }
+            return where;
+        }
         default: {
             // A list: the literal under its last line, or under a blank line after it.
             if (last > start && reads(lastText)) {
@@ -715,6 +778,47 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
             return where;
         }
     }
+}
+
+/**
+ * The literal of every list item in the group that carries one, in token
+ * order, or why one cannot be kept. markdown-it-attrs gives a list item the
+ * `{…}` at the end of its first paragraph (`- text {.a}`, its "list item end"
+ * rule) — at any depth, in a quote or a container too — so that is where it is
+ * read, verbatim, and where `serialize.ts` writes it back. A lone `{…}` line
+ * closing that paragraph is the list's (`- text` + `{.a}`, `recoverBlockAttrs`),
+ * so the item's literal is on the line before it.
+ */
+function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[]): string[] | string {
+    const out: string[] = [];
+    for (let i = group.start; i < group.end; i++) {
+        const t = tokens[i];
+        const wanted = t.type === 'list_item_open' ? literalAttrs(t) : [];
+        if (wanted.length === 0) {
+            continue;
+        }
+        const paragraph = tokens[i + 1];
+        if (paragraph?.type !== 'paragraph_open' || !paragraph.map) {
+            return 'list item attributes not at the end of its first paragraph';
+        }
+        // What `itemTakesLiteral` asks of the node: text before the literal, no hard break ending it.
+        const children = (tokens[i + 2]?.children ?? []).filter(c => c.type !== 'text' || c.content !== '');
+        if (children.length === 0 || children[children.length - 1].type === 'hardbreak') {
+            return 'list item attributes after no text, or after a line break';
+        }
+        let line = trimTrailingBlank(lines, paragraph.map[0], paragraph.map[1]) - 1;
+        const bare = (lines[line]?.text ?? '').replace(/^[\s>]*/, '').trim();
+        if (line > paragraph.map[0] && parseAttrsLiteral(bare) !== null) {
+            line--;
+        }
+        const literal = findEndLiteral(lines[line]?.text ?? '');
+        const pairs = literal === null ? null : parseAttrsLiteral(literal);
+        if (literal === null || pairs === null || !sameAttrs(joinAttrs(pairs), wanted)) {
+            return 'list item attributes not written where the editor can keep them';
+        }
+        out.push(literal);
+    }
+    return out;
 }
 
 /**
@@ -793,7 +897,7 @@ function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines:
 
 function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], nextStart: number): Classification {
     const first = tokens[group.start];
-    const none = { attrs: null, spanLiterals: [], endLine: null };
+    const none = { attrs: null, spanLiterals: [], itemLiterals: [], endLine: null };
     if (first.type === 'front_matter') {
         return { kind: 'front_matter', reason: 'front matter', injectedKind: null, mark: null, ...none };
     }
@@ -816,6 +920,10 @@ function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly S
     if (typeof recovered === 'string') {
         return raw(recovered);
     }
+    const itemLiterals = recoverItemLiterals(tokens, group, lines);
+    if (typeof itemLiterals === 'string') {
+        return raw(itemLiterals);
+    }
     // markdown-it-container leaves its closing fence out of the map; it is the
     // container's last line, or the container runs to the end of the file.
     let endLine = recovered.endLine;
@@ -832,7 +940,7 @@ function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly S
         // (`unwritableInTable`), so it is not drawn as one it can edit.
         return raw('attribute span holding | or a backtick in a table cell');
     }
-    return { kind: 'editable', reason: first.type, injectedKind: null, mark: null, attrs: recovered.attrs, spanLiterals, endLine };
+    return { kind: 'editable', reason: first.type, injectedKind: null, mark: null, attrs: recovered.attrs, spanLiterals, itemLiterals, endLine };
 }
 
 /** The end of `[start, end)` with trailing blank lines removed, never below one line. */
@@ -952,6 +1060,7 @@ export function groupSourceBlocks(tokens: readonly Token[], lines: readonly Sour
                     mark: null,
                     attrs: null,
                     spanLiterals: [],
+                    itemLiterals: [],
                     endLine: null,
                 },
                 tokenRange: [group.start, group.end],
@@ -983,6 +1092,7 @@ export function groupSourceBlocks(tokens: readonly Token[], lines: readonly Sour
         mark: l.classification.mark,
         attrs: l.classification.attrs,
         spanLiterals: l.classification.spanLiterals,
+        itemLiterals: l.classification.itemLiterals,
     }));
     return { blocks, tail };
 }

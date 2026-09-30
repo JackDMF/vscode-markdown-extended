@@ -55,7 +55,9 @@ export const EDITABLE_TOP_NODES: ReadonlySet<string> = new Set([
 export const WRAPPER_NODES: ReadonlySet<string> = new Set(['container', 'admonition']);
 
 /** The nodes that carry a block attribute literal (`attrsSuffix`); a heading carries one too, with its anchor. */
-export const SUFFIX_NODES: ReadonlySet<string> = new Set(['paragraph', 'heading', 'bullet_list', 'ordered_list', 'code_block', 'horizontal_rule']);
+export const SUFFIX_NODES: ReadonlySet<string> = new Set([
+    'paragraph', 'heading', 'bullet_list', 'ordered_list', 'code_block', 'horizontal_rule', 'blockquote', 'table',
+]);
 
 /**
  * A top-level block's `{…}` literal, verbatim, and where it stood
@@ -376,9 +378,9 @@ export const editorSchema = new Schema({
             content: 'block+',
             group: 'block',
             defining: true,
-            attrs: { ...sourceAttrs },
+            attrs: { ...sourceAttrs, ...suffixAttrs },
             parseDOM: [{ tag: 'blockquote' }],
-            toDOM(): DOMOutputSpec { return ['blockquote', 0]; },
+            toDOM(node): DOMOutputSpec { return ['blockquote', withSuffix(node), 0]; },
         },
         container: {
             content: 'block+',
@@ -474,8 +476,16 @@ export const editorSchema = new Schema({
         list_item: {
             content: 'block+',
             defining: true,
+            attrs: {
+                /**
+                 * The item's `{…}`, verbatim, written at the end of its first
+                 * paragraph (`- text {.a}`) at any depth; `null` for none. Not an
+                 * `attrsSuffix`: that is a top-level block's, which a nested one loses.
+                 */
+                literal: { default: null as string | null },
+            },
             parseDOM: [{ tag: 'li' }],
-            toDOM(): DOMOutputSpec { return ['li', 0]; },
+            toDOM(node): DOMOutputSpec { return ['li', domAttrsOf(node.attrs.literal as string | null), 0]; },
         },
         code_block: {
             content: 'text*',
@@ -514,7 +524,8 @@ export const editorSchema = new Schema({
         },
         table: {
             ...tableSpecs.table,
-            attrs: { ...sourceAttrs },
+            attrs: { ...sourceAttrs, ...suffixAttrs },
+            toDOM(node): DOMOutputSpec { return ['table', withSuffix(node), ['tbody', 0]]; },
         },
         table_row: tableSpecs.table_row,
         table_header: spanless(tableSpecs.table_header),
