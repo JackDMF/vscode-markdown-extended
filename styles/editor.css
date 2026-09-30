@@ -440,9 +440,6 @@ img.mep-pending-range {
 .mep-probing .mep-toolbar-layer,
 .mep-probing .mep-hint { pointer-events: none !important; }
 
-/* The room above a block whose bar has no place beside it: empty, the bar's height, while the bar shows. */
-.ProseMirror > .mep-bar-room, .ProseMirror .mep-bar-room { display: block; user-select: none; }
-
 /* A set-verb's menu (a table's Row, Column, Align) is the formatting toolbar's menu, narrower. */
 .mep-object-menu { min-width: 180px; }
 

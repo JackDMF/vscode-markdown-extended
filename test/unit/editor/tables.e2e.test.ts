@@ -94,7 +94,7 @@ suite('Editor pipe tables (e2e)', () => {
             if (hint) {
                 hint.hidden = true;
             }
-            // A room the last test was given scrolled the page; each test starts at its top.
+            // Each test starts at the page's top, whatever the last one scrolled to.
             window.scrollTo(0, 0);
         });
         await delay(300);
@@ -351,7 +351,6 @@ suite('Editor pipe tables (e2e)', () => {
             return { left: bar.left, right: table.right, top: bar.top, tableTop: table.top };
         }, BAR);
         assert.ok(beside.left > beside.right && Math.abs(beside.top - beside.tableTop) < 2, `beside the table's first line, top-aligned: ${JSON.stringify(beside)}`);
-        assert.strictEqual(await page.$('.mep-bar-room'), null, 'a table with room beside it is given none above');
         await shot('02-table-bar.png');
 
         await clickAt('After', 2);
@@ -360,42 +359,74 @@ suite('Editor pipe tables (e2e)', () => {
         assert.strictEqual(await page.$('.ProseMirror table.mep-table-active'), null, 'and the outline with the caret');
     });
 
-    test('a block with text in every place its bar could go gets room above for it; the caret\'s line stays where it was', async function () {
+    test('a block with text in every place its bar could go shows it above, right-aligned, over the line above; nothing moves', async function () {
         this.timeout(15000);
         // Text at the column's right edge above the container, below it, and in its own first line.
         const long = 'Inside the container, a first line of prose long enough to run across the whole width of the column and on past its right edge, so its first line is full.';
         await showDocument(`Right-aligned text above. {style="text-align: right"}\n\n::: note\n${long}\n:::\n\nRight-aligned text below. {style="text-align: right"}\n`, 'Inside');
+        const layout = () => page.evaluate(() => ({
+            block: (document.querySelector('.ProseMirror div[data-mep-container]') as HTMLElement).getBoundingClientRect().top,
+            caret: (document.getSelection() as Selection).rangeCount > 0 ? (document.getSelection() as Selection).getRangeAt(0).getBoundingClientRect().top : null,
+            scroll: window.scrollY,
+        }));
         await clickAt('Inside', 2);
-        const caretTop = () => page.evaluate(() => (document.getSelection() as Selection).getRangeAt(0).getBoundingClientRect().top);
-        const before = await caretTop();
+        const before = await layout();
         await page.waitForSelector(BAR, { timeout: 2000 });
-        await page.waitForSelector('.mep-bar-room', { timeout: 1000 });
-        await delay(50);
+        await delay(100);
         assert.strictEqual((await barState()).object, 'container');
-        assert.deepStrictEqual(await coveredText(BAR), [], 'the bar stands in the room, over no text');
-        assert.ok(Math.abs((await caretTop()) - before) < 1.5, 'the room moved the content above, not the line being typed');
-        // The room scrolled under the sticky row: the bar is placed again, and still covers nothing.
-        const underRow = await page.evaluate(() => {
-            const room = (document.querySelector('.mep-bar-room') as HTMLElement).getBoundingClientRect();
-            const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
-            return room.bottom - row.bottom + 4;
-        });
-        await page.evaluate(by => window.scrollBy(0, by), underRow);
-        await delay(100);
-        assert.deepStrictEqual(await coveredText(BAR), [], 'with its room under the row the bar covers no content, the container\'s first line included');
-        await page.evaluate(() => window.scrollTo(0, 0));
-        await delay(100);
-        await clickAt('Right-aligned', 2);
-        await delay(100);
-        assert.strictEqual(await page.$('.mep-bar-room'), null, 'the room goes with the bar');
+        assert.deepStrictEqual(await layout(), before, 'showing the bar moved nothing: the block, the caret\'s line and the scroll are where they were');
+        const where = await page.evaluate(sel => {
+            const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+            const block = (document.querySelector('.ProseMirror div[data-mep-container]') as HTMLElement).getBoundingClientRect();
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const column = root.getBoundingClientRect().right - (parseFloat(getComputedStyle(root).paddingRight) || 0);
+            return { bottom: bar.bottom, top: block.top, right: bar.right, column };
+        }, BAR);
+        assert.ok(where.bottom <= where.top && Math.abs(where.right - where.column) < 2, `above the block, right-aligned to the column: ${JSON.stringify(where)}`);
+        assert.strictEqual(await page.$('.mep-bar-room'), null, 'no room is made for it');
 
-        // A block with a free place for its bar needs no room, and nothing moves: a short line ends far from it.
+        // A block with a free place for its bar takes it, and nothing moves either: a short line ends far from it.
         await showDocument('Short line.\n\n::: note\nInside the container.\n:::\n', 'Inside');
         await clickAt('Inside', 2);
+        const shortBefore = await layout();
         await page.waitForSelector(BAR, { timeout: 2000 });
-        await delay(50);
-        assert.strictEqual(await page.$('.mep-bar-room'), null);
+        await delay(100);
+        assert.deepStrictEqual(await layout(), shortBefore);
         assert.deepStrictEqual(await coveredText(BAR), []);
+    });
+
+    test('a full-width table under a paragraph: its bar shows above it and the table does not move', async function () {
+        this.timeout(15000);
+        const wide = [
+            '| Requirement | Statement | Verification |',
+            '| :---------- | :-------- | :----------- |',
+            '| FRS-001 | The editor shows the document as the preview renders it, block for block, with nothing added and nothing taken away, whatever the width of the window it is shown in. | Inspection of every construct |',
+            '| FRS-002 | A bar that appears for an object never moves the text around it, so the reader keeps their place. | Page test |',
+        ].join('\n');
+        const intro = 'The table below is as wide as the column, so no place beside it is free for its bar. The paragraph above it ends short of the right edge.';
+        await showDocument(`${intro}\n\n${wide}\n\nAfter the table, a closing paragraph that also runs across most of the column so the place below is taken as well.\n`, 'FRS-001');
+        const tableTop = () => page.evaluate(() => ({
+            table: (document.querySelector('.ProseMirror > table') as HTMLElement).getBoundingClientRect().top,
+            scroll: window.scrollY,
+        }));
+        const widths = await page.evaluate(() => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const column = root.getBoundingClientRect().right - (parseFloat(getComputedStyle(root).paddingRight) || 0);
+            return { table: (document.querySelector('.ProseMirror > table') as HTMLElement).getBoundingClientRect().right, column };
+        });
+        assert.ok(widths.column - widths.table < 40, `the table fills the column: ${JSON.stringify(widths)}`);
+        await clickAt('FRS-002', 2);
+        const before = await tableTop();
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await page.waitForSelector('.mep-table-column', { timeout: 1000 });
+        await delay(100);
+        assert.deepStrictEqual(await tableTop(), before, 'the table\'s top and the scroll are where they were before its bar showed');
+        const where = await page.evaluate(sel => ({
+            bar: (document.querySelector(sel) as HTMLElement).getBoundingClientRect().bottom,
+            table: (document.querySelector('.ProseMirror > table') as HTMLElement).getBoundingClientRect().top,
+        }), BAR);
+        assert.ok(where.bar <= where.table, `the bar stands above the table: ${JSON.stringify(where)}`);
+        await shot('02-table-bar-fullwidth.png');
     });
 
     test('Row ▾ inserts above and below and deletes, Column ▾ inserts left and right and deletes: each a tidy table', async function () {

@@ -1211,8 +1211,9 @@ the editor or in a bar. `Alt+Enter` (a `handleKeyDown` prop, which no other keym
 binds) skips the delay and focuses the first verb; the arrow keys move between verbs
 (wrapping), `Enter` chooses, `Esc` returns the focus to the text.
 
-**Where it sits** (`place`). *A block's bar never covers text* (Daniel, 2026-09-29, after the
-table screenshots showed a bar over the paragraph above its table). For every block-placed
+**Where it sits** (`place`). *A block's bar covers no text where it can help it, and never moves
+layout* (Daniel, 2026-09-29, after the table screenshots showed a bar over the paragraph above its
+table; 2026-09-30, after a full-width table's bar made the layout jump). For every block-placed
 object — a table, a container, an admonition, a heading, a block with attributes, a source
 block, injected content, the front matter — `placeBlock` takes the first of these places that
 holds no text: beside the block's first line, outside it, top-aligned with it, where the block
@@ -1220,17 +1221,14 @@ ends short of the column's right edge (a table, a short heading; a heading or a 
 attributes is measured by its text, whose lines in the bar's band must all end before it, a
 block that draws a box by its box); above the block, right-aligned to the column; inside the
 block's own box at its top right (a source block, a container, an admonition whose first line
-is short); below it, right-aligned. Where none is free, the bar goes above the block into room
-the block is given while the bar shows — a widget of the bar's height before it (and before
-its lens row), `Room` in the plugin's state — so the line above stays readable; once given, a
-room stays while that bar shows, since the band it makes is free and taking it back would move
-the block back under the bar — but a given room is only tried first, not trusted: when its band
-is not free (scrolled under the sticky row), the ladder is tried again, and the bar stays in
-its room, covering nothing, only when nothing else is free. A room moves what is below it, so the view scrolls by its height
-at once, keeping what the person is at — the pointed-at block, else the caret's line — where it
-was: a pointed-at block that slid down as its bar appeared would leave the pointer, and a click
-aimed at it would land on the block above (the real-mouse tests caught exactly that). The places
-before the room move nothing, which is why they come first. **One ladder, one notion of free**
+is short); below it, right-aligned. Where none is free, the bar goes above the block,
+right-aligned to the column, regardless — over whatever stands there, usually the empty tail of
+the line above, as a heading's bar always stood. It is never given room in the document: an
+earlier version made a widget of the bar's height before the block and scrolled to compensate,
+and the block jumped down under the reader every time its bar appeared — the layout moving is
+worse than a bar over the end of a line, which the bar leaves again with the caret. A bar is
+floating chrome and nothing else; the page test holds the block's top, the caret's line and the
+scroll to where they were before the bar showed. **One ladder, one notion of free**
 (`firstFree` in `webview/clearance.ts`): every bar — an object's, a block's, the selection
 bubble, the toolbar's field bar — gives only its candidate places in order, and `firstFree`
 refuses, the same way for all, a place under the sticky row or past the window's bottom, over
