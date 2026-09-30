@@ -1131,7 +1131,13 @@ heavy as frequent ones. So the surfaces now divide the work:
   chevron, hairlines separate the groups, and a narrow window scrolls the row rather than
   wrapping it, so no control moves. Only the five native marks are in it, their glyph the
   real element held to the button's height and minimum width, so a stylesheet can change
-  how the glyph looks but not the row's geometry. The bubble carries the same five, the
+  how the glyph looks but not the row's geometry. The height is the glyph's *border box*,
+  and the button clips at its own edge: what a stylesheet draws around the text — a note
+  reference's underline (a border), a code chip's padding and background, a key's frame —
+  is drawn whole. Held by its content box, such a glyph stood taller than the button and
+  was cut, and whether a 1.5px underline survived depended on the sub-pixel offset the bar
+  stood at: the same bubble showed a user's note style above one line and not above the
+  next (2026-09-30). The bubble carries the same five, the
   extension's five marks and the two notes (`inBubble`).
 - **A menu entry** is where the fidelity lives: the entry is the element the parser makes
   (`sample`), styled by the cascade, beside its syntax. Every entry has one height; a block

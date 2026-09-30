@@ -280,10 +280,24 @@ img.mep-pending-range {
 .mep-tool.mep-disabled:hover { background: none; outline: none; }
 
 /* A mark's glyph is its real element, held to the button: centred in a fixed
-   minimum width, one line of the control's inner height, clipped. */
-.mep-mark-tool { justify-content: center; min-width: 28px; }
+   minimum width, one line of the control's inner height, clipped.
+   The height it is held to is its border box's, not its content's: what the
+   cascade gives the element around its text — a note reference's underline
+   (a border), a code chip's padding and background, a key's frame — is drawn
+   inside the button, never cut at its edge. Held by the content box, a sample
+   with a border or padding stood taller than the button, and whether its
+   1.5px underline survived the clipping depended on the sub-pixel row the bar
+   happened to stand on, so the same bubble drew the note's style above one
+   line and not above the next. Its text, one 20px line, is centred in what
+   remains (`inline-flex`), overflowing into the padding where that is less.
+   The button clips at its own edge, not inside its 1px border: a sample sits
+   on the row's baseline, and a smaller font (a code chip's) puts its box a
+   pixel off the centre. */
+.mep-mark-tool { justify-content: center; min-width: 28px; overflow: clip; overflow-clip-margin: border-box; }
 .mep-mark-tool .mep-sample > * {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
     max-height: 20px;
     margin: 0;
     line-height: 20px;

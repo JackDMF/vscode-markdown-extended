@@ -49,6 +49,7 @@
 - **A link in a note whose address holds the note's marker closed the note inside the URL.** `[C++](https://en.wikipedia.org/wiki/C++)` in a sidenote was written with the raw `++`, which the notes plugin read as the note's end. A run of the marker character is now percent-encoded in a destination and a character reference in a title, and a bare link holding it is written as `[…](…)`.
 - **A note made inside superscript, subscript or inline code disappeared on save**: it took the surrounding mark, whose text is written as it is. It no longer does.
 - **A Ctrl+click on a malformed link (`http:////x`) was an unhandled error** instead of a warning in the log.
+- **The bubble drew a note's underline over one line and not over the next.** A toolbar glyph was held to its button by its content box, so a sample whose stylesheet gives it a border or padding — a sidenote reference underlined by a 1.5px border, a code chip, a key's frame — stood taller than the button and was cut at its edge; whether the underline survived depended on the fraction of a pixel the bubble happened to stand at. A glyph is now held by its whole box and the button clips at its own edge, so the row and the bubble draw a sample's border, padding and background whole, wherever they stand.
 
 ### ⚠️ Limits
 
