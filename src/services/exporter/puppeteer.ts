@@ -12,6 +12,34 @@ import { ExtensionContext } from '../common/extensionContext';
 import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
 
 /**
+ * The locale Chrome formats the PDF header/footer `date` in, or undefined to leave Chrome's own.
+ * The `markdownExtended.pdf.locale` setting wins; else VS Code's display language. Empty and the
+ * pseudo-locale `qps-ploc` (VS Code's localisation test language) name no real language.
+ */
+export function exportLocale(setting: string | undefined, envLanguage: string | undefined): string | undefined {
+    const pick = (v: string | undefined) => (v ?? '').trim();
+    const locale = pick(setting) || pick(envLanguage);
+    return locale === '' || locale.toLowerCase() === 'qps-ploc' ? undefined : locale;
+}
+
+/**
+ * Launch options of the export browser. Chrome fills `<span class='date'>` in the language it was
+ * started with, which takes `--lang` on Windows and `LANG` on Linux/macOS.
+ */
+export function launchOptions(executablePath: string | undefined, locale: string | undefined): puppeteer.LaunchOptions {
+    const args = ['--no-sandbox', '--disable-setuid-sandbox']; // For compatibility
+    if (locale) {
+        args.push(`--lang=${locale}`);
+    }
+    return {
+        executablePath,
+        headless: true, // Use headless mode
+        args,
+        ...(locale ? { env: { ...process.env, LANG: locale } as Record<string, string | undefined> } : {})
+    };
+}
+
+/**
  * Puppeteer-based exporter for PDF, PNG, and JPG formats.
  * Implements singleton pattern for consistent exporter access.
  */
@@ -74,11 +102,10 @@ export class PuppeteerExporter implements MarkdownExporter {
             const executablePath = await browserManager.ensureBrowser(progress);
             
             progress.report({ message: "Initializing browser..." });
-            browser = await puppeteer.launch({
-                executablePath: executablePath || undefined,
-                headless: true, // Use headless mode
-                args: ['--no-sandbox', '--disable-setuid-sandbox'] // For compatibility
-            });
+            const setting = vscode.workspace.getConfiguration('markdownExtended', items[0]?.uri).get<string>('pdf.locale');
+            browser = await puppeteer.launch(
+                launchOptions(executablePath || undefined, exportLocale(setting, vscode.env.language))
+            );
             page = await browser.newPage();
 
             // Process all export items sequentially

@@ -91,6 +91,7 @@ export class MermaidRenderer {
         const mermaidSource = await fsPromises.readFile(this.mermaidHarnessPath(), 'utf8');
         const executablePath = await BrowserManager.instance.ensureBrowser();
 
+        // No --lang here: diagrams format no dates (see exportLocale for the PDF export's browser).
         const browser = await puppeteer.launch({
             executablePath: executablePath || undefined,
             headless: true,

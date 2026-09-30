@@ -441,6 +441,13 @@
           "order": 19,
           "scope": "resource"
         },
+        "markdownExtended.pdf.locale": {
+          "type": "string",
+          "default": "",
+          "description": "%markdownExtended.configuration.pdfLocale%",
+          "order": 22,
+          "scope": "resource"
+        },
         "markdownExtended.pdf.headerTemplate": {
           "type": "string",
           "default": "<div style=\"font-size: 9px; margin-left: 1cm;\"> <span class='title'></span></div> <div style=\"font-size: 9px; margin-left: auto; margin-right: 1cm; \"> <span class='date'></span></div>",
@@ -720,6 +727,7 @@
     "glob": "^11.0.3",
     "mocha": "^11.7.5",
     "path-browserify": "^1.0.1",
+    "pdf-parse": "^2.4.5",
     "sinon": "^21.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.3",
