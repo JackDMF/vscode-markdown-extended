@@ -39,11 +39,11 @@ import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
-import { FieldStep, InlineChoice, InlineField, fieldHeading } from './inlineField';
+import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
 import { NoteNodeName, unwrapNote } from './notes';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
-    BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, changeAdmonitionTransaction, changeContainerTransaction,
+    BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
@@ -173,7 +173,13 @@ interface Presentation {
  * (its own verbs are the properties panel's header), with none offered.
  */
 function barless(object: EditorObject, presentation: Presentation): boolean {
-    return presentation.verbs.length === 0 && (object.kind === 'heading' || object.kind === 'front_matter');
+    if (presentation.verbs.length === 0) {
+        return object.kind === 'heading' || object.kind === 'front_matter';
+    }
+    // A bar whose one verb is Attributes…, on a block with no literal yet — every plain
+    // heading — is chrome on every such block; the menu reaches it, and the verb joins
+    // the bar once the block has others (lenses, code actions) or a literal.
+    return 'node' in object && literalOf(object.node) === null && presentation.verbs.every(v => v.id === 'block-attributes');
 }
 
 const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = {
@@ -614,7 +620,8 @@ class ObjectBar {
             // A prefilled field shows no placeholder: the label says what the value is.
             label.textContent = fieldHeading(this.el.getAttribute('aria-label') ?? '', spec.label);
         }
-        this.el.replaceChildren(...(label ? [label] : []), field.el);
+        const keys = 'keys' in spec && spec.keys ? [fieldKeys(spec.keys)] : [];
+        this.el.replaceChildren(...(label ? [label] : []), field.el, ...keys);
         field.focus();
         if (this.object) {
             this.events.fieldOpened(this.object);

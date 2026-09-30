@@ -41,6 +41,8 @@ export interface FieldStep {
     label: string;
     placeholder?: string;
     complete?: Completer;
+    /** The keys and the syntax the field takes, drawn at its right in the bar (`↵ set · Esc cancel · …`). */
+    keys?: string;
     commit(value: string): FieldStep | void;
 }
 
@@ -75,6 +77,15 @@ export interface InlineFieldOptions {
  */
 export function fieldHeading(object: string, field: string): string {
     return object === '' || object.toLowerCase().endsWith(field.toLowerCase()) ? object || field : `${object} · ${field}`;
+}
+
+/** The keys line a bar draws at a field's right (`FieldStep.keys`). */
+export function fieldKeys(text: string): HTMLElement {
+    const el = document.createElement('span');
+    el.className = 'mep-field-keys';
+    el.setAttribute('aria-hidden', 'true');
+    el.textContent = text;
+    return el;
 }
 
 /** The completion list's footer: its keys, the glyphs VS Code's own keybinding labels use. */

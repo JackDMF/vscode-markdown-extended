@@ -482,6 +482,16 @@ img.mep-pending-range {
 .mep-object-verb[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 .mep-object-verb[aria-disabled="true"]:hover { background: var(--vscode-button-secondaryBackground, transparent); }
 
+/* What a field takes and its keys, at its right in the bar: dimmed, never a control. */
+.mep-field-keys {
+    margin-left: 6px;
+    padding-left: 6px;
+    border-left: 1px solid var(--vscode-editorWidget-border, #8884);
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, #888);
+}
+
 /* The inline field: one line, prefilled, in the bar in place of the verbs. */
 .mep-inline-field {
     box-sizing: border-box;

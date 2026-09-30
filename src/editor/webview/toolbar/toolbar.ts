@@ -30,7 +30,7 @@ import type { LinkChoice, LinkedFile } from '../../protocol';
 import { editorSchema } from '../../schema';
 import { firstFree } from '../clearance';
 import { showHint } from '../hint';
-import { FieldStep, InlineField, fieldHeading } from '../inlineField';
+import { FieldStep, InlineField, fieldHeading, fieldKeys } from '../inlineField';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
@@ -39,7 +39,7 @@ import {
     applySpanTransaction, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
     LINK_LOCK, literalRefusal, objectAtSelection, spanLockReason,
 } from '../objects';
-import { attributesStep } from '../attributes';
+import { ATTRIBUTES_FIELD_KEYS, attributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
     MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
@@ -820,6 +820,7 @@ class ToolbarView implements PluginView {
             value: SPAN_FIELD_PREFILL.value,
             caret: SPAN_FIELD_PREFILL.caret,
             label: 'Attributes',
+            keys: ATTRIBUTES_FIELD_KEYS,
             commit: value => {
                 view.focus();
                 const refusal = literalRefusal(value, 'span');
@@ -996,7 +997,7 @@ class ToolbarView implements PluginView {
             });
             field.el.dataset.verb = verb;
             label.textContent = fieldHeading(barLabel, step.label);
-            bar.replaceChildren(label, field.el);
+            bar.replaceChildren(label, field.el, ...(step.keys ? [fieldKeys(step.keys)] : []));
             this.fieldBar = { bar, field };
             return field;
         };

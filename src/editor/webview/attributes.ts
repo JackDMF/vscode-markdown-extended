@@ -2,7 +2,8 @@
  * **Attributes…**: the field that sets the markdown-it-attrs literal of a
  * block — the Formatting menu's entry for the block at the caret, and the verb
  * of the same name on the bars of the blocks that have one (a heading, a table,
- * a block already carrying a literal). One step for every surface, so the menu
+ * a block already carrying a literal — a bar is not drawn for this verb alone).
+ * One step for every surface, so the menu
  * and a bar cannot prefill, refuse or announce differently; what the literal
  * does to the document is `commitAttributes` (`objects.ts`).
  *
@@ -16,7 +17,7 @@
  * | Heading | at the end of its line: `## Title {.x}`; its `#id` is the heading's anchor | the `<hN>` |
  * | List item | at the end of its first paragraph, at any depth: `- text {.x}` | the `<li>` |
  * | Quote | a line of its own under its last paragraph, inside it: `> {.x}` | the `<blockquote>` |
- * | Table | a line of its own under a blank line after it: `{.x}` | the `<table>` |
+ * | Table | a line of its own under a blank line after it: `{.x}` (one right under it stays there) | the `<table>` |
  * | Fenced code | after the opening fence's info string: ```` ```js {.x} ```` | the `<code>` |
  * | Rule (selected) | after the rule: `--- {.x}` | the `<hr>` |
  * | List (one it has already) | where it stood: under its last line, or under a blank line | the `<ul>`/`<ol>` |
@@ -47,6 +48,12 @@ import { SPAN_FIELD_PREFILL } from './toolbar/actions';
 /** The field's own label; its heading is the block's name before it (`Paragraph · Attributes`). */
 export const ATTRIBUTES_FIELD_LABEL = 'Attributes';
 
+/**
+ * What the attributes field says at its right — its keys, then the syntax it
+ * takes, since `{.}` alone shows only the class. **Span with class** shows it too.
+ */
+export const ATTRIBUTES_FIELD_KEYS = '↵ set · Esc cancel · {.class #id key=value}';
+
 /** What the caret hint says once a literal is set or removed: the change is on the page, the way back is named. */
 export const ATTRIBUTES_SET_HINT = 'Attributes set';
 export const ATTRIBUTES_REMOVED_HINT = 'Attributes removed';
@@ -64,6 +71,7 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
         value: literal ?? SPAN_FIELD_PREFILL.value,
         caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
         label: ATTRIBUTES_FIELD_LABEL,
+        keys: ATTRIBUTES_FIELD_KEYS,
         commit: value => {
             view.focus();
             const made = commitAttributes(view.state, target, value);

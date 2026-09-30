@@ -333,7 +333,7 @@ suite('Editor code actions as object verbs (e2e)', () => {
         assert.strictEqual((await actionRequests()).length, 1, 'the answer is kept for the node: not asked again');
     });
 
-    test('a plain heading without actions shows its own verb only: Attributes…', async function () {
+    test('a plain heading without actions shows no bar: Attributes… alone does not make one', async function () {
         this.timeout(10000);
         await clickText('Plain heading');
         await delay(INLINE_DELAY_MS + 150);
@@ -341,7 +341,7 @@ suite('Editor code actions as object verbs (e2e)', () => {
         assert.strictEqual(request?.blockIndex, 2);
         await (editor as EditorPage).send({ type: 'actions', requestId: (request as { requestId: number }).requestId, blockIndex: 2, items: [] });
         await delay(100);
-        assert.deepStrictEqual((await barState()).children, ['mep-object-label', 'block-attributes']);
+        assert.strictEqual(await page.$(BAR), null);
     });
 
     test('a source block\'s bar has its own verbs, a separator, then the actions', async function () {

@@ -4,9 +4,10 @@ import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } from '../../../src/editor/webview/attributes';
+import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } from '../../../src/editor/webview/attributes';
 import { CONTAINER_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
+import type { WebviewMessage } from '../../../src/editor/protocol';
 import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -197,6 +198,7 @@ suite('Editor Attributes… (e2e)', () => {
             };
         }, FIELD);
         assert.deepStrictEqual(opened, { heading: 'Paragraph · Attributes', value: '{.}', caret: [2, 2], focused: true });
+        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-field-keys`, el => el.textContent), ATTRIBUTES_FIELD_KEYS, 'the keys and the syntax at the field\'s right');
         const placed = await page.evaluate(sel => {
             const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
             const para = Array.from(document.querySelectorAll('.ProseMirror p')).find(p => p.textContent?.includes('configurable')) as HTMLElement;
@@ -233,13 +235,22 @@ suite('Editor Attributes… (e2e)', () => {
         assert.strictEqual((await hint()).text, `${ATTRIBUTES_REMOVED_HINT} — Ctrl+Z`);
     });
 
-    test('a heading\'s bar carries Attributes…: the literal goes at the end of its line', async function () {
+    test('a plain heading grows no bar for Attributes… alone; with another extension\'s action its bar carries it first, and the literal goes at the end of its line', async function () {
         this.timeout(15000);
         await showDocument(DOC);
         await clickAt('Overview', 3);
-        await page.waitForSelector(BAR, { visible: true, timeout: INLINE_DELAY_MS + 2000 });
+        await delay(INLINE_DELAY_MS + 200);
+        assert.strictEqual(await page.$(BAR), null, 'no bar whose one verb is Attributes…');
+        const asked = (await (editor as EditorPage).posted())
+            .filter((m): m is Extract<WebviewMessage, { type: 'actionsFor' }> => m.type === 'actionsFor');
+        const request = asked[asked.length - 1];
+        assert.strictEqual(request?.blockIndex, 0, 'the heading\'s actions were asked for');
+        await (editor as EditorPage).send({
+            type: 'actions', requestId: request.requestId, blockIndex: 0, items: [{ id: 'q.0', title: 'Quick fix', kind: 'quickfix' }],
+        });
+        await page.waitForSelector(BAR, { visible: true, timeout: 2000 });
         const verbs = await page.$$eval(`${BAR} button[data-verb]`, vs => vs.map(v => [(v as HTMLElement).dataset.verb, v.textContent]));
-        assert.deepStrictEqual(verbs[0], ['block-attributes', 'Attributes…']);
+        assert.deepStrictEqual(verbs, [['block-attributes', 'Attributes…'], ['code-action:q.0', 'Quick fix']]);
         await shot('04-heading-bar-attributes.png');
         await clickVerb('block-attributes');
         const field = `${BAR} .mep-inline-field`;
