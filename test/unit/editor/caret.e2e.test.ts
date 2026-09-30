@@ -92,4 +92,42 @@ suite('Editor caret (e2e)', () => {
         await delay(250);
         assert.deepStrictEqual((await lastCaret())?.position, null);
     });
+
+    test('a key pressed before the browser reports the click\'s selection change acts where the click put the caret', async function () {
+        this.timeout(20000);
+        // The caret rests in the second paragraph, and ProseMirror knows it.
+        await page.click('.ProseMirror > p:nth-of-type(2)');
+        await page.keyboard.press('Home');
+        await delay(100);
+        // A busy page: the browser's own `selectionchange` for the next click reaches
+        // ProseMirror only after the keys (the lens suite's flake, made certain). The
+        // page's own, dispatched ahead of a key, is let through.
+        await page.evaluate(() => {
+            const w = window as unknown as { held: number; hold?: (e: Event) => void };
+            w.held = 0;
+            w.hold = (e: Event) => {
+                if (e.isTrusted) {
+                    w.held++;
+                    e.stopImmediatePropagation();
+                }
+            };
+            window.addEventListener('selectionchange', w.hold, true);
+        });
+        const end = await page.$eval('.ProseMirror > p', el => {
+            const r = el.getBoundingClientRect();
+            return { x: r.right - 2, y: r.top + r.height / 2 };
+        });
+        await page.mouse.click(end.x, end.y);
+        await page.keyboard.press('Enter');
+        await page.keyboard.type('New.');
+        const held = await page.evaluate(() => {
+            const w = window as unknown as { held: number; hold?: (e: Event) => void };
+            window.removeEventListener('selectionchange', w.hold as (e: Event) => void, true);
+            return w.held;
+        });
+        assert.ok(held > 0, 'the click\'s selection change was held back');
+        await settle();
+        const text = (await (editor as EditorPage).edits()).pop()?.text ?? '';
+        assert.ok(text.startsWith('Intro paragraph.\n\nNew.\n\nYXSecond'), `Enter split at the click, not at the caret before it: ${JSON.stringify(text)}`);
+    });
 });

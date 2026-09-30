@@ -80,9 +80,45 @@ function markdownKeymap(): Plugin {
     });
 }
 
+/**
+ * A key acts where the caret is shown, not where ProseMirror last read it.
+ *
+ * A click moves the DOM caret at once, but ProseMirror takes the new position
+ * into its state only when the browser's `selectionchange` event reaches it —
+ * a task of its own, which Chromium may run after input it already has queued.
+ * On a busy page a key pressed right after the click is then handled against
+ * the selection from before it: Enter split the block the caret had left, and
+ * the text typed after it went there (the lens suite's "Inserted.Intro.", and
+ * text typed into a heading the caret had been in). ProseMirror's `keydown`
+ * flushes pending DOM mutations, not a selection change it has not heard of.
+ *
+ * So before any key handler — `handleDOMEvents` run ahead of every plugin's
+ * `handleKeyDown`, the completion list's included — the page tells ProseMirror
+ * the selection changed, and ProseMirror reads it by its own rules (a widget's
+ * or a node view's selection it ignores stays ignored; an unchanged one is a
+ * no-op). Only for a key on the editable text itself, and not while an IME
+ * composes: a field inside a node view keeps its own selection.
+ */
+export function domSelectionFirst(): Plugin {
+    return new Plugin({
+        props: {
+            handleDOMEvents: {
+                keydown(view, event) {
+                    if (event.target === view.dom && !event.isComposing && event.keyCode !== 229 && view.hasFocus()) {
+                        view.dom.ownerDocument.dispatchEvent(new Event('selectionchange'));
+                    }
+                    return false;
+                },
+            },
+        },
+    });
+}
+
 /** Every plugin the editor state is built with, in the order they must run. */
 export function editorPlugins(): Plugin[] {
     return [
+        // First: every key below reads the selection the DOM shows.
+        domSelectionFirst(),
         markdownInputRules(),
         // Ahead of the Markdown keys: Tab, Enter and Backspace mean something else inside a note,
         // Enter and Backspace in an empty paragraph of a container or an admonition,
