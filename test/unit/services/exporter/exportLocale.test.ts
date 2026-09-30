@@ -46,48 +46,100 @@ suite('formatPrintDate', () => {
         assert.match(fold(formatPrintDate('en-CA', now)), /^2026-09-30, 1:20 p\.m\.$/);
     });
 
-    test('an invalid tag falls back to the default locale and warns once, naming the setting', () => {
+    test('a malformed tag falls back to the default locale and warns once, naming the setting', () => {
         const warnings: string[] = [];
         const text = formatPrintDate('not_a_locale!', now, m => warnings.push(m));
         assert.strictEqual(text, formatPrintDate(undefined, now));
         assert.strictEqual(warnings.length, 1);
         assert.ok(warnings[0].includes('markdownExtended.pdf.locale'));
     });
+
+    test('a well-formed but unknown tag is invalid too', () => {
+        for (const tag of ['German', 'xx-YY']) {
+            const warnings: string[] = [];
+            assert.strictEqual(formatPrintDate(tag, now, m => warnings.push(m)), formatPrintDate(undefined, now), tag);
+            assert.strictEqual(warnings.length, 1, tag);
+        }
+    });
 });
 
 suite('fillPrintDate', () => {
     const D = '30.09.26, 13:20';
 
-    test('fills an empty span in single and double quotes', () => {
-        assert.strictEqual(fillPrintDate(`<span class='date'></span>`, D), `<span class='date'>${D}</span>`);
-        assert.strictEqual(fillPrintDate(`<span class="date"></span>`, D), `<span class="date">${D}</span>`);
+    test('fills an empty span in single and double quotes, and renames the class', () => {
+        assert.strictEqual(fillPrintDate(`<span class='date'></span>`, D), `<span class='print-date'>${D}</span>`);
+        assert.strictEqual(fillPrintDate(`<span class="date"></span>`, D), `<span class="print-date">${D}</span>`);
+    });
+
+    test('the filled element never carries class date, which Chrome would overwrite', () => {
+        const out = fillPrintDate(`<span class="a date b"></span><div class=date></div>`, D);
+        const lists = [...out.matchAll(/class="([^"]*)"/g)].map(m => m[1].split(' '));
+        assert.strictEqual(lists.length, 2, out);
+        assert.ok(lists.every(l => l.includes('print-date') && !l.includes('date')), out);
     });
 
     test('tolerates whitespace, other attributes and unquoted values', () => {
-        assert.strictEqual(fillPrintDate(`<span  style="x" class = "date" > </span>`, D), `<span  style="x" class = "date" >${D}</span>`);
-        assert.strictEqual(fillPrintDate(`<span class=date></span>`, D), `<span class=date>${D}</span>`);
+        assert.strictEqual(fillPrintDate(`<span  style="x" class = "date" > </span>`, D), `<span  style="x" class = "print-date" >${D}</span>`);
+        assert.strictEqual(fillPrintDate(`<span class=date></span>`, D), `<span class="print-date">${D}</span>`);
+    });
+
+    test('keeps every other class and attribute, in place', () => {
+        assert.strictEqual(fillPrintDate(`<span id="d" class="a date b" style="font-size: 9px"></span>`, D),
+            `<span id="d" class="a print-date b" style="font-size: 9px">${D}</span>`);
     });
 
     test('matches date among other classes, not as a substring of one', () => {
-        assert.strictEqual(fillPrintDate(`<span class="a date b"></span>`, D), `<span class="a date b">${D}</span>`);
         const other = `<span class="update"></span><span class="date-x"></span>`;
         assert.strictEqual(fillPrintDate(other, D), other);
     });
 
-    test('fills several spans and leaves the other spans alone', () => {
+    test('fills several elements and leaves the others alone', () => {
         const t = `<span class='title'></span> <span class='date'></span> | <span class='pageNumber'></span> <span class='date'></span>`;
         assert.strictEqual(fillPrintDate(t, D),
-            `<span class='title'></span> <span class='date'>${D}</span> | <span class='pageNumber'></span> <span class='date'>${D}</span>`);
+            `<span class='title'></span> <span class='print-date'>${D}</span> | <span class='pageNumber'></span> <span class='print-date'>${D}</span>`);
     });
 
-    test('a template without a date span is unchanged', () => {
+    test('a template without a date element is unchanged', () => {
         const t = `<div style="font-size: 9px"><span class='pageNumber'></span></div>`;
         assert.strictEqual(fillPrintDate(t, D), t);
         assert.strictEqual(fillPrintDate('', D), '');
     });
 
-    test('content already in the span is replaced', () => {
-        assert.strictEqual(fillPrintDate(`<span class='date'>old</span>`, D), `<span class='date'>${D}</span>`);
+    test('content already in the element is replaced', () => {
+        assert.strictEqual(fillPrintDate(`<span class='date'>old</span>`, D), `<span class='print-date'>${D}</span>`);
+    });
+
+    test('an outer non-date element does not swallow an inner date element', () => {
+        assert.strictEqual(fillPrintDate(`<span class="wrap">Stand: <span class="date"></span></span>`, D),
+            `<span class="wrap">Stand: <span class="print-date">${D}</span></span>`);
+    });
+
+    test('any element name counts', () => {
+        assert.strictEqual(fillPrintDate(`<div class="date"></div>`, D), `<div class="print-date">${D}</div>`);
+        assert.strictEqual(fillPrintDate(`<p class="x date">old</p>`, D), `<p class="x print-date">${D}</p>`);
+    });
+
+    test('a > inside a quoted attribute does not end the tag', () => {
+        assert.strictEqual(fillPrintDate(`<span title="a>b" class="date"></span>`, D), `<span title="a>b" class="print-date">${D}</span>`);
+        assert.strictEqual(fillPrintDate(`<span class="date" title='a>b'>x</span>`, D), `<span class="print-date" title='a>b'>${D}</span>`);
+    });
+
+    test('a nested span inside the date element goes with it', () => {
+        assert.strictEqual(fillPrintDate(`<span class="date">a<span>b</span>c</span> tail`, D), `<span class="print-date">${D}</span> tail`);
+    });
+
+    test('a self-closing date element is an empty element', () => {
+        assert.strictEqual(fillPrintDate(`<span class="date"/> tail`, D), `<span class="print-date">${D}</span> tail`);
+        assert.strictEqual(fillPrintDate(`<span class="date" /> tail`, D), `<span class="print-date" >${D}</span> tail`);
+    });
+
+    test('an inline style block follows the rename', () => {
+        assert.strictEqual(fillPrintDate(`<style>.date { color: red } .date-x { } .update {}</style><span class="date"></span>`, D),
+            `<style>.print-date { color: red } .date-x { } .update {}</style><span class="print-date">${D}</span>`);
+    });
+
+    test('the printed time is escaped', () => {
+        assert.strictEqual(fillPrintDate(`<span class="date"></span>`, 'a<b&c'), `<span class="print-date">a&lt;b&amp;c</span>`);
     });
 });
 
@@ -101,8 +153,8 @@ suite('applyPrintDate', () => {
             footerTemplate: `<span class="date"></span> / <span class='pageNumber'></span>`,
         };
         applyPrintDate(options, 'de', now);
-        assert.strictEqual(options.headerTemplate, `<span class='title'></span> <span class='date'>30.09.26, 13:20</span>`);
-        assert.strictEqual(options.footerTemplate, `<span class="date">30.09.26, 13:20</span> / <span class='pageNumber'></span>`);
+        assert.strictEqual(options.headerTemplate, `<span class='title'></span> <span class='print-date'>30.09.26, 13:20</span>`);
+        assert.strictEqual(options.footerTemplate, `<span class="print-date">30.09.26, 13:20</span> / <span class='pageNumber'></span>`);
         assert.strictEqual(options.format, 'A4');
     });
 
