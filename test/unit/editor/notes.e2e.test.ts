@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { hostEngine } from './helpers';
-import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
 
 /** Narrower than the notes' 1280px breakpoint: the notes render stacked, in the text flow, where a click reaches them. */
 const NARROW = 1000;
@@ -85,8 +85,8 @@ suite('Editor notes and links (e2e)', () => {
         await watchWindowClicks();
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('Daniel\'s sequence: set a sidenote, then keep typing — in the note, after it, in the paragraph', async function () {

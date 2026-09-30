@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
-import { EditorPage, EXTENSION_ID, openEditorPage, settle, showDiagnostics } from './pageHarness';
+import { closeEditorPage, EditorPage, EXTENSION_ID, openEditorPage, settle, showDiagnostics } from './pageHarness';
 
 const LINE_2 = 'The installer checks the prerequisites before it copies anything.';
 const SOURCE = [
@@ -97,8 +97,8 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         await page.waitForSelector('.ProseMirror');
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('a trigger character asks behind the edit; the list opens under the caret, filters, and accepting goes through the source', async function () {

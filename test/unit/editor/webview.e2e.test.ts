@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
-import { EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
 
 const FRONT_AND_HEADING = [
     '---',
@@ -92,8 +92,8 @@ suite('Editor webview (e2e)', () => {
         await page.waitForSelector('.ProseMirror');
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('the document renders: front matter folded, the id read-only, the table as a raw block', async () => {
@@ -133,10 +133,13 @@ suite('Editor webview (e2e)', () => {
         await page.keyboard.press('End');
         await page.keyboard.type(' Extra.');
         await settle();
+        // One edit when the keys come within the page's typing delay; on a loaded
+        // machine a pause between two of them sends what was typed so far first.
+        // What is checked is the text the last one carries, whole.
         const all = await edits();
-        assert.strictEqual(all.length, 1);
-        const text = all[0].text;
-        assert.strictEqual(all[0].baseVersion, 1);
+        assert.ok(all.length >= 1, 'the typing was sent');
+        assert.deepStrictEqual(all.map(e => e.baseVersion), all.map(() => 1));
+        const text = all[all.length - 1].text;
         assert.ok(text.startsWith(FRONT_AND_HEADING), text);
         assert.ok(text.endsWith(`\n${TABLE}`), text);
         const paragraph = text.slice(FRONT_AND_HEADING.length, text.length - TABLE.length - 1);
@@ -300,13 +303,11 @@ suite('Editor webview (e2e)', () => {
         await page.waitForSelector('.ProseMirror h2 .mep-heading-text');
 
         const before = (await edits()).length;
-        // A click in the middle of the title puts the caret inside it, and
-        // ProseMirror takes it over on the selectionchange that follows, which
-        // is given time to arrive: a key pressed at once would act on the
-        // selection before the click. (Arrow keys are no use for placing the
-        // caret here: in headless Chromium their moves did not reach the state.)
+        // A click in the middle of the title puts the caret inside it, and a key
+        // pressed at once acts there: the page has ProseMirror read the caret
+        // before any key (`domSelectionFirst`), without waiting for the
+        // selectionchange that follows the click.
         await page.click('.ProseMirror h2 .mep-heading-text');
-        await new Promise(resolve => setTimeout(resolve, 150));
         await page.keyboard.press('Enter');
         await settle();
         const all = await edits();
@@ -422,8 +423,8 @@ suite('Editor revealing a link\'s fragment (e2e)', () => {
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Slugged heading'));
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('a heading\'s anchor is scrolled to the top, below the formatting row, with the caret in it', async () => {

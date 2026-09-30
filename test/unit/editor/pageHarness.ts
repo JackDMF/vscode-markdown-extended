@@ -163,10 +163,11 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
             await page.evaluate(m => window.postMessage(m, '*'), message as unknown as Record<string, unknown>);
         },
         close: async () => {
-            // A suite's teardown has mocha's 5 s; on a loaded machine Chromium can
-            // take longer to close, and a teardown that times out fails the run
-            // with every test passed. What has not closed by then is killed,
-            // with its whole process tree.
+            // On a loaded machine Chromium can take seconds to close, and a
+            // teardown that times out fails the run with every test passed. A
+            // suite closes through `closeEditorPage`, whose hook has
+            // CLOSE_HOOK_MS; what has not closed within the grace is killed,
+            // with its whole process tree, inside that.
             let closed = false;
             let timer: ReturnType<typeof setTimeout> | undefined;
             await Promise.race([
@@ -197,8 +198,21 @@ function codiconCss(extensionPath: string): string | undefined {
     return fs.readFileSync(css, 'utf8').replace(/url\(["']?\.\/codicon\.ttf[^"')]*["']?\)/g, `url("${data}")`);
 }
 
-/** How long a browser may take to close before the harness kills it: inside mocha's 5 s hook timeout. */
-const CLOSE_GRACE_MS = 3500;
+/** How long a browser may take to close before the harness kills it: well inside CLOSE_HOOK_MS, leaving the kill its time. */
+const CLOSE_GRACE_MS = 10000;
+
+/** The teardown hook's timeout when it closes the page: mocha's 5 s is not enough for a slow close and the kill after it. */
+const CLOSE_HOOK_MS = 20000;
+
+/**
+ * Close a suite's page from its `suiteTeardown`, given the hook's context (a
+ * `function`, not an arrow): the hook gets CLOSE_HOOK_MS, so a slow close
+ * never fails a suite whose tests all passed.
+ */
+export async function closeEditorPage(hook: Mocha.Context, editor: EditorPage | undefined): Promise<void> {
+    hook.timeout(CLOSE_HOOK_MS);
+    await editor?.close();
+}
 
 /**
  * Kill a browser and every process it started. Killing the launcher alone

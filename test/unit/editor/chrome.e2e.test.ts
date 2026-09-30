@@ -5,7 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import type { WebviewMessage } from '../../../src/editor/protocol';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import {
-    EXTENSION_ID, EditorPage, clickText, computedColour as computed, delay, openEditorPage, shot as saveShot, showDiagnostics, vscodeMarkdownCss,
+    EXTENSION_ID, EditorPage, clickText, closeEditorPage, computedColour as computed, delay, openEditorPage, shot as saveShot, showDiagnostics, vscodeMarkdownCss,
 } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
@@ -95,8 +95,8 @@ suite('Editor chrome (e2e)', () => {
         page = editor.page;
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     const themes: [Theme, string][] = [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']];

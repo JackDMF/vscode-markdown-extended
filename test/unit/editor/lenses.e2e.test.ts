@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { LensRow, WebviewMessage } from '../../../src/editor/protocol';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
-import { delay, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, delay, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
 
 const SOURCE = 'Intro.\n\n# Heading\n\nA paragraph.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n';
 
@@ -59,8 +59,8 @@ suite('Editor lens rows (e2e)', () => {
         await showDocument();
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('rows render above the blocks the host named, as text-editor lenses: titles, bars, a text-only lens', async () => {
@@ -296,8 +296,8 @@ suite('Editor code actions as object verbs (e2e)', () => {
         await showDocument();
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('the caret resting in a requirement heading asks for its actions; the bar shows them, labelled with the id, and runs one', async function () {
@@ -574,8 +574,8 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         await showDocument();
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('status, priority and a relation go on the badge and the table\'s rows; the hinted block has no row, a foreign lens on a paragraph keeps one', async () => {

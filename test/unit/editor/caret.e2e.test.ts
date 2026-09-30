@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
-import { EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
 
 const SOURCE = 'Intro paragraph.\n\nSecond *paragraph* here.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n';
 
@@ -38,8 +38,8 @@ suite('Editor caret (e2e)', () => {
         await page.waitForSelector('.ProseMirror');
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('a click and the keys put the caret where the source has it; typing reports it behind the edit', async function () {

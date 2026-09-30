@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
 
 const TABLE = '| a | b |\n| = | = |\n| 1 | 2 |\n';
 const SOURCE = [
@@ -82,8 +82,8 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await page.waitForSelector('.mep-raw-block table');
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('Edit source focuses the textarea with the caret at the end, and the caret and a selection are visible', async function () {

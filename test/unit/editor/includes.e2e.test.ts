@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { NO_INCLUDES_REFUSAL } from '../../../src/editor/webview/toolbar/actions';
-import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
 
 type PickIncludeMessage = Extract<WebviewMessage, { type: 'pickInclude' }>;
 
@@ -107,8 +107,8 @@ suite('Editor includes (e2e)', () => {
         page = editor.page;
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     teardown(async () => {

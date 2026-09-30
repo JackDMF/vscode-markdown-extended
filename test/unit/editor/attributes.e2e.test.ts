@@ -8,7 +8,7 @@ import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } f
 import { CONTAINER_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import type { WebviewMessage } from '../../../src/editor/protocol';
-import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -160,8 +160,8 @@ suite('Editor Attributes… (e2e)', () => {
         await page.addStyleTag({ content: PAGE_STYLE });
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     teardown(async () => {

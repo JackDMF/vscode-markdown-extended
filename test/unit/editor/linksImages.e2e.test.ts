@@ -6,7 +6,7 @@ import { WebviewMessage } from '../../../src/editor/protocol';
 import { SYSTEM_FILE_LOCK } from '../../../src/editor/webview/images';
 import { COMPLETION_KEYS } from '../../../src/editor/webview/inlineField';
 import { DROP_LOCK } from '../../../src/editor/webview/objects';
-import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
 
 type Posted<T extends WebviewMessage['type']> = Extract<WebviewMessage, { type: T }>;
 
@@ -90,8 +90,8 @@ suite('Editor links and images (e2e)', () => {
         page = editor.page;
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     teardown(async () => {

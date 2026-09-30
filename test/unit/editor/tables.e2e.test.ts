@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { CELL_BREAK_REFUSAL } from '../../../src/editor/serialize';
-import { clickText, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot as saveShot, vscodeMarkdownCss } from './pageHarness';
+import { closeEditorPage, clickText, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot as saveShot, vscodeMarkdownCss } from './pageHarness';
 import { LIGHT_MODERN, applyTheme } from './themes';
 
 /** The selection's object toolbar, shown. */
@@ -176,8 +176,8 @@ suite('Editor pipe tables (e2e)', () => {
         await applyTheme(page, LIGHT_MODERN);
     });
 
-    suiteTeardown(async () => {
-        await editor?.close();
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
     });
 
     test('Tab selects the next cell\'s text and Shift+Tab the previous; Tab in the last cell adds a row and goes into it', async function () {
