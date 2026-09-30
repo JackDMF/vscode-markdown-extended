@@ -10,9 +10,14 @@ import * as puppeteer from 'puppeteer';
  * backgrounds are) is no variable in the page either, so a stylesheet's
  * fallback is what shows — as in the real webview.
  *
- * Only the variables the editor's page reads are listed; `editorCss.test.ts`
- * holds the stylesheet to reading workbench variables, and these are what make
- * the page tests and their screenshots render as VS Code would.
+ * Only the variables the editor's page reads are listed (and
+ * `editor-foreground`, which paints the body as a webview's is painted);
+ * `editorCss.test.ts` holds the stylesheet to reading workbench variables, and
+ * these are what make the page tests and their screenshots render as VS Code
+ * would. High Contrast sets no `toolbar-hoverBackground`,
+ * `toolbar-activeBackground`, `inputOption-activeBackground` or
+ * `menu-selectionBackground`: its hover is `toolbar-hoverOutline`, its menu
+ * selection `menu-selectionBorder`.
  */
 export interface Theme {
     name: string;
@@ -48,7 +53,6 @@ export const LIGHT_MODERN: Theme = {
         'editorWidget-border': '#c8c8c8',
         'editorGroupHeader-tabsBackground': '#e5e5e5',
         'editorGroupHeader-tabsBorder': '#e5e5e5',
-        'editorGroup-border': '#e5e5e5',
         'toolbar-hoverBackground': 'rgba(184, 184, 184, 0.31)',
         'toolbar-activeBackground': 'rgba(166, 166, 166, 0.31)',
         'menu-background': '#ffffff',
@@ -109,7 +113,6 @@ export const DARK_MODERN: Theme = {
         'editorWidget-border': '#454545',
         'editorGroupHeader-tabsBackground': '#2b2b2b',
         'editorGroupHeader-tabsBorder': '#2b2b2b',
-        'editorGroup-border': 'rgba(255, 255, 255, 0.09)',
         'toolbar-hoverBackground': 'rgba(90, 93, 94, 0.31)',
         'toolbar-activeBackground': 'rgba(99, 102, 103, 0.31)',
         'menu-background': '#1f1f1f',
@@ -156,7 +159,6 @@ export const HC_DARK: Theme = {
     variables: {
         ...FONTS,
         'contrastBorder': '#6fc3df',
-        'contrastActiveBorder': '#f38518',
         'foreground': '#ffffff',
         'descriptionForeground': 'rgba(255, 255, 255, 0.7)',
         'disabledForeground': '#a5a5a5',
@@ -170,7 +172,6 @@ export const HC_DARK: Theme = {
         'editorWidget-foreground': '#ffffff',
         'editorWidget-border': '#6fc3df',
         'editorGroupHeader-border': '#6fc3df',
-        'editorGroup-border': '#6fc3df',
         'toolbar-hoverOutline': '#f38518',
         'menu-background': '#000000',
         'menu-foreground': '#ffffff',
@@ -182,6 +183,7 @@ export const HC_DARK: Theme = {
         'input-border': '#6fc3df',
         'input-placeholderForeground': 'rgba(255, 255, 255, 0.7)',
         'inputOption-activeBorder': '#6fc3df',
+        'inputOption-activeForeground': '#ffffff',
         'button-border': '#6fc3df',
         'button-secondaryForeground': '#ffffff',
         'editor-selectionBackground': '#ffffff',

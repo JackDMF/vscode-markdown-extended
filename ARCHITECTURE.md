@@ -625,9 +625,9 @@ alignment per column, the header cell's. The verbs that add a row copy the align
 row beside it, so a row added above the header keeps the columns aligned. There is no
 *Toggle header row*: GFM has no table without a header, and multimd's headerless one is raw.
 
-**The bar** (`objectToolbar.ts`, Daniel, 2026-09-29): five slots — `Row ▾` (*Insert above*,
-*Insert below* with `Tab at end` as its keyboard route, *Delete row*), `Column ▾` (*Insert
-left*, *Insert right*, *Delete column*), `Align ▾` (*Left*, *Center*, *Right*, each with its
+**The bar** (`objectToolbar.ts`, Daniel, 2026-09-29): five slots — `Row` (*Insert above*,
+*Insert below* with `Tab at end` as its keyboard route, *Delete row*), `Column` (*Insert
+left*, *Insert right*, *Delete column*), `Align` (*Left*, *Center*, *Right*, each with its
 delimiter, the current one marked with a ✓ — state apart from the focus ring; the marked one
 chosen again is the default, `---`), a gap,
 then *Edit source* and *Delete table*. The three are set-verbs: a menu opens under the verb on
@@ -969,7 +969,7 @@ heading it named. The page (`revealAnchor` in `webview/main.ts`) takes the top-l
 whose `anchor` is the fragment, else the top-level block the host's line starts in — found by
 bisection over `lineAt`, since block start lines only grow — so the slug rule lives only on
 the host; it puts the caret at the block's start and scrolls it to the top, where
-`scroll-margin-top` keeps it clear of the sticky formatting row.
+`scroll-margin-top` keeps it clear of the formatting row fixed at the top.
 
 The session remembers the text it believes the page holds. An `edit` is written only
 when its `baseVersion` is the last posted version and the document still holds that
@@ -1068,7 +1068,8 @@ the workbench draws its counterpart, and reads its colours from the `--vscode-*`
 every webview receives, each with a fallback after it:
 
 - **The row** is a chrome row under the tabs: `position: fixed` at the editor's top, full
-  width — the page's padding does not inset it; `.mep-editor` keeps its height free —
+  width — the page's padding does not inset it; `.mep-editor` keeps its height and an 8px
+  gap free, so a document that begins with a table does not sit against its edge —
   26px and a 1px edge, `editorGroupHeader-tabsBackground` with the tabs' border
   (`editorGroupHeader-tabsBorder`, else `-border`, else `widget-border`), no radius, no
   shadow; the workbench font at its size less one; 22px controls with
@@ -1078,21 +1079,33 @@ every webview receives, each with a fallback after it:
   own colour in both Modern themes and a separator in it would not be seen. A dropdown's
   affordance is the codicon `chevron-down` (`chevronNode` in `lenses.ts`, the one element
   for the row's faces, a submenu's `chevron-right` and an object bar's set-verbs), dim in
-  `descriptionForeground`.
+  `descriptionForeground`, right after the label (the block-type face keeps the longest
+  type's width after it, so nothing after it moves). A narrow row scrolls sideways with no
+  scrollbar — one would be laid out inside its 26px and clip the controls — by the wheel
+  (`toolbar.ts` turns a vertical wheel sideways) and by the focus.
 - **A menu** — the row's four, a submenu, the table bar's Row, Column and Align — is the
   context menu: `menu-background`, `-foreground`, `-border`, the entry under the pointer or
   the focus in `menu-selectionBackground` / `-Foreground` (outlined in
   `menu-selectionBorder` in High Contrast, which sets no selection background), 5px
-  corners and `widget-shadow`. The sample column and the syntax column stay.
+  corners and `widget-shadow`. The sample column and the syntax column stay. In a menu
+  that holds the focus (opened from the keyboard, or a set-verb's), the entry under the
+  pointer takes it (`followPointer`), as in the workbench's menus: the two were drawn
+  alike, and `Enter` ran the entry the reader was not looking at.
 - **An object bar and the bubble** are editor widgets: `editorWidget-background`,
   `-foreground`, `-border`, `widget-shadow`, the row's 22px controls — a verb is a toolbar
   control, no surface at rest — and the inline field in `input-*`. The preview card keeps
   the document's ground inside an editor widget's frame, since what it shows is the
   document's rendering.
 
-So a light, dark or High Contrast theme needs no rule of its own. `editorCss.test.ts` holds
-`editor.css` to it: no colour is written there except as the fallback of a `var()` (a mask's
-alpha gradient aside) — the samples are not styled there at all. The page tests apply the
+So a light, dark or High Contrast theme needs no rule of its own — provided a variable some
+theme leaves unset falls back to no colour: High Contrast has no `toolbar-hoverBackground`,
+`toolbar-activeBackground`, `inputOption-activeBackground` or `menu-selectionBackground`, and
+a grey fallback there painted a surface where VS Code draws only the outline
+(`toolbar-hoverOutline`, `inputOption-activeBorder`, `menu-selectionBorder`), so their
+fallback is `transparent`. `editorCss.test.ts` holds `editor.css` to it: in a colour
+declaration, no colour and no word but `transparent`, `currentColor`, `inherit` and the
+shorthands' keywords outside a `var()`; a fallback is a colour; the unset ones fall back to
+`transparent` (a mask's alpha gradient aside) — the samples are not styled there at all. The page tests apply the
 variables VS Code supplies for Light Modern, Dark Modern and Dark High Contrast
 (`test/unit/editor/themes.ts`, taken from the theme files and the colour registry's
 defaults), and `chrome.e2e.test.ts` checks the row, a menu, the bars and the bubble in them.
@@ -1265,10 +1278,13 @@ earlier version made a widget of the bar's height before the block and scrolled 
 and the block jumped down under the reader every time its bar appeared — the layout moving is
 worse than a bar over the end of a line, which the bar leaves again with the caret. A bar is
 floating chrome and nothing else; the page test holds the block's top, the caret's line and the
-scroll to where they were before the bar showed. **One ladder, one notion of free**
+scroll to where they were before the bar showed. The last resort must also be seen: where
+above the block is under the formatting row (the block's top scrolled up to it), it could be
+neither seen nor clicked, so the bar goes below the block, and where that is past the window's
+bottom too, at the row's edge (`lastResortY`) — a position, never a layout change. **One ladder, one notion of free**
 (`firstFree` in `webview/clearance.ts`): every bar — an object's, a block's, the selection
 bubble, the toolbar's field bar — gives only its candidate places in order, and `firstFree`
-refuses, the same way for all, a place under the sticky row or past the window's bottom, over
+refuses, the same way for all, a place under the formatting row (`rowCeiling`) or past the window's bottom, over
 the selection bubble (for any bar but the bubble) or an open language card (a hover, a
 diagnostic, the completion list — read, not a bar), and over content: the page's text probed
 with `posAtCoords` at points across the band — a floated note body is no part of its line —
@@ -1278,7 +1294,7 @@ table's content, drawn to be seen), an image, an atom, or another extension's le
 The floating chrome is looked through while probing, by one class on the mount around the
 whole search; bars are placed again on scroll and resize once per animation frame. Three
 ladders with three notions of free had drifted apart (a bar pinned over its block under the
-sticky row, a place blind to images, a bubble over a lens row), which is why it is one now.
+row, a place blind to images, a bubble over a lens row), which is why it is one now.
 **An inline object's bar follows the same rule with the
 same helper**: above the object's first line at its start where that holds no content, else
 beside that line — just right of its textblock's text on it — else below its last line; the
@@ -1322,7 +1338,7 @@ of thing, two triggers and two places.
   `header`;
 - block with attributes — *Edit block attributes* (the literal replaced in place, its
   placement kept; empty removes it; a heading's anchor follows the literal's id);
-- table — `Row ▾`, `Column ▾`, `Align ▾`, *Edit source*, *Delete table* (above, "Tables"): a
+- table — `Row`, `Column`, `Align`, *Edit source*, *Delete table* (above, "Tables"): a
   verb may be a **set-verb**, a menu of related actions that opens under it (`Verb.menu`),
   in the formatting toolbar's menu chrome, keyboard-navigable, the current value of a
   choice marked;
@@ -1469,7 +1485,7 @@ where it leaves `node_modules` out), and `lensLabelNodes` turns each reference i
 `<span class="codicon codicon-name">` beside the text, ignoring a `~spin` modifier, not
 checking the name (an unknown one is an empty icon slot) and keeping an escaped `\$(name)` as text. Wherever a title is drawn as elements — a lens row, an object toolbar's
 verb — the verb keeps the provider's title and the nodes are made at draw time;
-tooltips, accessible names and the `<option>`s of the **Actions ▾** choice, which holds no
+tooltips, accessible names and the `<option>`s of the **Actions** choice, which holds no
 elements, take `lensLabel`'s plain text.
 
 The object toolbar keeps off the rows: `place` treats every row's rectangle as occupied and
@@ -1574,7 +1590,7 @@ row's tooltip off. The preview's stylesheets are not touched.
 *Verbs in the toolbar.* `ObjectToolbarHost.lensesAt(pos)` answers `lensVerbsAt` for the
 top-level block; `present` draws them after the object's own verbs and before the code
 actions, each group after a separator, a lens without a command refused. More than
-`LENS_VERBS_INLINE` (4) lens verbs: the first three stay and the rest are one **Actions ▾**
+`LENS_VERBS_INLINE` (4) lens verbs: the first three stay and the rest are one **Actions**
 verb, an inline choice of them, so the bar keeps to four slots. A heading's bar is a caret
 object's: it shows once the caret rests in the heading.
 

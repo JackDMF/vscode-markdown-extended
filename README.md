@@ -448,7 +448,7 @@ never covers the line you are typing on.
 | Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Remove admonition, keep content** |
 | Container | while the caret is in it, after a moment | **Change name/info** · **Remove container, keep content** |
 | A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Edit block attributes** (empty removes them) |
-| Table | while the caret is in it, after a moment; the caret's column is tinted | **Row ▾** (insert above, insert below, delete) · **Column ▾** (insert left, insert right, delete) · **Align ▾** (left, center, right; the current one marked) · **Edit source** · **Delete table** |
+| Table | while the caret is in it, after a moment; the caret's column is tinted | **Row** (insert above, insert below, delete) · **Column** (insert left, insert right, delete) · **Align** (left, center, right; the current one marked) · **Edit source** · **Delete table** |
 | Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
 | Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Change snippet…** · **Show in text editor** · **Delete directive** |
 | A status badge, a summary table | as above | its name only |
@@ -512,7 +512,7 @@ way the text editor does, so what one shows the other shows.
   `Tab` reaches them, `Enter` runs the focused one. A lens that is a verb (**+ ref**) is a
   verb in the heading's object toolbar — the caret resting in the heading shows it — and
   so is a lens whose element the page does not show (a count for a relation the table
-  hides); past four, the first three stay and the rest are behind **Actions ▾**.
+  hides); past four, the first three stay and the rest are behind **Actions**.
 - **The other extension says where a lens goes; the editor does not guess.** A lens names
   its surface in the last of its command's arguments,
   `{ reqExplorer: { surface: 'status' | 'priority' | 'links' | 'action', artifact: 'FR-X-001', relation?: 'verified-by', direction?: 'out' | 'in' } }`,

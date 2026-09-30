@@ -19,8 +19,8 @@
  * the arrow keys move, `Enter` chooses, `Esc` returns to the text.
  *
  * **Where it sits.** Above the object's first line — at an inline object's
- * start, at a block's right edge (`Anchor`); below its last line when there is
- * no room above (under the sticky formatting row) — and never over the line
+ * start, at a block's right edge (`Anchor`); below its last line when above is
+ * taken or under the formatting row — and never over the line
  * the caret is on: a bar that would cover it is put on the other side. While text is selected the bar prefers below, since the
  * selection bubble takes the room above. It is `position: absolute` inside the
  * editor's mount, as the bubble is, so it scrolls with the text.
@@ -48,9 +48,9 @@ import {
     deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
-import { Place, firstFree, firstLineTop, rightEdgeIn } from './clearance';
+import { Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
-import { selectionBubbleShown } from './toolbar/toolbar';
+import { followPointer, selectionBubbleShown } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
@@ -96,7 +96,7 @@ export interface ObjectToolbarHost {
 
 /**
  * How many lens verbs a bar shows in a line. With more, the first ones stay
- * and the rest go behind **Actions ▾**, so the bar keeps to this many slots:
+ * and the rest go behind **Actions** (a choice, with the dropdown chevron), so the bar keeps to this many slots:
  * a requirement heading can carry eight lenses, and a bar as wide as the page
  * is a row again.
  */
@@ -135,7 +135,7 @@ interface Verb {
     choice?: { value: string; label: string; options: readonly { value: string; label: string }[]; commit(value: string): void };
     /**
      * A set-verb: a menu of related actions that opens under it on a click,
-     * `Enter` or `Space` — a table's `Row ▾`, `Column ▾`, `Align ▾` — drawn
+     * `Enter` or `Space` — a table's Row, Column and Align, each with the dropdown chevron (`chevronNode`) — drawn
      * with the formatting toolbar's menu chrome (`.mep-menu`), navigated with
      * the arrow keys, `Enter` choosing and `Esc` closing it.
      */
@@ -212,6 +212,22 @@ interface BarDecor {
 const NO_DECOR: BarDecor = { tint: null };
 
 const decorKey = new PluginKey<BarDecor>('mep-object-toolbar-decor');
+
+/**
+ * Where a block's bar goes when no place is free (`placeBlock`, step 5):
+ * above the block, unless that is under the formatting row (`ceiling`), where
+ * it could not be seen or clicked; then below it, unless that is past the
+ * window's bottom; then at the row's edge. A position, never a layout change.
+ */
+export function lastResortY(aboveY: number, belowY: number, height: number, ceiling: number, bottom = window.innerHeight): number {
+    if (aboveY >= ceiling) {
+        return aboveY;
+    }
+    if (belowY >= ceiling && belowY + height <= bottom) {
+        return belowY;
+    }
+    return ceiling + GAP;
+}
 
 /** The caret's columns of the table at `tablePos`, as node decorations on their cells; none when the selection is not in it. */
 function columnTint(state: EditorState, tablePos: number | null): Decoration[] {
@@ -471,6 +487,7 @@ class ObjectBar {
                 e.preventDefault();
                 this.pick(entry);
             });
+            el.addEventListener('mouseenter', () => followPointer(panel, el));
             return { entry, el };
         });
         panel.append(...made.map(m => m.el));
@@ -1032,7 +1049,11 @@ class ObjectToolbarView implements PluginView {
      * 4. below the block, right-aligned to the column;
      * 5. where none is free: above the block, right-aligned to the column,
      *    regardless — over whatever is there, usually the empty tail of the
-     *    line above, as a heading's bar has always stood.
+     *    line above, as a heading's bar has always stood. Where above is under
+     *    the formatting row (the block's top scrolled up to it), the bar could
+     *    be neither seen nor clicked there: below the block then, and where
+     *    that is past the window's bottom too, at the row's edge — over the
+     *    block's own top, still moving nothing.
      *
      * A bar is never given room in the document: a room moved the block down
      * as its bar appeared, and the layout jumped under the reader (a
@@ -1072,7 +1093,7 @@ class ObjectToolbarView implements PluginView {
         ];
         const found = firstFree(view, this.mount, ladder, { width, height });
         let x = found?.x ?? edge;
-        const y = found?.y ?? aboveY;
+        const y = found?.y ?? lastResortY(aboveY, belowY, height, rowCeiling(this.mount));
         x = Math.max(base.left, Math.min(x, base.right - width));
         el.style.left = `${x - base.left}px`;
         el.style.top = `${y - base.top}px`;
@@ -1131,7 +1152,7 @@ class ObjectToolbarView implements PluginView {
 
     /**
      * Lenses as verbs: each its title, running its command. Past
-     * `LENS_VERBS_INLINE` the first ones stay and the rest are one **Actions ▾**
+     * `LENS_VERBS_INLINE` the first ones stay and the rest are one **Actions**
      * verb, a choice of them. A lens without a command is shown, and refused:
      * it is what the other extension shows there, and runs nothing.
      */

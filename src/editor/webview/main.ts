@@ -777,7 +777,7 @@ const plugins = [
     }, placeDrop),
 ];
 
-/** Room above the caret for the sticky toolbar when ProseMirror scrolls the selection into view. */
+/** Room above the caret for the formatting row fixed at the top when ProseMirror scrolls the selection into view. */
 const SCROLL_MARGIN = { top: 64, bottom: 8, left: 8, right: 8 };
 
 function dispatchTransaction(this: EditorView, tr: Transaction): void {

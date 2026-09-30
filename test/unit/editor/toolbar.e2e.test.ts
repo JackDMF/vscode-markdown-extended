@@ -5,7 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { PREVIEW_CARD_CLASS, TOOLBAR_ACTIONS, inRow, menuOf } from '../../../src/editor/webview/toolbar/actions';
 import { ALL_LOCK, REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
-import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
+import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
 
 const SOURCE = [
     '## FRS-TST-001: Page {#frs-tst-001-1a2b3c4d}',
@@ -22,8 +22,6 @@ const SOURCE = [
  * notes where the page's own notes would float into the margin.
  */
 const WIDE = 1400;
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * The formatting toolbar — its row, menus, preview card — and the selection
@@ -136,17 +134,33 @@ suite('Editor toolbar (e2e)', () => {
         assert.deepStrictEqual(marks, ['i', 'em', 'b', 'strong', 'code'], 'a mark\'s glyph is its real element');
     });
 
-    test('narrow, the row scrolls sideways instead of wrapping, and keeps its height', async function () {
+    test('narrow, the row scrolls sideways instead of wrapping, keeps its height, draws no scrollbar over its controls, and scrolls by the wheel', async function () {
         this.timeout(10000);
         try {
             await page.setViewport({ width: 420, height: 900 });
             await delay(100);
             const narrow = await page.evaluate(() => {
                 const bar = document.querySelector('.mep-toolbar') as HTMLElement;
-                const tops = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool')).map(c => Math.round(c.offsetTop));
-                return { height: bar.offsetHeight, scrolls: bar.scrollWidth > bar.clientWidth, lines: new Set(tops).size };
+                const row = bar.getBoundingClientRect();
+                const tools = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool'));
+                const tops = tools.map(c => Math.round(c.offsetTop));
+                // Inside the row's box above its edge: no scrollbar laid out under them takes their height.
+                const inside = tools.every(c => {
+                    const r = c.getBoundingClientRect();
+                    return r.top >= row.top && r.bottom <= row.bottom - 1 && r.height === 22;
+                });
+                return { height: bar.offsetHeight, scrolls: bar.scrollWidth > bar.clientWidth, lines: new Set(tops).size, inside, gutter: bar.offsetHeight - bar.clientHeight };
             });
-            assert.deepStrictEqual(narrow, { height: 27, scrolls: true, lines: 1 });
+            assert.deepStrictEqual(narrow, { height: 27, scrolls: true, lines: 1, inside: true, gutter: 1 }, 'the only thing under the controls is the 1px edge');
+            const box = await (await page.$('.mep-toolbar'))?.boundingBox();
+            assert.ok(box);
+            await page.mouse.move(box.x + 100, box.y + box.height / 2);
+            await page.mouse.wheel({ deltaY: 120 });
+            await delay(100);
+            assert.ok(await page.$eval('.mep-toolbar', el => el.scrollLeft) > 0, 'a vertical wheel scrolls the row sideways');
+            await page.$eval('.mep-toolbar', el => {
+                el.scrollLeft = 0;
+            });
         } finally {
             await page.setViewport({ width: WIDE, height: 900 });
         }

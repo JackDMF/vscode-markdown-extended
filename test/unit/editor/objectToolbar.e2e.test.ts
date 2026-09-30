@@ -4,9 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
-import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+import { delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
 
 /** The selection's object toolbar, shown. */
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
@@ -38,21 +36,7 @@ suite('Editor object toolbar (e2e)', () => {
     };
 
     /** The point just inside the left edge of character `index` of `needle`. */
-    const pointAt = async (needle: string, index = 0): Promise<{ x: number; y: number }> => page.evaluate((n, k) => {
-        const root = document.querySelector('.ProseMirror') as HTMLElement;
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-            const at = (node.textContent ?? '').indexOf(n);
-            if (at >= 0) {
-                const range = document.createRange();
-                range.setStart(node, at + k);
-                range.setEnd(node, at + k + 1);
-                const r = range.getBoundingClientRect();
-                return { x: r.left + 1, y: r.top + r.height / 2 };
-            }
-        }
-        throw new Error(`no "${n}" in the document`);
-    }, needle, index);
+    const pointAt = (needle: string, index = 0) => textPoint(page, needle, index);
 
     /** A real click right before character `index` of `needle`; returns when it was pressed. */
     const clickBefore = async (needle: string, index = 0): Promise<number> => {
@@ -128,9 +112,16 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$(BAR), null);
     });
 
-    test('on the first line, under the sticky row, the bar goes beside the line, else below it, and never over text or the caret', async function () {
+    test('on a line just under the row, the bar goes beside the line, else below it, and never over text or the caret', async function () {
         this.timeout(15000);
         await showDocument('Alpha ++beta ref|the body++ gamma.\n\nSecond paragraph.\n', 'Alpha');
+        // The line scrolled up to just under the row: no room above it for a bar.
+        await page.evaluate(() => {
+            const line = (document.querySelector('.ProseMirror > p') as HTMLElement).getBoundingClientRect();
+            const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
+            window.scrollBy(0, line.top - row.bottom - 6);
+        });
+        await delay(100);
         await clickBefore('ref', 1);
         await page.waitForSelector(BAR, { timeout: 2000 });
         const geometry = await page.evaluate(sel => {

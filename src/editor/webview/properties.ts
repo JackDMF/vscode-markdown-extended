@@ -752,7 +752,8 @@ export class PropertiesView implements NodeView, SourceEditor {
         const style = getComputedStyle(area);
         const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4 || 18;
         const top = area.getBoundingClientRect().top + (parseFloat(style.paddingTop) || 0) + line * lineHeight;
-        // Below the sticky formatting row, which is about 64px high (main.ts, SCROLL_MARGIN).
+        // Clear of the formatting row fixed at the top, with the margin the page keeps above a
+        // caret it scrolls to (main.ts, SCROLL_MARGIN: 64px).
         if (property !== null || top < 64 || top > window.innerHeight - lineHeight) {
             window.scrollBy(0, top - 80);
         }

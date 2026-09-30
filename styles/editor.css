@@ -166,6 +166,8 @@ img.mep-pending-range {
     position: relative;
     /* The row's height, border included: the room the page keeps under it. */
     --mep-row-height: 27px;
+    /* The space between the row's edge and the document's first block. */
+    --mep-row-gap: 8px;
     /* The row's bottom edge, as the workbench draws the edge under its tabs. */
     --mep-chrome-border: var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-editorGroupHeader-border, var(--vscode-widget-border, transparent)));
     /*
@@ -177,14 +179,21 @@ img.mep-pending-range {
     --mep-chrome-separator: var(--vscode-menu-separatorBackground, var(--mep-chrome-border));
 }
 
-/* The page keeps the row's height free at its top: the row stands over the page, not in it. */
-.mep-editor:has(> .mep-toolbar) { padding-top: var(--mep-row-height); }
+/*
+ * The page keeps the row's height free at its top, and a gap under it, so a
+ * document that begins with a table, a fence or a container does not sit
+ * against the row's edge: the row stands over the page, not in it.
+ */
+.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-row-gap)); }
 
 /*
  * The row: full width, fixed at the top of the editor as the workbench's rows
  * are under the tabs — the page's own padding does not inset it. One line,
  * every control 22px. Narrow, it scrolls sideways rather than wrapping, so
- * every control keeps its place.
+ * every control keeps its place — without a scrollbar, which would be laid
+ * out inside the row's height and clip the controls: the wheel scrolls it
+ * (`toolbar.ts`), and a control that takes the keyboard's focus is scrolled
+ * into view.
  */
 .mep-toolbar {
     position: fixed;
@@ -201,7 +210,7 @@ img.mep-pending-range {
     padding: 0 8px;
     overflow-x: auto;
     overflow-y: hidden;
-    scrollbar-width: thin;
+    scrollbar-width: none;
     font-family: var(--vscode-font-family, sans-serif);
     font-size: calc(var(--vscode-font-size, 13px) - 1px);
     line-height: 20px;
@@ -209,6 +218,8 @@ img.mep-pending-range {
     background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
     border-bottom: 1px solid var(--mep-chrome-border);
 }
+
+.mep-toolbar::-webkit-scrollbar { display: none; }
 
 .mep-row-group {
     display: flex;
@@ -248,12 +259,12 @@ img.mep-pending-range {
 
 /* The workbench's toolbar states: hover, and a menu's face while its menu is open. High Contrast outlines the hover. */
 .mep-tool:hover {
-    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+    background: var(--vscode-toolbar-hoverBackground, transparent);
     outline: 1px dashed var(--vscode-toolbar-hoverOutline, transparent);
     outline-offset: -1px;
 }
 .mep-menu-face[aria-expanded="true"] {
-    background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.3)));
+    background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground, transparent));
 }
 .mep-tool:focus-visible { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: -1px; }
 
@@ -261,7 +272,7 @@ img.mep-pending-range {
 .mep-tool.mep-active {
     color: var(--vscode-inputOption-activeForeground, inherit);
     border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, Highlight));
-    background: var(--vscode-inputOption-activeBackground, rgba(0, 120, 212, 0.15));
+    background: var(--vscode-inputOption-activeBackground, transparent);
 }
 
 .mep-tool.mep-disabled,
@@ -286,9 +297,10 @@ img.mep-pending-range {
 /* A menu's face: a label and the workbench's dropdown chevron. */
 .mep-menu-face { gap: 2px; padding: 0 4px 0 7px; }
 
-/* The block-type face names the current type; a width that fits the longest
-   keeps the controls after it from moving when the type changes. */
-.mep-menu-face[data-menu="block-type"] { min-width: 8.5em; justify-content: space-between; }
+/* The block-type face names the current type, the chevron right after it; a
+   width that fits the longest keeps the controls after it from moving when the
+   type changes. */
+.mep-menu-face[data-menu="block-type"] { min-width: 8.5em; justify-content: flex-start; }
 
 /*
  * The chevron of everything that opens a list (`chevronNode`): a toolbar
@@ -547,12 +559,12 @@ img.mep-pending-range {
 .mep-object-verb:has(> .mep-menu-caret) { padding-right: 4px; }
 
 .mep-object-verb:hover {
-    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+    background: var(--vscode-toolbar-hoverBackground, transparent);
     outline: 1px dashed var(--vscode-toolbar-hoverOutline, transparent);
     outline-offset: -1px;
 }
 .mep-object-verb[aria-expanded="true"] {
-    background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.3)));
+    background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground, transparent));
 }
 .mep-object-verb:focus { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: -1px; }
 .mep-object-verb[aria-disabled="true"] { opacity: 0.4; cursor: default; }
@@ -745,14 +757,14 @@ img.mep-pending-range {
 .mep-prop-source-link { color: var(--vscode-textLink-foreground, #3794ff); }
 .mep-props-source[aria-pressed="true"] {
     border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, #0078d4));
-    background: var(--vscode-inputOption-activeBackground, rgba(0, 120, 212, 0.15));
+    background: var(--vscode-inputOption-activeBackground, transparent);
 }
 
 .mep-props-toggle:hover,
 .mep-props-source:hover,
 .mep-prop-add-button:hover,
 .mep-prop-remove:hover,
-.mep-prop-chip-remove:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.mep-prop-chip-remove:hover { background: var(--vscode-toolbar-hoverBackground, transparent); }
 .mep-prop-source-link:hover { text-decoration: underline; }
 
 .mep-properties button:focus-visible,
@@ -833,7 +845,7 @@ img.mep-pending-range {
     border-radius: 3px;
     cursor: pointer;
 }
-.mep-prop-date-pick:hover { color: var(--vscode-foreground, inherit); background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.mep-prop-date-pick:hover { color: var(--vscode-foreground, inherit); background: var(--vscode-toolbar-hoverBackground, transparent); }
 .mep-prop-date-native {
     position: absolute;
     left: 12ch;
@@ -860,7 +872,7 @@ img.mep-pending-range {
     padding: 0 2px;
     margin-left: -2px;
 }
-.mep-prop-id:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.mep-prop-id:hover { background: var(--vscode-toolbar-hoverBackground, transparent); }
 
 .mep-prop-summary { color: var(--vscode-descriptionForeground, #888); }
 .mep-prop-source-link { padding: 0 2px; }
@@ -877,8 +889,8 @@ img.mep-pending-range {
     font-size: 12px;
     line-height: 18px;
     color: var(--vscode-foreground, inherit);
-    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
-    border: 1px solid transparent;
+    background: var(--vscode-toolbar-hoverBackground, transparent);
+    border: 1px solid var(--vscode-contrastBorder, transparent);
     border-radius: 10px;
 }
 .mep-prop-chip-remove { padding: 0 4px; border-radius: 8px; line-height: 16px; color: var(--vscode-descriptionForeground, #888); }
@@ -1112,7 +1124,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     outline-offset: 1px;
 }
 
-/* A block brought into view (a followed link's fragment) stands below the sticky formatting row, not under it. */
+/* A block brought into view (a followed link's fragment) stands below the formatting row, not under it. */
 .mep-editor .ProseMirror > * { scroll-margin-top: 64px; }
 
 /* ------------------------------------------------------------------------- */
@@ -1214,7 +1226,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 }
 .mep-diag-count[hidden] { display: none; }
 .mep-diag-count:hover {
-    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+    background: var(--vscode-toolbar-hoverBackground, transparent);
     outline: 1px dashed var(--vscode-toolbar-hoverOutline, transparent);
     outline-offset: -1px;
 }

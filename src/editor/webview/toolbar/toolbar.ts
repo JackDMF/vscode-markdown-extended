@@ -100,6 +100,19 @@ function span(className: string, text?: string): HTMLElement {
     return node;
 }
 
+/**
+ * The entry under the pointer takes the focus, as in the workbench's menus,
+ * when the menu holds the focus already (opened from the keyboard, or by a
+ * set-verb): an entry under the pointer and another holding the focus would
+ * be drawn alike, and `Enter` would run the one the reader is not looking at.
+ * A menu opened by a click leaves the focus in the text, and so it stays.
+ */
+export function followPointer(panel: HTMLElement, item: HTMLElement): void {
+    if (panel.contains(document.activeElement) && document.activeElement !== item) {
+        item.focus({ preventScroll: true });
+    }
+}
+
 function div(className: string): HTMLElement {
     const node = document.createElement('div');
     node.className = className;
@@ -244,6 +257,17 @@ class ToolbarView implements PluginView {
             }
         }, true);
         this.listen(window, 'resize', () => this.closeAll());
+        // The row draws no scrollbar (it would take the controls' height): a
+        // narrow row scrolls sideways by the wheel, a vertical wheel included.
+        this.listen(this.row, 'wheel', e => {
+            const wheel = e as WheelEvent;
+            const row = this.row;
+            if (row.scrollWidth <= row.clientWidth || wheel.deltaY === 0 || Math.abs(wheel.deltaX) > Math.abs(wheel.deltaY)) {
+                return;
+            }
+            wheel.preventDefault();
+            row.scrollLeft += wheel.deltaY;
+        });
         this.update(view);
     }
 
@@ -462,6 +486,7 @@ class ToolbarView implements PluginView {
         });
         item.addEventListener('mouseenter', () => {
             this.closeSubmenus(menu);
+            followPointer(menu.panel, item);
             this.scheduleCard(action, item, menu);
         });
         item.addEventListener('mouseleave', () => this.hideCard());
@@ -483,6 +508,7 @@ class ToolbarView implements PluginView {
         child.opener = item;
         item.addEventListener('mouseenter', () => {
             this.hideCard();
+            followPointer(menu.panel, item);
             this.openMenu(child, false);
         });
         item.addEventListener('click', e => {
@@ -1020,7 +1046,7 @@ class ToolbarView implements PluginView {
      * Over a non-empty text selection in editable text, while the editor (or
      * the bubble) has the focus: above the selection's first line, centred on it
      * when the selection is on one line — unless there it would cover content
-     * (the line above, a table's row above) or sit under the sticky toolbar;
+     * (the line above, a table's row above) or sit under the formatting row;
      * then beside the block, just right of its edge on the selection's line,
      * where the block is narrower than the column — close to what it acts on,
      * as the mapping between a control and its object weakens with distance —

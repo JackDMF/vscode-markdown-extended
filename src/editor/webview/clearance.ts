@@ -3,7 +3,8 @@
  * bar of the page — an object's bar, a block's, the selection bubble, the
  * toolbar's field bar — says only where it could stand, in order of
  * preference, and `firstFree` answers which of those places is free, by one
- * notion of free for all of them: under the sticky formatting row and past
+ * notion of free for all of them: under the formatting row (fixed at the
+ * editor's top, `rowCeiling`) and past
  * the window's bottom is not; over the selection bubble is not (for any bar
  * but the bubble); over content is not (`OCCUPIED`, text). Three ladders with
  * three notions of free had drifted apart — one bar pinned under the row, one
@@ -54,8 +55,8 @@ const OPEN_CARDS = ':scope > .mep-language-card, :scope > .mep-completions';
 /** What counts as content inside a rendered block, besides its text. */
 const OCCUPIED_WITHIN = 'img:not(.ProseMirror-separator), td, th, .mep-inline-atom';
 
-/** The bottom of the sticky formatting row in `mount`: nothing is placed under it. */
-export function stickyCeiling(mount: HTMLElement): number {
+/** The bottom of the formatting row (fixed at the editor's top) in `mount`: nothing is placed under it. */
+export function rowCeiling(mount: HTMLElement): number {
     const row = mount.querySelector(':scope > .mep-toolbar');
     return Math.max(0, row ? row.getBoundingClientRect().bottom : 0);
 }
@@ -73,7 +74,7 @@ function overlaps(a: Band, b: Band): boolean {
 export function firstFree(
     view: EditorView, mount: HTMLElement, places: readonly Place[], size: { width: number; height: number }, self?: Element,
 ): Place | null {
-    const ceiling = stickyCeiling(mount);
+    const ceiling = rowCeiling(mount);
     const bubbleEl = mount.querySelector<HTMLElement>(':scope > .mep-bubble');
     const bubble = bubbleEl && !bubbleEl.hidden && bubbleEl !== self ? bubbleEl.getBoundingClientRect() : null;
     // An open card (a hover, a diagnostic, the completion list) is read, not a bar: no bar covers it.

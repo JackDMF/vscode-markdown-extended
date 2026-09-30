@@ -1,15 +1,11 @@
 import * as assert from 'assert';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { CELL_BREAK_REFUSAL } from '../../../src/editor/serialize';
-import { EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle, vscodeMarkdownCss } from './pageHarness';
+import { clickText, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot as saveShot, vscodeMarkdownCss } from './pageHarness';
 import { LIGHT_MODERN, applyTheme } from './themes';
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /** The selection's object toolbar, shown. */
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
@@ -25,9 +21,6 @@ const TABLE = [
 ].join('\n');
 const DOC = `Intro paragraph.\n\n${TABLE}\n\nAfter the table.\n`;
 
-/** With `MEP_SHOTS_DIR` set, the suite saves a screenshot of each state it names there; without it, none. */
-const SHOTS = process.env.MEP_SHOTS_DIR;
-
 /**
  * Pipe tables in the real page, with the real keyboard and mouse: the keys
  * that move between cells, Insert → Table, the table's bar with its three
@@ -40,12 +33,7 @@ suite('Editor pipe tables (e2e)', () => {
 
     const lastEdit = async (): Promise<EditMessage | undefined> => (await (editor as EditorPage).edits()).pop();
 
-    const shot = async (name: string) => {
-        if (SHOTS) {
-            fs.mkdirSync(SHOTS, { recursive: true });
-            await page.screenshot({ path: path.join(SHOTS, name) });
-        }
-    };
+    const shot = (name: string) => saveShot(page, name);
 
     const showDocument = async (text: string, marker: string) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
@@ -67,25 +55,7 @@ suite('Editor pipe tables (e2e)', () => {
     };
 
     /** A real click just inside the left edge of character `index` of `needle`. */
-    const clickAt = async (needle: string, index = 0) => {
-        const p = await page.evaluate((n, k) => {
-            const root = document.querySelector('.ProseMirror') as HTMLElement;
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-                const at = (node.textContent ?? '').indexOf(n);
-                if (at >= 0) {
-                    const range = document.createRange();
-                    range.setStart(node, at + k);
-                    range.setEnd(node, at + k + 1);
-                    const r = range.getBoundingClientRect();
-                    return { x: r.left + 1, y: r.top + r.height / 2 };
-                }
-            }
-            throw new Error(`no "${n}" in the document`);
-        }, needle, index);
-        await page.mouse.click(p.x, p.y);
-        await delay(80);
-    };
+    const clickAt = (needle: string, index = 0) => clickText(page, needle, index);
 
     /** A real click at the end of the cell holding `needle`, past its text. */
     const clickCellEnd = async (needle: string) => {
@@ -359,6 +329,37 @@ suite('Editor pipe tables (e2e)', () => {
         await delay(100);
         assert.deepStrictEqual(await layout(), shortBefore);
         assert.deepStrictEqual(await coveredText(BAR), []);
+    });
+
+    test('with no place free and above it under the row, a block\'s bar goes below the block, where it can be seen; nothing moves', async function () {
+        this.timeout(15000);
+        const long = 'Inside the container, a first line of prose long enough to run across the whole width of the column and on past its right edge, so its first line is full.';
+        const filler = Array.from({ length: 12 }, (_, k) => `Filler paragraph ${k + 1}, to give the page something to scroll.`).join('\n\n');
+        await showDocument(`${filler}\n\nRight-aligned text above. {style="text-align: right"}\n\n::: note\n${long}\n:::\n\nRight-aligned text below. {style="text-align: right"}\n\n${filler}\n`, 'Inside');
+        // The container's top just under the row: above it is under the row.
+        await page.evaluate(() => {
+            const block = (document.querySelector('.ProseMirror div[data-mep-container]') as HTMLElement).getBoundingClientRect();
+            const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
+            window.scrollBy(0, block.top - row.bottom - 6);
+        });
+        await delay(100);
+        await clickAt('Inside', 2);
+        const before = await page.evaluate(() => ({
+            block: (document.querySelector('.ProseMirror div[data-mep-container]') as HTMLElement).getBoundingClientRect().top,
+            scroll: window.scrollY,
+        }));
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await delay(100);
+        const where = await page.evaluate(sel => ({
+            bar: (document.querySelector(sel) as HTMLElement).getBoundingClientRect().top,
+            row: (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect().bottom,
+            below: (document.querySelector('.ProseMirror div[data-mep-container]') as HTMLElement).getBoundingClientRect().bottom,
+            block: (document.querySelector('.ProseMirror div[data-mep-container]') as HTMLElement).getBoundingClientRect().top,
+            scroll: window.scrollY,
+        }), BAR);
+        assert.ok(before.block - where.row < 40, `the block's top is just under the row: ${JSON.stringify(where)}`);
+        assert.ok(where.bar >= where.row && where.bar >= where.below, `the bar is below the block, clear of the row: ${JSON.stringify(where)}`);
+        assert.deepStrictEqual({ block: where.block, scroll: where.scroll }, before, 'and nothing moved');
     });
 
     test('a full-width table under a paragraph: its bar shows above it and the table does not move', async function () {
