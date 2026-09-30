@@ -16,7 +16,7 @@ Markdown Extended Pro is a comprehensive extension that extends syntaxes and abi
 - 🌗 **Theme-Aware & Accessible Exports** - Light / dark / auto export theme with a built-in, accessible base stylesheet (overridable by your own CSS)
 - 🧜 **Mermaid in Exports** - Diagrams shown in VS Code's preview are rendered to inline SVG in exported files
 - ✏️ **Editing Helpers** - Table formatting, text formatting toggles, and more
-- 🖋️ **Visual Editor (experimental)** - Edit as rendered text; untouched blocks are saved byte for byte, and the front matter is a properties panel edited in place ([details](#visual-editor-experimental))
+- 🖋️ **Visual Editor** - Edit as rendered text; untouched blocks are saved byte for byte, and the front matter is a properties panel edited in place ([details](#visual-editor))
 - 🌐 **Web Extension** - Works in [vscode.dev](https://vscode.dev) and [github.dev](https://github.dev) (preview & editing; export requires desktop)
 - 🏗️ **TypeScript Codebase** - Built with TypeScript, unit tests, and error recovery
 
@@ -324,7 +324,7 @@ The first row becomes the header, and the table is aligned on insert.
 Search "Markdown" in the command palette (`Ctrl+Shift+P`) to reach them; export is
 also on the editor title menu and the explorer context menu.
 
-## Visual Editor (experimental)
+## Visual Editor
 
 Visual Editor: you edit the document as it reads; the technique is a rich-text editor
 over the file's own text.
@@ -437,9 +437,11 @@ To remove, convert or edit a note as a whole, use its bar (below).
 ### Every object carries its verbs
 
 A note, a link, an image, a source block, an included snippet: each is an *object*, and
-each shows the same small bar — its name on the left, then what can be done with it. The
-bar sits above the object's first line (below its last when there is no room above) and
-never covers the line you are typing on.
+each shows the same small bar — its name on the left, then what can be done with it. An
+inline object's bar sits above its line (below it when there is no room above); a block's
+bar goes where there is no text — beside the block's first line when the block is narrow,
+else above it, inside its top-right corner or below it. A bar never covers the line you
+are typing on, and never moves the page.
 
 | Object | Its bar shows | Verbs |
 | ------ | ------------- | ----- |
@@ -627,7 +629,9 @@ workspace, while the file keeps the path as you wrote it.
 
 A toolbar stays at the top of the editor, one line of controls across its full width:
 
-`Block type ▾` | `i` `em` `b` `strong` `code` | `Formatting ▾` `Annotation ▾` `Insert ▾`
+`Block type` | `i` `em` `b` `strong` `code` | `Formatting` `Annotation` `Insert`
+
+Each menu is its name followed by VS Code's own dropdown chevron.
 
 It is drawn as part of VS Code rather than of the page: the colours of the tab strip above
 it, the workbench's font, its menus drawn as VS Code's context menus and each object's bar
@@ -801,7 +805,9 @@ rather than a second heading, so the id and the anchor are never written twice.
 
 ### Limits
 
-- **Experimental.** Try it on files under version control.
+- **What stays source-edited.** A table using markdown-it-multimd-table's extensions and
+  raw HTML are edited as Markdown in a source block, and a document the editor cannot show
+  without loss is never written to: the editor says so and offers the text editor instead.
 - **Only pipe tables are tables.** A table using markdown-it-multimd-table's extensions is
   edited as source, and so are the other block constructs listed above. A table inside a
   container, a quote or a list leaves that block a source block. A cell holds one line:

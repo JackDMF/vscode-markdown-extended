@@ -1,6 +1,12 @@
 # Change Log
 
-## Unreleased — Visual Editor (experimental)
+## Unreleased
+
+## v4.0.0 — The Visual Editor
+
+*2026-09-30*
+
+This is a major release because it adds a new way to edit a Markdown file, the Visual Editor, which saves every block you did not touch byte for byte. It also changes two behaviours an existing document may notice: the PDF's print date now follows VS Code's display language unless `markdownExtended.pdf.locale` is set (it followed the operating system's locale), and every image now keeps its alt text in the preview and the exports (it was rendered as `alt=""`).
 
 ### ✨ New Features
 
@@ -55,8 +61,8 @@
 ### ⚠️ Limits
 
 - **Change snippet…** is offered on an included snippet, not on a source block that happens to be one include line the extension could not expand at all: telling such a line from any other would take the directive's syntax, which is the providing extension's.
-- Experimental: try it on files under version control.
-- Tables are edited as source, not cell by cell; so are footnotes, definition and task lists, abbreviations, the table of contents and reference definitions.
+- A table using markdown-it-multimd-table's extensions and raw HTML stay source blocks, and a document the editor cannot show without changing it is not written to: the editor says so and offers the text editor instead.
+- A table inside a container, a quote or a list is edited as source; so are footnotes, definition and task lists, abbreviations, the table of contents and reference definitions.
 - Containers and admonitions nest one level deep; a third level, a nested container closed by its parent's fence, an admonition with a second class, and attributes on a list item, a link, emphasis, an image, a quote, a nested block, a container or an admonition title stay source blocks. An admonition title holding Markdown shows its markers in the editor.
 - A note holds no note: the notes plugin allows one of another kind inside a note (`++a|see !!b|c!!++`), and such a paragraph stays a source block.
 - Inline code in a note cannot hold the note's `++` or `!!`, and inline code, superscript or subscript cannot hold a reference's `|` or a sidebar's `$` or `@`: the notes plugin finds those before anything else is read, and nothing escapes them there. The editor refuses such an edit and says why beside the caret; the Code, Superscript and Subscript buttons are disabled with the reason.
