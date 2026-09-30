@@ -12,9 +12,9 @@ import { ExtensionContext } from '../common/extensionContext';
 import { ErrorHandler, ErrorSeverity } from '../common/errorHandler';
 
 /**
- * The locale Chrome formats the PDF header/footer `date` in, or undefined to leave Chrome's own.
- * The `markdownExtended.pdf.locale` setting wins; else VS Code's display language. Empty and the
- * pseudo-locale `qps-ploc` (VS Code's localisation test language) name no real language.
+ * The locale the print date is formatted in. The `markdownExtended.pdf.locale` setting wins; else
+ * VS Code's display language. Empty and the pseudo-locale `qps-ploc` (VS Code's localisation test
+ * language) name no real language and give `undefined`, for which `Intl` uses the runtime's default.
  */
 export function exportLocale(setting: string | undefined, envLanguage: string | undefined): string | undefined {
     const pick = (v: string | undefined) => (v ?? '').trim();
@@ -23,20 +23,47 @@ export function exportLocale(setting: string | undefined, envLanguage: string | 
 }
 
 /**
- * Launch options of the export browser. Chrome fills `<span class='date'>` in the language it was
- * started with, which takes `--lang` on Windows and `LANG` on Linux/macOS.
+ * The print time as Chrome itself writes the `date` class (`30.09.26, 13:20`, `9/30/26, 1:20 PM`),
+ * but in a locale we choose: Chrome takes its own from the OS and the launch environment, which
+ * differ per platform. An invalid tag (a `RangeError`) falls back to the runtime default and is
+ * reported through `warn`.
  */
-export function launchOptions(executablePath: string | undefined, locale: string | undefined): puppeteer.LaunchOptions {
-    const args = ['--no-sandbox', '--disable-setuid-sandbox']; // For compatibility
-    if (locale) {
-        args.push(`--lang=${locale}`);
+export function formatPrintDate(locale: string | undefined, now: Date, warn?: (message: string) => void): string {
+    const format = (l: string | undefined) => new Intl.DateTimeFormat(l, { dateStyle: 'short', timeStyle: 'short' }).format(now);
+    try {
+        return format(locale);
+    } catch (error) {
+        if (!(error instanceof RangeError)) {
+            throw error;
+        }
+        warn?.(`[WARNING] markdownExtended.pdf.locale "${locale}" is not a valid BCP 47 language tag; the print date uses the default locale.`);
+        return format(undefined);
     }
-    return {
-        executablePath,
-        headless: true, // Use headless mode
-        args,
-        ...(locale ? { env: { ...process.env, LANG: locale } as Record<string, string | undefined> } : {})
-    };
+}
+
+/**
+ * Replaces the content of every `<span class="date">` (any quoting, any attributes, `date` among
+ * other classes) in a header or footer template with the preformatted print time. The span and its
+ * attributes stay, so a user's CSS still finds it.
+ */
+export function fillPrintDate(template: string, formatted: string): string {
+    const text = formatted.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    return template.replace(/<span\b([^>]*)>[\s\S]*?<\/span>/gi, (whole, attrs: string) => {
+        const m = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i.exec(attrs);
+        const classes = (m?.[1] ?? m?.[2] ?? m?.[3] ?? '').split(/\s+/);
+        return classes.includes('date') ? `<span${attrs}>${text}</span>` : whole;
+    });
+}
+
+/** Fills the `date` spans of the header and footer templates in PDF options, in place. */
+export function applyPrintDate(pdfOptions: { headerTemplate?: unknown; footerTemplate?: unknown }, locale: string | undefined, now: Date, warn?: (message: string) => void): void {
+    const formatted = formatPrintDate(locale, now, warn);
+    for (const key of ['headerTemplate', 'footerTemplate'] as const) {
+        const template = pdfOptions[key];
+        if (typeof template === 'string') {
+            pdfOptions[key] = fillPrintDate(template, formatted);
+        }
+    }
 }
 
 /**
@@ -102,10 +129,11 @@ export class PuppeteerExporter implements MarkdownExporter {
             const executablePath = await browserManager.ensureBrowser(progress);
             
             progress.report({ message: "Initializing browser..." });
-            const setting = vscode.workspace.getConfiguration('markdownExtended', items[0]?.uri).get<string>('pdf.locale');
-            browser = await puppeteer.launch(
-                launchOptions(executablePath || undefined, exportLocale(setting, vscode.env.language))
-            );
+            browser = await puppeteer.launch({
+                executablePath: executablePath || undefined,
+                headless: true, // Use headless mode
+                args: ['--no-sandbox', '--disable-setuid-sandbox'] // For compatibility
+            });
             page = await browser.newPage();
 
             // Process all export items sequentially
@@ -199,6 +227,12 @@ export class PuppeteerExporter implements MarkdownExporter {
                 if (typeof ptConf.preferCSSPageSize === 'undefined') {
                     ptConf.preferCSSPageSize = true;
                 }
+                applyPrintDate(
+                    ptConf,
+                    exportLocale(scoped.pdfLocale, vscode.env.language),
+                    new Date(),
+                    message => ExtensionContext.current.outputPanel.appendLine(message)
+                );
                 ptConf = Object.assign(ptConf, { path: item.fileName });
                 await page.pdf(ptConf);
                 break;

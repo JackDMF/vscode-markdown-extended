@@ -11,6 +11,8 @@ export interface ScopedExportConfig {
     exportOutDirName: string;
     exportDefaultStyles: boolean;
     exportTheme: 'light' | 'dark';
+    /** `markdownExtended.pdf.locale`: the print date's locale; empty for VS Code's language. */
+    pdfLocale: string;
     puppeteerUserSetting: { pdf: Record<string, unknown>; image: Record<string, unknown> };
 }
 
@@ -194,6 +196,7 @@ export class Config extends ConfigReader {
             exportOutDirName: read<string>('export.outDirName', 'exportOutDirName'),
             exportDefaultStyles: conf.get<boolean>('export.defaultStyles') !== false,
             exportTheme: resolveExportTheme(read<string>('export.theme', 'exportTheme'), isDark),
+            pdfLocale: conf.get<string>('pdf.locale') ?? '',
             puppeteerUserSetting: {
                 pdf: {
                     format: read<string>('pdf.format', 'pdfFormat'),
