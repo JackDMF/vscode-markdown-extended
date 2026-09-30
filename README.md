@@ -622,12 +622,16 @@ workspace, while the file keeps the path as you wrote it.
 
 ### Toolbar
 
-A toolbar stays at the top of the page, one line of controls:
+A toolbar stays at the top of the editor, one line of controls across its full width:
 
 `Block type ▾` | `i` `em` `b` `strong` `code` | `Formatting ▾` `Annotation ▾` `Insert ▾`
 
-Every control has the same height, and nothing wraps: in a narrow window the row scrolls
-sideways, so each control stays where you learned it. The five marks show their real
+It is drawn as part of VS Code rather than of the page: the colours of the tab strip above
+it, the workbench's font, its menus drawn as VS Code's context menus and each object's bar
+as an editor widget — every colour taken from the current theme, so a light, dark or high
+contrast theme needs nothing of its own. Every control has the same height, and nothing
+wraps: in a narrow window the row scrolls sideways, so each control stays where you learned
+it. The five marks show their real
 element (the italic, emphasis, bold, strong and code your stylesheets draw) as their
 glyph; everything else is in a menu. Above any text you select, a small bubble offers the
 same five marks, the extension's five (highlight, superscript, subscript, strikethrough,

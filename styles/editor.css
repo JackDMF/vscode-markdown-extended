@@ -154,28 +154,60 @@ img.mep-pending-range {
  * an admonition box — styled by the document's own cascade, so nothing below
  * sets its colour or decoration. What is set on a sample is its box: a height
  * it must fit, and margins taken off, so a stylesheet cannot break the row.
+ *
+ * The chrome is the workbench's (Daniel, 2026-09-30): the row is drawn as VS
+ * Code draws a row of its own under the tabs, the menus as its context menus,
+ * the bars and the bubble as its editor widgets. Every colour is a
+ * `--vscode-*` variable, with a fallback after it for a page without them, so
+ * Light, Dark, High Contrast and any other theme follow by construction.
  */
 
-.mep-editor { position: relative; }
+.mep-editor {
+    position: relative;
+    /* The row's height, border included: the room the page keeps under it. */
+    --mep-row-height: 27px;
+    /* The row's bottom edge, as the workbench draws the edge under its tabs. */
+    --mep-chrome-border: var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-editorGroupHeader-border, var(--vscode-widget-border, transparent)));
+    /*
+     * A separator between the row's groups. The edge's own colour is the row's
+     * background in both Modern themes (the tabs' border is drawn in the tabs'
+     * colour), so a separator in it would not be seen; the workbench's
+     * separator colour is its menus', and the edge's stands after it.
+     */
+    --mep-chrome-separator: var(--vscode-menu-separatorBackground, var(--mep-chrome-border));
+}
 
-/* The row: one line, every control the same height. Narrow, it scrolls sideways
-   rather than wrapping, so every control keeps its place. */
+/* The page keeps the row's height free at its top: the row stands over the page, not in it. */
+.mep-editor:has(> .mep-toolbar) { padding-top: var(--mep-row-height); }
+
+/*
+ * The row: full width, fixed at the top of the editor as the workbench's rows
+ * are under the tabs — the page's own padding does not inset it. One line,
+ * every control 22px. Narrow, it scrolls sideways rather than wrapping, so
+ * every control keeps its place.
+ */
 .mep-toolbar {
-    position: sticky;
+    position: fixed;
     top: 0;
+    left: 0;
+    right: 0;
     z-index: 20;
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
-    height: 34px;
     box-sizing: border-box;
-    margin: 0 -8px 8px;
-    padding: 0 4px;
+    height: var(--mep-row-height);
+    margin: 0;
+    padding: 0 8px;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: thin;
-    background: var(--vscode-editor-background, Canvas);
-    border-bottom: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #8884));
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: calc(var(--vscode-font-size, 13px) - 1px);
+    line-height: 20px;
+    color: var(--vscode-foreground, CanvasText);
+    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
+    border-bottom: 1px solid var(--mep-chrome-border);
 }
 
 .mep-row-group {
@@ -183,11 +215,19 @@ img.mep-pending-range {
     flex: none;
     align-items: center;
     gap: 2px;
-    padding: 0 6px;
+    padding: 0 5px;
 }
 
-.mep-row-group + .mep-row-group {
-    border-left: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, #8884));
+.mep-row-group:first-child { padding-left: 0; }
+
+.mep-row-group + .mep-row-group::before {
+    content: "";
+    flex: none;
+    width: 1px;
+    height: 14px;
+    margin-right: 5px;
+    margin-left: -5px;
+    background: var(--mep-chrome-separator);
 }
 
 .mep-tool {
@@ -195,9 +235,10 @@ img.mep-pending-range {
     flex: none;
     align-items: center;
     box-sizing: border-box;
-    height: 26px;
+    height: 22px;
     padding: 0 6px;
     overflow: hidden;
+    color: inherit;
     border: 1px solid transparent;
     border-radius: 3px;
     cursor: pointer;
@@ -205,47 +246,36 @@ img.mep-pending-range {
     white-space: nowrap;
 }
 
-.mep-tool:hover,
-.mep-menu-item:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
-.mep-tool:focus-visible,
-.mep-menu-item:focus { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: -1px; }
+/* The workbench's toolbar states: hover, and a menu's face while its menu is open. High Contrast outlines the hover. */
+.mep-tool:hover {
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+    outline: 1px dashed var(--vscode-toolbar-hoverOutline, transparent);
+    outline-offset: -1px;
+}
+.mep-menu-face[aria-expanded="true"] {
+    background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.3)));
+}
+.mep-tool:focus-visible { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: -1px; }
 
-/* A row button that is on: a toggle's pressed state. */
+/* A row button that is on: a toggle's pressed state, as the workbench's option toggles draw it. */
 .mep-tool.mep-active {
-    border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, #0078d4));
+    color: var(--vscode-inputOption-activeForeground, inherit);
+    border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, Highlight));
     background: var(--vscode-inputOption-activeBackground, rgba(0, 120, 212, 0.15));
 }
 
-/*
- * A menu entry that is the current value — the block type, a mark that is on,
- * a table column's alignment — carries a check in a column of its own, as the
- * workbench's menus do. A border and a background said it too, and looked like
- * the focus ring: which entry is current and which one Enter chooses were the
- * same picture. State is the check, focus the ring.
- */
-.mep-menu-item::before {
-    content: "";
-    flex: none;
-    width: 1em;
-    margin-right: -6px;
-    text-align: center;
-    color: var(--vscode-foreground, inherit);
-}
-.mep-menu-item.mep-active::before { content: "\2713"; }
-
 .mep-tool.mep-disabled,
 .mep-menu-item.mep-disabled { opacity: 0.4; cursor: default; }
-.mep-tool.mep-disabled:hover,
-.mep-menu-item.mep-disabled:hover { background: none; }
+.mep-tool.mep-disabled:hover { background: none; outline: none; }
 
 /* A mark's glyph is its real element, held to the button: centred in a fixed
-   minimum width, one line of the button's height, clipped. */
-.mep-mark-tool { justify-content: center; min-width: 32px; }
+   minimum width, one line of the control's inner height, clipped. */
+.mep-mark-tool { justify-content: center; min-width: 28px; }
 .mep-mark-tool .mep-sample > * {
     display: inline-block;
-    max-height: 22px;
+    max-height: 20px;
     margin: 0;
-    line-height: 22px;
+    line-height: 20px;
     white-space: nowrap;
 }
 
@@ -253,24 +283,29 @@ img.mep-pending-range {
    checkbox does not toggle, a sample link does not open). */
 .mep-sample { pointer-events: none; }
 
-/* A menu's face: a label and a chevron, in the workbench's font. */
-.mep-menu-face {
-    gap: 4px;
-    padding: 0 8px;
-    font-family: var(--vscode-font-family, sans-serif);
-    font-size: var(--vscode-font-size, 13px);
-    color: var(--vscode-foreground, inherit);
-}
+/* A menu's face: a label and the workbench's dropdown chevron. */
+.mep-menu-face { gap: 2px; padding: 0 4px 0 7px; }
 
 /* The block-type face names the current type; a width that fits the longest
    keeps the controls after it from moving when the type changes. */
 .mep-menu-face[data-menu="block-type"] { min-width: 8.5em; justify-content: space-between; }
 
+/*
+ * The chevron of everything that opens a list (`chevronNode`): a toolbar
+ * menu's face, a submenu's entry, an object bar's set-verb. The codicon, dim,
+ * no taller than the line.
+ */
 .mep-menu-caret {
-    font-family: var(--vscode-font-family, sans-serif);
-    font-size: 10px;
-    color: var(--vscode-descriptionForeground, #888);
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    color: var(--vscode-descriptionForeground, GrayText);
 }
+.mep-menu-caret > .codicon { font-size: 14px; line-height: 1; }
+
+/* ------------------------------------------------------------------------- */
+/* Menus: the workbench's context menu                                       */
+/* ------------------------------------------------------------------------- */
 
 /* Menus and the card sit outside the scrolling row, positioned from their face. */
 .mep-menu {
@@ -282,9 +317,12 @@ img.mep-pending-range {
     max-height: 70vh;
     overflow-y: auto;
     padding: 4px;
-    background: var(--vscode-menu-background, var(--vscode-editor-background, Canvas));
-    border: 1px solid var(--vscode-menu-border, var(--vscode-editorWidget-border, #8888));
-    border-radius: 4px;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: var(--vscode-font-size, 13px);
+    color: var(--vscode-menu-foreground, var(--vscode-foreground, CanvasText));
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas));
+    border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
+    border-radius: 5px;
     box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
 }
 
@@ -298,11 +336,41 @@ img.mep-pending-range {
     box-sizing: border-box;
     height: 30px;
     padding: 0 8px;
-    border: 1px solid transparent;
     border-radius: 3px;
     cursor: pointer;
     user-select: none;
 }
+
+/* The entry under the pointer or the keyboard's focus, in the menu's selection colours; High Contrast outlines it. */
+.mep-menu-item:hover,
+.mep-menu-item:focus {
+    color: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground, inherit));
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground, transparent));
+    outline: 1px solid var(--vscode-menu-selectionBorder, transparent);
+    outline-offset: -1px;
+}
+.mep-menu-item.mep-disabled:hover,
+.mep-menu-item.mep-disabled:focus {
+    color: inherit;
+    background: none;
+}
+
+/*
+ * A menu entry that is the current value — the block type, a mark that is on,
+ * a table column's alignment — carries a check in a column of its own, as the
+ * workbench's menus do. A border and a background said it too, and looked like
+ * the focus ring: which entry is current and which one Enter chooses were the
+ * same picture. State is the check, focus the selection.
+ */
+.mep-menu-item::before {
+    content: "";
+    flex: none;
+    width: 1em;
+    margin-right: -6px;
+    text-align: center;
+    color: inherit;
+}
+.mep-menu-item.mep-active::before { content: "\2713"; }
 
 .mep-entry-sample {
     display: flex;
@@ -320,12 +388,9 @@ img.mep-pending-range {
 .mep-entry-sample .mep-sample { display: block; width: 100%; }
 .mep-entry-sample .mep-sample > * { margin: 0 !important; }
 
-.mep-entry-label {
-    font-family: var(--vscode-font-family, sans-serif);
-    font-size: var(--vscode-font-size, 13px);
-    color: var(--vscode-foreground, inherit);
-}
+.mep-entry-label { color: inherit; }
 
+/* The syntax column: right, mono, dim — and the selection's colour on the chosen entry. */
 .mep-entry-syntax {
     flex: 1;
     min-width: 0;
@@ -335,8 +400,9 @@ img.mep-pending-range {
     text-align: right;
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 12px;
-    color: var(--vscode-descriptionForeground, #888);
+    color: var(--vscode-descriptionForeground, GrayText);
 }
+.mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret) { color: inherit; opacity: 0.8; }
 
 /*
  * The preview card: the construct at its natural size, from the cascade.
@@ -345,7 +411,9 @@ img.mep-pending-range {
  * first is in markdown-extended.css, whose margin layout for notes and
  * sidebars excludes this card: its media query reads the window, not the
  * card, and would float a note out by its full offset in a wide window. The
- * notes therefore render stacked here, as they do below the breakpoint.
+ * notes therefore render stacked here, as they do below the breakpoint. Its
+ * ground is the document's, since what it shows is the document's rendering;
+ * its frame is an editor widget's.
  */
 .mep-preview-card {
     position: fixed;
@@ -357,7 +425,7 @@ img.mep-pending-range {
     width: 360px;
     padding: 8px 12px;
     background: var(--vscode-editor-background, Canvas);
-    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, transparent));
     border-radius: 4px;
     box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
     pointer-events: none;
@@ -371,67 +439,74 @@ img.mep-pending-range {
 .mep-preview-syntax {
     margin-top: 8px;
     padding-top: 6px;
-    border-top: 1px solid var(--vscode-editorWidget-border, #8884);
+    border-top: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, transparent));
     white-space: pre-wrap;
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 12px;
-    color: var(--vscode-descriptionForeground, #888);
+    color: var(--vscode-descriptionForeground, GrayText);
 }
 
-/* The bubble: the five marks, below the sticky row — it belongs to the text,
-   which scrolls under the row. */
+/* ------------------------------------------------------------------------- */
+/* Editor widgets: the selection bubble and the object toolbar               */
+/* ------------------------------------------------------------------------- */
+
+/* The bubble: the five marks, below the row — it belongs to the text, which
+   scrolls under the row. An editor widget, as the find widget is. */
 .mep-bubble {
     position: absolute;
     z-index: 15;
     display: flex;
+    align-items: center;
     gap: 2px;
-    padding: 2px 4px;
+    padding: 2px;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: calc(var(--vscode-font-size, 13px) - 1px);
+    line-height: 20px;
+    color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, CanvasText));
     background: var(--vscode-editorWidget-background, var(--vscode-editor-background, Canvas));
-    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, transparent));
     border-radius: 4px;
     box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
 }
 
 .mep-bubble[hidden] { display: none; }
 
-/* ------------------------------------------------------------------------- */
-/* The object toolbar: one bar for every object's verbs                      */
-/* ------------------------------------------------------------------------- */
-
 /*
  * A note, a link, an image, a source block, injected content: each shows the
  * same small bar above its first line (below its last when there is no room),
  * a label naming it and then its verbs. Positioned by objectToolbar.ts inside
  * .mep-editor, as the bubble is, so it scrolls with the text; under the bubble,
- * which belongs to the selection being formatted.
+ * which belongs to the selection being formatted. An editor widget with the
+ * row's 22px controls.
  */
 .mep-object-toolbar {
     position: absolute;
     z-index: 14;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     box-sizing: border-box;
     max-width: 100%;
-    padding: 2px 4px;
+    padding: 2px;
     font-family: var(--vscode-font-family, sans-serif);
-    font-size: 11px;
-    line-height: 18px;
+    font-size: calc(var(--vscode-font-size, 13px) - 1px);
+    line-height: 20px;
     white-space: nowrap;
-    color: var(--vscode-descriptionForeground, #888);
+    color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, CanvasText));
     background: var(--vscode-editorWidget-background, var(--vscode-editor-background, Canvas));
-    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, transparent));
     border-radius: 4px;
-    box-shadow: 0 1px 4px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+    box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
 }
 
 .mep-object-toolbar[hidden] { display: none; }
-.mep-object-toolbar:focus { outline: 1px solid var(--vscode-focusBorder, #0078d4); }
+.mep-object-toolbar:focus { outline: 1px solid var(--vscode-focusBorder, Highlight); }
 
 .mep-object-label {
-    padding: 0 4px;
+    padding: 0 6px;
     overflow: hidden;
     text-overflow: ellipsis;
+    color: var(--vscode-descriptionForeground, GrayText);
 }
 
 /* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through. */
@@ -445,14 +520,45 @@ img.mep-pending-range {
 
 /* Between an object's own verbs and the code actions other extensions offer for it, or between groups of its own. */
 .mep-object-separator {
-    align-self: stretch;
+    flex: none;
     width: 1px;
-    margin: 2px 2px;
-    background: var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    height: 14px;
+    margin: 0 3px;
+    background: var(--vscode-menu-separatorBackground, var(--vscode-editorWidget-border, var(--vscode-contrastBorder, transparent)));
 }
 
-/* A verb, and the error banner's one button, which is the same kind of control. */
-.mep-object-verb,
+/* A verb: a toolbar control, as the row's are — no surface at rest, the toolbar's on hover and while its menu is open. */
+.mep-object-verb {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 2px;
+    box-sizing: border-box;
+    height: 22px;
+    font: inherit;
+    padding: 0 6px;
+    color: inherit;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.mep-object-verb[aria-haspopup="menu"],
+.mep-object-verb:has(> .mep-menu-caret) { padding-right: 4px; }
+
+.mep-object-verb:hover {
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+    outline: 1px dashed var(--vscode-toolbar-hoverOutline, transparent);
+    outline-offset: -1px;
+}
+.mep-object-verb[aria-expanded="true"] {
+    background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.3)));
+}
+.mep-object-verb:focus { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: -1px; }
+.mep-object-verb[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+.mep-object-verb[aria-disabled="true"]:hover { background: transparent; outline: none; }
+
+/* The error banner's one button: a secondary button, as the workbench draws one in a notification. */
 .mep-error-button {
     font: inherit;
     padding: 0 8px;
@@ -462,29 +568,26 @@ img.mep-pending-range {
     background: var(--vscode-button-secondaryBackground, transparent);
     cursor: pointer;
 }
-
-.mep-object-verb:hover,
 .mep-error-button:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.2)); }
-.mep-object-verb:focus,
-.mep-error-button:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: -1px; }
-.mep-object-verb[aria-disabled="true"] { opacity: 0.4; cursor: default; }
-.mep-object-verb[aria-disabled="true"]:hover { background: var(--vscode-button-secondaryBackground, transparent); }
+.mep-error-button:focus-visible { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: -1px; }
 
-/* The inline field: one line, prefilled, in the bar in place of the verbs. */
+/* The inline field: one line, prefilled, in the bar in place of the verbs — the control's 22px, the input's colours. */
 .mep-inline-field {
     box-sizing: border-box;
+    height: 22px;
     min-width: 12em;
     max-width: 60ch;
     padding: 0 4px;
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 12px;
-    line-height: 18px;
+    line-height: 20px;
     color: var(--vscode-input-foreground, inherit);
     background: var(--vscode-input-background, transparent);
-    border: 1px solid var(--vscode-focusBorder, #0078d4);
+    border: 1px solid var(--vscode-focusBorder, Highlight);
     border-radius: 2px;
     outline: none;
 }
+.mep-inline-field::placeholder { color: var(--vscode-input-placeholderForeground, GrayText); }
 
 /*
  * A link's field completes: the files and headings the host offers, listed
@@ -1091,8 +1194,8 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     flex: none;
     align-items: center;
     margin-left: auto;
-    padding: 0 4px 0 8px;
-    background: var(--vscode-editor-background, Canvas);
+    padding: 0 0 0 8px;
+    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
 }
 .mep-row-status:empty { display: none; }
 
@@ -1100,17 +1203,21 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    height: 26px;
+    box-sizing: border-box;
+    height: 22px;
     padding: 0 6px;
-    font-family: var(--vscode-font-family, sans-serif);
-    font-size: 12px;
-    color: var(--vscode-foreground, inherit);
+    font: inherit;
+    color: inherit;
     border-radius: 3px;
     cursor: pointer;
     user-select: none;
 }
 .mep-diag-count[hidden] { display: none; }
-.mep-diag-count:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)); }
+.mep-diag-count:hover {
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+    outline: 1px dashed var(--vscode-toolbar-hoverOutline, transparent);
+    outline-offset: -1px;
+}
 /* A button, and it looks like one under the pointer: the numbers underline, as a link's text does. */
 .mep-diag-count:hover .mep-diag-count-part { text-decoration: underline; }
 .mep-diag-count:focus-visible { outline: 1px solid var(--vscode-focusBorder, #0078d4); outline-offset: -1px; }

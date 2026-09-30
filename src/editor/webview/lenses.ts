@@ -174,6 +174,21 @@ export function lensLabelNodes(title: string): globalThis.Node[] {
     return nodes.length > 0 ? nodes : [document.createTextNode('')];
 }
 
+/**
+ * The dropdown affordance of every control that opens a list — a toolbar
+ * menu's face, a submenu's entry (`right`), an object bar's set-verb: the
+ * workbench's own codicon chevron, as its menus and dropdowns draw it, in a
+ * `.mep-menu-caret` the stylesheet dims. One element for all of them, so the
+ * row, the menus and the bars cannot draw it three ways.
+ */
+export function chevronNode(direction: 'down' | 'right' = 'down'): HTMLElement {
+    const holder = document.createElement('span');
+    holder.className = 'mep-menu-caret';
+    holder.setAttribute('aria-hidden', 'true');
+    holder.append(...lensLabelNodes(`$(chevron-${direction})`));
+    return holder;
+}
+
 /** What a placed element's tooltip says: the verb, then the provider's own tooltip where it says more. */
 function targetTitle(item: LensItem): string {
     const label = lensName(item.title);

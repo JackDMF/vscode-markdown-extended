@@ -31,6 +31,7 @@ import { editorSchema } from '../../schema';
 import { firstFree } from '../clearance';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
+import { chevronNode } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
@@ -357,7 +358,7 @@ class ToolbarView implements PluginView {
         face.setAttribute('aria-haspopup', 'menu');
         face.setAttribute('aria-expanded', 'false');
         face.tabIndex = 0;
-        face.append(span('mep-face-label', MENU_LABELS[id]), span('mep-menu-caret', '▾'));
+        face.append(span('mep-face-label', MENU_LABELS[id]), chevronNode());
         menu.face = face;
         face.addEventListener('click', e => {
             e.preventDefault();
@@ -478,7 +479,7 @@ class ToolbarView implements PluginView {
         item.setAttribute('aria-expanded', 'false');
         const label = span('mep-entry-sample');
         label.append(span('mep-entry-label', MENU_LABELS[child.id]));
-        item.append(label, span('mep-entry-syntax', SUBMENU_SYNTAX[child.id as ToolbarSubmenu]), span('mep-menu-caret', '▸'));
+        item.append(label, span('mep-entry-syntax', SUBMENU_SYNTAX[child.id as ToolbarSubmenu]), chevronNode('right'));
         child.opener = item;
         item.addEventListener('mouseenter', () => {
             this.hideCard();

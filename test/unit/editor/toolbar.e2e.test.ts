@@ -116,8 +116,8 @@ suite('Editor toolbar (e2e)', () => {
                 groups: Array.from(bar.querySelectorAll(':scope > .mep-row-group')).map(g => Array.from(g.children).map(c => (c as HTMLElement).dataset.action ?? `menu:${(c as HTMLElement).dataset.menu}`)),
                 heights: [...new Set(controls.map(c => c.offsetHeight))],
                 tops: [...new Set(controls.map(c => Math.round(c.getBoundingClientRect().top)))],
-                faces: Array.from(bar.querySelectorAll('.mep-menu-face')).map(f => ({ text: f.textContent, samples: f.querySelectorAll('.mep-sample').length })),
-                sticky: getComputedStyle(bar).position === 'sticky' && bar.nextElementSibling?.classList.contains('ProseMirror'),
+                faces: Array.from(bar.querySelectorAll('.mep-menu-face')).map(f => ({ text: f.textContent, samples: f.querySelectorAll('.mep-sample').length, chevron: f.querySelector(':scope > .mep-menu-caret > .codicon-chevron-down') !== null })),
+                fixed: getComputedStyle(bar).position === 'fixed' && bar.nextElementSibling?.classList.contains('ProseMirror'),
             };
         });
         assert.deepStrictEqual(row.groups, [
@@ -128,9 +128,9 @@ suite('Editor toolbar (e2e)', () => {
         assert.strictEqual(row.heights.length, 1, `one height: ${row.heights.join(', ')}`);
         assert.strictEqual(row.tops.length, 1, 'one line');
         assert.deepStrictEqual(row.faces, [
-            { text: 'Paragraph▾', samples: 0 }, { text: 'Formatting▾', samples: 0 }, { text: 'Annotation▾', samples: 0 }, { text: 'Insert▾', samples: 0 },
+            { text: 'Paragraph', samples: 0, chevron: true }, { text: 'Formatting', samples: 0, chevron: true }, { text: 'Annotation', samples: 0, chevron: true }, { text: 'Insert', samples: 0, chevron: true },
         ]);
-        assert.strictEqual(row.sticky, true);
+        assert.strictEqual(row.fixed, true, 'the row stands fixed at the top of the editor, before the text');
 
         const marks = await page.$$eval('.mep-toolbar .mep-mark-tool', tools => tools.map(t => t.querySelector('.mep-sample > *')?.tagName.toLowerCase()));
         assert.deepStrictEqual(marks, ['i', 'em', 'b', 'strong', 'code'], 'a mark\'s glyph is its real element');
@@ -146,7 +146,7 @@ suite('Editor toolbar (e2e)', () => {
                 const tops = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool')).map(c => Math.round(c.offsetTop));
                 return { height: bar.offsetHeight, scrolls: bar.scrollWidth > bar.clientWidth, lines: new Set(tops).size };
             });
-            assert.deepStrictEqual(narrow, { height: 34, scrolls: true, lines: 1 });
+            assert.deepStrictEqual(narrow, { height: 27, scrolls: true, lines: 1 });
         } finally {
             await page.setViewport({ width: WIDE, height: 900 });
         }
@@ -271,7 +271,7 @@ suite('Editor toolbar (e2e)', () => {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('Second');
-        assert.strictEqual(await page.$eval(face('block-type'), el => el.textContent), 'Paragraph▾');
+        assert.strictEqual(await page.$eval(face('block-type'), el => el.textContent), 'Paragraph');
         await openMenu('block-type');
         assert.strictEqual(await page.$eval(entry('paragraph'), el => el.classList.contains('mep-active')), true);
         await page.click(entry('heading-2'));
@@ -279,7 +279,7 @@ suite('Editor toolbar (e2e)', () => {
         const edit = await lastEdit();
         assert.ok(edit?.text.includes('\n## Second paragraph here.\n'), edit?.text);
         const shown = await page.$eval(face('block-type'), el => ({ text: el.textContent, shows: (el as HTMLElement).dataset.shows, samples: el.querySelectorAll('.mep-sample').length }));
-        assert.deepStrictEqual(shown, { text: 'Heading 2▾', shows: 'heading-2', samples: 0 });
+        assert.deepStrictEqual(shown, { text: 'Heading 2', shows: 'heading-2', samples: 0 });
         assert.strictEqual(await page.$eval(panel('block-type'), el => (el as HTMLElement).hidden), true, 'the menu closed');
     });
 
@@ -290,7 +290,7 @@ suite('Editor toolbar (e2e)', () => {
         const locked = await page.$eval(face('block-type'), el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title, text: el.textContent }));
         assert.strictEqual(locked.disabled, 'true');
         assert.ok(locked.title.includes(REQUIREMENT_HEADING_LOCK), locked.title);
-        assert.strictEqual(locked.text, 'Heading 2▾', 'still named while locked');
+        assert.strictEqual(locked.text, 'Heading 2', 'still named while locked');
         await page.click(face('block-type'));
         assert.strictEqual(await page.$eval(panel('block-type'), el => (el as HTMLElement).hidden), true, 'the menu does not open');
         assert.strictEqual(await page.$eval(rowTool('italic'), el => el.getAttribute('aria-disabled')), 'false', 'the title can still be formatted');

@@ -735,7 +735,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         await send([{ blockIndex: 0, items: actions }]);
         const children = await headingBar();
         assert.deepStrictEqual(children, ['mep-object-label', 'lens:x.0', 'lens:x.1', 'lens:x.2', 'lens-overflow']);
-        assert.strictEqual(await page.$eval(`${BAR} [data-verb="lens-overflow"]`, el => el.textContent), 'Actions ▾');
+        assert.deepStrictEqual(await page.$eval(`${BAR} [data-verb="lens-overflow"]`, el => [el.textContent, el.querySelector('.mep-menu-caret .codicon-chevron-down') !== null]), ['Actions', true]);
         await clickCentre(`${BAR} [data-verb="lens-overflow"]`);
         const options = await page.$$eval(`${BAR} select option`, os => os.map(o => (o as HTMLOptionElement).value));
         assert.deepStrictEqual(options, ['', 'x.3', 'x.4', 'x.5']);

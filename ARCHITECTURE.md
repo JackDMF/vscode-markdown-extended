@@ -1060,6 +1060,43 @@ heavy as frequent ones. So the surfaces now divide the work:
 Menus and the card are `position: fixed` in a layer outside the row: the row scrolls,
 and a scrolling box clips whatever hangs out of it.
 
+**The chrome is the workbench's, and every colour a workbench variable** (Daniel,
+2026-09-30, from a sketch). The row used to be a floating card with greys, a radius and a
+shadow of its own inside the document's margin: the vocabulary of a web widget, read as
+content the page owns rather than a control the editor owns. Now each surface is drawn as
+the workbench draws its counterpart, and reads its colours from the `--vscode-*` variables
+every webview receives, each with a fallback after it:
+
+- **The row** is a chrome row under the tabs: `position: fixed` at the editor's top, full
+  width — the page's padding does not inset it; `.mep-editor` keeps its height free —
+  26px and a 1px edge, `editorGroupHeader-tabsBackground` with the tabs' border
+  (`editorGroupHeader-tabsBorder`, else `-border`, else `widget-border`), no radius, no
+  shadow; the workbench font at its size less one; 22px controls with
+  `toolbar-hoverBackground` (and `toolbar-hoverOutline`, High Contrast's) on hover,
+  `toolbar-activeBackground` on a face whose menu is open, `focusBorder` for the keyboard's
+  focus; separators in `menu-separatorBackground`, because the tabs' border is the tabs'
+  own colour in both Modern themes and a separator in it would not be seen. A dropdown's
+  affordance is the codicon `chevron-down` (`chevronNode` in `lenses.ts`, the one element
+  for the row's faces, a submenu's `chevron-right` and an object bar's set-verbs), dim in
+  `descriptionForeground`.
+- **A menu** — the row's four, a submenu, the table bar's Row, Column and Align — is the
+  context menu: `menu-background`, `-foreground`, `-border`, the entry under the pointer or
+  the focus in `menu-selectionBackground` / `-Foreground` (outlined in
+  `menu-selectionBorder` in High Contrast, which sets no selection background), 5px
+  corners and `widget-shadow`. The sample column and the syntax column stay.
+- **An object bar and the bubble** are editor widgets: `editorWidget-background`,
+  `-foreground`, `-border`, `widget-shadow`, the row's 22px controls — a verb is a toolbar
+  control, no surface at rest — and the inline field in `input-*`. The preview card keeps
+  the document's ground inside an editor widget's frame, since what it shows is the
+  document's rendering.
+
+So a light, dark or High Contrast theme needs no rule of its own. `editorCss.test.ts` holds
+`editor.css` to it: no colour is written there except as the fallback of a `var()` (a mask's
+alpha gradient aside) — the samples are not styled there at all. The page tests apply the
+variables VS Code supplies for Light Modern, Dark Modern and Dark High Contrast
+(`test/unit/editor/themes.ts`, taken from the theme files and the colour registry's
+defaults), and `chrome.e2e.test.ts` checks the row, a menu, the bars and the bubble in them.
+
 **Why a card needs the notes stylesheet's help.** The notes' margin layout in
 `styles/markdown-extended.css` is gated by `@media screen and (min-width: 1280px)`, and a
 media query reads the window, not the card: in a wide webview a 360px card's note would
@@ -1099,7 +1136,7 @@ The layers:
   active and disabled states per action, the block-type face (the current type's name,
   locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
   `Enter`, `Esc`), the card, the bubble (placed from `coordsAtPos` inside `.mep-editor`,
-  above the selection where that covers no content and is clear of the sticky toolbar, else
+  above the selection where that covers no content and is clear of the fixed row, else
   beside the block — just right of its box, on the selection's line, where the block is
   narrower than the column (a table): close to what it acts on, since the mapping between a
   control and its object weakens with distance — else below it where that is free, else at the

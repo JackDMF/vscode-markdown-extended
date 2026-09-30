@@ -58,7 +58,7 @@ import {
 } from './tables';
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
-import { lensLabelNodes, lensName } from './lenses';
+import { chevronNode, lensLabelNodes, lensName } from './lenses';
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -376,6 +376,10 @@ class ObjectBar {
             el.className = 'mep-object-verb';
             el.dataset.verb = verb.id;
             el.replaceChildren(...lensLabelNodes(verb.label));
+            if (verb.menu || verb.choice) {
+                // It opens a list: the workbench's dropdown chevron, as the formatting row's menus carry.
+                el.append(chevronNode());
+            }
             if ((el.textContent ?? '') === '') {
                 // Only an icon: the button is named by it, not left without a name.
                 el.setAttribute('aria-label', lensName(verb.label));
@@ -1155,7 +1159,7 @@ class ObjectToolbarView implements PluginView {
             const rest = items.slice(LENS_VERBS_INLINE - 1).filter((item): item is LensItem & { id: string } => item.id !== undefined);
             verbs.push({
                 id: 'lens-overflow',
-                label: 'Actions ▾',
+                label: 'Actions',
                 title: 'More from other extensions',
                 refusal: rest.length === 0 ? 'None of the others runs anything.' : null,
                 choice: {
@@ -1530,7 +1534,7 @@ class ObjectToolbarView implements PluginView {
             title: `A pipe table: ${columns} ${columns === 1 ? 'column' : 'columns'}, a header row and ${rows - 1} ${rows === 2 ? 'row' : 'rows'} under it.`,
             verbs: [
                 {
-                    id: 'row', label: 'Row ▾', title: 'Insert a row next to the caret\'s, or delete it.',
+                    id: 'row', label: 'Row', title: 'Insert a row next to the caret\'s, or delete it.',
                     menu: [
                         entry('insert-row-above', 'Insert above', 'A new row above the caret\'s; above the header row it is the new header.', () => addRowTransaction(view.state, 'above')),
                         entry('insert-row-below', 'Insert below', 'A new row below the caret\'s. Tab in the last cell adds one too.', () => addRowTransaction(view.state, 'below'), { keys: 'Tab at end' }),
@@ -1539,7 +1543,7 @@ class ObjectToolbarView implements PluginView {
                     ],
                 },
                 {
-                    id: 'column', label: 'Column ▾', title: 'Insert a column next to the caret\'s (tinted), or delete it.',
+                    id: 'column', label: 'Column', title: 'Insert a column next to the caret\'s (tinted), or delete it.',
                     menu: [
                         entry('insert-column-left', 'Insert left', 'A new column left of the caret\'s.', () => addColumnTransaction(view.state, 'left')),
                         entry('insert-column-right', 'Insert right', 'A new column right of the caret\'s.', () => addColumnTransaction(view.state, 'right')),
@@ -1547,7 +1551,7 @@ class ObjectToolbarView implements PluginView {
                     ],
                 },
                 {
-                    id: 'align', label: 'Align ▾', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
+                    id: 'align', label: 'Align', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
                     menu: [alignEntry('left', 'Left', ':--'), alignEntry('center', 'Center', ':-:'), alignEntry('right', 'Right', '--:')],
                 },
                 {
