@@ -136,8 +136,28 @@ function readStartTag(src: string, at: number): StartTag | undefined {
 /** The tag's class attribute, as its list of class names. */
 function classList(tag: StartTag): { attribute?: TagAttribute; classes: string[] } {
     const attribute = tag.attributes.find(a => a.name.toLowerCase() === 'class');
-    return { attribute, classes: attribute ? attribute.value.split(/\s+/).filter(c => c !== '') : [] };
+    return { attribute, classes: attribute ? decodeEntities(attribute.value).split(/\s+/).filter(c => c !== '') : [] };
 }
+
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+/** Decodes numeric character references and the five named entities, as the HTML parser does in an attribute. */
+function decodeEntities(value: string): string {
+    return value.replace(/&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|(amp|lt|gt|quot|apos));/g, (whole, dec?: string, hex?: string, named?: string) => {
+        if (named) {
+            return NAMED_ENTITIES[named];
+        }
+        const code = dec !== undefined ? parseInt(dec, 10) : parseInt(hex as string, 16);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+    });
+}
+
+function encodeAttribute(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Elements that have no content and no end tag; `<br/>` is empty, `<div/>` is an open tag. */
+const VOID_ELEMENTS = new Set(['img', 'br', 'hr', 'input', 'meta', 'link', 'wbr', 'source', 'col', 'area', 'base', 'embed', 'param', 'track']);
 
 /**
  * The start tag of a `date` element, opened again for the printed time: class `date` becomes
@@ -153,14 +173,17 @@ function reopenAsPrintDate(src: string, at: number, tag: StartTag, attribute: Ta
             renamed.push(name);
         }
     }
-    const list = renamed.join(' ');
+    const list = encodeAttribute(renamed.join(' '));
     const a = attribute.start - at;
     const b = attribute.end - at;
     const inQuotes = attribute.quoted ? source.slice(a, attribute.valueStart - at) + list + source.slice(attribute.valueEnd - at, b) : `class="${list}"`;
     return source.slice(0, a) + inQuotes + source.slice(b);
 }
 
-/** Index after the end tag matching the start tag just read, counting same-named tags nested in it. */
+/**
+ * Index after the end tag matching the start tag just read, counting same-named tags nested in
+ * it and skipping comments. A `/>` on a non-void element opens it, as in HTML.
+ */
 function findElementEnd(src: string, tag: StartTag): { innerEnd: number; end: number } | undefined {
     const name = tag.name.toLowerCase();
     let depth = 1;
@@ -169,6 +192,11 @@ function findElementEnd(src: string, tag: StartTag): { innerEnd: number; end: nu
         const lt = src.indexOf('<', i);
         if (lt < 0) {
             return undefined;
+        }
+        if (src.startsWith('<!--', lt)) {
+            const endComment = src.indexOf('-->', lt + 4);
+            i = endComment < 0 ? src.length : endComment + 3;
+            continue;
         }
         const close = /^<\/([A-Za-z][^\s/>]*)\s*>/.exec(src.slice(lt, lt + 80));
         if (close) {
@@ -180,7 +208,7 @@ function findElementEnd(src: string, tag: StartTag): { innerEnd: number; end: nu
         }
         const open = /[A-Za-z]/.test(src[lt + 1] ?? '') ? readStartTag(src, lt) : undefined;
         if (open) {
-            if (open.name.toLowerCase() === name && !open.selfClosing) {
+            if (open.name.toLowerCase() === name) {
                 depth++;
             }
             i = open.end;
@@ -192,11 +220,55 @@ function findElementEnd(src: string, tag: StartTag): { innerEnd: number; end: nu
 }
 
 /**
+ * Rewrites the selectors in a template's own CSS that name class `date` (`.date`, `[class~="date"]`,
+ * `[class="date"]`) to `print-date`, leaving CSS strings and comments untouched.
+ */
+function renameDateSelectors(css: string): string {
+    const attribute = /\[\s*class\s*(~?=)\s*(["']?)date\2\s*\]/iy;
+    let out = '';
+    let i = 0;
+    while (i < css.length) {
+        const c = css[i];
+        if (css.startsWith('/*', i)) {
+            const close = css.indexOf('*/', i + 2);
+            const end = close < 0 ? css.length : close + 2;
+            out += css.slice(i, end);
+            i = end;
+        } else if (c === '"' || c === "'") {
+            let j = i + 1;
+            while (j < css.length && css[j] !== c && css[j] !== '\n') {
+                j += css[j] === '\\' ? 2 : 1;
+            }
+            out += css.slice(i, j + 1);
+            i = j + 1;
+        } else if (c === '[') {
+            attribute.lastIndex = i;
+            const m = attribute.exec(css);
+            if (m) {
+                out += `[class${m[1]}${m[2]}print-date${m[2]}]`;
+                i += m[0].length;
+            } else {
+                out += c;
+                i++;
+            }
+        } else if (c === '.' && /^\.date(?![\w-])/.test(css.slice(i, i + 6))) {
+            out += '.print-date';
+            i += 5;
+        } else {
+            out += c;
+            i++;
+        }
+    }
+    return out;
+}
+
+/**
  * Fills the `date` elements of a header or footer template with the preformatted print time.
  *
  * Any element whose class list contains `date` counts, whatever its name; its whole content
- * (nested tags included, up to its own end tag) is replaced, and `<x class="date"/>` is an empty
- * element. The filled element carries `print-date` instead of `date`, since Chrome overwrites
+ * (nested tags included, up to its own end tag, comments skipped) is replaced; one without an end
+ * tag runs to the end of the template, and only a void element (`<br>`) has no content. The class
+ * value is read with its character references decoded. The filled element carries `print-date` instead of `date`, since Chrome overwrites
  * the text of any element with class `date` when it prints; the template's own `<style>` blocks
  * get `.date` rewritten to `.print-date` to follow it. An outer element never swallows a date
  * element inside it, and a `>` inside a quoted attribute does not end a tag.
@@ -226,20 +298,25 @@ export function fillPrintDate(template: string, formatted: string): string {
             continue;
         }
         const lower = tag.name.toLowerCase();
-        if ((lower === 'style' || lower === 'script') && !tag.selfClosing) {
+        if (lower === 'style' || lower === 'script') {
             const close = template.toLowerCase().indexOf(`</${lower}`, tag.end);
             const innerEnd = close < 0 ? template.length : close;
             const inner = template.slice(tag.end, innerEnd);
-            out += template.slice(lt, tag.end) + (lower === 'style' ? inner.replace(/\.date(?![\w-])/g, '.print-date') : inner);
+            out += template.slice(lt, tag.end) + (lower === 'style' ? renameDateSelectors(inner) : inner);
             i = innerEnd;
             continue;
         }
         const { attribute, classes } = classList(tag);
         if (attribute && classes.includes('date')) {
             out += reopenAsPrintDate(template, lt, tag, attribute, classes);
-            const element = tag.selfClosing ? undefined : findElementEnd(template, tag);
+            if (VOID_ELEMENTS.has(lower)) {
+                i = tag.end; // a void element has no content to fill; Chrome puts none either
+                continue;
+            }
+            // No end tag: the element runs to the end of the template, as in HTML and in Chrome.
+            const element = findElementEnd(template, tag);
             out += text + `</${tag.name}>`;
-            i = element ? element.end : tag.end;
+            i = element ? element.end : template.length;
             continue;
         }
         out += template.slice(lt, tag.end);
@@ -248,7 +325,7 @@ export function fillPrintDate(template: string, formatted: string): string {
     return out + template.slice(i);
 }
 
-/** Fills the `date` spans of the header and footer templates in PDF options, in place. */
+/** Fills the date elements of the header and footer templates in PDF options, in place, and renames their class (see `fillPrintDate`). */
 export function applyPrintDate(pdfOptions: { headerTemplate?: unknown; footerTemplate?: unknown }, locale: string | undefined, now: Date, warn?: (message: string) => void): void {
     const formatted = formatPrintDate(locale, now, warn);
     for (const key of ['headerTemplate', 'footerTemplate'] as const) {

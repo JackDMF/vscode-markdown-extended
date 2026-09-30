@@ -128,9 +128,37 @@ suite('fillPrintDate', () => {
         assert.strictEqual(fillPrintDate(`<span class="date">a<span>b</span>c</span> tail`, D), `<span class="print-date">${D}</span> tail`);
     });
 
-    test('a self-closing date element is an empty element', () => {
-        assert.strictEqual(fillPrintDate(`<span class="date"/> tail`, D), `<span class="print-date">${D}</span> tail`);
-        assert.strictEqual(fillPrintDate(`<span class="date" /> tail`, D), `<span class="print-date" >${D}</span> tail`);
+    test('self-closing syntax on a non-void element opens it, as in HTML', () => {
+        assert.strictEqual(fillPrintDate(`<span class="date"/> tail</span> after`, D), `<span class="print-date">${D}</span> after`);
+        assert.strictEqual(fillPrintDate(`<div class="date" />x</div>y`, D), `<div class="print-date" >${D}</div>y`);
+        // a same-named self-closing tag inside counts as open, so it needs its own end tag
+        assert.strictEqual(fillPrintDate(`<span class="date"><span/>a</span>b</span>c`, D), `<span class="print-date">${D}</span>c`);
+    });
+
+    test('a void date element is empty and gets no text', () => {
+        assert.strictEqual(fillPrintDate(`<br class="date"/> tail`, D), `<br class="print-date"> tail`);
+        assert.strictEqual(fillPrintDate(`<img class="x date" src="a.png"> tail`, D), `<img class="x print-date" src="a.png"> tail`);
+    });
+
+    test('a comment inside the date element is skipped while looking for its end', () => {
+        assert.strictEqual(fillPrintDate(`<span class="date"><!-- </span> -->x</span>tail`, D), `<span class="print-date">${D}</span>tail`);
+    });
+
+    test('an unclosed date element swallows the rest of the template, as Chrome does', () => {
+        assert.strictEqual(fillPrintDate(`<b>a</b><span class="date">rest <i>of</i> it`, D), `<b>a</b><span class="print-date">${D}</span>`);
+    });
+
+    test('character references in the class value are decoded before testing for date', () => {
+        assert.strictEqual(fillPrintDate(`<span class="&#100;ate"></span>`, D), `<span class="print-date">${D}</span>`);
+        assert.strictEqual(fillPrintDate(`<span class="x &#x64;&#97;te"></span>`, D), `<span class="x print-date">${D}</span>`);
+        const other = `<span class="&amp;date"></span>`;
+        assert.strictEqual(fillPrintDate(other, D), other);
+    });
+
+    test('CSS strings and comments in a style block are left alone; attribute selectors follow', () => {
+        assert.strictEqual(
+            fillPrintDate(`<style>/* .date */ a::after { content: "v1.date" } b::after { content: 'x.date' } .date { } [class~="date"] { } [class~='date'] { } [class="date"] { } [class~="dated"] { }</style>`, D),
+            `<style>/* .date */ a::after { content: "v1.date" } b::after { content: 'x.date' } .print-date { } [class~="print-date"] { } [class~='print-date'] { } [class="print-date"] { } [class~="dated"] { }</style>`);
     });
 
     test('an inline style block follows the rename', () => {
