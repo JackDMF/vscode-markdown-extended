@@ -595,8 +595,9 @@ export function blockAttrsRefusal(node: Node): string | null {
 
 /**
  * Where a block given a literal for the first time writes it (`AttrsPlacement`
- * in `blocks.ts`): a quote's under its last paragraph, a list's and a table's
- * under the block, anything else's at the end of its line.
+ * in `blocks.ts`, read by `withBlockSuffix`): a quote's under its last
+ * paragraph, a list's under its last line, a table's under a blank line after
+ * it, anything else's at the end of its line.
  */
 function newPlacement(node: Node): string {
     switch (node.type.name) {
@@ -615,17 +616,44 @@ function newPlacement(node: Node): string {
 export const QUOTE_ATTRS_REFUSAL = 'A quote\'s {…} stands on a line under its last paragraph, and this quote ends in another block: markdown-it-attrs would give the literal to that block.';
 
 /**
+ * Why `node` cannot be given a literal, or `null` — the one rule the menu
+ * entry, the bars and every commit ask, so none can offer what another would
+ * refuse. Removing a literal is refused only on a requirement heading.
+ */
+export function literalHomeRefusal(node: Node): string | null {
+    switch (node.type.name) {
+        case 'container':
+            return CONTAINER_ATTRS_REFUSAL;
+        case 'admonition':
+            return ADMONITION_ATTRS_REFUSAL;
+        case 'raw_block':
+            return 'A source block is edited as Markdown: write its {…} there (Edit source).';
+        case 'front_matter':
+            return 'The front matter is YAML: it renders nothing that could carry attributes.';
+        case 'injected_block':
+            return 'Injected content is not in the file: there is no block here to give attributes to.';
+        case 'code_block':
+            return node.attrs.markup === '' ? INDENTED_CODE_ATTRS_REFUSAL : null;
+        case 'blockquote':
+            return quoteTakesLiteral(node) ? null : QUOTE_ATTRS_REFUSAL;
+        case 'list_item':
+            return itemTakesLiteral(node) ? null : ITEM_ATTRS_REFUSAL;
+    }
+    return blockAttrsRefusal(node) ?? (SUFFIX_NODES.has(node.type.name) ? null : NO_BLOCK_ATTRS_REFUSAL);
+}
+
+/**
  * The top-level block at `pos` with `literal` as its attribute literal, where
  * it stood before (a new one where `newPlacement` says); `''` removes it. A
  * heading's anchor follows the literal's id. `null` when unchanged, refused
- * (`blockAttrsRefusal`, a quote that cannot carry one) or unreadable.
+ * (`literalHomeRefusal`) or unreadable.
  */
 export function changeBlockAttrsTransaction(state: EditorState, pos: number, literal: string): Transaction | null {
     const node = state.doc.nodeAt(pos);
     const value = literal.trim();
     if (!node || !SUFFIX_NODES.has(node.type.name) || blockAttrsRefusal(node) !== null
-        || value === (node.attrs.attrsSuffix ?? '') || (value !== '' && literalRefusal(value, literalPlaceOf(node)) !== null)
-        || (value !== '' && node.type === nodes.blockquote && !quoteTakesLiteral(node))) {
+        || value === (node.attrs.attrsSuffix ?? '')
+        || (value !== '' && (literalRefusal(value, literalPlaceOf(node)) !== null || literalHomeRefusal(node) !== null))) {
         return null;
     }
     const attrs: Record<string, unknown> = { ...node.attrs, attrsSuffix: value === '' ? null : value };
@@ -688,27 +716,15 @@ export function literalOf(node: Node): string | null {
     return typeof literal === 'string' ? literal : null;
 }
 
-/** A top-level block as a target — the block a bar is for — or why it is none. */
+/**
+ * A block as a target — a top-level one, the block a bar is for, or a list
+ * item — or why it is none: `literalHomeRefusal`, except that a block which
+ * has a literal already can always have it edited or removed (a requirement
+ * heading's apart).
+ */
 export function attributesTargetOf(node: Node, pos: number): AttributesTarget | { refusal: string } {
-    switch (node.type.name) {
-        case 'container':
-            return { refusal: CONTAINER_ATTRS_REFUSAL };
-        case 'admonition':
-            return { refusal: ADMONITION_ATTRS_REFUSAL };
-        case 'raw_block':
-            return { refusal: 'A source block is edited as Markdown: write its {…} there (Edit source).' };
-        case 'front_matter':
-            return { refusal: 'The front matter is YAML: it renders nothing that could carry attributes.' };
-        case 'injected_block':
-            return { refusal: 'Injected content is not in the file: there is no block here to give attributes to.' };
-    }
-    const refusal = blockAttrsRefusal(node)
-        ?? (node.type === nodes.code_block && node.attrs.markup === '' ? INDENTED_CODE_ATTRS_REFUSAL : null)
-        ?? (node.type === nodes.blockquote && literalOf(node) === null && !quoteTakesLiteral(node) ? QUOTE_ATTRS_REFUSAL : null);
-    if (refusal !== null) {
-        return { refusal };
-    }
-    return SUFFIX_NODES.has(node.type.name) ? { pos, node, name: BLOCK_NAMES[node.type.name] ?? 'Block' } : { refusal: NO_BLOCK_ATTRS_REFUSAL };
+    const refusal = blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
+    return refusal === null ? { pos, node, name: BLOCK_NAMES[node.type.name] ?? 'Block' } : { refusal };
 }
 
 /**
@@ -733,9 +749,7 @@ export function attributesTargetAt(state: EditorState): AttributesTarget | { ref
     for (let d = $from.depth; d > 1; d--) {
         const node = $from.node(d);
         if (node.type === nodes.list_item && $to.depth >= d && $to.node(d) === node) {
-            return literalOf(node) === null && !itemTakesLiteral(node)
-                ? { refusal: ITEM_ATTRS_REFUSAL }
-                : { pos: $from.before(d), node, name: BLOCK_NAMES.list_item };
+            return attributesTargetOf(node, $from.before(d));
         }
     }
     return attributesTargetOf($from.node(1), $from.before(1));
@@ -764,26 +778,17 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
     const value = literal.trim();
     const removed = value === '' || value === '{}';
     const node = current.node;
-    if (!removed) {
-        const refusal = literalRefusal(value, literalPlaceOf(node))
-            ?? (node.type === nodes.list_item && !itemTakesLiteral(node) ? ITEM_ATTRS_REFUSAL : null);
-        if (refusal !== null) {
-            return { refusal };
-        }
+    const refusal = blockAttrsRefusal(node)
+        ?? (removed ? null : literalRefusal(value, literalPlaceOf(node)) ?? literalHomeRefusal(node));
+    if (refusal !== null) {
+        return { refusal };
     }
     const next = removed ? null : value;
     if (next === literalOf(node)) {
         return null;
     }
-    let tr: Transaction | null;
-    if (node.type === nodes.list_item) {
-        tr = state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, literal: next }).scrollIntoView();
-    } else {
-        const refusal = blockAttrsRefusal(node) ?? (next !== null && node.type === nodes.blockquote && !quoteTakesLiteral(node) ? QUOTE_ATTRS_REFUSAL : null);
-        if (refusal !== null) {
-            return { refusal };
-        }
-        tr = changeBlockAttrsTransaction(state, current.pos, next ?? '');
-    }
+    const tr = node.type === nodes.list_item
+        ? state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, literal: next }).scrollIntoView()
+        : changeBlockAttrsTransaction(state, current.pos, next ?? '');
     return tr === null ? null : { tr, removed };
 }
