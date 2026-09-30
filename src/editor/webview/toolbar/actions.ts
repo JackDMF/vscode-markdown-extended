@@ -25,10 +25,11 @@
  * - `sample` and `example`: the element and Markdown in which the construct
  *   renders as that element;
  * - `preview`: a fuller example — Markdown and the elements it renders as;
- * - `apply`: `mark`, `wrap-node`, `block`, `attr-span`, `insert-wrapper` and
- *   `insert-table` edit natively — the extension's inline syntax (highlight,
- *   keys, notes, sidebars, …) is rich text since stage 2, attribute spans,
- *   containers and admonitions since stage 3, pipe tables since; `wrap-source`
+ * - `apply`: `mark`, `wrap-node`, `block`, `attr-span`, `block-attrs`,
+ *   `insert-wrapper` and `insert-table` edit natively — the extension's inline
+ *   syntax (highlight, keys, notes, sidebars, …) is rich text since stage 2,
+ *   attribute spans, containers and admonitions since stage 3, pipe tables and
+ *   a block's `{…}` since; `wrap-source`
  *   and `insert-source` write a construct the editor cannot edit as rich text
  *   (a footnote, a task list, a definition list, …), as source; `insert-include` writes, as source, the
  *   include line the host hands back from another extension's choices;
@@ -86,6 +87,12 @@ export type ActionApply =
      * asks for the literal, prefilled `{.}` with the caret after the dot.
      */
     | { kind: 'attr-span' }
+    /**
+     * The `{…}` literal of the block at the caret (`attributesTargetAt`): the
+     * inline field asks for it, prefilled with the block's literal, or `{.}`
+     * with the caret after the dot when it has none; `{}` removes it.
+     */
+    | { kind: 'block-attrs' }
     /**
      * A new container or admonition after the current block, edited in place,
      * the caret in its body (an empty paragraph): `name` is the container's
@@ -295,6 +302,9 @@ const SPAN_LITERAL_EXAMPLE = '{.class}';
 /** What the span action's field starts with, and where its caret goes: after the dot, to type the class. */
 export const SPAN_FIELD_PREFILL = { value: '{.}', caret: 2 } as const;
 
+/** The literal the block-attributes entry names as its syntax. */
+const BLOCK_LITERAL_EXAMPLE = '{.x}';
+
 const formatting: ToolbarAction[] = [
     formatAction('mark', 'Highlight', 'mark', M.mark, M.mark, el('mark', 'mark'),
         { markdown: `Highlight ${M.mark}the point${M.mark} of a sentence.`, nodes: [el('p', 'Highlight ', el('mark', 'the point'), ' of a sentence.')] }),
@@ -311,6 +321,15 @@ const formatting: ToolbarAction[] = [
         id: 'span-class', place: { menu: 'formatting' }, label: 'Span with class', syntax: `[text]${SPAN_LITERAL_EXAMPLE}`,
         sample: el('span.class', 'span'), apply: { kind: 'attr-span' }, example: `[span]${SPAN_LITERAL_EXAMPLE}`,
         preview: { markdown: 'A [styled phrase]{.lead} in a sentence.', nodes: [el('p', 'A ', el('span.lead', 'styled phrase'), ' in a sentence.')] },
+    },
+    {
+        // markdown-it-attrs on the block at the caret: written where the plugin reads it for that block.
+        id: 'block-attributes', place: { menu: 'formatting' }, label: 'Attributes…', syntax: BLOCK_LITERAL_EXAMPLE,
+        sample: el('p.x', 'Attributes…'), apply: { kind: 'block-attrs' }, example: `Attributes… ${BLOCK_LITERAL_EXAMPLE}`,
+        preview: {
+            markdown: 'A paragraph with a class of its own. {.lead}',
+            nodes: [el('p.lead', 'A paragraph with a class of its own.')],
+        },
     },
 ];
 

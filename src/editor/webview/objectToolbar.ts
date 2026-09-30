@@ -43,11 +43,12 @@ import { FieldStep, InlineChoice, InlineField, fieldHeading } from './inlineFiel
 import { NoteNodeName, unwrapNote } from './notes';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
-    EditorObject, NOTE_CONVERSION, NodeObjectKind, blockAttrsRefusal, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction,
+    BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
+    deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
     removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
+import { attributesStep } from './attributes';
 import { Place, firstFree, firstLineTop, rightEdgeIn } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { selectionBubbleShown } from './toolbar/toolbar';
@@ -166,8 +167,9 @@ interface Presentation {
 }
 
 /**
- * An object whose bar would be its label alone, and so is not drawn: a heading
- * (its verbs are other extensions' lenses and actions) and the front matter
+ * An object whose bar would be its label alone, and so is not drawn: a
+ * requirement heading (its verbs are other extensions' lenses and actions; any
+ * other heading has **Attributes…**) and the front matter
  * (its own verbs are the properties panel's header), with none offered.
  */
 function barless(object: EditorObject, presentation: Presentation): boolean {
@@ -188,15 +190,6 @@ const CONVERT_LABELS: Readonly<Record<NoteNodeName, string>> = {
     right_sidebar: 'Move to left',
 };
 
-/** What a block carrying an attribute literal is called in its bar's label. */
-const BLOCK_LABELS: Readonly<Record<string, string>> = {
-    paragraph: 'Paragraph',
-    heading: 'Heading',
-    bullet_list: 'List',
-    ordered_list: 'List',
-    code_block: 'Code block',
-    horizontal_rule: 'Rule',
-};
 
 /** Room made above a block for its bar: a widget of `height` at the block's position `pos`. */
 interface Room {
@@ -1425,6 +1418,7 @@ class ObjectToolbarView implements PluginView {
                                 },
                             },
                         },
+                        this.attributesVerb(object),
                         {
                             id: 'remove-container',
                             label: 'Remove container, keep content',
@@ -1462,6 +1456,7 @@ class ObjectToolbarView implements PluginView {
                                 commit: value => this.apply(object, current => changeAdmonitionTransaction(view.state, current.from, { title: value })),
                             },
                         },
+                        this.attributesVerb(object),
                         {
                             id: 'remove-admonition',
                             label: 'Remove admonition, keep content',
@@ -1476,22 +1471,9 @@ class ObjectToolbarView implements PluginView {
             case 'block_attrs': {
                 const literal = (object.node.attrs.attrsSuffix as string | null) ?? '';
                 return {
-                    label: `${BLOCK_LABELS[object.node.type.name] ?? 'Block'} attributes`,
+                    label: `${BLOCK_NAMES[object.node.type.name] ?? 'Block'} attributes`,
                     title: `${literal}: the attributes the block is rendered with.`,
-                    verbs: [
-                        {
-                            id: 'edit-block-attributes',
-                            label: 'Edit block attributes',
-                            title: 'The block\'s {…}; empty removes it (Enter to apply, Esc to cancel).',
-                            refusal: blockAttrsRefusal(object.node),
-                            field: {
-                                value: literal,
-                                label: 'Attributes',
-                                commit: value => this.commitLiteral(object, value,
-                                    current => changeBlockAttrsTransaction(view.state, current.from, value), value.trim() === '' ? 'Attributes removed' : undefined),
-                            },
-                        },
-                    ],
+                    verbs: [this.attributesVerb(object)],
                 };
             }
             case 'badge': {
@@ -1570,10 +1552,12 @@ class ObjectToolbarView implements PluginView {
             case 'heading': {
                 const prefix = object.node.attrs.reqPrefix as string | null;
                 const id = prefix?.replace(/:\s*$/, '') ?? '';
+                // A requirement heading's anchor is Req Explorer's: no verb it would
+                // refuse on every requirement the caret rests in (`carriesBlockAttrs`).
                 return {
                     label: id ? `Requirement ${id}` : `Heading ${object.node.attrs.level as number}`,
                     title: id ? 'A requirement heading: its id and anchor are Req Explorer\'s.' : 'A heading.',
-                    verbs: [],
+                    verbs: id ? [] : [this.attributesVerb(object)],
                 };
             }
         }
@@ -1630,15 +1614,32 @@ class ObjectToolbarView implements PluginView {
                     id: 'align', label: 'Align ▾', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
                     menu: [alignEntry('left', 'Left', ':--'), alignEntry('center', 'Center', ':-:'), alignEntry('right', 'Right', '--:')],
                 },
+                { ...this.attributesVerb(object), separated: true },
                 {
                     id: 'edit-source',
                     label: 'Edit source',
                     title: 'Edit this table as Markdown (Ctrl+Enter to apply, Esc to cancel).',
-                    separated: true,
                     run: () => this.editTableSource(object),
                 },
                 { id: 'delete-table', label: 'Delete table', title: 'The table goes from the file.', run: () => this.remove(object, 'Table deleted') },
             ],
+        };
+    }
+
+    /**
+     * **Attributes…** on a block's bar: the same field as **Formatting →
+     * Attributes…** (`attributesStep`), for this block — refused, with the
+     * reason, on a container and an admonition, whose renderers drop a literal.
+     */
+    private attributesVerb(object: EditorObject): Verb {
+        const found = object.kind === 'link' || object.kind === 'span' ? { refusal: NO_BLOCK_ATTRS_REFUSAL } : attributesTargetOf(object.node, object.from);
+        const refused = 'refusal' in found;
+        return {
+            id: 'block-attributes',
+            label: 'Attributes…',
+            title: 'The block\'s {…}: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).',
+            refusal: refused ? found.refusal : null,
+            field: refused ? undefined : attributesStep(this.view, found),
         };
     }
 
@@ -1676,7 +1677,7 @@ class ObjectToolbarView implements PluginView {
      * where it means "none"); applied otherwise.
      */
     private commitLiteral(object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): void {
-        const place = object.kind === 'span' ? 'span' : object.kind === 'block_attrs' ? literalPlaceOf(object.node) : 'block';
+        const place = object.kind === 'span' ? 'span' : 'block';
         const refusal = hint !== undefined && value.trim() === '' ? null : literalRefusal(value, place);
         if (refusal !== null) {
             this.view.focus();

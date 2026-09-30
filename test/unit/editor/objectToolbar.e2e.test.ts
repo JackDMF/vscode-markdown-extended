@@ -383,7 +383,7 @@ suite('Editor object toolbar (e2e)', () => {
         await showDocument('Intro.\n\n!!! note "Old title"\n    Body text here.\n\nAfter.\n', 'Body');
         await clickBefore('text here', 1);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'admonition', label: 'Admonition note', verbs: ['change-type', 'edit-title', 'remove-admonition'] });
+        assert.deepStrictEqual(await barState(), { object: 'admonition', label: 'Admonition note', verbs: ['change-type', 'edit-title', 'block-attributes', 'remove-admonition'] });
 
         await clickVerb('change-type');
         const choice = `${BAR} select.mep-inline-choice`;
@@ -407,7 +407,7 @@ suite('Editor object toolbar (e2e)', () => {
         await showDocument('Intro.\n\n::: box\nFirst kept.\n\nSecond kept.\n:::\n\nAfter.\n', 'First');
         await clickBefore('First kept', 2);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'container', label: 'Container box', verbs: ['change-name', 'remove-container'] });
+        assert.deepStrictEqual(await barState(), { object: 'container', label: 'Container box', verbs: ['change-name', 'block-attributes', 'remove-container'] });
         await clickVerb('remove-container');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Intro.\n\nFirst kept.\n\nSecond kept.\n\nAfter.\n');

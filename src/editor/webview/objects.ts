@@ -18,7 +18,7 @@
  * | `container` | A `container` node (`::: name`) | The node |
  * | `admonition` | An `admonition` node (`!!! type "Title"`) | The node |
  * | `table` | A pipe table (`table`), the caret in a cell or cells selected | The node |
- * | `block_attrs` | A top-level block carrying an attribute literal (`attrsSuffix`) | The node |
+ * | `block_attrs` | A top-level block carrying an attribute literal (`attrsSuffix`), a quote's too; a table with one stays a `table` | The node |
  * | `heading` | A top-level heading that is no `block_attrs` — a requirement heading is one | The node |
  * | `raw_block` | A source block | The node |
  * | `injected_block` | Injected content: an expansion, an atom, generated content | The node |
@@ -27,9 +27,10 @@
  * The last three are **block objects**, the rest **caret objects**; the toolbar
  * shows them on different triggers (`objectToolbar.ts`). Of the caret objects,
  * a container, an admonition, a table and a block with attributes are placed like a
- * block, at its right edge (`isBlockPlaced`), and so is a heading, which has no
- * verbs of its own: its bar carries only the code actions other extensions
- * offer for it (`isTopLevelBlock`), and shows only when there are some.
+ * block, at its right edge (`isBlockPlaced`), and so is a heading: its one
+ * verb is **Attributes…**, then the code actions other extensions offer for it
+ * (`isTopLevelBlock`); a requirement heading has no verb of its own, and its
+ * bar shows only when there are some.
  */
 import { liftTarget } from 'prosemirror-transform';
 import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
@@ -687,8 +688,8 @@ export function literalOf(node: Node): string | null {
     return typeof literal === 'string' ? literal : null;
 }
 
-/** A top-level block as a target, or why it is none. */
-function topLevelTarget(node: Node, pos: number): AttributesTarget | { refusal: string } {
+/** A top-level block as a target — the block a bar is for — or why it is none. */
+export function attributesTargetOf(node: Node, pos: number): AttributesTarget | { refusal: string } {
     switch (node.type.name) {
         case 'container':
             return { refusal: CONTAINER_ATTRS_REFUSAL };
@@ -723,7 +724,7 @@ function topLevelTarget(node: Node, pos: number): AttributesTarget | { refusal: 
 export function attributesTargetAt(state: EditorState): AttributesTarget | { refusal: string } {
     const sel = state.selection;
     if (sel instanceof NodeSelection && sel.$from.depth === 0) {
-        return topLevelTarget(sel.node, sel.from);
+        return attributesTargetOf(sel.node, sel.from);
     }
     const { $from, $to } = sel;
     if ($from.depth < 1 || $to.depth < 1 || $from.node(1) !== $to.node(1)) {
@@ -737,7 +738,7 @@ export function attributesTargetAt(state: EditorState): AttributesTarget | { ref
                 : { pos: $from.before(d), node, name: BLOCK_NAMES.list_item };
         }
     }
-    return topLevelTarget($from.node(1), $from.before(1));
+    return attributesTargetOf($from.node(1), $from.before(1));
 }
 
 /** The target as it is in `state`: the same kind of node at the same place, or `null` when it is gone. */

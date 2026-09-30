@@ -378,6 +378,15 @@ img.mep-pending-range {
     color: var(--vscode-descriptionForeground, #888);
 }
 
+/* Why a disabled entry is disabled, under its syntax: the reason its tooltip gives. */
+.mep-preview-refusal {
+    margin-top: 6px;
+    padding-left: 8px;
+    border-left: 2px solid var(--vscode-editorWarning-foreground, #bf8803);
+    font-size: 12px;
+    color: var(--vscode-foreground, inherit);
+}
+
 /* The bubble: the five marks, below the sticky row — it belongs to the text,
    which scrolls under the row. */
 .mep-bubble {

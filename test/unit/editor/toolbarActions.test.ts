@@ -123,6 +123,15 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                 assert.strictEqual(tag, action.sample.tag);
                 assert.strictEqual(attrs.class, action.sample.className);
             }
+            if (action.apply.kind === 'block-attrs') {
+                // The block the example parses into carries the literal, and draws
+                // the element and class the engine renders the example as.
+                const block = parseDocument(md, action.example, {}).doc.child(0);
+                assert.strictEqual(block.attrs.attrsSuffix, action.syntax, `${action.example} carries ${action.syntax}`);
+                const [tag, attrs] = block.type.spec.toDOM?.(block) as unknown as [string, { class?: string }];
+                assert.strictEqual(tag, action.sample.tag);
+                assert.strictEqual(attrs.class, action.sample.className);
+            }
             if (action.apply.kind === 'insert-wrapper') {
                 // The node the action inserts draws the element the engine
                 // renders its example as, and the example parses into that node.
@@ -160,7 +169,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         }
         assert.deepStrictEqual(ROW_LAYOUT, [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']]);
         const byMenu = (menu: string) => TOOLBAR_ACTIONS.filter(a => menuOf(a) === menu && submenuOf(a) === null).map(a => a.id);
-        assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class']);
+        assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class', 'block-attributes']);
         assert.deepStrictEqual(byMenu('annotation'), ['sidenote', 'marginal-note', 'left-sidebar', 'right-sidebar', 'footnote-reference']);
         assert.deepStrictEqual(byMenu('insert'),
             ['link', 'image', 'horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents', 'include', 'properties']);
