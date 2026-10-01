@@ -136,28 +136,65 @@ export function readBrace(str: string, open: number): BraceReading {
  * attributes and drop it from the text.
  */
 export function isTextBrace(str: string, start: number): boolean {
-    return readBrace(str, start).spaced;
+    const reading = readBrace(str, start);
+    return reading.close >= 0 && reading.spaced;
 }
 
 /**
- * The index of the closing `}` of every brace in `str` that is the text's own
- * (`isTextBrace`), in one pass: from a `{` to the first `}` outside a quoted
- * value, as markdown-it-attrs reads it — a `{` inside is read as part of it
- * (`{a = {b}` is one brace) — and on from that `}`.
+ * How many end literals markdown-it-attrs strips off one text at most: a list
+ * item's (`list item end`), then its paragraph's (`end of block`).
+ */
+const END_READINGS = 2;
+
+/**
+ * The index of the `}` attrs' test finds for every literal it would read off
+ * `str` that is a brace of the text's own (`isTextBrace`) — the places to split
+ * the text so that test fails. They are the literals it reads, the way it reads
+ * them, and no others:
+ *
+ * - at the start (after inline markup, `*em*{…}`): from the `{` to the first `}`
+ *   outside quotes, then again from after a literal it took (`*em*{.a}{.b}`);
+ * - at the end: from the **last** `{` outside quotes to a `}` that ends the
+ *   text, then again from the end of what is left once it took one — so
+ *   `x {y = {a=b}` ends in the literal `{a=b}`, which is attributes.
  */
 export function textBraceCloses(str: string): number[] {
     const out: number[] = [];
-    for (let open = str.indexOf('{'); open >= 0; ) {
-        const reading = readBrace(str, open);
-        if (reading.close < 0) {
+    let offset = 0;
+    let rest = str;
+    while (rest.startsWith('{')) {
+        const close = findRightDelimiter(rest, 2);
+        if (close < 0) {
             break;
         }
-        if (reading.spaced) {
-            out.push(reading.close);
+        if (readBrace(rest, 0).spaced) {
+            out.push(offset + close);
+            break;
         }
-        open = str.indexOf('{', reading.close + 1);
+        // The rule cuts the literal off at the first `}`, quoted or not.
+        const cut = rest.indexOf('}') + 1;
+        offset += cut;
+        rest = rest.slice(cut);
     }
-    return out;
+    let end = str;
+    for (let n = 0; n < END_READINGS; n++) {
+        const open = findLeftDelimiter(end);
+        if (open < 0 || findRightDelimiter(end, open + 2) !== end.length - 1) {
+            break;
+        }
+        if (readBrace(end, open).spaced) {
+            if (!out.includes(end.length - 1)) {
+                out.push(end.length - 1);
+            }
+            break;
+        }
+        // What is left once the literal is taken: the text before it, less one space.
+        end = end.slice(0, open);
+        if (end.endsWith(' ')) {
+            end = end.slice(0, -1);
+        }
+    }
+    return out.sort((a, b) => a - b);
 }
 
 /**

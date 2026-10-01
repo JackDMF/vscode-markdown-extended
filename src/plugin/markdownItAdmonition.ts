@@ -21,13 +21,19 @@ export function MarkdownItAdmonition(md: MarkdownIt) {
 
 function render(tokens: Token[], idx: number, _options: any, env: any, self: Renderer) {
     const token = tokens[idx];
+    // The classes are joined for this render only, so a second render of the same tokens gives the same tags.
+    const own = token.attrs ? token.attrs.map(pair => [...pair]) : token.attrs;
     if (token.type === "admonition_open") {
         // A brace of the text's own ending the classes (`!!! note x {a = b}`) is no class.
         tokens[idx].attrJoin("class", "admonition " + withoutTextBraceEnd(token.info));
     } else if (token.type === "admonition_title_open") {
         tokens[idx].attrJoin("class", "admonition-title");
     }
-    return self.renderToken(tokens, idx, _options);
+    try {
+        return self.renderToken(tokens, idx, _options);
+    } finally {
+        token.attrs = own;
+    }
 }
 
 function admonition(state: any, startLine: number, endLine: number, silent: boolean) {

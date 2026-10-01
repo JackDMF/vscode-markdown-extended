@@ -224,3 +224,30 @@ suite('MarkdownItAttrs and a text brace: the review\'s second round', () => {
         assert.ok(html.includes('class="admonition note x"'), html);
     });
 });
+suite('MarkdownItAttrs and a text brace: the review\'s third round', () => {
+    let md: MarkdownIt.MarkdownIt;
+
+    setup(() => {
+        md = preview();
+    });
+
+    test('an end literal is read from the last {, as attrs reads it: one reading everywhere', () => {
+        assert.strictEqual(md.render('x {y = {a=b}'), '<p a="b">x {y =</p>\n');
+        assert.ok(md.render('```js {y = {a=b}\nx\n```\n').includes('a="b"'), md.render('```js {y = {a=b}\nx\n```\n'));
+    });
+
+    test('an unclosed brace after a bracketed span is no text brace: the span stays, as on master', () => {
+        assert.strictEqual(md.render('[x]{a = b'), '<p><span>x</span>{a = b</p>\n');
+    });
+
+    test('an admonition rendered twice gives the same classes', () => {
+        const tokens = md.parse('!!! note "T"\n    Body.\n', {});
+        const first = md.renderer.render(tokens, {}, {});
+        assert.strictEqual(md.renderer.render(tokens, {}, {}), first);
+        assert.ok(first.includes('class="admonition note"'), first);
+    });
+
+    test('an admonition whose only extra is a text brace has one class', () => {
+        assert.ok(md.render('!!! note {a = b} "T"\n    Body.\n').includes('class="admonition note"'));
+    });
+});

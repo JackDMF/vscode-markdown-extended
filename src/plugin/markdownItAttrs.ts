@@ -62,11 +62,8 @@ export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
         }
         for (const [inline, pieces] of braces?.split ?? []) {
             inline.children = unsplit(inline.children, pieces);
-        }
-        for (const token of state.tokens) {
-            if (token.type === 'inline' && token.children) {
-                textBraceSpansAsText(state, token.children);
-            }
+            // A span's text brace starts a text attrs reads, so it was split: its inline is one of these.
+            textBraceSpansAsText(state, inline.children);
         }
     });
     wrapFence(md);

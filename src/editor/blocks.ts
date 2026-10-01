@@ -1,5 +1,6 @@
 import { Token } from '../@types/markdown-it';
 import { AttrPair, NOTE_SYNTAX_CHARS, endLiteralOf, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
+import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 
 /**
  * The token stream → top-level source blocks step of the rich editor.
@@ -556,8 +557,9 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
             if (wrapperEnds.length >= MAX_WRAPPER_DEPTH) {
                 return `${t.type} nested more than one level deep`;
             }
-            if (t.type === 'admonition_open' && /\s/.test(t.info.trim())) {
-                // `!!! warning big "Title"`: a second class the node has no slot for.
+            if (t.type === 'admonition_open' && /\s/.test(withoutTextBraceEnd(t.info))) {
+                // `!!! warning big "Title"`: a second class the node has no slot for. A
+                // brace of the text's own is no class (`!!! note {a = b} "T"`), as the renderer reads it.
                 return 'admonition with more than one class';
             }
             if (t.type === CONTAINER_OPEN && i !== group.start) {

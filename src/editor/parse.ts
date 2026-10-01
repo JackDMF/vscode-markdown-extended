@@ -16,6 +16,7 @@ import {
 } from './blocks';
 import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
 import { endLiteralOf } from './attrs';
+import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
 /**
@@ -390,7 +391,8 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 const marker = line.indexOf(t.markup);
                 return {
                     ...sourceOf(tok),
-                    type: t.info.trim() || 'note',
+                    // Its class as the renderer draws it: a brace of the text's own is none.
+                    type: withoutTextBraceEnd(t.info) || 'note',
                     title: admonitionTitle.get(tok) ?? '',
                     markup: t.markup || '!!!',
                     // From the marker on: a quote's `> ` or a list's indentation is not the header's.

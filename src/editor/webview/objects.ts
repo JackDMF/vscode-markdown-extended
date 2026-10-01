@@ -462,6 +462,20 @@ export function literalPlaceOf(node: Node): LiteralPlace {
     return node.type === nodes.horizontal_rule ? 'rule' : 'block';
 }
 
+/**
+ * The text brace `value` with the spaces beside its `=` taken out, when that is
+ * the same attributes the author wrote: as many key/value pairs, none spaced,
+ * and a literal the plugin reads. `null` when taking them out would change what
+ * it says (`{.a =b}` would be the class `a=b`) or still be no literal (`{ = b}`).
+ */
+function tightenedSuggestion(value: string): string | null {
+    const tightened = tightenedBrace(value, 0);
+    const reading = readBrace(tightened, 0);
+    return reading.separators.length === readBrace(value, 0).separators.length && !reading.spaced && parseAttrsLiteral(tightened) !== null
+        ? tightened
+        : null;
+}
+
 /** Why `literal` cannot be an attribute span's or a block's literal at `place`, or `null`: the plugin must read it as attributes, all of it. */
 export function literalRefusal(literal: string, place: LiteralPlace = 'block'): string | null {
     const value = literal.trim();
@@ -469,7 +483,9 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'block'): 
         return `${value} is not closed: end the attribute list with }.`;
     }
     if (value.startsWith('{') && isTextBrace(value, 0)) {
-        return `${value} is text, not an attribute list: a space beside its = makes it text, as in PowerShell's @{a = 1}. Write it as ${tightenedBrace(value, 0)}.`;
+        const text = `${value} is text, not an attribute list: a space beside its = makes it text, as in PowerShell's @{a = 1}.`;
+        const tightened = tightenedSuggestion(value);
+        return tightened === null ? text : `${text} Write it as ${tightened}.`;
     }
     if (parseAttrsLiteral(value) === null) {
         return `${value || 'An empty value'} is no attribute list: write it as {.class}, {#id} or {key="value"}, as markdown-it-attrs reads it.`;

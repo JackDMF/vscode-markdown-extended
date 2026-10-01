@@ -235,6 +235,14 @@ suite('Editor stage 3: review findings, in the page', () => {
         assert.match(literalRefusal('{.a title= "x y" b =2}') ?? '', /Write it as \{\.a title="x y" b=2\}\.$/);
     });
 
+    test('no tightened form is suggested where taking the spaces out would change what it says', () => {
+        for (const literal of ['{.a =b}', '{#x =y}', '{a="b" =c}', '{a = b = c}', '{ = b}']) {
+            const reason = literalRefusal(literal) ?? '';
+            assert.match(reason, /makes it text/, literal);
+            assert.doesNotMatch(reason, /Write it as/, literal);
+        }
+    });
+
     test('an unclosed literal is refused as unclosed, not for its spacing', () => {
         assert.strictEqual(literalRefusal('{a = 1'), '{a = 1 is not closed: end the attribute list with }.');
     });

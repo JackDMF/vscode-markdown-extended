@@ -161,6 +161,20 @@ suite('Editor attribute spans: the literal is recovered from the source', () => 
         assert.deepStrictEqual(spanMarks(p), []);
     });
 
+    test('a paragraph ending in a literal after a text brace keeps both, written back byte for byte', () => {
+        const source = 'x {y = {a=b}\n';
+        const p = paragraph(source);
+        assert.deepStrictEqual([p.type.name, p.attrs.attrsSuffix, p.textContent], ['paragraph', '{a=b}', 'x {y =']);
+        const parsed = parseDocument(md, source);
+        const doc = parsed.doc.type.create(null, [touched(p)]);
+        assert.strictEqual(serializeDocument({ ...parsed, doc }, { defaultWrap: 90 }), source);
+    });
+
+    test('an admonition whose only extra is a text brace is an admonition of that type', () => {
+        const node = paragraph('!!! note {a = b} "T"\n    Body.\n');
+        assert.deepStrictEqual([node.type.name, node.attrs.type], ['admonition', 'note']);
+    });
+
     test('a normalized literal quotes a value holding =', () => {
         assert.strictEqual(normalizedLiteral([['k', 'v='], ['class', 'y']]), '{k="v=" .y}');
         assert.ok(sameAttrs(joinAttrs(parseAttrsLiteral('{k="v=" .y}') ?? []), [['k', 'v='], ['class', 'y']]));
