@@ -73,7 +73,14 @@ function image2Base64(src: string, env: HtmlExporterEnv): string {
     if (env.workspaceFolder) {paths.push(env.workspaceFolder.fsPath);}
     const file = searchFile(src, paths);
     if (!file) {return src;}
-    return fileToDataUri(file)
+    // A missing file (searchFile returns an absolute path unchecked) or a type
+    // with no data URI schema keeps the original src: a null src breaks
+    // html5-embed downstream (qjebbs/vscode-markdown-extended#157).
+    try {
+        return fileToDataUri(file) ?? src;
+    } catch {
+        return src;
+    }
 }
 
 function searchFile(name: string, paths: string[]): string {

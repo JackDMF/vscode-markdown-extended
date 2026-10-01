@@ -5,6 +5,7 @@
 ### 🐛 Bug Fixes
 
 - **A table with two columns spanning many rows keeps every row** ([#3](https://github.com/JackDMF/vscode-markdown-extended/issues/3)). With two `^^` columns spanning five rows, the preview and the exports dropped the fourth and fifth rows. markdown-it-multimd-table laid the spans out correctly, but markdown-it-attrs then laid them out a second time, as if they were its own `{rowspan=…}`, and hid every cell from the fourth spanned row on. attrs now sees only the spans written in its own syntax, and a multimd table's `^^` and `||` are rendered as multimd laid them out.
+- **An image that cannot be embedded no longer fails the export** ([qjebbs/vscode-markdown-extended#157](https://github.com/qjebbs/vscode-markdown-extended/issues/157)). `![a](/does/not/exist.png)` stopped the HTML and PDF export with *Cannot read properties of null (reading 'replace')*: an absolute path was embedded without checking the file existed, the missing file gave no data URI, and the image was handed on with a `null` `src`. An image whose file is missing, or whose type has no data URI (`.webp`, which threw *Unsupported mimeType*), now keeps the `src` as written.
 
 ## v4.0.0 — The Visual Editor
 
