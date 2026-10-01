@@ -95,6 +95,11 @@ suite('MarkdownItHtml5Embed', () => {
         assert.ok(html.includes('\n&lt;b&gt;v&lt;/b&gt;\n</video>'), html);
     });
 
+    test('a media image\'s title is what its alt reads, escaped once', () => {
+        const html = md.render('![a &amp; b &lt;c&gt; **d**](v.mp4)\n');
+        assert.ok(html.includes('\na &amp; b &lt;c&gt; d\n</video>'), html);
+    });
+
     test('a link is embedded only when a browser plays its type (qjebbs/vscode-markdown-extended#177)', () => {
         for (const href of ['src/foo.ts', 'src/foo.mts', 'clip.m2ts', 'sound.dts', 'list.m3u', 'film.mkv']) {
             const html = md.render(`[file](${href})\n`);

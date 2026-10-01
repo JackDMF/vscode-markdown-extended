@@ -72,7 +72,11 @@ function useImage(md: MarkdownIt, options: Html5EmbedOptions, allowed: Html5Embe
     const embed = pluginRule(md, 'image', { ...options, useImageSyntax: true, isAllowedMimeType: allowed });
     const image = md.renderer.rules.image;
     md.renderer.rules.image = (tokens, idx, opts, env, self) => {
-        const html = embed([escapedCopy(md, tokens[idx])], 0, opts, env, self);
+        // The alt's content is its raw source, entities and markup still in it;
+        // the fallback is what a reader reads of it, as for a link.
+        const copy = escapedCopy(md, tokens[idx]);
+        copy.content = md.utils.escapeHtml(textOf(tokens[idx].children ?? []));
+        const html = embed([copy], 0, opts, env, self);
         return html === NOT_EMBEDDED ? image(tokens, idx, opts, env, self) : html;
     };
 }
