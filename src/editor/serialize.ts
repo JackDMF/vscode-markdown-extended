@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
-import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, WORD_CHARACTER, opensInsideWords } from '../syntax/markers';
+import { ALPHANUMERIC, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, opensInsideWords } from '../syntax/markers';
 import { NOTE_SYNTAX_CHARS, endLiteralOf, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
@@ -133,7 +133,7 @@ function gluedAt(mark: Mark, parent: Node, index: number, side: 'before' | 'afte
         return false;
     }
     const ch = side === 'before' ? (node.text ?? '').slice(-1) : (node.text ?? '').slice(0, 1);
-    return WORD_CHARACTER.test(ch);
+    return ALPHANUMERIC.test(ch);
 }
 
 /**
