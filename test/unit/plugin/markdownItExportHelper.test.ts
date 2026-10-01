@@ -63,4 +63,39 @@ suite('MarkdownItExportHelper', () => {
             assert.ok(html.includes('src="data:image/png;base64,'), html);
         });
     });
+
+    suite('linked stylesheets (qjebbs/vscode-markdown-extended#162)', () => {
+        /** The CSS a `<link>` in the output carries, decoded, or undefined when it is not embedded. */
+        function linkedCss(html: string): string | undefined {
+            const m = /<link\b[^>]*href="data:text\/css;base64,([^"]*)"/.exec(html);
+            return m ? Buffer.from(m[1], 'base64').toString() : undefined;
+        }
+
+        test('a relative stylesheet is embedded, its url()s with it', () => {
+            const html = md.render('<link rel="stylesheet" type="text/css" href="style.css"/>\n\n# Title\n', env);
+            const css = linkedCss(html);
+            assert.ok(css && css.includes('rebeccapurple'), html);
+            assert.ok(css.includes('url("data:font/woff2;base64,'), css);
+            assert.ok(html.includes('type="text/css"'), 'the other attributes stay');
+        });
+
+        test('a stylesheet linked inside a paragraph is embedded', () => {
+            const html = md.render("Text <link href='./style.css' rel=stylesheet> more", env);
+            assert.ok(linkedCss(html)?.includes('rebeccapurple'), html);
+        });
+
+        test('web stylesheets, missing files and other links stay as written', () => {
+            const src = [
+                '<link rel="stylesheet" href="https://example.com/style.css">',
+                '<link rel="stylesheet" href="missing.css">',
+                '<link rel="icon" href="style.css">',
+            ].join('\n');
+            assert.strictEqual(md.render(src, env), md.render(src, {}));
+        });
+
+        test('the preview is not touched', () => {
+            const html = md.render('<link rel="stylesheet" href="style.css">', {});
+            assert.ok(html.includes('href="style.css"'), html);
+        });
+    });
 });
