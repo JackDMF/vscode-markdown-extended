@@ -196,9 +196,15 @@ export class LinkChoiceController {
         const anchors: HeadingAnchor[] = headingAnchors(md, document.getText(), { currentDocument: document.uri } as unknown as Environment);
         const wanted = decode(fragment).toLowerCase();
         const choices: LinkChoice[] = [];
+        // An id an earlier heading carries names that heading, as in the browser: offered once.
+        const offered = new Set<string>();
         for (const anchor of anchors) {
             const name = anchor.id;
-            if (name === '' || (wanted !== '' && !name.toLowerCase().includes(wanted) && !anchor.text.toLowerCase().includes(wanted))) {
+            if (name === '' || offered.has(name)) {
+                continue;
+            }
+            offered.add(name);
+            if (wanted !== '' && !name.toLowerCase().includes(wanted) && !anchor.text.toLowerCase().includes(wanted)) {
                 continue;
             }
             // The path is fixed once `#` is typed: the list shows the anchor, the value is the whole destination.

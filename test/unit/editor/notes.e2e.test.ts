@@ -302,10 +302,11 @@ suite('Editor notes and links (e2e)', () => {
         assert.strictEqual(await windowClicks(), clicksBefore, 'no click reached VS Code\'s listener');
     });
 
-    test('Ctrl+click on a link to a heading of the document scrolls to it, and asks the host for nothing', async function () {
+    test('Ctrl+click on a link to a heading of the document asks the host, which names the heading, and the page scrolls to its answer', async function () {
         this.timeout(15000);
         const filler = Array.from({ length: 60 }, (_, i) => `Filler paragraph ${i}.`).join('\n\n');
-        await showDocument(`Jump to [the end](#the-end).\n\n${filler}\n\n## The end {#the-end}\n`, 'Jump');
+        const text = `Jump to [the end](#the-end).\n\n${filler}\n\n## The end {#the-end}\n`;
+        await showDocument(text, 'Jump');
         const linksBefore = (await openLinks()).length;
         await page.evaluate(() => window.scrollTo(0, 0));
         const p = await pointAt('the end', 1);
@@ -313,7 +314,11 @@ suite('Editor notes and links (e2e)', () => {
         await page.mouse.click(p.x, p.y);
         await page.keyboard.up('Control');
         await delay(150);
-        assert.strictEqual((await openLinks()).length, linksBefore);
+        // The slug rule lives on the host (`fragmentLine`): the page does not look the fragment up itself.
+        assert.deepStrictEqual((await openLinks()).slice(linksBefore), [{ type: 'openLink', href: '#the-end' }]);
+        assert.ok(await page.evaluate(() => window.scrollY === 0), 'not scrolled before the host answers');
+        await (editor as EditorPage).send({ type: 'revealAnchor', anchor: 'the-end', line: text.split('\n').indexOf('## The end {#the-end}') });
+        await delay(150);
         assert.ok(await page.evaluate(() => window.scrollY > 0), 'the page scrolled');
     });
 });

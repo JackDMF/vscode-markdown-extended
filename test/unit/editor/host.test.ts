@@ -931,6 +931,22 @@ suite('Editor host: a link lands on the element its fragment names', () => {
         assert.deepStrictEqual(ids.map(h => h.id), ['setup', 'setup-1']);
     });
 
+    test('a slug that is some heading\'s explicit id is no second anchor: the fragment is the author\'s', async () => {
+        const text = ['## Setup {#install}', '', '## Configuration {#setup}', ''].join('\n');
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', text);
+        assert.deepStrictEqual(secondAnchors(html), ['configuration'], 'the first heading keeps no <a id="setup">');
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const anchors = headingAnchors(md, text, {});
+        assert.strictEqual(fragmentLine(anchors, 'setup'), 2);
+        assert.strictEqual(fragmentLine(anchors, 'Setup'), null, 'an explicit id is compared as written, and the first heading\'s slug is no anchor to match without case');
+        assert.strictEqual(fragmentLine(anchors, 'install'), 0);
+    });
+
+    test('a heading without a source line that first carries a fragment names no line, not a later heading', () => {
+        const anchor = (line: number | null) => ({ line, id: 'setup', explicit: false, anchor: null, text: 'Setup' });
+        assert.strictEqual(fragmentLine([anchor(null), anchor(4)], 'setup'), null);
+    });
+
     test('a link to another file opens it at the heading; a fragment it lacks opens it at the top, logged as info at most', async function () {
         this.timeout(20000);
         const source = tempMarkdown('Source.\n');
@@ -996,6 +1012,14 @@ suite('Editor host: a link lands on the element its fragment names', () => {
             webview.send({ type: 'openLink', href: `${path.basename(uri.fsPath)}#second-heading-with-code--punctuation-1` });
             await until(() => reveals(webview)[0], 5000);
             assert.deepStrictEqual(reveals(webview), [{ type: 'revealAnchor', anchor: 'second-heading-with-code--punctuation-1', line: 6 }]);
+
+            // The page asks for a bare fragment too: the host names the heading the browser lands on.
+            webview.send({ type: 'openLink', href: '#title' });
+            await until(() => reveals(webview)[1], 5000);
+            assert.deepStrictEqual(reveals(webview)[1], { type: 'revealAnchor', anchor: 'title', line: 0 }, '"# Title", not "## Other {#title}"');
+            webview.send({ type: 'openLink', href: '#fn1' });
+            await until(() => reveals(webview)[2], 5000);
+            assert.deepStrictEqual(reveals(webview)[2], { type: 'revealAnchor', anchor: 'fn1', line: null }, 'no heading: the page looks among its own elements');
 
             // Before the other page has its document the reveal waits, then follows the document.
             revealInVisualEditor(second, { anchor: 'frs-tst-001-1a2b3c4d', line: 2 });
@@ -1516,6 +1540,7 @@ suite('Editor host: links and images', () => {
         fs.mkdirSync(path.join(dir, 'pictures'));
         fs.writeFileSync(path.join(dir, 'doc.md'), TEXT, 'utf8');
         fs.writeFileSync(path.join(dir, 'docs', 'other file.md'), '# Other Heading\n\nText.\n', 'utf8');
+        fs.writeFileSync(path.join(dir, 'docs', 'repeats.md'), '## Setup {#setup-1}\n\n## Setup\n\n## Setup\n', 'utf8');
         fs.writeFileSync(path.join(dir, 'pictures', 'my pic.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
         fs.writeFileSync(path.join(dir, 'z.txt'), 'z', 'utf8');
         docUri = vscode.Uri.file(path.join(dir, 'doc.md'));
@@ -1581,6 +1606,11 @@ suite('Editor host: links and images', () => {
         assert.deepStrictEqual((await choices('docs/other%20file.md#')).map(c => [c.value, c.label]), [['docs/other%20file.md#other-heading', '#other-heading']],
             'the path is fixed once # is typed: the list shows the anchor, the value is the whole destination');
         assert.deepStrictEqual(await choices('z.txt#'), [], 'a file that is not Markdown has no headings to offer');
+    });
+
+    test('an id two headings carry is offered once, for the first of them', async function () {
+        this.timeout(10000);
+        assert.deepStrictEqual((await choices('docs/repeats.md#')).map(c => c.label), ['#setup-1', '#setup-2']);
     });
 
     test('Insert → Image… asks VS Code\'s open dialog in the document\'s folder for an image, and answers its path relative to the document, POSIX, spaces encoded, its stem the alt text', async function () {

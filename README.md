@@ -1091,7 +1091,9 @@ are not supported.
 Each entry links the id VS Code's preview gives its heading: GitHub-style slugs, with `-1`, `-2` for a repeated
 heading (`setup`, `setup-1`, `setup-2`). A heading written with an explicit `{#id}` is linked by that id, the one it
 carries in the preview and the exports; it still counts for the repeats after it (`## Setup {#intro}` then `## Setup`
-are `#intro` and `#setup-1`), and keeps that slug as a second anchor inside it, so a link to the slug still lands.
+are `#intro` and `#setup-1`), and keeps that slug as a second anchor inside it, so a link to the slug still lands —
+unless another heading's explicit id is that slug (`## Setup {#install}`, `## Configuration {#setup}`: `#setup` is the
+second heading).
 An explicit id is not checked against the other headings' slugs: `## Setup {#setup-1}`, `## Setup`, `## Setup` are
 `setup-1`, `setup-1` and `setup-2`, and `#setup-1` lands on the first of the two, in the browser and in the Visual
 Editor alike. A heading whose slug is empty (`## ???`) has nothing a link can

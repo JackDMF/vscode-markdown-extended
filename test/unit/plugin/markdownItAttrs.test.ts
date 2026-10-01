@@ -282,6 +282,25 @@ suite('MarkdownItAttrs keeps a heading\'s explicit id under VS Code\'s heading r
         assert.deepStrictEqual(secondAnchors(vscodeEngine().render('## Größe {#size}\n', previewEnv())), ['größe']);
     });
 
+    test('a slug that is some heading\'s explicit id is no second anchor, a later heading\'s too', () => {
+        const html = vscodeEngine().render('## Setup {#install}\n\n## Configuration {#setup}\n', previewEnv());
+        assert.deepStrictEqual(headingIds(html), ['install', 'setup']);
+        assert.deepStrictEqual(secondAnchors(html), ['configuration']);
+    });
+
+    test('an id another extension\'s heading rule set is no slug: no second anchor', () => {
+        const md = preview();
+        const inner = md.renderer.rules.heading_open;
+        // Installed after MEP's, so it runs between VS Code's rule and MEP's.
+        md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
+            tokens[idx].attrSet('id', `perma-${idx}`);
+            return inner(tokens, idx, options, env, self);
+        };
+        const html = withVscodeHeadingRule(md).render('## FR-1: Name {#fr-1}\n', previewEnv());
+        assert.deepStrictEqual(headingIds(html), ['fr-1']);
+        assert.deepStrictEqual(secondAnchors(html), []);
+    });
+
     test('without VS Code\'s rule a heading has its explicit id and no second anchor', () => {
         const html = preview().render('## FR-1: Name {#fr-1}\n');
         assert.deepStrictEqual(headingIds(html), ['fr-1']);
@@ -324,6 +343,11 @@ suite('An explicit heading id in VS Code\'s own render (markdown.api.render)', (
         const html = await vscode.commands.executeCommand<string>('markdown.api.render', '## FR-1: Name {#fr-1}\n');
         assert.deepStrictEqual(headingIds(html), ['fr-1']);
         assert.deepStrictEqual(secondAnchors(html), ['fr-1-name']);
+    });
+
+    test('the second anchor is part of the preview\'s source map, as VS Code\'s preview looks a fragment up there', async () => {
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', 'Text.\n\n## FR-1: Name {#fr-1}\n');
+        assert.ok(/<h2 [^>]*data-line="2"[^>]*><a id="fr-1-name" class="code-line" data-line="2"><\/a>FR-1: Name<\/h2>/.test(html), html);
     });
 
     test('slugged headings keep VS Code\'s slug and count an explicit-id heading among the repeats', async () => {

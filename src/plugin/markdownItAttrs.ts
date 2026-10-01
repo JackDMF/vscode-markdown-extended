@@ -1,7 +1,7 @@
 import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
 import markdownItAttrs from 'markdown-it-attrs';
 import { findLeftDelimiter, isTextBrace, textBraceCloses, withoutTextBraceEnd } from '../syntax/attrsLiteral';
-import { EXPLICIT_ID, explicitHeadingId } from '../syntax/headingSlug';
+import { EXPLICIT_ID, explicitHeadingId, headingIds } from '../syntax/headingSlug';
 
 // markdown-it-attrs recomputes a table's cells from every `rowspan` and
 // `colspan` it finds, to honour its own `{rowspan=2}`. It cannot tell those
@@ -84,11 +84,24 @@ export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
 // is kept as a second anchor at the start of the heading's content
 // (`<a id="fr-1-name"></a>`), so a link written to the slug still lands, and
 // so does the one VS Code's language server completes, which knows only slugs.
+// The anchor is the heading's `anchor` by `headingIds` — none when some
+// heading's explicit id is that slug — and it is written only when the id
+// VS Code set is that slug: an id another rule set (`perma-0`) is no slug.
+// VS Code's preview follows a fragment from another document only to an
+// element of its own source map, so the anchor carries the heading's
+// `data-line` and `code-line` class. The preview's scroll sync then takes the
+// heading, the first element of that line, for the line, and the anchor, with
+// no size, is never visible to it; it measures the heading only down to the
+// anchor inside it (one pixel), and a scroll position within the heading is
+// still interpolated between the heading's line and the next block's.
 //
-// Two limits, both outside what this rule can see: an id a core rule of
+// Three limits, all outside what this rule can see: an id a core rule of
 // another plugin sets on a heading before `curly_attributes` is read as the
-// author's; and a `heading_open` rule another extension installs after this
-// one runs between VS Code's and this one, and reads the slug as the id.
+// author's; a `heading_open` rule another extension installs after this one
+// runs between VS Code's and this one, and reads the slug as the id; and a
+// render without VS Code's slug builder (`env.slugifier`) slugs repeats its
+// own way, so a repeated heading's slug is not the one `headingIds` counts,
+// and it gets no second anchor.
 
 /** Every heading's explicit id, kept under its `meta`. */
 function keepHeadingIds(tokens: Token[]) {
@@ -113,17 +126,33 @@ function setMeta(token: Token, key: string, value: unknown) {
     (token.meta as Record<string, unknown>)[key] = value;
 }
 
+/** The second anchors of a rendered stream's headings by their index, read once per stream. */
+const anchorsOf = new WeakMap<Token[], Map<number, string>>();
+
+function secondAnchors(tokens: Token[]): Map<number, string> {
+    let anchors = anchorsOf.get(tokens);
+    if (!anchors) {
+        anchors = new Map(headingIds(tokens).filter(h => h.anchor !== null).map(h => [h.index, h.anchor]));
+        anchorsOf.set(tokens, anchors);
+    }
+    return anchors;
+}
+
 /** The heading renderer, giving a heading its explicit id back and keeping its slug as a second anchor. */
 function wrapHeading(md: MarkdownIt) {
     const open = md.renderer.rules.heading_open;
     md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
         const token = tokens[idx];
         const id = explicitHeadingId(token);
-        // VS Code's rule set the slug; without it (an engine of its own) the id is attrs' and there is no slug here.
-        const slug = id !== null ? token.attrGet('id') : null;
+        // VS Code's rule set the slug; without it (an engine of its own) the id is attrs' and no anchor is written.
+        const set = id !== null ? token.attrGet('id') : null;
         if (id !== null) { token.attrSet('id', id); }
         const html = open ? open(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
-        return slug && slug !== id ? `${html}<a id="${md.utils.escapeHtml(slug)}"></a>` : html;
+        const anchor = id !== null ? secondAnchors(tokens).get(idx) : undefined;
+        if (anchor === undefined || set !== anchor) { return html; }
+        const line = token.attrGet('data-line');
+        const sourceMap = line !== null ? ` class="code-line" data-line="${md.utils.escapeHtml(line)}"` : '';
+        return `${html}<a id="${md.utils.escapeHtml(anchor)}"${sourceMap}></a>`;
     };
 }
 

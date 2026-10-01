@@ -73,52 +73,52 @@ export function resolveLinkTarget(href: string, documentUri: vscode.Uri, workspa
 export { githubSlug, slugBuilder } from '../../syntax/headingSlug';
 
 /**
- * A heading a fragment can name: its 0-based line, the id it carries
- * (`headingIds`: its explicit `{#id}`, else its slug), the slug it took from
- * the count — its second anchor when the id is `explicit` — and the text the
- * slug is made of.
+ * A heading a fragment can name: its 0-based line (`null` for a heading
+ * without a source line, which a core rule may push), the id it carries and
+ * whether it is `explicit` (`headingIds`: its explicit `{#id}`, else its
+ * slug), its second anchor, and the text its slug is made of.
  */
 export interface HeadingAnchor {
-    line: number;
+    line: number | null;
     id: string;
-    slug: string;
     explicit: boolean;
+    anchor: string | null;
     text: string;
 }
 
 /**
  * Every heading of `text` as the engine parses it — the preview's composition,
  * so `markdown-it-attrs` has read a `{#id}` and taken it out of the text that
- * is slugged — named by the preview's rule (`headingIds`). A heading without a
- * source line counts for the repeats and is not listed: no line to land on.
+ * is slugged — named by the preview's rule (`headingIds`).
  */
 export function headingAnchors(md: MarkdownIt, text: string, env: Environment): HeadingAnchor[] {
     const tokens = md.parse(text, env);
-    return headingIds(tokens).flatMap(({ index, id, slug, explicit, text }) => {
-        const map = tokens[index].map;
-        return map ? [{ line: map[0], id, slug, explicit, text: text.trim() }] : [];
-    });
+    return headingIds(tokens).map(({ index, id, explicit, anchor, text }) => ({
+        line: tokens[index].map?.[0] ?? null, id, explicit, anchor, text: text.trim(),
+    }));
 }
 
 /**
  * The 0-based line a fragment names, or `null`: the first heading in document
- * order that carries it — as its id, or, for a heading with an explicit
- * `{#id}`, as the slug it keeps as a second anchor — the element the browser
- * lands on, so an explicit id another heading's slug repeats names the first
- * of the two; else the first whose slug it is without case, as the built-in
- * compares a fragment (an explicit id is compared as written); else a line
- * fragment (`L12`, `12`, `L12,5`) as the built-in reads one.
+ * order that carries it — as its id, or as its second anchor — the element
+ * the browser lands on, so an explicit id another heading's slug repeats names
+ * the first of the two; else the first heading one of whose slugs it is
+ * without case, as the built-in compares a fragment (an explicit id is
+ * compared as written) — further than the browser goes, which finds no
+ * element for `#Setup`; else a line fragment (`L12`, `12`, `L12,5`) as the
+ * built-in reads one. A heading without a source line that is the first to
+ * carry the fragment names no line: `null`, never a later heading.
  */
 export function fragmentLine(anchors: readonly HeadingAnchor[], fragment: string): number | null {
     if (fragment === '') {
         return null;
     }
-    const exact = anchors.find(a => a.id === fragment || a.slug === fragment);
+    const exact = anchors.find(a => a.id === fragment || a.anchor === fragment);
     if (exact) {
         return exact.line;
     }
     const lower = fragment.toLowerCase();
-    const bySlug = anchors.find(a => a.slug.toLowerCase() === lower);
+    const bySlug = anchors.find(a => [a.explicit ? null : a.id, a.anchor].some(s => s !== null && s.toLowerCase() === lower));
     if (bySlug) {
         return bySlug.line;
     }

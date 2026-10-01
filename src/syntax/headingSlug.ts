@@ -16,7 +16,9 @@
  * set back by a heading rule VS Code's calls after its own
  * (`src/plugin/markdownItAttrs.ts`), which also keeps the slug the heading
  * took as a second anchor inside it (`<a id="slug"></a>`), so a link written
- * to the slug before the id was honoured still lands.
+ * to the slug before the id was honoured still lands — unless some heading's
+ * explicit id is that slug (`## Setup {#install}`, `## Configuration {#setup}`):
+ * then `#setup` is the author's, and the first heading has no second anchor.
  *
  * An explicit id may equal another heading's slug (`## Setup {#setup-1}`,
  * `## Setup`, `## Setup` are `setup-1`, `setup-1`, `setup-2`): nothing is
@@ -114,10 +116,15 @@ export interface HeadingId {
     index: number;
     /** The id it carries: its explicit `{#id}`, else its slug (`''` when the slug is empty). */
     id: string;
-    /** The slug it took from the count: its id, or its second anchor when `explicit`. */
+    /** The slug it took from the count: its id, unless `explicit`. */
     slug: string;
-    /** Whether `id` is the author's `{#id}`. */
+    /** Whether `id` is the author's `{#id}`: compared as written, where a slug is compared without case. */
     explicit: boolean;
+    /**
+     * Its second anchor, or `null`: the slug of a heading with an explicit id,
+     * when that slug is neither empty, nor its id, nor any heading's explicit id.
+     */
+    anchor: string | null;
     /** The text it is slugged from. */
     text: string;
 }
@@ -126,11 +133,12 @@ export interface HeadingId {
  * The ids of a stream's headings in order, by the one rule every surface
  * names a heading with: its explicit `{#id}`, else its slug, the slug counted
  * either way, for every `heading_open` — with a source line or without, at
- * every level — as VS Code's preview counts them with one builder per render.
+ * every level — as VS Code's preview counts them with one builder per render;
+ * and the second anchor a heading with an explicit id keeps.
  */
 export function headingIds(tokens: readonly HeadingToken[]): HeadingId[] {
     const slug = slugBuilder();
-    const ids: HeadingId[] = [];
+    const ids: Omit<HeadingId, 'anchor'>[] = [];
     tokens.forEach((token, index) => {
         if (token.type !== 'heading_open') { return; }
         const text = headingText(tokens[index + 1]);
@@ -138,5 +146,9 @@ export function headingIds(tokens: readonly HeadingToken[]): HeadingId[] {
         const explicit = explicitHeadingId(token);
         ids.push({ index, id: explicit ?? slugged, slug: slugged, explicit: explicit !== null, text });
     });
-    return ids;
+    const authored = new Set(ids.filter(h => h.explicit).map(h => h.id));
+    return ids.map(h => ({
+        ...h,
+        anchor: h.explicit && h.slug !== '' && h.slug !== h.id && !authored.has(h.slug) ? h.slug : null,
+    }));
 }

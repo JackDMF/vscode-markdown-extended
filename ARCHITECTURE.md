@@ -948,7 +948,7 @@ text the other — never a diff:
 | host → page | `lenses { version, blocks, rows }` | Other extensions' code lenses, one row of `{ id?, title, tooltip?, surface?, artifact?, relation? }` per top-level block index (below) |
 | host → page | `actions { requestId, blockIndex, items }` | The code actions for one block, `{ id, title, kind, refusal? }` each (below) |
 | host → page | `invalidateActions { refused? }` | Every answer the page holds may be stale; ask again. With `refused`, that action was not applied (below) |
-| host → page | `revealAnchor { anchor, line }` | Bring a followed link's fragment into view and put the caret there: the heading whose `anchor` it is, else the block `line` starts (below) |
+| host → page | `revealAnchor { anchor, line }` | Bring a followed link's fragment into view and put the caret there: the block `line` starts, else (no line) the page's element with the id `anchor` (below) |
 | host → page | `includeChosen { requestId, insert? }` | The include line chosen in the QuickPick, as its provider offered it; none when dismissed or nothing was offered (below) |
 | host → page | `linkChoicesResult { requestId, items }` | Completions for a link's field, `{ value, label, detail?, kind }` each, best first, capped (below, *Links and images*) |
 | host → page | `filesChosen { requestId, files }` | The answer to `pickImage`, `insertFiles` and `saveImage`: the files to insert, `{ src, alt, image }` each — `src` relative to the document, POSIX, percent-encoded; for `saveImage` the copy the host wrote; empty when the dialog was dismissed or nothing could be written (below) |
@@ -1034,8 +1034,11 @@ before opening it (`fragmentLine`, `host/links.ts`), as the browser finds it in 
 preview: the first heading in document order that carries the fragment — as the one id it
 has by `headingIds` (`src/syntax/headingSlug.ts`: its explicit `{#id}`, else its slug, the
 slug counted either way), or as the slug a heading with a `{#id}` keeps as a second anchor;
-else the first whose slug equals it without case, as the built-in compares; else a line
-fragment (`L12`, `L12,5`). See *Explicit heading ids* below. The slug is the built-in's, read from where it is true: no public
+else the first one of whose slugs equals it without case, as the built-in compares — further
+than the browser, which finds no element for `#Setup`, so the editor lands where the preview
+lands nowhere; else a line fragment (`L12`, `L12,5`). A heading without a source line that is
+the first to carry the fragment names no line (`null`), never a later heading. See *Explicit
+heading ids* below. The slug is the built-in's, read from where it is true: no public
 command of `vscode.markdown-language-features` opens a document at a fragment for another
 extension (its `openDocumentLink` is internal), so its rule is ported — trimmed, lower-cased,
 `githubSlugReplaceRegex` removed, each white-space character a hyphen, a repeated slug
@@ -1053,13 +1056,17 @@ picks for it. In a text editor the line is also revealed `AtTop`. In the Visual 
 (the active tab is its custom editor for that uri) the file's session is sent the reveal —
 at once when its page has the document, else right after the first `document`; sessions are
 kept by uri for this, and a reveal for a page whose session does not exist yet waits for it.
-A link to the document itself opens nothing and reveals in its own page. A fragment the file
-does not have opens it at the top and logs an `[INFO]` line: the link may be older than the
-heading it named. The page (`revealAnchor` in `webview/main.ts`) takes the top-level heading
-whose `anchor` is the fragment, else the top-level block the host's line starts in — found by
-bisection over `lineAt`, since block start lines only grow — so the slug rule lives only on
-the host; it puts the caret at the block's start and scrolls it to the top, where
-`scroll-margin-top` keeps it clear of the formatting row fixed at the top.
+A link to the document itself opens nothing and reveals in its own page: the page posts
+every fragment it follows, its own document's too, as `openLink`, since its DOM carries only
+the headings' explicit ids and the first heading the browser finds may be one that carries a
+slug (`# Title` before `## Other {#title}`). A fragment another file does not have opens it
+at the top and logs an `[INFO]` line: the link may be older than the heading it named. The
+page (`revealAnchor` in `webview/main.ts`) takes the top-level block the host's line starts
+in — found by bisection over `lineAt`, since block start lines only grow — so the slug rule
+lives only on the host; it puts the caret at the block's start and scrolls it to the top,
+where `scroll-margin-top` keeps it clear of the formatting row fixed at the top. Without a
+line — a fragment no heading carries, such as a footnote's — it scrolls to the page's
+element with that id, if there is one.
 
 **Explicit heading ids** (Daniel, 2026-10-01: Req Explorer's `{#fr-1}` anchors landed
 nowhere outside the Visual Editor). VS Code's engine installs its heading rule after every
@@ -1072,11 +1079,19 @@ object already there: the token stream stays JSON for the language server, and a
 holding that object keeps its data) in a core rule after `curly_attributes`, and installs
 the `heading_open` rule VS Code's wraps. That rule sets the id back and keeps the slug
 VS Code set as an empty `<a id="fr-1-name"></a>` at the start of the heading's content, so a
-link written to the slug still lands. The heading has taken its slug from the builder, so
-the repeats after it are counted as before. One function states the rule for every surface
+link written to the slug still lands. VS Code's preview follows a fragment from another
+document only to an element of its source map (`.code-line`), so the anchor carries the
+heading's `data-line` and the `code-line` class; its scroll sync takes the heading, the
+first element of that line, measures it only down to the anchor inside it, and never sees
+the anchor, which has no size. No second anchor is written when some heading's explicit id
+is that slug (`## Setup {#install}`, `## Configuration {#setup}`: `#setup` is the author's),
+nor when the id VS Code set is not the slug `headingIds` counts (another rule's id, or a
+render without `env.slugifier`, which slugs repeats its own way). The heading has taken its
+slug from the builder, so the repeats after it are counted as before. One function states the rule for every surface
 that names a heading — `headingIds`: the explicit id, else the slug, the slug counted for
-every `heading_open` — and the table of contents (which escapes the id into its `href`),
-`headingAnchors`, the link completion and `fragmentLine` read it.
+every `heading_open`, and each heading's second anchor — and the table of contents (which
+escapes the id into its `href`), the second anchors, `headingAnchors`, the link completion
+(which offers an id once, for the first heading that carries it) and `fragmentLine` read it.
 
 An explicit id is not checked against the other headings' slugs: `## Setup {#setup-1}`,
 `## Setup`, `## Setup` are `setup-1`, `setup-1`, `setup-2`. Nothing is renamed — the author's

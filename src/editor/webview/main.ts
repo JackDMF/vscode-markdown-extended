@@ -223,13 +223,9 @@ const imageSources = new ImageSources(
 
 const port: EditorPort = {
     showImages: container => showImagesIn(container, imageSources),
-    openLink: href => {
-        // A heading or footnote of this document is in the page: scrolled to, not opened.
-        if (href.startsWith('#') && followFragment(href.slice(1))) {
-            return;
-        }
-        post({ type: 'openLink', href });
-    },
+    // A fragment of this document goes to the host too, which names a heading
+    // by the preview's rule (`fragmentLine`) and answers with `revealAnchor`.
+    openLink: href => post({ type: 'openLink', href }),
     requestRender: src => {
         const requestId = ++renderSeq;
         pendingRenders.set(requestId, src);
@@ -614,22 +610,28 @@ function followFragment(fragment: string): boolean {
 
 /**
  * Bring the element a followed link's fragment names into view and put the
- * caret there (`revealAnchor`). A top-level heading whose `anchor` is the
- * fragment first — the `{#id}` the file carries — else the top-level block
- * the host's line starts in, since the host resolved slugs and line
- * fragments against the document's text and the page has no second slug
- * rule. Blocks' start lines only grow, so the block is found by bisection
- * over `lineAt`, which serializes what stands before a block.
+ * caret there (`revealAnchor`): the top-level block the host's line starts
+ * in. The host resolved the fragment against the document's text by the
+ * preview's rule (`fragmentLine`), the one place that rule lives, so the page
+ * does not look for a heading's `anchor` of its own: the first heading the
+ * browser finds may be one that carries a slug. Without a line (a fragment no
+ * heading carries) the page's element with that id, such as a footnote's, is
+ * scrolled to. Blocks' start lines only grow, so the block is found by
+ * bisection over `lineAt`, which serializes what stands before a block.
  */
 function revealAnchor(anchor: string, line: number | null): void {
     if (!view) {
         return;
     }
+    if (line === null) {
+        followFragment(anchor);
+        return;
+    }
     const doc = view.state.doc;
     const offsets: number[] = [];
     doc.forEach((_child, offset) => offsets.push(offset));
-    let index = offsets.findIndex((_offset, i) => doc.child(i).type === editorSchema.nodes.heading && doc.child(i).attrs.anchor === anchor);
-    if (index < 0 && line !== null && offsets.length > 0) {
+    let index = -1;
+    if (offsets.length > 0) {
         let low = 0;
         let high = offsets.length - 1;
         while (low < high) {

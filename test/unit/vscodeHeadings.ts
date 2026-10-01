@@ -32,7 +32,10 @@ export function headingIds(html: string): string[] {
     return [...html.matchAll(/<h[1-6][^>]*\sid="([^"]*)"/g)].map(([, id]) => id);
 }
 
-/** The second anchors the rendered headings keep (`<a id="…"></a>` opening their content), in order. */
+/**
+ * The second anchors the rendered headings keep (`<a id="…"></a>` opening
+ * their content, with the heading's source map when it has one), in order.
+ */
 export function secondAnchors(html: string): string[] {
-    return [...html.matchAll(/<h[1-6][^>]*><a id="([^"]*)"><\/a>/g)].map(([, id]) => id);
+    return [...html.matchAll(/<h[1-6][^>]*><a id="([^"]*)"(?: class="code-line" data-line="\d+")?><\/a>/g)].map(([, id]) => id);
 }

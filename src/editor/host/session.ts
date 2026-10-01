@@ -469,9 +469,11 @@ export class VisualEditorSession implements vscode.Disposable {
      * line fragment); the file opens with `vscode.open`, in whichever editor
      * VS Code chooses for it. In the text editor the line is revealed at the
      * top; in the Visual Editor its page is sent `revealAnchor`. A link to
-     * this very document scrolls this page, and opens nothing. A fragment the
-     * file does not have opens it at the top — not an error, the link may be
-     * older than the heading it named.
+     * this very document scrolls this page, and opens nothing: its page asks
+     * here for every fragment, and one no heading carries (a footnote's) it
+     * looks for among its own elements. A fragment another file does not have
+     * opens it at the top — not an error, the link may be older than the
+     * heading it named.
      */
     private async openAt(uri: vscode.Uri): Promise<void> {
         const fragment = uri.fragment;
@@ -488,12 +490,12 @@ export class VisualEditorSession implements vscode.Disposable {
         } catch {
             // Not a text file (an image, a folder): there is nothing to land on.
         }
-        if (line === null) {
-            this.host.log(`[INFO] Visual Editor: ${file.fsPath} has no #${fragment}; opened at the top.`);
-        }
         if (self) {
             this.reveal({ anchor: fragment, line });
             return;
+        }
+        if (line === null) {
+            this.host.log(`[INFO] Visual Editor: ${file.fsPath} has no #${fragment}; opened at the top.`);
         }
         if (line === null) {
             await vscode.commands.executeCommand('vscode.open', file);

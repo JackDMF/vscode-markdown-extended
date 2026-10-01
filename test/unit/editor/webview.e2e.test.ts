@@ -389,8 +389,8 @@ suite('Editor webview (e2e)', () => {
 
 /**
  * `revealAnchor`: a followed link's fragment brought into view in the page,
- * the caret put there — by a heading's `anchor`, else by the line the host
- * resolved the fragment to.
+ * the caret put there — by the line the host resolved the fragment to, never
+ * by a heading's `anchor` of the page's own.
  */
 suite('Editor revealing a link\'s fragment (e2e)', () => {
     const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -427,9 +427,10 @@ suite('Editor revealing a link\'s fragment (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test('a heading\'s anchor is scrolled to the top, below the formatting row, with the caret in it', async () => {
+    test('the heading at the host\'s line is scrolled to the top, below the formatting row, with the caret in it', async () => {
         assert.ok(((await headingState('Far away')).top ?? 0) > 900, 'out of view at first');
-        await (editor as EditorPage).send({ type: 'revealAnchor', anchor: 'far-away', line: null });
+        const line = SOURCE_TEXT.split('\n').indexOf('## Far away {#far-away}');
+        await (editor as EditorPage).send({ type: 'revealAnchor', anchor: 'far-away', line });
         await delay(150);
         const state = await headingState('Far away');
         assert.ok(state.top !== null && state.top >= 40 && state.top < 120, `the heading at the top, clear of the sticky row: ${state.top}`);
@@ -445,5 +446,17 @@ suite('Editor revealing a link\'s fragment (e2e)', () => {
         const state = await headingState('Slugged heading');
         assert.ok(state.top !== null && state.top >= 40 && state.top < 120, `at the top: ${state.top}`);
         assert.strictEqual(state.caretIn, true);
+    });
+
+    test('the host\'s line wins over a heading whose anchor is the fragment: the slug rule lives on the host', async () => {
+        const line = SOURCE_TEXT.split('\n').indexOf('# Top');
+        await (editor as EditorPage).send({ type: 'revealAnchor', anchor: 'far-away', line });
+        await delay(150);
+        const caretInTop = await page.evaluate(() => {
+            const top = document.querySelector('.ProseMirror h1');
+            const anchor = window.getSelection()?.anchorNode ?? null;
+            return top !== null && anchor !== null && top.contains(anchor);
+        });
+        assert.strictEqual(caretInTop, true, 'the caret in "# Top", not in "## Far away {#far-away}"');
     });
 });
