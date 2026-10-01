@@ -45,8 +45,13 @@ const HEADINGS = [
     '### Setup',
     '## Setup',
     '## Title {#custom}',
+    '## [x] Done',
 ];
-const EXPECTED = ['what-is-new', 'qa', 'größe', '标题', '-emoji', 'inline-code-here', 'a-link-in-it', 'setup', 'setup-1', 'setup-2', 'title'];
+const EXPECTED = ['what-is-new', 'qa', 'größe', '标题', '-emoji', 'inline-code-here', 'a-link-in-it', 'setup', 'setup-1', 'setup-2', 'title', 'done'];
+
+// Headings whose slug is empty, or whose text is: the first empty slug is the
+// id "", each one after it a repeat of "" (`-1`, `-2`, …).
+const EMPTY = ['## ???', '## \u{1F680}', '## ![](x.png)', '## ![](x.png)', '## ???'];
 
 suite('markdown-it-table-of-contents links the ids the preview gives the headings', () => {
     let md: MarkdownIt.MarkdownIt;
@@ -95,6 +100,35 @@ suite('markdown-it-table-of-contents links the ids the preview gives the heading
     test('@[toc] inside a sentence is text', () => {
         assert.strictEqual(md.render('See @[toc] here.\n'), '<p>See @[toc] here.</p>\n');
     });
+
+    test('@[toc](Title) takes parentheses nested one deep', () => {
+        const html = md.render(['@[toc](Contents (draft))', '', '## Sub 1', ''].join('\n'));
+        assert.ok(html.startsWith('<div class="table-of-contents"><p class="table-of-contents-title">Contents (draft)</p><ul>'), html);
+        assert.ok(!md.render('@[toc](a ((b)))\n').includes('table-of-contents'), 'deeper is no TOC');
+    });
+
+    test('[[TOC]] at the start of a line makes a TOC, and drops the rest of the line', () => {
+        const html = md.render(['[[TOC]] trailing', '', '## Sub 1', ''].join('\n'));
+        assert.deepStrictEqual(tocHrefs(html), ['sub-1']);
+        assert.ok(!html.includes('trailing'), html);
+    });
+
+    test('a heading with an empty slug is listed unlinked, one with no text not at all, and both count', () => {
+        const html = md.render(['[[TOC]]', '', ...EMPTY, ''].join('\n'));
+        assert.strictEqual(tocOf(html), '<ul><li>???</li><li><a href="#-1">\u{1F680}</a></li><li><a href="#-4">???</a></li></ul>');
+        assert.ok(!html.includes('null'), html);
+    });
+
+    test('the text a later core rule leaves is the one slugged: markdown-it-checkbox takes [x] out of a heading', () => {
+        assert.deepStrictEqual(tocHrefs(md.render(['[[TOC]]', '', '## [x] Done', ''].join('\n'))), ['done']);
+    });
+
+    test('a TOC body without the parse\'s state is still linked by the preview rule, never by the plugin\'s slug', () => {
+        const tokens = md.parse(['[[TOC]]', '', '## What is new?', '## What is new?', ''].join('\n'), {});
+        tokens.filter(t => t.type === 'toc_body').forEach(t => { t.meta = null; });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        assert.deepStrictEqual(tocHrefs(md.renderer.render(tokens, (md as any).options, {})), ['what-is-new', 'what-is-new-1']);
+    });
 });
 
 suite('The Visual Editor renders a TOC block with the document\'s headings', () => {
@@ -111,6 +145,12 @@ suite('The TOC against VS Code\'s own render (markdown.api.render)', () => {
         const html = await vscode.commands.executeCommand<string>('markdown.api.render', ['[[TOC]]', '', ...HEADINGS, ''].join('\n'));
         assert.deepStrictEqual(headingIds(html), EXPECTED, 'the preview\'s ids are the ones this suite expects');
         assert.deepStrictEqual(tocHrefs(html).map(decodeURIComponent), headingIds(html));
+    });
+
+    test('an empty slug is an empty id in the preview, and the headings after it count it', async () => {
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', ['[[TOC]]', '', ...EMPTY, ''].join('\n'));
+        assert.deepStrictEqual(headingIds(html), ['', '-1', '-2', '-3', '-4']);
+        assert.deepStrictEqual(tocHrefs(html), ['-1', '-4']);
     });
 
     test('@[toc] renders as a table of contents in the preview', async () => {

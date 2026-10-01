@@ -6,8 +6,9 @@
  * preview's headings carry; the Visual Editor's host (`src/editor/host/links.ts`),
  * which follows a link's fragment to its heading; and the export, which hands
  * VS Code's engine the builder the preview renders with. Each of them imports
- * this module, so a TOC entry, a followed link and an exported heading cannot
- * disagree about what a heading is called.
+ * this module, so they slug a heading alike. They still differ on an explicit
+ * `{#id}`: the editor's link following resolves one (`fragmentLine`), while the
+ * preview and the export overwrite it with the slug, and the TOC links the slug.
  *
  * It imports neither `vscode` nor markdown-it: a token is read by its shape.
  */
