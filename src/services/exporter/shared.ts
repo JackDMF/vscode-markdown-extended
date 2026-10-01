@@ -6,7 +6,7 @@ import { ContributesService } from '../contributes/contributesService';
 import { MarkdownItEnv } from '../common/interfaces';
 import { Config } from '../common/config';
 import { readContributeFile } from '../contributes/tools';
-import { slugBuilder } from '../../editor/host/links';
+import { slugBuilder } from '../../syntax/headingSlug';
 
 /**
  * Escape HTML special characters to prevent XSS. Safe in text and in quoted

@@ -54,15 +54,10 @@ suite('Export: a table of contents links the exported headings', () => {
         ExtensionContext._reset();
     });
 
-    test('every TOC link names the id its heading has in the export', async function () {
+    test('every TOC link names the id its heading has in the export', async () => {
         const document = await vscode.workspace.openTextDocument({ content: text, language: 'markdown' });
         const html = renderHTML(new MarkdownDocument(document));
         const ids = headingIds(html);
-        if (new Set(ids).size < ids.length) {
-            // renderHTML hands VS Code's engine no `env.slugifier` before branch
-            // fix/export, so repeated headings share an id in the export.
-            this.skip();
-        }
         assert.deepStrictEqual(ids, ['notes', 'setup', 'setup-1', 'setup-2']);
         assert.deepStrictEqual(tocHrefs(html), ids);
     });
