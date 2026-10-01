@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import { ExtensionContext } from './extensionContext';
+import { decode, schemeOf } from '../../editor/paths';
 
 /**
  * cssFileToDataUri embeds files referred by url(), with data uri, while fileToDataUri not
@@ -13,14 +14,13 @@ export function cssFileToDataUri(cssFileName: string): string {
         {return "";}
     let css = fs.readFileSync(cssFileName).toString();
     css = css.replace(URL_REG, (substr, ...args: any[]) => {
-        let filePath: string = args[0] || args[1];
-        if (filePath.substr(0, 5).toLocaleLowerCase() === "data:") {
+        const filePath = urlTarget(args[0] || args[1], cssFileName);
+        if (!filePath) {
             return substr;
         }
-        if (!path.isAbsolute(filePath))
-            {filePath = path.resolve(path.dirname(cssFileName), filePath)}
         try {
-            return `url("${fileToDataUri(filePath)}")`;
+            const dataUri = fileToDataUri(filePath);
+            return dataUri ? `url("${dataUri}")` : substr;
         } catch (error) {
             // Log errors but return original URL to avoid breaking CSS
             if (ExtensionContext.isInitialized) {
@@ -31,6 +31,26 @@ export function cssFileToDataUri(cssFileName: string): string {
         }
     });
     return `data:text/css;base64,${Buffer.from(css).toString("base64")}`;
+}
+
+/**
+ * The local file a stylesheet's `url()` names, resolved against the
+ * stylesheet's folder, or undefined when it names none: a scheme (`data:`,
+ * `https:`), `//host`, or a fragment of the page (`url(#gradient)`). A
+ * `?v=4.7.0` or `?#iefix` after a font's name is not part of its file.
+ * What it names but cannot be read is left to the `url()` as written.
+ * @param ref the url() argument as written
+ * @param cssFileName path of the css file
+ */
+function urlTarget(ref: string, cssFileName: string): string | undefined {
+    if (schemeOf(ref) || ref.startsWith("//") || ref.startsWith("#")) {
+        return undefined;
+    }
+    const filePath = decode(ref.replace(/[?#].*$/, ""));
+    if (!filePath) {
+        return undefined;
+    }
+    return path.isAbsolute(filePath) ? filePath : path.resolve(path.dirname(cssFileName), filePath);
 }
 
 /**
@@ -96,6 +116,12 @@ export function getDataUriSchema(fileName: string): string {
         case ".bmp":
             mimeType = "image/bmp"
             break;
+        case ".webp":
+            mimeType = "image/webp"
+            break;
+        case ".avif":
+            mimeType = "image/avif"
+            break;
         default:
             throw (`Unsupported mimeType for "${ext}" file.`);
     }
@@ -121,23 +147,20 @@ export async function cssFileToDataUriAsync(cssFileName: string): Promise<string
     const urlMatches: Array<{match: string, filePath: string}> = [];
     let match;
     while ((match = URL_REG.exec(css)) !== null) {
-        const filePath = match[1] || match[2];
-        if (filePath && filePath.substr(0, 5).toLocaleLowerCase() !== "data:") {
+        const filePath = urlTarget(match[1] || match[2], cssFileName);
+        if (filePath) {
             urlMatches.push({ match: match[0], filePath });
         }
     }
-    
+
     // Process all URLs concurrently
     let processedCss = css;
-    for (const { match: matchStr, filePath: urlPath } of urlMatches) {
-        let resolvedPath = urlPath;
-        if (!path.isAbsolute(resolvedPath)) {
-            resolvedPath = path.resolve(path.dirname(cssFileName), resolvedPath);
-        }
-        
+    for (const { match: matchStr, filePath: resolvedPath } of urlMatches) {
         try {
             const dataUri = await fileToDataUriAsync(resolvedPath);
-            processedCss = processedCss.replace(matchStr, `url("${dataUri}")`);
+            if (dataUri) {
+                processedCss = processedCss.replace(matchStr, `url("${dataUri}")`);
+            }
         } catch (error) {
             // Log errors but keep original URL to avoid breaking CSS
             if (ExtensionContext.isInitialized) {
