@@ -11,8 +11,14 @@ function preview(): MarkdownIt.MarkdownIt {
     return md;
 }
 
-function cells(html: string): string[] {
-    return [...html.matchAll(/<td>([\s\S]*?)<\/td>/g)].map(([, cell]) => cell);
+// The ids count on across renders of one engine, so a test compares the
+// markup with each box's id as `N`, and their order apart.
+function render(md: MarkdownIt.MarkdownIt, src: string): string {
+    return md.render(src).replace(/"checkbox\d+"/g, '"checkboxN"');
+}
+
+function box(label: string, checked = false): string {
+    return `<input type="checkbox" id="checkboxN"${checked ? ' checked="true"' : ''}><label for="checkboxN">${label}</label>`;
 }
 
 suite('MarkdownItCheckbox', () => {
@@ -22,7 +28,7 @@ suite('MarkdownItCheckbox', () => {
         md = preview();
     });
 
-    test('a task list keeps its boxes and labels', () => {
+    test('a task list renders as markdown-it-checkbox rendered it', () => {
         assert.strictEqual(md.render('- [ ] open\n- [x] done\n'), [
             '<ul>',
             '<li><input type="checkbox" id="checkbox0"><label for="checkbox0">open</label></li>',
@@ -30,42 +36,55 @@ suite('MarkdownItCheckbox', () => {
             '</ul>',
             '',
         ].join('\n'));
+        assert.strictEqual(render(md, '- [X] up\n- [_] u\n- [-] d\n'),
+            `<ul>\n<li>${box('up', true)}</li>\n<li>${box('u')}</li>\n<li>${box('d')}</li>\n</ul>\n`);
     });
 
     test('the text before a box is kept', () => {
-        assert.strictEqual(md.render('para [ ] mid\n'),
-            '<p>para <input type="checkbox" id="checkbox0"><label for="checkbox0">mid</label></p>\n');
+        assert.strictEqual(render(md, 'para [ ] mid\n'), `<p>para ${box('mid')}</p>\n`);
+        assert.ok(render(md, '| a |\n| - |\n| text [x] mid |\n').includes(`<td>text ${box('mid', true)}</td>`));
     });
 
-    test('the text before a box in a table cell is kept', () => {
-        const html = md.render('| a |\n| - |\n| text [x] mid |\n');
-        assert.deepStrictEqual(cells(html),
-            ['text <input type="checkbox" id="checkbox0" checked="true"><label for="checkbox0">mid</label>']);
+    test('an escaped bracket after a box stays in its label', () => {
+        assert.strictEqual(render(md, '- [ ] see \\[1\\] here\n'), `<ul>\n<li>${box('see [1] here')}</li>\n</ul>\n`);
+        assert.strictEqual(render(md, 'a [x] b \\[c\\]\n'), `<p>a ${box('b [c]', true)}</p>\n`);
     });
 
-    test('a bare box is a box (qjebbs/vscode-markdown-extended#158)', () => {
-        const html = md.render('| a | b |\n| - | - |\n| [ ] | [x] |\n| [ ] todo | text [ ] |\n');
-        assert.deepStrictEqual(cells(html), [
-            '<input type="checkbox" id="checkbox0"><label for="checkbox0"></label>',
-            '<input type="checkbox" id="checkbox1" checked="true"><label for="checkbox1"></label>',
-            '<input type="checkbox" id="checkbox2"><label for="checkbox2">todo</label>',
-            'text <input type="checkbox" id="checkbox3"><label for="checkbox3"></label>',
-        ]);
-        assert.strictEqual(md.render('[x]\n'),
-            '<p><input type="checkbox" id="checkbox4" checked="true"><label for="checkbox4"></label></p>\n');
+    test('an escape changes no box: the label runs to the end of the text, as before', () => {
+        const label = box('b [c] d [ ] e', true);
+        assert.strictEqual(render(md, 'a [x] b \\[c\\] d [ ] e\n'), `<p>a ${label}</p>\n`);
+        assert.strictEqual(render(md, 'a [x] b [c] d [ ] e\n'), `<p>a ${label}</p>\n`);
     });
 
-    test('brackets that are no box stay text', () => {
-        assert.strictEqual(md.render('[ab] and a[i] and [ ]**bold**\n'),
-            '<p>[ab] and a[i] and [ ]<b>bold</b></p>\n');
+    test('an escaped box stays text', () => {
+        assert.strictEqual(render(md, '\\[x\\] a\n'), '<p>[x] a</p>\n');
+        assert.strictEqual(render(md, '\\[ \\] a\n'), '<p>[ ] a</p>\n');
     });
 
-    test('an escaped box stays text, and the box after it is one', () => {
-        assert.strictEqual(md.render('\\[x\\]\n\n\\[ \\] a\n\na \\[x\\] b [ ] c\n'), [
-            '<p>[x]</p>',
-            '<p>[ ] a</p>',
-            '<p>a [x] b <input type="checkbox" id="checkbox0"><label for="checkbox0">c</label></p>',
-            '',
-        ].join('\n'));
+    test('a box needs the start of the text or whitespace before it', () => {
+        assert.strictEqual(render(md, 'ends foo[x]\n'), '<p>ends foo[x]</p>\n');
+        assert.strictEqual(render(md, 'a[i] x[x] y\n'), '<p>a[i] x[x] y</p>\n');
+        assert.ok(render(md, '| a |\n| - |\n| arr[_] |\n').includes('<td>arr[_]</td>'));
+    });
+
+    test('a box with nothing after it stays text', () => {
+        assert.ok(render(md, '# Heading [x]\n').includes('>Heading [x]</h1>'));
+        assert.strictEqual(render(md, '- [ ]\n  wrapped\n'), '<ul>\n<li>[ ]\nwrapped</li>\n</ul>\n');
+        assert.ok(render(md, '| a |\n| - |\n| [ ] |\n').includes('<td>[ ]</td>'));
+    });
+
+    test('only text becomes a box, never a code span', () => {
+        assert.strictEqual(render(md, '`a [x] b` and [x] c\n'), `<p><code>a [x] b</code> and ${box('c', true)}</p>\n`);
+    });
+
+    test('boxes are numbered in the order they are written', () => {
+        const ids = [...md.render('[ ] a\n[x] b\n\n- [ ] c\n').matchAll(/<input type="checkbox" id="checkbox(\d+)"/g)].map(([, n]) => Number(n));
+        assert.strictEqual(ids.length, 3);
+        assert.deepStrictEqual(ids, [...ids].sort((a, b) => a - b));
+    });
+
+    test('a text without a box keeps its tokens as they are', () => {
+        const [inline] = md.parseInline('plain \\[x\\] text', {});
+        assert.deepStrictEqual(inline.children.map(t => [t.type, t.content, t.meta]), [['text', 'plain [x] text', null]]);
     });
 });

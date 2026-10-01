@@ -1,37 +1,30 @@
 import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
-import markdownItCheckbox from 'markdown-it-checkbox';
 
-// markdown-it-checkbox turns a text token holding `[ ] label` into the box and
-// its label, and drops whatever stood before the box: `para [ ] mid` renders
-// only the box and `mid`. It also asks for a space after the box, so a bare
-// `[ ]` or `[x]` — the whole of a table cell, or of a paragraph — is never a
-// box (qjebbs/vscode-markdown-extended#158). Before its rule runs, the text
-// before a box is therefore split into a token of its own, and a box that ends
-// its line gets the space the plugin asks for; its label stays empty.
-//
-// The plugin runs after `text_join`, which has already merged an escaped
-// `\[x\]` into the text around it. Where the escapes were is noted before the
-// join, and the text is split at them too, so the plugin never sees a bracket
-// the author escaped as the edge of a box.
-const BOX = /\[(x|\s|_|-)\](?=\s|$)/i;
-const ESCAPES = 'mepCheckboxEscapes';
+// Our own rule in place of markdown-it-checkbox's, rendering the same markup
+// (`<input type="checkbox" id="checkboxN"><label for="checkboxN">…</label>`)
+// from the same tokens, so stylesheets, the export and the Visual Editor see
+// no difference. The plugin's rule dropped the text before a box (`para [ ]
+// mid` rendered only the box and `mid`), took a box out of any token with
+// content — a code span included — and ran after `text_join`, so an escaped
+// `\[x\]` was a box too. This one runs before the join, where an escaped
+// bracket is still a `text_special` token of its own: a box is written in one
+// text token, at the start of the text or after whitespace, and followed by
+// whitespace. Its label is the rest of the text, up to the next token that is
+// not text, as the plugin's was.
+const BOX = /(^|\s)\[(x|\s|_|-)\]\s/i;
 
 type TokenConstructor = new (type: string, tag: string, nesting: number) => Token;
-type Meta = Record<string, unknown> | null | undefined;
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
-export function MarkdownItCheckbox(md: MarkdownIt, ...args: any[]) {
-    md.use(markdownItCheckbox, ...args);
-    md.core.ruler.before('text_join', 'mep_checkbox_escapes', (state: StateBase) => {
+export function MarkdownItCheckbox(md: MarkdownIt) {
+    // Per engine and never reset, as in the plugin.
+    let lastId = 0;
+    md.core.ruler.before('text_join', 'checkbox', (state: StateBase) => {
+        const textToken = state.Token as TokenConstructor;
         for (const token of state.tokens) {
-            if (token.type === 'inline' && token.children) { noteEscapes(token.children); }
-        }
-    });
-    md.core.ruler.before('checkbox', 'mep_checkbox_split', (state: StateBase) => {
-        for (const token of state.tokens) {
-            if (token.type === 'inline' && token.children) {
-                token.children = split(token.children, state.Token as TokenConstructor);
-            }
+            if (token.type !== 'inline' || !token.children) { continue; }
+            const children = withBoxes(token.children, (checked, label) => box(textToken, `checkbox${lastId++}`, checked, label));
+            if (children) { token.children = children; }
         }
     });
 }
@@ -40,64 +33,67 @@ function isText(token: Token | undefined): boolean {
     return !!token && (token.type === 'text' || token.type === 'text_special');
 }
 
-// `text_join` keeps the last token of each run of text, so the offsets of the
-// run's escaped brackets are noted on that one.
-function noteEscapes(children: Token[]) {
-    let offset = 0;
-    let escapes: number[] = [];
-    children.forEach((child, i) => {
-        if (!isText(child)) { return; }
-        if (child.type === 'text_special' && (child.content === '[' || child.content === ']')) {
-            escapes.push(offset);
+// The children with each run of text's first box made, or undefined when
+// there is none.
+function withBoxes(children: Token[], make: (checked: boolean, label: Token[]) => Token[]): Token[] | undefined {
+    let result: Token[] | undefined;
+    let i = 0;
+    while (i < children.length) {
+        if (!isText(children[i])) { i++; continue; }
+        let end = i;
+        while (isText(children[end + 1])) { end++; }
+        const found = findBox(children, i, end);
+        if (found) {
+            result ??= children.slice(0, i);
+            const [at, match] = found;
+            const token = children[at];
+            const start = match.index + match[1].length;
+            result.push(...children.slice(i, at));
+            if (start > 0) { result.push(text(token, token.content.slice(0, start))); }
+            const label = [text(token, token.content.slice(match.index + match[0].length)), ...children.slice(at + 1, end + 1)];
+            result.push(...make(match[2].toLowerCase() === 'x', label));
+        } else if (result) {
+            result.push(...children.slice(i, end + 1));
         }
-        offset += child.content.length;
-        if (isText(children[i + 1])) { return; }
-        if (escapes.length) { child.meta = { ...((child.meta as Meta) ?? {}), [ESCAPES]: escapes }; }
-        offset = 0;
-        escapes = [];
-    });
-}
-
-// The offsets a text token is cut at: after an escaped `[`, before an escaped
-// `]` — so neither is inside a token with the rest of a box — and before the
-// first box of each piece in between.
-function cuts(content: string, escapes: number[]): number[] {
-    const result = new Set<number>();
-    for (const at of escapes) { result.add(content[at] === '[' ? at + 1 : at); }
-    const bounds = [0, ...[...result].sort((a, b) => a - b), content.length];
-    for (let i = 0; i < bounds.length - 1; i++) {
-        const match = BOX.exec(content.slice(bounds[i], bounds[i + 1]));
-        if (match) { result.add(bounds[i] + match.index); }
+        i = end + 1;
+        // Non-text tokens up to the next run, kept as they are.
+        while (i < children.length && !isText(children[i])) {
+            if (result) { result.push(children[i]); }
+            i++;
+        }
     }
-    return [...result].filter(at => at > 0 && at < content.length).sort((a, b) => a - b);
-}
-
-function split(children: Token[], textToken: TokenConstructor): Token[] {
-    const result: Token[] = [];
-    children.forEach((child, i) => {
-        if (child.type !== 'text') { result.push(child); return; }
-        const meta = child.meta as Meta;
-        const escapes = (meta?.[ESCAPES] as number[] | undefined) ?? [];
-        if (meta) { delete meta[ESCAPES]; }
-        const content = child.content;
-        let start = 0;
-        for (const at of cuts(content, escapes)) {
-            const piece = new textToken('text', '', 0);
-            piece.content = content.slice(start, at);
-            result.push(piece);
-            start = at;
-        }
-        child.content = content.slice(start);
-        // A box followed by more of its line (`[ ]**bold**`) is not bare.
-        const bare = BOX.exec(child.content);
-        if (bare && bare.index === 0 && bare[0].length === child.content.length && endsLine(children[i + 1])) {
-            child.content += ' ';
-        }
-        result.push(child);
-    });
     return result;
 }
 
-function endsLine(next: Token | undefined): boolean {
-    return !next || next.type === 'softbreak' || next.type === 'hardbreak';
+// The first box in children[from..to], one run of text: in a text token,
+// at the start of the run or after whitespace.
+function findBox(children: Token[], from: number, to: number): [number, RegExpExecArray] | undefined {
+    for (let at = from; at <= to; at++) {
+        const token = children[at];
+        if (token.type !== 'text') { continue; }
+        const match = BOX.exec(token.content);
+        if (!match) { continue; }
+        const before = at === from ? '' : children[at - 1].content.slice(-1);
+        if (match[1] || at === from || /\s/.test(before)) { return [at, match]; }
+        // A box right after an escape (`\*[x] a`) is no box; one later in the
+        // same token still is.
+        const later = /\s\[(x|\s|_|-)\]\s/i.exec(token.content);
+        if (later) { return [at, later]; }
+    }
+    return undefined;
+}
+
+function text(like: Token, content: string): Token {
+    const token = Object.assign(Object.create(Object.getPrototypeOf(like)), like) as Token;
+    token.content = content;
+    return token;
+}
+
+function box(textToken: TokenConstructor, id: string, checked: boolean, label: Token[]): Token[] {
+    const input = new textToken('checkbox_input', 'input', 0);
+    input.attrs = [['type', 'checkbox'], ['id', id]];
+    if (checked) { input.attrs.push(['checked', 'true']); }
+    const open = new textToken('label_open', 'label', 1);
+    open.attrs = [['for', id]];
+    return [input, open, ...label, new textToken('label_close', 'label', -1)];
 }

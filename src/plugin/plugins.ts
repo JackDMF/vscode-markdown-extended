@@ -43,7 +43,7 @@ const myPlugins: Record<string, any> = {
     'markdown-it-abbr': markdownItAbbr,
     'markdown-it-sup-alt': markdownItSupAlt,
     'markdown-it-sub-alt': markdownItSubAlt,
-    // Wrapped: keeps the text before a box, and renders a bare `[ ]` as one.
+    // Our own rule in markdown-it-checkbox's markup: keeps the text before a box.
     'markdown-it-checkbox': MarkdownItCheckbox,
     // Wrapped: leaves the spans markdown-it-multimd-table laid out alone.
     'markdown-it-attrs': MarkdownItAttrs,
