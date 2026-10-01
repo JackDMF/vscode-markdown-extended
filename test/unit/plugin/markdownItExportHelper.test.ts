@@ -421,6 +421,12 @@ suite('MarkdownItExportHelper', () => {
                 assert.ok(!embedsImage(`![a](<${path.join(dir, 'pixel.png')}>)`, withMode('workspace', vfs)));
                 assert.ok(embedsImage(`![a](<${path.join(dir, 'pixel.png')}>)`, withMode('machine', vfs)));
             });
+
+            test('vscode-vfs: a local folder that happens to share the remote path is no root', () => {
+                // The remote path names this test's own folder on the disk.
+                const vfs = vscode.Uri.file(path.join(dir, 'doc.md')).with({ scheme: 'vscode-vfs', authority: 'github' });
+                assert.ok(!embedsImage('![a](pixel.png)', withMode('workspace', vfs)));
+            });
         });
 
         suite('a file the setting refuses is said in the output panel', () => {

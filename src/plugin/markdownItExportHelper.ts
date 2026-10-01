@@ -293,9 +293,11 @@ function localFile(what: string, resolve: () => LocalFile): { path: string, real
  * the document's images from (`documentRoots`): every workspace folder, and
  * the document's folder when it lies in none.
  *
- * The document's folder is its `file:` folder, or, for another scheme (`git:`),
- * the folder its path names when that is a folder on this machine's disk. An
- * untitled document has none: a relative path finds nothing.
+ * The document's folder is its `file:` folder, or, for a `git:` document (whose
+ * path is the working-tree file's), the folder its path names when that is a
+ * folder on this machine's disk. Any other scheme has none: a `vscode-vfs:`
+ * path names a remote repository, and a local folder that happens to share it
+ * must not become a root. An untitled document has none either.
  */
 function embeddingOf(env: HtmlExporterEnv): Embedding {
     const own = documentFolder(env.uri);
@@ -313,7 +315,7 @@ function documentFolder(uri: vscode.Uri): { folder: string } | { reason: string 
     if (uri.scheme === "file") {return { folder: path.dirname(uri.fsPath) };}
     if (uri.scheme === "untitled") {return { reason: "the document is untitled and has no folder" };}
     const folder = path.dirname(uri.fsPath);
-    if (path.isAbsolute(folder) && !isNetworkPath(folder) && fs.existsSync(folder)) {return { folder };}
+    if (uri.scheme === "git" && path.isAbsolute(folder) && !isNetworkPath(folder) && fs.existsSync(folder)) {return { folder };}
     return { reason: `the document (${uri.scheme}:) is not in a folder on this machine's disk` };
 }
 
