@@ -20,20 +20,24 @@ function validate(): boolean {
     return true;
 }
 
-function render(tokens, idx): string {
-    if (tokens[idx].nesting === 1) {
-        // opening tag 
-        const cls = escape(tokens[idx].info.trim());
-        return `<div class="${cls}">\n`;
-    } else {
-        // closing tag 
-        return '</div>\n';
+/**
+ * The container's `div`, rendered from its token so that what markdown-it-attrs
+ * put there from a `{…}` on the `:::` line reaches it (qjebbs/vscode-markdown-extended#126):
+ * the info, trimmed, is the first of its classes, the literal's classes after it,
+ * then its id and other attributes. The renderer escapes every value. The token
+ * keeps its own attributes, so a second render gives the same `div`.
+ */
+function render(tokens, idx, options, env, self): string {
+    const token = tokens[idx];
+    if (token.nesting !== 1) {
+        return self.renderToken(tokens, idx, options, env, self);
     }
-}
-
-function escape(str: string): string {
-    return str.replace(/"/g, '&quot;', )
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
+    const own = token.attrs;
+    const classes = [token.info.trim(), token.attrGet('class') ?? ''].filter(c => c !== '');
+    token.attrs = [['class', classes.join(' ')], ...(own ?? []).filter(([name]) => name !== 'class')];
+    try {
+        return self.renderToken(tokens, idx, options, env, self);
+    } finally {
+        token.attrs = own;
+    }
 }
