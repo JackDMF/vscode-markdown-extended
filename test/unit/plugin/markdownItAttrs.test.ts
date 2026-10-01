@@ -74,3 +74,64 @@ suite('MarkdownItAttrs with multimd tables', () => {
         assert.ok(html.includes('<table class="wide">'));
     });
 });
+
+suite('MarkdownItAttrs leaves a brace that is the text\'s own', () => {
+    let md: MarkdownIt.MarkdownIt;
+
+    setup(() => {
+        md = preview();
+    });
+
+    test('a PowerShell hashtable in a table cell is shown whole (qjebbs/vscode-markdown-extended#146)', () => {
+        const html = md.render([
+            '| Name  | Properties     |',
+            '| ----- | -------------- |',
+            '| karin | @{height = 65} |',
+            '',
+        ].join('\n'));
+        assert.deepStrictEqual(rows(html)[1], ['karin', '@{height = 65}']);
+        assert.ok(!html.includes('height=""'), html);
+    });
+
+    for (const [source, text] of [
+        ['Set it to @{height=65}', 'Set it to @{height=65}'],
+        ['A placeholder ${name}', 'A placeholder ${name}'],
+        ['Glued x{.a}', 'Glued x{.a}'],
+        ['Spaced {height = 65}', 'Spaced {height = 65}'],
+        ['Spaced {a= b}', 'Spaced {a= b}'],
+        ['*em*{a = b} after', '<i>em</i>{a = b} after'],
+    ]) {
+        test(`${source} keeps its braces as text`, () => {
+            assert.strictEqual(md.render(source), `<p>${text}</p>\n`);
+        });
+    }
+
+    test('a fence\'s info and a heading keep a brace glued to a word', () => {
+        assert.ok(md.render('```ps1 @{a=1}\nx\n```\n').startsWith('<pre><code class="language-ps1">'));
+        assert.strictEqual(md.render('# Title x{.a}\n'), '<h1>Title x{.a}</h1>\n');
+    });
+
+    for (const [source, html] of [
+        ['text {.a}', '<p class="a">text</p>\n'],
+        ['text {#b}', '<p id="b">text</p>\n'],
+        ['text {key=value}', '<p key="value">text</p>\n'],
+        ['text {key="v w"}', '<p key="v w">text</p>\n'],
+        ['text {title="a = b"}', '<p title="a = b">text</p>\n'],
+        ['text {.a #b c=d}', '<p class="a" id="b" c="d">text</p>\n'],
+        ['*em*{.a} after', '<p><i class="a">em</i> after</p>\n'],
+        ['`code`{.a}', '<p><code class="a">code</code></p>\n'],
+        ['[link](u){.a}', '<p><a href="u" class="a">link</a></p>\n'],
+        ['==mark=={.a}', '<p><mark class="a">mark</mark></p>\n'],
+        ['text\n{.a}', '<p class="a">text</p>\n'],
+    ]) {
+        test(`${source.replace('\n', '⏎')} is still read as attributes`, () => {
+            assert.strictEqual(md.render(source), html);
+        });
+    }
+
+    test('the text reads the same on a second render', () => {
+        const tokens = md.parse('Set it to @{height = 65}', {});
+        assert.strictEqual(md.renderer.render(tokens, {}, {}), '<p>Set it to @{height = 65}</p>\n');
+        assert.strictEqual(md.renderer.render(tokens, {}, {}), '<p>Set it to @{height = 65}</p>\n');
+    });
+});

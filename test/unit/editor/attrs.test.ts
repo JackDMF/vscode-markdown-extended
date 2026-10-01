@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { Mark, Node } from 'prosemirror-model';
-import { domAttrsOf, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from '../../../src/editor/attrs';
+import { domAttrsOf, endsWithAttrsLiteral, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from '../../../src/editor/attrs';
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -54,6 +54,25 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
         }
     });
 
+    test('a spaced = is no attribute list, to the port as to the preview (qjebbs/vscode-markdown-extended#146)', () => {
+        for (const literal of ['{height = 65}', '{a= b}', '{a =b}', '{.c a = b}']) {
+            assert.strictEqual(parseAttrsLiteral(literal), null, literal);
+            assert.strictEqual(md.render(`text ${literal}`), `<p>text ${literal}</p>\n`, literal);
+        }
+        assert.deepStrictEqual(parseAttrsLiteral('{title="a = b"}'), [['title', 'a = b']]);
+    });
+
+    for (const [text, taken] of [
+        ['@{height = 65}', false], ['@{height=65}', false], ['${name}', false], ['x{.a}', false], ['a {b = c}', false],
+        ['text {.a}', true], ['{.a}', true], ['**b**{.a}', true], ['`c`{.a}', true], ['[l](u){.a}', true], ['==m=={.a}', true],
+    ] as const) {
+        test(`${text} ends in a literal ${taken ? 'as' : 'neither for the port nor for'} the plugin`, () => {
+            assert.strictEqual(endsWithAttrsLiteral(text), taken);
+            const html = md.render(`${text}\n`);
+            assert.strictEqual(html.includes(' class="a"'), taken, html);
+        });
+    }
+
     test('the editor draws no event handler and nothing that changes how an element is edited', () => {
         assert.deepStrictEqual(domAttrsOf('{onclick="x()" contenteditable=true .ok tabindex=1}'), { class: 'ok' });
     });
@@ -83,6 +102,20 @@ suite('Editor attribute spans: the literal is recovered from the source', () => 
             assert.strictEqual(serializeDocument({ ...parsed, doc }, { defaultWrap: 90 }), source);
         });
     }
+
+    // (`@` and `$` are escaped when a changed paragraph is written, for the
+    // sidebars' sake, so the hashtable itself is not the example here.)
+    test('a paragraph ending in a brace of its own text keeps it as text, its braces written back unescaped', () => {
+        for (const source of ['Set it to {height = 65}\n', 'Pass key{a=1}\n', 'Glued x{.a}\n']) {
+            const p = paragraph(source);
+            assert.strictEqual(p.type.name, 'paragraph', source);
+            assert.strictEqual(p.attrs.attrsSuffix, null, source);
+            assert.strictEqual(p.textContent, source.trim());
+            const parsed = parseDocument(md, source);
+            const doc = parsed.doc.type.create(null, [touched(p)]);
+            assert.strictEqual(serializeDocument({ ...parsed, doc }, { defaultWrap: 90 }), source);
+        }
+    });
 
     test('two spans in one paragraph each keep their own literal, in order', () => {
         const p = paragraph('A [one]{ .x  #first } and [two]{.x} and [three]{data-n="3"}.\n');

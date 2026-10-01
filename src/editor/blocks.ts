@@ -1,5 +1,5 @@
 import { Token } from '../@types/markdown-it';
-import { AttrPair, NOTE_SYNTAX_CHARS, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
+import { AttrPair, NOTE_SYNTAX_CHARS, endLiteralOf, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
 
 /**
  * The token stream → top-level source blocks step of the rich editor.
@@ -78,17 +78,12 @@ export function findAttrsSuffix(line: string): string | null {
 /**
  * The `{…}` a line ends with as markdown-it-attrs finds it — the last `{`
  * outside a quoted value, through the line's end — when it is a literal the
- * plugin takes as attributes; `null` otherwise. Unlike `findAttrsSuffix` it
- * reads a quoted `}` (`{title="a}"}`) as the plugin does.
+ * plugin takes as attributes and no brace of the text's own (`isTextBrace`);
+ * `null` otherwise. Unlike `findAttrsSuffix` it reads a quoted `}`
+ * (`{title="a}"}`) as the plugin does.
  */
 export function findEndLiteral(line: string): string | null {
-    const trimmed = line.replace(/[ \t]+$/, '');
-    const start = findLeftDelimiter(trimmed);
-    if (start < 0) {
-        return null;
-    }
-    const literal = trimmed.slice(start);
-    return parseAttrsLiteral(literal) === null ? null : literal;
+    return endLiteralOf(line);
 }
 
 /**

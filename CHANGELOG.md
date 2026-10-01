@@ -5,6 +5,7 @@
 ### 🐛 Bug Fixes
 
 - **A table with two columns spanning many rows keeps every row** ([#3](https://github.com/JackDMF/vscode-markdown-extended/issues/3)). With two `^^` columns spanning five rows, the preview and the exports dropped the fourth and fifth rows. markdown-it-multimd-table laid the spans out correctly, but markdown-it-attrs then laid them out a second time, as if they were its own `{rowspan=…}`, and hid every cell from the fourth spanned row on. attrs now sees only the spans written in its own syntax, and a multimd table's `^^` and `||` are rendered as multimd laid them out.
+- **A PowerShell hashtable is shown whole** ([qjebbs/vscode-markdown-extended#146](https://github.com/qjebbs/vscode-markdown-extended/issues/146)). `@{height = 65}` at the end of a table cell or a paragraph rendered as `@`: markdown-it-attrs took the braces for an attribute list and dropped them. A `{…}` is now read as attributes only when it is one: after a space, at the start of the text, or right after inline markup (`*em*{.a}`, `` `code`{.a} ``, `[link](u){.a}`); one glued to a word or a sign (`@{…}`, `${…}`, `x{…}`), or holding an `=` with a space beside it (`{height = 65}`), stays text. `{.class}`, `{#id}`, `{key=value}`, `{key="v w"}` and `{.a #b c=d}` read as before. The Visual Editor reads a literal by the same rule, so a paragraph ending in such a brace stays text there too and is written back without escapes.
 
 ## v4.0.0 — The Visual Editor
 
