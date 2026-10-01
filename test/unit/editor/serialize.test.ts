@@ -181,6 +181,36 @@ suite('Editor serializer for changed blocks', () => {
         assert.strictEqual(serialize(allTouched(reparsed)), first);
     });
 
+    test('a wiki embed ![[…]] is text, not a key, and a changed paragraph writes it as it was (qjebbs/vscode-markdown-extended#168)', () => {
+        const source = 'See ![[path/to/my img.png]] and press [[Ctrl+S]], or ![[a_b c.png]].\n';
+        const parsed = parseDocument(md, source);
+        const p = topChildren(parsed.doc)[0];
+        assert.strictEqual(p.type.name, 'paragraph');
+        const keys: string[] = [];
+        p.forEach(child => { if (child.marks.some(m => m.type.name === 'kbd')) { keys.push(child.textContent); } });
+        assert.deepStrictEqual(keys, ['Ctrl+S']);
+        assert.ok(p.textContent.startsWith('See ![[path/to/my img.png]] and press '), p.textContent);
+        // Untouched: byte for byte. Changed: the embeds' brackets as written, not escaped.
+        assert.strictEqual(serialize(parsed), source);
+        const written = assertStable(source);
+        assert.strictEqual(written, source);
+    });
+
+    test('a key right after a ! is written with the ! escaped, so it reads back as a key', () => {
+        const kbd = schema.marks.kbd.create();
+        const doc = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [text('Wow!'), text('Ctrl', kbd)])]);
+        const first = serialize({ doc, eol: '\n', tail: '' });
+        assert.strictEqual(first, 'Wow\\![[Ctrl]]\n');
+        const p = topChildren(parseDocument(md, first).doc)[0];
+        assert.strictEqual(p.textContent, 'Wow!Ctrl');
+        assert.ok(p.lastChild?.marks.some(m => m.type.name === 'kbd'), first);
+        assert.strictEqual(serialize(allTouched(parseDocument(md, first))), first);
+    });
+
+    test('an embed written escaped, !\\[\\[x\\]\\], is the same text and is written as an embed once changed', () => {
+        assert.strictEqual(assertStable('Plain !\\[\\[x\\]\\] and \\[\\[y\\]\\], ![[a\\*b.png]].\n'), 'Plain ![[x]] and \\[\\[y\\]\\], ![[a\\*b.png]].\n');
+    });
+
     test('stability: a code span whose content starts or ends with a space or backtick', () => {
         const code = schema.marks.code.create();
         for (const content of [' padded ', '`tick', 'a ` b', ' lead']) {

@@ -1153,6 +1153,12 @@ $left sidebar${.my-class}
 
 Renders keyboard shortcuts with proper styling.
 
+**Wiki links and embeds (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]`, is never a key: a `[[` right after a `!` is left as written, for the extension that renders embeds. Write `\![[Ctrl]]` for a `!` followed by a key. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one. In a Foam or Obsidian vault, turn keys off to keep wiki links as links, and restart VS Code:
+
+```json
+"markdownExtended.plugins.disabled": "kbd"
+```
+
 ### markdown-it-ib
 
 ```markdown

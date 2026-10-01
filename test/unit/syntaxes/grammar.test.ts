@@ -249,4 +249,22 @@ suite('Markdown Grammar: multiline emphasis', () => {
             assertNotEmphasized(text, 3, ' end');
         });
     });
+
+    suite('keys and wiki embeds (qjebbs/vscode-markdown-extended#168)', () => {
+        const KBD = 'markup.kbd.markdown';
+        const noKey = (text: string, substr: string) => {
+            const scopes = scopesAt(text, 0, substr);
+            assert.ok(!scopes.includes(KBD), `expected "${substr}" to be no key, got: [${scopes.join(', ')}]`);
+        };
+
+        test('[[Ctrl+S]] is a key, also after an escaped !', () => {
+            assertScoped('Press [[Ctrl+S]] now', 0, 'Ctrl', KBD);
+            assertScoped('Wow\\![[Ctrl+S]]', 0, 'Ctrl', KBD);
+        });
+
+        test('![[…]] is a wiki embed, not a key, mid-line and at a line start', () => {
+            noKey('See ![[path/to/img.png]] here', 'path');
+            noKey('![[note]]', 'note');
+        });
+    });
 });

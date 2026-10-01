@@ -5,6 +5,7 @@
 ### 🐛 Bug Fixes
 
 - **A table with two columns spanning many rows keeps every row** ([#3](https://github.com/JackDMF/vscode-markdown-extended/issues/3)). With two `^^` columns spanning five rows, the preview and the exports dropped the fourth and fifth rows. markdown-it-multimd-table laid the spans out correctly, but markdown-it-attrs then laid them out a second time, as if they were its own `{rowspan=…}`, and hid every cell from the fourth spanned row on. attrs now sees only the spans written in its own syntax, and a multimd table's `^^` and `||` are rendered as multimd laid them out.
+- **A wiki embed `![[…]]` is no longer a key** ([qjebbs/vscode-markdown-extended#168](https://github.com/qjebbs/vscode-markdown-extended/issues/168)). With Foam, `![[path/to/img.png]]` was rendered as `!<kbd>path/to/img.png</kbd>`, because markdown-it-kbd reads every `[[…]]` as a key, and Foam never saw its embed. A `[[` right after a `!` is now left as written, in the preview, the exports, the Visual Editor and the text editor's highlighting; `\![[Ctrl]]` is a `!` and a key, and the Visual Editor writes a key typed after a `!` that way. A changed paragraph in the Visual Editor writes an embed as it was, not escaped. A wiki *link* `[[note]]` is written exactly like a key and is still one; the README says how to turn keys off in a Foam or Obsidian vault.
 
 ## v4.0.0 — The Visual Editor
 

@@ -164,7 +164,7 @@
     },
     "kbd": {
       "name": "markup.kbd.markdown",
-      "match": "\\[\\[(\\S(?:.*?\\S)?)\\]\\]",
+      "match": "(?<!^!)(?<![^\\\\]!)\\[\\[(\\S(?:.*?\\S)?)\\]\\]",
       "captures": {
         "0": {
           "name": "markup.kbd.container.markdown"
