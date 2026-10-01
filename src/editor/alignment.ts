@@ -16,6 +16,9 @@ import type { SourcePosition } from './positions';
 export const NEWLINE = 10;
 export const CARRIAGE_RETURN = 13;
 
+/** A character reference, as markdown-it's entity rule reads one. */
+export const ENTITY = /&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/y;
+
 const LINE_BREAK = /\r\n|\r|\n/g;
 
 /** Offsets ↔ lines of one text, broken as VS Code breaks them. */
@@ -33,6 +36,21 @@ export class Lines {
             this.starts.push(m.index + m[0].length);
         }
         this.ends.push(text.length);
+    }
+
+    /** How many lines the text has: one more than its line breaks. */
+    get count(): number {
+        return this.starts.length;
+    }
+
+    /** The offset line `line` starts at. */
+    startOf(line: number): number {
+        return this.starts[line];
+    }
+
+    /** The offset line `line`'s text ends at, before its terminator. */
+    endOf(line: number): number {
+        return this.ends[line];
     }
 
     positionAt(offset: number): SourcePosition {

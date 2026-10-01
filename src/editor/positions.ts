@@ -1,6 +1,6 @@
 import { Node } from 'prosemirror-model';
 import { Selection, TextSelection } from 'prosemirror-state';
-import { Alignment, Lines, NEWLINE, NOTE_ANCHORS, Normalized, UNMATCHABLE, Unit, align, normalize } from './alignment';
+import { Alignment, ENTITY, Lines, NEWLINE, NOTE_ANCHORS, Normalized, UNMATCHABLE, Unit, align, normalize } from './alignment';
 import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize';
 
 /**
@@ -180,8 +180,6 @@ export function holdsText(node: Node): boolean {
 const AMPERSAND = 38;
 /** What a line's prefix is made of, besides the line break: indentation and a quote's `>`. */
 const PREFIX_CHARS: ReadonlySet<number> = new Set([NEWLINE, 32, 9, 62]);
-/** A character reference, as markdown-it's entity rule reads one. */
-const ENTITY = /&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/y;
 
 function collectUnits(block: Node): Unit[] {
     const units: Unit[] = [];
