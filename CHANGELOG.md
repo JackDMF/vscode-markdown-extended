@@ -5,6 +5,8 @@
 ### 🐛 Bug Fixes
 
 - **A table with two columns spanning many rows keeps every row** ([#3](https://github.com/JackDMF/vscode-markdown-extended/issues/3)). With two `^^` columns spanning five rows, the preview and the exports dropped the fourth and fifth rows. markdown-it-multimd-table laid the spans out correctly, but markdown-it-attrs then laid them out a second time, as if they were its own `{rowspan=…}`, and hid every cell from the fourth spanned row on. attrs now sees only the spans written in its own syntax, and a multimd table's `^^` and `||` are rendered as multimd laid them out.
+- **A link to a media file no longer blanks the preview** ([qjebbs/vscode-markdown-extended#154](https://github.com/qjebbs/vscode-markdown-extended/issues/154)). markdown-it-html5-embed embeds a link to an audio or video file in its place, but it then hid everything after the link to the end of the paragraph, and threw on a line break or `**bold**` there (`Unexpected token: softbreak`), so the preview showed nothing. It now hides only the link's own text; the rest of the paragraph renders.
+- **A link to a `.ts` file is a link, not a video** ([qjebbs/vscode-markdown-extended#177](https://github.com/qjebbs/vscode-markdown-extended/issues/177)). `[file](src/foo.ts)` rendered as an empty `<video>`, because `.ts` and `.mts` are also the extensions of MPEG-TS video. A link to MPEG-TS is no longer embedded; `![clip](clip.ts)` still is, since image syntax asks for the embed. Together with the fix above, this is what blanked the preview of a document linking TypeScript files by reference (`[Name]` … `[Name]: src/name.ts`).
 
 ## v4.0.0 — The Visual Editor
 

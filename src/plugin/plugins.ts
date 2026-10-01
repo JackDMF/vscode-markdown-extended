@@ -4,6 +4,7 @@ import { MarkdownItAnchorLink } from './markdownItAnchorLink';
 import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { MarkdownItAttrs } from './markdownItAttrs';
+import { MarkdownItHtml5Embed } from './markdownItHtml5Embed';
 import { Config } from '../services/common/config';
 // eslint-disable-next-line @typescript-eslint/naming-convention
 import * as MarkdownItSidenote from './markdownItSidenote';
@@ -21,7 +22,6 @@ import markdownItMark from 'markdown-it-mark';
 import markdownItDeflist from 'markdown-it-deflist';
 import { full as markdownItEmoji } from 'markdown-it-emoji';
 import markdownItMultimdTable from 'markdown-it-multimd-table';
-import markdownItHtml5Embed from 'markdown-it-html5-embed';
 import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
 import markdownItTableOfContents from 'markdown-it-table-of-contents';
 import markdownItCjkFriendly from 'markdown-it-cjk-friendly';
@@ -52,7 +52,8 @@ const myPlugins: Record<string, any> = {
     'markdown-it-deflist': markdownItDeflist,
     'markdown-it-emoji': markdownItEmoji,
     'markdown-it-multimd-table': markdownItMultimdTable,
-    'markdown-it-html5-embed': markdownItHtml5Embed,
+    // Wrapped: a media link hides only its own text, and `.ts` stays a link.
+    'markdown-it-html5-embed': MarkdownItHtml5Embed,
     'markdown-it-bracketed-spans': markdownItBracketedSpans,
     'markdown-it-table-of-contents': markdownItTableOfContents,
     'markdown-it-cjk-friendly': markdownItCjkFriendly,
