@@ -2,7 +2,8 @@ import * as assert from 'assert';
 import { parseDocument } from '../../../../src/editor';
 import { tableLines } from '../../../../src/editor/serialize';
 import { MDTable } from '../../../../src/services/table/mdTable';
-import { MonoSpaceLength } from '../../../../src/services/table/monospace';
+import { convertToMarkdownTable } from '../../../../src/services/table/convertTable';
+import { MonoSpaceLength, clustersWidth } from '../../../../src/services/table/monospace';
 import { hostEngine } from '../../editor/helpers';
 
 const ZWJ = '\u200D';
@@ -50,6 +51,31 @@ suite('Table monospace width', () => {
             assert.strictEqual(MonoSpaceLength(text), width, JSON.stringify(text));
         });
     }
+
+    test('plain text, Latin with umlauts and dashes, is its length, as the full rule measures it', () => {
+        for (const text of ['Größe', 'Übermaß – ‚so‘ …', 'Ærøskøbing', 'ǅ ȷ ɏ']) {
+            assert.strictEqual(MonoSpaceLength(text), text.length, text);
+            assert.strictEqual(clustersWidth(text), text.length, text);
+        }
+    });
+
+    test('without Intl.Segmenter each code point is measured by the same rules', () => {
+        const single = ['abc', '🍉', '中文', 'ＡＢ１', 'ｶﾅ', `e${ACUTE}`, ACUTE, 'น้ำ', '→─○', '🇩🇪'];
+        for (const text of single) {
+            assert.strictEqual(clustersWidth(text, null), MonoSpaceLength(text), JSON.stringify(text));
+        }
+        assert.strictEqual(clustersWidth(`👨${ZWJ}👩${ZWJ}👧`, null), 6, 'an emoji sequence is the sum of its parts');
+        assert.strictEqual(clustersWidth(`1${VS16}${KEYCAP}`, null), 1);
+    });
+
+    test('Paste as Table lines up CSV cells padded with spaces', () => {
+        assert.deepStrictEqual(convertToMarkdownTable(' Name , Wert \n Größe ,  1 \n 中文,22').split('\n'), [
+            '| Name  | Wert |',
+            '| ----- | ---- |',
+            '| Größe | 1    |',
+            '| 中文  | 22   |',
+        ]);
+    });
 
     const SOURCE = [
         '| Cell | Kind |',

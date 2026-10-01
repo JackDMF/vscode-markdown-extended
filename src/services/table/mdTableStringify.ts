@@ -1,8 +1,7 @@
 import { MDTable, TableAlign } from "./mdTable";
 export function stringifyMDTable(table: MDTable, compact?: boolean, padding?: number): string {
     padding = padding || 1;
-    const measure = (cell: string) => table.cellWidth(cell);
-    const rows = table.data.map((row, i) => table.indentation + stringifyRow(row, table.columnWidths, table.aligns, table.rowMergeFlags[i], compact, padding, measure));
+    const rows = table.data.map((row, i) => table.indentation + stringifyRow(table, row, table.rowMergeFlags[i], compact, padding));
     const sep = table.indentation + stringifyHeaderSeperator(table, compact, padding);
     rows.splice(table.headerRowCount, 0, sep);
     return rows.join('\n');
@@ -15,7 +14,8 @@ function stringifyHeaderSeperator(table: MDTable, compact: boolean, padding: num
         , "|"
     );
 }
-function stringifyRow(row: string[], columnWidths: number[], aligns: TableAlign[], merged: boolean, compact: boolean, padding: number, measure: (cell: string) => number): string {
+function stringifyRow(table: MDTable, row: string[], merged: boolean, compact: boolean, padding: number): string {
+    const columnWidths = table.columnWidths;
     return row.reduce((p, c, i) => {
         const splittor = (i === row.length - 1 && merged) ? '\\' : '|';
         if (c === null) {return p + splittor;}
@@ -27,7 +27,7 @@ function stringifyRow(row: string[], columnWidths: number[], aligns: TableAlign[
             width += columnWidths[idx] + padding * 2;
             idx++;
         }
-        return p + (compact ? c : formatCell(c, measure(c), width, aligns[i], padding)) + splittor;
+        return p + (compact ? c : formatCell(c, table.cellWidth(c), width, table.aligns[i], padding)) + splittor;
     }, "|");
 }
 function formatHeaderCell(align: TableAlign, columnWidth: number, compact: boolean, padding: number) {

@@ -1,11 +1,17 @@
 import { eastAsianWidth } from 'get-east-asian-width';
 
-/** A text of printable ASCII only, one column per character: most cells, measured without segmenting. */
-const PRINTABLE_ASCII_REG = /^[\x20-\x7E]*$/;
+/**
+ * Text measured as its length, without segmenting: printable ASCII, the
+ * Latin-1 and Latin Extended-A and -B letters (U+00A0–U+024F) and the
+ * punctuation U+2010–U+2027 (dashes, quotes, the ellipsis). Each of them takes
+ * one column by the rules below and none joins a cluster with its neighbour —
+ * checked over every code point in the ranges. Most cells are such text.
+ */
+const PLAIN_TEXT_REG = /^[\x20-\x7E\u00A0-\u024F\u2010-\u2027]*$/;
 
-/** Whether a text is printable ASCII only, so its monospace length is its length. */
-export function isPrintableAscii(text: string): boolean {
-    return PRINTABLE_ASCII_REG.test(text);
+/** Whether a text is plain (above), so its monospace length is its length. */
+export function isPlainText(text: string): boolean {
+    return PLAIN_TEXT_REG.test(text);
 }
 
 /**
@@ -18,14 +24,16 @@ const ZERO_WIDTH_REG = /^[\p{Mn}\p{Me}\u200B-\u200F\u2060-\u2064\uFEFF\u{E0000}-
 /**
  * A cluster drawn as an emoji although its first character defaults to text:
  * a character with VS16 or a keycap (❤ VS16, 1 VS16 U+20E3), a ZWJ
- * sequence (❤ VS16 ZWJ 🔥). A
- * text-default emoji without one (❤, ☀, ⚠) counts as text: whether it is
- * drawn one or two columns wide depends on the font, and most monospace
- * fonts draw it as one.
+ * sequence (❤ VS16 ZWJ 🔥). A text-default emoji without one (❤, ☀, ⚠)
+ * counts as text, 1, as Unicode's width gives it: how wide it is drawn
+ * depends on the font — where the font has no glyph for it, a colour-emoji
+ * font draws it, at whatever width that font has (Consolas: ❤ 1.77 columns,
+ * ☝ 2.5) — so no whole number is right everywhere.
  */
 const EMOJI_SEQUENCE_REG = /^(?:\p{Emoji}[\uFE0F\u20E3]|\p{Extended_Pictographic}[^]*\u200D)/u;
 
-const SEGMENTER = new Intl.Segmenter();
+/** What splits a text into grapheme clusters, where the runtime has one (not Firefox before 125, Safari before 14.1). */
+const SEGMENTER: Intl.Segmenter | null = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter() : null;
 
 /**
  * The monospace columns one grapheme cluster takes, from its whole content:
@@ -47,6 +55,27 @@ function clusterWidth(cluster: string): number {
 }
 
 /**
+ * The monospace width of a text, by grapheme cluster, without the plain-text
+ * shortcut. With no segmenter each code point is measured as a cluster by the
+ * same rules, so an emoji sequence counts as the sum of its parts.
+ * @param text text to calculate
+ * @param segmenter what splits it; `null` measures by code point
+ */
+export function clustersWidth(text: string, segmenter: Intl.Segmenter | null = SEGMENTER): number {
+    let width = 0;
+    if (segmenter) {
+        for (const { segment } of segmenter.segment(text)) {
+            width += clusterWidth(segment);
+        }
+    } else {
+        for (const character of text) {
+            width += clusterWidth(character);
+        }
+    }
+    return width;
+}
+
+/**
  * Calculate the Monospace Length of a string, counted by grapheme cluster: a
  * wide, fullwidth or emoji character as length of 2, a combining mark as 0.
  * Format Table and the Visual Editor's table writer both pad a column by it.
@@ -54,10 +83,5 @@ function clusterWidth(cluster: string): number {
  */
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export function MonoSpaceLength(text: string): number {
-    if (isPrintableAscii(text)) {return text.length;}
-    let width = 0;
-    for (const { segment } of SEGMENTER.segment(text)) {
-        width += clusterWidth(segment);
-    }
-    return width;
+    return isPlainText(text) ? text.length : clustersWidth(text);
 }

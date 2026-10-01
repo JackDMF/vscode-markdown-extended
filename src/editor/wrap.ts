@@ -27,8 +27,10 @@ const LEADING_HOLDS = new RegExp(`^[${HOLD_OPEN}${HOLD_CLOSE}]*`);
 
 /**
  * The characters a line holds, for the wrap column: code points, not UTF-16
- * units, and no hold markers. Not its display width — a CJK character or an
- * emoji counts 1 here, 2 in a table (`MonoSpaceLength`). The wrap column is a
+ * units and not grapheme clusters, and no hold markers. Not its display width
+ * — a CJK character or an emoji counts 1 here, 2 in a table
+ * (`MonoSpaceLength`), and an emoji built of several code points counts each:
+ * a ZWJ family of four is 7, a flag 2. The wrap column is a
  * count of characters, and a paragraph's own width is read back by the same
  * count, so this module's two halves agree whatever the script; a table pads to
  * columns because its pipes must line up on screen.

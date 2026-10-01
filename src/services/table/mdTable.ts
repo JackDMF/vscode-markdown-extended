@@ -1,6 +1,6 @@
 import { parseMDTAble } from "./mdTableParse";
 import { stringifyMDTable } from "./mdTableStringify";
-import { MonoSpaceLength, isPrintableAscii } from "./monospace";
+import { clustersWidth, isPlainText } from "./monospace";
 
 export enum TableAlign {
     Auto,
@@ -116,15 +116,17 @@ export class MDTable {
         this._columnCount -= count;
     }
     /**
-     * A cell's monospace width, measured once per text however often the table
-     * is laid out; printable ASCII is its length, cheaper than a lookup.
+     * A cell's monospace width as it is written, trimmed; measured once per
+     * text however often the table is laid out. Plain text is its length,
+     * cheaper than a lookup.
      */
     public cellWidth(cell: string): number {
-        if (isPrintableAscii(cell)) {return cell.length;}
-        let width = this._cellWidths.get(cell);
+        const text = cell.trim();
+        if (isPlainText(text)) {return text.length;}
+        let width = this._cellWidths.get(text);
         if (width === undefined) {
-            width = MonoSpaceLength(cell);
-            this._cellWidths.set(cell, width);
+            width = clustersWidth(text);
+            this._cellWidths.set(text, width);
         }
         return width;
     }
