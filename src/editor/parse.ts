@@ -283,8 +283,9 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                         foreignLiteral.set(tokens[i + 1], { suffix: literal, placement: 'end' });
                     }
                     if (t.type === 'admonition_title_open') {
-                        // The title is the admonition's attribute, not a block of its body.
-                        admonitionTitle.set(tokens[i - 1], (tokens[i + 1]?.content ?? '').trim());
+                        // The title is the admonition's attribute, not a block of its body;
+                        // as the plugin read it, so a quoted title's spaces are written back.
+                        admonitionTitle.set(tokens[i - 1], tokens[i + 1]?.content ?? '');
                         i += 2;
                         continue;
                     }
