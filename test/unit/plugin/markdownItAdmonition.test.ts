@@ -77,6 +77,8 @@ suite('MarkdownItAdmonition: the opening line', () => {
         assert.deepStrictEqual(admonitionParams(' warning größe "Titel"'), { type: 'warning', classes: ['warning', 'größe'], title: 'Titel' });
         assert.deepStrictEqual(admonitionParams(' note 重要 "标题"'), { type: 'note', classes: ['note', '重要'], title: '标题' });
         assert.deepStrictEqual(admonitionParams(' 注意 "标题"'), { type: 'note', classes: ['note', '注意'], title: '标题' });
+        assert.deepStrictEqual(admonitionParams(' Foo "Bar"'), { type: 'note', classes: ['note', 'Foo'], title: 'Bar' });
+        assert.deepStrictEqual(admonitionParams(' WARNING "Big"'), { type: 'warning', classes: ['warning'], title: 'Big' });
         assert.deepStrictEqual(admonitionParams(' note my.class "Title"'), { type: 'note', classes: ['note', 'my.class'], title: 'Title' });
     });
 

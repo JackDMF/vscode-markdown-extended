@@ -195,10 +195,10 @@ export function admonitionParams(line: string): { type: string; classes: string[
     const quoted = /^(?:([^\s"]+(?:\s+[^\s"]+)*)\s+|([^\s"]+))?"([\s\S]*)"(\s*\{[^{}]*\})?$/.exec(params);
     if (quoted) {
         const classes = (quoted[1] ?? quoted[2] ?? "").split(/\s+/).filter(s => !!s);
-        if (classes.length) {
+        // Lowercased to find the type; a first class that is no type keeps its case.
+        if (classes.length && _types.indexOf(classes[0].toLowerCase()) >= 0) {
             classes[0] = classes[0].toLowerCase();
-        }
-        if (_types.indexOf(classes[0]) < 0) {
+        } else {
             classes.unshift("note");
         }
         const title = quoted[3] === "" ? "" : quoted[3] + (quoted[4] ?? "");

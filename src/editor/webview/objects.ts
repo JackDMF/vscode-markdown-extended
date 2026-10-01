@@ -575,8 +575,11 @@ export function changeAdmonitionTransaction(state: EditorState, pos: number, cha
         return null;
     }
     const type = change.type ?? (node.attrs.type as string);
-    const title = change.title === undefined ? (node.attrs.title as string) : change.title.trim();
-    if (/[\r\n]/.test(title) || (type === node.attrs.type && title === node.attrs.title)) {
+    const current = node.attrs.title as string;
+    // A committed field is trimmed; one that holds the title it was opened
+    // with, outer spaces aside, changes nothing (`" padded "` stays as written).
+    const title = change.title === undefined || change.title.trim() === current.trim() ? current : change.title.trim();
+    if (/[\r\n]/.test(title) || (type === node.attrs.type && title === current)) {
         return null;
     }
     return state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, type, title, header: null }).scrollIntoView();

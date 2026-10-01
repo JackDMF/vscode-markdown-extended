@@ -198,6 +198,16 @@ suite('Editor containers and admonitions: the toolbar, the keys and the object v
         assert.strictEqual(text(state), '!!! tip " padded "\n    Body.\n');
     });
 
+    test('committing a title field unchanged changes nothing, outer spaces included', () => {
+        for (const source of ['!!! note " padded "\n    Body.\n', '!!! note "  "\n    Body.\n']) {
+            const state = stateOf(source);
+            const at = firstOf(state.doc, 'admonition').pos;
+            const title = state.doc.nodeAt(at)?.attrs.title as string;
+            assert.strictEqual(changeAdmonitionTransaction(state, at, { title: title.trim() }), null, source);
+            assert.strictEqual(changeAdmonitionTransaction(state, at, { title }), null, source);
+        }
+    });
+
     test('a tab-indented admonition is the box, its body read as the preview reads it, and written back byte for byte (qjebbs/vscode-markdown-extended#110)', () => {
         const source = '!!! tip "Tabs"\n\tBody.\n\n\tMore.\n';
         const state = stateOf(source);
