@@ -1030,12 +1030,12 @@ select the table.
 **A link lands on the element its fragment names** (Daniel, 2026-09-28: in the text
 editor the built-in link handling lands on the heading; here the file opened at its
 top). `openAt` in `host/session.ts` resolves the fragment against the target file's text
-before opening it (`fragmentLine`, `host/links.ts`), in this order: a heading whose
-explicit `{#id}` is the fragment — Req Explorer writes its anchors so, and an id the author
-wrote wins over a slug; a heading without one whose GitHub-style slug equals it, without
-case; a line fragment (`L12`, `L12,5`). These are the ids the preview's headings carry: a
-heading with a `{#id}` carries that id and not its slug, and still counts for the repeats
-after it (see *Explicit heading ids* below). The slug is the built-in's, read from where it is true: no public
+before opening it (`fragmentLine`, `host/links.ts`), as the browser finds it in the
+preview: the first heading in document order that carries the fragment — as the one id it
+has by `headingIds` (`src/syntax/headingSlug.ts`: its explicit `{#id}`, else its slug, the
+slug counted either way), or as the slug a heading with a `{#id}` keeps as a second anchor;
+else the first whose slug equals it without case, as the built-in compares; else a line
+fragment (`L12`, `L12,5`). See *Explicit heading ids* below. The slug is the built-in's, read from where it is true: no public
 command of `vscode.markdown-language-features` opens a document at a fragment for another
 extension (its `openDocumentLink` is internal), so its rule is ported — trimmed, lower-cased,
 `githubSlugReplaceRegex` removed, each white-space character a hyphen, a repeated slug
@@ -1047,20 +1047,6 @@ reproduces it; `host.test.ts` compares it with the regex the test host's VS Code
 the language server's bundle and in the preview's (`extension.js`), and fails when they part. Headings are read with the editor's engine, so `markdown-it-attrs`
 has read a `{#id}` (kept under the token's `meta`, `explicitHeadingId`) and taken it out of
 the slugged text.
-
-**Explicit heading ids** (Daniel, 2026-10-01: Req Explorer's `{#fr-1}` anchors landed
-nowhere outside the Visual Editor). VS Code's engine installs its heading rule after every
-extension's `extendMarkdownIt`, wrapping the rule it finds: it slugs the heading
-(`env.slugifier.add`, else a stateless slugifier), `attrSet('id', slug)` over the id
-`markdown-it-attrs` put there, then calls the wrapped rule. So `## FR-1: Name {#fr-1}` was
-`id="fr-1-name"` in the preview, `markdown.api.render` and the exports. `MarkdownItAttrs`
-now keeps a heading's id under `meta.mepExplicitId` (a string: the token stream stays JSON
-for the language server) in a core rule after `curly_attributes`, and installs the
-`heading_open` rule VS Code's wraps, which sets the id back. The heading has taken its slug
-from the builder by then, so the repeats after it are counted as before; the table of
-contents and `headingAnchors` count the same way. VS Code's Markdown language server slugs
-the tokens it receives on its own and reads no explicit id: its link validation reports
-`#fr-1` as missing, and its Go to Definition resolves the slug no element carries.
 
 The file then opens with `vscode.open` and `{ selection }`, in whichever editor VS Code
 picks for it. In a text editor the line is also revealed `AtTop`. In the Visual Editor
@@ -1074,6 +1060,38 @@ whose `anchor` is the fragment, else the top-level block the host's line starts 
 bisection over `lineAt`, since block start lines only grow — so the slug rule lives only on
 the host; it puts the caret at the block's start and scrolls it to the top, where
 `scroll-margin-top` keeps it clear of the formatting row fixed at the top.
+
+**Explicit heading ids** (Daniel, 2026-10-01: Req Explorer's `{#fr-1}` anchors landed
+nowhere outside the Visual Editor). VS Code's engine installs its heading rule after every
+extension's `extendMarkdownIt`, wrapping the rule it finds: it slugs the heading
+(`env.slugifier.add`, else a stateless slugifier), `attrSet('id', slug)` over the id
+`markdown-it-attrs` put there, then calls the wrapped rule. So `## FR-1: Name {#fr-1}` was
+`id="fr-1-name"` in the preview, `markdown.api.render` and the exports. `MarkdownItAttrs`
+now keeps a heading's id under `meta.mepExplicitId` (a string, written into the `meta`
+object already there: the token stream stays JSON for the language server, and a plugin
+holding that object keeps its data) in a core rule after `curly_attributes`, and installs
+the `heading_open` rule VS Code's wraps. That rule sets the id back and keeps the slug
+VS Code set as an empty `<a id="fr-1-name"></a>` at the start of the heading's content, so a
+link written to the slug still lands. The heading has taken its slug from the builder, so
+the repeats after it are counted as before. One function states the rule for every surface
+that names a heading — `headingIds`: the explicit id, else the slug, the slug counted for
+every `heading_open` — and the table of contents (which escapes the id into its `href`),
+`headingAnchors`, the link completion and `fragmentLine` read it.
+
+An explicit id is not checked against the other headings' slugs: `## Setup {#setup-1}`,
+`## Setup`, `## Setup` are `setup-1`, `setup-1`, `setup-2`. Nothing is renamed — the author's
+id is the contract — and the first element in document order is the one a fragment names, in
+the browser and, by `fragmentLine`, in the Visual Editor.
+
+VS Code's Markdown language server slugs the tokens it receives on its own and reads no
+explicit id. Its completion offers `#fr-1-name`, and its Go to Definition follows it; both
+now land on the second anchor. With `markdown.validate.enabled` it reports `#fr-1` as a
+missing heading: a false report MEP cannot take back, since it does not own that server.
+
+Two limits lie outside what MEP's rules can see. A core rule of another plugin that sets a
+heading's id before `curly_attributes` is read as the author's `{#id}`. A `heading_open` rule
+another extension installs after MEP runs between VS Code's and MEP's, and reads the slug
+as the heading's id.
 
 The session remembers the text it believes the page holds. An `edit` is written only
 when its `baseVersion` is the last posted version and the document still holds that

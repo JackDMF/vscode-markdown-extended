@@ -1,6 +1,6 @@
 import { MarkdownIt, StateBase, Token } from '../@types/markdown-it';
 import markdownItTableOfContents from 'markdown-it-table-of-contents';
-import { explicitHeadingId, headingText, slugBuilder, TextToken } from '../syntax/headingSlug';
+import { headingIds, headingText, TextToken } from '../syntax/headingSlug';
 
 // markdown-it-table-of-contents links a heading by a slug of its own: percent-
 // encoded, never de-duplicated (`What is new?` → `#what-is-new%3F`, a third
@@ -14,7 +14,7 @@ import { explicitHeadingId, headingText, slugBuilder, TextToken } from '../synta
 // those ids, and it links a heading by an id it finds on it; it never slugs.
 //
 // A heading with an explicit `{#id}` (markdown-it-attrs) is linked by that id,
-// the one the preview gives it (`explicitHeadingId`), and still counts for the
+// the one the preview gives it (`headingIds`), and still counts for the
 // repeats after it: `## Title {#custom}` is `#custom`, a `## Title` after it
 // `#title-1`.
 //
@@ -55,6 +55,10 @@ export function MarkdownItTableOfContents(md: MarkdownIt, options: Record<string
         // Every heading the plugin sees carries its id already; one without
         // (an empty slug) stays unlinked rather than getting the plugin's slug.
         slugify: () => '',
+        // The plugin writes the anchor into `href="#…"` as it is, and an
+        // explicit id may hold any character (`{#x"y}`, `{id="a & b"}`):
+        // escaped, it cannot close the attribute.
+        transformLink: (anchor: string | null) => anchor ? md.utils.escapeHtml(anchor) : anchor,
         // The entry's text is the heading's, as the preview reads it (emoji
         // included), written as text: rendering it again as Markdown linkified
         // a URL into a link inside the entry's link, and runs every
@@ -91,21 +95,16 @@ export function MarkdownItTableOfContents(md: MarkdownIt, options: Record<string
  * `<!-- omit from toc -->`.
  */
 function anchoredHeadings(stream: Token[]): Token[] {
-    const slug = slugBuilder();
     const headings: Token[] = [];
-    stream.forEach((token, i) => {
-        if (token.type !== 'heading_open') { return; }
-        const inline = stream[i + 1];
-        const text = headingText(inline);
-        const slugged = slug(text);
-        const id = explicitHeadingId(token) ?? slugged;
-        if (text.trim() === '') { return; }
+    for (const { index, id, text } of headingIds(stream)) {
+        if (text.trim() === '') { continue; }
+        const token = stream[index];
         const open = copy(token, 'heading_open', 1);
         if (id !== '') { open.attrs = [['id', id]]; }
-        const before = stream[i - 1];
+        const before = stream[index - 1];
         if (before?.type === 'html_block') { headings.push(before); }
-        headings.push(open, inline, copy(token, 'heading_close', -1));
-    });
+        headings.push(open, stream[index + 1], copy(token, 'heading_close', -1));
+    }
     return headings;
 }
 

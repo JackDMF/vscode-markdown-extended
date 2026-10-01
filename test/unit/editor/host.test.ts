@@ -16,6 +16,8 @@ import { SessionHost, SessionWebview, VisualEditorSession, revealInVisualEditor 
 import { fillDestination } from '../../../src/editor/host/images';
 import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
 import { GITHUB_SLUG_REPLACE } from '../../../src/syntax/githubSlugRegex';
+import { headingIds } from '../../../src/syntax/headingSlug';
+import { headingIds as renderedHeadingIds, secondAnchors } from '../vscodeHeadings';
 import { blockLineRanges } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { ActiveVisualEditor, ActiveVisualEditorTracker, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
@@ -884,31 +886,49 @@ suite('Editor host: a link lands on the element its fragment names', () => {
         assert.strictEqual(GITHUB_SLUG_REPLACE.source, shipped, 'regenerate src/syntax/githubSlugRegex.ts from this VS Code');
     });
 
-    test('a {#id} heading, a slugged heading, a repeated slug, a line fragment; an id wins over a slug; a missing one is none', async () => {
+    test('a {#id} heading, a slugged heading, a repeated slug, a line fragment; the first carrier in document order wins; a missing one is none', async () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const anchors = headingAnchors(md, FRAGMENT_TARGET, {});
         const line = (fragment: string) => fragmentLine(anchors, fragment);
         assert.strictEqual(line('frs-tst-001-1a2b3c4d'), 2, 'the explicit id');
-        assert.strictEqual(line('frs-tst-001-smoke'), null, 'not its slug: no element in the preview carries it');
+        assert.strictEqual(line('frs-tst-001-smoke'), 2, 'its slug too: the heading keeps it as a second anchor');
         assert.strictEqual(line('second-heading-with-code--punctuation'), 4);
         assert.strictEqual(line('Second-Heading-With-Code--Punctuation'), 4, 'compared without case');
         assert.strictEqual(line('second-heading-with-code--punctuation-1'), 6, 'the second of a repeated slug');
-        assert.strictEqual(line('title'), 8, 'an id wins over the slug of "# Title"');
+        assert.strictEqual(line('title'), 0, '"# Title" comes first: the browser lands there, not on "## Other {#title}"');
+        assert.strictEqual(line('other'), 8, 'the slug "## Other {#title}" keeps as a second anchor');
         assert.strictEqual(line('L11'), 10);
         assert.strictEqual(line('no-such-heading'), null);
         assert.strictEqual(line(''), null);
     });
 
-    test('a fragment lands where the preview\'s id is, around explicit-id headings too (markdown.api.render)', async () => {
+    test('a fragment lands where the preview\'s id or second anchor is, around explicit-id headings too (markdown.api.render)', async () => {
         const text = ['## Setup', '', '## Setup {#intro}', '', '## Setup', '', '## FR-1: Name {#fr-1}', ''].join('\n');
         const html = await vscode.commands.executeCommand<string>('markdown.api.render', text);
-        const ids = [...html.matchAll(/<h[1-6][^>]*\sid="([^"]*)"/g)].map(([, id]) => id);
-        assert.deepStrictEqual(ids, ['setup', 'intro', 'setup-2', 'fr-1'], 'the preview\'s ids');
+        assert.deepStrictEqual(renderedHeadingIds(html), ['setup', 'intro', 'setup-2', 'fr-1'], 'the preview\'s ids');
+        assert.deepStrictEqual(secondAnchors(html), ['setup-1', 'fr-1-name'], 'the preview\'s second anchors');
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const anchors = headingAnchors(md, text, {});
-        assert.deepStrictEqual(ids.map(id => fragmentLine(anchors, id)), [0, 2, 4, 6], 'each id lands on its heading');
-        assert.strictEqual(fragmentLine(anchors, 'setup-1'), null, 'the slug of an explicit-id heading names nothing');
-        assert.strictEqual(fragmentLine(anchors, 'fr-1-name'), null, 'nor does the slug of Req Explorer\'s anchor heading');
+        assert.deepStrictEqual(renderedHeadingIds(html).map(id => fragmentLine(anchors, id)), [0, 2, 4, 6], 'each id lands on its heading');
+        assert.deepStrictEqual(secondAnchors(html).map(id => fragmentLine(anchors, id)), [2, 6], 'each second anchor on its heading');
+    });
+
+    test('an explicit id another heading\'s slug repeats names the first of the two, as in the browser', async () => {
+        const text = ['## Setup {#setup-1}', '', '## Setup', '', '## Setup', ''].join('\n');
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', text);
+        assert.deepStrictEqual(renderedHeadingIds(html), ['setup-1', 'setup-1', 'setup-2'], 'nothing is renamed');
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        assert.strictEqual(fragmentLine(headingAnchors(md, text, {}), 'setup-1'), 0);
+    });
+
+    test('every heading_open counts for the repeats, one without a source line too', () => {
+        const heading = (content: string, map: [number, number] | null) => [
+            { type: 'heading_open', content: '', map },
+            { type: 'inline', content, children: [{ type: 'text', content }] },
+            { type: 'heading_close', content: '' },
+        ];
+        const ids = headingIds([...heading('Setup', null), ...heading('Setup', [2, 3])]);
+        assert.deepStrictEqual(ids.map(h => h.id), ['setup', 'setup-1']);
     });
 
     test('a link to another file opens it at the heading; a fragment it lacks opens it at the top, logged as info at most', async function () {

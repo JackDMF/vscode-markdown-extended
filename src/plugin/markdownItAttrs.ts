@@ -80,26 +80,50 @@ export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
 // kept under the token's `meta` (`explicitHeadingId`, `src/syntax/headingSlug.ts`),
 // where a render cannot overwrite it, and the heading rule installed here —
 // the one VS Code's calls — sets it back. VS Code has slugged the heading by
-// then, so the headings after it count its slug as they did.
+// then, so the headings after it count its slug as they did; the slug it set
+// is kept as a second anchor at the start of the heading's content
+// (`<a id="fr-1-name"></a>`), so a link written to the slug still lands, and
+// so does the one VS Code's language server completes, which knows only slugs.
+//
+// Two limits, both outside what this rule can see: an id a core rule of
+// another plugin sets on a heading before `curly_attributes` is read as the
+// author's; and a `heading_open` rule another extension installs after this
+// one runs between VS Code's and this one, and reads the slug as the id.
 
 /** Every heading's explicit id, kept under its `meta`. */
 function keepHeadingIds(tokens: Token[]) {
     for (const token of tokens) {
         if (token.type !== 'heading_open') { continue; }
         const id = token.attrGet('id');
-        if (id) {
-            token.meta = { ...((token.meta as Meta) ?? {}), [EXPLICIT_ID]: id };
-        }
+        if (id) { setMeta(token, EXPLICIT_ID, id); }
     }
 }
 
-/** The heading renderer, giving a heading its explicit id back. */
+/**
+ * `value` under `key` of the token's `meta`, written into the object already
+ * there, as Req Explorer's marks are: a plugin holding that object keeps
+ * seeing its own data. A `meta` that is not an object belongs to nobody and
+ * is replaced.
+ */
+function setMeta(token: Token, key: string, value: unknown) {
+    if (typeof token.meta !== 'object' || token.meta === null) {
+        token.meta = { [key]: value };
+        return;
+    }
+    (token.meta as Record<string, unknown>)[key] = value;
+}
+
+/** The heading renderer, giving a heading its explicit id back and keeping its slug as a second anchor. */
 function wrapHeading(md: MarkdownIt) {
     const open = md.renderer.rules.heading_open;
     md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
-        const id = explicitHeadingId(tokens[idx]);
-        if (id !== null) { tokens[idx].attrSet('id', id); }
-        return open ? open(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
+        const token = tokens[idx];
+        const id = explicitHeadingId(token);
+        // VS Code's rule set the slug; without it (an engine of its own) the id is attrs' and there is no slug here.
+        const slug = id !== null ? token.attrGet('id') : null;
+        if (id !== null) { token.attrSet('id', id); }
+        const html = open ? open(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
+        return slug && slug !== id ? `${html}<a id="${md.utils.escapeHtml(slug)}"></a>` : html;
     };
 }
 
@@ -230,7 +254,7 @@ function setAside(tokens: Token[]) {
         const spans = token.attrs.filter(([name]) => SPANS.includes(name));
         if (!spans.length) { continue; }
         token.attrs = token.attrs.filter(([name]) => !SPANS.includes(name));
-        token.meta = { ...((token.meta as Meta) ?? {}), [STASH]: spans };
+        setMeta(token, STASH, spans);
     }
 }
 

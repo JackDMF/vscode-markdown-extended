@@ -8,19 +8,27 @@
  * VS Code's engine the builder the preview renders with. Each of them imports
  * this module, so they slug a heading alike.
  *
- * A heading written with an explicit `{#id}` (markdown-it-attrs) carries that
- * id on every one of them, and only that id. VS Code's heading rule sets every
+ * The rule is one (`headingIds`): a heading carries its explicit `{#id}`
+ * (markdown-it-attrs), else its slug; the slug is counted either way, for
+ * every `heading_open` of the stream. VS Code's heading rule sets every
  * heading's id from its slug at render time, over the one attrs put there; the
  * id the author wrote is therefore kept on the token (`explicitHeadingId`) and
  * set back by a heading rule VS Code's calls after its own
- * (`src/plugin/markdownItAttrs.ts`). Such a heading still takes its slug from
- * the builder — VS Code slugs it before the id is set back — so the headings
- * after it count it as a repeat.
+ * (`src/plugin/markdownItAttrs.ts`), which also keeps the slug the heading
+ * took as a second anchor inside it (`<a id="slug"></a>`), so a link written
+ * to the slug before the id was honoured still lands.
+ *
+ * An explicit id may equal another heading's slug (`## Setup {#setup-1}`,
+ * `## Setup`, `## Setup` are `setup-1`, `setup-1`, `setup-2`): nothing is
+ * renamed, and the first element in document order is the one a fragment
+ * names, in the browser and in the Visual Editor alike.
  *
  * VS Code's Markdown language server (link validation, Go to Definition,
  * heading completion) slugs the headings of the tokens it receives on its own
- * and never reads an explicit id: there `[x](#fr-1)` names no heading, and the
- * slug of `## FR-1: Name {#fr-1}` names it, though no element carries it.
+ * and never reads an explicit id: its completion offers `#fr-1-name` for
+ * `## FR-1: Name {#fr-1}`, which lands on the second anchor, and with
+ * `markdown.validate.enabled` it reports `[x](#fr-1)` as a missing heading —
+ * a false report MEP cannot take back, since it does not own that server.
  *
  * It imports neither `vscode` nor markdown-it: a token is read by its shape.
  */
@@ -95,4 +103,40 @@ export function headingText(inline: TextToken | undefined): string {
         return t.type === 'text' || t.type === 'emoji' || t.type === 'code_inline' ? t.content : '';
     }).join('');
     return inline ? walk(inline.children ?? []) : '';
+}
+
+/** A token of a stream `headingIds` reads: its type, its text, its `meta`. */
+export type HeadingToken = TextToken & MetaToken;
+
+/** The id a heading carries, read by `headingIds`. */
+export interface HeadingId {
+    /** The index of its `heading_open` in the stream. */
+    index: number;
+    /** The id it carries: its explicit `{#id}`, else its slug (`''` when the slug is empty). */
+    id: string;
+    /** The slug it took from the count: its id, or its second anchor when `explicit`. */
+    slug: string;
+    /** Whether `id` is the author's `{#id}`. */
+    explicit: boolean;
+    /** The text it is slugged from. */
+    text: string;
+}
+
+/**
+ * The ids of a stream's headings in order, by the one rule every surface
+ * names a heading with: its explicit `{#id}`, else its slug, the slug counted
+ * either way, for every `heading_open` — with a source line or without, at
+ * every level — as VS Code's preview counts them with one builder per render.
+ */
+export function headingIds(tokens: readonly HeadingToken[]): HeadingId[] {
+    const slug = slugBuilder();
+    const ids: HeadingId[] = [];
+    tokens.forEach((token, index) => {
+        if (token.type !== 'heading_open') { return; }
+        const text = headingText(tokens[index + 1]);
+        const slugged = slug(text);
+        const explicit = explicitHeadingId(token);
+        ids.push({ index, id: explicit ?? slugged, slug: slugged, explicit: explicit !== null, text });
+    });
+    return ids;
 }

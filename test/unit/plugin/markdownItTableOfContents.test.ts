@@ -5,6 +5,7 @@ import MarkdownIt = require('markdown-it');
 import { plugins } from '../../../src/plugin/plugins';
 import { parseDocument } from '../../../src/editor';
 import { hostEngine, topChildren } from '../editor/helpers';
+import { headingIds, previewEnv, secondAnchors, withVscodeHeadingRule } from '../vscodeHeadings';
 
 // The preview's own registry, in its order, with raw HTML on as the preview has it.
 function preview(): MarkdownIt.MarkdownIt {
@@ -26,10 +27,6 @@ function tocOf(html: string): string {
     return toc[1];
 }
 
-/** The ids the rendered headings carry, in order. */
-function headingIds(html: string): string[] {
-    return [...html.matchAll(/<h[1-6][^>]*\sid="([^"]*)"/g)].map(([, id]) => id);
-}
 
 // Every case the slug rule treats differently, each heading at a level the
 // TOC lists (the default 1–3), so the TOC links every one of them.
@@ -73,6 +70,19 @@ suite('markdown-it-table-of-contents links the ids the preview gives the heading
     test('a heading with an explicit {#id} is linked by it and still counts for the repeats after it', () => {
         const html = md.render(['[[TOC]]', '', ...EXPLICIT, ''].join('\n'));
         assert.deepStrictEqual(tocHrefs(html), EXPLICIT_IDS);
+    });
+
+    test('an explicit id is escaped into the link: a quote cannot close the href', () => {
+        const html = md.render(['[[TOC]]', '', '## T {#x"onmouseover="alert(1)}', '## U {id="a & b"}', '## V {#a>b}', ''].join('\n'));
+        assert.ok(!tocOf(html).includes('"onmouseover'), tocOf(html));
+        // (`{id="<b>"}` is no literal with raw HTML on: `<b>` is an HTML tag there.)
+        assert.deepStrictEqual(tocHrefs(html), ['x&quot;onmouseover=&quot;alert(1)', 'a &amp; b', 'a&gt;b']);
+    });
+
+    test('under VS Code\'s heading rule the TOC links the explicit id, not the second anchor', () => {
+        const html = withVscodeHeadingRule(preview()).render(['[[TOC]]', '', ...EXPLICIT, ''].join('\n'), previewEnv());
+        assert.deepStrictEqual(tocHrefs(html), headingIds(html));
+        assert.deepStrictEqual(secondAnchors(html), ['fr-1-name', 'setup-1']);
     });
 
     test('a heading at a level the TOC leaves out still counts for the repeats after it', () => {

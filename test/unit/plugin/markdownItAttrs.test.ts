@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import MarkdownIt = require('markdown-it');
 import { plugins } from '../../../src/plugin/plugins';
+import { headingIds, previewEnv, secondAnchors, withVscodeHeadingRule } from '../vscodeHeadings';
 
 // The preview's own registry, in its order: the bug lives between two plugins.
 function preview(): MarkdownIt.MarkdownIt {
@@ -253,60 +254,48 @@ suite('MarkdownItAttrs and a text brace: the review\'s third round', () => {
     });
 });
 
-/** The ids the rendered headings carry, in order. */
-function headingIds(html: string): string[] {
-    return [...html.matchAll(/<h[1-6][^>]*\sid="([^"]*)"/g)].map(([, id]) => id);
-}
 
-/**
- * The preview's registry under VS Code's heading rule as its engine installs
- * it, after every extension's: the heading slugged by `env.slugifier`, the id
- * set from the slug, then the rule it wrapped called.
- */
 function vscodeEngine(): MarkdownIt.MarkdownIt {
-    const md = preview();
-    const wrapped = md.renderer.rules.heading_open;
-    md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
-        const title = tokens[idx + 1].children.map(t => t.content).join('');
-        const slugifier = (env as { slugifier: { add(heading: string): { value: string } } }).slugifier;
-        tokens[idx].attrSet('id', slugifier.add(title).value);
-        return wrapped ? wrapped(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
-    };
-    return md;
-}
-
-/** A slug builder of `-1`, `-2` repeats, enough for plain headings. */
-function slugifier() {
-    const seen = new Map<string, number>();
-    return {
-        add: (heading: string) => {
-            const slug = heading.trim().toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s/g, '-');
-            const count = seen.get(slug);
-            seen.set(slug, (count ?? -1) + 1);
-            return { value: count === undefined ? slug : `${slug}-${count + 1}` };
-        },
-    };
+    return withVscodeHeadingRule(preview());
 }
 
 const REPEATS = ['## Setup', '## Setup {#intro}', '## Setup', '## Setup {id=last}', ''].join('\n');
 
 suite('MarkdownItAttrs keeps a heading\'s explicit id under VS Code\'s heading rule', () => {
-    test('the rule VS Code wraps sets the {#id} back over the slug', () => {
-        const html = vscodeEngine().render('## FR-1: Name {#fr-1}\n', { slugifier: slugifier() });
+    test('the rule VS Code wraps sets the {#id} back over the slug, and keeps the slug as a second anchor', () => {
+        const html = vscodeEngine().render('## FR-1: Name {#fr-1}\n', previewEnv());
         assert.deepStrictEqual(headingIds(html), ['fr-1']);
+        assert.deepStrictEqual(secondAnchors(html), ['fr-1-name']);
     });
 
     test('an explicit-id heading takes its slug all the same: the repeats after it count it', () => {
-        assert.deepStrictEqual(headingIds(vscodeEngine().render(REPEATS, { slugifier: slugifier() })), ['setup', 'intro', 'setup-2', 'last']);
+        const html = vscodeEngine().render(REPEATS, previewEnv());
+        assert.deepStrictEqual(headingIds(html), ['setup', 'intro', 'setup-2', 'last']);
+        assert.deepStrictEqual(secondAnchors(html), ['setup-1', 'setup-3']);
+    });
+
+    test('a heading without an explicit id has no second anchor, nor one whose id is its slug', () => {
+        assert.deepStrictEqual(secondAnchors(vscodeEngine().render('## Setup\n\n## Setup {#setup-1}\n', previewEnv())), []);
+    });
+
+    test('a slug of non-ASCII text is the second anchor as VS Code slugs it', () => {
+        assert.deepStrictEqual(secondAnchors(vscodeEngine().render('## Größe {#size}\n', previewEnv())), ['größe']);
+    });
+
+    test('without VS Code\'s rule a heading has its explicit id and no second anchor', () => {
+        const html = preview().render('## FR-1: Name {#fr-1}\n');
+        assert.deepStrictEqual(headingIds(html), ['fr-1']);
+        assert.deepStrictEqual(secondAnchors(html), []);
     });
 
     test('a parse rendered twice keeps the explicit id: the render does not lose it', () => {
         const md = vscodeEngine();
         const tokens = md.parse(REPEATS, {});
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const render = () => headingIds(md.renderer.render(tokens, (md as any).options, { slugifier: slugifier() }));
-        assert.deepStrictEqual(render(), render());
-        assert.deepStrictEqual(render(), ['setup', 'intro', 'setup-2', 'last']);
+        const render = () => md.renderer.render(tokens, (md as any).options, previewEnv());
+        const first = render();
+        assert.strictEqual(render(), first);
+        assert.deepStrictEqual(headingIds(first), ['setup', 'intro', 'setup-2', 'last']);
     });
 
     test('the tokens stay plain data: VS Code\'s language server receives them as JSON', () => {
@@ -314,16 +303,39 @@ suite('MarkdownItAttrs keeps a heading\'s explicit id under VS Code\'s heading r
         const json = JSON.parse(JSON.stringify(tokens)) as { type: string; meta: Record<string, unknown> | null }[];
         assert.deepStrictEqual(json.filter(t => t.type === 'heading_open').map(t => t.meta?.mepExplicitId ?? null), [null, 'intro', null, 'last']);
     });
+
+    test('the id is written into the meta object a heading already has; a meta that is no object is replaced', () => {
+        const md = preview();
+        const held = { other: 1 };
+        md.core.ruler.before('curly_attributes', 'test_meta', state => {
+            const headings = state.tokens.filter(t => t.type === 'heading_open');
+            headings[0].meta = held;
+            headings[1].meta = 'not an object';
+        });
+        const [first, second] = md.parse('## A {#a}\n\n## B {#b}\n', {}).filter(t => t.type === 'heading_open');
+        assert.strictEqual(first.meta, held, 'the same object');
+        assert.deepStrictEqual(held, { other: 1, mepExplicitId: 'a' });
+        assert.deepStrictEqual(second.meta, { mepExplicitId: 'b' });
+    });
 });
 
 suite('An explicit heading id in VS Code\'s own render (markdown.api.render)', () => {
-    test('## FR-1: Name {#fr-1} is id="fr-1"', async () => {
+    test('## FR-1: Name {#fr-1} is id="fr-1", its slug a second anchor', async () => {
         const html = await vscode.commands.executeCommand<string>('markdown.api.render', '## FR-1: Name {#fr-1}\n');
         assert.deepStrictEqual(headingIds(html), ['fr-1']);
+        assert.deepStrictEqual(secondAnchors(html), ['fr-1-name']);
     });
 
     test('slugged headings keep VS Code\'s slug and count an explicit-id heading among the repeats', async () => {
         const html = await vscode.commands.executeCommand<string>('markdown.api.render', REPEATS);
         assert.deepStrictEqual(headingIds(html), ['setup', 'intro', 'setup-2', 'last']);
+        assert.deepStrictEqual(secondAnchors(html), ['setup-1', 'setup-3']);
+    });
+
+    test('the stand-in for VS Code\'s heading rule renders the ids and anchors VS Code\'s does', async () => {
+        const text = ['## Größe {#size}', '## Setup', '## Setup {#intro}', '## 标题', ''].join('\n');
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', text);
+        const ours = vscodeEngine().render(text, previewEnv());
+        assert.deepStrictEqual([headingIds(ours), secondAnchors(ours)], [headingIds(html), secondAnchors(html)]);
     });
 });

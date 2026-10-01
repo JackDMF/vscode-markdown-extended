@@ -583,10 +583,12 @@ a click puts the caret in the link, to edit it; on a rendered block (a table, sa
 selects the block. The one exception is Req Explorer's summary table under a requirement
 heading: it is a read model, and a plain click on one of its links opens it. Hovering a link shows where it goes. A relative link opens the file it
 names (resolved against the document's folder), a web or mail address opens outside VS
-Code. **A link with a `#fragment` lands on the element it names**, as the text editor's
-own link handling does: a heading whose `{#id}` is the fragment (Req Explorer's anchors),
-else the heading without one whose GitHub-style slug it is — the rule of VS Code's built-in Markdown
-support — else a line (`#L12`). In the text editor the heading comes to the top of the
+Code. **A link with a `#fragment` lands on the element it names in the preview**: the
+first heading, in document order, whose id is the fragment — its `{#id}` (Req Explorer's
+anchors), else its GitHub-style slug, the id VS Code's preview gives it — or, for a heading
+with a `{#id}`, whose slug it is, which the heading keeps as a second anchor; else a line
+(`#L12`), as the text editor reads one. A slug is compared without case, as VS Code's
+language server compares it; a `{#id}` as written. In the text editor the heading comes to the top of the
 window; in the Visual Editor it is scrolled to below the toolbar and the caret put in it;
 a link to a heading of the same document scrolls there. A fragment the file does not have
 opens it at the top.
@@ -1089,7 +1091,10 @@ are not supported.
 Each entry links the id VS Code's preview gives its heading: GitHub-style slugs, with `-1`, `-2` for a repeated
 heading (`setup`, `setup-1`, `setup-2`). A heading written with an explicit `{#id}` is linked by that id, the one it
 carries in the preview and the exports; it still counts for the repeats after it (`## Setup {#intro}` then `## Setup`
-are `#intro` and `#setup-1`). A heading whose slug is empty (`## ???`) has nothing a link can
+are `#intro` and `#setup-1`), and keeps that slug as a second anchor inside it, so a link to the slug still lands.
+An explicit id is not checked against the other headings' slugs: `## Setup {#setup-1}`, `## Setup`, `## Setup` are
+`setup-1`, `setup-1` and `setup-2`, and `#setup-1` lands on the first of the two, in the browser and in the Visual
+Editor alike. A heading whose slug is empty (`## ???`) has nothing a link can
 name, and is listed without a link; a heading with no text (`## ![](logo.png)`) is not listed.
 
 In the Visual Editor the table of contents lists the headings as the document was last parsed: a heading added or
