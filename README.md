@@ -585,7 +585,7 @@ heading: it is a read model, and a plain click on one of its links opens it. Hov
 names (resolved against the document's folder), a web or mail address opens outside VS
 Code. **A link with a `#fragment` lands on the element it names**, as the text editor's
 own link handling does: a heading whose `{#id}` is the fragment (Req Explorer's anchors),
-else the heading whose GitHub-style slug it is — the rule of VS Code's built-in Markdown
+else the heading without one whose GitHub-style slug it is — the rule of VS Code's built-in Markdown
 support — else a line (`#L12`). In the text editor the heading comes to the top of the
 window; in the Visual Editor it is scrolled to below the toolbar and the caret put in it;
 a link to a heading of the same document scrolls there. A fragment the file does not have
@@ -1087,8 +1087,9 @@ one deep (`@[toc](Contents (draft))`). VS Code's link checker reads `@[toc](Titl
 are not supported.
 
 Each entry links the id VS Code's preview gives its heading: GitHub-style slugs, with `-1`, `-2` for a repeated
-heading (`setup`, `setup-1`, `setup-2`). The preview gives a heading written with an explicit `{#id}` its slug, not
-that id, and the table of contents links the slug. A heading whose slug is empty (`## ???`) has nothing a link can
+heading (`setup`, `setup-1`, `setup-2`). A heading written with an explicit `{#id}` is linked by that id, the one it
+carries in the preview and the exports; it still counts for the repeats after it (`## Setup {#intro}` then `## Setup`
+are `#intro` and `#setup-1`). A heading whose slug is empty (`## ???`) has nothing a link can
 name, and is listed without a link; a heading with no text (`## ![](logo.png)`) is not listed.
 
 In the Visual Editor the table of contents lists the headings as the document was last parsed: a heading added or

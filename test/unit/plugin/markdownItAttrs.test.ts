@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as vscode from 'vscode';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import MarkdownIt = require('markdown-it');
 import { plugins } from '../../../src/plugin/plugins';
@@ -249,5 +250,80 @@ suite('MarkdownItAttrs and a text brace: the review\'s third round', () => {
 
     test('an admonition whose only extra is a text brace has one class', () => {
         assert.ok(md.render('!!! note {a = b} "T"\n    Body.\n').includes('class="admonition note"'));
+    });
+});
+
+/** The ids the rendered headings carry, in order. */
+function headingIds(html: string): string[] {
+    return [...html.matchAll(/<h[1-6][^>]*\sid="([^"]*)"/g)].map(([, id]) => id);
+}
+
+/**
+ * The preview's registry under VS Code's heading rule as its engine installs
+ * it, after every extension's: the heading slugged by `env.slugifier`, the id
+ * set from the slug, then the rule it wrapped called.
+ */
+function vscodeEngine(): MarkdownIt.MarkdownIt {
+    const md = preview();
+    const wrapped = md.renderer.rules.heading_open;
+    md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
+        const title = tokens[idx + 1].children.map(t => t.content).join('');
+        const slugifier = (env as { slugifier: { add(heading: string): { value: string } } }).slugifier;
+        tokens[idx].attrSet('id', slugifier.add(title).value);
+        return wrapped ? wrapped(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
+    };
+    return md;
+}
+
+/** A slug builder of `-1`, `-2` repeats, enough for plain headings. */
+function slugifier() {
+    const seen = new Map<string, number>();
+    return {
+        add: (heading: string) => {
+            const slug = heading.trim().toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s/g, '-');
+            const count = seen.get(slug);
+            seen.set(slug, (count ?? -1) + 1);
+            return { value: count === undefined ? slug : `${slug}-${count + 1}` };
+        },
+    };
+}
+
+const REPEATS = ['## Setup', '## Setup {#intro}', '## Setup', '## Setup {id=last}', ''].join('\n');
+
+suite('MarkdownItAttrs keeps a heading\'s explicit id under VS Code\'s heading rule', () => {
+    test('the rule VS Code wraps sets the {#id} back over the slug', () => {
+        const html = vscodeEngine().render('## FR-1: Name {#fr-1}\n', { slugifier: slugifier() });
+        assert.deepStrictEqual(headingIds(html), ['fr-1']);
+    });
+
+    test('an explicit-id heading takes its slug all the same: the repeats after it count it', () => {
+        assert.deepStrictEqual(headingIds(vscodeEngine().render(REPEATS, { slugifier: slugifier() })), ['setup', 'intro', 'setup-2', 'last']);
+    });
+
+    test('a parse rendered twice keeps the explicit id: the render does not lose it', () => {
+        const md = vscodeEngine();
+        const tokens = md.parse(REPEATS, {});
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const render = () => headingIds(md.renderer.render(tokens, (md as any).options, { slugifier: slugifier() }));
+        assert.deepStrictEqual(render(), render());
+        assert.deepStrictEqual(render(), ['setup', 'intro', 'setup-2', 'last']);
+    });
+
+    test('the tokens stay plain data: VS Code\'s language server receives them as JSON', () => {
+        const tokens = preview().parse(REPEATS, {});
+        const json = JSON.parse(JSON.stringify(tokens)) as { type: string; meta: Record<string, unknown> | null }[];
+        assert.deepStrictEqual(json.filter(t => t.type === 'heading_open').map(t => t.meta?.mepExplicitId ?? null), [null, 'intro', null, 'last']);
+    });
+});
+
+suite('An explicit heading id in VS Code\'s own render (markdown.api.render)', () => {
+    test('## FR-1: Name {#fr-1} is id="fr-1"', async () => {
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', '## FR-1: Name {#fr-1}\n');
+        assert.deepStrictEqual(headingIds(html), ['fr-1']);
+    });
+
+    test('slugged headings keep VS Code\'s slug and count an explicit-id heading among the repeats', async () => {
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', REPEATS);
+        assert.deepStrictEqual(headingIds(html), ['setup', 'intro', 'setup-2', 'last']);
     });
 });

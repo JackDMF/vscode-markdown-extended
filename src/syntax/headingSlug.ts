@@ -6,9 +6,21 @@
  * preview's headings carry; the Visual Editor's host (`src/editor/host/links.ts`),
  * which follows a link's fragment to its heading; and the export, which hands
  * VS Code's engine the builder the preview renders with. Each of them imports
- * this module, so they slug a heading alike. They still differ on an explicit
- * `{#id}`: the editor's link following resolves one (`fragmentLine`), while the
- * preview and the export overwrite it with the slug, and the TOC links the slug.
+ * this module, so they slug a heading alike.
+ *
+ * A heading written with an explicit `{#id}` (markdown-it-attrs) carries that
+ * id on every one of them, and only that id. VS Code's heading rule sets every
+ * heading's id from its slug at render time, over the one attrs put there; the
+ * id the author wrote is therefore kept on the token (`explicitHeadingId`) and
+ * set back by a heading rule VS Code's calls after its own
+ * (`src/plugin/markdownItAttrs.ts`). Such a heading still takes its slug from
+ * the builder — VS Code slugs it before the id is set back — so the headings
+ * after it count it as a repeat.
+ *
+ * VS Code's Markdown language server (link validation, Go to Definition,
+ * heading completion) slugs the headings of the tokens it receives on its own
+ * and never reads an explicit id: there `[x](#fr-1)` names no heading, and the
+ * slug of `## FR-1: Name {#fr-1}` names it, though no element carries it.
  *
  * It imports neither `vscode` nor markdown-it: a token is read by its shape.
  */
@@ -43,6 +55,24 @@ export function slugBuilder(): (heading: string) => string {
         seen.set(slug, { count: 0 });
         return slug;
     };
+}
+
+/**
+ * The key under a `heading_open` token's `meta` its explicit `{#id}` is kept
+ * under: a string, so the token stream stays plain data (VS Code's language
+ * server receives it as JSON).
+ */
+export const EXPLICIT_ID = 'mepExplicitId';
+
+/** The part of a markdown-it token an explicit id is read from. */
+export interface MetaToken {
+    meta?: unknown;
+}
+
+/** The `{#id}` the author wrote on the heading `open` opens, or `null`: the id it carries on every surface. */
+export function explicitHeadingId(open: MetaToken | undefined): string | null {
+    const id = (open?.meta as Record<string, unknown> | null | undefined)?.[EXPLICIT_ID];
+    return typeof id === 'string' && id !== '' ? id : null;
 }
 
 /** The part of a markdown-it token the heading's text is read from. */

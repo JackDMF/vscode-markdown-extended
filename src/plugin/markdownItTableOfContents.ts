@@ -1,6 +1,6 @@
 import { MarkdownIt, StateBase, Token } from '../@types/markdown-it';
 import markdownItTableOfContents from 'markdown-it-table-of-contents';
-import { headingText, slugBuilder, TextToken } from '../syntax/headingSlug';
+import { explicitHeadingId, headingText, slugBuilder, TextToken } from '../syntax/headingSlug';
 
 // markdown-it-table-of-contents links a heading by a slug of its own: percent-
 // encoded, never de-duplicated (`What is new?` → `#what-is-new%3F`, a third
@@ -13,9 +13,10 @@ import { headingText, slugBuilder, TextToken } from '../syntax/headingSlug';
 // one builder per render. The plugin is handed copies of the headings carrying
 // those ids, and it links a heading by an id it finds on it; it never slugs.
 //
-// An explicit `{#id}` (markdown-it-attrs) is not used: the preview's heading
-// rule sets every heading's id from its slug and overwrites the one the author
-// wrote, so `## Title {#custom}` is `id="title"` there, and the TOC links that.
+// A heading with an explicit `{#id}` (markdown-it-attrs) is linked by that id,
+// the one the preview gives it (`explicitHeadingId`), and still counts for the
+// repeats after it: `## Title {#custom}` is `#custom`, a `## Title` after it
+// `#title-1`.
 //
 // A heading whose slug is empty (`## ???`, `## 🚀`) has `id=""` in the
 // preview: nothing a link can name (`href="#"` goes to the top of the page), so
@@ -96,7 +97,8 @@ function anchoredHeadings(stream: Token[]): Token[] {
         if (token.type !== 'heading_open') { return; }
         const inline = stream[i + 1];
         const text = headingText(inline);
-        const id = slug(text);
+        const slugged = slug(text);
+        const id = explicitHeadingId(token) ?? slugged;
         if (text.trim() === '') { return; }
         const open = copy(token, 'heading_open', 1);
         if (id !== '') { open.attrs = [['id', id]]; }

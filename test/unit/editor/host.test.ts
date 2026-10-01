@@ -889,7 +889,7 @@ suite('Editor host: a link lands on the element its fragment names', () => {
         const anchors = headingAnchors(md, FRAGMENT_TARGET, {});
         const line = (fragment: string) => fragmentLine(anchors, fragment);
         assert.strictEqual(line('frs-tst-001-1a2b3c4d'), 2, 'the explicit id');
-        assert.strictEqual(line('frs-tst-001-smoke'), 2, 'its slug too: the id is not in the slugged text');
+        assert.strictEqual(line('frs-tst-001-smoke'), null, 'not its slug: no element in the preview carries it');
         assert.strictEqual(line('second-heading-with-code--punctuation'), 4);
         assert.strictEqual(line('Second-Heading-With-Code--Punctuation'), 4, 'compared without case');
         assert.strictEqual(line('second-heading-with-code--punctuation-1'), 6, 'the second of a repeated slug');
@@ -897,6 +897,18 @@ suite('Editor host: a link lands on the element its fragment names', () => {
         assert.strictEqual(line('L11'), 10);
         assert.strictEqual(line('no-such-heading'), null);
         assert.strictEqual(line(''), null);
+    });
+
+    test('a fragment lands where the preview\'s id is, around explicit-id headings too (markdown.api.render)', async () => {
+        const text = ['## Setup', '', '## Setup {#intro}', '', '## Setup', '', '## FR-1: Name {#fr-1}', ''].join('\n');
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', text);
+        const ids = [...html.matchAll(/<h[1-6][^>]*\sid="([^"]*)"/g)].map(([, id]) => id);
+        assert.deepStrictEqual(ids, ['setup', 'intro', 'setup-2', 'fr-1'], 'the preview\'s ids');
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const anchors = headingAnchors(md, text, {});
+        assert.deepStrictEqual(ids.map(id => fragmentLine(anchors, id)), [0, 2, 4, 6], 'each id lands on its heading');
+        assert.strictEqual(fragmentLine(anchors, 'setup-1'), null, 'the slug of an explicit-id heading names nothing');
+        assert.strictEqual(fragmentLine(anchors, 'fr-1-name'), null, 'nor does the slug of Req Explorer\'s anchor heading');
     });
 
     test('a link to another file opens it at the heading; a fragment it lacks opens it at the top, logged as info at most', async function () {

@@ -1,6 +1,7 @@
 import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
 import markdownItAttrs from 'markdown-it-attrs';
 import { findLeftDelimiter, isTextBrace, textBraceCloses, withoutTextBraceEnd } from '../syntax/attrsLiteral';
+import { EXPLICIT_ID, explicitHeadingId } from '../syntax/headingSlug';
 
 // markdown-it-attrs recomputes a table's cells from every `rowspan` and
 // `colspan` it finds, to honour its own `{rowspan=2}`. It cannot tell those
@@ -66,7 +67,40 @@ export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
             textBraceSpansAsText(state, inline.children);
         }
     });
+    md.core.ruler.after('curly_attributes', 'mep_explicit_heading_id', (state: StateBase) => keepHeadingIds(state.tokens));
     wrapFence(md);
+    wrapHeading(md);
+}
+
+// An explicit `{#id}` on a heading is the id the author links it by (Req
+// Explorer writes `## FR-1: Name {#fr-1}`), but VS Code's heading rule, which
+// wraps every rule the extensions installed, sets each heading's id from its
+// slug before it calls the rule it wrapped — `fr-1-name` in the preview, in
+// `markdown.api.render` and in the exports. The id attrs read is therefore
+// kept under the token's `meta` (`explicitHeadingId`, `src/syntax/headingSlug.ts`),
+// where a render cannot overwrite it, and the heading rule installed here —
+// the one VS Code's calls — sets it back. VS Code has slugged the heading by
+// then, so the headings after it count its slug as they did.
+
+/** Every heading's explicit id, kept under its `meta`. */
+function keepHeadingIds(tokens: Token[]) {
+    for (const token of tokens) {
+        if (token.type !== 'heading_open') { continue; }
+        const id = token.attrGet('id');
+        if (id) {
+            token.meta = { ...((token.meta as Meta) ?? {}), [EXPLICIT_ID]: id };
+        }
+    }
+}
+
+/** The heading renderer, giving a heading its explicit id back. */
+function wrapHeading(md: MarkdownIt) {
+    const open = md.renderer.rules.heading_open;
+    md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
+        const id = explicitHeadingId(tokens[idx]);
+        if (id !== null) { tokens[idx].attrSet('id', id); }
+        return open ? open(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
+    };
 }
 
 /** A new text token holding `content`, at `level`. */

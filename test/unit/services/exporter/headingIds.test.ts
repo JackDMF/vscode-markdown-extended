@@ -65,6 +65,13 @@ suite('Export heading ids', () => {
         assert.deepStrictEqual(headingIds(await exported(text)), headingIds(preview));
     });
 
+    test('an explicit {#id} is the heading\'s id, and the repeats around it are the preview\'s', async () => {
+        const explicit = '## FR-1: Name {#fr-1}\n\n## Setup\n\n## Setup {#intro}\n\n## Setup\n';
+        const preview: string = await vscode.commands.executeCommand('markdown.api.render', explicit);
+        assert.deepStrictEqual(headingIds(await exported(explicit)), ['fr-1', 'setup', 'intro', 'setup-2']);
+        assert.deepStrictEqual(headingIds(await exported(explicit)), headingIds(preview));
+    });
+
     test('each export starts counting again', async () => {
         await exported(text);
         assert.deepStrictEqual(headingIds(await exported('## Setup\n')), ['setup']);

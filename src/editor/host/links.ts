@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { decode, schemeOf } from '../paths';
-import { headingText, slugBuilder } from '../../syntax/headingSlug';
+import { explicitHeadingId, headingText, slugBuilder } from '../../syntax/headingSlug';
 
 /**
  * Where a link the person Ctrl/Cmd+clicked in the rich editor goes.
@@ -72,7 +72,11 @@ export function resolveLinkTarget(href: string, documentUri: vscode.Uri, workspa
  */
 export { githubSlug, slugBuilder } from '../../syntax/headingSlug';
 
-/** A heading a fragment can name: its 0-based line, its explicit `{#id}`, its slug, and the text the slug is made of. */
+/**
+ * A heading a fragment can name: its 0-based line, its explicit `{#id}`, its
+ * slug, and the text the slug is made of. A heading with an `id` is named by
+ * it alone, as in the preview; its `slug` is the one it took from the count.
+ */
 export interface HeadingAnchor {
     line: number;
     id: string | null;
@@ -82,8 +86,9 @@ export interface HeadingAnchor {
 
 /**
  * Every heading of `text` as the engine parses it — the preview's composition,
- * so `markdown-it-attrs` has read a `{#id}` into the heading's `id` and taken
- * it out of the text that is slugged.
+ * so `markdown-it-attrs` has read a `{#id}` (`explicitHeadingId`) and taken it
+ * out of the text that is slugged. Every heading counts for the repeats, one
+ * with an explicit id too, as in the preview.
  */
 export function headingAnchors(md: MarkdownIt, text: string, env: Environment): HeadingAnchor[] {
     const tokens = md.parse(text, env);
@@ -92,7 +97,7 @@ export function headingAnchors(md: MarkdownIt, text: string, env: Environment): 
     tokens.forEach((token, i) => {
         if (token.type === 'heading_open' && token.map) {
             const text = headingText(tokens[i + 1]);
-            anchors.push({ line: token.map[0], id: token.attrGet('id'), slug: slug(text), text: text.trim() });
+            anchors.push({ line: token.map[0], id: explicitHeadingId(token), slug: slug(text), text: text.trim() });
         }
     });
     return anchors;
@@ -101,9 +106,11 @@ export function headingAnchors(md: MarkdownIt, text: string, env: Environment): 
 /**
  * The 0-based line a fragment names, or `null`: a heading whose explicit `id`
  * is the fragment — Req Explorer's anchors are written as `{#id}`, and an id
- * the author wrote wins over a slug — else a heading whose slug is the
- * fragment, compared without case as the built-in does, else a line fragment
- * (`L12`, `12`, `L12,5`) as the built-in reads one.
+ * the author wrote wins over a slug — else a heading without one whose slug
+ * is the fragment, compared without case as the built-in does, else a line
+ * fragment (`L12`, `12`, `L12,5`) as the built-in reads one. The slug of a
+ * heading with an explicit id names nothing: no element in the preview carries
+ * it (VS Code's language server still resolves it, `src/syntax/headingSlug.ts`).
  */
 export function fragmentLine(anchors: readonly HeadingAnchor[], fragment: string): number | null {
     if (fragment === '') {
@@ -114,7 +121,7 @@ export function fragmentLine(anchors: readonly HeadingAnchor[], fragment: string
         return byId.line;
     }
     const lower = fragment.toLowerCase();
-    const bySlug = anchors.find(a => a.slug.toLowerCase() === lower);
+    const bySlug = anchors.find(a => a.id === null && a.slug.toLowerCase() === lower);
     if (bySlug) {
         return bySlug.line;
     }

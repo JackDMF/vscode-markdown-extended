@@ -1032,8 +1032,10 @@ editor the built-in link handling lands on the heading; here the file opened at 
 top). `openAt` in `host/session.ts` resolves the fragment against the target file's text
 before opening it (`fragmentLine`, `host/links.ts`), in this order: a heading whose
 explicit `{#id}` is the fragment — Req Explorer writes its anchors so, and an id the author
-wrote wins over a slug; a heading whose GitHub-style slug equals it, without case; a line
-fragment (`L12`, `L12,5`). The slug is the built-in's, read from where it is true: no public
+wrote wins over a slug; a heading without one whose GitHub-style slug equals it, without
+case; a line fragment (`L12`, `L12,5`). These are the ids the preview's headings carry: a
+heading with a `{#id}` carries that id and not its slug, and still counts for the repeats
+after it (see *Explicit heading ids* below). The slug is the built-in's, read from where it is true: no public
 command of `vscode.markdown-language-features` opens a document at a fragment for another
 extension (its `openDocumentLink` is internal), so its rule is ported — trimmed, lower-cased,
 `githubSlugReplaceRegex` removed, each white-space character a hyphen, a repeated slug
@@ -1043,7 +1045,22 @@ links with too). It is github-slugger's table, a snapshot of one Unicode version
 (it strips `²` and letters newer than that version), so no `\p{…}` property escape
 reproduces it; `host.test.ts` compares it with the regex the test host's VS Code ships, in
 the language server's bundle and in the preview's (`extension.js`), and fails when they part. Headings are read with the editor's engine, so `markdown-it-attrs`
-has put a `{#id}` into the heading's `id` and taken it out of the slugged text.
+has read a `{#id}` (kept under the token's `meta`, `explicitHeadingId`) and taken it out of
+the slugged text.
+
+**Explicit heading ids** (Daniel, 2026-10-01: Req Explorer's `{#fr-1}` anchors landed
+nowhere outside the Visual Editor). VS Code's engine installs its heading rule after every
+extension's `extendMarkdownIt`, wrapping the rule it finds: it slugs the heading
+(`env.slugifier.add`, else a stateless slugifier), `attrSet('id', slug)` over the id
+`markdown-it-attrs` put there, then calls the wrapped rule. So `## FR-1: Name {#fr-1}` was
+`id="fr-1-name"` in the preview, `markdown.api.render` and the exports. `MarkdownItAttrs`
+now keeps a heading's id under `meta.mepExplicitId` (a string: the token stream stays JSON
+for the language server) in a core rule after `curly_attributes`, and installs the
+`heading_open` rule VS Code's wraps, which sets the id back. The heading has taken its slug
+from the builder by then, so the repeats after it are counted as before; the table of
+contents and `headingAnchors` count the same way. VS Code's Markdown language server slugs
+the tokens it receives on its own and reads no explicit id: its link validation reports
+`#fr-1` as missing, and its Go to Definition resolves the slug no element carries.
 
 The file then opens with `vscode.open` and `{ selection }`, in whichever editor VS Code
 picks for it. In a text editor the line is also revealed `AtTop`. In the Visual Editor
