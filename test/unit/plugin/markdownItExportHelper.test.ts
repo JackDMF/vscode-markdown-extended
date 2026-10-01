@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import nodeFs = require('fs');
 import * as vscode from 'vscode';
@@ -13,7 +13,7 @@ import { ExtensionContext } from '../../../src/services/common/extensionContext'
 import MarkdownIt = require('markdown-it');
 import { plugins } from '../../../src/plugin/plugins';
 import { MarkdownItEnv } from '../../../src/services/common/interfaces';
-import { EmbedFiles } from '../../../src/services/common/dataUri';
+import { EmbedFiles, followLinks, isNetworkTarget } from '../../../src/services/common/dataUri';
 
 // The preview's own registry, in its order, with HTML on as in VS Code's
 // engine: html5-embed sits between the export helper and the output.
@@ -240,9 +240,22 @@ suite('MarkdownItExportHelper', () => {
         });
     });
 
+    /** `run` with `folders` as the open workspace folders. */
+    function inFolders<T>(folders: string[], run: () => T): T {
+        const stub = sinon.stub(vscode.workspace, 'workspaceFolders').get(() =>
+            folders.map((folder, index) => ({ uri: vscode.Uri.file(folder), name: path.basename(folder), index })));
+        try {
+            return run();
+        } finally {
+            stub.restore();
+        }
+    }
+
     suite('markdownExtended.export.embedFiles decides what is embedded', () => {
         const woff2 = `url("data:font/woff2;base64,${Buffer.from('woff2').toString('base64')}")`;
+        const far = `url("data:font/woff2;base64,${Buffer.from('FAR').toString('base64')}")`;
         let farPng: string;
+        let tree: string;
 
         suiteSetup(() => {
             farPng = path.join(outside, 'far.png');
@@ -250,10 +263,15 @@ suite('MarkdownItExportHelper', () => {
             fs.writeFileSync(path.join(outside, 'far.woff2'), 'FAR');
             fs.writeFileSync(path.join(outside, 'far.css'), 'h1 { color: maroon; }\n');
             fs.writeFileSync(path.join(dir, 'reach.css'), 'a { src: url(../outside/far.woff2); }\n');
+            // tree/outer holds tree/outer/inner, the document's folder.
+            tree = path.join(base, 'tree');
+            fs.mkdirSync(path.join(tree, 'outer', 'inner'), { recursive: true });
+            fs.writeFileSync(path.join(tree, 'outer', 'o.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+            fs.writeFileSync(path.join(tree, 'x.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
         });
 
-        function embedsImage(src: string, renderEnv: MarkdownItEnv): boolean {
-            return /src="data:image\/png;base64,/.test(md.render(src, renderEnv));
+        function embedsImage(src: string, renderEnv: MarkdownItEnv, engine = md): boolean {
+            return /src="data:image\/png;base64,/.test(engine.render(src, renderEnv));
         }
 
         function linkedFrom(href: string, renderEnv: MarkdownItEnv): string | undefined {
@@ -288,7 +306,35 @@ suite('MarkdownItExportHelper', () => {
             const e = { htmlExporter: { ...withMode('workspace').htmlExporter, workspaceFolder: vscode.Uri.file(base) } };
             assert.ok(embedsImage('![a](../outside/far.png)', e));
             assert.ok(linkedFrom('../outside/far.css', e)?.includes('maroon'));
-            assert.ok(linkedFrom('reach.css', e)?.includes(`url("data:font/woff2;base64,${Buffer.from('FAR').toString('base64')}")`));
+            assert.ok(linkedFrom('reach.css', e)?.includes(far));
+        });
+
+        test('workspace in a multi-root workspace: every workspace folder counts, as in the Visual Editor', () => {
+            inFolders([dir, outside], () => {
+                const e = { htmlExporter: { ...withMode('workspace').htmlExporter, workspaceFolder: vscode.Uri.file(dir) } };
+                assert.ok(embedsImage('![a](../outside/far.png)', e), 'an image in another workspace folder');
+                assert.ok(linkedFrom('../outside/far.css', e)?.includes('maroon'), 'a stylesheet in another workspace folder');
+                assert.ok(linkedFrom('reach.css', e)?.includes(far), 'a url() into another workspace folder');
+                assert.ok(!embedsImage(`![a](<${path.join(tree, 'x.png')}>)`, e), 'not a file in no workspace folder');
+            });
+        });
+
+        test('workspace: a document outside every workspace folder adds its own folder', () => {
+            inFolders([outside], () => {
+                const e = withMode('workspace');
+                assert.ok(embedsImage('![a](pixel.png)', e), 'its own folder');
+                assert.ok(embedsImage('![a](../outside/far.png)', e), 'a workspace folder');
+                assert.ok(!embedsImage(`![a](<${path.join(tree, 'x.png')}>)`, e), 'neither');
+            });
+        });
+
+        test('workspace with nested workspace folders: the outer one counts', () => {
+            const outer = path.join(tree, 'outer');
+            inFolders([outer, path.join(outer, 'inner')], () => {
+                const e = withMode('workspace', vscode.Uri.file(path.join(outer, 'inner', 'doc.md')));
+                assert.ok(embedsImage('![a](../o.png)', e), 'in the outer folder');
+                assert.ok(!embedsImage('![a](../../x.png)', e), 'above both');
+            });
         });
 
         test('machine: any local file of a type that is embedded', () => {
@@ -298,7 +344,7 @@ suite('MarkdownItExportHelper', () => {
             assert.ok(linkedFrom('style.css', e)?.includes(woff2), 'a stylesheet inside');
             assert.ok(linkedFrom('../outside/far.css', e)?.includes('maroon'), 'a stylesheet outside');
             assert.ok(linkedFrom(pathToFileURL(path.join(outside, 'far.css')).href, e)?.includes('maroon'), 'a file: URL outside');
-            assert.ok(linkedFrom('reach.css', e)?.includes(`url("data:font/woff2;base64,${Buffer.from('FAR').toString('base64')}")`), 'a url() outside');
+            assert.ok(linkedFrom('reach.css', e)?.includes(far), 'a url() outside');
             assert.strictEqual(linkedFrom('notes.txt', e), undefined, 'still only a .css file');
             assert.ok(!embedsImage(`![a](<${path.join(outside, 'id_rsa')}>)`, e), 'still only a type that is embedded');
         });
@@ -316,15 +362,37 @@ suite('MarkdownItExportHelper', () => {
             }
         });
 
+        test('a file: URL image is resolved as a file: stylesheet is, under the same rule', () => {
+            // VS Code's engine lets a file: link through; markdown-it's default does not.
+            const fileMd = preview();
+            fileMd.validateLink = () => true;
+            const inside = `![a](${pathToFileURL(path.join(dir, 'pixel.png')).href})`;
+            const beyond = `![a](${pathToFileURL(farPng).href})`;
+            assert.ok(embedsImage(inside, withMode('workspace'), fileMd), 'workspace, inside');
+            assert.ok(!embedsImage(beyond, withMode('workspace'), fileMd), 'workspace, outside');
+            assert.ok(embedsImage(beyond, withMode('machine'), fileMd), 'machine, outside');
+            assert.ok(!embedsImage(inside, withMode('none'), fileMd), 'none');
+            for (const mode of ['workspace', 'machine', 'none'] as const) {
+                const html = fileMd.render('![a](file://unc.invalid/share/x.png)', withMode(mode));
+                assert.ok(html.includes('src="file://unc.invalid/share/x.png"'), `${mode}: ${html}`);
+            }
+        });
+
         suite('an untitled document has no folder', () => {
             const untitled = vscode.Uri.parse('untitled:Untitled-1');
 
-            test('workspace and none embed nothing', () => {
+            test('workspace and none embed nothing outside a workspace folder', () => {
                 for (const mode of ['workspace', 'none'] as const) {
                     const e = withMode(mode, untitled);
                     assert.ok(!embedsImage(`![a](<${path.join(dir, 'pixel.png')}>)`, e), mode);
                     assert.strictEqual(linkedFrom(path.join(dir, 'style.css'), e), undefined, mode);
                 }
+            });
+
+            test('workspace embeds an absolute path in a workspace folder', () => {
+                inFolders([dir], () => {
+                    assert.ok(embedsImage(`![a](<${path.join(dir, 'pixel.png')}>)`, withMode('workspace', untitled)));
+                });
             });
 
             test('machine embeds an absolute path; a relative one is looked up nowhere', () => {
@@ -338,6 +406,20 @@ suite('MarkdownItExportHelper', () => {
                 } finally {
                     process.chdir(cwd);
                 }
+            });
+        });
+
+        suite('a document of another scheme', () => {
+            test('git: a relative path is looked up in the folder its path names on the disk', () => {
+                const git = vscode.Uri.file(path.join(dir, 'doc.md')).with({ scheme: 'git', query: '{"ref":"HEAD"}' });
+                assert.ok(embedsImage('![a](pixel.png)', withMode('workspace', git)));
+                assert.ok(!embedsImage('![a](../outside/far.png)', withMode('workspace', git)));
+            });
+
+            test('vscode-vfs: no folder on the disk, so workspace embeds nothing', () => {
+                const vfs = vscode.Uri.parse('vscode-vfs://github/owner/repo/doc.md');
+                assert.ok(!embedsImage(`![a](<${path.join(dir, 'pixel.png')}>)`, withMode('workspace', vfs)));
+                assert.ok(embedsImage(`![a](<${path.join(dir, 'pixel.png')}>)`, withMode('machine', vfs)));
             });
         });
 
@@ -356,24 +438,31 @@ suite('MarkdownItExportHelper', () => {
                 ExtensionContext._reset();
             });
 
-            test('an image, a stylesheet and a url() outside, under workspace', () => {
+            test('an image, a stylesheet and a url() outside, under workspace, with the remedy', () => {
                 md.render('![a](../outside/far.png)\n\n<link rel="stylesheet" href="../outside/far.css">\n<link rel="stylesheet" href="reach.css">\n', withMode('workspace'));
-                const why = 'it is outside the document\'s folder and workspace, and markdownExtended.export.embedFiles is "workspace"';
+                const why = 'it is outside the document\'s folder and the workspace folders, and markdownExtended.export.embedFiles is "workspace" (set it to "machine" to embed it)';
                 assert.ok(lines.includes(`[WARNING] Image "../outside/far.png" not embedded: ${why}`), lines.join('\n'));
                 assert.ok(lines.includes(`[WARNING] Stylesheet "../outside/far.css" not embedded: ${why}`), lines.join('\n'));
-                assert.ok(lines.includes(`[WARNING] url(../outside/far.woff2) in "reach.css" not embedded: ${why}`), lines.join('\n'));
+                // The stylesheet by its full path, as the document's uri gives its folder (a lower-case drive).
+                const css = path.join(path.dirname(env.htmlExporter.uri.fsPath), 'reach.css');
+                assert.ok(lines.includes(`[WARNING] url(../outside/far.woff2) in "${css}" not embedded: ${why}`), lines.join('\n'));
             });
 
-            test('every local file, under none', () => {
-                md.render('![a](pixel.png)\n\n<link rel="stylesheet" href="style.css">\n', withMode('none'));
-                assert.ok(lines.includes('[WARNING] Image "pixel.png" not embedded: markdownExtended.export.embedFiles is "none"'), lines.join('\n'));
-                assert.ok(lines.includes('[WARNING] Stylesheet "style.css" not embedded: markdownExtended.export.embedFiles is "none"'), lines.join('\n'));
+            test('one line for the export, under none', () => {
+                md.render('![a](pixel.png) ![b](../outside/far.png)\n\n<link rel="stylesheet" href="style.css">\n', withMode('none'));
+                assert.deepStrictEqual(lines, ['[INFO] "doc.md" is exported without the files it names: markdownExtended.export.embedFiles is "none"']);
             });
 
             test('an untitled document, under workspace', () => {
                 const src = path.join(dir, 'pixel.png');
                 md.render(`![a](<${src}>)`, withMode('workspace', vscode.Uri.parse('untitled:Untitled-1')));
-                assert.ok(lines.includes(`[WARNING] Image "${src}" not embedded: the document has no folder, and markdownExtended.export.embedFiles is "workspace"`), lines.join('\n'));
+                assert.ok(lines.includes(`[WARNING] Image "${src}" not embedded: the document is untitled and has no folder, and markdownExtended.export.embedFiles is "workspace"`), lines.join('\n'));
+            });
+
+            test('a document not on the disk, under workspace', () => {
+                const src = path.join(dir, 'pixel.png');
+                md.render(`![a](<${src}>)`, withMode('workspace', vscode.Uri.parse('vscode-vfs://github/owner/repo/doc.md')));
+                assert.ok(lines.includes(`[WARNING] Image "${src}" not embedded: the document (vscode-vfs:) is not in a folder on this machine's disk, and markdownExtended.export.embedFiles is "workspace"`), lines.join('\n'));
             });
         });
     });
@@ -382,12 +471,18 @@ suite('MarkdownItExportHelper', () => {
         /** The paths the file system was asked for while `src` rendered. */
         function askedWhile(src: string, renderEnv: MarkdownItEnv): string[] {
             const asked: string[] = [];
-            for (const name of ['existsSync', 'readFileSync', 'statSync', 'accessSync'] as const) {
-                const original = nodeFs[name] as (...args: unknown[]) => unknown;
-                sinon.stub(nodeFs, name).callsFake(((...args: unknown[]) => {
+            for (const name of ['existsSync', 'readFileSync', 'statSync', 'accessSync', 'realpathSync'] as const) {
+                const original = nodeFs[name] as ((...args: unknown[]) => unknown) & { native?: unknown };
+                const stub = sinon.stub(nodeFs, name).callsFake(((...args: unknown[]) => {
                     asked.push(String(args[0]));
                     return original(...args);
                 }) as never);
+                if (original.native) {
+                    (stub as unknown as { native: unknown }).native = (...args: unknown[]) => {
+                        asked.push(String(args[0]));
+                        return (original.native as (...a: unknown[]) => unknown)(...args);
+                    };
+                }
             }
             try {
                 md.render(src, renderEnv);
@@ -414,6 +509,55 @@ suite('MarkdownItExportHelper', () => {
                 const asked = askedWhile(src, withMode(mode));
                 assert.deepStrictEqual(asked.filter(p => /unc\.invalid/i.test(p)), [], mode);
             }
+        });
+
+        // A directory symlink needs a privilege on Windows (or developer mode);
+        // a junction does not, but Windows will not read one to a share back.
+        // VS Code's own fs refuses a UNC host it was not told to allow, so the
+        // link is made by a Node process of its own, outside the extension host.
+        for (const kind of ['dir', 'junction'] as const) {
+            test(`a ${kind} link to a network path is not followed`, function () {
+                const netlink = path.join(dir, `net-${kind}`);
+                try {
+                    const script = path.join(base, 'link.js');
+                    // VS Code's Electron refuses UNC hosts until told otherwise (`restrictUNCAccess`).
+                    fs.writeFileSync(script, 'process.restrictUNCAccess = false;\nrequire("fs").symlinkSync(process.argv[2], process.argv[3], process.argv[4]);\n');
+                    execFileSync(process.execPath, [script, '\\\\unc.invalid\\share', netlink, kind],
+                        { stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+                } catch {
+                    this.skip(); // cannot be made here; isNetworkTarget is tested below
+                }
+                try {
+                    const src = `![a](net-${kind}/x.png)\n\n<link rel="stylesheet" href="net-${kind}/x.css">\n`;
+                    for (const mode of ['workspace', 'machine'] as const) {
+                        const asked = askedWhile(src, withMode(mode));
+                        assert.deepStrictEqual(asked.filter(p => /net-/i.test(p)), [], `${mode}: nothing follows the link`);
+                        assert.strictEqual(md.render(src, withMode(mode)), md.render(src, {}), mode);
+                    }
+                    // A junction to a share is not read back: unreadable, or, where
+                    // VS Code's fs refuses even to lstat it, missing. Never found.
+                    const found = followLinks(path.join(netlink, 'x.png'));
+                    assert.ok(kind === 'dir' ? found === 'network' : found !== 'found', found);
+                } finally {
+                    // A link to a folder is removed as a folder on Windows, as a file elsewhere.
+                    try { fs.rmdirSync(netlink); } catch { fs.unlinkSync(netlink); }
+                }
+            });
+        }
+
+        test('what a link target is: a network path in each of its forms, a local one in each of its', () => {
+            for (const target of ['\\\\host\\share', '//host/share', '\\\\?\\UNC\\host\\share', '\\??\\UNC\\host\\share', '\\\\?\\Volume{0}\\']) {
+                assert.ok(isNetworkTarget(target), target);
+            }
+            for (const target of ['C:\\x', '\\\\?\\C:\\x', '\\??\\C:\\x', '\\\\.\\C:\\x', '..\\x', '/usr/x', 'x']) {
+                assert.ok(!isNetworkTarget(target), target);
+            }
+        });
+
+        test('followLinks follows a local junction and reports a missing path', () => {
+            assert.strictEqual(followLinks(path.join(dir, 'linked', 'far.png')), 'found');
+            assert.strictEqual(followLinks(path.join(dir, 'linked', 'gone.png')), 'missing');
+            assert.strictEqual(followLinks(path.join(dir, 'pixel.png')), 'found');
         });
     });
 
@@ -479,7 +623,7 @@ suite('MarkdownItExportHelper', () => {
 
         test('a stylesheet outside the document folder and workspace', () => {
             md.render('<link rel="stylesheet" href="../outside/secret.css">', env);
-            assert.ok(lines.some(l => l.includes('outside the document\'s folder and workspace')), lines.join('\n'));
+            assert.ok(lines.some(l => l.includes('outside the document\'s folder and the workspace folders')), lines.join('\n'));
         });
 
         test('a missing image, a missing stylesheet and an href that is not a stylesheet', () => {

@@ -378,10 +378,11 @@ export function resolveExportTheme(value: string | undefined, isDark: boolean): 
 }
 
 /**
- * `markdownExtended.export.embedFiles` as read: one of its values, or its
- * default `workspace` for anything else, so an unknown value never widens
- * what an export embeds.
+ * `markdownExtended.export.embedFiles` as read: one of its values in any
+ * case (`Machine` is `machine`), or its default `workspace` for anything
+ * else, so an unknown value never widens what an export embeds.
  */
 export function embedFiles(value: string | undefined): EmbedFiles {
-    return EMBED_FILES.find(v => v === value) ?? EMBED_FILES[0];
+    const read = typeof value === 'string' ? value.trim().toLowerCase() : undefined;
+    return EMBED_FILES.find(v => v === read) ?? EMBED_FILES[0];
 }

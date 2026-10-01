@@ -61,6 +61,8 @@ suite('Config.scoped', () => {
         assert.strictEqual(Config.instance.scoped().exportEmbedFiles, 'workspace', 'an unknown value');
         getConfigurationStub.callsFake(() => mockConf({}));
         assert.strictEqual(Config.instance.scoped(a).exportEmbedFiles, 'workspace', 'unset');
+        getConfigurationStub.callsFake(() => mockConf({ 'export.embedFiles': 'Machine' }));
+        assert.strictEqual(Config.instance.scoped(a).exportEmbedFiles, 'machine', 'in any case');
     });
 
     test('without a document it falls back to the window-level read', () => {

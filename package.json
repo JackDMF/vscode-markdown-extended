@@ -337,7 +337,8 @@
           "default": "",
           "description": "%markdownExtended.configuration.puppeteerExecutable%",
           "order": 3,
-          "scope": "machine-overridable"
+          "scope": "machine-overridable",
+          "restricted": true
         },
         "markdownExtended.export.defaultStyles": {
           "type": "boolean",
@@ -361,7 +362,8 @@
           ],
           "description": "%markdownExtended.configuration.exportEmbedFiles%",
           "order": 5,
-          "scope": "resource"
+          "scope": "resource",
+          "restricted": true
         },
         "markdownExtended.pdf.format": {
           "type": "string",
@@ -542,7 +544,8 @@
           "type": "string",
           "default": "",
           "deprecationMessage": "%markdownExtended.configuration.deprecated%",
-          "scope": "machine-overridable"
+          "scope": "machine-overridable",
+          "restricted": true
         },
         "markdownExtended.pdfFormat": {
           "type": "string",

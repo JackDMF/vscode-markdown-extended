@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { cssFileToDataUri, cssFileToDataUriAsync } from '../../../../src/services/common/dataUri';
+import { cssFileToDataUri, UNRESTRICTED } from '../../../../src/services/common/dataUri';
 
 /** The CSS a `data:text/css;base64,` URI carries. */
 function cssOf(dataUri: string): string {
@@ -31,9 +31,9 @@ suite('cssFileToDataUri', () => {
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
+    // As a configured stylesheet is converted (`markdown.styles`): unrestricted.
     for (const [name, convert] of [
-        ['sync', async (f: string) => cssFileToDataUri(f)],
-        ['async', cssFileToDataUriAsync],
+        ['configured', async (f: string) => cssFileToDataUri(f, UNRESTRICTED)],
     ] as const) {
         test(`${name}: what it cannot embed stays as written, a font's query does not reach its file`, async () => {
             const css = cssOf(await convert(cssFile));

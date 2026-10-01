@@ -1,10 +1,14 @@
 import { MarkdownIt, Token } from '../@types/markdown-it';
 import { MarkdownItEnv, HtmlExporterEnv } from '../services/common/interfaces';
 import * as path from 'path';
+import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { cssFileToDataUri, EmbedScope, fileToDataUri, hasDataUriSchema, LocalFile, resolveLocalFile } from '../services/common/dataUri';
+import {
+    cssFileToDataUri, EmbedScope, embedScope, fileToDataUri, hasDataUriSchema, isNetworkPath, LocalFile, resolveLocalFile,
+} from '../services/common/dataUri';
 import { ExtensionContext } from '../services/common/extensionContext';
 import { decode, schemeOf } from '../editor/paths';
+import { documentRoots } from '../editor/host/roots';
 
 /**
  * Markdown-it plugin to prepare images for HTML export.
@@ -46,24 +50,48 @@ interface ScanState {
     rawText?: string;
 }
 
+/**
+ * Where one render finds the files the document names: the folders a
+ * relative path is looked up in, and what it may embed.
+ */
+interface Embedding {
+    folders: string[];
+    scope: EmbedScope;
+}
+
+/**
+ * The render's `Embedding`, made once, the first time a local file the
+ * document names is looked up: a render that names none reads no folder.
+ */
+type RenderEmbedding = () => Embedding;
+
 function exportHelperWorker(state: any, md: MarkdownIt) {
     const env = (state.env as MarkdownItEnv).htmlExporter;
     if (!env) {return;}
-    enumTokens(state.tokens, env, md, {});
+    let made: Embedding | undefined;
+    const embedding = () => {
+        if (made) {return made;}
+        made = embeddingOf(env);
+        if (made.scope.embedFiles === "none") {
+            info(`"${path.basename(env.uri.fsPath)}" is exported without the files it names: markdownExtended.export.embedFiles is "none"`);
+        }
+        return made;
+    };
+    enumTokens(state.tokens, env, embedding, md, {});
 }
-function enumTokens(tokens: Token[], env: HtmlExporterEnv, md: MarkdownIt, scan: ScanState) {
+function enumTokens(tokens: Token[], env: HtmlExporterEnv, embedding: RenderEmbedding, md: MarkdownIt, scan: ScanState) {
     tokens.map(t => {
         if (t.type === "image") {
             const written = t.attrGet("src");
             removeVsUri(t, env);
-            if (env.embedImage) {embedImage(t, env, written);}
+            if (env.embedImage) {embedImage(t, embedding, written);}
         }
         if (t.type === "html_block" || t.type === "html_inline") {
-            t.content = embedStylesheets(t.content, env, md, scan);
+            t.content = embedStylesheets(t.content, embedding, md, scan);
         }
         // An image's children are its alt text, which the renderer escapes
         // into an attribute: HTML there opens and ends nothing.
-        if (t.children && t.type !== "image") {enumTokens(t.children, env, md, scan);}
+        if (t.children && t.type !== "image") {enumTokens(t.children, env, embedding, md, scan);}
     });
 }
 function removeVsUri(token: Token, env: HtmlExporterEnv) {
@@ -78,7 +106,7 @@ function removeVsUri(token: Token, env: HtmlExporterEnv) {
     // A malformed escape (`caf%E9.png`) is left as written rather than failing the export.
     token.attrs[index][1] = decode(src.replace(env.vsUri, ""));
 }
-function embedImage(token: Token, env: HtmlExporterEnv, written: string) {
+function embedImage(token: Token, embedding: RenderEmbedding, written: string) {
     let index = 0;
     let src = "";
     for (let i = 0; i < token.attrs.length; i++) {
@@ -92,13 +120,15 @@ function embedImage(token: Token, env: HtmlExporterEnv, written: string) {
     // An image that cannot be embedded keeps the src as written, not the
     // decoded path it was looked up by (`shot%231.png` is not `shot#1.png`):
     // a null src breaks html5-embed downstream (qjebbs/vscode-markdown-extended#157).
-    token.attrs[index][1] = image2Base64(src, env) ?? written;
+    token.attrs[index][1] = image2Base64(src, written, embedding) ?? written;
 }
-function image2Base64(src: string, env: HtmlExporterEnv): string | undefined {
-    // A web address (`https:`, `//host`) or a data URI is the browser's to load.
-    if (schemeOf(src) || src.startsWith("//")) {return undefined;}
-    const scope = embedScope(env);
-    const file = localFile(`Image "${src}"`, () => resolveLocalFile(src, scope.roots, hasDataUriSchema, scope));
+/**
+ * The image as a data URI, or undefined when it is not embedded.
+ * @param src the src decoded, as a path names the file
+ * @param written the src as written, as a `file:` URL names it
+ */
+function image2Base64(src: string, written: string, embedding: RenderEmbedding): string | undefined {
+    const file = addressedFile(`Image "${src}"`, schemeOf(src) === "file" ? written : src, () => src, hasDataUriSchema, embedding);
     if (!file) {return undefined;}
     try {
         return fileToDataUri(file.real) ?? undefined;
@@ -134,7 +164,7 @@ const ATTRIBUTE = /[\s/]*([^\s"'>/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?/y;
  * A `<link>` inside a comment or a raw-text element is text and stays so,
  * also where an earlier html token opened it (`scan`, updated here).
  */
-function embedStylesheets(html: string, env: HtmlExporterEnv, md: MarkdownIt, scan: ScanState): string {
+function embedStylesheets(html: string, embedding: RenderEmbedding, md: MarkdownIt, scan: ScanState): string {
     let out = "";
     let i = 0;
     while (i < html.length) {
@@ -162,7 +192,7 @@ function embedStylesheets(html: string, env: HtmlExporterEnv, md: MarkdownIt, sc
         if (m[1] !== undefined) {scan.comment = true;}
         else if (name && !m[2]) {
             if (RAW_TEXT.has(name)) {scan.rawText = name;}
-            else if (name === "link") {markup = embedLink(markup, 1 + name.length, env, md);}
+            else if (name === "link") {markup = embedLink(markup, 1 + name.length, embedding, md);}
         }
         out += markup;
         i = m.index + m[0].length;
@@ -176,7 +206,7 @@ function find(pattern: RegExp, text: string, from: number): RegExpExecArray | un
 }
 
 /** The `<link>` tag with its stylesheet's href made a data URI, or as written. */
-function embedLink(tag: string, attributesAt: number, env: HtmlExporterEnv, md: MarkdownIt): string {
+function embedLink(tag: string, attributesAt: number, embedding: RenderEmbedding, md: MarkdownIt): string {
     const attributes = new Map<string, { value: string, start: number, end: number }>();
     ATTRIBUTE.lastIndex = attributesAt;
     for (let a = ATTRIBUTE.exec(tag); a && a[0]; a = ATTRIBUTE.exec(tag)) {
@@ -192,12 +222,12 @@ function embedLink(tag: string, attributesAt: number, env: HtmlExporterEnv, md: 
     const rel = attributes.get("rel")?.value.toLowerCase().split(/\s+/) ?? [];
     const href = attributes.get("href");
     if (!rel.includes("stylesheet") || !href?.value) {return tag;}
-    const file = stylesheetFile(href.value, env);
+    const file = stylesheetFile(href.value, embedding);
     if (!file) {return tag;}
     try {
         // The linked path, not the real one: a stylesheet's url()s resolve
         // against the folder it was linked from, as in the preview.
-        return tag.slice(0, href.start) + `"${cssFileToDataUri(file.path, embedScope(env))}"` + tag.slice(href.end);
+        return tag.slice(0, href.start) + `"${cssFileToDataUri(file.path, embedding().scope)}"` + tag.slice(href.end);
     } catch (error) {
         warn(`Stylesheet "${href.value}" not embedded`, error);
         return tag;
@@ -209,30 +239,46 @@ function embedLink(tag: string, attributesAt: number, env: HtmlExporterEnv, md: 
  * judged by its real path, that `markdownExtended.export.embedFiles` lets the
  * document embed. Web addresses are left to the href as written.
  */
-function stylesheetFile(href: string, env: HtmlExporterEnv): { path: string, real: string } | undefined {
-    const what = `Stylesheet "${href}"`;
-    const scope = embedScope(env);
-    const roots = scope.roots;
+function stylesheetFile(href: string, embedding: RenderEmbedding): { path: string, real: string } | undefined {
     const isCss = (real: string) => path.extname(real).toLowerCase() === ".css";
-    const scheme = schemeOf(href);
-    if (scheme === "file") {
-        return localFile(what, () => {
-            // Not Node's fileURLToPath: the web bundle has no `url` module.
-            const uri = vscode.Uri.parse(href, true);
-            if (uri.authority) {return { reason: "it is a network path" };}
-            return resolveLocalFile(uri.fsPath, roots, isCss, scope);
-        });
-    }
-    if (scheme || href.startsWith("//")) {return undefined;}
-    return localFile(what, () => resolveLocalFile(decode(href.replace(/[?#].*$/, "")), roots, isCss, scope));
+    return addressedFile(`Stylesheet "${href}"`, href, () => decode(href.replace(/[?#].*$/, "")), isCss, embedding);
 }
 
-/** The file `resolve` finds, or undefined, with why not written to the output panel. */
+/**
+ * The local file an image's src or a stylesheet's href names, by one rule
+ * for both: a `file:` URL by its path, unless it names a host; a path as
+ * `plain` reads it. A web address (`https:`, `//host`) or a data URI is the
+ * browser's to load, and left as written.
+ */
+function addressedFile(
+    what: string, address: string, plain: () => string, accepts: (real: string) => boolean, embedding: RenderEmbedding
+): { path: string, real: string } | undefined {
+    const scheme = schemeOf(address);
+    if (scheme === "file") {
+        return localFile(what, () => {
+            const { folders, scope } = embedding();
+            // Not Node's fileURLToPath: the web bundle has no `url` module.
+            const uri = vscode.Uri.parse(address, true);
+            if (uri.authority) {return { reason: "it is a network path" };}
+            return resolveLocalFile(uri.fsPath, folders, accepts, scope);
+        });
+    }
+    if (scheme || address.startsWith("//")) {return undefined;}
+    return localFile(what, () => {
+        const { folders, scope } = embedding();
+        return resolveLocalFile(plain(), folders, accepts, scope);
+    });
+}
+
+/**
+ * The file `resolve` finds, or undefined, with why not written to the output
+ * panel; under `none` the render says it once (`exportHelperWorker`).
+ */
 function localFile(what: string, resolve: () => LocalFile): { path: string, real: string } | undefined {
     try {
         const file = resolve();
         if ("real" in file) {return file;}
-        warn(`${what} not embedded: ${file.reason}`);
+        if (file.bySetting !== "none") {warn(`${what} not embedded: ${file.reason}`);}
     } catch (error) {
         warn(`${what} not embedded`, error);
     }
@@ -240,16 +286,40 @@ function localFile(what: string, resolve: () => LocalFile): { path: string, real
 }
 
 /**
- * What the document may embed. Its roots are where a relative path is looked
- * up, the document's folder, then its workspace's, and where `workspace`
- * confines a file to. An untitled document has no folder: a relative path
- * finds nothing, and only `machine` embeds an absolute one.
+ * Where the document's files are found, and what it may embed.
+ *
+ * A relative path is looked up in the document's folder, then its workspace
+ * folder. `workspace` confines a file to the folders the Visual Editor shows
+ * the document's images from (`documentRoots`): every workspace folder, and
+ * the document's folder when it lies in none.
+ *
+ * The document's folder is its `file:` folder, or, for another scheme (`git:`),
+ * the folder its path names when that is a folder on this machine's disk. An
+ * untitled document has none: a relative path finds nothing.
  */
-function embedScope(env: HtmlExporterEnv): EmbedScope {
-    const roots: string[] = [];
-    if (env.uri.scheme === "file") {roots.push(path.dirname(env.uri.fsPath));}
+function embeddingOf(env: HtmlExporterEnv): Embedding {
+    const own = documentFolder(env.uri);
+    const folders: string[] = [];
+    if ("folder" in own) {folders.push(own.folder);}
+    if (env.workspaceFolder) {folders.push(env.workspaceFolder.fsPath);}
+    const roots = documentRoots(env.uri).filter(root => root.scheme === "file").map(root => root.fsPath);
+    if (env.uri.scheme !== "file" && "folder" in own) {roots.push(own.folder);}
     if (env.workspaceFolder) {roots.push(env.workspaceFolder.fsPath);}
-    return { embedFiles: env.embedFiles, roots };
+    return { folders, scope: embedScope(env.embedFiles, roots, "reason" in own ? own.reason : undefined) };
+}
+
+/** The folder on this machine's disk the document lies in, or why it has none. */
+function documentFolder(uri: vscode.Uri): { folder: string } | { reason: string } {
+    if (uri.scheme === "file") {return { folder: path.dirname(uri.fsPath) };}
+    if (uri.scheme === "untitled") {return { reason: "the document is untitled and has no folder" };}
+    const folder = path.dirname(uri.fsPath);
+    if (path.isAbsolute(folder) && !isNetworkPath(folder) && fs.existsSync(folder)) {return { folder };}
+    return { reason: `the document (${uri.scheme}:) is not in a folder on this machine's disk` };
+}
+
+function info(message: string) {
+    if (!ExtensionContext.isInitialized) {return;}
+    ExtensionContext.current.outputPanel.appendLine(`[INFO] ${message}`);
 }
 
 function warn(message: string, error?: unknown) {
