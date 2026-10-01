@@ -2,7 +2,7 @@ import { MarkdownIt, Token } from '../@types/markdown-it';
 import { MarkdownItEnv, HtmlExporterEnv } from '../services/common/interfaces';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { cssFileToDataUri, fileToDataUri, hasDataUriSchema, LocalFile, resolveLocalFile } from '../services/common/dataUri';
+import { cssFileToDataUri, EmbedScope, fileToDataUri, hasDataUriSchema, LocalFile, resolveLocalFile } from '../services/common/dataUri';
 import { ExtensionContext } from '../services/common/extensionContext';
 import { decode, schemeOf } from '../editor/paths';
 
@@ -14,6 +14,7 @@ import { decode, schemeOf } from '../editor/paths';
  * - Embeds images as base64 data URIs when embedImage is enabled
  * - Resolves relative image paths to absolute paths
  * - Embeds the local stylesheets a document links with `<link>` as data URIs
+ * - Embeds only the files `markdownExtended.export.embedFiles` allows
  *
  * @param md - The markdown-it instance
  * @example
@@ -22,6 +23,7 @@ import { decode, schemeOf } from '../editor/paths';
  * const env: HtmlExporterEnv = {
  *   uri: documentUri,
  *   embedImage: true,
+ *   embedFiles: 'workspace',
  *   vsUri: 'file:///',
  *   workspaceFolder: workspace.workspaceFolders[0]
  * };
@@ -95,7 +97,8 @@ function embedImage(token: Token, env: HtmlExporterEnv, written: string) {
 function image2Base64(src: string, env: HtmlExporterEnv): string | undefined {
     // A web address (`https:`, `//host`) or a data URI is the browser's to load.
     if (schemeOf(src) || src.startsWith("//")) {return undefined;}
-    const file = localFile(`Image "${src}"`, () => resolveLocalFile(src, searchPaths(env), hasDataUriSchema));
+    const scope = embedScope(env);
+    const file = localFile(`Image "${src}"`, () => resolveLocalFile(src, scope.roots, hasDataUriSchema, scope));
     if (!file) {return undefined;}
     try {
         return fileToDataUri(file.real) ?? undefined;
@@ -194,7 +197,7 @@ function embedLink(tag: string, attributesAt: number, env: HtmlExporterEnv, md: 
     try {
         // The linked path, not the real one: a stylesheet's url()s resolve
         // against the folder it was linked from, as in the preview.
-        return tag.slice(0, href.start) + `"${cssFileToDataUri(file.path)}"` + tag.slice(href.end);
+        return tag.slice(0, href.start) + `"${cssFileToDataUri(file.path, embedScope(env))}"` + tag.slice(href.end);
     } catch (error) {
         warn(`Stylesheet "${href.value}" not embedded`, error);
         return tag;
@@ -202,13 +205,14 @@ function embedLink(tag: string, attributesAt: number, env: HtmlExporterEnv, md: 
 }
 
 /**
- * The file a stylesheet's href names, when it may be embedded: a `.css` file
- * whose real path lies in the document's folder or its workspace folder.
- * Web addresses are left to the href as written.
+ * The file a stylesheet's href names, when it may be embedded: a `.css` file,
+ * judged by its real path, that `markdownExtended.export.embedFiles` lets the
+ * document embed. Web addresses are left to the href as written.
  */
 function stylesheetFile(href: string, env: HtmlExporterEnv): { path: string, real: string } | undefined {
     const what = `Stylesheet "${href}"`;
-    const roots = searchPaths(env);
+    const scope = embedScope(env);
+    const roots = scope.roots;
     const isCss = (real: string) => path.extname(real).toLowerCase() === ".css";
     const scheme = schemeOf(href);
     if (scheme === "file") {
@@ -216,11 +220,11 @@ function stylesheetFile(href: string, env: HtmlExporterEnv): { path: string, rea
             // Not Node's fileURLToPath: the web bundle has no `url` module.
             const uri = vscode.Uri.parse(href, true);
             if (uri.authority) {return { reason: "it is a network path" };}
-            return resolveLocalFile(uri.fsPath, roots, isCss, roots);
+            return resolveLocalFile(uri.fsPath, roots, isCss, scope);
         });
     }
     if (scheme || href.startsWith("//")) {return undefined;}
-    return localFile(what, () => resolveLocalFile(decode(href.replace(/[?#].*$/, "")), roots, isCss, roots));
+    return localFile(what, () => resolveLocalFile(decode(href.replace(/[?#].*$/, "")), roots, isCss, scope));
 }
 
 /** The file `resolve` finds, or undefined, with why not written to the output panel. */
@@ -235,11 +239,17 @@ function localFile(what: string, resolve: () => LocalFile): { path: string, real
     return undefined;
 }
 
-/** The folders a relative path is looked up in: the document's, then its workspace's. */
-function searchPaths(env: HtmlExporterEnv): string[] {
-    const paths = [path.dirname(env.uri.fsPath)];
-    if (env.workspaceFolder) {paths.push(env.workspaceFolder.fsPath);}
-    return paths;
+/**
+ * What the document may embed. Its roots are where a relative path is looked
+ * up, the document's folder, then its workspace's, and where `workspace`
+ * confines a file to. An untitled document has no folder: a relative path
+ * finds nothing, and only `machine` embeds an absolute one.
+ */
+function embedScope(env: HtmlExporterEnv): EmbedScope {
+    const roots: string[] = [];
+    if (env.uri.scheme === "file") {roots.push(path.dirname(env.uri.fsPath));}
+    if (env.workspaceFolder) {roots.push(env.workspaceFolder.fsPath);}
+    return { embedFiles: env.embedFiles, roots };
 }
 
 function warn(message: string, error?: unknown) {

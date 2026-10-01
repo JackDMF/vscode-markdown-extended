@@ -346,6 +346,23 @@
           "order": 4,
           "scope": "resource"
         },
+        "markdownExtended.export.embedFiles": {
+          "type": "string",
+          "default": "workspace",
+          "enum": [
+            "workspace",
+            "machine",
+            "none"
+          ],
+          "enumDescriptions": [
+            "%markdownExtended.configuration.exportEmbedFiles.workspace%",
+            "%markdownExtended.configuration.exportEmbedFiles.machine%",
+            "%markdownExtended.configuration.exportEmbedFiles.none%"
+          ],
+          "description": "%markdownExtended.configuration.exportEmbedFiles%",
+          "order": 5,
+          "scope": "resource"
+        },
         "markdownExtended.pdf.format": {
           "type": "string",
           "default": "A4",

@@ -1,6 +1,7 @@
 import { ConfigReader } from "./configReader";
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import { EMBED_FILES, EmbedFiles } from './dataUri';
 
 /**
  * Configuration reader for markdown-extended settings.
@@ -13,6 +14,11 @@ export interface ScopedExportConfig {
     exportTheme: 'light' | 'dark';
     /** `markdownExtended.pdf.locale`: the print date's locale; empty for VS Code's language. */
     pdfLocale: string;
+    /**
+     * `markdownExtended.export.embedFiles`: which local files the export may
+     * embed; `workspace` for a value it does not know (a hand-edited file).
+     */
+    exportEmbedFiles: EmbedFiles;
     puppeteerUserSetting: { pdf: Record<string, unknown>; image: Record<string, unknown> };
 }
 
@@ -197,6 +203,7 @@ export class Config extends ConfigReader {
             exportDefaultStyles: conf.get<boolean>('export.defaultStyles') !== false,
             exportTheme: resolveExportTheme(read<string>('export.theme', 'exportTheme'), isDark),
             pdfLocale: conf.get<string>('pdf.locale') ?? '',
+            exportEmbedFiles: embedFiles(conf.get<string>('export.embedFiles')),
             puppeteerUserSetting: {
                 pdf: {
                     format: read<string>('pdf.format', 'pdfFormat'),
@@ -368,4 +375,13 @@ export function resolveExportTheme(value: string | undefined, isDark: boolean): 
         default:
             return 'light';
     }
+}
+
+/**
+ * `markdownExtended.export.embedFiles` as read: one of its values, or its
+ * default `workspace` for anything else, so an unknown value never widens
+ * what an export embeds.
+ */
+export function embedFiles(value: string | undefined): EmbedFiles {
+    return EMBED_FILES.find(v => v === value) ?? EMBED_FILES[0];
 }

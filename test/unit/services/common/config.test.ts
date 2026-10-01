@@ -50,6 +50,19 @@ suite('Config.scoped', () => {
             'every configuration read must carry the resource scope');
     });
 
+    test('export.embedFiles is read for the document, workspace for a value it does not know', () => {
+        // Two documents in folders of their own, each with its own value.
+        const a = vscode.Uri.file('/repo/a/doc.md');
+        const b = vscode.Uri.file('/repo/b/doc.md');
+        getConfigurationStub.callsFake((_section: string, scope?: vscode.Uri) =>
+            mockConf({ 'export.embedFiles': scope === a ? 'machine' : scope === b ? 'none' : 'everything' }));
+        assert.strictEqual(Config.instance.scoped(a).exportEmbedFiles, 'machine');
+        assert.strictEqual(Config.instance.scoped(b).exportEmbedFiles, 'none');
+        assert.strictEqual(Config.instance.scoped().exportEmbedFiles, 'workspace', 'an unknown value');
+        getConfigurationStub.callsFake(() => mockConf({}));
+        assert.strictEqual(Config.instance.scoped(a).exportEmbedFiles, 'workspace', 'unset');
+    });
+
     test('without a document it falls back to the window-level read', () => {
         const before = getConfigurationStub.callCount;
         Config.instance.scoped();

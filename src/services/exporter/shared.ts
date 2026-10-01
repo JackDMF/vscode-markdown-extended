@@ -69,6 +69,7 @@ export function renderHTML(doc: MarkdownDocument): string {
             workspaceFolder: getworkspaceFolder(doc.document.uri),
             vsUri: getVsUri(doc.document.uri),
             embedImage: true,
+            embedFiles: Config.instance.scoped(doc.document.uri).exportEmbedFiles,
         },
         slugifier: { add: (heading: string) => ({ value: slug(heading) }) },
     }
