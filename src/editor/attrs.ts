@@ -33,9 +33,10 @@ export type AttrPair = [string, string];
  * The `{…}` a text or a line ends with as markdown-it-attrs finds it — from the
  * last `{` outside a quoted value, through the end, trailing spaces aside —
  * when it is a literal the plugin takes as attributes (`parseAttrsLiteral`);
- * `null` otherwise. Unlike `findAttrsSuffix` (`blocks.ts`) it reads a quoted
- * `}` (`{title="a}"}`) as the plugin does. A text ending in one would lose its
- * end to an attribute list.
+ * `null` otherwise; a quoted `}` (`{title="a}"}`) is read as the plugin reads
+ * it. The one reader of a block's or a heading's literal at its line's end — a
+ * heading's anchor is a locator Req Explorer owns, so the serializer writes it
+ * back as it was — and of a text that would lose its end to an attribute list.
  */
 export function endLiteralOf(text: string): string | null {
     const trimmed = text.replace(/[ \t]+$/, '');
@@ -204,7 +205,7 @@ export function normalizedLiteral(attrs: readonly AttrPair[]): string {
             parts.push(...value.split(' ').map(v => dot + v));
             continue;
         }
-        parts.push(/[\s}]/.test(value) || value === '' ? `${name}="${value}"` : `${name}=${value}`);
+        parts.push(/[\s}=]/.test(value) || value === '' ? `${name}="${value}"` : `${name}=${value}`);
     }
     return `{${parts.join(' ')}}`;
 }

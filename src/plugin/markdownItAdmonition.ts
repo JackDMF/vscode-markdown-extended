@@ -1,5 +1,6 @@
 import { MarkdownIt, Token, Renderer } from "../@types/markdown-it";
 import { ADMONITION_MARKER, ADMONITION_TYPES } from "../syntax/markers";
+import { withoutTextBraceEnd } from "../syntax/attrsLiteral";
 
 // The types and the marker live in `src/syntax/markers.ts`, which the Visual
 // Editor's toolbar reads too: its admonition menu lists exactly these. Each
@@ -21,7 +22,8 @@ export function MarkdownItAdmonition(md: MarkdownIt) {
 function render(tokens: Token[], idx: number, _options: any, env: any, self: Renderer) {
     const token = tokens[idx];
     if (token.type === "admonition_open") {
-        tokens[idx].attrJoin("class", "admonition " + token.info);
+        // A brace of the text's own ending the classes (`!!! note x {a = b}`) is no class.
+        tokens[idx].attrJoin("class", "admonition " + withoutTextBraceEnd(token.info));
     } else if (token.type === "admonition_title_open") {
         tokens[idx].attrJoin("class", "admonition-title");
     }

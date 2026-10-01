@@ -221,10 +221,10 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
     test('a literal markdown-it-attrs would not read back is refused with the reason', () => {
         const state = caretAt(stateOf('Alpha beta.\n'), 'beta');
         const target = targetAt(state);
-        for (const literal of ['{.}', '.note', '{.a', '{#}', '{.a}\n{.b}']) {
+        for (const [literal, reason] of [['{.}', /no attribute list/], ['.note', /no attribute list/], ['{.a', /is not closed/], ['{#}', /no attribute list/], ['{.a}\n{.b}', /no attribute list/]] as const) {
             const made = commitAttributes(state, target, literal);
             assert.ok(made !== null && 'refusal' in made, `${JSON.stringify(literal)} is refused`);
-            assert.match(made.refusal, /no attribute list/);
+            assert.match(made.refusal, reason);
         }
         const rule = stateOf('Text.\n\n---\n');
         const selected = rule.apply(rule.tr.setSelection(NodeSelection.create(rule.doc, rule.doc.child(0).nodeSize)));

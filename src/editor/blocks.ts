@@ -65,17 +65,6 @@ export function detectEol(text: string): '\n' | '\r\n' {
 }
 
 /**
- * The literal `{…}` attribute suffix at the end of a heading's source line, or
- * `null`. `markdown-it-attrs` moves it into `heading_open.attrs` and strips it
- * from the inline text, so the serializer has to get it from the line to write
- * it back as it was — the anchor is a locator Req Explorer owns, never prose.
- */
-export function findAttrsSuffix(line: string): string | null {
-    const m = /(\{[^{}\r\n]*\})[ \t]*$/.exec(line);
-    return m ? m[1] : null;
-}
-
-/**
  * Where a block's `{…}` stands in its source, which a changed block is written
  * back in (`serialize.ts`):
  *
@@ -559,7 +548,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
             if (!t.markup.startsWith('#') || !t.map || t.map[1] - t.map[0] !== 1) {
                 return 'setext heading: its underline has no place in the heading node';
             }
-            if (t.attrs && t.attrs.length > 0 && findAttrsSuffix(lines[t.map[0]]?.text ?? '') === null) {
+            if (t.attrs && t.attrs.length > 0 && endLiteralOf(lines[t.map[0]]?.text ?? '') === null) {
                 return 'heading attributes that are not written as a trailing {…} on its line';
             }
         }
@@ -723,7 +712,7 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
     const where = `${open.type.replace(/_open$/, '')} attributes not written where the editor can keep them`;
     switch (open.type) {
         case 'heading_open': {
-            const suffix = findAttrsSuffix(lines[start]?.text ?? '');
+            const suffix = endLiteralOf(lines[start]?.text ?? '');
             return suffix === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix, placement: 'end' }, endLine: null };
         }
         case 'fence': {

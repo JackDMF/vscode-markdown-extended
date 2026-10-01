@@ -62,6 +62,17 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
         assert.deepStrictEqual(parseAttrsLiteral('{title="a = b"}'), [['title', 'a = b']]);
     });
 
+    test('an = inside a value is the value\'s, to the port as to the preview', () => {
+        for (const [literal, pairs] of [
+            ['{data-h=YQ== .wide}', [['data-h', 'YQ=='], ['class', 'wide']]],
+            ['{integrity=sha256-abc= crossorigin=anonymous}', [['integrity', 'sha256-abc='], ['crossorigin', 'anonymous']]],
+        ] as const) {
+            assert.deepStrictEqual(parseAttrsLiteral(literal), pairs, literal);
+            const html = md.render(`text ${literal}`);
+            assert.ok(!html.includes('{'), html);
+        }
+    });
+
     // `taken`: the port finds an end literal, and the engine renders the
     // paragraph's text without it. The escaped and the entity forms are what
     // the editor writes for a changed paragraph, and must stay text too.
@@ -125,6 +136,34 @@ suite('Editor attribute spans: the literal is recovered from the source', () => 
             assert.strictEqual(md.render(written), `<p>${source.trim()}</p>\n`, 'and the preview shows it whole');
             assert.strictEqual(paragraph(written).textContent, source.trim(), 'and the editor reads it back');
         }
+    });
+
+    test('a heading ending in a text brace, given an id by another extension, writes the brace once', () => {
+        // Another extension's extendMarkdownIt giving every heading an id (engine.ts).
+        const withIds = hostEngine([m => {
+            m.core.ruler.push('test_heading_ids', state => {
+                state.tokens.filter(t => t.type === 'heading_open').forEach(t => t.attrSet('id', 'given'));
+                return true;
+            });
+        }]);
+        const source = '## Title {a = b}\n';
+        const parsed = parseDocument(withIds, source);
+        const heading = topChildren(parsed.doc)[0];
+        // The id is on no literal the line holds, so the heading stays a source block, written as it is.
+        assert.strictEqual(heading.type.name, 'raw_block');
+        assert.strictEqual(serializeDocument(parsed, { defaultWrap: 90 }), source);
+    });
+
+    test('a bracketed span whose literal is text is an editable paragraph of that text', () => {
+        const p = paragraph('A [x]{a = b} c.\n');
+        assert.strictEqual(p.type.name, 'paragraph');
+        assert.strictEqual(p.textContent, 'A [x]{a = b} c.');
+        assert.deepStrictEqual(spanMarks(p), []);
+    });
+
+    test('a normalized literal quotes a value holding =', () => {
+        assert.strictEqual(normalizedLiteral([['k', 'v='], ['class', 'y']]), '{k="v=" .y}');
+        assert.ok(sameAttrs(joinAttrs(parseAttrsLiteral('{k="v=" .y}') ?? []), [['k', 'v='], ['class', 'y']]));
     });
 
     test('two spans in one paragraph each keep their own literal, in order', () => {

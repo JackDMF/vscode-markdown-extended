@@ -37,7 +37,7 @@ import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import { endLiteralOf, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
-import { isTextBrace } from '../../syntax/attrsLiteral';
+import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { itemTakesLiteral, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
@@ -465,8 +465,11 @@ export function literalPlaceOf(node: Node): LiteralPlace {
 /** Why `literal` cannot be an attribute span's or a block's literal at `place`, or `null`: the plugin must read it as attributes, all of it. */
 export function literalRefusal(literal: string, place: LiteralPlace = 'block'): string | null {
     const value = literal.trim();
+    if (value.startsWith('{') && readBrace(value, 0).close < 0) {
+        return `${value} is not closed: end the attribute list with }.`;
+    }
     if (value.startsWith('{') && isTextBrace(value, 0)) {
-        return `${value} is text, not an attribute list: a space beside its = makes it text, as in PowerShell's @{a = 1}. Write the attribute as {a=1} or {a="1"}.`;
+        return `${value} is text, not an attribute list: a space beside its = makes it text, as in PowerShell's @{a = 1}. Write it as ${tightenedBrace(value, 0)}.`;
     }
     if (parseAttrsLiteral(value) === null) {
         return `${value || 'An empty value'} is no attribute list: write it as {.class}, {#id} or {key="value"}, as markdown-it-attrs reads it.`;

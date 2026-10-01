@@ -55,59 +55,123 @@ export function findLeftDelimiter(str: string): number {
     return start;
 }
 
-/** An `=` with a space beside it, at `i`. */
-function spacedEquals(str: string, i: number): boolean {
-    return str.charAt(i) === '=' && (str.charAt(i - 1) === ' ' || str.charAt(i + 1) === ' ');
+/** What `readBrace` finds of the `{…}` at an index. */
+export interface BraceReading {
+    /** The `}` that closes it, outside a quoted value; -1 when none does. */
+    close: number;
+    /** The index of every `=` that separates a key from its value. */
+    separators: number[];
+    /** Whether a space stands beside one of those `=` (`isTextBrace`). */
+    spaced: boolean;
+}
+
+/**
+ * The `{…}` at `open` read as markdown-it-attrs' `getAttrs` reads it, up to
+ * the first `}` outside a quoted value: a pair is a key, an `=` and a value,
+ * `.a` and `#a` start a value at once, a space ends a pair, and a `"` opens a
+ * quoted value only where the value is still empty. Only the `=` read while
+ * reading a key separates; one inside a value is the value's (`{data-h=YQ==}`).
+ */
+export function readBrace(str: string, open: number): BraceReading {
+    const allowedKeyChars = /[^\t\n\f />"'=]/;
+    const separators: number[] = [];
+    let spaced = false;
+    let key = '';
+    let value = '';
+    let parsingKey = true;
+    let quoted = false;
+    for (let i = open + 1; i < str.length; i++) {
+        const ch = str.charAt(i);
+        if (!quoted && ch === '}') {
+            return { close: i, separators, spaced };
+        }
+        if (ch === '=' && parsingKey) {
+            parsingKey = false;
+            separators.push(i);
+            spaced = spaced || str.charAt(i - 1) === ' ' || str.charAt(i + 1) === ' ';
+            continue;
+        }
+        if ((ch === '.' || ch === '#') && key === '') {
+            if (ch === '.' && str.charAt(i + 1) === '.') {
+                i += 1;
+            }
+            key = ch;
+            parsingKey = false;
+            continue;
+        }
+        if (isUnescapedDoubleQuote(str, i) && value === '' && !quoted) {
+            quoted = true;
+            continue;
+        }
+        if (isUnescapedDoubleQuote(str, i) && quoted) {
+            quoted = false;
+            continue;
+        }
+        if (ch === ' ' && !quoted) {
+            if (key !== '') {
+                key = '';
+                value = '';
+                parsingKey = true;
+            }
+            continue;
+        }
+        if (parsingKey && ch.search(allowedKeyChars) === -1) {
+            continue;
+        }
+        if (parsingKey) {
+            key += ch;
+        } else {
+            value += ch;
+        }
+    }
+    return { close: -1, separators, spaced };
 }
 
 /**
  * Whether the `{` at `start` is the text's own brace rather than an attribute
- * literal (qjebbs/vscode-markdown-extended#146): before its closing `}` it
- * holds an `=` outside quotes with a space beside it — `@{height = 65}`, a
- * PowerShell hashtable — which no attribute list is written with
- * (`{height=65}`, `{title="a = b"}`). markdown-it-attrs would take it for
+ * literal (qjebbs/vscode-markdown-extended#146): a space stands beside an `=`
+ * that separates a key from its value — `@{height = 65}`, a PowerShell
+ * hashtable — which no attribute list is written with (`{height=65}`,
+ * `{title="a = b"}`, `{data-h=YQ==}`). markdown-it-attrs would take it for
  * attributes and drop it from the text.
  */
 export function isTextBrace(str: string, start: number): boolean {
-    let quoted = false;
-    for (let i = start + 1; i < str.length; i++) {
-        if (isUnescapedDoubleQuote(str, i)) {
-            quoted = !quoted;
-        } else if (!quoted && str.charAt(i) === '}') {
-            return false;
-        } else if (!quoted && spacedEquals(str, i)) {
-            return true;
-        }
-    }
-    return false;
+    return readBrace(str, start).spaced;
 }
 
 /**
  * The index of the closing `}` of every brace in `str` that is the text's own
- * (`isTextBrace`), in one pass. A `{` read the plugin's way — quotes counted
- * from the start of the string, the last `{` before a `}` the one it closes.
+ * (`isTextBrace`), in one pass: from a `{` to the first `}` outside a quoted
+ * value, as markdown-it-attrs reads it — a `{` inside is read as part of it
+ * (`{a = {b}` is one brace) — and on from that `}`.
  */
 export function textBraceCloses(str: string): number[] {
     const out: number[] = [];
-    let quoted = false;
-    let open = -1;
-    let spaced = false;
-    for (let i = 0; i < str.length; i++) {
-        if (isUnescapedDoubleQuote(str, i)) {
-            quoted = !quoted;
-        } else if (quoted) {
-            continue;
-        } else if (str.charAt(i) === '{') {
-            open = i;
-            spaced = false;
-        } else if (str.charAt(i) === '}' && open >= 0) {
-            if (spaced) {
-                out.push(i);
-            }
-            open = -1;
-        } else if (open >= 0 && spacedEquals(str, i)) {
-            spaced = true;
+    for (let open = str.indexOf('{'); open >= 0; ) {
+        const reading = readBrace(str, open);
+        if (reading.close < 0) {
+            break;
         }
+        if (reading.spaced) {
+            out.push(reading.close);
+        }
+        open = str.indexOf('{', reading.close + 1);
+    }
+    return out;
+}
+
+/**
+ * The brace at `start` with the spaces beside each separating `=` taken out:
+ * `{width = 50%}` → `{width=50%}`, the attribute list its author meant.
+ */
+export function tightenedBrace(str: string, start: number): string {
+    let out = str;
+    for (const at of [...readBrace(str, start).separators].reverse()) {
+        let from = at;
+        while (out.charAt(from - 1) === ' ') { from--; }
+        let to = at + 1;
+        while (out.charAt(to) === ' ') { to++; }
+        out = `${out.slice(0, from)}=${out.slice(to)}`;
     }
     return out;
 }

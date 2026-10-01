@@ -174,3 +174,53 @@ suite('MarkdownItAttrs leaves a brace that is the text\'s own', () => {
         assert.strictEqual(md.renderer.render(tokens, {}, {}), '<p>Set it to @{height = 65}</p>\n');
     });
 });
+
+suite('MarkdownItAttrs and a text brace: the review\'s second round', () => {
+    let md: MarkdownIt.MarkdownIt;
+
+    setup(() => {
+        md = preview();
+    });
+
+    test('an = inside a value is the value\'s: base64 padding, an integrity hash', () => {
+        const image = md.render('![i](p.png){data-h=YQ== .wide}');
+        assert.ok(image.includes('data-h="YQ=="') && image.includes('class="wide"'), image);
+        assert.strictEqual(md.render('text {integrity=sha256-abc= crossorigin=anonymous}'), '<p integrity="sha256-abc=" crossorigin="anonymous">text</p>\n');
+    });
+
+    test('a text brace anywhere in a paragraph attrs reads whole keeps all of it', () => {
+        const table = md.render('| A |\n| - |\n| 1 |\n\n{.x} {a = b}\n');
+        assert.ok(table.includes('<table>') && table.includes('<p>{.x} {a = b}</p>'), table);
+        const list = md.render('- a\n\n{.x} {a = b}\n');
+        assert.ok(list.includes('<ul>') && list.includes('<p>{.x} {a = b}</p>'), list);
+        assert.strictEqual(md.render('para\n{.x} {a = b}\n'), '<p>para\n{.x} {a = b}</p>\n');
+        assert.ok(md.render('--- {a = b} {.x}\n').includes('--- {a = b}'), md.render('--- {a = b} {.x}\n'));
+    });
+
+    test('a brace runs from its { to the first }, a { inside it included', () => {
+        assert.strictEqual(md.render('*em*{a = {b} x'), '<p><i>em</i>{a = {b} x</p>\n');
+    });
+
+    test('the typographer sees the brace whole, as it would without attrs', () => {
+        const typographic = new MarkdownIt({ typographer: true });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        plugins.forEach(p => typographic.use(p.plugin as any, ...p.args));
+        assert.strictEqual(typographic.render('x {a = --}'), '<p>x {a = --}</p>\n');
+    });
+
+    test('a fence\'s info that is only a text brace names no language, and one glued to a language that language', () => {
+        assert.strictEqual(md.render('```{a = b}\nx\n```\n'), '<pre><code>x\n</code></pre>\n');
+        assert.ok(md.render('```js{a = b}\nx\n```\n').startsWith('<pre><code class="language-js">'), md.render('```js{a = b}\nx\n```\n'));
+    });
+
+    test('a bracketed span whose literal is text is text, brackets and all', () => {
+        assert.strictEqual(md.render('[x]{a = b}'), '<p>[x]{a = b}</p>\n');
+        assert.strictEqual(md.render('A [*x*]{a = b} y'), '<p>A [<i>x</i>]{a = b} y</p>\n');
+        assert.ok(md.render('[x]{.a}').includes('<span class="a">x</span>'));
+    });
+
+    test('an admonition\'s classes leave out a text brace', () => {
+        const html = md.render('!!! note x {a = b} "Title"\n    Body.\n');
+        assert.ok(html.includes('class="admonition note x"'), html);
+    });
+});
