@@ -2,7 +2,7 @@
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
-import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
+import { NOTE_SYNTAX_CHARS, endLiteralOf, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
@@ -926,7 +926,7 @@ function listTakesLineLiteral(list: Node): boolean {
  */
 function endsInLiteralText(node: Node): boolean {
     const last = node.lastChild;
-    return last !== null && last.isText && last.marks.length === 0 && endsWithAttrsLiteral(last.text ?? '');
+    return last !== null && last.isText && last.marks.length === 0 && endLiteralOf(last.text ?? '') !== null;
 }
 
 /** The line's trailing `{…}` as text, `\{x\}`, which the plugin reads as no literal. */

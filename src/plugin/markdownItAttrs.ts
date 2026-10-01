@@ -1,6 +1,6 @@
 import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
 import markdownItAttrs from 'markdown-it-attrs';
-import { findLeftDelimiter, isTextBrace } from '../editor/attrs';
+import { findLeftDelimiter, isTextBrace, textBraceCloses } from '../syntax/attrsLiteral';
 
 // markdown-it-attrs recomputes a table's cells from every `rowspan` and
 // `colspan` it finds, to honour its own `{rowspan=2}`. It cannot tell those
@@ -14,20 +14,31 @@ const STASH = 'mepTableSpans';
 
 type Meta = Record<string, unknown> | null | undefined;
 
-// markdown-it-attrs takes any `{…}` that ends a block, or starts the text after
+// markdown-it-attrs takes a `{…}` that ends a block, or starts the text after
 // inline markup, for attributes, and drops it from the text: a PowerShell
 // hashtable `@{height = 65}` in a table cell renders as `@`
 // (qjebbs/vscode-markdown-extended#146). A brace that is the text's own
-// (`isTextBrace`, the rule the Visual Editor reads literals by) is therefore
-// hidden from attrs' rule behind a private-use character and put back after it.
-const MASK = '';
-
-interface Masked {
+// (`isTextBrace`, `src/syntax/attrsLiteral.ts`, the rule the Visual Editor
+// reads literals by) is kept from attrs' rule:
+//
+// - in inline text, the text token is split right before the brace's `}`, so
+//   no text token attrs reads holds the whole brace — however often it strips
+//   a literal off the end (a list item's, then its paragraph's). The text is
+//   unchanged, and markdown-it's `text_join` joins the tokens again;
+// - where attrs reads a whole string instead — an inline's content for a
+//   `{…}` paragraph or a `--- {…}` rule, a fence's or a container's info — the
+//   string is changed so attrs' test fails, and put back from what it was.
+interface Held {
     token: Token;
     field: 'content' | 'info';
+    original: string;
+    held: string;
 }
 
-const masked = new WeakMap<StateBase, Masked[]>();
+const heldBack = new WeakMap<StateBase, Held[]>();
+
+/** The start of the paragraph attrs turns into a rule: `---` and a `{` (its `horizontal rule` pattern). */
+const RULE_START = /^ {0,3}[-*_]{3,} ?\{[^}]/;
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
@@ -35,53 +46,60 @@ export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
     md.core.ruler.before('curly_attributes', 'mep_table_spans_aside', (state: StateBase) => setAside(state.tokens));
     md.core.ruler.after('curly_attributes', 'mep_table_spans_back', (state: StateBase) => putBack(state.tokens));
     md.core.ruler.before('curly_attributes', 'mep_text_braces_aside', (state: StateBase) => {
-        masked.set(state, maskTextBraces(state.tokens));
+        heldBack.set(state, holdTextBraces(state));
     });
     md.core.ruler.after('curly_attributes', 'mep_text_braces_back', (state: StateBase) => {
-        for (const { token, field } of masked.get(state) ?? []) {
-            token[field] = token[field].split(MASK).join('{');
+        for (const { token, field, original, held } of heldBack.get(state) ?? []) {
+            if (token[field] === held) { token[field] = original; }
         }
-        masked.delete(state);
+        heldBack.delete(state);
     });
 }
 
-/**
- * The string with every brace attrs would read and that is the text's own
- * masked: the one it starts with (attrs' `start` and `only` readings) and the
- * last one (its `end` reading), again until the last is a literal or none is left.
- */
-function maskBraces(str: string): string {
-    let out = str;
-    if (out.startsWith('{') && isTextBrace(out, 0)) {
-        out = MASK + out.slice(1);
+/** The text token split right before the `}` of each brace of its own (`textBraceCloses`); itself when it has none. */
+function splitText(state: StateBase, token: Token): Token[] {
+    const closes = textBraceCloses(token.content);
+    if (closes.length === 0) { return [token]; }
+    const pieces: Token[] = [];
+    let from = 0;
+    for (const at of [...closes, token.content.length]) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const piece: Token = new (state as any).Token('text', '', 0);
+        piece.content = token.content.slice(from, at);
+        piece.level = token.level;
+        pieces.push(piece);
+        from = at;
     }
-    for (let start = findLeftDelimiter(out); start >= 0 && isTextBrace(out, start); start = findLeftDelimiter(out)) {
-        out = out.slice(0, start) + MASK + out.slice(start + 1);
-    }
-    return out;
+    return pieces;
 }
 
-/** Every string attrs reads a literal from: an inline token's content and text children, a block's info. */
-function maskTextBraces(tokens: Token[]): Masked[] {
-    const out: Masked[] = [];
-    const mask = (token: Token, field: Masked['field']) => {
-        const value = token[field];
-        // A string already holding the mask is left alone, so putting it back cannot change it.
-        if (typeof value !== 'string' || !value.includes('{') || value.includes(MASK)) { return; }
-        const next = maskBraces(value);
-        if (next !== value) {
-            token[field] = next;
-            out.push({ token, field });
-        }
+/** Whether attrs would read the whole string as a brace of the text's own: a `{…}` paragraph's, a rule's. */
+function wholeIsTextBrace(content: string): boolean {
+    return (content.startsWith('{') && isTextBrace(content, 0))
+        || (RULE_START.test(content) && isTextBrace(content, content.lastIndexOf('{')));
+}
+
+function holdTextBraces(state: StateBase): Held[] {
+    const out: Held[] = [];
+    const hold = (token: Token, field: Held['field'], held: string) => {
+        out.push({ token, field, original: token[field], held });
+        token[field] = held;
     };
-    for (const token of tokens) {
+    for (const token of state.tokens) {
         if (token.type === 'inline') {
-            mask(token, 'content');
-            for (const child of token.children ?? []) {
-                if (child.type === 'text') { mask(child, 'content'); }
+            if (token.content.includes('{') && wholeIsTextBrace(token.content)) {
+                // A string attrs' `only` and rule tests cannot match: it no longer starts with the `{`, or the dashes.
+                hold(token, 'content', `\n${token.content}`);
+            }
+            if (token.children?.some(c => c.type === 'text' && c.content.includes('{'))) {
+                token.children = token.children.flatMap(c => (c.type === 'text' ? splitText(state, c) : [c]));
             }
         } else if (token.block && token.info) {
-            mask(token, 'info');
+            const start = findLeftDelimiter(token.info);
+            if (start >= 0 && isTextBrace(token.info, start)) {
+                // attrs' `end` test needs the `}` last.
+                hold(token, 'info', `${token.info} `);
+            }
         }
     }
     return out;

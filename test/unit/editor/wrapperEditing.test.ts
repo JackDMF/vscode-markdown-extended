@@ -226,6 +226,14 @@ suite('Editor block attributes: the object and its verb', () => {
 });
 
 suite('Editor stage 3: review findings, in the page', () => {
+    test('a literal with a space beside its = is refused as text, saying how to write it (qjebbs/vscode-markdown-extended#146)', () => {
+        const state = select(stateOf('Alpha beta gamma.\n'), 'beta');
+        assert.strictEqual(applySpanTransaction(state, '{a = 1}'), null);
+        const reason = literalRefusal('{a = 1}') ?? '';
+        assert.match(reason, /a space beside its = makes it text/);
+        assert.match(reason, /\{a=1\} or \{a="1"\}/);
+    });
+
     test('5. a span literal with a quoted } is refused, with the reason', () => {
         const state = select(stateOf('Alpha beta gamma.\n'), 'beta');
         assert.strictEqual(applySpanTransaction(state, '{title="a}b"}'), null);

@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { Mark, Node } from 'prosemirror-model';
-import { domAttrsOf, endsWithAttrsLiteral, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from '../../../src/editor/attrs';
+import { domAttrsOf, endLiteralOf, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from '../../../src/editor/attrs';
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -62,14 +62,19 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
         assert.deepStrictEqual(parseAttrsLiteral('{title="a = b"}'), [['title', 'a = b']]);
     });
 
+    // `taken`: the port finds an end literal, and the engine renders the
+    // paragraph's text without it. The escaped and the entity forms are what
+    // the editor writes for a changed paragraph, and must stay text too.
     for (const [text, taken] of [
-        ['@{height = 65}', false], ['@{height=65}', false], ['${name}', false], ['x{.a}', false], ['a {b = c}', false],
+        ['@{height = 65}', false], ['a {b = c}', false], ['\\@{height = 65}', false], ['\\${VAR = 1}', false], ['&amp;{x = 1}', false],
         ['text {.a}', true], ['{.a}', true], ['**b**{.a}', true], ['`c`{.a}', true], ['[l](u){.a}', true], ['==m=={.a}', true],
+        ['x{.a}', true], ['@{height=65}', true],
     ] as const) {
         test(`${text} ends in a literal ${taken ? 'as' : 'neither for the port nor for'} the plugin`, () => {
-            assert.strictEqual(endsWithAttrsLiteral(text), taken);
+            const literal = endLiteralOf(text);
+            assert.strictEqual(literal !== null, taken);
             const html = md.render(`${text}\n`);
-            assert.strictEqual(html.includes(' class="a"'), taken, html);
+            assert.strictEqual(!html.includes('}'), taken, html);
         });
     }
 
@@ -103,17 +108,22 @@ suite('Editor attribute spans: the literal is recovered from the source', () => 
         });
     }
 
-    // (`@` and `$` are escaped when a changed paragraph is written, for the
-    // sidebars' sake, so the hashtable itself is not the example here.)
     test('a paragraph ending in a brace of its own text keeps it as text, its braces written back unescaped', () => {
-        for (const source of ['Set it to {height = 65}\n', 'Pass key{a=1}\n', 'Glued x{.a}\n']) {
+        // `@` is escaped when a changed paragraph is written, for the sidebars'
+        // sake; the escaped form is what the preview then reads.
+        for (const [source, written] of [
+            ['Set it to {height = 65}\n', 'Set it to {height = 65}\n'],
+            ['Set it to @{height = 65}\n', 'Set it to \\@{height = 65}\n'],
+        ]) {
             const p = paragraph(source);
             assert.strictEqual(p.type.name, 'paragraph', source);
             assert.strictEqual(p.attrs.attrsSuffix, null, source);
             assert.strictEqual(p.textContent, source.trim());
             const parsed = parseDocument(md, source);
             const doc = parsed.doc.type.create(null, [touched(p)]);
-            assert.strictEqual(serializeDocument({ ...parsed, doc }, { defaultWrap: 90 }), source);
+            assert.strictEqual(serializeDocument({ ...parsed, doc }, { defaultWrap: 90 }), written);
+            assert.strictEqual(md.render(written), `<p>${source.trim()}</p>\n`, 'and the preview shows it whole');
+            assert.strictEqual(paragraph(written).textContent, source.trim(), 'and the editor reads it back');
         }
     });
 

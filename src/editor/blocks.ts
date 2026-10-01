@@ -76,17 +76,6 @@ export function findAttrsSuffix(line: string): string | null {
 }
 
 /**
- * The `{…}` a line ends with as markdown-it-attrs finds it — the last `{`
- * outside a quoted value, through the line's end — when it is a literal the
- * plugin takes as attributes and no brace of the text's own (`isTextBrace`);
- * `null` otherwise. Unlike `findAttrsSuffix` it reads a quoted `}`
- * (`{title="a}"}`) as the plugin does.
- */
-export function findEndLiteral(line: string): string | null {
-    return endLiteralOf(line);
-}
-
-/**
  * Where a block's `{…}` stands in its source, which a changed block is written
  * back in (`serialize.ts`):
  *
@@ -738,18 +727,18 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
             return suffix === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix, placement: 'end' }, endLine: null };
         }
         case 'fence': {
-            const literal = findEndLiteral(lines[start]?.text ?? '');
+            const literal = endLiteralOf(lines[start]?.text ?? '');
             return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
         }
         case 'hr': {
-            const literal = findEndLiteral(open.markup);
+            const literal = endLiteralOf(open.markup);
             return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
         }
         case 'paragraph_open': {
             if (last > start && reads(lastText)) {
                 return { attrs: { suffix: lastText, placement: 'line' }, endLine: null };
             }
-            const literal = findEndLiteral(lines[last]?.text ?? '');
+            const literal = endLiteralOf(lines[last]?.text ?? '');
             return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
         }
         case 'blockquote_open': {
@@ -828,7 +817,7 @@ function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines:
         if (line > paragraph.map[0] && parseAttrsLiteral(bare) !== null) {
             line--;
         }
-        const literal = findEndLiteral(lines[line]?.text ?? '');
+        const literal = endLiteralOf(lines[line]?.text ?? '');
         const pairs = literal === null ? null : parseAttrsLiteral(literal);
         if (literal === null || pairs === null || !sameAttrs(joinAttrs(pairs), wanted)) {
             return 'list item attributes not written where the editor can keep them';

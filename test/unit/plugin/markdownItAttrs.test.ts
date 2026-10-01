@@ -94,21 +94,39 @@ suite('MarkdownItAttrs leaves a brace that is the text\'s own', () => {
     });
 
     for (const [source, text] of [
-        ['Set it to @{height=65}', 'Set it to @{height=65}'],
-        ['A placeholder ${name}', 'A placeholder ${name}'],
-        ['Glued x{.a}', 'Glued x{.a}'],
+        ['Set it to @{height = 65}', 'Set it to @{height = 65}'],
         ['Spaced {height = 65}', 'Spaced {height = 65}'],
         ['Spaced {a= b}', 'Spaced {a= b}'],
+        ['Spaced {a =b}', 'Spaced {a =b}'],
         ['*em*{a = b} after', '<i>em</i>{a = b} after'],
+        // What the Visual Editor writes for a changed paragraph: `@` and `$` escaped, an entity kept.
+        ['Set it to \\@{height = 65}', 'Set it to @{height = 65}'],
+        ['An env var \\${VAR = 1}', 'An env var ${VAR = 1}'],
+        ['An entity &amp;{x = 1}', 'An entity &amp;{x = 1}'],
+        ['A private-use  character, then @{height = 65}', 'A private-use  character, then @{height = 65}'],
+        ['Two {a = 1} and {b = 2}', 'Two {a = 1} and {b = 2}'],
     ]) {
         test(`${source} keeps its braces as text`, () => {
             assert.strictEqual(md.render(source), `<p>${text}</p>\n`);
         });
     }
 
-    test('a fence\'s info and a heading keep a brace glued to a word', () => {
-        assert.ok(md.render('```ps1 @{a=1}\nx\n```\n').startsWith('<pre><code class="language-ps1">'));
-        assert.strictEqual(md.render('# Title x{.a}\n'), '<h1>Title x{.a}</h1>\n');
+    test('a list item\'s literal after a hashtable goes to the item, the hashtable stays text', () => {
+        assert.strictEqual(md.render('- karin @{height = 65} {.row}\n'), '<ul>\n<li class="row">karin @{height = 65}</li>\n</ul>\n');
+    });
+
+    test('a paragraph of a hashtable after a table stays a paragraph, and gives the table nothing', () => {
+        const html = md.render('| A |\n| - |\n| 1 |\n\n{height = 65}\n');
+        assert.ok(html.includes('<table>'), html);
+        assert.ok(html.includes('<p>{height = 65}</p>'), html);
+    });
+
+    test('a rule followed by a hashtable stays the paragraph it is', () => {
+        assert.strictEqual(md.render('--- {.a}@{b = 1}\n'), '<p>--- {.a}@{b = 1}</p>\n');
+    });
+
+    test('a fence\'s info ending in a hashtable keeps its language and gets no attribute', () => {
+        assert.ok(md.render('```ps1 @{a = 1}\nx\n```\n').startsWith('<pre><code class="language-ps1">'));
     });
 
     for (const [source, html] of [
@@ -123,11 +141,32 @@ suite('MarkdownItAttrs leaves a brace that is the text\'s own', () => {
         ['[link](u){.a}', '<p><a href="u" class="a">link</a></p>\n'],
         ['==mark=={.a}', '<p><mark class="a">mark</mark></p>\n'],
         ['text\n{.a}', '<p class="a">text</p>\n'],
+        // A brace glued to the text before it is read as on master.
+        ['text{.lead}', '<p class="lead">text</p>\n'],
+        ['Set it to @{height=65}', '<p height="65">Set it to @</p>\n'],
+        ['*em*{.a}{.b}', '<p><i class="a b">em</i></p>\n'],
+        ['---{.a}', '<hr class="a">\n'],
     ]) {
         test(`${source.replace('\n', '⏎')} is still read as attributes`, () => {
             assert.strictEqual(md.render(source), html);
         });
     }
+
+    test('a glued heading anchor, a CJK one too, is the heading\'s id, as Req Explorer reads it', () => {
+        assert.ok(md.render('## FR-1: Name{#fr-1}\n').includes('id="fr-1"'), md.render('## FR-1: Name{#fr-1}\n'));
+        assert.ok(md.render('# 标题{#id}\n').includes('id="id"'), md.render('# 标题{#id}\n'));
+    });
+
+    test('a fence\'s glued literal leaves its language as on master', () => {
+        assert.ok(md.render('```js{4}\nx\n```\n').includes('class="language-js"'), md.render('```js{4}\nx\n```\n'));
+        const numbered = md.render('```js{.numberLines}\nx\n```\n');
+        assert.ok(numbered.includes('language-js') && numbered.includes('numberLines') && !numbered.includes('language-js{'), numbered);
+    });
+
+    test('a span\'s chained literals both reach it', () => {
+        const html = md.render('[span]{.a}{#b}');
+        assert.ok(html.includes('class="a"') && html.includes('id="b"'), html);
+    });
 
     test('the text reads the same on a second render', () => {
         const tokens = md.parse('Set it to @{height = 65}', {});

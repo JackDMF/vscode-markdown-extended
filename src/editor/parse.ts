@@ -11,12 +11,12 @@ import {
     SourceBlock,
     detectEol,
     findAttrsSuffix,
-    findEndLiteral,
     groupSourceBlocks,
     injectionMarkOf,
     splitLines,
 } from './blocks';
 import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
+import { endLiteralOf } from './attrs';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
 /**
@@ -440,7 +440,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 // the whole line; the literal is `attrsSuffix`, the rule the rest.
                 const suffix = suffixOf(tok);
                 let markup = real(tok).markup || '---';
-                const literal = suffix.attrsSuffix === null ? null : findEndLiteral(markup);
+                const literal = suffix.attrsSuffix === null ? null : endLiteralOf(markup);
                 if (literal !== null && markup.trimEnd().endsWith(literal)) {
                     markup = markup.trimEnd().slice(0, -literal.length).trimEnd();
                 }

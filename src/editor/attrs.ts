@@ -15,106 +15,32 @@
  * lists is rendered through the real engine and must give the same attributes.
  *
  * One rule is the extension's own, not the plugin's: a brace that is the text's
- * (`isTextBrace`) is no literal. `markdownItAttrs.ts` hides such a brace from
- * the plugin, and this module reads it so, so the preview and the editor agree.
+ * (`isTextBrace`, `src/syntax/attrsLiteral.ts`) is no literal. The preview's
+ * wrapper of the plugin keeps such a brace from it, and this module reads it so,
+ * so the preview and the editor agree.
  *
- * It imports nothing, so the page and the preview's plugin can load it.
+ * It imports only that module, which imports nothing, so the page can load it.
  */
+
+import { findLeftDelimiter, findRightDelimiter, isTextBrace, isUnescapedDoubleQuote } from '../syntax/attrsLiteral';
+
+export { findLeftDelimiter, findRightDelimiter };
 
 /** One attribute as the plugin reads it: `[name, value]`. */
 export type AttrPair = [string, string];
 
-function isUnescapedDoubleQuote(str: string, i: number): boolean {
-    if (str.charAt(i) !== '"') {
-        return false;
-    }
-    let slashes = 0;
-    for (let n = i - 1; n >= 0 && str.charAt(n) === '\\'; n--) {
-        slashes++;
-    }
-    return slashes % 2 === 0;
-}
-
-/** The first `}` at or after `start` outside a quoted value, or -1. */
-export function findRightDelimiter(str: string, start: number): number {
-    let quoted = false;
-    for (let i = start; i < str.length; i++) {
-        if (isUnescapedDoubleQuote(str, i)) {
-            quoted = !quoted;
-            continue;
-        }
-        if (!quoted && str.charAt(i) === '}') {
-            return i;
-        }
-    }
-    return -1;
-}
-
-/** The last `{` outside a quoted value, or -1. */
-export function findLeftDelimiter(str: string): number {
-    let start = -1;
-    let quoted = false;
-    for (let i = 0; i < str.length; i++) {
-        if (isUnescapedDoubleQuote(str, i)) {
-            quoted = !quoted;
-            continue;
-        }
-        if (!quoted && str.charAt(i) === '{') {
-            start = i;
-        }
-    }
-    return start;
-}
-
 /**
- * What a `{…}` may stand against with no space and still be a literal: the end
- * of the inline markup it is written for — `*em*{.a}`, `` `code`{.a} ``,
- * `[a](u){.a}`, `==mark=={.a}`, `</b>{.a}`.
- */
-const LITERAL_GLUE = /[*_~^=+`)\]>]/;
-
-/**
- * Whether the `{` at `start` is the text's own brace rather than an attribute
- * literal (qjebbs/vscode-markdown-extended#146): it stands against a character
- * other than a space or the end of inline markup (`@{…}`, a PowerShell
- * hashtable; `${…}`, a placeholder; `x{…}`), or it holds an `=` outside quotes
- * with a space beside it (`{height = 65}`), which no attribute list is written
- * with. markdown-it-attrs would take either for attributes and drop the text.
- */
-export function isTextBrace(str: string, start: number): boolean {
-    const before = str.charAt(start - 1);
-    if (start > 0 && !/\s/.test(before) && !LITERAL_GLUE.test(before)) {
-        return true;
-    }
-    let quoted = false;
-    for (let i = start + 1; i < str.length; i++) {
-        if (isUnescapedDoubleQuote(str, i)) {
-            quoted = !quoted;
-            continue;
-        }
-        if (quoted) {
-            continue;
-        }
-        const ch = str.charAt(i);
-        if (ch === '}') {
-            return false;
-        }
-        if (ch === '=' && (str.charAt(i - 1) === ' ' || str.charAt(i + 1) === ' ')) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
- * The `{…}` a text ends with as markdown-it-attrs finds it — from the last `{`
- * outside a quoted value — when it is a literal the plugin takes as attributes
- * and no brace of the text's own; `null` otherwise.
+ * The `{…}` a text or a line ends with as markdown-it-attrs finds it — from the
+ * last `{` outside a quoted value, through the end, trailing spaces aside —
+ * when it is a literal the plugin takes as attributes (`parseAttrsLiteral`);
+ * `null` otherwise. Unlike `findAttrsSuffix` (`blocks.ts`) it reads a quoted
+ * `}` (`{title="a}"}`) as the plugin does. A text ending in one would lose its
+ * end to an attribute list.
  */
 export function endLiteralOf(text: string): string | null {
     const trimmed = text.replace(/[ \t]+$/, '');
     const start = findLeftDelimiter(trimmed);
-    if (start < 0 || isTextBrace(trimmed, start)) {
+    if (start < 0) {
         return null;
     }
     const literal = trimmed.slice(start);
@@ -215,7 +141,7 @@ export function joinAttrs(pairs: readonly AttrPair[]): AttrPair[] {
  * The attribute pairs of `literal` when it is a whole `{…}` the plugin accepts
  * as attributes: one line, `{` first, the first `}` outside quotes last, long
  * enough (`{.}` and `{#}` are not; `{a}` is), and giving at least one
- * attribute, and no brace of the text's own (`isTextBrace`). `null` otherwise —
+ * attribute, and no brace of the text's own (`isTextBrace`: `{a = 1}`). `null` otherwise —
  * the plugin would leave it as text, or take it and add nothing.
  */
 export function parseAttrsLiteral(literal: string): AttrPair[] | null {
@@ -281,15 +207,6 @@ export function normalizedLiteral(attrs: readonly AttrPair[]): string {
         parts.push(/[\s}]/.test(value) || value === '' ? `${name}="${value}"` : `${name}=${value}`);
     }
     return `{${parts.join(' ')}}`;
-}
-
-/**
- * Whether the text ends in a `{…}` the plugin would take as attributes of the
- * block or element it ends (its `hasDelimiters('end')`), so a name or title
- * written there would lose its end to an attribute list.
- */
-export function endsWithAttrsLiteral(text: string): boolean {
-    return endLiteralOf(text) !== null;
 }
 
 /**
