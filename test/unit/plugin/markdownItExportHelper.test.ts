@@ -3,6 +3,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
+import { execSync } from 'child_process';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import nodeFs = require('fs');
 import * as vscode from 'vscode';
 import * as sinon from 'sinon';
 import { ExtensionContext } from '../../../src/services/common/extensionContext';
@@ -167,9 +170,120 @@ suite('MarkdownItExportHelper', () => {
             assert.ok(linkedCss(md.render('<link data-href="x.css" rel="stylesheet" href="style.css">', env)));
         });
 
+        test('an unquoted value runs to white space or >', () => {
+            assert.ok(linkedCss(md.render('<link href=style.css?v=2 rel=stylesheet>', env))?.includes('rebeccapurple'));
+            assert.ok(linkedCss(md.render('<link rel=stylesheet href=style.css?v=2>', env))?.includes('rebeccapurple'));
+        });
+
+        test('a name that only starts with .. is inside the folder', () => {
+            fs.writeFileSync(path.join(dir, '..ok.css'), 'h1 { color: olive; }\n');
+            assert.ok(linkedCss(md.render('<link rel="stylesheet" href="..ok.css">', env))?.includes('olive'));
+        });
+
+        test('the type is judged by the real path: a symlink', function () {
+            fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1');
+            try {
+                fs.symlinkSync(path.join(dir, '.env'), path.join(dir, 'sym.css'), 'file');
+            } catch {
+                this.skip(); // a file symlink needs a privilege on Windows
+            }
+            unchanged('<link rel="stylesheet" href="sym.css">');
+        });
+
+        test('the type is judged by the real path: an 8.3 name', function () {
+            const long = path.join(dir, 'secret.cssbackup');
+            fs.writeFileSync(long, 'SHORTNAMESECRET');
+            let short = long;
+            if (process.platform === 'win32') {
+                short = execSync(`cmd /c for %I in ("${long}") do @echo %~sI`).toString().trim();
+            }
+            if (path.basename(short).toLowerCase() === path.basename(long).toLowerCase()) {
+                this.skip(); // no 8.3 names on this volume
+            }
+            unchanged(`<link rel="stylesheet" href="${path.basename(short)}">`);
+        });
+
+        test("a stylesheet's url()s resolve against the path it was linked by", () => {
+            // doc/themes is a junction to outside/themes; the preview resolves
+            // ../font.woff2 from doc/themes, so it is doc/font.woff2.
+            const themes = path.join(outside, 'themes');
+            fs.mkdirSync(themes, { recursive: true });
+            fs.writeFileSync(path.join(themes, 'theme.css'), 'h1 { color: navy; src: url(../font.woff2); }\n');
+            fs.writeFileSync(path.join(outside, 'font.woff2'), 'OUTSIDE');
+            fs.symlinkSync(themes, path.join(dir, 'themes'), 'junction');
+            const inWorkspace = { htmlExporter: { ...env.htmlExporter, workspaceFolder: vscode.Uri.file(base) } };
+            const css = linkedCss(md.render('<link rel="stylesheet" href="themes/theme.css">', inWorkspace));
+            assert.ok(css?.includes(`url("data:font/woff2;base64,${Buffer.from('woff2').toString('base64')}")`), css);
+        });
+
         test('the preview is not touched', () => {
             const html = md.render('<link rel="stylesheet" href="style.css">', {});
             assert.ok(html.includes('href="style.css"'), html);
+        });
+    });
+
+    suite('network paths are refused before the disk is asked', () => {
+        test('no file system call names the host', () => {
+            const unc = path.join(dir, 'unc.css');
+            fs.writeFileSync(unc, 'a { background: url(\\\\unc.invalid\\share\\x.png); b: url(/\\unc.invalid/share/y.png); }\n');
+            const asked: string[] = [];
+            for (const name of ['existsSync', 'readFileSync', 'statSync', 'accessSync'] as const) {
+                const original = nodeFs[name] as (...args: unknown[]) => unknown;
+                sinon.stub(nodeFs, name).callsFake(((...args: unknown[]) => {
+                    asked.push(String(args[0]));
+                    return original(...args);
+                }) as never);
+            }
+            try {
+                md.render([
+                    '<link rel="stylesheet" href="\\\\unc.invalid\\share\\x.css">',
+                    '<link rel="stylesheet" href="//unc.invalid/share/x.css">',
+                    '<link rel="stylesheet" href="/\\unc.invalid/share/x.css">',
+                    '<link rel="stylesheet" href="file://unc.invalid/share/x.css">',
+                    '<link rel="stylesheet" href="unc.css">',
+                    '',
+                    '![a](//unc.invalid/share/x.png) ![b](<\\\\\\\\unc.invalid\\\\share\\\\x.png>) ![c](/\\\\unc.invalid/x.png)',
+                ].join('\n'), env);
+            } finally {
+                sinon.restore();
+            }
+            assert.deepStrictEqual(asked.filter(p => /unc\.invalid/i.test(p)), []);
+        });
+    });
+
+    suite('a link is text where HTML reads text, across the whole document', () => {
+        let md: MarkdownIt.MarkdownIt;
+
+        setup(() => {
+            md = preview();
+        });
+
+        function embeds(src: string): boolean {
+            return /href="data:text\/css;base64,/.test(md.render(src, env));
+        }
+
+        const link = '<link rel="stylesheet" href="style.css">';
+        test('a comment, a script or a textarea opened in one token and ended in a later one', () => {
+            assert.ok(!embeds(`<div>\n<!--\n\n${link}\n\n-->\n`), 'comment in a div block');
+            assert.ok(!embeds(`<div><script>\nvar x;\n\n${link}\n\nend </script> here\n`), 'script ended inline');
+            assert.ok(!embeds(`Text <textarea>\n\n${link}\n\n</textarea>\n`), 'textarea across paragraphs');
+            assert.ok(!embeds(`a <script> b\n\n${link}\n`), 'script left open');
+            assert.ok(!embeds(`<!-- open\n\n${link}\n`), 'comment left open');
+        });
+
+        test('and the link after its end is embedded', () => {
+            assert.ok(embeds(`<div><script>\nvar x;\n\nend </script> here\n\n<textarea>\n</textarea>\n\n${link}\n`));
+            assert.ok(embeds(`<!-- a --!> ${link}\n`), '--!> ends a comment');
+            assert.ok(embeds(`<!--> ${link} -->\n`), '<!--> is a whole comment');
+            assert.ok(embeds(`<!---> ${link} -->\n`), '<!---> is a whole comment');
+            assert.ok(embeds(`a <script>x</script> ${link} b\n`));
+        });
+
+        test('every raw-text element, and plaintext to the end', () => {
+            for (const name of ['xmp', 'iframe', 'noembed', 'noframes', 'noscript', 'title', 'style']) {
+                assert.ok(!embeds(`<${name}>${link}</${name}>\n`), name);
+            }
+            assert.ok(!embeds(`<plaintext>\n\n</plaintext>\n\n${link}\n`), 'plaintext');
         });
     });
 
@@ -200,6 +314,14 @@ suite('MarkdownItExportHelper', () => {
         test('a stylesheet outside the document folder and workspace', () => {
             md.render('<link rel="stylesheet" href="../outside/secret.css">', env);
             assert.ok(lines.some(l => l.includes('outside the document\'s folder and workspace')), lines.join('\n'));
+        });
+
+        test('a missing image, a missing stylesheet and an href that is not a stylesheet', () => {
+            fs.writeFileSync(path.join(dir, 'theme.txt'), 'h1 {}');
+            md.render('<link rel="stylesheet" href="gone.css">\n<link rel="stylesheet" href="theme.txt">\n\n![a](gone.png)\n', env);
+            assert.ok(lines.includes('[WARNING] Stylesheet "gone.css" not embedded: not found'), lines.join('\n'));
+            assert.ok(lines.includes('[WARNING] Image "gone.png" not embedded: not found'), lines.join('\n'));
+            assert.ok(lines.includes('[WARNING] Stylesheet "theme.txt" not embedded: "theme.txt" is not of a type that is embedded'), lines.join('\n'));
         });
 
         test('a file: URL outside the document folder and workspace', () => {

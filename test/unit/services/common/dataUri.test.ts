@@ -46,5 +46,16 @@ suite('cssFileToDataUri', () => {
             assert.strictEqual(fonts.length, 2, css);
             assert.ok(fonts.every(f => f === `url("data:font/woff2;base64,${Buffer.from('woff2').toString('base64')}")`), css);
         });
+
+        test(`${name}: a local @import url() is embedded one level deep, a network path not at all`, async () => {
+            fs.writeFileSync(path.join(dir, 'base.css'), 'b { src: url(font.woff2); }');
+            const importing = path.join(dir, 'importing.css');
+            fs.writeFileSync(importing, '@import url("base.css");\n@import "plain.css";\na { src: url(//unc.invalid/x.woff2); }\n');
+            const css = cssOf(await convert(importing));
+            const imported = /@import url\("data:text\/css;base64,([^"]*)"\)/.exec(css);
+            assert.strictEqual(imported && Buffer.from(imported[1], 'base64').toString(), 'b { src: url(font.woff2); }');
+            assert.ok(css.includes('@import "plain.css"'), css);
+            assert.ok(css.includes('url(//unc.invalid/x.woff2)'), css);
+        });
     }
 });
