@@ -202,6 +202,13 @@ function sameExpansion(a: InjectionMark | null, b: InjectionMark | null): boolea
 export const CONTAINER_OPEN = 'container_container_open';
 export const CONTAINER_CLOSE = 'container_container_close';
 
+/**
+ * Why a container written with a `{…}` on its `:::` line is a source block: the
+ * preview draws the literal on the container's `div` (`markdownItContainer.ts`),
+ * and the container node has no slot to keep it in.
+ */
+const CONTAINER_ATTRS_REASON = 'container attributes on its ::: line, which the container node does not keep';
+
 /** Top-level tokens that can open an editable block. Anything else at top level is a raw block. */
 export const EDITABLE_TOP_LEVEL_TOKENS: ReadonlySet<string> = new Set([
     'paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open',
@@ -594,7 +601,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
         }
         // The top-level opener's literal is `recoverBlockAttrs`'s, a list item's `recoverItemLiterals`'.
         if (i !== group.start && t.type !== 'heading_open' && t.type !== 'list_item_open' && !attrsAllowed(t)) {
-            return `attributes on ${t.type}`;
+            return t.type === CONTAINER_OPEN ? CONTAINER_ATTRS_REASON : `attributes on ${t.type}`;
         }
         if (t.type !== 'inline') {
             continue;
@@ -710,6 +717,9 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
     const wanted = literalAttrs(open);
     if (wanted.length === 0) {
         return { attrs: null, endLine: null };
+    }
+    if (open.type === CONTAINER_OPEN) {
+        return CONTAINER_ATTRS_REASON;
     }
     if (!SUFFIX_BLOCKS.has(open.type) || !open.map) {
         return `attributes on ${open.type}`;

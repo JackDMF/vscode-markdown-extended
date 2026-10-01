@@ -685,8 +685,12 @@ export const BLOCK_NAMES: Readonly<Record<string, string>> = {
     table: 'Table',
 };
 
-/** Why a container is given no literal: markdown-it-container's renderer here draws none. */
-export const CONTAINER_ATTRS_REFUSAL = 'A container takes no {…}: markdown-it-attrs reads a literal on its ::: line, and the container\'s renderer drops it. Its classes are its name and info (Change name/info).';
+/**
+ * Why a container is given no literal here: the preview draws a `{…}` on its
+ * `:::` line (`markdownItContainer.ts`), but the container node has no slot for
+ * one, so a container written with one stays a source block (`blocks.ts`).
+ */
+export const CONTAINER_ATTRS_REFUSAL = 'A container\'s {…} is not edited here: the preview gives a literal on its ::: line to the container, but the editor has no place for it — a container written with one is a source block, edited as Markdown. Its classes here are its name and info (Change name/info).';
 
 /** Why an admonition is given no literal: the plugin hands it to the title bar. */
 export const ADMONITION_ATTRS_REFUSAL = 'An admonition takes no {…}: markdown-it-attrs gives a literal on its !!! line to the title bar, not to the box. Its class is its type (Change type).';

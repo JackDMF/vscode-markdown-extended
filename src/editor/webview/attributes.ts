@@ -26,7 +26,7 @@
  *
  * | Block | Why |
  * | --- | --- |
- * | Container | markdown-it-attrs takes a literal off the `:::` line, and the container's renderer drops it |
+ * | Container | the preview draws a literal on the `:::` line, but the container node has no slot for it: one written so is a source block |
  * | Admonition | the plugin gives a literal on the `!!!` line to the title bar, not the box |
  * | Quote ending in a list, code or a quote | a `> {…}` line under it goes to that block, not the quote |
  * | List item not starting with a paragraph that ends in text | there is no line end to put it at |

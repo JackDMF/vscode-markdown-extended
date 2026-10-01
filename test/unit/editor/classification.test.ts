@@ -218,6 +218,31 @@ suite('Editor block classification (constructs.md)', () => {
     });
 });
 
+/**
+ * A container written with a `{…}` on its `:::` line: the preview draws the
+ * literal on the container's `div` (qjebbs/vscode-markdown-extended#126), the
+ * container node has no slot for it, so the block is a source block saying so.
+ */
+suite('Editor block classification: a container with attributes', () => {
+    const reason = 'container attributes on its ::: line, which the container node does not keep';
+
+    for (const [where, text] of [
+        ['at top level', '::: note {#id .c}\nInside.\n:::\n'],
+        ['alone on the line', '::: { .admonition .note }\nInside.\n:::\n'],
+        ['nested in a container', ':::: outer\n::: inner {.c}\nInside.\n:::\n::::\n'],
+    ]) {
+        test(`${where} is a source block: ${reason}`, () => {
+            const grouped = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text)).blocks;
+            assert.deepStrictEqual(grouped.map(b => [b.kind, b.reason]), [['raw', reason]]);
+        });
+    }
+
+    test('one without stays a container node', () => {
+        const text = '::: note c\nInside.\n:::\n';
+        assert.strictEqual(topChildren(parseDocument(hostEngine(), text).doc)[0].type.name, 'container');
+    });
+});
+
 /** constructs.md's raw blocks: each one's first line and the reason `blocks.ts` gives. */
 const CONSTRUCTS_RAW: [string, string][] = [
     ['[[toc]]', 'toc_open'],
