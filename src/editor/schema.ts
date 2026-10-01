@@ -1,6 +1,7 @@
 import { DOMOutputSpec, DOMParser, Fragment, Mark, Node, NodeSpec, Schema, TagParseRule } from 'prosemirror-model';
 import { tableNodes } from 'prosemirror-tables';
 import { ADMONITION_TYPES, NOTE_SYNTAX } from '../syntax/markers';
+import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { domAttrsOf } from './attrs';
 
 /**
@@ -74,9 +75,13 @@ function withSuffix(node: Node, own: Record<string, string | null> = {}): Record
     return { ...domAttrsOf(node.attrs.attrsSuffix as string | null), ...own };
 }
 
-/** The class a container is drawn with: `markdownItContainer.ts` puts the whole info, trimmed, in its `class`. */
+/**
+ * The class a container is drawn with: `markdownItContainer.ts` puts the whole
+ * info, trimmed, in its `class`, less a brace of the text's own it ends with
+ * (`withoutTextBraceEnd`: `::: note {a = b}` is `class="note"`).
+ */
 export function containerClass(name: string, info: string): string {
-    return `${name}${info}`.trim();
+    return withoutTextBraceEnd(`${name}${info}`);
 }
 
 /**

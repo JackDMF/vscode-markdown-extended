@@ -14,8 +14,6 @@ export {
     INJECTION_META_KEY,
     MAX_WRAPPER_DEPTH,
     detectEol,
-    findAttrsSuffix,
-    findEndLiteral,
     groupSourceBlocks,
     injectionMarkOf,
     isBlankLine,
@@ -24,7 +22,7 @@ export {
 } from './blocks';
 export type { AttrsPlacement, BlockAttrs, BlockKind, GroupedBlocks, InjectedKind, InjectionMark, SourceBlock, SourceLine } from './blocks';
 export { EDITABLE_TOP_NODES, SOURCE_NODES, SUFFIX_NODES, WRAPPER_NODES, editorSchema } from './schema';
-export { domAttrsOf, normalizedLiteral, parseAttrsLiteral } from './attrs';
+export { domAttrsOf, endLiteralOf, normalizedLiteral, parseAttrsLiteral } from './attrs';
 export type { EditorSchema } from './schema';
 export { blockLineRanges, parseDocument, parsedDocumentFromJSON, parsedDocumentToJSON } from './parse';
 export type { ParsedDocument, ParsedDocumentJSON } from './parse';

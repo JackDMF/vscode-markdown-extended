@@ -574,8 +574,9 @@ gives the quote its attributes, and the field's label says which block it is.
 
 Where no literal can go the entry is disabled and says why — in its tooltip, and on its
 preview card, where the eye already is — rather than writing one the file would not keep:
-a container (markdown-it-attrs takes a literal off the `:::` line and the container's
-renderer drops it; its classes are its name and info), an admonition (the plugin gives a
+a container (the preview draws a literal on its `:::` line, but the container node has no
+slot for one, so a container written with one is a source block; its classes are its name
+and info), an admonition (the plugin gives a
 literal on the `!!!` line to the title bar), a quote ending in another block, a list item
 not starting with a paragraph that ends in text, a requirement heading (its anchor is Req
 Explorer's), an indented code block (no opening line), a source block, the front matter,

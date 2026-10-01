@@ -451,7 +451,7 @@ are typing on, and never moves the page.
 | Span (`[text]{…}`) | while the caret is in its text, after a moment | **Edit attributes** · **Remove attributes, keep text** |
 | Image | when you click it, after a moment | **Edit image…** (its alt text, then its path) · **Open file** · **Remove image** |
 | Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Attributes…** (disabled: the plugin gives a `{…}` to the title bar) · **Remove admonition, keep content** |
-| Container | while the caret is in it, after a moment | **Change name/info** · **Attributes…** (disabled: the container's renderer drops a `{…}`) · **Remove container, keep content** |
+| Container | while the caret is in it, after a moment | **Change name/info** · **Attributes…** (disabled: the editor keeps no `{…}` on a `:::` line; a container written with one is a source block) · **Remove container, keep content** |
 | A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Attributes…** (`{}` or empty removes them) |
 | Table | while the caret is in it, after a moment; the caret's column is tinted | **Row** (insert above, insert below, delete) · **Column** (insert left, insert right, delete) · **Align** (left, center, right; the current one marked) · **Attributes…** · **Edit source** · **Delete table** |
 | Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
