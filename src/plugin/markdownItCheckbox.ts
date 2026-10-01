@@ -76,8 +76,8 @@ function findBox(children: Token[], from: number, to: number): [number, RegExpEx
         const before = at === from ? '' : children[at - 1].content.slice(-1);
         if (match[1] || at === from || /\s/.test(before)) { return [at, match]; }
         // A box right after an escape (`\*[x] a`) is no box; one later in the
-        // same token still is.
-        const later = /\s\[(x|\s|_|-)\]\s/i.exec(token.content);
+        // same token still is. Same groups as BOX, so the caller reads both alike.
+        const later = /(\s)\[(x|\s|_|-)\]\s/i.exec(token.content);
         if (later) { return [at, later]; }
     }
     return undefined;

@@ -61,6 +61,11 @@ suite('MarkdownItCheckbox', () => {
         assert.strictEqual(render(md, '\\[ \\] a\n'), '<p>[ ] a</p>\n');
     });
 
+    test('a box right after an escape or an entity is text, and a later box in the same text still is one', () => {
+        assert.strictEqual(render(md, '&amp;[ ] a [x] b\n'), `<p>&amp;[ ] a ${box('b', true)}</p>\n`);
+        assert.strictEqual(render(md, 'x \\*[x] a [ ] b\n'), `<p>x *[x] a ${box('b')}</p>\n`);
+    });
+
     test('a box needs the start of the text or whitespace before it', () => {
         assert.strictEqual(render(md, 'ends foo[x]\n'), '<p>ends foo[x]</p>\n');
         assert.strictEqual(render(md, 'a[i] x[x] y\n'), '<p>a[i] x[x] y</p>\n');
