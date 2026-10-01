@@ -4,6 +4,7 @@ import { MarkdownItAnchorLink } from './markdownItAnchorLink';
 import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { MarkdownItAttrs } from './markdownItAttrs';
+import { MarkdownItTableOfContents } from './markdownItTableOfContents';
 import { Config } from '../services/common/config';
 // eslint-disable-next-line @typescript-eslint/naming-convention
 import * as MarkdownItSidenote from './markdownItSidenote';
@@ -23,7 +24,6 @@ import { full as markdownItEmoji } from 'markdown-it-emoji';
 import markdownItMultimdTable from 'markdown-it-multimd-table';
 import markdownItHtml5Embed from 'markdown-it-html5-embed';
 import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
-import markdownItTableOfContents from 'markdown-it-table-of-contents';
 import markdownItCjkFriendly from 'markdown-it-cjk-friendly';
 
 interface MarkdownItPlugin {
@@ -54,7 +54,8 @@ const myPlugins: Record<string, any> = {
     'markdown-it-multimd-table': markdownItMultimdTable,
     'markdown-it-html5-embed': markdownItHtml5Embed,
     'markdown-it-bracketed-spans': markdownItBracketedSpans,
-    'markdown-it-table-of-contents': markdownItTableOfContents,
+    // Wrapped: links each heading by the id the preview gives it, and reads `@[toc]`.
+    'markdown-it-table-of-contents': MarkdownItTableOfContents,
     'markdown-it-cjk-friendly': markdownItCjkFriendly,
 }
 

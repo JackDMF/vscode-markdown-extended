@@ -1037,10 +1037,11 @@ command of `vscode.markdown-language-features` opens a document at a fragment fo
 extension (its `openDocumentLink` is internal), so its rule is ported — trimmed, lower-cased,
 `githubSlugReplaceRegex` removed, each white-space character a hyphen, a repeated slug
 `-1`, `-2`, … — and the regex is generated from the language server's bundle into
-`host/githubSlugRegex.ts`. It is github-slugger's table, a snapshot of one Unicode version
+`src/syntax/githubSlugRegex.ts` (the rule itself is `src/syntax/headingSlug.ts`, which the preview's table of contents
+links with too). It is github-slugger's table, a snapshot of one Unicode version
 (it strips `²` and letters newer than that version), so no `\p{…}` property escape
-reproduces it; `host.test.ts` compares it with the regex the test host's VS Code ships and
-fails when they part. Headings are read with the editor's engine, so `markdown-it-attrs`
+reproduces it; `host.test.ts` compares it with the regex the test host's VS Code ships, in
+the language server's bundle and in the preview's (`extension.js`), and fails when they part. Headings are read with the editor's engine, so `markdown-it-attrs`
 has put a `{#id}` into the heading's `id` and taken it out of the slugged text.
 
 The file then opens with `vscode.open` and `{ selection }`, in whichever editor VS Code

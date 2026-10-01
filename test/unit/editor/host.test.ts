@@ -15,7 +15,7 @@ import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
 import { SessionHost, SessionWebview, VisualEditorSession, revealInVisualEditor } from '../../../src/editor/host/session';
 import { fillDestination } from '../../../src/editor/host/images';
 import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
-import { GITHUB_SLUG_REPLACE } from '../../../src/editor/host/githubSlugRegex';
+import { GITHUB_SLUG_REPLACE } from '../../../src/syntax/githubSlugRegex';
 import { blockLineRanges } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { ActiveVisualEditor, ActiveVisualEditorTracker, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
@@ -864,8 +864,24 @@ suite('Editor host: a link lands on the element its fragment names', () => {
         const start = src.indexOf(key);
         assert.ok(start >= 0, 'the built-in names its slug regex githubSlugReplaceRegex');
         const shipped = src.slice(start + key.length, src.indexOf('/g;', start));
-        assert.strictEqual(GITHUB_SLUG_REPLACE.source, shipped, 'regenerate src/editor/host/githubSlugRegex.ts from this VS Code');
+        assert.strictEqual(GITHUB_SLUG_REPLACE.source, shipped, 'regenerate src/syntax/githubSlugRegex.ts from this VS Code');
         assert.strictEqual(githubSlug('  Second Heading, with `code` & punctuation!  '), 'second-heading-with-code--punctuation');
+    });
+
+    test('the slug rule is the one the preview of this VS Code gives its headings ids with', function () {
+        const bundle = path.join(vscode.env.appRoot, 'extensions', 'markdown-language-features', 'dist', 'extension.js');
+        if (!fs.existsSync(bundle)) {
+            this.skip();
+        }
+        const src = fs.readFileSync(bundle, 'utf8');
+        // Minified: `fromHeading(e){let t=e.trim().toLowerCase().replace(RRe,"").replace(/\s/g,"-")`, the regex bound as `RRe=/…/g,`.
+        const rule = /fromHeading\((\w+)\)\{let \w+=\1\.trim\(\)\.toLowerCase\(\)\.replace\(([\w$]+),""\)\.replace\(\/\\s\/g,"-"\)/.exec(src);
+        assert.ok(rule, 'the preview\'s slugifier trims, lower-cases, strips one regex and hyphenates white space');
+        const binding = new RegExp(`[^\\w$]${rule[2].replace(/\$/g, '\\$')}=/`).exec(src);
+        assert.ok(binding, `the preview binds its slug regex to ${rule[2]}`);
+        const start = binding.index + binding[0].length;
+        const shipped = src.slice(start, src.indexOf('/g,', start));
+        assert.strictEqual(GITHUB_SLUG_REPLACE.source, shipped, 'regenerate src/syntax/githubSlugRegex.ts from this VS Code');
     });
 
     test('a {#id} heading, a slugged heading, a repeated slug, a line fragment; an id wins over a slug; a missing one is none', async () => {
