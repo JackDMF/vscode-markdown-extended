@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { toggleFormat } from '../services/helpers/toggleFormat';
+import { BLOCK_TOGGLE_ARGS } from './blockToggleArgs';
 import { CommandConfig, Commands } from './commands';
 import { inlineToggleArgs } from './inlineToggleArgs';
 
@@ -12,42 +13,10 @@ const togglers: CommandConfig[] = [
     { commandId: "markdownExtended.toggleSubscript", worker: toggle, args: inlineToggleArgs('subscript', true) },
     { commandId: "markdownExtended.toggleStrikethrough", worker: toggle, args: inlineToggleArgs('strikethrough') },
     { commandId: "markdownExtended.toggleCodeInline", worker: toggle, args: inlineToggleArgs('codeInline') },
-    {
-        commandId: "markdownExtended.toggleCodeBlock",
-        worker: toggle,
-        args: [
-            /^```\r?\n[\S\s]+\r?\n```\s*$/ig, true,
-            /((?:\S|\s)+)/ig, "```\n$1\n```",
-            /^```\r?\n([\S\s]+)\r?\n```\s*$/ig, "$1",
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleUList",
-        worker: toggle,
-        args: [
-            /((^|\n)-\s+(.+)\s*(?=$|\n))+/ig, true,
-            /(^|\n)\s*(.+?)\s*(?=$|\n)/ig, "$1- $2",
-            /(^|\n)-\s+(.+)\s*(?=$|\n)/ig, "$1$2",
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleOList",
-        worker: toggle,
-        args: [
-            /((^|\n)(?:\d+\.)\s+(.+)\s*(?=$|\n))+/ig, true,
-            /(^|\n)\s*(.+?)\s*(?=$|\n)/ig, "$11. $2",
-            /(^|\n)(?:\d+\.)\s+(.+)\s*(?=$|\n)/ig, "$1$2",
-        ]
-    },
-    {
-        commandId: "markdownExtended.toggleBlockQuote",
-        worker: toggle,
-        args: [
-            /((^|\n)>[^\S\n]*(.*?)[^\S\n]*(?=$|\n))+/ig, true,
-            /(^|\n)[^\S\n]*(.*?)[^\S\n]*(?=$|\n)/ig, "$1> $2",
-            /(^|\n)>[^\S\n]+(.*?)[^\S\n]*(?=$|\n)/ig, "$1$2",
-        ]
-    },
+    { commandId: "markdownExtended.toggleCodeBlock", worker: toggle, args: BLOCK_TOGGLE_ARGS.codeBlock },
+    { commandId: "markdownExtended.toggleUList", worker: toggle, args: BLOCK_TOGGLE_ARGS.uList },
+    { commandId: "markdownExtended.toggleOList", worker: toggle, args: BLOCK_TOGGLE_ARGS.oList },
+    { commandId: "markdownExtended.toggleBlockQuote", worker: toggle, args: BLOCK_TOGGLE_ARGS.blockQuote },
 ]
 
 export const commandToggles = new Commands(togglers);
@@ -62,4 +31,4 @@ function toggle(
         vscode.window.activeTextEditor,
         detect, on, onReplace, off, offReplace, multiLine
     );
-}
+}
