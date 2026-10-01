@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
-import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
+import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, SIDEBAR_STAND_INS, SIDEBAR_STAND_IN_RE, SidebarMarker, resolveSidebarMarkers, sidebarCanClose } from '../syntax/markers';
 import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
@@ -61,10 +61,11 @@ function breakMarkerRuns(text: string, ch: string | undefined, replace: (ch: str
 /**
  * The parts of a note whose text needs more than CommonMark escaping, because
  * `markdownItSidenote.ts` finds their ends in the raw source, before any
- * backslash escape is read: a reference ends at the first `|`, a left
- * sidebar at the next `$`, a right one at the next `@`. Those characters are
- * written as numeric character references there, which the inline parser of
- * the part turns back into the character. A note ends at its marker pair,
+ * backslash escape is read: a reference ends at the first `|`. That character
+ * is written as a numeric character reference there, which the inline parser
+ * of the part turns back into the character. A sidebar's end is found by the
+ * inline parser, which reads a backslash escape, so its text needs none of
+ * this (`resolveSidebarMarkers`). A note ends at its marker pair,
  * which the escape of `ESCAPE_EXTRA` breaks up in text (`\+\+`); in a link's
  * destination and title, which take no backslash escape, a run of the marker
  * character is percent-encoded or a character reference (`breakMarkerRuns`),
@@ -78,9 +79,32 @@ type NotePart = 'ref' | 'body' | 'left' | 'right';
 const PART_TERMINATORS: Readonly<Record<NotePart, { escaped: RegExp; raw: string; entity: string } | null>> = {
     ref: { escaped: /\|/g, raw: '|', entity: '&#124;' },
     body: null,
-    left: { escaped: /\\\$/g, raw: '$', entity: '&#36;' },
-    right: { escaped: /\\@/g, raw: '@', entity: '&#64;' },
+    left: null,
+    right: null,
 };
+
+/** The marker character of a sidebar part. */
+const SIDEBAR_MARKER_OF_PART: Readonly<Partial<Record<NotePart, SidebarMarker>>> = {
+    left: NOTE_SYNTAX.leftSidebar.marker,
+    right: NOTE_SYNTAX.rightSidebar.marker,
+};
+
+/** The wrapper's hold markers, which stand between a sidebar marker and what the plugin reads beside it. */
+const HOLD_CHARACTERS = HOLD_OPEN + HOLD_CLOSE;
+
+/**
+ * `text` with each `$` and `@` as its text stand-in (`SIDEBAR_STAND_INS`), so
+ * that `resolveSidebarMarkers` escapes the ones the sidebar rule would read.
+ */
+function sidebarStandIns(text: string): string {
+    return text.replace(/[$@]/g, ch => SIDEBAR_STAND_INS.text[ch as SidebarMarker]);
+}
+
+/** Whether `text`, written bare, holds a `marker` the sidebar rule could take as its closing one. */
+function closesSidebar(text: string, marker: SidebarMarker): boolean {
+    const chars = Array.from(text);
+    return chars.some((ch, i) => ch === marker && (i + 1 >= chars.length || sidebarCanClose(chars[i + 1])));
+}
 
 function internals(state: MarkdownSerializerState): StateInternals {
     return state as unknown as StateInternals;
@@ -93,12 +117,14 @@ function internals(state: MarkdownSerializerState): StateInternals {
 /**
  * What prosemirror-markdown's CommonMark escaping does not cover and this
  * engine would otherwise read as syntax: an HTML tag or entity (`html: true`),
- * `==mark==`, `^sup^`, `++sidenote++`, `!!marginal note!!`, the sidebars'
- * `$`/`@` (the sidebar rule pairs any two in a paragraph) and an emoji
+ * `==mark==`, `^sup^`, `++sidenote++`, `!!marginal note!!` and an emoji
  * shortcode. Each gets a CommonMark backslash escape, which every rule
- * respects because the escape is consumed before they see the character.
+ * respects because the escape is consumed before they see the character. The
+ * sidebars' `$` and `@` are not here: whether one is a marker depends on the
+ * text around it, so they are escaped once the whole textblock is written
+ * (`resolveSidebarMarkers`), and only where the sidebar rule would read them.
  */
-const ESCAPE_EXTRA = /<(?=[A-Za-z/!?])|&(?=#?[0-9A-Za-z]+;)|=(?==)|(?<==)=|\+(?=\+)|(?<=\+)\+|!(?=!)|(?<=!)!|[$@^]|:(?=[A-Za-z_+-][\w+-]*:)/g;
+const ESCAPE_EXTRA = /<(?=[A-Za-z/!?])|&(?=#?[0-9A-Za-z]+;)|=(?==)|(?<==)=|\+(?=\+)|(?<=\+)\+|!(?=!)|(?<=!)!|\^|:(?=[A-Za-z_+-][\w+-]*:)/g;
 
 // ---------------------------------------------------------------------------
 // Marks
@@ -218,9 +244,13 @@ function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, inde
     // Bare and angle forms are written unescaped, which a note part cannot
     // take when the URL holds its terminator or the note's marker character,
     // nor a table cell when it holds a `|` or a backtick.
+    // In a sidebar, a bare URL holding a marker that could close it is no URL
+    // to the sidebar rule, which looks for its end before linkify runs.
     const spelled = (node.text ?? '') + (mark.attrs.href as string);
+    const sidebarMarker = part === undefined ? undefined : SIDEBAR_MARKER_OF_PART[part];
     if (markup === null || !node.isText || mark.attrs.title || (part !== undefined && PART_TERMINATORS[part] !== null)
-        || (noteMarker !== undefined && spelled.includes(noteMarker)) || (inTableCell && /[|`]/.test(spelled))) {
+        || (noteMarker !== undefined && spelled.includes(noteMarker)) || (inTableCell && /[|`]/.test(spelled))
+        || (sidebarMarker !== undefined && closesSidebar(node.text ?? '', sidebarMarker))) {
         return 'inline';
     }
     if (node.marks[node.marks.length - 1] !== mark) {
@@ -338,19 +368,25 @@ type NodeSerializers = ConstructorParameters<typeof MarkdownSerializer>[0];
 /** The inline node serializers, shared by the block serializer and the inline-only one. */
 const inlineNodes: NodeSerializers = {
     text(state, node) {
-        const text = (node.text ?? '').replace(HOLD_RE, '');
+        const text = (node.text ?? '').replace(HOLD_RE, '').replace(SIDEBAR_STAND_IN_RE, '');
         const st = internals(state);
-        if (st.notePart === undefined || st.inAutolink) {
-            state.text(text, !st.inAutolink);
+        if (st.inAutolink) {
+            state.text(text, false);
+            return;
+        }
+        if (st.notePart === undefined) {
+            state.text(sidebarStandIns(text), true);
             return;
         }
         // Never at a line start: the note's opening marker is before it.
-        state.text(partText(st.notePart, state.esc(text, false)), false);
+        state.text(partText(st.notePart, state.esc(sidebarStandIns(text), false)), false);
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
         const st = internals(state);
-        state.write(HOLD_OPEN + '![' + partText(st.notePart, state.esc(alt ?? '')) + '](' + target(st, src, title) + ')' + HOLD_CLOSE);
+        // The alt text is read as inline Markdown of its own, sidebars included.
+        const altText = resolveSidebarMarkers(state.esc(sidebarStandIns((alt ?? '').replace(SIDEBAR_STAND_IN_RE, ''))));
+        state.write(HOLD_OPEN + '![' + partText(st.notePart, altText) + '](' + target(st, src, title) + ')' + HOLD_CLOSE);
     },
     hard_break(state, node, parent, index) {
         // As prosemirror-markdown does: a trailing hard break has no line to break to.
@@ -404,11 +440,13 @@ const MARKER_GUARD = HOLD_OPEN + HOLD_CLOSE;
  */
 export const RAW_TEXT_MARKS: ReadonlySet<string> = new Set(['code', 'sup', 'sub']);
 
-/** The terminator each note part must not hold raw (`PART_TERMINATORS`), by the node holding the part's text. */
+/**
+ * The terminator each note part must not hold raw (`PART_TERMINATORS`), by the
+ * node holding the part's text. A sidebar has none: its end is found by the
+ * inline parser, which skips code, superscript and subscript whole.
+ */
 const TERMINATOR_OF_PART: Readonly<Record<string, string>> = {
     note_ref: PART_TERMINATORS.ref?.raw ?? '|',
-    left_sidebar: PART_TERMINATORS.left?.raw ?? '$',
-    right_sidebar: PART_TERMINATORS.right?.raw ?? '@',
 };
 
 /** Why `note` cannot be written so that it reads back as itself, or `null`. */
@@ -544,14 +582,16 @@ function writeNote(state: MarkdownSerializerState, node: Node, marker: string): 
 }
 
 /**
- * `$body$` or `@body@`: the body a part whose marker is a character reference
- * inside it. The spaces the corpus writes inside the markers (`$ … $`) are the
- * body's own text and are written as they are read, so `$x$` stays `$x$`.
+ * `$body$` or `@body@`: the body a part, the markers stand-ins until the
+ * textblock is written (`resolveSidebarMarkers`), which escapes a marker
+ * character of the body only where the sidebar rule would read it. The spaces
+ * the corpus writes inside the markers (`$ … $`) are the body's own text and
+ * are written as they are read, so `$x$` stays `$x$`.
  */
-function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string, part: NotePart): void {
-    state.text(marker, false);
+function writeSidebar(state: MarkdownSerializerState, node: Node, marker: SidebarMarker, part: NotePart): void {
+    state.text(SIDEBAR_STAND_INS.marker[marker], false);
     renderPart(state, node, part);
-    state.text(marker, false);
+    state.text(SIDEBAR_STAND_INS.marker[marker], false);
 }
 
 /**
@@ -631,7 +671,7 @@ const READS_AS_DELIMITER = /^:?(?:-+|=+):?\+?$/;
 /** One cell's inline content as the tidy form writes it (see above), unpadded. */
 export function tableCellMarkdown(cell: Node): string {
     const paragraph = editorSchema.nodes.paragraph.create(null, cell.content);
-    const written = inlineInCell.serialize(editorSchema.topNodeType.create(null, [paragraph]))
+    const written = resolveSidebarMarkers(inlineInCell.serialize(editorSchema.topNodeType.create(null, [paragraph])), HOLD_CHARACTERS)
         .replace(BACKSLASH_BEFORE_CODE, '&#92;')
         .replace(HOLD_RE, '')
         .replace(/\r?\n/g, ' ')
@@ -719,7 +759,7 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
 function inlineMarkdown(node: Node, fromBlockStart: boolean): string {
     const paragraph = editorSchema.nodes.paragraph.create(null, node.content);
     const doc = editorSchema.topNodeType.create(null, [paragraph]);
-    return (fromBlockStart ? inlineAtStart : inlineMidLine).serialize(doc);
+    return resolveSidebarMarkers((fromBlockStart ? inlineAtStart : inlineMidLine).serialize(doc), HOLD_CHARACTERS);
 }
 
 function blockSerializer(options: SerializeOptions): MarkdownSerializer {

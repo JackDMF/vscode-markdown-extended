@@ -2,6 +2,8 @@ import * as assert from 'assert';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import MarkdownIt = require('markdown-it');
 import sidenotePlugin from '../../../src/plugin/markdownItSidenote';
+import { plugins } from '../../../src/plugin/plugins';
+import * as vscode from 'vscode';
 
 suite('MarkdownItSidenote Plugin Tests', () => {
     let md: MarkdownIt.MarkdownIt;
@@ -169,5 +171,76 @@ suite('MarkdownItSidenote Plugin Tests', () => {
             const result = md.render('++ref with <>&"|special chars++');
             assert.ok(typeof result === 'string', 'Should handle special characters');
         });
+    });
+});
+
+// The preview's own registry, in its order, as the preview composes it.
+function preview(options: MarkdownIt.Options = {}): MarkdownIt.MarkdownIt {
+    const md = new MarkdownIt({ html: true, linkify: true, ...options });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    plugins.forEach(p => md.use(p.plugin as any, ...p.args));
+    return md;
+}
+
+/** The sidebars `html` holds, as `left:…`/`right:…` with their inner HTML. */
+function sidebars(html: string): string[] {
+    return [...html.matchAll(/<span class="(left|right)-sidebar">(.*?)<\/span>/g)].map(([, side, inner]) => `${side}:${inner}`);
+}
+
+suite('Sidebars: the closing marker is found by the inline parser, and markers flank', () => {
+    const md = preview();
+    const inline = (text: string) => md.renderInline(text);
+
+    test('an email address and code holding an @ make no right sidebar (the defect: a<span>b.c and `</span>x`)', () => {
+        assert.strictEqual(inline('mail a@b.c and `@x`'), 'mail a@b.c and <code>@x</code>');
+        assert.strictEqual(inline('mail me@example.com and `@x`'), 'mail <a href="mailto:me@example.com">me@example.com</a> and <code>@x</code>');
+    });
+
+    test('a marker after a letter or digit opens nothing, one before a letter or digit closes nothing', () => {
+        for (const text of ['costs $5 and $10', 'user@host and more@', 'a@b.c', 'US$5 or US$6', 'write to @{name} later', 'a@b@ c']) {
+            assert.deepStrictEqual(sidebars(inline(text)), [], text);
+        }
+    });
+
+    test('the sidebars the corpus writes still are sidebars', () => {
+        assert.deepStrictEqual(sidebars(inline('Text $sidebar content$ more @right@ end')), ['left:sidebar content', 'right:right']);
+        assert.deepStrictEqual(sidebars(inline('$ left body $ and @ right body @.')), ['left: left body ', 'right: right body ']);
+        assert.deepStrictEqual(sidebars(inline('WIR SIND SOLDATEN @(3 Min.)@')), ['right:(3 Min.)']);
+        assert.deepStrictEqual(sidebars(inline('$left$$left2$@right@@right2@')), ['left:left', 'left:left2', 'right:right', 'right:right2']);
+        assert.deepStrictEqual(sidebars(inline('a $costs $5$ b')), ['left:costs $5'], 'a $ that cannot close is the text of one');
+    });
+
+    test('a marker inside code, an autolink, inline HTML, a link or after a backslash does not close the sidebar', () => {
+        assert.deepStrictEqual(sidebars(inline('$a `b$` c$')), ['left:a <code>b$</code> c']);
+        assert.deepStrictEqual(sidebars(inline('@see <https://x.org/@a> now@')), ['right:see <a href="https://x.org/@a">https://x.org/@a</a> now']);
+        assert.deepStrictEqual(sidebars(inline('@a <abbr title="@">b</abbr> c@')), ['right:a <abbr title="@">b</abbr> c']);
+        assert.deepStrictEqual(sidebars(inline('@a [l](https://x.org/@) b@')), ['right:a <a href="https://x.org/@">l</a> b']);
+        assert.deepStrictEqual(sidebars(inline('@a \\@ b@')), ['right:a @ b']);
+        assert.deepStrictEqual(sidebars(inline('$a &#36; b$')), ['left:a $ b']);
+    });
+
+    test('a sidebar of the other kind inside one is read whole', () => {
+        assert.deepStrictEqual(sidebars(inline('@see $x@y$ z@')), ['right:see <span class="left-sidebar">x@y']);
+        assert.ok(inline('@see $x@y$ z@').includes('<span class="left-sidebar">x@y</span> z</span>'));
+    });
+
+    test('a sidebar in a link\'s text is the link\'s own; one cannot reach into a link', () => {
+        assert.strictEqual(inline('[a $b$ c](u) and $x [y$](z)'), '<a href="u">a <span class="left-sidebar">b</span> c</a> and $x <a href="z">y$</a>');
+    });
+
+    test('VS Code\'s math extension claims every $ before the sidebar rule sees it; @ sidebars and email addresses are unaffected', async function () {
+        const math = vscode.extensions.getExtension('vscode.markdown-math');
+        if (math === undefined) {
+            this.skip();
+        }
+        const exported = (await math.activate()) as { extendMarkdownIt?: (md: MarkdownIt.MarkdownIt) => MarkdownIt.MarkdownIt };
+        if (!vscode.workspace.getConfiguration('markdown').get<boolean>('math.enabled', true) || exported?.extendMarkdownIt === undefined) {
+            this.skip();
+        }
+        const withMath = exported.extendMarkdownIt(preview());
+        const html = withMath.renderInline('$x$ and $ left $ and @right@, mail a@b.c and `@x`');
+        assert.strictEqual(html.match(/<annotation encoding="application\/x-tex">/g)?.length, 2, `$x$ and $ left $ are formulas: ${html}`);
+        assert.deepStrictEqual(sidebars(html), ['right:right'], 'no left sidebar');
+        assert.ok(html.endsWith(', mail a@b.c and <code>@x</code>'), html);
     });
 });

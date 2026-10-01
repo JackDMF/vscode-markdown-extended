@@ -200,10 +200,43 @@ suite('Editor inline constructs: written back by rule', () => {
         assert.strictEqual(assertRoundTrip([t('see '), marginal([t('there', link)], [t('b')]), t(' '), t('next', link)]), 'see !![there](x.md)|b!! [next](x.md)\n');
     });
 
-    test('a $ in a left sidebar and an @ in a right one are character references; elsewhere they stay escaped', () => {
-        const left = schema.nodes.left_sidebar.create(null, [t('costs $5')]);
-        const right = schema.nodes.right_sidebar.create(null, [t(' mail a@b.c ')]);
-        assert.strictEqual(assertRoundTrip([left, t(' and '), right, t(' $ @')]), '$costs &#36;5$ and @ mail a&#64;b.c @ \\$ \\@\n');
+    test('a $ or @ in text is escaped only where the sidebar rule would read it as a marker, in a sidebar or not', () => {
+        const left = schema.nodes.left_sidebar.create(null, [t('costs $5 or 5$')]);
+        const right = schema.nodes.right_sidebar.create(null, [t(' mail user@host or me@ now ')]);
+        assert.strictEqual(assertRoundTrip([left, t(' and '), right, t(' $ @')]), '$costs $5 or 5\\$$ and @ mail user@host or me\\@ now @ $ @\n');
+        // Text that would pair: the opener is escaped, the rest cannot open.
+        assert.strictEqual(assertRoundTrip([t('a $b and c$ d, an @x and y@.')]), 'a \\$b and c$ d, an \\@x and y@.\n');
+        // A $ after the opener that cannot close does not need one.
+        assert.strictEqual(assertRoundTrip([t('from $5 to $10 and @{name} or user@host')]), 'from $5 to $10 and @{name} or user@host\n');
+    });
+
+    test('an email address before code holding an @ is text and code, no sidebar, and is written back as it was', () => {
+        const source = 'Mail a@b.c and `@x` or pay $5 for `$y`.\n';
+        assert.strictEqual(shape(topChildren(parseDocument(md, source).doc)[0]),'paragraph("Mail a@b.c and " [code]"@x" " or pay $5 for " [code]"$y" ".")');
+        assert.strictEqual(assertStable(source), source);
+    });
+
+    test('a changed paragraph holding an email address, $5 or @{…} gains no escape; the untouched block beside it stays byte for byte', () => {
+        const source = 'Keep a\\@b.c, \\$5 and \\@{x} as written.\n\nWrite to a@b.c about $5 or @{name}.\n';
+        const parsed = parseDocument(md, source);
+        const [first, second] = topChildren(parsed.doc);
+        const edited = second.type.create({ ...second.attrs, src: null }, second.content.append(schema.nodes.paragraph.create(null, [t(' Now.')]).content));
+        const doc = parsed.doc.type.create(null, [first, edited]);
+        assert.strictEqual(serializeDocument({ ...parsed, doc }, options),
+            'Keep a\\@b.c, \\$5 and \\@{x} as written.\n\nWrite to a@b.c about $5 or @{name}. Now.\n');
+        // With linkify off, as `markdown.preview.linkify` can be, the address is text, and still gains none.
+        assert.strictEqual(written([t('Write to a@b.c about $5 or @{name}.')]), 'Write to a@b.c about $5 or @{name}.\n');
+    });
+
+    test('a sidebar glued to a letter or digit writes that character as a reference, so the markers still flank', () => {
+        const left = schema.nodes.left_sidebar.create(null, [t('y')]);
+        const right = schema.nodes.right_sidebar.create(null, [t('r')]);
+        assert.strictEqual(assertRoundTrip([t('x'), left, t('z and 1'), right, t('2')]), '&#120;$y$&#122; and &#49;@r@&#50;\n');
+    });
+
+    test('code and superscript in a sidebar may hold its marker character: code is skipped whole, superscript takes the escape', () => {
+        const left = schema.nodes.left_sidebar.create(null, [t('see '), t('a$ b', schema.marks.code.create()), t(' and '), t('US$', schema.marks.sup.create())]);
+        assert.strictEqual(assertRoundTrip([t('Price '), left, t('.')]), 'Price $see `a$ b` and ^US\\$^$.\n');
     });
 
     test('a reference with no text is written as &nbsp;, which the plugin accepts, and stays one', () => {
