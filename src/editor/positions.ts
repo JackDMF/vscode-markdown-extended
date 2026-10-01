@@ -46,7 +46,8 @@ import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize
  * `NOTE_SEPARATOR` — read from where the syntax is stated), so the text of one
  * part cannot be matched into another, and a table's line breaks and `|`s
  * (`visitTable`: a cell is a textblock that starts after a `|`, not on a line
- * of its own). The alignment runs in a band around the
+ * of its own). A wiki embed, an atom, is anchored by its source and matches its
+ * last character. The alignment runs in a band around the
  * diagonal (the source is the page text plus delimiters); a block too large for
  * the band's budget is aligned greedily instead and every answer in it is
  * approximate.
@@ -274,6 +275,14 @@ function collectUnits(block: Node): Unit[] {
             for (let k = 0; k < text.length; k++) {
                 units.push({ pos: pos + k, code: text.charCodeAt(k) });
             }
+            return;
+        }
+        if (node.type.name === 'wiki_embed') {
+            // Its source as written anchors it, and the atom matches its last
+            // character, so the position after it is after the whole source.
+            const source = node.attrs.source as string;
+            anchor(source.slice(0, -1));
+            units.push({ pos, code: source.charCodeAt(source.length - 1) });
             return;
         }
         if (node.isLeaf) {

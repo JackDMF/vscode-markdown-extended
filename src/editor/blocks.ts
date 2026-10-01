@@ -1,5 +1,4 @@
 import { Token } from '../@types/markdown-it';
-import { WIKI_EMBED_META } from '../syntax/markers';
 import { AttrPair, NOTE_SYNTAX_CHARS, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
 
 /**
@@ -253,6 +252,8 @@ export const EDITABLE_INLINE_TOKENS: ReadonlySet<string> = new Set([
     // The extension's inline syntax: `==`, `^`, `~`, `~~`, `[[…]]` …
     'mark_open', 'mark_close', 'sup_open', 'sup_close', 'sub_open', 'sub_close',
     's_open', 's_close', 'kbd_open', 'kbd_close',
+    // A wiki embed, `![[…]]` (`markdownItWikiEmbed.ts`): one atom carrying its source.
+    'wiki_embed',
     // … and the note family (`markdownItSidenote.ts`), whose reference and body are inline content.
     'sidenote_open', 'sidenote_ref_open', 'sidenote_ref_close', 'sidenote_content_open', 'sidenote_content_close', 'sidenote_close',
     'marginal_note_open', 'marginal_note_ref_open', 'marginal_note_ref_close',
@@ -521,7 +522,7 @@ function pipeTableNotEditableBecause(tokens: readonly Token[], group: TokenGroup
             }
             case 'inline': {
                 const children = t.children ?? [];
-                const because = inlineNotEditable(t);
+                const because = inlineNotEditable(children);
                 if (because !== null) {
                     return `${because} in a table cell`;
                 }
@@ -613,7 +614,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
         if (inTitle && (t.children ?? []).some(c => injectionMarkOf(c) !== undefined)) {
             return 'injected content in an admonition title';
         }
-        const because = inlineNotEditable(t);
+        const because = inlineNotEditable(t.children ?? []);
         if (because !== null) {
             return inTitle ? `${because} in an admonition title` : because;
         }
@@ -622,14 +623,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
 }
 
 /** Why an inline token's children cannot be edited in place, or `null` when they can. */
-function inlineNotEditable(inline: Token): string | null {
-    // A wiki embed is text by now (`markdownItWikiEmbed.ts`), and text would be
-    // written escaped, which the extension rendering embeds does not read as
-    // one: the block keeps its source, written back as it was.
-    if ((inline.meta as Record<string, unknown> | null | undefined)?.[WIKI_EMBED_META]) {
-        return 'wiki embed ![[…]]';
-    }
-    const children: readonly Token[] = inline.children ?? [];
+function inlineNotEditable(children: readonly Token[]): string | null {
     let noteDepth = 0;
     let spanDepth = 0;
     for (const child of children) {

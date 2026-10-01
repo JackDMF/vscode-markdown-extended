@@ -316,7 +316,7 @@ export function tableSourceTransaction(state: EditorState, pos: number, context:
         return null;
     }
     const own = node.attrs.src as string | null;
-    const src = own ?? `${serializeNode(node, { defaultWrap: context.defaultWrap }).replace(/\n/g, context.eol)}${context.eol}`;
+    const src = own ?? `${serializeNode(node, { defaultWrap: context.defaultWrap, wikiEmbeds: context.wikiEmbeds }).replace(/\n/g, context.eol)}${context.eol}`;
     const tr = state.tr.replaceWith(pos, pos + node.nodeSize, nodes.raw_block.create({ src, gap: node.attrs.gap ?? null, html: '' }));
     tr.setSelection(NodeSelection.create(tr.doc, pos));
     return { tr: tr.setMeta(PRESERVE_SOURCE_META, true).scrollIntoView(), src };

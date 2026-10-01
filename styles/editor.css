@@ -144,6 +144,23 @@ img.mep-pending-range {
 
 .mep-inline-atom { display: inline; }
 
+/*
+ * A wiki embed (`![[…]]`): its source, one unit the editor keeps as written,
+ * set off from the prose as markup another extension (Foam) renders.
+ */
+.mep-wiki-embed {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 0.9em;
+    color: var(--vscode-textLink-foreground, inherit);
+    background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12));
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+.mep-wiki-embed.ProseMirror-selectednode {
+    outline: 1px solid var(--vscode-focusBorder, #0078d4);
+}
+
 /* ------------------------------------------------------------------------- */
 /* Formatting toolbar, its menus and preview card, and the selection bubble   */
 /* ------------------------------------------------------------------------- */

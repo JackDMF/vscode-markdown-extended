@@ -1,6 +1,7 @@
 import markdownIt from 'markdown-it';
 import frontMatter from 'markdown-it-front-matter';
 import { MarkdownIt } from '../@types/markdown-it';
+import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
 
 /**
  * One entry of a plugin registry, in the shape `src/plugin/plugins.ts` exports
@@ -58,7 +59,9 @@ export function createEditorEngine(options: EditorEngineOptions): MarkdownIt {
         html: true,
         linkify: options.linkify,
         typographer: options.typographer,
-    });
+        // A wiki embed stays a token of its own, edited as one atom (`markdownItWikiEmbed.ts`).
+        [WIKI_EMBED_TOKENS_OPTION]: true,
+    } as Parameters<typeof markdownIt>[0]);
     // The plugin's declarations are written against @types/markdown-it, which is
     // not the declaration this project compiles against; the runtime contract
     // (a plugin taking the instance and a callback) is the same.

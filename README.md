@@ -1153,11 +1153,7 @@ $left sidebar${.my-class}
 
 Renders keyboard shortcuts with proper styling.
 
-**Wiki links and embeds (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key: it is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it. Nothing inside it is read as syntax, and `![[x]](y)` is the embed followed by `(y)`, not an image. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor a paragraph holding an embed is a source block, written back as it was. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one. In a Foam or Obsidian vault, turn keys off to keep wiki links as links, and restart VS Code:
-
-```json
-"markdownExtended.plugins.disabled": "kbd"
-```
+**Wiki embeds and links (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key. It is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it, and nothing inside it is read as syntax: `![[x]](y)` is the embed followed by `(y)`, not an image, and a `{…}` right after it stays text. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor an embed is one unit, drawn as its source and written back exactly as it was. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one.
 
 ### markdown-it-ib
 

@@ -17,6 +17,7 @@ import {
     splitLines,
 } from './blocks';
 import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
+import { readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
 /**
@@ -29,6 +30,8 @@ export interface ParsedDocument {
     eol: '\n' | '\r\n';
     /** The text after the last block (blank lines, the final newline), written back verbatim. */
     tail: string;
+    /** Whether the engine reads wiki embeds, for the serializer (`SerializeOptions.wikiEmbeds`); unknown is `true`. */
+    wikiEmbeds?: boolean;
 }
 
 /** `ParsedDocument` as it crosses to the webview: the tree as ProseMirror JSON. */
@@ -36,14 +39,15 @@ export interface ParsedDocumentJSON {
     doc: Record<string, unknown>;
     eol: '\n' | '\r\n';
     tail: string;
+    wikiEmbeds?: boolean;
 }
 
 export function parsedDocumentToJSON(parsed: ParsedDocument): ParsedDocumentJSON {
-    return { doc: parsed.doc.toJSON() as Record<string, unknown>, eol: parsed.eol, tail: parsed.tail };
+    return { doc: parsed.doc.toJSON() as Record<string, unknown>, eol: parsed.eol, tail: parsed.tail, wikiEmbeds: parsed.wikiEmbeds };
 }
 
 export function parsedDocumentFromJSON(json: ParsedDocumentJSON): ParsedDocument {
-    return { doc: Node.fromJSON(editorSchema, json.doc), eol: json.eol, tail: json.tail };
+    return { doc: Node.fromJSON(editorSchema, json.doc), eol: json.eol, tail: json.tail, wikiEmbeds: json.wikiEmbeds };
 }
 
 /**
@@ -107,7 +111,9 @@ function listIsTight(stream: readonly StreamToken[], index: number): boolean {
 function textOf(tokens: readonly Token[] | null): string {
     let out = '';
     for (const t of tokens ?? []) {
-        if (t.type === 'text' || t.type === 'code_inline') {
+        // A wiki embed in an image's alt text is its text there (`markdownItWikiEmbed.ts`);
+        // an escape is `text_special`, which `text_join` does not join inside an image.
+        if (t.type === 'text' || t.type === 'text_special' || t.type === 'code_inline' || t.type === 'wiki_embed') {
             out += t.content;
         } else if (t.children) {
             out += textOf(t.children);
@@ -457,6 +463,11 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             },
         },
         hardbreak: { node: 'hard_break' },
+        // `![[…]]`: one atom carrying its source as written (`markdownItWikiEmbed.ts`).
+        wiki_embed: {
+            node: 'wiki_embed',
+            getAttrs: tok => ({ source: ((real(tok).meta as { source?: string } | null)?.source) ?? real(tok).content }),
+        },
         em: { mark: 'em', getAttrs: tok => ({ markup: real(tok).markup || '*' }) },
         strong: { mark: 'strong', getAttrs: tok => ({ markup: real(tok).markup || '**' }) },
         link: {
@@ -512,5 +523,5 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     if (opened !== made) {
         throw new Error(`Rich editor: ${opened} notes became ${made} note nodes.`);
     }
-    return { doc, eol: detectEol(text), tail };
+    return { doc, eol: detectEol(text), tail, wikiEmbeds: readsWikiEmbeds(md) };
 }

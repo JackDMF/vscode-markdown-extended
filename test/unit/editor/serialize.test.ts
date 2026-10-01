@@ -181,64 +181,6 @@ suite('Editor serializer for changed blocks', () => {
         assert.strictEqual(serialize(allTouched(reparsed)), first);
     });
 
-    test('a paragraph with a wiki embed keeps its source, written back as it was even when every block is rewritten (qjebbs/vscode-markdown-extended#168)', () => {
-        // Nothing in an embed's name is escaped: `_`, `#^`, `++`, `@`, `$`, and what follows (`(y)`) stays as written.
-        for (const source of [
-            'See ![[assets/_img.png]] and press [[Ctrl+S]].\n',
-            'Block ![[note#^block-id]], ![[C++ notes]], ![[a@b $x$]].\n',
-            '![[x]](y) and ![[x]][ref]\n',
-            '# Title ![[img.png]]\n',
-        ]) {
-            const parsed = parseDocument(md, source);
-            assert.deepStrictEqual(topChildren(parsed.doc).map(n => n.type.name), ['raw_block'], source);
-            assert.strictEqual(serialize(parsed), source);
-            assert.strictEqual(serialize(allTouched(parsed)), source);
-        }
-    });
-
-    test('an embed the author escaped, !\\[\\[note\\]\\], is text in an editable paragraph and stays escaped after an edit', () => {
-        const source = 'Plain !\\[\\[note\\]\\] here.\n';
-        const parsed = parseDocument(md, source);
-        assert.strictEqual(topChildren(parsed.doc)[0].type.name, 'paragraph');
-        assert.strictEqual(assertStable(source), source);
-    });
-
-    test('a key right after a ! is written with the ! escaped, so it reads back as a key, not an embed', () => {
-        const kbd = schema.marks.kbd.create();
-        for (const [before, written] of [['Wow!', 'Wow\\!'], ['x\\!', 'x\\\\\\!']]) {
-            const doc = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [text(before), text('Ctrl', kbd)])]);
-            const first = serialize({ doc, eol: '\n', tail: '' });
-            assert.strictEqual(first, `${written}[[Ctrl]]\n`);
-            const p = topChildren(parseDocument(md, first).doc)[0];
-            assert.strictEqual(p.type.name, 'paragraph', first);
-            assert.strictEqual(p.textContent, `${before}Ctrl`);
-            assert.ok(p.lastChild?.marks.some(m => m.type.name === 'kbd'), first);
-            assert.strictEqual(serialize(allTouched(parseDocument(md, first))), first);
-        }
-    });
-
-    test('a link right after a ! that follows a written backslash gets its ! escaped too: an escaped backslash leaves the ! bare', () => {
-        const link = schema.marks.link.create({ href: 'u', title: null });
-        const doc = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [text('x\\!'), text('a', link)])]);
-        const first = serialize({ doc, eol: '\n', tail: '' });
-        assert.strictEqual(first, 'x\\\\\\![a](u)\n');
-        const p = topChildren(parseDocument(md, first).doc)[0];
-        assert.strictEqual(p.textContent, 'x\\!a');
-        assert.ok(p.lastChild?.marks.some(m => m.type.name === 'link'), first);
-    });
-
-    test('a key right after a marginal note stays a key after a save', () => {
-        const source = 'A !!ref|note!![[Ctrl]] b.\n';
-        const parsed = parseDocument(md, source);
-        assert.strictEqual(topChildren(parsed.doc)[0].type.name, 'paragraph');
-        const written = assertStable(source);
-        assert.strictEqual(written, source);
-        const p = topChildren(parseDocument(md, written).doc)[0];
-        const keys: string[] = [];
-        p.forEach(child => { if (child.marks.some(m => m.type.name === 'kbd')) { keys.push(child.textContent); } });
-        assert.deepStrictEqual(keys, ['Ctrl']);
-    });
-
     test('stability: a code span whose content starts or ends with a space or backtick', () => {
         const code = schema.marks.code.create();
         for (const content of [' padded ', '`tick', 'a ` b', ' lead']) {

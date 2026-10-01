@@ -318,6 +318,21 @@ suite('Editor object toolbar (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
+    test('a wiki embed is one unit drawn as its source: a click selects it, its bar names it, and Remove embed takes it out whole', async function () {
+        this.timeout(15000);
+        await showDocument('An ![[assets/_img.png]] here.\n', 'An');
+        const drawn = await page.$eval('.ProseMirror .mep-wiki-embed', el => ({ text: el.textContent, editable: (el as HTMLElement).contentEditable }));
+        assert.deepStrictEqual(drawn, { text: '![[assets/_img.png]]', editable: 'false' });
+        const box = await (await page.$('.ProseMirror .mep-wiki-embed'))?.boundingBox();
+        assert.ok(box);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForSelector(`${BAR}[data-object="wiki_embed"]`, { timeout: 2000 });
+        assert.deepStrictEqual(await barState(), { object: 'wiki_embed', label: 'Wiki embed', verbs: ['remove-wiki-embed'] });
+        await clickVerb('remove-wiki-embed');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An here.\n');
+    });
+
     test('a source block shows its bar while the pointer is on it, keeps it while the pointer crosses to it, and Delete block removes it', async function () {
         this.timeout(15000);
         await showDocument('Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n', 'Before');

@@ -1,5 +1,5 @@
 import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
-import { WIKI_EMBED_MARKERS, WIKI_EMBED_META } from '../syntax/markers';
+import { WIKI_EMBED_MARKERS, WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
 
 // A wiki embed, `![[path/to/img.png]]`, read as one run of literal text
 // (qjebbs/vscode-markdown-extended#168). markdown-it-kbd read its `[[…]]` as a
@@ -13,59 +13,97 @@ import { WIKI_EMBED_MARKERS, WIKI_EMBED_META } from '../syntax/markers';
 // The name holds no bracket and no line break, as Foam's own rule asks, so
 // `![[x [[Ctrl]] y]]` is no embed: a `!` and a key.
 //
-// The token is turned into plain text just before `text_join`, after the
-// rules that rewrite text (typographer, emoji, linkify) have passed it by, so
-// the embed's name reaches the page, and Foam, exactly as written.
-const RULE = 'wiki_embed';
+// The token's `content` is the embed's text as markdown-it would have read it
+// without this rule — escapes and character references resolved
+// (`![[img.png\|300]]` in a table is `![[img.png|300]]`) — and `meta.source`
+// its source as written. Just before `text_join`, after the rules that rewrite
+// text (typographer, emoji, linkify) have passed it by, the token becomes plain
+// text and joins the text around it, so an extension that renders embeds from
+// text (Foam) finds it. An engine whose options set `WIKI_EMBED_TOKENS_OPTION`
+// (the Visual Editor's) keeps the token, which it edits as one atom. The notes
+// plugin parses a note's parts with the same engine, so a note's embed is kept
+// or joined by the same option.
+//
+// A `{…}` right after an embed stays text: Foam and Obsidian have no
+// attributes on an embed, and markdown-it-attrs would otherwise read it as the
+// paragraph's (`![[x]]{.cls}`). Its `{` is pushed as `text_special`, which
+// attrs does not read and `text_join` makes text again.
+export const WIKI_EMBED_TOKEN = 'wiki_embed';
+
 const OPEN = WIKI_EMBED_MARKERS.open;
 const CLOSE = WIKI_EMBED_MARKERS.close;
+const BRACKET_OPEN = 0x5b;
+const BRACKET_CLOSE = 0x5d;
+const NEWLINE = 0x0a;
+const BRACE_OPEN = 0x7b;
 
-function tokenize(state: StateBase, silent: boolean): boolean {
+type Push = (type: string, tag: string, nesting: number) => Token;
+
+/** markdown-it's `utils`, which the typings leave out. */
+type Utils = { unescapeAll(str: string): string; escapeHtml(str: string): string };
+
+function utils(md: MarkdownIt): Utils {
+    return (md as unknown as { utils: Utils }).utils;
+}
+
+function wikiEmbed(state: StateBase, silent: boolean): boolean {
     const src = state.src;
     const start = state.pos as number;
     const max = state.posMax as number;
     if (!src.startsWith(OPEN, start)) { return false; }
-    const end = src.indexOf(CLOSE, start + OPEN.length);
-    if (end < 0 || end + CLOSE.length > max) { return false; }
-    const name = src.slice(start + OPEN.length, end);
-    if (!name || /[[\]\n]/.test(name)) { return false; }
-    if (!silent) {
-        const push = state.push as (type: string, tag: string, nesting: number) => Token;
-        push.call(state, RULE, '', 0).content = src.slice(start, end + CLOSE.length);
+    // Forward to the first bracket or line break: each attempt stops at the
+    // next `[`, so a line of unclosed `![[a ` is read in linear time.
+    let at = start + OPEN.length;
+    while (at < max) {
+        const code = src.charCodeAt(at);
+        if (code === BRACKET_OPEN || code === NEWLINE) { return false; }
+        if (code === BRACKET_CLOSE) { break; }
+        at++;
     }
-    state.pos = end + CLOSE.length;
+    if (at === start + OPEN.length || at + CLOSE.length > max || !src.startsWith(CLOSE, at)) { return false; }
+    const end = at + CLOSE.length;
+    if (!silent) {
+        const push = state.push as Push;
+        const source = src.slice(start, end);
+        const token = push.call(state, WIKI_EMBED_TOKEN, '', 0);
+        token.content = utils(state.md as MarkdownIt).unescapeAll(source);
+        token.meta = { source };
+        if (end < max && src.charCodeAt(end) === BRACE_OPEN) {
+            const brace = push.call(state, 'text_special', '', 0);
+            brace.content = '{';
+            brace.markup = '{';
+            state.pos = end + 1;
+            return true;
+        }
+    }
+    state.pos = end;
     return true;
 }
 
-function asText(tokens: Token[] | null | undefined): boolean {
-    let found = false;
+function joinAsText(tokens: Token[] | null | undefined): void {
     for (const token of tokens ?? []) {
-        if (token.type === RULE) {
+        if (token.type === WIKI_EMBED_TOKEN) {
             token.type = 'text';
-            found = true;
         }
         // An image's alt text is its children.
-        found = asText(token.children) || found;
+        joinAsText(token.children);
     }
-    return found;
+}
+
+/** Whether `md` reads wiki embeds: this plugin is registered, not disabled. */
+export function readsWikiEmbeds(md: MarkdownIt): boolean {
+    return md.inline.ruler.getRules('').includes(wikiEmbed);
 }
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItWikiEmbed(md: MarkdownIt) {
-    md.inline.ruler.before('image', RULE, tokenize);
-    const toText = (state: StateBase) => {
+    md.inline.ruler.before('image', WIKI_EMBED_TOKEN, wikiEmbed);
+    md.core.ruler.before('text_join', WIKI_EMBED_TOKEN, (state: StateBase) => {
+        if ((md as unknown as { options: Record<string, unknown> }).options[WIKI_EMBED_TOKENS_OPTION]) { return; }
         for (const token of state.tokens) {
-            if (token.type === 'inline' && asText(token.children)) {
-                token.meta = { ...((token.meta as Record<string, unknown> | null) ?? {}), [WIKI_EMBED_META]: true };
-            }
+            if (token.type === 'inline') { joinAsText(token.children); }
         }
-    };
-    try {
-        md.core.ruler.before('text_join', RULE, toText);
-    } catch {
-        // markdown-it before 13 has no `text_join`.
-        md.core.ruler.push(RULE, toText);
-    }
-    // Should a plugin keep the token from reaching the core rule, it is still the text it was.
-    md.renderer.rules[RULE] = (tokens: Token[], idx: number) => md.utils.escapeHtml(tokens[idx].content);
+    });
+    // Where the token is kept, a block rendered as source still shows the text.
+    md.renderer.rules[WIKI_EMBED_TOKEN] = (tokens: Token[], idx: number) => utils(md).escapeHtml(tokens[idx].content);
 }
