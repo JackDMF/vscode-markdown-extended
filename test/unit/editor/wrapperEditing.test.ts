@@ -178,6 +178,25 @@ suite('Editor containers and admonitions: the toolbar, the keys and the object v
         state = apply(state, changeAdmonitionTransaction(state, at, { title: '' }));
         assert.strictEqual(text(state), '!!! warning\n    Body More.\n');
     });
+
+    test('a title written by rule reads back as itself: quotes in it, and the quotes of an unquoted title (qjebbs/vscode-markdown-extended#131)', () => {
+        let state = stateOf('!!! note Say "hi" twice\n    Body.\n');
+        const at = firstOf(state.doc, 'admonition').pos;
+        assert.strictEqual(state.doc.nodeAt(at)?.attrs.title, 'Say "hi" twice', 'the preview\'s title, not a class');
+        state = apply(state, changeAdmonitionTransaction(state, at, { type: 'tip' }));
+        assert.strictEqual(text(state), '!!! tip "Say "hi" twice"\n    Body.\n');
+        assert.strictEqual(stateOf(text(state)).doc.nodeAt(at)?.attrs.title, 'Say "hi" twice');
+        state = apply(state, changeAdmonitionTransaction(state, at, { title: '"Quoted" start' }));
+        assert.strictEqual(stateOf(text(state)).doc.nodeAt(at)?.attrs.title, '"Quoted" start');
+    });
+
+    test('a tab-indented admonition is the box, its body read as the preview reads it, and written back byte for byte (qjebbs/vscode-markdown-extended#110)', () => {
+        const source = '!!! tip "Tabs"\n\tBody.\n\n\tMore.\n';
+        const state = stateOf(source);
+        const box = state.doc.nodeAt(firstOf(state.doc, 'admonition').pos);
+        assert.deepStrictEqual([box?.attrs.title, box?.childCount, box?.child(1).textContent], ['Tabs', 2, 'More.']);
+        assert.strictEqual(text(state), source);
+    });
 });
 
 suite('Editor block attributes: the object and its verb', () => {

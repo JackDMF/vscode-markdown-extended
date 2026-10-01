@@ -43,41 +43,7 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
     if (len < _minMarkerLen) {return false;}
 
     const markup: string = state.src.slice(mem, pos);
-    // https://python-markdown.github.io/extensions/admonition/
-    const params: string = state.src.slice(pos, max).trim();
-    const quoteIdx = params.indexOf('"');
-    let type = "";
-    let classes: string[] = [];
-    let title = "";
-    if (quoteIdx >= 0) {
-        classes = params.substring(0, quoteIdx).trim()
-            .split(" ")
-            .map(s => s.trim())
-            .filter(s => !!s);
-        type = classes[0];
-        title = params.substring(quoteIdx);
-        if (_types.indexOf(type) < 0) {
-            classes.unshift("note");
-            type = "note";
-        }
-    } else {
-        type = params.split(" ").shift().toLowerCase();
-        if (_types.indexOf(type) < 0) {
-            type = "note";
-            title = params;
-        } else {
-            title = params.substring(type.length);
-        }
-        classes.push(type)
-    }
-    if (title.startsWith('"')) {
-        if (title.length > 1 && title.endsWith('"')) {
-            title = title.substring(1, title.length - 1);
-        } else {
-            title = title.substring(1);
-        }
-    }
-
+    const { type, classes, title } = admonitionParams(state.src.slice(pos, max));
 
     // Since start is found, we can report success here in validation mode
     if (silent) {return true;}
@@ -133,8 +99,17 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
         token.markup = markup + " " + type;
     }
 
-    // parse admonition body
+    // parse admonition body, its lines seen from where the body starts
+    const saved = indentBody(state, startLine + 1, nextLine, state.blkIndent);
+    state.blkIndent = 0;
     state.md.block.tokenize(state, startLine + 1, nextLine);
+    saved.forEach((s, i) => {
+        const line = startLine + 1 + i;
+        state.bMarks[line] = s[0];
+        state.tShift[line] = s[1];
+        state.sCount[line] = s[2];
+        state.bsCount[line] = s[3];
+    });
 
     token = state.push("admonition_close", "div", -1);
     token.markup = markup;
@@ -146,4 +121,82 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
     state.line = nextLine;
     state.blkIndent = oldIndent;
     return true;
+}
+
+/**
+ * Moves the start of each body line past the body's indentation, `indent`
+ * columns, as markdown-it's blockquote rule moves it past `> `, and returns
+ * the offsets it replaced: `[bMarks, tShift, sCount, bsCount]` per line.
+ * Every rule inside then reads the body as a document of its own (indent 0),
+ * so a rule that cuts `bMarks + blkIndent` characters, as
+ * markdown-it-multimd-table does, cuts no text when a tab (one character,
+ * four columns) indents the body (qjebbs/vscode-markdown-extended#110). A tab
+ * the indentation ends inside is kept, its remaining columns counted through
+ * `bsCount`.
+ */
+function indentBody(state: any, startLine: number, endLine: number, indent: number): number[][] {
+    const saved: number[][] = [];
+    for (let line = startLine; line < endLine; line++) {
+        saved.push([state.bMarks[line], state.tShift[line], state.sCount[line], state.bsCount[line]]);
+        const max: number = state.eMarks[line];
+        const bsCount: number = state.bsCount[line];
+        let pos: number = state.bMarks[line];
+        let col = 0;
+        while (pos < max && col < indent) {
+            const ch = state.src.charCodeAt(pos);
+            const width = ch === 0x09 ? 4 - (col + bsCount) % 4 : ch === 0x20 ? 1 : 0;
+            if (width === 0 || col + width > indent) {break;}
+            col += width;
+            pos++;
+        }
+        // `pos` is where the body's text starts, or a tab reaching past it.
+        const start = pos;
+        let offset = col;
+        while (pos < max) {
+            const ch = state.src.charCodeAt(pos);
+            if (ch === 0x09) {
+                offset += 4 - (offset + bsCount) % 4;
+            } else if (ch === 0x20) {
+                offset++;
+            } else {
+                break;
+            }
+            pos++;
+        }
+        state.bMarks[line] = start;
+        state.tShift[line] = pos - start;
+        state.sCount[line] = Math.max(0, offset - indent);
+        state.bsCount[line] = bsCount + indent;
+    }
+    return saved;
+}
+
+/**
+ * The opening line after the marker
+ * (https://python-markdown.github.io/extensions/admonition/):
+ * `type "Title"`, `type class … "Title"` or `type Title`. A title is quoted
+ * only when its `"` follows the type and its classes, words separated by
+ * whitespace, and its closing `"` ends the line; otherwise the rest of the
+ * line after the type is the title, quotes and all, so
+ * `!!! note <font color="red">…</font>` is a note titled by its HTML
+ * (qjebbs/vscode-markdown-extended#131). A `{…}` after the closing quote
+ * stays with the title, where markdown-it-attrs gives it to the title bar.
+ * A first word that is no type is a note's title, unless a quoted title
+ * follows it: then it is a class beside `note`.
+ */
+export function admonitionParams(line: string): { type: string; classes: string[]; title: string } {
+    const params = line.trim();
+    const quoted = /^(?:([\w-]+(?:\s+[\w-]+)*)\s+)?"([\s\S]*)"(\s*\{[^{}]*\})?$/.exec(params);
+    if (quoted) {
+        const classes = (quoted[1] ?? "").split(/\s+/).filter(s => !!s);
+        if (_types.indexOf(classes[0]) < 0) {
+            classes.unshift("note");
+        }
+        return { type: classes[0], classes, title: (quoted[2] + (quoted[3] ?? "")).trim() };
+    }
+    const [, first, rest] = /^(\S*)\s*([\s\S]*)$/.exec(params);
+    const type = first.toLowerCase();
+    return _types.indexOf(type) < 0
+        ? { type: "note", classes: ["note"], title: params }
+        : { type, classes: [type], title: rest };
 }
