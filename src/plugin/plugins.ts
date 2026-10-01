@@ -5,10 +5,11 @@ import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { MarkdownItAttrs } from './markdownItAttrs';
 import { MarkdownItWikiEmbed } from './markdownItWikiEmbed';
+import { tokenText } from '../syntax/tokenText';
 import { Config } from '../services/common/config';
 // eslint-disable-next-line @typescript-eslint/naming-convention
 import * as MarkdownItSidenote from './markdownItSidenote';
-import { MarkdownIt } from '../@types/markdown-it';
+import { MarkdownIt, Token } from '../@types/markdown-it';
 
 // Import all external markdown-it plugins statically for bundling
 import markdownItFootnote from 'markdown-it-footnote';
@@ -68,7 +69,8 @@ export const plugins: MarkdownItPlugin[] = [
     // markdown-it-front-matter here, as it conflicts with the built-in renderer.
     // $('markdown-it-toc'),
     // $('markdown-it-anchor'), // MarkdownItAnchorLink requires MarkdownItTOC
-    $('markdown-it-table-of-contents', { includeLevel: Config.instance.tocLevels }),
+    // An entry's text as every other reader takes it (`tokenText`), a wiki embed's included; not an image's alt, as the plugin's own.
+    $('markdown-it-table-of-contents', { includeLevel: Config.instance.tocLevels, getTokensText: (tokens: Token[]) => tokenText(tokens, { nested: false }) }),
     $('markdown-it-container'),
     $('markdown-it-admonition'),
     $('markdown-it-footnote'),

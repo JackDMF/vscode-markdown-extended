@@ -17,7 +17,8 @@ import {
     splitLines,
 } from './blocks';
 import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
-import { readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
+import { WIKI_EMBED_TOKEN, readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
+import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
 /**
@@ -108,18 +109,19 @@ function listIsTight(stream: readonly StreamToken[], index: number): boolean {
     return false;
 }
 
-function textOf(tokens: readonly Token[] | null): string {
-    let out = '';
-    for (const t of tokens ?? []) {
-        // A wiki embed in an image's alt text is its text there (`markdownItWikiEmbed.ts`);
-        // an escape is `text_special`, which `text_join` does not join inside an image.
-        if (t.type === 'text' || t.type === 'text_special' || t.type === 'code_inline' || t.type === 'wiki_embed') {
-            out += t.content;
-        } else if (t.children) {
-            out += textOf(t.children);
+/**
+ * A block the editor shows rendered (a source block, injected content) is
+ * drawn as the preview draws it: a wiki embed the editor's engine kept as a
+ * token (`markdownItWikiEmbed.ts`) becomes the text the preview's engine made
+ * of it, so markdown-it's own text readers (an image's alt) see it too.
+ */
+function embedsAsText(tokens: readonly Token[]): void {
+    for (const t of tokens) {
+        if (t.type === WIKI_EMBED_TOKEN) {
+            t.type = 'text';
         }
+        embedsAsText(t.children ?? []);
     }
-    return out;
 }
 
 /**
@@ -225,7 +227,9 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
 
     const render = (block: SourceBlock): string => {
         const [start, end] = block.tokenRange;
-        return start < end ? md.renderer.render(tokens.slice(start, end), engine.options, env) : '';
+        const slice = tokens.slice(start, end);
+        embedsAsText(slice);
+        return start < end ? md.renderer.render(slice, engine.options, env) : '';
     };
 
     // Attributes MarkdownParser cannot derive from a token alone: the source
@@ -459,7 +463,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             node: 'image',
             getAttrs: tok => {
                 const t = real(tok);
-                return { src: attr(t, 'src') ?? '', alt: textOf(t.children) || null, title: attr(t, 'title') };
+                return { src: attr(t, 'src') ?? '', alt: tokenText(t.children) || null, title: attr(t, 'title') };
             },
         },
         hardbreak: { node: 'hard_break' },

@@ -319,6 +319,23 @@ same tokens into a ProseMirror document. Two parsers would be two answers to
 "what does this file contain", and the first construct they disagreed on would be
 edited as something it is not.
 
+**The one exception: wiki embeds.** The two engines differ in one option,
+`WIKI_EMBED_TOKENS_OPTION` (`src/syntax/markers.ts`), which only the editor
+engine sets. `markdownItWikiEmbed.ts` reads `![[name]]` into a `wiki_embed`
+token on both; on the preview's it turns that token into plain text just before
+`text_join`, so the text joins its neighbours and an extension that renders
+embeds from text (Foam's core rule) finds it; on the editor's the token is kept,
+so the editor can hold each embed as one atom carrying its source. The
+difference is in token types only: the token's `content` is the text the
+preview's joined text holds. What reads text from tokens reads it through
+`tokenText` (`src/syntax/tokenText.ts`), which counts a `wiki_embed` as its
+text — an image's alt in the editor, a heading's slug for links and fragment
+completion, the table of contents' entries — and a block the editor renders as
+source has its embeds turned into text first (`parse.ts`), so markdown-it's own
+text readers (an image's alt) agree. An extension that reads `text` tokens on
+the editor's engine (Foam's core rule) does not see an embed there; the editor
+draws the atom instead.
+
 markdown-it is pinned to major 14, which is what VS Code's preview bundles, so the
 two engines tokenize alike. The engine is built once per provider and rebuilt when
 the set of extensions or one of those preview settings changes.

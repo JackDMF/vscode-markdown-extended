@@ -26,14 +26,15 @@
  *   and `Delete` right before one select it the same way. `Delete` at the end
  *   of a part does nothing: parts are not joined.
  */
-import { Fragment, Mark, Node, ResolvedPos } from 'prosemirror-model';
+import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { keymap } from 'prosemirror-keymap';
 import { EditorView } from 'prosemirror-view';
 import { PRESERVE_SOURCE_META } from '../fidelity';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
-import { RAW_TEXT_MARKS, unwritableInNote } from '../serialize';
+import { RAW_TEXT_MARKS, unwritableEmbed, unwritableInNote } from '../serialize';
 import { showHint } from './hint';
+import { textWithEmbeds } from './wikiEmbeds';
 
 const nodes = editorSchema.nodes;
 
@@ -332,6 +333,12 @@ export function noteRefusal(tr: Transaction): string | null {
     return range === null ? null : unwritableInNote(tr.doc, range.from, range.to);
 }
 
+/** Why the transaction must not be applied: it puts a wiki embed under a raw mark (`unwritableEmbed`). */
+export function embedRefusal(tr: Transaction): string | null {
+    const range = refusableRange(tr);
+    return range === null ? null : unwritableEmbed(tr.doc, range.from, range.to);
+}
+
 /**
  * The range of the new document a transaction changed, which a refusal is
  * decided over — the notes' here, the tables' (`tables.ts`) — or `null` for one
@@ -364,14 +371,15 @@ export function refusableRange(tr: Transaction): { from: number; to: number } | 
  * browser would put the text into the neighbouring span), and pastes into a
  * part as text — a slice of paragraphs would split the note in two.
  */
-export function notesPlugin(): Plugin {
+export function notesPlugin(wikiEmbeds: () => boolean = () => true): Plugin {
     let editorView: EditorView | null = null;
     return new Plugin({
         // The one edit the serializer cannot write back is refused here,
         // whatever made it — a key, the toolbar, a paste, typing into a code
-        // span — with the reason shown beside the caret (`noteRefusal`).
+        // span — with the reason shown beside the caret (`noteRefusal`); and
+        // so is a wiki embed made code, superscript or subscript (`embedRefusal`).
         filterTransaction(tr) {
-            const reason = noteRefusal(tr);
+            const reason = noteRefusal(tr) ?? embedRefusal(tr);
             if (reason !== null) {
                 if (editorView) {
                     showHint(editorView, reason, 'refusal');
@@ -430,8 +438,12 @@ export function notesPlugin(): Plugin {
                 if (noteContextAt(sel.$from) === null && noteContextAt(sel.$to) === null) {
                     return false;
                 }
-                const text = slice.content.textBetween(0, slice.content.size, ' ', ' ');
-                view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+                // A leaf is its own text (a wiki embed its source), not a space,
+                // and an embed in it is an atom again (`wikiEmbeds.ts`).
+                const text = slice.content.textBetween(0, slice.content.size, ' ', leaf => leaf.type.spec.leafText?.(leaf) ?? ' ');
+                const embeds = wikiEmbeds() ? textWithEmbeds(text, sel.$from.marks()) : null;
+                const tr = embeds === null ? view.state.tr.insertText(text) : view.state.tr.replaceSelection(new Slice(Fragment.from(embeds), 0, 0));
+                view.dispatch(tr.scrollIntoView());
                 return true;
             },
         },

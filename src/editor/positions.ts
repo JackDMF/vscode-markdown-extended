@@ -46,8 +46,9 @@ import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize
  * `NOTE_SEPARATOR` — read from where the syntax is stated), so the text of one
  * part cannot be matched into another, and a table's line breaks and `|`s
  * (`visitTable`: a cell is a textblock that starts after a `|`, not on a line
- * of its own). A wiki embed, an atom, is anchored by its source and matches its
- * last character. The alignment runs in a band around the
+ * of its own). A wiki embed, an atom, matches its source's first character,
+ * the rest of its source anchors it, and its spelling runs to the source's end.
+ * The alignment runs in a band around the
  * diagonal (the source is the page text plus delimiters); a block too large for
  * the band's budget is aligned greedily instead and every answer in it is
  * approximate.
@@ -252,6 +253,8 @@ const UNMATCHABLE = -1;
 interface Unit {
     pos: number;
     code: number;
+    /** For an atom spelled by a run of source characters (a wiki embed): how many. */
+    span?: number;
 }
 
 /** The markers the notes plugin reads around a note's parts (`markdownItSidenote.ts`), as anchors. */
@@ -278,11 +281,12 @@ function collectUnits(block: Node): Unit[] {
             return;
         }
         if (node.type.name === 'wiki_embed') {
-            // Its source as written anchors it, and the atom matches its last
-            // character, so the position after it is after the whole source.
+            // The atom matches its source's first character and its spelling
+            // runs to the source's end (`spellingEnd`), as an entity's does: the
+            // position before it is the source's start, the one after it its end.
             const source = node.attrs.source as string;
-            anchor(source.slice(0, -1));
-            units.push({ pos, code: source.charCodeAt(source.length - 1) });
+            units.push({ pos, code: source.charCodeAt(0), span: source.length });
+            anchor(source.slice(1));
             return;
         }
         if (node.isLeaf) {
@@ -613,6 +617,15 @@ class BlockMap {
         // A character spelled as an entity whose first character it is
         // (`&amp;` for `&`) matches that first character: its spelling runs to
         // the `;`, as an escape's (`\*`) runs to the character.
+        // An atom spelled by its source (a wiki embed) runs to the source's end.
+        this.units.forEach((unit, j) => {
+            const i = this.alignment.toSource[j];
+            if (unit.span !== undefined && i >= 0) {
+                const end = Math.min(src.length, i + unit.span);
+                this.spellingEnd[i] = end;
+                this.inside.fill(1, i + 1, end);
+            }
+        });
         for (let i = 0; i < src.length; i++) {
             if (src.charCodeAt(i) !== AMPERSAND || toUnit[i] < 0) {
                 continue;

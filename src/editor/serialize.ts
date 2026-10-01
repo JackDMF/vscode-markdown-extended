@@ -95,6 +95,30 @@ function internals(state: MarkdownSerializerState): StateInternals {
 }
 
 /**
+ * A wiki embed's source as it is written where it stands: as it was written,
+ * never escaped, except for a character the place reads as its own syntax —
+ * in a table cell a `|` no backslash precedes (the table plugin's reading:
+ * any backslash before it escapes it) as `\|` and a backtick as `&#96;`; in a
+ * note's part its terminator (`PART_TERMINATORS`) and a run of the note's
+ * marker character (`breakMarkerRuns`) as character references. The embed
+ * plugin reads its name with escapes and references resolved
+ * (`markdownItWikiEmbed.ts`), so each form is the same embed to it and to Foam.
+ * A block read from the file never holds such a character where it stands, so
+ * a source read from the file is written byte for byte.
+ */
+function embedSource(st: StateInternals, source: string): string {
+    let written = source;
+    if (st.inTableCell) {
+        written = written.replace(/(?<!\\)\|/g, '\\|').replace(/`/g, '&#96;');
+    }
+    const terminator = st.notePart === undefined ? null : PART_TERMINATORS[st.notePart];
+    if (terminator !== null) {
+        written = written.split(terminator.raw).join(terminator.entity);
+    }
+    return breakMarkerRuns(written, st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
+}
+
+/**
  * Escape a `!` that ends the output, unless a backslash already escapes it,
  * before a `[` that would make it part of the next construct: `![` an image,
  * `![[` a wiki embed. An escaped backslash (`\\!`) leaves the `!` bare, so the
@@ -399,8 +423,8 @@ const inlineNodes: NodeSerializers = {
         } else {
             escapeTrailingBang(st);
         }
-        // Its source, as it was written: never escaped, and held on one line.
-        state.text(HOLD_OPEN + (node.attrs.source as string) + HOLD_CLOSE, false);
+        // Its source, as it was written, held on one line (`embedSource`).
+        state.text(HOLD_OPEN + embedSource(st, node.attrs.source as string) + HOLD_CLOSE, false);
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
@@ -481,13 +505,6 @@ function noteUnwritable(note: Node): string | null {
         const terminator = TERMINATOR_OF_PART[part.type.name] ?? null;
         let reason: string | null = null;
         part.forEach(child => {
-            if (reason === null && child.type.name === 'wiki_embed') {
-                const source = child.attrs.source as string;
-                if ((terminator !== null && source.includes(terminator)) || (marker !== null && source.includes(marker))) {
-                    reason = `A wiki embed in this part of a note cannot hold "${terminator !== null && source.includes(terminator) ? terminator : marker}": its source is written as it is, and the notes plugin would read the part's end in it.`;
-                }
-                return;
-            }
             if (reason !== null || !child.isText) {
                 return;
             }
@@ -508,6 +525,25 @@ function noteUnwritable(note: Node): string | null {
         }
     }
     return null;
+}
+
+/**
+ * Why a wiki embed between `from` and `to` cannot be written so that it reads
+ * back as itself, or `null`: one under inline code, superscript or subscript
+ * (`RAW_TEXT_MARKS`), whose text is read as it is, so the embed would be text
+ * after a save. The editor refuses the edit that makes it (`webview/notes.ts`).
+ */
+export function unwritableEmbed(doc: Node, from = 0, to = doc.content.size): string | null {
+    let reason: string | null = null;
+    const start = Math.max(0, Math.min(from, to));
+    const end = Math.min(doc.content.size, Math.max(from, to));
+    doc.nodesBetween(start, end, node => {
+        if (reason === null && node.type.name === 'wiki_embed' && node.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
+            reason = 'A wiki embed cannot be inline code, superscript or subscript: their text is written as it is, and the embed would be plain text after a save.';
+        }
+        return reason === null;
+    });
+    return reason;
 }
 
 /**
@@ -772,8 +808,6 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
             }
             if (child.type.name === 'hard_break') {
                 reason = CELL_BREAK_REFUSAL;
-            } else if (child.type.name === 'wiki_embed' && /(^|[^\\])(\\\\)*\|/.test(child.attrs.source as string)) {
-                reason = 'A wiki embed in a table cell cannot hold an unescaped "|": its source is written as it is, and the table plugin splits the row at it. Write it as "\\|".';
             } else if (child.isText && (child.text ?? '').includes('|') && child.marks.some(m => m.type.name === 'code')) {
                 reason = 'Inline code in a table cell cannot hold "|": the table plugin splits the row at it, and nothing escapes it there.';
             } else {
@@ -1007,7 +1041,8 @@ function endsInLiteralText(node: Node, wikiEmbeds = true): boolean {
     // A `{…}` right after a wiki embed is text the plugin never reads (`markdownItWikiEmbed.ts`).
     const text = last.text ?? '';
     const before = node.childCount > 1 ? node.child(node.childCount - 2) : null;
-    return !(wikiEmbeds && before?.type.name === 'wiki_embed' && text.lastIndexOf('{') === 0);
+    // Only after an embed with no mark: a mark's closing delimiter (`*![[x]]*{.a}`) is what attrs reads a literal after.
+    return !(wikiEmbeds && before?.type.name === 'wiki_embed' && before.marks.length === 0 && text.lastIndexOf('{') === 0);
 }
 
 /** The line's trailing `{…}` as text, `\{x\}`, which the plugin reads as no literal. */

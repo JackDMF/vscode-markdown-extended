@@ -140,17 +140,22 @@ suite('MarkdownItWikiEmbed: a wiki embed is no key (qjebbs/vscode-markdown-exten
     });
 
     test('the rule reads a long line of unclosed embeds, and one of closed ones, in linear time', function () {
-        this.timeout(20000);
+        this.timeout(60000);
+        /** The best of three renders, in ms: the least disturbed by the rest of the suite. */
+        const time = (engine: MarkdownIt.MarkdownIt, source: string) => Math.min(...[0, 1, 2].map(() => {
+            const t0 = process.hrtime.bigint();
+            engine.render(source);
+            return Number(process.hrtime.bigint() - t0) / 1e6;
+        }));
+        /** How much longer four times the input takes: about 4 when linear, about 16 when quadratic. */
+        const growth = (engine: MarkdownIt.MarkdownIt, unit: string, n: number) =>
+            time(engine, unit.repeat(4 * n) + '\n') / Math.max(1, time(engine, unit.repeat(n) + '\n'));
         // On its own: markdown-it-kbd's scan of an unclosed `[[` is its own (and quadratic).
         const alone = new MarkdownIt().use(MarkdownItWikiEmbed as unknown as MarkdownIt.PluginSimple);
-        for (const source of ['![[a '.repeat(100000) + '\n', '![[a]] '.repeat(100000) + '\n']) {
-            const t0 = Date.now();
-            alone.render(source);
-            assert.ok(Date.now() - t0 < 3000, `${Date.now() - t0} ms`);
+        for (const [engine, unit] of [[alone, '![[a '], [alone, '![[a]] '], [md, '![[a]] ']] as const) {
+            const ratio = growth(engine, unit, 50000);
+            assert.ok(ratio < 9, `${JSON.stringify(unit)}: four times the input took ${ratio.toFixed(1)} times as long`);
         }
-        const t1 = Date.now();
-        md.render('![[a]] '.repeat(100000) + '\n');
-        assert.ok(Date.now() - t1 < 3000, `${Date.now() - t1} ms`);
     });
 
     test('[[TOC]] on its own line is still the table of contents', () => {

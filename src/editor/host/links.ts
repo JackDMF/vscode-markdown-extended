@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Environment, MarkdownIt, Token } from '../../@types/markdown-it';
 import { decode, schemeOf } from '../paths';
 import { GITHUB_SLUG_REPLACE } from './githubSlugRegex';
+import { tokenText } from '../../syntax/tokenText';
 
 /**
  * Where a link the person Ctrl/Cmd+clicked in the rich editor goes.
@@ -102,15 +103,9 @@ export interface HeadingAnchor {
     text: string;
 }
 
-/** A heading's text as the built-in slugs it: the text, emoji and inline code of its inline children. */
+/** A heading's text as the built-in slugs it: the text, emoji, inline code and wiki embeds of its inline children (`tokenText`). */
 function headingText(inline: Token | undefined): string {
-    const walk = (tokens: readonly Token[]): string => tokens.map(t => {
-        if (t.children && t.children.length > 0) {
-            return walk(t.children);
-        }
-        return t.type === 'text' || t.type === 'emoji' || t.type === 'code_inline' ? t.content : '';
-    }).join('');
-    return inline ? walk(inline.children ?? []) : '';
+    return tokenText(inline?.children, { emoji: true });
 }
 
 /**

@@ -333,6 +333,36 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'An here.\n');
     });
 
+    test('![[name]] typed becomes an embed atom at its closing ]], and is saved as written', async function () {
+        this.timeout(15000);
+        await showDocument('An here.\n', 'An');
+        await clickBefore('here', 0);
+        await page.keyboard.type('![[a_b.png]] ');
+        await settle();
+        assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.textContent), '![[a_b.png]]');
+        assert.strictEqual((await lastEdit())?.text, 'An ![[a_b.png]] here.\n');
+    });
+
+    const pasteText = (text: string) => page.evaluate(t => {
+        const data = new DataTransfer();
+        data.setData('text/plain', t);
+        (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    }, text);
+
+    test('text pasted with ![[name]] in it, into a paragraph or a note, holds an embed atom and is saved as written', async function () {
+        this.timeout(15000);
+        await showDocument('An here.\n\nAlpha ++beta|the body++ gamma.\n', 'An');
+        await clickBefore('here', 0);
+        await pasteText('see ![[x]] ');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An see ![[x]] here.\n\nAlpha ++beta|the body++ gamma.\n');
+        await clickBefore('body', 0);
+        await pasteText('see ![[y]] ');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An see ![[x]] here.\n\nAlpha ++beta|the see ![[y]] body++ gamma.\n');
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2);
+    });
+
     test('a source block shows its bar while the pointer is on it, keeps it while the pointer crosses to it, and Delete block removes it', async function () {
         this.timeout(15000);
         await showDocument('Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n', 'Before');

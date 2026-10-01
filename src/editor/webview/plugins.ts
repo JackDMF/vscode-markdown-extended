@@ -12,6 +12,7 @@ import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
 import { tableKeymap, tablesPlugins } from './tables';
 import { toggleMarkType } from './toolbar/commands';
+import { wikiEmbedInputRule, wikiEmbedPastePlugin } from './wikiEmbeds';
 import { admonitionTitlesPlugin, wrapperKeymap } from './wrappers';
 
 const nodes = editorSchema.nodes;
@@ -21,9 +22,11 @@ const marks = editorSchema.marks;
  * Markdown's own block syntax, typed at the start of a line, turns the line into
  * the block — the shortcut a Markdown author already knows.
  */
-function markdownInputRules(): Plugin {
+function markdownInputRules(wikiEmbeds: () => boolean): Plugin {
     return inputRules({
         rules: [
+            // `![[name]]` typed: an embed atom, where the engine reads embeds (`wikiEmbeds.ts`).
+            wikiEmbedInputRule(wikiEmbeds),
             textblockTypeInputRule(/^(#{1,6})\s$/, nodes.heading, match => ({ level: match[1].length })),
             wrappingInputRule(/^\s*([-*])\s$/, nodes.bullet_list, match => ({ bullet: match[1] })),
             wrappingInputRule(
@@ -114,12 +117,15 @@ export function domSelectionFirst(): Plugin {
     });
 }
 
-/** Every plugin the editor state is built with, in the order they must run. */
-export function editorPlugins(): Plugin[] {
+/**
+ * Every plugin the editor state is built with, in the order they must run.
+ * `wikiEmbeds` says whether the host's engine reads wiki embeds (`readsWikiEmbeds`).
+ */
+export function editorPlugins(wikiEmbeds: () => boolean = () => true): Plugin[] {
     return [
         // First: every key below reads the selection the DOM shows.
         domSelectionFirst(),
-        markdownInputRules(),
+        markdownInputRules(wikiEmbeds),
         // Ahead of the Markdown keys: Tab, Enter and Backspace mean something else inside a note,
         // Enter and Backspace in an empty paragraph of a container or an admonition,
         // and Tab, Enter and Shift+Enter in a table cell (a sidebar in a cell keeps its own keys).
@@ -132,7 +138,8 @@ export function editorPlugins(): Plugin[] {
         dropCursor(),
         gapCursor(),
         hintPlugin(),
-        notesPlugin(),
+        notesPlugin(wikiEmbeds),
+        wikiEmbedPastePlugin(wikiEmbeds),
         admonitionTitlesPlugin(),
         ...tablesPlugins(),
         fidelityPlugin(),

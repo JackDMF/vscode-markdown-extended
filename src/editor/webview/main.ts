@@ -735,7 +735,7 @@ function showDiagnostics(version: number, items: Extract<HostMessage, { type: 'd
 const plugins = [
     // First, before the editor's keymaps: while its list is open, Enter, Tab and the arrows are the list's.
     completionPlugin(languagePort),
-    ...editorPlugins(),
+    ...editorPlugins(() => current?.wikiEmbeds ?? true),
     pendingRangePlugin(),
     linkClickPlugin(href => port.openLink(href)),
     toolbarPlugin({

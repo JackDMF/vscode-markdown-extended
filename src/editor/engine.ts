@@ -41,6 +41,12 @@ export interface EditorEngineOptions {
  * rule first, then this extension's registry, then every other extension's
  * extender.
  *
+ * One option differs from the preview's engine: `WIKI_EMBED_TOKENS_OPTION`,
+ * which keeps each wiki embed a `wiki_embed` token where the preview's engine
+ * makes it text (`markdownItWikiEmbed.ts`, and "The one exception: wiki
+ * embeds" in ARCHITECTURE.md). Text read from tokens goes through `tokenText`,
+ * which reads both alike.
+ *
  * The front-matter rule is registered here and nowhere else. The preview engine
  * must not get one from this extension — VS Code's own preview already
  * registers it, and the comment on `plugins` in `src/plugin/plugins.ts` records
