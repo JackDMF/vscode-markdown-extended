@@ -90,6 +90,8 @@ export class CommandOpenVisualEditor extends Command {
 /**
  * Register the rich editor and its command.
  *
+ * `engines` is the extension's one engine host, which `activate` owns: the
+ * text editor's toggles read documents with the same engine.
  * `retainContextWhenHidden` keeps the webview alive in a background tab: the
  * ProseMirror state holds the undo history and an edit still inside its
  * debounce, and both would be lost if VS Code tore the page down on every tab
@@ -97,12 +99,10 @@ export class CommandOpenVisualEditor extends Command {
  * exports.
  */
 export function registerVisualEditor(
-    context: vscode.ExtensionContext, log: (line: string) => void, tracker?: ActiveVisualEditorTracker,
+    context: vscode.ExtensionContext, log: (line: string) => void, engines: EditorEngineHost, tracker?: ActiveVisualEditorTracker,
 ): vscode.Disposable {
-    const engines = new EditorEngineHost(context.extension.id, log);
     const provider = new VisualEditorProvider(context.extensionUri, engines, log, context.extension.id, tracker);
     return vscode.Disposable.from(
-        engines,
         vscode.window.registerCustomEditorProvider(VISUAL_EDITOR_VIEW_TYPE, provider, {
             webviewOptions: { retainContextWhenHidden: true },
         }),

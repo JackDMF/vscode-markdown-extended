@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { MarkdownIt } from '../../@types/markdown-it';
 import { WORD_CHARACTER, opensInsideWords } from '../../syntax/markers';
 import { editTextDocument } from '../common/editTextDocument';
 import { LineStart, findSpans, lineStarts } from './inlineSpans';
@@ -88,7 +89,7 @@ const KIND_ORDER = { close: 0, pair: 1, open: 2, delete: 3 };
  * whichever cursor is the primary one. Every selection is kept where its text
  * went.
  */
-export function toggleInlineFormat(editor: vscode.TextEditor, marker: string): Thenable<unknown> {
+export function toggleInlineFormat(editor: vscode.TextEditor, marker: string, md: MarkdownIt): Thenable<unknown> {
     if (!editor || !editor.document) {return;}
     const document = editor.document;
     const last = Math.max(...editor.selections.map(s => s.end.line));

@@ -7,10 +7,11 @@ import { mdConfig } from './services/contributes/mdConfig';
 import { CommandCopy, CommandCopyWithStyles } from './commands/copy';
 import { CommandPasteTable } from './commands/pasteTable';
 import { CommandFormateTable } from './commands/formateTable';
-import { commandToggles } from './commands/toggleFormats';
+import { createToggleCommands } from './commands/toggleFormats';
 import { commandTableEdits } from './commands/tableEdits';
 import { ExtensionContext } from './services/common/extensionContext';
 import { ActiveVisualEditorTracker } from './editor/host/activeEditor';
+import { EditorEngineHost } from './editor/host/engineHost';
 
 // Deprecated: Use ExtensionContext.current.markdown instead
 // @deprecated
@@ -34,11 +35,22 @@ export function activate(ctx: vscode.ExtensionContext) {
             );
         });
 
+    // The engine the inline toggles read documents with, as the desktop
+    // build's Visual Editor parses them.
+    const engines = new EditorEngineHost(ctx.extension.id, line => {
+        try {
+            extensionContext.outputPanel.appendLine(line);
+        } catch {
+            // Nothing left to report to.
+        }
+    });
+
     const subscriptions = [
         extensionContext.outputPanel,
         Config.instance,
         mdConfig,
-        commandToggles,
+        engines,
+        createToggleCommands(engines),
         commandTableEdits,
         new CommandCopy(),
         new CommandCopyWithStyles(),

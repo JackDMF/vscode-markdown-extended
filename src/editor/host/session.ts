@@ -6,6 +6,7 @@ import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
 import { MappedPagePosition, SourcePosition, validPosition, validRange } from '../positions';
 import { HostMessage, WebviewMessage } from '../protocol';
 import { CodeActionController } from './codeActions';
+import { engineEnvironment } from './engineHost';
 import { message } from './errors';
 import { IncludeController, IncludePicker, IncludeProvider, collectIncludeProviders } from './includes';
 import { LanguageFeatures } from './language';
@@ -324,14 +325,9 @@ export class VisualEditorSession implements vscode.Disposable {
         });
     }
 
-    /**
-     * The render environment. `currentDocument` is the file's uri, as VS Code
-     * puts it in the preview's render env, so a plugin that asks which document
-     * it renders — Req Explorer's, which treats only its own reading scheme as a
-     * reading document — sees an ordinary file.
-     */
+    /** The render environment (`engineEnvironment`). */
     private env(): Environment {
-        return { currentDocument: this.document.uri } as unknown as Environment;
+        return engineEnvironment(this.document.uri);
     }
 
     private receive(msg: WebviewMessage): void {
@@ -518,7 +514,7 @@ export class VisualEditorSession implements vscode.Disposable {
     /** The line `fragment` names in `document`: headings only in Markdown, a line fragment in any text. */
     private async lineOf(document: vscode.TextDocument, fragment: string): Promise<number | null> {
         const anchors = document.languageId === 'markdown'
-            ? headingAnchors(await this.host.engine(), document.getText(), { currentDocument: document.uri } as unknown as Environment)
+            ? headingAnchors(await this.host.engine(), document.getText(), engineEnvironment(document.uri))
             : [];
         const line = fragmentLine(anchors, fragment);
         return line === null ? null : Math.min(line, document.lineCount - 1);

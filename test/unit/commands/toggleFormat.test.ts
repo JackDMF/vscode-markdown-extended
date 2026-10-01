@@ -3,6 +3,9 @@ import * as vscode from 'vscode';
 import { BLOCK_TOGGLE_ARGS } from '../../../src/commands/blockToggleArgs';
 import { toggleFormat, toggleInlineFormat } from '../../../src/services/helpers/toggleFormat';
 import { INLINE_MARKERS, InlineMarkerName } from '../../../src/syntax/markers';
+import { hostEngine } from '../editor/helpers';
+
+const md = hostEngine();
 
 /**
  * The text editor's toggles, on a real editor. A document is written with its
@@ -43,7 +46,7 @@ async function open(content: string, selections: [number, number][]): Promise<vs
 
 async function inline(name: InlineMarkerName, content: string, selections: [number, number][]): Promise<vscode.TextEditor> {
     const editor = await open(content, selections);
-    await toggleInlineFormat(editor, INLINE_MARKERS[name]);
+    await toggleInlineFormat(editor, INLINE_MARKERS[name], md);
     return editor;
 }
 

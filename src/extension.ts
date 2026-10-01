@@ -11,12 +11,13 @@ import { Config } from './services/common/config';
 import { mdConfig } from './services/contributes/mdConfig';
 import { CommandPasteTable } from './commands/pasteTable';
 import { CommandFormateTable } from './commands/formateTable';
-import { commandToggles } from './commands/toggleFormats';
+import { createToggleCommands } from './commands/toggleFormats';
 import { commandTableEdits } from './commands/tableEdits';
 import { CommandExportWorkSpace } from './commands/exportWorkspace';
 import { ExtensionContext } from './services/common/extensionContext';
 import { BrowserManager } from './services/browser/browserManager';
 import { registerVisualEditor } from './editor/host/provider';
+import { EditorEngineHost } from './editor/host/engineHost';
 import { ActiveVisualEditorTracker } from './editor/host/activeEditor';
 
 // this method is called when your extension is activated
@@ -32,12 +33,25 @@ export function activate(ctx: vscode.ExtensionContext) {
     // extensions (`visualEditor` below; ARCHITECTURE.md, "The active editor
     // and its caret").
     const visualEditors = new ActiveVisualEditorTracker();
-    
+
+    const log = (line: string) => {
+        // The channel can be gone when a test has reset the context.
+        try {
+            extensionContext.outputPanel.appendLine(line);
+        } catch {
+            // Nothing left to report to.
+        }
+    };
+    // The engine the Visual Editor parses with, which the inline toggles read
+    // documents with too.
+    const engines = new EditorEngineHost(ctx.extension.id, log);
+
     const subscriptions = [
         extensionContext.outputPanel,
         Config.instance,
         mdConfig,
-        commandToggles,
+        engines,
+        createToggleCommands(engines),
         commandTableEdits,
         new CommandExportCurrent(),
         new CommandExportWorkSpace(),
@@ -51,14 +65,7 @@ export function activate(ctx: vscode.ExtensionContext) {
         // disk (ContributesService), which the web build has no file system for,
         // and the editor is experimental enough to be tried where it can be
         // debugged first.
-        registerVisualEditor(ctx, line => {
-            // The channel can be gone when a test has reset the context.
-            try {
-                extensionContext.outputPanel.appendLine(line);
-            } catch {
-                // Nothing left to report to.
-            }
-        }, visualEditors),
+        registerVisualEditor(ctx, log, engines, visualEditors),
         visualEditors,
     ].filter(Boolean);
     
