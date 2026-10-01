@@ -1,10 +1,11 @@
 import * as assert from 'assert';
-import { Fragment, Node, Slice } from 'prosemirror-model';
+import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
+import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { createPositionMap } from '../../../src/editor/positions';
 import { unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
 import { headingAnchors } from '../../../src/editor/host/links';
-import { textWithEmbeds, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
+import { inlineForNote, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
 import { tokenText } from '../../../src/syntax/tokenText';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -156,8 +157,15 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             [table('![[a\\|b]]'), '![[a\\|b]]', 'a|b'],
             [table('![[a|b]]'), '![[a\\|b]]', 'a|b'],
             [table('![[a`b]]'), '![[a&#96;b]]', 'a`b'],
+            // An escaped backtick is the table plugin's escape already: as written.
+            [table('![[a\\`b]]'), '![[a\\`b]]', 'a`b'],
             [sidenote(embed('![[a|b]]'), text('note')), '![[a&#124;b]]', 'a|b'],
+            // Escaped, the terminator still ends the reference to the notes plugin: a reference, not `\&#124;`.
+            [sidenote(embed('![[img.png\\|300]]'), text('note')), '![[img.png&#124;300]]', 'img.png|300'],
             [sidenote(text('ref'), embed('![[C++ x]]')), '![[C&#43;&#43; x]]', 'C++ x'],
+            // Where nothing needs encoding, the plain form (`plainWikiEmbed`).
+            [paragraph(text('A '), embed('![[a&#124;b]]')), '![[a|b]]', 'a|b'],
+            [paragraph(text('A '), embed('![[a\\|b]]')), '![[a|b]]', 'a|b'],
         ] as const) {
             assert.strictEqual(unwritableInTable(doc), null);
             assert.strictEqual(unwritableInNote(doc), null);
@@ -169,8 +177,12 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
                 assert.ok(preview.render(out).includes(`![[${md.utils.escapeHtml(name)}]]`), preview.render(out));
             }
         }
-        // Read from the file, an embed is written byte for byte.
-        assertVerbatim('| a |\n| - |\n| ![[a\\\\|b]] |\n'.replace('| a |\n| - |', '| a          |\n| ---------- |'), 'table');
+        // Read from the file, an embed in a cell or a note is written byte for byte.
+        assertVerbatim('| a          |\n| ---------- |\n| ![[a\\\\|b]] |\n', 'table');
+        assertVerbatim('| a         |\n| --------- |\n| ![[a\\`b]] |\n', 'table');
+        assertVerbatim('A ++![[img.png&#124;300]]|n++ b\n', 'paragraph');
+        // The atom shows the plain name.
+        assert.strictEqual(embed('![[a&#124;b]]').textContent, '![[a|b]]');
     });
 
     test('a wiki embed under inline code, superscript or subscript is refused, not written', () => {
@@ -218,13 +230,17 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.strictEqual(tokenText(md.parseInline('a ![[b\\_c]] `d`', {})[0].children), 'a ![[b_c]] d');
     });
 
-    test('positions: the position before an embed is its source\'s start, the one after it its end, at a block\'s start too', () => {
+    test('positions: the position before an embed is its source\'s start, the one after it its end, at a block\'s start and end too', () => {
         for (const [source, expected] of [
             ['ab ![[x/y.png]] cd\n', [[3, 15]]],
             ['![[x]] b\n', [[0, 6]]],
             ['# ![[x]] t\n', [[2, 8]]],
             ['- ![[aa]]![[bb]]\n', [[2, 9], [9, 16]]],
             ['A ++ref|![[x]] b++ c\n', [[8, 14]]],
+            // Ending its block: the source's end maps exactly after the atom.
+            ['ab ![[x]]\n', [[3, 9]]],
+            // Spelled longer than its plain name where it stands.
+            ['A ++![[img.png&#124;300]]|n++ b\n', [[4, 25]]],
         ] as const) {
             const parsed = parseDocument(md, source);
             const map = createPositionMap(parsed, { defaultWrap: 90 });
@@ -235,23 +251,93 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
                     const after = map.sourcePositionOf(p + 1);
                     assert.ok(before && after && !before.approximate && !after.approximate, source);
                     found.push([before.character, after.character]);
-                    assert.strictEqual(map.pagePositionOf({ line: 0, character: after.character })?.pos, p + 1, source);
+                    const back = map.pagePositionOf({ line: 0, character: after.character });
+                    assert.deepStrictEqual(back, { pos: p + 1, approximate: false }, source);
                 }
             });
             assert.deepStrictEqual(found, expected, source);
         }
+        // A changed cell writes `\|`: positions follow the written spelling.
+        const n = schema.nodes;
+        const doc = schema.topNodeType.create(null, [n.table.create(null, [
+            n.table_row.create(null, [n.table_header.create(null, [text('a')])]),
+            n.table_row.create(null, [n.table_cell.create(null, [embed('![[a|b]]'), text(' x')])]),
+        ])]);
+        const map = createPositionMap({ doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+        let at = -1;
+        doc.descendants((node, p) => {
+            if (node.type.name === 'wiki_embed') { at = p; }
+        });
+        assert.deepStrictEqual(map.sourcePositionOf(at + 1), { line: 2, character: 11, approximate: false });
     });
 
-    test('text typed or pasted as ![[name]] becomes an atom, except under a raw mark', () => {
+    test('a block the host renders from the editor\'s engine shows an embed in an image\'s alt, as the preview does', () => {
+        assert.strictEqual(md.render('![alt ![[y]]](z.png)\n'), previewEngine().render('![alt ![[y]]](z.png)\n'));
+    });
+
+    test('text before the caret is made an embed only when its ]] was just typed, in one run of plain text', () => {
+        const n = schema.nodes;
+        const rule = wikiEmbedInputRule(() => true) as unknown as { match: RegExp; handler: (s: EditorState, m: RegExpMatchArray, a: number, b: number) => Transaction | null };
+        /** What the input rule makes of typing `typed` at the end of `doc`'s first textblock (`typed` '' is a composition's end). */
+        const type = (doc: Node, typed: string, stored?: readonly Mark[]): Transaction | null => {
+            const end = doc.content.size - 1;
+            let state = EditorState.create({ doc, selection: TextSelection.create(doc, end) });
+            if (stored) { state = state.apply(state.tr.setStoredMarks(stored)); }
+            const $end = state.doc.resolve(end);
+            const before = $end.parent.textBetween(0, $end.parentOffset, null, '￼') + typed;
+            const match = rule.match.exec(before);
+            return match === null ? null : rule.handler(state, match, end - (match[0].length - typed.length), end);
+        };
+        const made = type(paragraph(text('See ![[x]')), ']');
+        assert.deepStrictEqual(made && embedsOf(made.doc), ['![[x]]']);
+        // The end of a composition over literal text already there makes nothing.
+        assert.strictEqual(type(paragraph(text('Lit ![[x]]')), ''), null);
+        // Across a sidenote: the text before the caret spans the note's parts.
+        const crossing = paragraph(text('See ![['), n.sidenote.create(null, [n.note_ref.create(null, [text('r')]), n.sidenote_body.create(null, [text('body]')])]));
+        assert.strictEqual(type(crossing, ']'), null);
+        // Marks: the stored marks typed text takes, not the code before the `!`.
+        const code = schema.marks.code.create();
+        const afterCode = type(paragraph(text('k', code), text('![[a]')), ']', []);
+        assert.ok(afterCode, 'made');
+        afterCode.doc.descendants(node => {
+            if (node.type.name === 'wiki_embed') { assert.deepStrictEqual(node.marks, []); }
+        });
+        assert.strictEqual(type(paragraph(text('![[a]', code)), ']', [code]), null);
+        const off = wikiEmbedInputRule(() => false) as unknown as typeof rule;
+        assert.strictEqual(off.handler(EditorState.create({ doc: paragraph(text('![[x]')) }), ['![[x]]'] as unknown as RegExpMatchArray, 1, 6), null);
+    });
+
+    test('plain text pasted from outside is read with its embeds as atoms; nothing else is', () => {
         const nodes = textWithEmbeds('see ![[x]] and ![[a b.png]] end', []);
         assert.deepStrictEqual(nodes?.map(n => n.type.name === 'wiki_embed' ? `atom ${n.attrs.source as string}` : n.text), ['see ', 'atom ![[x]]', ' and ', 'atom ![[a b.png]]', ' end']);
         assert.strictEqual(textWithEmbeds('no embed ![[a [[b]] c]]', []), null);
         assert.strictEqual(textWithEmbeds('![[x]]', [schema.marks.code.create()]), null);
-        const pasted = new Slice(Fragment.from(schema.nodes.paragraph.create(null, [text('a ![[x]] b')])), 1, 1);
+        const doc = paragraph(text('ab'));
+        const view = { state: EditorState.create({ doc }) };
         const plugin = wikiEmbedPastePlugin(() => true);
-        const transform = plugin.props.transformPasted as unknown as (slice: Slice) => Slice;
-        assert.deepStrictEqual(embedsOf(schema.topNodeType.create(null, transform(pasted).content)), ['![[x]]']);
-        const off = wikiEmbedPastePlugin(() => false).props.transformPasted as unknown as (slice: Slice) => Slice;
-        assert.deepStrictEqual(embedsOf(schema.topNodeType.create(null, off(pasted).content)), []);
+        const parse = plugin.props.clipboardTextParser as unknown as (t: string, $c: ResolvedPos, plain: boolean, v: unknown) => Slice | null;
+        const paste = (plugin.props.handleDOMEvents as { paste: () => boolean }).paste;
+        // Not from a paste event (a drop): ProseMirror's own reading, no embed.
+        assert.strictEqual(parse('see ![[x]]', doc.resolve(2), false, view), null);
+        paste();
+        const slice = parse('see ![[x]]\nmore', doc.resolve(2), false, view);
+        assert.ok(slice);
+        assert.deepStrictEqual(embedsOf(schema.topNodeType.create(null, slice.content)), ['![[x]]']);
+        // Under inline code the text is the code's.
+        const coded = paragraph(text('ab', schema.marks.code.create()));
+        assert.strictEqual(parse('see ![[x]]', coded.resolve(2), false, { state: EditorState.create({ doc: coded }) }), null);
+        assert.strictEqual(wikiEmbedPastePlugin(() => false).props.clipboardTextParser?.call(plugin, 'see ![[x]]', doc.resolve(2), false, view as never), null);
+    });
+
+    test('a paste into a note keeps an atom an atom and literal text literal, with the marks typed text takes', () => {
+        const em = schema.marks.em.create();
+        const literal = new Slice(Fragment.from(schema.nodes.paragraph.create(null, [text('Lit ![[x]]')])), 1, 1);
+        assert.deepStrictEqual(inlineForNote(literal, []).map(n => n.type.name), ['text']);
+        const atom = new Slice(Fragment.from(schema.nodes.paragraph.create(null, [text('see '), embed('![[x]]'), text(' end')])), 1, 1);
+        const inline = inlineForNote(atom, [em]);
+        assert.deepStrictEqual(inline.map(n => n.type.name), ['text', 'wiki_embed', 'text']);
+        assert.ok(inline.every(n => em.isInSet(n.marks)));
+        // Under code an atom is its text.
+        assert.deepStrictEqual(inlineForNote(atom, [schema.marks.code.create()]).map(n => n.text), ['see ', '![[x]]', ' end']);
     });
 });

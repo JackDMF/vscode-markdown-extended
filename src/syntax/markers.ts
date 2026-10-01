@@ -58,6 +58,27 @@ export const WIKI_EMBED_MARKERS = { open: '![[', close: ']]' } as const;
  */
 export const WIKI_EMBED_TOKENS_OPTION = 'mepWikiEmbedTokens';
 
+/**
+ * The spellings the Visual Editor writes a character of an embed's name in
+ * where the place would read the bare character as its own syntax (a table
+ * cell's `|` and backtick, a note's terminator and marker), each read back by
+ * the embed plugin as the character itself.
+ */
+const WIKI_EMBED_ENCODINGS: Readonly<Record<string, string>> = {
+    '&#124;': '|', '&#36;': '$', '&#64;': '@', '&#43;': '+', '&#33;': '!', '&#96;': '`', '\\|': '|',
+};
+const WIKI_EMBED_ENCODED = /\\.|&#(?:124|36|64|43|33|96);/g;
+
+/**
+ * An embed's source with exactly those spellings read back, other escapes
+ * kept: the form written where nothing needs encoding, and the one the
+ * editor shows. `![[a&#124;b]]` and `![[a\|b]]` are `![[a|b]]`; `![[a\\|b]]`
+ * keeps its escaped backslash.
+ */
+export function plainWikiEmbed(source: string): string {
+    return source.replace(WIKI_EMBED_ENCODED, found => WIKI_EMBED_ENCODINGS[found] ?? found);
+}
+
 /** Between a note's reference text and its content: `++reference|note++`. */
 export const NOTE_SEPARATOR = '|';
 

@@ -28,13 +28,14 @@
  */
 import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, Transaction } from 'prosemirror-state';
+import { undoInputRule } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { EditorView } from 'prosemirror-view';
 import { PRESERVE_SOURCE_META } from '../fidelity';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, unwritableEmbed, unwritableInNote } from '../serialize';
 import { showHint } from './hint';
-import { textWithEmbeds } from './wikiEmbeds';
+import { inlineForNote } from './wikiEmbeds';
 
 const nodes = editorSchema.nodes;
 
@@ -269,7 +270,8 @@ export function noteKeymap(): Plugin {
         'Escape': leaveNote,
         'ArrowRight': chain(arrowRightInPart, enterAdjacentNote(1)),
         'ArrowLeft': chain(arrowLeftInPart, enterAdjacentNote(-1)),
-        'Backspace': chain(backspaceInPart, deleteCharInPart(-1), selectAdjacentNote(-1)),
+        // Right after an input rule (a typed `]]` made an embed), Backspace gives back what was typed.
+        'Backspace': chain(undoInputRule, backspaceInPart, deleteCharInPart(-1), selectAdjacentNote(-1)),
         'Delete': chain(deleteInPart, deleteCharInPart(1), selectAdjacentNote(1)),
     });
 }
@@ -339,6 +341,12 @@ export function embedRefusal(tr: Transaction): string | null {
     return range === null ? null : unwritableEmbed(tr.doc, range.from, range.to);
 }
 
+/** `noteRefusal`, then `embedRefusal`, over the range the transaction changed, read once. */
+function refusal(tr: Transaction): string | null {
+    const range = refusableRange(tr);
+    return range === null ? null : unwritableInNote(tr.doc, range.from, range.to) ?? unwritableEmbed(tr.doc, range.from, range.to);
+}
+
 /**
  * The range of the new document a transaction changed, which a refusal is
  * decided over — the notes' here, the tables' (`tables.ts`) — or `null` for one
@@ -371,7 +379,7 @@ export function refusableRange(tr: Transaction): { from: number; to: number } | 
  * browser would put the text into the neighbouring span), and pastes into a
  * part as text — a slice of paragraphs would split the note in two.
  */
-export function notesPlugin(wikiEmbeds: () => boolean = () => true): Plugin {
+export function notesPlugin(): Plugin {
     let editorView: EditorView | null = null;
     return new Plugin({
         // The one edit the serializer cannot write back is refused here,
@@ -379,7 +387,7 @@ export function notesPlugin(wikiEmbeds: () => boolean = () => true): Plugin {
         // span — with the reason shown beside the caret (`noteRefusal`); and
         // so is a wiki embed made code, superscript or subscript (`embedRefusal`).
         filterTransaction(tr) {
-            const reason = noteRefusal(tr) ?? embedRefusal(tr);
+            const reason = refusal(tr);
             if (reason !== null) {
                 if (editorView) {
                     showHint(editorView, reason, 'refusal');
@@ -412,7 +420,12 @@ export function notesPlugin(wikiEmbeds: () => boolean = () => true): Plugin {
                     }
                     if (e.inputType === 'insertText' && typeof e.data === 'string') {
                         e.preventDefault();
-                        view.dispatch(view.state.tr.insertText(e.data).scrollIntoView());
+                        // The input rules first, as for text typed anywhere else (a `]]` closing an embed).
+                        const { from, to } = view.state.selection;
+                        const text = e.data;
+                        if (!view.someProp('handleTextInput', f => f(view, from, to, text, () => view.state.tr.insertText(text, from, to)))) {
+                            view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+                        }
                         return true;
                     }
                     // A deletion the keymap did not take (a word, a line): what the
@@ -438,11 +451,13 @@ export function notesPlugin(wikiEmbeds: () => boolean = () => true): Plugin {
                 if (noteContextAt(sel.$from) === null && noteContextAt(sel.$to) === null) {
                     return false;
                 }
-                // A leaf is its own text (a wiki embed its source), not a space,
-                // and an embed in it is an atom again (`wikiEmbeds.ts`).
-                const text = slice.content.textBetween(0, slice.content.size, ' ', leaf => leaf.type.spec.leafText?.(leaf) ?? ' ');
-                const embeds = wikiEmbeds() ? textWithEmbeds(text, sel.$from.marks()) : null;
-                const tr = embeds === null ? view.state.tr.insertText(text) : view.state.tr.replaceSelection(new Slice(Fragment.from(embeds), 0, 0));
+                // One line of the slice's text, with the marks typed text takes
+                // here; a wiki embed atom stays one, text stays text (`inlineForNote`).
+                const marks = view.state.storedMarks ?? sel.$from.marks();
+                const inline = inlineForNote(slice, marks);
+                const tr = inline.some(n => n.type === editorSchema.nodes.wiki_embed)
+                    ? view.state.tr.replaceSelection(new Slice(Fragment.from(inline), 0, 0))
+                    : view.state.tr.insertText(inline.map(n => n.text ?? '').join(''));
                 view.dispatch(tr.scrollIntoView());
                 return true;
             },

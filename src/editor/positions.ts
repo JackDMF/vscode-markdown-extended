@@ -1,6 +1,6 @@
 import { Node } from 'prosemirror-model';
 import { Selection, TextSelection } from 'prosemirror-state';
-import { NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
+import { NOTE_SEPARATOR, NOTE_SYNTAX, WIKI_EMBED_MARKERS, plainWikiEmbed } from '../syntax/markers';
 import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize';
 
 /**
@@ -46,8 +46,10 @@ import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize
  * `NOTE_SEPARATOR` — read from where the syntax is stated), so the text of one
  * part cannot be matched into another, and a table's line breaks and `|`s
  * (`visitTable`: a cell is a textblock that starts after a `|`, not on a line
- * of its own). A wiki embed, an atom, matches its source's first character,
- * the rest of its source anchors it, and its spelling runs to the source's end.
+ * of its own). A wiki embed, an atom, matches its source's `!`, the rest of
+ * its plain name anchors it, and its spelling runs to its closing `]]`
+ * however the place spelled it; a source position right after that is after
+ * the atom.
  * The alignment runs in a band around the
  * diagonal (the source is the page text plus delimiters); a block too large for
  * the band's budget is aligned greedily instead and every answer in it is
@@ -253,8 +255,8 @@ const UNMATCHABLE = -1;
 interface Unit {
     pos: number;
     code: number;
-    /** For an atom spelled by a run of source characters (a wiki embed): how many. */
-    span?: number;
+    /** An atom spelled by a run of source characters up to and including `spelledTo` (a wiki embed: `]]`). */
+    spelledTo?: string;
 }
 
 /** The markers the notes plugin reads around a note's parts (`markdownItSidenote.ts`), as anchors. */
@@ -281,11 +283,13 @@ function collectUnits(block: Node): Unit[] {
             return;
         }
         if (node.type.name === 'wiki_embed') {
-            // The atom matches its source's first character and its spelling
-            // runs to the source's end (`spellingEnd`), as an entity's does: the
-            // position before it is the source's start, the one after it its end.
-            const source = node.attrs.source as string;
-            units.push({ pos, code: source.charCodeAt(0), span: source.length });
+            // The atom matches its source's `!`, and its spelling runs to the
+            // `]]` that closes it (`spellingEnd`), as an entity's runs to its
+            // `;`: the position before it is the source's start, the one after
+            // it its end, however the place spelled the name (`writtenWikiEmbed`:
+            // `\|` in a cell, `&#124;` in a note). Its plain name anchors it.
+            const source = plainWikiEmbed(node.attrs.source as string);
+            units.push({ pos, code: source.charCodeAt(0), spelledTo: WIKI_EMBED_MARKERS.close });
             anchor(source.slice(1));
             return;
         }
@@ -574,6 +578,8 @@ class BlockMap {
     private readonly spellingEnd: Int32Array;
     /** For each normalized position, whether it stands inside a delimiter: a line's prefix, an entity's tail. */
     private readonly inside: Uint8Array;
+    /** The unit of the atom whose spelling ends at a normalized position (a wiki embed's `]]`). */
+    private readonly atomEndingAt = new Map<number, number>();
 
     constructor(block: Node, readonly body: string) {
         this.units = collectUnits(block);
@@ -617,13 +623,15 @@ class BlockMap {
         // A character spelled as an entity whose first character it is
         // (`&amp;` for `&`) matches that first character: its spelling runs to
         // the `;`, as an escape's (`\*`) runs to the character.
-        // An atom spelled by its source (a wiki embed) runs to the source's end.
+        // An atom spelled by a run of source (a wiki embed) runs to its closing marker.
         this.units.forEach((unit, j) => {
             const i = this.alignment.toSource[j];
-            if (unit.span !== undefined && i >= 0) {
-                const end = Math.min(src.length, i + unit.span);
+            const close = unit.spelledTo === undefined || i < 0 ? -1 : src.indexOf(unit.spelledTo, i + 1);
+            if (close >= 0) {
+                const end = close + (unit.spelledTo as string).length;
                 this.spellingEnd[i] = end;
                 this.inside.fill(1, i + 1, end);
+                this.atomEndingAt.set(end, j);
             }
         });
         for (let i = 0; i < src.length; i++) {
@@ -678,6 +686,11 @@ class BlockMap {
         const afterPos = after >= 0 ? this.units[after].pos : -1;
         // Inside a delimiter the place is only near one: the rules below still find it.
         const within = exact && this.inside[l] === 0;
+        // Right after an atom's spelling: after the atom, wherever it stands in its block.
+        const atom = this.atomEndingAt.get(l);
+        if (atom !== undefined) {
+            return { rel: this.units[atom].pos + 1, exact: within };
+        }
         if (beforePos >= 0 && src.charCodeAt(l - 1) !== NEWLINE) {
             return { rel: beforePos + 1, exact: within };
         }

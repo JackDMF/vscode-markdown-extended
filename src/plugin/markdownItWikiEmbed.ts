@@ -104,6 +104,16 @@ export function MarkdownItWikiEmbed(md: MarkdownIt) {
             if (token.type === 'inline') { joinAsText(token.children); }
         }
     });
-    // Where the token is kept, a block rendered as source still shows the text.
+    // Where the token is kept, everything rendered from it shows the text the
+    // preview shows: the rule for the element, and markdown-it's own reader of
+    // an element's text (an image's alt), which reads only `text` tokens.
     md.renderer.rules[WIKI_EMBED_TOKEN] = (tokens: Token[], idx: number) => utils(md).escapeHtml(tokens[idx].content);
+    const renderer = md.renderer as unknown as { renderInlineAsText(tokens: Token[], ...rest: unknown[]): string };
+    const asText = renderer.renderInlineAsText;
+    renderer.renderInlineAsText = function (this: unknown, tokens: Token[], ...rest: unknown[]): string {
+        const read = tokens.some(t => t.type === WIKI_EMBED_TOKEN)
+            ? tokens.map(t => (t.type === WIKI_EMBED_TOKEN ? { ...t, type: 'text' } as Token : t))
+            : tokens;
+        return asText.call(this, read, ...rest);
+    };
 }

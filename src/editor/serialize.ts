@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
-import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
+import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, plainWikiEmbed } from '../syntax/markers';
 import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
@@ -95,27 +95,42 @@ function internals(state: MarkdownSerializerState): StateInternals {
 }
 
 /**
- * A wiki embed's source as it is written where it stands: as it was written,
- * never escaped, except for a character the place reads as its own syntax —
- * in a table cell a `|` no backslash precedes (the table plugin's reading:
- * any backslash before it escapes it) as `\|` and a backtick as `&#96;`; in a
- * note's part its terminator (`PART_TERMINATORS`) and a run of the note's
- * marker character (`breakMarkerRuns`) as character references. The embed
- * plugin reads its name with escapes and references resolved
- * (`markdownItWikiEmbed.ts`), so each form is the same embed to it and to Foam.
- * A block read from the file never holds such a character where it stands, so
- * a source read from the file is written byte for byte.
+ * A wiki embed's source as it is written where it stands. It starts from the
+ * plain form (`plainWikiEmbed`: the encodings below read back, every other
+ * escape kept), and encodes only a character the place reads as its own
+ * syntax: in a table cell a `|` no backslash precedes (the table plugin's
+ * reading: any backslash before it escapes it) as `\|` and a bare backtick as
+ * `&#96;`; in a note's part its terminator (`PART_TERMINATORS`), bare or
+ * escaped (the notes plugin finds it in the raw source either way), and a run
+ * of the note's marker character as character references. The embed plugin
+ * reads its name with escapes and references resolved
+ * (`markdownItWikiEmbed.ts`), so each form is the same embed to it and to Foam,
+ * and a block read from the file is written back as it was read.
  */
+export function writtenWikiEmbed(source: string, place: { inTableCell?: boolean; notePart?: NotePart; noteMarker?: string }): string {
+    // A source as characters: an escape pair is one, `\|` stands for `|`.
+    const units = plainWikiEmbed(source).match(/\\.|[^]/g) ?? [];
+    const charOf = (unit: string) => (unit.length === 2 ? unit[1] : unit);
+    const terminator = place.notePart === undefined ? null : PART_TERMINATORS[place.notePart];
+    const marker = place.noteMarker;
+    const written = units.map((unit, i) => {
+        const ch = charOf(unit);
+        if (terminator !== null && ch === terminator.raw) {
+            return terminator.entity;
+        }
+        if (marker !== undefined && ch === marker && (charOf(units[i - 1] ?? '') === marker || charOf(units[i + 1] ?? '') === marker)) {
+            return MARKER_REFERENCES[ch] ?? unit;
+        }
+        if (place.inTableCell && unit === '`') {
+            return '&#96;';
+        }
+        return unit;
+    }).join('');
+    return place.inTableCell ? written.replace(/(?<!\\)\|/g, '\\|') : written;
+}
+
 function embedSource(st: StateInternals, source: string): string {
-    let written = source;
-    if (st.inTableCell) {
-        written = written.replace(/(?<!\\)\|/g, '\\|').replace(/`/g, '&#96;');
-    }
-    const terminator = st.notePart === undefined ? null : PART_TERMINATORS[st.notePart];
-    if (terminator !== null) {
-        written = written.split(terminator.raw).join(terminator.entity);
-    }
-    return breakMarkerRuns(written, st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
+    return writtenWikiEmbed(source, { inTableCell: st.inTableCell, notePart: st.notePart, noteMarker: st.noteMarker });
 }
 
 /**

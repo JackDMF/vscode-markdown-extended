@@ -1153,7 +1153,7 @@ $left sidebar${.my-class}
 
 Renders keyboard shortcuts with proper styling.
 
-**Wiki embeds and links (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key. It is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it, and nothing inside it is read as syntax: `![[x]](y)` is the embed followed by `(y)`, not an image, and a `{…}` right after it stays text. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor an embed is one unit, drawn as its source and written back exactly as it was; typing or pasting `![[name]]` makes one. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one.
+**Wiki embeds and links (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key. It is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it, and nothing inside it is read as syntax: `![[x]](y)` is the embed followed by `(y)`, not an image, and a `{…}` right after it stays text. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor an embed is one unit, drawn as its source and written back exactly as it was; typing `![[name]]`, or pasting it as plain text from outside the editor, makes one. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one.
 
 ### markdown-it-ib
 

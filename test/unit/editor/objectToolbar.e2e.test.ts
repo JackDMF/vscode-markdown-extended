@@ -363,6 +363,35 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2);
     });
 
+    test('a paste carrying HTML — the editor\'s own copy — keeps literal ![[x]] text literal', async function () {
+        this.timeout(15000);
+        await showDocument('Lit !\\[\\[x\\]\\] here.\n', 'Lit');
+        await clickBefore('here', 0);
+        await page.evaluate(() => {
+            const data = new DataTransfer();
+            data.setData('text/html', '<p>copy ![[y]] </p>');
+            data.setData('text/plain', 'copy ![[y]] ');
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+        });
+        await settle();
+        assert.strictEqual(await page.$('.ProseMirror .mep-wiki-embed'), null);
+        // The pasted paragraph's trailing space is the HTML's, which the browser drops.
+        assert.strictEqual((await lastEdit())?.text, 'Lit !\\[\\[x\\]\\] copy !\\[\\[y\\]\\]here.\n');
+    });
+
+    test('Backspace right after ]] made an embed in a note gives back the typed text', async function () {
+        this.timeout(15000);
+        await showDocument('Alpha ++beta|the body++ gamma.\n', 'Alpha');
+        await clickBefore('body', 0);
+        await page.keyboard.type('![[z]]');
+        await delay(100);
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 1);
+        await page.keyboard.press('Backspace');
+        await settle();
+        assert.strictEqual(await page.$('.ProseMirror .mep-wiki-embed'), null);
+        assert.strictEqual((await lastEdit())?.text, 'Alpha ++beta|the !\\[\\[z\\]\\]body++ gamma.\n');
+    });
+
     test('a source block shows its bar while the pointer is on it, keeps it while the pointer crosses to it, and Delete block removes it', async function () {
         this.timeout(15000);
         await showDocument('Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n', 'Before');

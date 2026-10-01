@@ -17,7 +17,7 @@ import {
     splitLines,
 } from './blocks';
 import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
-import { WIKI_EMBED_TOKEN, readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
+import { readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
 import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
@@ -107,21 +107,6 @@ function listIsTight(stream: readonly StreamToken[], index: number): boolean {
         }
     }
     return false;
-}
-
-/**
- * A block the editor shows rendered (a source block, injected content) is
- * drawn as the preview draws it: a wiki embed the editor's engine kept as a
- * token (`markdownItWikiEmbed.ts`) becomes the text the preview's engine made
- * of it, so markdown-it's own text readers (an image's alt) see it too.
- */
-function embedsAsText(tokens: readonly Token[]): void {
-    for (const t of tokens) {
-        if (t.type === WIKI_EMBED_TOKEN) {
-            t.type = 'text';
-        }
-        embedsAsText(t.children ?? []);
-    }
 }
 
 /**
@@ -227,9 +212,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
 
     const render = (block: SourceBlock): string => {
         const [start, end] = block.tokenRange;
-        const slice = tokens.slice(start, end);
-        embedsAsText(slice);
-        return start < end ? md.renderer.render(slice, engine.options, env) : '';
+        return start < end ? md.renderer.render(tokens.slice(start, end), engine.options, env) : '';
     };
 
     // Attributes MarkdownParser cannot derive from a token alone: the source

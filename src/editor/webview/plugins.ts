@@ -138,7 +138,7 @@ export function editorPlugins(wikiEmbeds: () => boolean = () => true): Plugin[] 
         dropCursor(),
         gapCursor(),
         hintPlugin(),
-        notesPlugin(wikiEmbeds),
+        notesPlugin(),
         wikiEmbedPastePlugin(wikiEmbeds),
         admonitionTitlesPlugin(),
         ...tablesPlugins(),

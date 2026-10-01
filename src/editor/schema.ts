@@ -1,6 +1,6 @@
 import { DOMOutputSpec, DOMParser, Fragment, Mark, Node, NodeSpec, Schema, TagParseRule } from 'prosemirror-model';
 import { tableNodes } from 'prosemirror-tables';
-import { ADMONITION_TYPES, NOTE_SYNTAX } from '../syntax/markers';
+import { ADMONITION_TYPES, NOTE_SYNTAX, plainWikiEmbed } from '../syntax/markers';
 import { domAttrsOf } from './attrs';
 
 /**
@@ -652,15 +652,16 @@ export const editorSchema = new Schema({
             attrs: {
                 source: {},
             },
-            // Its text, where ProseMirror reads text (a copy, an emptiness check): the source.
-            leafText: node => node.attrs.source as string,
+            // Its text, where ProseMirror reads text (a copy, an emptiness check): the source, plain (`plainWikiEmbed`).
+            leafText: node => plainWikiEmbed(node.attrs.source as string),
             parseDOM: [{
                 tag: 'span[data-mep-wiki-embed]',
                 getAttrs: (dom: HTMLElement) => ({ source: dom.getAttribute('data-mep-wiki-embed') || dom.textContent || '' }),
             }],
             toDOM(node): DOMOutputSpec {
                 const source = node.attrs.source as string;
-                return ['span', { class: 'mep-wiki-embed', 'data-mep-wiki-embed': source, title: 'Wiki embed' }, source];
+                // Shown plain: a place's encoding of a character (`&#124;` in a note) is how it is written, not its name.
+                return ['span', { class: 'mep-wiki-embed', 'data-mep-wiki-embed': source, title: 'Wiki embed' }, plainWikiEmbed(source)];
             },
         },
         sidenote: noteNode(SN.refClass, 'sidenote_body', SN.noteClass),
