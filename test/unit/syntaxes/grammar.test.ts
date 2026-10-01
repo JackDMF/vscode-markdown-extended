@@ -252,19 +252,29 @@ suite('Markdown Grammar: multiline emphasis', () => {
 
     suite('keys and wiki embeds (qjebbs/vscode-markdown-extended#168)', () => {
         const KBD = 'markup.kbd.markdown';
+        const EMBED = 'meta.embed.wiki.markdown';
         const noKey = (text: string, substr: string) => {
             const scopes = scopesAt(text, 0, substr);
             assert.ok(!scopes.includes(KBD), `expected "${substr}" to be no key, got: [${scopes.join(', ')}]`);
         };
 
-        test('[[Ctrl+S]] is a key, also after an escaped !', () => {
+        test('[[Ctrl+S]] is a key, also after an escaped ! and after a marginal note followed by a space', () => {
             assertScoped('Press [[Ctrl+S]] now', 0, 'Ctrl', KBD);
             assertScoped('Wow\\![[Ctrl+S]]', 0, 'Ctrl', KBD);
+            // The grammar's marginal note needs a space after its closing `!!`
+            // (`!!ref|note!![[Ctrl]]` is scoped as an embed here, a key in the preview).
+            assertScoped('A !!ref|note!! [[Ctrl]] b', 0, 'Ctrl', KBD);
         });
 
-        test('![[…]] is a wiki embed, not a key, mid-line and at a line start', () => {
+        test('![[…]] is a wiki embed, not a key, mid-line, at a line start and after an escaped backslash', () => {
             noKey('See ![[path/to/img.png]] here', 'path');
             noKey('![[note]]', 'note');
+            noKey('a\\\\![[b]]', 'b');
+            assertScoped('See ![[img.png]]', 0, 'img', EMBED);
+        });
+
+        test('![[x [[Ctrl]] y]] is no embed, as in the preview', () => {
+            assertScoped('![[x [[Ctrl]] y]]', 0, 'Ctrl', KBD);
         });
     });
 });

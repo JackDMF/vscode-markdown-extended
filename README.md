@@ -115,7 +115,7 @@ To disable integrated plugins, add their names (comma-separated, without `markdo
 
 > The pre-3.0 key `markdownExtended.disabledPlugins` still works but is deprecated.
 
-**Available plugin names:** `table-of-contents`, `container`, `admonition`, `footnote`, `abbr`, `sup-alt`, `sub-alt`, `checkbox`, `attrs`, `kbd`, `ib`, `mark`, `deflist`, `emoji`, `multimd-table`, `html5-embed`, `sidenote`, `bracketed-spans`, `cjk-friendly`, `helper`
+**Available plugin names:** `table-of-contents`, `container`, `admonition`, `footnote`, `abbr`, `sup-alt`, `sub-alt`, `checkbox`, `attrs`, `wiki-embed`, `kbd`, `ib`, `mark`, `deflist`, `emoji`, `multimd-table`, `html5-embed`, `sidenote`, `bracketed-spans`, `cjk-friendly`, `helper`
 
 ## Architecture & Development
 
@@ -1153,7 +1153,7 @@ $left sidebar${.my-class}
 
 Renders keyboard shortcuts with proper styling.
 
-**Wiki links and embeds (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]`, is never a key: a `[[` right after a `!` is left as written, for the extension that renders embeds. Write `\![[Ctrl]]` for a `!` followed by a key. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one. In a Foam or Obsidian vault, turn keys off to keep wiki links as links, and restart VS Code:
+**Wiki links and embeds (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key: it is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it. Nothing inside it is read as syntax, and `![[x]](y)` is the embed followed by `(y)`, not an image. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor a paragraph holding an embed is a source block, written back as it was. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one. In a Foam or Obsidian vault, turn keys off to keep wiki links as links, and restart VS Code:
 
 ```json
 "markdownExtended.plugins.disabled": "kbd"

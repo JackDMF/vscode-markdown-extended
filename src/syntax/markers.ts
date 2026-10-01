@@ -39,32 +39,24 @@ export type InlineMarkerName = keyof typeof INLINE_MARKERS;
 export const KBD_MARKERS = { open: '[[', close: ']]' } as const;
 
 /**
- * The `!` that makes `[[…]]` a wiki embed — Foam's, Obsidian's and Markdown
- * Notes' `![[note]]` or `![[path/to/image.png]]` — and never a key
- * (qjebbs/vscode-markdown-extended#168). A plain `[[note]]` stays a key: it is
- * this extension's syntax as much as a wiki link, and nothing in it tells the
- * two apart.
+ * A wiki embed, Foam's, Obsidian's and Markdown Notes' `![[note]]` or
+ * `![[path/to/image.png]]` (qjebbs/vscode-markdown-extended#168): `open`, a
+ * name with no bracket and no line break, `close` — the shape Foam's own
+ * embed rule matches. `src/plugin/markdownItWikiEmbed.ts` reads it as one run
+ * of literal text, so no key, image or other inline rule starts inside it. A
+ * plain `[[note]]` stays a key: it is this extension's syntax as much as a
+ * wiki link, and nothing in it tells the two apart.
  */
-export const WIKI_EMBED_MARKER = '!';
+export const WIKI_EMBED_MARKERS = { open: '![[', close: ']]' } as const;
 
 /**
- * Whether the `[[` at `pos` of `src` follows a wiki embed's `!` that no
- * backslash escapes, so it opens an embed and not a key; `\![[Ctrl]]` is a `!`
- * and a key. The kbd plugin (`src/plugin/markdownItKbd.ts`) asks it of the
- * source it parses, the Visual Editor's serializer of what it has written so
- * far, so a key written after a `!` is written `\![[…]]` and reads back as the
- * key it was.
+ * The flag the embed plugin sets on an `inline` token's `meta` when the token
+ * holds a wiki embed. The embed is plain text by the end of the parse, joined
+ * with the text around it, so an extension that renders embeds from text
+ * (Foam) still finds it; the flag is how the Visual Editor still knows it is
+ * there.
  */
-export function followsWikiEmbedMarker(src: string, pos: number): boolean {
-    if (src.charAt(pos - 1) !== WIKI_EMBED_MARKER) {
-        return false;
-    }
-    let backslashes = 0;
-    while (src.charAt(pos - 2 - backslashes) === '\\') {
-        backslashes++;
-    }
-    return backslashes % 2 === 0;
-}
+export const WIKI_EMBED_META = 'mepWikiEmbed';
 
 /** Between a note's reference text and its content: `++reference|note++`. */
 export const NOTE_SEPARATOR = '|';

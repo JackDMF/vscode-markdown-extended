@@ -4,7 +4,7 @@ import { MarkdownItAnchorLink } from './markdownItAnchorLink';
 import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { MarkdownItAttrs } from './markdownItAttrs';
-import { MarkdownItKbd } from './markdownItKbd';
+import { MarkdownItWikiEmbed } from './markdownItWikiEmbed';
 import { Config } from '../services/common/config';
 // eslint-disable-next-line @typescript-eslint/naming-convention
 import * as MarkdownItSidenote from './markdownItSidenote';
@@ -16,6 +16,7 @@ import markdownItAbbr from 'markdown-it-abbr';
 import markdownItSupAlt from 'markdown-it-sup-alt';
 import markdownItSubAlt from 'markdown-it-sub-alt';
 import markdownItCheckbox from 'markdown-it-checkbox';
+import markdownItKbd from 'markdown-it-kbd';
 import markdownItIb from 'markdown-it-ib';
 import markdownItMark from 'markdown-it-mark';
 import markdownItDeflist from 'markdown-it-deflist';
@@ -46,8 +47,9 @@ const myPlugins: Record<string, any> = {
     'markdown-it-checkbox': markdownItCheckbox,
     // Wrapped: leaves the spans markdown-it-multimd-table laid out alone.
     'markdown-it-attrs': MarkdownItAttrs,
-    // Wrapped: a wiki embed's `![[…]]` is not a key.
-    'markdown-it-kbd': MarkdownItKbd,
+    // Before kbd: `![[...]]` is a wiki embed, read as literal text, never a key.
+    'markdown-it-wiki-embed': MarkdownItWikiEmbed,
+    'markdown-it-kbd': markdownItKbd,
     'markdown-it-ib': markdownItIb,
     'markdown-it-mark': markdownItMark,
     'markdown-it-deflist': markdownItDeflist,
@@ -75,6 +77,7 @@ export const plugins: MarkdownItPlugin[] = [
     $('markdown-it-sub-alt'),
     $('markdown-it-checkbox'),
     $('markdown-it-attrs'),
+    $('markdown-it-wiki-embed'),
     $('markdown-it-kbd'),
     $('markdown-it-ib'),
     $('markdown-it-mark'),

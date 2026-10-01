@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
-import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, WIKI_EMBED_MARKER, followsWikiEmbedMarker } from '../syntax/markers';
+import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
 import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
@@ -86,6 +86,25 @@ function internals(state: MarkdownSerializerState): StateInternals {
     return state as unknown as StateInternals;
 }
 
+/**
+ * Escape a `!` that ends the output, unless a backslash already escapes it,
+ * before a `[` that would make it part of the next construct: `![` an image,
+ * `![[` a wiki embed. An escaped backslash (`\\!`) leaves the `!` bare, so the
+ * backslashes before it are counted.
+ */
+function escapeTrailingBang(st: StateInternals): void {
+    if (!st.out.endsWith('!')) {
+        return;
+    }
+    let backslashes = 0;
+    while (st.out.charAt(st.out.length - 2 - backslashes) === '\\') {
+        backslashes++;
+    }
+    if (backslashes % 2 === 0) {
+        st.out = st.out.slice(0, -1) + '\\!';
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Escaping
 // ---------------------------------------------------------------------------
@@ -99,23 +118,6 @@ function internals(state: MarkdownSerializerState): StateInternals {
  * respects because the escape is consumed before they see the character.
  */
 const ESCAPE_EXTRA = /<(?=[A-Za-z/!?])|&(?=#?[0-9A-Za-z]+;)|=(?==)|(?<==)=|\+(?=\+)|(?<=\+)\+|!(?=!)|(?<=!)!|[$@^]|:(?=[A-Za-z_+-][\w+-]*:)/g;
-
-/** `\[\[…\]\]` in escaped text, with no bracket and no line break between: a wiki embed's brackets once the `!` before them is unescaped. */
-const ESCAPED_EMBED = /\\\[\\\[((?:[^\\\n]|\\[^[\]\n])+?)\\\]\\\]/g;
-
-/**
- * Escaped text with each wiki embed's brackets written as they were. The kbd
- * plugin leaves `![[…]]` as text (`followsWikiEmbedMarker`), so the text reads
- * back as itself unescaped, and the extension that renders embeds (Foam,
- * Markdown Notes) sees the embed again; escaped, it would see none. The
- * embed's own text keeps its escapes, and is held on one line, as a key is.
- */
-function unescapeWikiEmbeds(escaped: string): string {
-    return escaped.replace(ESCAPED_EMBED, (whole: string, content: string, at: number) =>
-        followsWikiEmbedMarker(escaped, at)
-            ? HOLD_OPEN + KBD_MARKERS.open + content + KBD_MARKERS.close + HOLD_CLOSE
-            : whole);
-}
 
 // ---------------------------------------------------------------------------
 // Marks
@@ -305,9 +307,7 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
                 // (`measureWrapWidth` holds it the same way). With the hold marker
                 // first, prosemirror-markdown no longer sees the `[` after a `!`
                 // that would make it an image, so that `!` is escaped here.
-                if (/(^|[^\\])!$/.test(st.out)) {
-                    st.out = st.out.slice(0, -1) + '\\!';
-                }
+                escapeTrailingBang(st);
                 return HOLD_OPEN + '[';
             }
             // Written unescaped: a backslash inside a URL is part of the URL.
@@ -336,14 +336,11 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // each is a held run the wrapper keeps on one line, as a code span is.
     // Mixable, so emphasis inside a key is written inside it (`[[a *b*]]`),
     // not as a second key inside the emphasis.
-    // A key right after a `!` would be a wiki embed's `![[…]]`, which the kbd
-    // plugin refuses, so that `!` is escaped, as a link's is.
+    // A key right after a `!` would be read as a wiki embed's `![[…]]`
+    // (`markdownItWikiEmbed.ts`), so that `!` is escaped, as a link's is.
     kbd: {
         open(state) {
-            const st = internals(state);
-            if (followsWikiEmbedMarker(st.out, st.out.length)) {
-                st.out = st.out.slice(0, -1) + '\\' + WIKI_EMBED_MARKER;
-            }
+            escapeTrailingBang(internals(state));
             return HOLD_OPEN + KBD_MARKERS.open;
         },
         close: KBD_MARKERS.close + HOLD_CLOSE,
@@ -369,14 +366,8 @@ const inlineNodes: NodeSerializers = {
     text(state, node) {
         const text = (node.text ?? '').replace(HOLD_RE, '');
         const st = internals(state);
-        if (st.inAutolink) {
-            state.text(text, false);
-            return;
-        }
-        if (st.notePart === undefined) {
-            const at = st.out.length;
-            state.text(text);
-            st.out = st.out.slice(0, at) + unescapeWikiEmbeds(st.out.slice(at));
+        if (st.notePart === undefined || st.inAutolink) {
+            state.text(text, !st.inAutolink);
             return;
         }
         // Never at a line start: the note's opening marker is before it.

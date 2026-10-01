@@ -1,4 +1,5 @@
 import { Token } from '../@types/markdown-it';
+import { WIKI_EMBED_META } from '../syntax/markers';
 import { AttrPair, NOTE_SYNTAX_CHARS, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
 
 /**
@@ -520,7 +521,7 @@ function pipeTableNotEditableBecause(tokens: readonly Token[], group: TokenGroup
             }
             case 'inline': {
                 const children = t.children ?? [];
-                const because = inlineNotEditable(children);
+                const because = inlineNotEditable(t);
                 if (because !== null) {
                     return `${because} in a table cell`;
                 }
@@ -612,7 +613,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
         if (inTitle && (t.children ?? []).some(c => injectionMarkOf(c) !== undefined)) {
             return 'injected content in an admonition title';
         }
-        const because = inlineNotEditable(t.children ?? []);
+        const because = inlineNotEditable(t);
         if (because !== null) {
             return inTitle ? `${because} in an admonition title` : because;
         }
@@ -621,7 +622,14 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
 }
 
 /** Why an inline token's children cannot be edited in place, or `null` when they can. */
-function inlineNotEditable(children: readonly Token[]): string | null {
+function inlineNotEditable(inline: Token): string | null {
+    // A wiki embed is text by now (`markdownItWikiEmbed.ts`), and text would be
+    // written escaped, which the extension rendering embeds does not read as
+    // one: the block keeps its source, written back as it was.
+    if ((inline.meta as Record<string, unknown> | null | undefined)?.[WIKI_EMBED_META]) {
+        return 'wiki embed ![[…]]';
+    }
+    const children: readonly Token[] = inline.children ?? [];
     let noteDepth = 0;
     let spanDepth = 0;
     for (const child of children) {
