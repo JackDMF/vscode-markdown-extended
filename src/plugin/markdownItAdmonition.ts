@@ -1,5 +1,6 @@
 import { MarkdownIt, Token, Renderer } from "../@types/markdown-it";
 import { ADMONITION_MARKER, ADMONITION_TYPES } from "../syntax/markers";
+import { withoutTextBraceEnd } from "../syntax/attrsLiteral";
 
 // The types and the marker live in `src/syntax/markers.ts`, which the Visual
 // Editor's toolbar reads too: its admonition menu lists exactly these. Each
@@ -20,12 +21,19 @@ export function MarkdownItAdmonition(md: MarkdownIt) {
 
 function render(tokens: Token[], idx: number, _options: any, env: any, self: Renderer) {
     const token = tokens[idx];
+    // The classes are joined for this render only, so a second render of the same tokens gives the same tags.
+    const own = token.attrs ? token.attrs.map(pair => [...pair]) : token.attrs;
     if (token.type === "admonition_open") {
-        tokens[idx].attrJoin("class", "admonition " + token.info);
+        // A brace of the text's own ending the classes (`!!! note x {a = b}`) is no class.
+        tokens[idx].attrJoin("class", "admonition " + withoutTextBraceEnd(token.info));
     } else if (token.type === "admonition_title_open") {
         tokens[idx].attrJoin("class", "admonition-title");
     }
-    return self.renderToken(tokens, idx, _options);
+    try {
+        return self.renderToken(tokens, idx, _options);
+    } finally {
+        token.attrs = own;
+    }
 }
 
 function admonition(state: any, startLine: number, endLine: number, silent: boolean) {
@@ -43,41 +51,7 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
     if (len < _minMarkerLen) {return false;}
 
     const markup: string = state.src.slice(mem, pos);
-    // https://python-markdown.github.io/extensions/admonition/
-    const params: string = state.src.slice(pos, max).trim();
-    const quoteIdx = params.indexOf('"');
-    let type = "";
-    let classes: string[] = [];
-    let title = "";
-    if (quoteIdx >= 0) {
-        classes = params.substring(0, quoteIdx).trim()
-            .split(" ")
-            .map(s => s.trim())
-            .filter(s => !!s);
-        type = classes[0];
-        title = params.substring(quoteIdx);
-        if (_types.indexOf(type) < 0) {
-            classes.unshift("note");
-            type = "note";
-        }
-    } else {
-        type = params.split(" ").shift().toLowerCase();
-        if (_types.indexOf(type) < 0) {
-            type = "note";
-            title = params;
-        } else {
-            title = params.substring(type.length);
-        }
-        classes.push(type)
-    }
-    if (title.startsWith('"')) {
-        if (title.length > 1 && title.endsWith('"')) {
-            title = title.substring(1, title.length - 1);
-        } else {
-            title = title.substring(1);
-        }
-    }
-
+    const { type, classes, title } = admonitionParams(state.src.slice(pos, max));
 
     // Since start is found, we can report success here in validation mode
     if (silent) {return true;}
@@ -133,8 +107,11 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
         token.markup = markup + " " + type;
     }
 
-    // parse admonition body
+    // parse admonition body, its lines seen from where the body starts
+    const saved = indentBody(state, startLine + 1, nextLine, state.blkIndent);
+    state.blkIndent = 0;
     state.md.block.tokenize(state, startLine + 1, nextLine);
+    restoreBody(state, startLine + 1, saved);
 
     token = state.push("admonition_close", "div", -1);
     token.markup = markup;
@@ -146,4 +123,98 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
     state.line = nextLine;
     state.blkIndent = oldIndent;
     return true;
+}
+
+/**
+ * Moves the start of each body line past the body's indentation, `indent`
+ * columns, as markdown-it's blockquote rule moves it past `> `, and returns
+ * the offsets it replaced: `[bMarks, tShift, sCount, bsCount]` per line.
+ * Every rule inside then reads the body as a document of its own (indent 0),
+ * so a rule that cuts `bMarks + blkIndent` characters, as
+ * markdown-it-multimd-table does, cuts no text when a tab (one character,
+ * four columns) indents the body (qjebbs/vscode-markdown-extended#110). A tab
+ * the indentation ends inside is kept, its remaining columns counted through
+ * `bsCount`.
+ */
+function indentBody(state: any, startLine: number, endLine: number, indent: number): number[][] {
+    const saved: number[][] = [];
+    for (let line = startLine; line < endLine; line++) {
+        saved.push([state.bMarks[line], state.tShift[line], state.sCount[line], state.bsCount[line]]);
+        const max: number = state.eMarks[line];
+        const bsCount: number = state.bsCount[line];
+        let pos: number = state.bMarks[line];
+        let col = 0;
+        while (pos < max && col < indent) {
+            const width = columnsOf(state.src.charCodeAt(pos), col, bsCount);
+            if (width === 0 || col + width > indent) {break;}
+            col += width;
+            pos++;
+        }
+        // `pos` is where the body's text starts, or a tab reaching past it.
+        const start = pos;
+        let offset = col;
+        for (let width; pos < max && (width = columnsOf(state.src.charCodeAt(pos), offset, bsCount)) > 0; pos++) {
+            offset += width;
+        }
+        state.bMarks[line] = start;
+        state.tShift[line] = pos - start;
+        state.sCount[line] = Math.max(0, offset - indent);
+        state.bsCount[line] = bsCount + indent;
+    }
+    return saved;
+}
+
+/** Puts back the offsets `indentBody` replaced, from `startLine` on. */
+function restoreBody(state: any, startLine: number, saved: number[][]) {
+    saved.forEach(([bMarks, tShift, sCount, bsCount], i) => {
+        state.bMarks[startLine + i] = bMarks;
+        state.tShift[startLine + i] = tShift;
+        state.sCount[startLine + i] = sCount;
+        state.bsCount[startLine + i] = bsCount;
+    });
+}
+
+/**
+ * How many columns the character at column `col` takes: a space one, a tab
+ * up to the next tab stop, as markdown-it counts it (`bsCount` being the
+ * line's columns before its `bMarks`); `0` for anything else.
+ */
+function columnsOf(ch: number, col: number, bsCount: number): number {
+    return ch === 0x09 ? 4 - (col + bsCount) % 4 : ch === 0x20 ? 1 : 0;
+}
+
+/**
+ * The opening line after the marker
+ * (https://python-markdown.github.io/extensions/admonition/):
+ * `type "Title"`, `type class … "Title"` or `type Title`. A title is quoted
+ * only when its `"` follows the type and its classes, words separated by
+ * whitespace (a lone type may touch it: `!!! warning"Careful"`), and its
+ * closing `"` ends the line; otherwise the rest of the line after the type
+ * is the title, quotes and all, so `!!! note <font color="red">…</font>` is
+ * a note titled by its HTML (qjebbs/vscode-markdown-extended#131). A quoted
+ * title is kept as written, spaces and all, and `""` is none; an unquoted
+ * one is trimmed. A `{…}` after the closing quote stays with the title,
+ * where markdown-it-attrs gives it to the title bar. The type is the first
+ * word, lowercased; a first word that is no type is a note's title, unless a
+ * quoted title follows it: then it is a class beside `note`.
+ */
+export function admonitionParams(line: string): { type: string; classes: string[]; title: string } {
+    const params = line.trim();
+    const quoted = /^(?:([^\s"]+(?:\s+[^\s"]+)*)\s+|([^\s"]+))?"([\s\S]*)"(\s*\{[^{}]*\})?$/.exec(params);
+    if (quoted) {
+        const classes = (quoted[1] ?? quoted[2] ?? "").split(/\s+/).filter(s => !!s);
+        // Lowercased to find the type; a first class that is no type keeps its case.
+        if (classes.length && _types.indexOf(classes[0].toLowerCase()) >= 0) {
+            classes[0] = classes[0].toLowerCase();
+        } else {
+            classes.unshift("note");
+        }
+        const title = quoted[3] === "" ? "" : quoted[3] + (quoted[4] ?? "");
+        return { type: classes[0], classes, title };
+    }
+    const [, first, rest] = /^(\S*)\s*([\s\S]*)$/.exec(params);
+    const type = first.toLowerCase();
+    return _types.indexOf(type) < 0
+        ? { type: "note", classes: ["note"], title: params }
+        : { type, classes: [type], title: rest };
 }

@@ -11,6 +11,13 @@ export function readFileSync(_path: string, _options?: any): Buffer {
     return Buffer.alloc(0);
 }
 
+// Never reached while existsSync finds no file: on the web the export helper
+// finds nothing to embed, and embeds nothing.
+export function realpathSync(path: string): string {
+    return path;
+}
+realpathSync.native = realpathSync;
+
 export function writeFileSync(_path: string, _data: any, _options?: any): void {}
 
 export function mkdirSync(_path: string, _options?: any): void {}

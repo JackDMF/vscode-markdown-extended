@@ -2,6 +2,7 @@ import { MarkdownIt } from '../@types/markdown-it';
 // Use default import for CommonJS module
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import container = require('markdown-it-container');
+import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 
 /**
  * Markdown-it plugin wrapper for markdown-it-container with custom validation and rendering.
@@ -20,20 +21,28 @@ function validate(): boolean {
     return true;
 }
 
-function render(tokens, idx): string {
-    if (tokens[idx].nesting === 1) {
-        // opening tag 
-        const cls = escape(tokens[idx].info.trim());
-        return `<div class="${cls}">\n`;
-    } else {
-        // closing tag 
-        return '</div>\n';
+/**
+ * The container's `div`, rendered from its token so that what markdown-it-attrs
+ * put there from a `{…}` on the `:::` line reaches it (qjebbs/vscode-markdown-extended#126):
+ * the info, trimmed, is the first of its classes, the token's other classes after
+ * it — the literal's, VS Code's `code-line` — then its id and other attributes,
+ * VS Code's `data-line` among them, which keeps the preview's scroll in step
+ * with the text editor inside a container. A brace of the text's own ending the
+ * info (`::: note {a = b}`, `withoutTextBraceEnd`) is no class. The renderer
+ * escapes every value. The token keeps its own attributes, so a second render
+ * gives the same `div`.
+ */
+function render(tokens, idx, options, env, self): string {
+    const token = tokens[idx];
+    if (token.nesting !== 1) {
+        return self.renderToken(tokens, idx, options, env, self);
     }
-}
-
-function escape(str: string): string {
-    return str.replace(/"/g, '&quot;', )
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
+    const own = token.attrs;
+    const classes = [withoutTextBraceEnd(token.info), token.attrGet('class') ?? ''].filter(c => c !== '');
+    token.attrs = [['class', classes.join(' ')], ...(own ?? []).filter(([name]) => name !== 'class')];
+    try {
+        return self.renderToken(tokens, idx, options, env, self);
+    } finally {
+        token.attrs = own;
+    }
 }

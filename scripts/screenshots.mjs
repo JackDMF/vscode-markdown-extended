@@ -39,6 +39,7 @@ if (!existsSync(resolve(compiled, 'markdownItAdmonition.js'))) {
 const { MarkdownItAdmonition } = require(resolve(compiled, 'markdownItAdmonition.js'));
 const { MarkdownItContainer } = require(resolve(compiled, 'markdownItContainer.js'));
 const MarkdownItSidenote = require(resolve(compiled, 'markdownItSidenote.js')).default;
+const { MarkdownItCheckbox } = require(resolve(compiled, 'markdownItCheckbox.js'));
 
 /**
  * markdown-it wired like the extension's renderer.
@@ -58,7 +59,7 @@ function renderer() {
   md.use(require('markdown-it-abbr'));
   md.use(require('markdown-it-sup-alt'));
   md.use(require('markdown-it-sub-alt'));
-  md.use(require('markdown-it-checkbox'));
+  md.use(MarkdownItCheckbox);
   md.use(require('markdown-it-attrs'));
   md.use(require('markdown-it-kbd'));
   md.use(require('markdown-it-ib'));

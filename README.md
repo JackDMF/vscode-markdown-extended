@@ -85,7 +85,7 @@ Built-in syntax extensions:
 
 Integrated markdown-it plugins:
 
-- [markdown-it-table-of-contents](https://www.npmjs.com/package/markdown-it-table-of-contents) - `[[TOC]]`
+- [markdown-it-table-of-contents](https://www.npmjs.com/package/markdown-it-table-of-contents) - `[[TOC]]` (or `@[toc]`)
 - [markdown-it-footnote](https://www.npmjs.com/package/markdown-it-footnote) - Footnote syntax
 - [markdown-it-abbr](https://www.npmjs.com/package/markdown-it-abbr) - Abbreviations
 - [markdown-it-deflist](https://www.npmjs.com/package/markdown-it-deflist) - Definition lists
@@ -451,7 +451,7 @@ are typing on, and never moves the page.
 | Span (`[text]{…}`) | while the caret is in its text, after a moment | **Edit attributes** · **Remove attributes, keep text** |
 | Image | when you click it, after a moment | **Edit image…** (its alt text, then its path) · **Open file** · **Remove image** |
 | Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Attributes…** (disabled: the plugin gives a `{…}` to the title bar) · **Remove admonition, keep content** |
-| Container | while the caret is in it, after a moment | **Change name/info** · **Attributes…** (disabled: the container's renderer drops a `{…}`) · **Remove container, keep content** |
+| Container | while the caret is in it, after a moment | **Change name/info** · **Attributes…** (disabled: the editor keeps no `{…}` on a `:::` line; a container written with one is a source block) · **Remove container, keep content** |
 | A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Attributes…** (`{}` or empty removes them) |
 | Table | while the caret is in it, after a moment; the caret's column is tinted | **Row** (insert above, insert below, delete) · **Column** (insert left, insert right, delete) · **Align** (left, center, right; the current one marked) · **Attributes…** · **Edit source** · **Delete table** |
 | Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
@@ -1076,7 +1076,24 @@ See also: [Python-Markdown Documentation for Admonitions](https://python-markdow
 [[TOC]]
 ```
 
-Generates a table of contents from document headings.
+Generates a table of contents from document headings. `[[TOC]]` (any case) starts a line; the rest of that line
+is dropped (`[[TOC]] trailing` is a table of contents, and `trailing` is gone). The levels it lists are
+`markdownExtended.toc.levels` (`[1, 2, 3]` by default); a heading after `<!-- omit from toc -->` is left out.
+
+`@[toc]`, the marker of markdown-it-toc, is the same table of contents, and `@[toc](Title)` writes the title above
+it; either must stand alone on its line (spaces after it allowed), else it is text. The title may hold parentheses
+one deep (`@[toc](Contents (draft))`). VS Code's link checker reads `@[toc](Title)` as a link, so with
+`markdown.validate.enabled` it may report `Title` as a file that does not exist. Other markers (`{{TOC}}`, `[TOC]`)
+are not supported.
+
+Each entry links the id VS Code's preview gives its heading: GitHub-style slugs, with `-1`, `-2` for a repeated
+heading (`setup`, `setup-1`, `setup-2`). The preview gives a heading written with an explicit `{#id}` its slug, not
+that id, and the table of contents links the slug. A heading whose slug is empty (`## ???`) has nothing a link can
+name, and is listed without a link; a heading with no text (`## ![](logo.png)`) is not listed.
+
+In the Visual Editor the table of contents lists the headings as the document was last parsed: a heading added or
+renamed in the Visual Editor shows in it once the document is parsed again — reopened, or changed in the text
+editor.
 
 ### markdown-it-footnote
 

@@ -2,10 +2,10 @@
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, WORD_CHARACTER, opensInsideWords } from '../syntax/markers';
-import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
+import { NOTE_SYNTAX_CHARS, endLiteralOf, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
-import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
+import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -730,10 +730,10 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             // so the column the first line starts at is known.
             state.write();
             const st = internals(state);
-            const column = width(st.out.slice(st.out.lastIndexOf('\n') + 1));
+            const column = characterCount(st.out.slice(st.out.lastIndexOf('\n') + 1));
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
-            const lines = wrapInline(inlineMarkdown(node, true), limit - column, limit - width(st.delim));
+            const lines = wrapInline(inlineMarkdown(node, true), limit - column, limit - characterCount(st.delim));
             if (endsInLiteralText(node)) {
                 lines[lines.length - 1] = escapeTrailingLiteral(lines[lines.length - 1]);
             }
@@ -926,7 +926,7 @@ function listTakesLineLiteral(list: Node): boolean {
  */
 function endsInLiteralText(node: Node): boolean {
     const last = node.lastChild;
-    return last !== null && last.isText && last.marks.length === 0 && endsWithAttrsLiteral(last.text ?? '');
+    return last !== null && last.isText && last.marks.length === 0 && endLiteralOf(last.text ?? '') !== null;
 }
 
 /** The line's trailing `{…}` as text, `\{x\}`, which the plugin reads as no literal. */

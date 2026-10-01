@@ -5,7 +5,8 @@
         "outDir": "out",
         "lib": [
             "dom",
-            "es6"
+            "es6",
+            "es2022.intl"
         ],
         "sourceMap": true,
         "rootDir": ".",

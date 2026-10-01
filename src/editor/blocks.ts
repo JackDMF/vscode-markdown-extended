@@ -1,5 +1,6 @@
 import { Token } from '../@types/markdown-it';
-import { AttrPair, NOTE_SYNTAX_CHARS, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
+import { AttrPair, NOTE_SYNTAX_CHARS, endLiteralOf, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
+import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 
 /**
  * The token stream → top-level source blocks step of the rich editor.
@@ -62,33 +63,6 @@ export function isBlankLine(line: SourceLine | undefined): boolean {
 /** The line ending a changed block is written with: `\r\n` if the file has one anywhere, else `\n`. */
 export function detectEol(text: string): '\n' | '\r\n' {
     return text.includes('\r\n') ? '\r\n' : '\n';
-}
-
-/**
- * The literal `{…}` attribute suffix at the end of a heading's source line, or
- * `null`. `markdown-it-attrs` moves it into `heading_open.attrs` and strips it
- * from the inline text, so the serializer has to get it from the line to write
- * it back as it was — the anchor is a locator Req Explorer owns, never prose.
- */
-export function findAttrsSuffix(line: string): string | null {
-    const m = /(\{[^{}\r\n]*\})[ \t]*$/.exec(line);
-    return m ? m[1] : null;
-}
-
-/**
- * The `{…}` a line ends with as markdown-it-attrs finds it — the last `{`
- * outside a quoted value, through the line's end — when it is a literal the
- * plugin takes as attributes; `null` otherwise. Unlike `findAttrsSuffix` it
- * reads a quoted `}` (`{title="a}"}`) as the plugin does.
- */
-export function findEndLiteral(line: string): string | null {
-    const trimmed = line.replace(/[ \t]+$/, '');
-    const start = findLeftDelimiter(trimmed);
-    if (start < 0) {
-        return null;
-    }
-    const literal = trimmed.slice(start);
-    return parseAttrsLiteral(literal) === null ? null : literal;
 }
 
 /**
@@ -206,6 +180,13 @@ function sameExpansion(a: InjectionMark | null, b: InjectionMark | null): boolea
  */
 export const CONTAINER_OPEN = 'container_container_open';
 export const CONTAINER_CLOSE = 'container_container_close';
+
+/**
+ * Why a container written with a `{…}` on its `:::` line is a source block: the
+ * preview draws the literal on the container's `div` (`markdownItContainer.ts`),
+ * and the container node has no slot to keep it in.
+ */
+const CONTAINER_ATTRS_REASON = 'container attributes on its ::: line, which the container node does not keep';
 
 /** Top-level tokens that can open an editable block. Anything else at top level is a raw block. */
 export const EDITABLE_TOP_LEVEL_TOKENS: ReadonlySet<string> = new Set([
@@ -568,7 +549,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
             if (!t.markup.startsWith('#') || !t.map || t.map[1] - t.map[0] !== 1) {
                 return 'setext heading: its underline has no place in the heading node';
             }
-            if (t.attrs && t.attrs.length > 0 && findAttrsSuffix(lines[t.map[0]]?.text ?? '') === null) {
+            if (t.attrs && t.attrs.length > 0 && endLiteralOf(lines[t.map[0]]?.text ?? '') === null) {
                 return 'heading attributes that are not written as a trailing {…} on its line';
             }
         }
@@ -576,8 +557,9 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
             if (wrapperEnds.length >= MAX_WRAPPER_DEPTH) {
                 return `${t.type} nested more than one level deep`;
             }
-            if (t.type === 'admonition_open' && /\s/.test(t.info.trim())) {
-                // `!!! warning big "Title"`: a second class the node has no slot for.
+            if (t.type === 'admonition_open' && /\s/.test(withoutTextBraceEnd(t.info))) {
+                // `!!! warning big "Title"`: a second class the node has no slot for. A
+                // brace of the text's own is no class (`!!! note {a = b} "T"`), as the renderer reads it.
                 return 'admonition with more than one class';
             }
             if (t.type === CONTAINER_OPEN && i !== group.start) {
@@ -599,7 +581,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
         }
         // The top-level opener's literal is `recoverBlockAttrs`'s, a list item's `recoverItemLiterals`'.
         if (i !== group.start && t.type !== 'heading_open' && t.type !== 'list_item_open' && !attrsAllowed(t)) {
-            return `attributes on ${t.type}`;
+            return t.type === CONTAINER_OPEN ? CONTAINER_ATTRS_REASON : `attributes on ${t.type}`;
         }
         if (t.type !== 'inline') {
             continue;
@@ -716,6 +698,9 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
     if (wanted.length === 0) {
         return { attrs: null, endLine: null };
     }
+    if (open.type === CONTAINER_OPEN) {
+        return CONTAINER_ATTRS_REASON;
+    }
     if (!SUFFIX_BLOCKS.has(open.type) || !open.map) {
         return `attributes on ${open.type}`;
     }
@@ -729,22 +714,22 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
     const where = `${open.type.replace(/_open$/, '')} attributes not written where the editor can keep them`;
     switch (open.type) {
         case 'heading_open': {
-            const suffix = findAttrsSuffix(lines[start]?.text ?? '');
+            const suffix = endLiteralOf(lines[start]?.text ?? '');
             return suffix === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix, placement: 'end' }, endLine: null };
         }
         case 'fence': {
-            const literal = findEndLiteral(lines[start]?.text ?? '');
+            const literal = endLiteralOf(lines[start]?.text ?? '');
             return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
         }
         case 'hr': {
-            const literal = findEndLiteral(open.markup);
+            const literal = endLiteralOf(open.markup);
             return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
         }
         case 'paragraph_open': {
             if (last > start && reads(lastText)) {
                 return { attrs: { suffix: lastText, placement: 'line' }, endLine: null };
             }
-            const literal = findEndLiteral(lines[last]?.text ?? '');
+            const literal = endLiteralOf(lines[last]?.text ?? '');
             return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
         }
         case 'blockquote_open': {
@@ -823,7 +808,7 @@ function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines:
         if (line > paragraph.map[0] && parseAttrsLiteral(bare) !== null) {
             line--;
         }
-        const literal = findEndLiteral(lines[line]?.text ?? '');
+        const literal = endLiteralOf(lines[line]?.text ?? '');
         const pairs = literal === null ? null : parseAttrsLiteral(literal);
         if (literal === null || pairs === null || !sameAttrs(joinAttrs(pairs), wanted)) {
             return 'list item attributes not written where the editor can keep them';

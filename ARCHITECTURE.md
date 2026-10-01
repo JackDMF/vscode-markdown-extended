@@ -574,8 +574,9 @@ gives the quote its attributes, and the field's label says which block it is.
 
 Where no literal can go the entry is disabled and says why — in its tooltip, and on its
 preview card, where the eye already is — rather than writing one the file would not keep:
-a container (markdown-it-attrs takes a literal off the `:::` line and the container's
-renderer drops it; its classes are its name and info), an admonition (the plugin gives a
+a container (the preview draws a literal on its `:::` line, but the container node has no
+slot for one, so a container written with one is a source block; its classes are its name
+and info), an admonition (the plugin gives a
 literal on the `!!!` line to the title bar), a quote ending in another block, a list item
 not starting with a paragraph that ends in text, a requirement heading (its anchor is Req
 Explorer's), an indented code block (no opening line), a source block, the front matter,
@@ -1037,10 +1038,11 @@ command of `vscode.markdown-language-features` opens a document at a fragment fo
 extension (its `openDocumentLink` is internal), so its rule is ported — trimmed, lower-cased,
 `githubSlugReplaceRegex` removed, each white-space character a hyphen, a repeated slug
 `-1`, `-2`, … — and the regex is generated from the language server's bundle into
-`host/githubSlugRegex.ts`. It is github-slugger's table, a snapshot of one Unicode version
+`src/syntax/githubSlugRegex.ts` (the rule itself is `src/syntax/headingSlug.ts`, which the preview's table of contents
+links with too). It is github-slugger's table, a snapshot of one Unicode version
 (it strips `²` and letters newer than that version), so no `\p{…}` property escape
-reproduces it; `host.test.ts` compares it with the regex the test host's VS Code ships and
-fails when they part. Headings are read with the editor's engine, so `markdown-it-attrs`
+reproduces it; `host.test.ts` compares it with the regex the test host's VS Code ships, in
+the language server's bundle and in the preview's (`extension.js`), and fails when they part. Headings are read with the editor's engine, so `markdown-it-attrs`
 has put a `{#id}` into the heading's `id` and taken it out of the slugged text.
 
 The file then opens with `vscode.open` and `{ selection }`, in whichever editor VS Code

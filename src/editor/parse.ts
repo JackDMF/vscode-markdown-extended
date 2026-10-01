@@ -10,13 +10,13 @@ import {
     NOTE_OPEN_TOKENS,
     SourceBlock,
     detectEol,
-    findAttrsSuffix,
-    findEndLiteral,
     groupSourceBlocks,
     injectionMarkOf,
     splitLines,
 } from './blocks';
 import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
+import { endLiteralOf } from './attrs';
+import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
 /**
@@ -283,8 +283,9 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                         foreignLiteral.set(tokens[i + 1], { suffix: literal, placement: 'end' });
                     }
                     if (t.type === 'admonition_title_open') {
-                        // The title is the admonition's attribute, not a block of its body.
-                        admonitionTitle.set(tokens[i - 1], (tokens[i + 1]?.content ?? '').trim());
+                        // The title is the admonition's attribute, not a block of its body;
+                        // as the plugin read it, so a quoted title's spaces are written back.
+                        admonitionTitle.set(tokens[i - 1], tokens[i + 1]?.content ?? '');
                         i += 2;
                         continue;
                     }
@@ -370,7 +371,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                     level: Number(t.tag.slice(1)),
                     reqPrefix: headingPrefix.get(tok) ?? null,
                     anchor: attr(t, 'id'),
-                    attrsSuffix: t.attrs && t.attrs.length > 0 ? findAttrsSuffix(line) : null,
+                    attrsSuffix: t.attrs && t.attrs.length > 0 ? endLiteralOf(line) : null,
                 };
             },
         },
@@ -391,7 +392,8 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 const marker = line.indexOf(t.markup);
                 return {
                     ...sourceOf(tok),
-                    type: t.info.trim() || 'note',
+                    // Its class as the renderer draws it: a brace of the text's own is none.
+                    type: withoutTextBraceEnd(t.info) || 'note',
                     title: admonitionTitle.get(tok) ?? '',
                     markup: t.markup || '!!!',
                     // From the marker on: a quote's `> ` or a list's indentation is not the header's.
@@ -440,7 +442,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 // the whole line; the literal is `attrsSuffix`, the rule the rest.
                 const suffix = suffixOf(tok);
                 let markup = real(tok).markup || '---';
-                const literal = suffix.attrsSuffix === null ? null : findEndLiteral(markup);
+                const literal = suffix.attrsSuffix === null ? null : endLiteralOf(markup);
                 if (literal !== null && markup.trimEnd().endsWith(literal)) {
                     markup = markup.trimEnd().slice(0, -literal.length).trimEnd();
                 }

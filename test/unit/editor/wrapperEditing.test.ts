@@ -178,6 +178,43 @@ suite('Editor containers and admonitions: the toolbar, the keys and the object v
         state = apply(state, changeAdmonitionTransaction(state, at, { title: '' }));
         assert.strictEqual(text(state), '!!! warning\n    Body More.\n');
     });
+
+    test('a title written by rule reads back as itself: quotes in it, and the quotes of an unquoted title (qjebbs/vscode-markdown-extended#131)', () => {
+        let state = stateOf('!!! note Say "hi" twice\n    Body.\n');
+        const at = firstOf(state.doc, 'admonition').pos;
+        assert.strictEqual(state.doc.nodeAt(at)?.attrs.title, 'Say "hi" twice', 'the preview\'s title, not a class');
+        state = apply(state, changeAdmonitionTransaction(state, at, { type: 'tip' }));
+        assert.strictEqual(text(state), '!!! tip "Say "hi" twice"\n    Body.\n');
+        assert.strictEqual(stateOf(text(state)).doc.nodeAt(at)?.attrs.title, 'Say "hi" twice');
+        state = apply(state, changeAdmonitionTransaction(state, at, { title: '"Quoted" start' }));
+        assert.strictEqual(stateOf(text(state)).doc.nodeAt(at)?.attrs.title, '"Quoted" start');
+    });
+
+    test('a quoted title keeps its spaces, as the preview keeps them: a new type writes them back', () => {
+        let state = stateOf('!!! note " padded "\n    Body.\n');
+        const at = firstOf(state.doc, 'admonition').pos;
+        assert.strictEqual(state.doc.nodeAt(at)?.attrs.title, ' padded ');
+        state = apply(state, changeAdmonitionTransaction(state, at, { type: 'tip' }));
+        assert.strictEqual(text(state), '!!! tip " padded "\n    Body.\n');
+    });
+
+    test('committing a title field unchanged changes nothing, outer spaces included', () => {
+        for (const source of ['!!! note " padded "\n    Body.\n', '!!! note "  "\n    Body.\n']) {
+            const state = stateOf(source);
+            const at = firstOf(state.doc, 'admonition').pos;
+            const title = state.doc.nodeAt(at)?.attrs.title as string;
+            assert.strictEqual(changeAdmonitionTransaction(state, at, { title: title.trim() }), null, source);
+            assert.strictEqual(changeAdmonitionTransaction(state, at, { title }), null, source);
+        }
+    });
+
+    test('a tab-indented admonition is the box, its body read as the preview reads it, and written back byte for byte (qjebbs/vscode-markdown-extended#110)', () => {
+        const source = '!!! tip "Tabs"\n\tBody.\n\n\tMore.\n';
+        const state = stateOf(source);
+        const box = state.doc.nodeAt(firstOf(state.doc, 'admonition').pos);
+        assert.deepStrictEqual([box?.attrs.title, box?.childCount, box?.child(1).textContent], ['Tabs', 2, 'More.']);
+        assert.strictEqual(text(state), source);
+    });
 });
 
 suite('Editor block attributes: the object and its verb', () => {
@@ -226,6 +263,27 @@ suite('Editor block attributes: the object and its verb', () => {
 });
 
 suite('Editor stage 3: review findings, in the page', () => {
+    test('a literal with a space beside its = is refused as text, saying how to write it (qjebbs/vscode-markdown-extended#146)', () => {
+        const state = select(stateOf('Alpha beta gamma.\n'), 'beta');
+        assert.strictEqual(applySpanTransaction(state, '{width = 50%}'), null);
+        const reason = literalRefusal('{width = 50%}') ?? '';
+        assert.match(reason, /a space beside its = makes it text/);
+        assert.match(reason, /Write it as \{width=50%\}\.$/);
+        assert.match(literalRefusal('{.a title= "x y" b =2}') ?? '', /Write it as \{\.a title="x y" b=2\}\.$/);
+    });
+
+    test('no tightened form is suggested where taking the spaces out would change what it says', () => {
+        for (const literal of ['{.a =b}', '{#x =y}', '{a="b" =c}', '{a = b = c}', '{ = b}']) {
+            const reason = literalRefusal(literal) ?? '';
+            assert.match(reason, /makes it text/, literal);
+            assert.doesNotMatch(reason, /Write it as/, literal);
+        }
+    });
+
+    test('an unclosed literal is refused as unclosed, not for its spacing', () => {
+        assert.strictEqual(literalRefusal('{a = 1'), '{a = 1 is not closed: end the attribute list with }.');
+    });
+
     test('5. a span literal with a quoted } is refused, with the reason', () => {
         const state = select(stateOf('Alpha beta gamma.\n'), 'beta');
         assert.strictEqual(applySpanTransaction(state, '{title="a}b"}'), null);

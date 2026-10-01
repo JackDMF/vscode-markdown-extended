@@ -4,6 +4,9 @@ import { MarkdownItAnchorLink } from './markdownItAnchorLink';
 import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { MarkdownItAttrs } from './markdownItAttrs';
+import { MarkdownItTableOfContents } from './markdownItTableOfContents';
+import { MarkdownItHtml5Embed } from './markdownItHtml5Embed';
+import { MarkdownItCheckbox } from './markdownItCheckbox';
 import { Config } from '../services/common/config';
 // eslint-disable-next-line @typescript-eslint/naming-convention
 import * as MarkdownItSidenote from './markdownItSidenote';
@@ -14,16 +17,13 @@ import markdownItFootnote from 'markdown-it-footnote';
 import markdownItAbbr from 'markdown-it-abbr';
 import markdownItSupAlt from 'markdown-it-sup-alt';
 import markdownItSubAlt from 'markdown-it-sub-alt';
-import markdownItCheckbox from 'markdown-it-checkbox';
 import markdownItKbd from 'markdown-it-kbd';
 import markdownItIb from 'markdown-it-ib';
 import markdownItMark from 'markdown-it-mark';
 import markdownItDeflist from 'markdown-it-deflist';
 import { full as markdownItEmoji } from 'markdown-it-emoji';
 import markdownItMultimdTable from 'markdown-it-multimd-table';
-import markdownItHtml5Embed from 'markdown-it-html5-embed';
 import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
-import markdownItTableOfContents from 'markdown-it-table-of-contents';
 import markdownItCjkFriendly from 'markdown-it-cjk-friendly';
 
 interface MarkdownItPlugin {
@@ -43,7 +43,8 @@ const myPlugins: Record<string, any> = {
     'markdown-it-abbr': markdownItAbbr,
     'markdown-it-sup-alt': markdownItSupAlt,
     'markdown-it-sub-alt': markdownItSubAlt,
-    'markdown-it-checkbox': markdownItCheckbox,
+    // Our own rule in markdown-it-checkbox's markup: keeps the text before a box.
+    'markdown-it-checkbox': MarkdownItCheckbox,
     // Wrapped: leaves the spans markdown-it-multimd-table laid out alone.
     'markdown-it-attrs': MarkdownItAttrs,
     'markdown-it-kbd': markdownItKbd,
@@ -52,9 +53,11 @@ const myPlugins: Record<string, any> = {
     'markdown-it-deflist': markdownItDeflist,
     'markdown-it-emoji': markdownItEmoji,
     'markdown-it-multimd-table': markdownItMultimdTable,
-    'markdown-it-html5-embed': markdownItHtml5Embed,
+    // Wrapped: a media link hides only its own text, and `.ts` stays a link.
+    'markdown-it-html5-embed': MarkdownItHtml5Embed,
     'markdown-it-bracketed-spans': markdownItBracketedSpans,
-    'markdown-it-table-of-contents': markdownItTableOfContents,
+    // Wrapped: links each heading by the id the preview gives it, and reads `@[toc]`.
+    'markdown-it-table-of-contents': MarkdownItTableOfContents,
     'markdown-it-cjk-friendly': markdownItCjkFriendly,
 }
 

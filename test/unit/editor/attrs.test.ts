@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { Mark, Node } from 'prosemirror-model';
-import { domAttrsOf, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from '../../../src/editor/attrs';
+import { domAttrsOf, endLiteralOf, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from '../../../src/editor/attrs';
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -54,6 +54,41 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
         }
     });
 
+    test('a spaced = is no attribute list, to the port as to the preview (qjebbs/vscode-markdown-extended#146)', () => {
+        for (const literal of ['{height = 65}', '{a= b}', '{a =b}', '{.c a = b}']) {
+            assert.strictEqual(parseAttrsLiteral(literal), null, literal);
+            assert.strictEqual(md.render(`text ${literal}`), `<p>text ${literal}</p>\n`, literal);
+        }
+        assert.deepStrictEqual(parseAttrsLiteral('{title="a = b"}'), [['title', 'a = b']]);
+    });
+
+    test('an = inside a value is the value\'s, to the port as to the preview', () => {
+        for (const [literal, pairs] of [
+            ['{data-h=YQ== .wide}', [['data-h', 'YQ=='], ['class', 'wide']]],
+            ['{integrity=sha256-abc= crossorigin=anonymous}', [['integrity', 'sha256-abc='], ['crossorigin', 'anonymous']]],
+        ] as const) {
+            assert.deepStrictEqual(parseAttrsLiteral(literal), pairs, literal);
+            const html = md.render(`text ${literal}`);
+            assert.ok(!html.includes('{'), html);
+        }
+    });
+
+    // `taken`: the port finds an end literal, and the engine renders the
+    // paragraph's text without it. The escaped and the entity forms are what
+    // the editor writes for a changed paragraph, and must stay text too.
+    for (const [text, taken] of [
+        ['@{height = 65}', false], ['a {b = c}', false], ['\\@{height = 65}', false], ['\\${VAR = 1}', false], ['&amp;{x = 1}', false],
+        ['text {.a}', true], ['{.a}', true], ['**b**{.a}', true], ['`c`{.a}', true], ['[l](u){.a}', true], ['==m=={.a}', true],
+        ['x{.a}', true], ['@{height=65}', true],
+    ] as const) {
+        test(`${text} ends in a literal ${taken ? 'as' : 'neither for the port nor for'} the plugin`, () => {
+            const literal = endLiteralOf(text);
+            assert.strictEqual(literal !== null, taken);
+            const html = md.render(`${text}\n`);
+            assert.strictEqual(!html.includes('}'), taken, html);
+        });
+    }
+
     test('the editor draws no event handler and nothing that changes how an element is edited', () => {
         assert.deepStrictEqual(domAttrsOf('{onclick="x()" contenteditable=true .ok tabindex=1}'), { class: 'ok' });
     });
@@ -83,6 +118,67 @@ suite('Editor attribute spans: the literal is recovered from the source', () => 
             assert.strictEqual(serializeDocument({ ...parsed, doc }, { defaultWrap: 90 }), source);
         });
     }
+
+    test('a paragraph ending in a brace of its own text keeps it as text, its braces written back unescaped', () => {
+        // `@` is escaped when a changed paragraph is written, for the sidebars'
+        // sake; the escaped form is what the preview then reads.
+        for (const [source, written] of [
+            ['Set it to {height = 65}\n', 'Set it to {height = 65}\n'],
+            ['Set it to @{height = 65}\n', 'Set it to \\@{height = 65}\n'],
+        ]) {
+            const p = paragraph(source);
+            assert.strictEqual(p.type.name, 'paragraph', source);
+            assert.strictEqual(p.attrs.attrsSuffix, null, source);
+            assert.strictEqual(p.textContent, source.trim());
+            const parsed = parseDocument(md, source);
+            const doc = parsed.doc.type.create(null, [touched(p)]);
+            assert.strictEqual(serializeDocument({ ...parsed, doc }, { defaultWrap: 90 }), written);
+            assert.strictEqual(md.render(written), `<p>${source.trim()}</p>\n`, 'and the preview shows it whole');
+            assert.strictEqual(paragraph(written).textContent, source.trim(), 'and the editor reads it back');
+        }
+    });
+
+    test('a heading ending in a text brace, given an id by another extension, writes the brace once', () => {
+        // Another extension's extendMarkdownIt giving every heading an id (engine.ts).
+        const withIds = hostEngine([m => {
+            m.core.ruler.push('test_heading_ids', state => {
+                state.tokens.filter(t => t.type === 'heading_open').forEach(t => t.attrSet('id', 'given'));
+                return true;
+            });
+        }]);
+        const source = '## Title {a = b}\n';
+        const parsed = parseDocument(withIds, source);
+        const heading = topChildren(parsed.doc)[0];
+        // The id is on no literal the line holds, so the heading stays a source block, written as it is.
+        assert.strictEqual(heading.type.name, 'raw_block');
+        assert.strictEqual(serializeDocument(parsed, { defaultWrap: 90 }), source);
+    });
+
+    test('a bracketed span whose literal is text is an editable paragraph of that text', () => {
+        const p = paragraph('A [x]{a = b} c.\n');
+        assert.strictEqual(p.type.name, 'paragraph');
+        assert.strictEqual(p.textContent, 'A [x]{a = b} c.');
+        assert.deepStrictEqual(spanMarks(p), []);
+    });
+
+    test('a paragraph ending in a literal after a text brace keeps both, written back byte for byte', () => {
+        const source = 'x {y = {a=b}\n';
+        const p = paragraph(source);
+        assert.deepStrictEqual([p.type.name, p.attrs.attrsSuffix, p.textContent], ['paragraph', '{a=b}', 'x {y =']);
+        const parsed = parseDocument(md, source);
+        const doc = parsed.doc.type.create(null, [touched(p)]);
+        assert.strictEqual(serializeDocument({ ...parsed, doc }, { defaultWrap: 90 }), source);
+    });
+
+    test('an admonition whose only extra is a text brace is an admonition of that type', () => {
+        const node = paragraph('!!! note {a = b} "T"\n    Body.\n');
+        assert.deepStrictEqual([node.type.name, node.attrs.type], ['admonition', 'note']);
+    });
+
+    test('a normalized literal quotes a value holding =', () => {
+        assert.strictEqual(normalizedLiteral([['k', 'v='], ['class', 'y']]), '{k="v=" .y}');
+        assert.ok(sameAttrs(joinAttrs(parseAttrsLiteral('{k="v=" .y}') ?? []), [['k', 'v='], ['class', 'y']]));
+    });
 
     test('two spans in one paragraph each keep their own literal, in order', () => {
         const p = paragraph('A [one]{ .x  #first } and [two]{.x} and [three]{data-n="3"}.\n');

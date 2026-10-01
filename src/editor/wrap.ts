@@ -25,8 +25,17 @@ export const HOLD_CLOSE = String.fromCharCode(0xe001);
 export const HOLD_RE = new RegExp(`[${HOLD_OPEN}${HOLD_CLOSE}]`, 'g');
 const LEADING_HOLDS = new RegExp(`^[${HOLD_OPEN}${HOLD_CLOSE}]*`);
 
-/** Code points, not UTF-16 units, and no hold markers: the width a reader counts. */
-export function width(s: string): number {
+/**
+ * The characters a line holds, for the wrap column: code points, not UTF-16
+ * units and not grapheme clusters, and no hold markers. Not its display width
+ * — a CJK character or an emoji counts 1 here, 2 in a table
+ * (`MonoSpaceLength`), and an emoji built of several code points counts each:
+ * a ZWJ family of four is 7, a flag 2. The wrap column is a
+ * count of characters, and a paragraph's own width is read back by the same
+ * count, so this module's two halves agree whatever the script; a table pads to
+ * columns because its pipes must line up on screen.
+ */
+export function characterCount(s: string): number {
     return Array.from(s.replace(HOLD_RE, '')).length;
 }
 
@@ -131,15 +140,15 @@ export function wrapInline(inline: string, first: number, rest: number): string[
         let lineWidth = 0;
         splitChunks(body).forEach((chunk, i) => {
             const room = out.length === 0 ? first : rest;
-            const candidate = lineWidth + width(chunk.sep) + width(chunk.text);
+            const candidate = lineWidth + characterCount(chunk.sep) + characterCount(chunk.text);
             if (i > 0 && candidate > room) {
                 out.push(line);
                 line = chunk.text;
-                lineWidth = width(chunk.text);
+                lineWidth = characterCount(chunk.text);
                 return;
             }
             line += chunk.sep + chunk.text;
-            lineWidth = i === 0 ? width(chunk.text) : candidate;
+            lineWidth = i === 0 ? characterCount(chunk.text) : candidate;
         });
         out.push(hardBreak ? line + '\\' : line);
     });
@@ -286,7 +295,7 @@ export function measureWrapWidth(lines: readonly string[], content: readonly str
     let widest = 0;
     let narrowest = Infinity;
     lines.forEach((raw, i) => {
-        const w = width(raw.replace(/[ \t]+$/, ''));
+        const w = characterCount(raw.replace(/[ \t]+$/, ''));
         narrowest = Math.min(narrowest, w);
         if (hasBreakOpportunity(content[i] ?? raw)) {
             widest = Math.max(widest, w);
@@ -306,5 +315,5 @@ export function measureWrapWidth(lines: readonly string[], content: readonly str
  * serializer wrote it at a wider `wrapWidth`, which the same rule reproduces.
  */
 export function measureLineWidth(lines: readonly string[]): number | null {
-    return lines.length === 1 ? width(lines[0].replace(/[ \t]+$/, '')) : null;
+    return lines.length === 1 ? characterCount(lines[0].replace(/[ \t]+$/, '')) : null;
 }

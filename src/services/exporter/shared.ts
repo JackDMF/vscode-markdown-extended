@@ -6,6 +6,7 @@ import { ContributesService } from '../contributes/contributesService';
 import { MarkdownItEnv } from '../common/interfaces';
 import { Config } from '../common/config';
 import { readContributeFile } from '../contributes/tools';
+import { slugBuilder } from '../../syntax/headingSlug';
 
 /**
  * Escape HTML special characters to prevent XSS. Safe in text and in quoted
@@ -57,6 +58,11 @@ ${scripts}
 }
 
 export function renderHTML(doc: MarkdownDocument): string {
+    // VS Code's engine gives a heading its id from `env.slugifier` when the
+    // render brings one, and from a stateless slugifier when not — then two
+    // headings of the same text share an id. Bring the preview's builder, so a
+    // repeated heading gets `-1`, `-2` as it does there.
+    const slug = slugBuilder();
     const env: MarkdownItEnv = {
         htmlExporter: {
             uri: doc.document.uri,
@@ -64,6 +70,7 @@ export function renderHTML(doc: MarkdownDocument): string {
             vsUri: getVsUri(doc.document.uri),
             embedImage: true,
         },
+        slugifier: { add: (heading: string) => ({ value: slug(heading) }) },
     }
     const markdown = ExtensionContext.current.markdown;
     const content = markdown.render(doc.content, env);
