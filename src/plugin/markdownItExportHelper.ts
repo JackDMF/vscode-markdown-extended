@@ -59,7 +59,9 @@ function enumTokens(tokens: Token[], env: HtmlExporterEnv, md: MarkdownIt, scan:
         if (t.type === "html_block" || t.type === "html_inline") {
             t.content = embedStylesheets(t.content, env, md, scan);
         }
-        if (t.children) {enumTokens(t.children, env, md, scan);}
+        // An image's children are its alt text, which the renderer escapes
+        // into an attribute: HTML there opens and ends nothing.
+        if (t.children && t.type !== "image") {enumTokens(t.children, env, md, scan);}
     });
 }
 function removeVsUri(token: Token, env: HtmlExporterEnv) {
@@ -71,7 +73,8 @@ function removeVsUri(token: Token, env: HtmlExporterEnv) {
             src = token.attrs[i][1];
         }
     }
-    token.attrs[index][1] = decodeURIComponent(src.replace(env.vsUri, ""));
+    // A malformed escape (`caf%E9.png`) is left as written rather than failing the export.
+    token.attrs[index][1] = decode(src.replace(env.vsUri, ""));
 }
 function embedImage(token: Token, env: HtmlExporterEnv, written: string) {
     let index = 0;

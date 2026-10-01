@@ -88,6 +88,17 @@ suite('MarkdownItExportHelper', () => {
             assert.ok(md.render('![a](picture.webp)', env).includes('src="data:image/webp;base64,'));
             assert.ok(md.render('![a](picture.avif)', env).includes('src="data:image/avif;base64,'));
         });
+
+        test('a malformed escape in an image\'s src fails neither the image nor the export', () => {
+            const html = md.render('![a](caf%E9.png)\n\n![b](pixel.png)', env);
+            assert.ok(html.includes('src="caf%E9.png"'), html);
+            assert.ok(html.includes('src="data:image/png;base64,'), html);
+        });
+
+        test('HTML in an image\'s alt text opens nothing: a later stylesheet is still embedded', () => {
+            const html = md.render('![The <textarea> element](pixel.png) and ![<script>](pixel.png)\n\n<link rel="stylesheet" href="style.css">\n', env);
+            assert.ok(html.includes('href="data:text/css;base64,'), html);
+        });
     });
 
     suite('linked stylesheets (qjebbs/vscode-markdown-extended#162)', () => {
