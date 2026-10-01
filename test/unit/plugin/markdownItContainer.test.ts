@@ -1,7 +1,9 @@
 import * as assert from 'assert';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import MarkdownIt = require('markdown-it');
+import * as vscode from 'vscode';
 import { plugins } from '../../../src/plugin/plugins';
+import { containerClass } from '../../../src/editor/schema';
 
 // The preview's own registry, in its order: markdown-it-attrs reads the `{…}` and the container renders it.
 function preview(): MarkdownIt.MarkdownIt {
@@ -46,10 +48,36 @@ suite('MarkdownItContainer', () => {
         assert.strictEqual(openingDiv(md.render('::: a"b <c> &d\nInside.\n:::\n')), '<div class="a&quot;b &lt;c&gt; &amp;d">');
     });
 
+    test('a brace of the text\'s own ending the info is no class, and no attribute', () => {
+        assert.strictEqual(openingDiv(md.render('::: note {a = b}\nInside.\n:::\n')), '<div class="note">');
+        // The editor draws the container with the same class.
+        assert.strictEqual(containerClass('note', ' {a = b}'), 'note');
+    });
+
+    test('a literal glued to the info is read as markdown-it-attrs reads it', () => {
+        assert.strictEqual(openingDiv(md.render('::: note x{.c}\nInside.\n:::\n')), '<div class="note x c">');
+    });
+
     test('a second render gives the same div', () => {
         const tokens = md.parse('::: note {.c}\nInside.\n:::\n', {});
         const first = md.renderer.render(tokens, {}, {});
         assert.strictEqual(md.renderer.render(tokens, {}, {}), first);
         assert.strictEqual(openingDiv(first), '<div class="note c">');
+    });
+});
+
+/**
+ * VS Code's preview marks every block it renders from a token with its source
+ * line (`code-line`, `data-line`) and `dir="auto"`. The hand-written `div` had
+ * none of them; rendered from its token the container has them too, which is
+ * kept: scroll sync then finds the container's own line, as it finds its
+ * paragraphs'.
+ */
+suite('MarkdownItContainer in VS Code\'s preview', () => {
+    test('the container\'s div carries its line, its classes first and the literal\'s attributes', async () => {
+        await vscode.extensions.getExtension('jackdmf.markdown-extended-pro')?.activate();
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', '::: note {#x .c}\nInside.\n:::\n\n::: warning\nText.\n:::\n');
+        assert.ok(html.includes('<div class="note c code-line" id="x" data-line="0" dir="auto">'), html);
+        assert.ok(html.includes('<div class="warning code-line" data-line="4" dir="auto">'), html);
     });
 });
