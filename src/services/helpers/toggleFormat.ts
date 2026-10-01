@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { MarkdownIt } from '../../@types/markdown-it';
-import { WORD_CHARACTER, opensInsideWords } from '../../syntax/markers';
+import { engineEnvironment } from '../../editor/host/engineHost';
+import { InlineSource, LineKind, SourceSpan, readInlineSource } from '../../editor/inlineSource';
+import { INLINE_MARKERS, WORD_CHARACTER, opensInsideWords } from '../../syntax/markers';
 import { editTextDocument } from '../common/editTextDocument';
-import { LineStart, findSpans, lineStarts } from './inlineSpans';
+import { inlineSourceOf } from './inlineSourceCache';
 
 /** Toggles a block construct (quote, list, code block) on the primary selection's lines. */
 export function toggleFormat(
@@ -61,28 +63,34 @@ interface Toggle extends Stretch {
 const KIND_ORDER = { close: 0, pair: 1, open: 2, delete: 3 };
 
 /**
- * Toggles an inline marker on every selection, in one edit.
+ * Toggles an inline marker on every selection, in one edit, reading the
+ * document as the engine reads it (`inlineSource.ts`, through `md`).
  *
- * A selection lying within a formatted span loses that span's markers; a
- * selection over several lines does when each line's part lies within a span.
- * Any other selection is wrapped, and written as one span: spans of the same
- * marker inside it lose their markers, and one it touches or overlaps becomes
- * part of it, so `«make **this** bold»` and `**make**« this bold»` both give
- * `**make this bold**`. What is wrapped is each line's part of the selection,
- * without the whitespace at its ends and after the line's block prefix (a
- * bullet and its task box, a number, `#`, `>`), so no marker stands next to a
- * space; over several lines a line that is not text a marker can go into — a
- * fence and its code, a table row, a thematic break, an HTML block, and the
- * like (`lineStarts`) — is left as it is, and so is a line whose part is
- * formatted already. Underline's `_` cannot open or close next to a word
- * character, so a selection ending inside or next to a word takes in the rest
- * of the word.
+ * A selection lying within a formatted span loses that span's markers — the
+ * innermost such span — and a selection over several lines does when each
+ * line's part lies within a span. Any other selection is wrapped as selected,
+ * the spans inside it kept, so `«make **this** bold»` gives
+ * `**make **this** bold**`. What is wrapped is each line's text the selection
+ * covers, without the whitespace at its ends: a line's prefix (a bullet and its
+ * task box, a number, `#`, `>`, a footnote's label, an admonition's
+ * indentation), code, inline HTML, a link's URL and a table cell's padding stay
+ * outside, so a selection across a link's end takes only the link's text and
+ * one over a table row formats each cell. A part may run across another span's
+ * markers, a code span, an image, an emoji or a footnote reference, which the
+ * markers then enclose. Over several lines a line that is not text — a fence
+ * and its code, a thematic break, a setext underline, a table's delimiter row,
+ * a container's fences, an HTML block — is left as it is, and so is a line
+ * whose part is formatted already; on its own such a line is not toggled at
+ * all. Underline's `_` cannot open or close next to a word character, so a
+ * selection ending inside or next to a word takes in the rest of the word.
  *
  * A cursor in or next to a span removes the span, and a cursor between the
  * markers of an empty pair removes the pair; otherwise it wraps the word at the
  * cursor (VS Code's word, so punctuation stays outside), and with no word there
- * the marker pair is inserted with the cursor between. Nothing is written into
- * code, math or an HTML block.
+ * the marker pair is inserted with the cursor between — unless the line would
+ * then be no longer text, as `~~~~` at a line's start opens a fence. Nothing is
+ * written into code. A span whose markers the tokens do not place exactly is
+ * never removed: the selection is wrapped instead.
  *
  * Selections whose texts overlap, and wrapped selections that touch, are
  * toggled as one selection from the first one's start to the last one's end,
@@ -92,9 +100,7 @@ const KIND_ORDER = { close: 0, pair: 1, open: 2, delete: 3 };
 export function toggleInlineFormat(editor: vscode.TextEditor, marker: string, md: MarkdownIt): Thenable<unknown> {
     if (!editor || !editor.document) {return;}
     const document = editor.document;
-    const last = Math.max(...editor.selections.map(s => s.end.line));
-    const lines = Array.from({ length: last + 1 }, (_, n) => document.lineAt(n).text);
-    const toggler = new InlineToggler(document, marker, lineStarts(lines));
+    const toggler = new InlineToggler(document, marker, inlineSourceOf(document, md), md);
     const toggles = editor.selections.map(selection => toggler.toggleOf(selection));
     const order = toggles.map((_, i) => i)
         .sort((a, b) => toggles[a].start - toggles[b].start || toggles[b].end - toggles[a].end);
@@ -145,15 +151,20 @@ function joins(a: Toggle, b: Toggle): boolean {
     return a.start < b.end && b.start < a.end;
 }
 
+/** The smallest of the spans: the innermost, when they nest. */
+function innermost(spans: SourceSpan[]): SourceSpan | undefined {
+    return spans.reduce<SourceSpan | undefined>((best, s) => (best === undefined || s.end - s.start < best.end - best.start ? s : best), undefined);
+}
+
 /** What one marker does to one selection, read from the document as it was before the edit. */
 class InlineToggler {
     private readonly text: string;
-    private readonly spans = new Map<number, Stretch[]>();
 
     constructor(
         private readonly document: vscode.TextDocument,
         private readonly marker: string,
-        private readonly starts: LineStart[],
+        private readonly source: InlineSource,
+        private readonly md: MarkdownIt,
     ) {
         this.text = document.getText();
     }
@@ -161,96 +172,174 @@ class InlineToggler {
     toggleOf(selection: vscode.Selection): Toggle {
         const at = this.document.offsetAt(selection.active);
         const selected = { start: this.document.offsetAt(selection.start), end: this.document.offsetAt(selection.end) };
-        if (selection.isSingleLine && this.starts[selection.start.line].kind === 'literal') {
-            return { ...selected, kind: 'none', changes: [] };
-        }
+        const none: Toggle = { ...selected, kind: 'none', changes: [] };
+        const kind = this.source.kindOf(selection.start.line);
+        if (selection.isSingleLine && kind !== 'text' && kind !== 'blank') {return none;}
         if (selection.isEmpty) {
+            const line = selection.active.line;
+            if (this.marker !== INLINE_MARKERS.codeInline && this.inCode(line, at)) {return none;}
             if (this.inEmptyPair(at)) {
                 const start = at - this.marker.length, end = at + this.marker.length;
                 return { start, end, kind: 'unwrap', changes: [{ start, end, text: '', kind: 'delete' }] };
             }
-            const span = this.spansOn(selection.active.line).find(s => s.start <= at && at <= s.end);
+            const span = innermost(this.spansOn(line).filter(s => s.start <= at && at <= s.end));
             if (span) {return this.unwrap([span], span);}
             const word = this.document.getWordRangeAtPosition(selection.active);
-            if (!word) {
-                const pair = this.marker + this.marker;
-                // `~~~~` at a line's start would open a fence.
-                const line = this.document.lineAt(selection.active.line).text;
-                const written = line.slice(0, selection.active.character) + pair + line.slice(selection.active.character);
-                if (lineStarts([written])[0].kind === 'literal') {return { ...selected, kind: 'none', changes: [] };}
-                return { start: at, end: at, kind: 'pair', changes: [{ start: at, end: at, text: pair, kind: 'pair' }] };
-            }
-            const part = { start: this.document.offsetAt(word.start), end: this.document.offsetAt(word.end) };
-            return this.wrap([part], part);
+            if (!word) {return this.pair(selection.active, at) ?? none;}
+            const part = this.partsOn(line, this.document.offsetAt(word.start), this.document.offsetAt(word.end))
+                .find(p => p.start <= at && at <= p.end);
+            return part ? this.wrap([part], part) : none;
         }
         const parts = this.partsOf(selection);
-        if (!parts.length) {return { ...selected, kind: 'none', changes: [] };}
-        const within = parts.map(part => this.spansAt(part).find(s => s.start <= part.start && part.end <= s.end));
+        if (!parts.length) {
+            // Code is no text a part takes: a selection over code spans and the spaces between them removes them.
+            const codes: SourceSpan[] = [];
+            for (let line = selection.start.line; this.marker === INLINE_MARKERS.codeInline && line <= selection.end.line; line++) {
+                codes.push(...this.spansOn(line).filter(s => s.start < selected.end && selected.start < s.end));
+            }
+            return codes.length ? this.unwrap(codes, selected) : none;
+        }
+        const within = parts.map(part => innermost(this.spansAt(part).filter(s => s.start <= part.start && part.end <= s.end)));
         if (within.every(s => !!s)) {return this.unwrap(within, selected);}
         // a line whose part is formatted already is left as it is.
         return this.wrap(parts.filter((_, i) => !within[i]), selected);
     }
 
-    /**
-     * Each line's part a selection wraps: after the line's block prefix,
-     * without whitespace at either end. Over several lines, a line no marker
-     * can go into has no part.
-     */
+    /** Each line's parts a selection wraps (`partsOn`); a line that is not text has none. */
     private partsOf(selection: vscode.Selection): Stretch[] {
+        const from = this.document.offsetAt(selection.start);
+        const to = this.document.offsetAt(selection.end);
         const parts: Stretch[] = [];
         for (let line = selection.start.line; line <= selection.end.line; line++) {
-            const start = this.starts[line];
-            if (start.kind === 'literal' || (start.kind === 'structure' && !selection.isSingleLine)) {continue;}
-            const text = this.document.lineAt(line).text;
-            let from = Math.max(line === selection.start.line ? selection.start.character : 0, start.prefix);
-            let to = line === selection.end.line ? selection.end.character : text.length;
-            while (from < to && /\s/.test(text[from])) {from++;}
-            while (to > from && /\s/.test(text[to - 1])) {to--;}
-            if (to <= from) {continue;}
-            const base = this.document.offsetAt(new vscode.Position(line, 0));
-            parts.push({ start: base + from, end: base + to });
+            parts.push(...this.partsOn(line, from, to));
         }
         return parts;
     }
 
     /**
-     * Wraps the parts as one span each. A span of the marker inside a part
-     * loses its markers; one a part touches or overlaps at an end lends it its
-     * marker there, so the two are one span. `_` widens a part to the ends of
-     * the words its ends touch.
+     * The parts of `from`..`to` on a line: its text stretches cut to the
+     * range, one joined to the one before it where the stretch continues it
+     * and the range takes in what stands between, without whitespace at
+     * either end.
      */
+    private partsOn(line: number, from: number, to: number): Stretch[] {
+        const parts: Stretch[] = [];
+        let last: Stretch | undefined;
+        let reached = false;
+        for (const stretch of this.source.textOn(line)) {
+            const start = Math.max(from, stretch.start), end = Math.min(to, stretch.end);
+            if (end <= start) {
+                last = undefined;
+                continue;
+            }
+            if (last && reached && stretch.continues && start === stretch.start) {
+                last.end = end;
+            } else {
+                last = { start, end };
+                parts.push(last);
+            }
+            reached = end === stretch.end;
+        }
+        const inside = this.allSpansOn(line).filter(s => from <= s.start && s.end <= to);
+        for (const part of parts) {
+            while (part.start < part.end && /\s/.test(this.text[part.start])) {part.start++;}
+            while (part.end > part.start && /\s/.test(this.text[part.end - 1])) {part.end--;}
+            // A span the range holds whole, markers and all, and the part runs
+            // into is taken in whole: its markers stay inside the new ones.
+            for (let grown = part.end > part.start; grown;) {
+                grown = false;
+                for (const s of inside) {
+                    if (s.start < part.end && part.start < s.end && (s.start < part.start || s.end > part.end)) {
+                        part.start = Math.min(part.start, s.start);
+                        part.end = Math.max(part.end, s.end);
+                        grown = true;
+                    }
+                }
+            }
+        }
+        // Parts grown into one span are one part.
+        const merged: Stretch[] = [];
+        for (const part of parts.filter(p => p.end > p.start)) {
+            const previous = merged[merged.length - 1];
+            if (previous && part.start < previous.end) {
+                previous.end = Math.max(previous.end, part.end);
+            } else {
+                merged.push(part);
+            }
+        }
+        return merged;
+    }
+
+    /** The exact spans of every inline marker on a line. */
+    private allSpansOn(line: number): SourceSpan[] {
+        return Object.values(INLINE_MARKERS).flatMap(m => (m === INLINE_MARKERS.codeInline ? [] : this.source.spansOn(line, m).filter(s => s.exact)));
+    }
+
+    /** Wraps each part as selected, the spans inside it kept. `_` widens a part to the ends of the words its ends touch. */
     private wrap(parts: Stretch[], covered: Stretch): Toggle {
-        const length = this.marker.length;
         const toggle: Toggle = { ...covered, kind: 'wrap', changes: [] };
         for (const original of parts) {
             const part = opensInsideWords(this.marker) ? original : this.widened(original);
-            const spans = this.spansAt(part).filter(s => s.end >= part.start && s.start <= part.end);
-            if (spans.some(s => s.start <= part.start && part.end <= s.end)) {continue;}
-            const left = spans.find(s => s.start <= part.start);
-            const right = spans.find(s => s.end >= part.end);
-            for (const span of spans) {
-                if (span !== left) {toggle.changes.push({ start: span.start, end: span.start + length, text: '', kind: 'delete' });}
-                if (span !== right) {toggle.changes.push({ start: span.end - length, end: span.end, text: '', kind: 'delete' });}
-            }
-            if (!left) {toggle.changes.push({ start: part.start, end: part.start, text: this.marker, kind: 'open' });}
-            if (!right) {toggle.changes.push({ start: part.end, end: part.end, text: this.marker, kind: 'close' });}
-            toggle.start = Math.min(toggle.start, left ? left.start : part.start);
-            toggle.end = Math.max(toggle.end, right ? right.end : part.end);
+            toggle.changes.push(
+                { start: part.start, end: part.start, text: this.marker, kind: 'open' },
+                { start: part.end, end: part.end, text: this.marker, kind: 'close' },
+            );
+            toggle.start = Math.min(toggle.start, part.start);
+            toggle.end = Math.max(toggle.end, part.end);
         }
         return toggle;
     }
 
-    private unwrap(spans: Stretch[], covered: Stretch): Toggle {
-        const length = this.marker.length;
+    /** Removes the spans' markers, each as long as it was written (a code span's backtick run). */
+    private unwrap(spans: SourceSpan[], covered: Stretch): Toggle {
+        const distinct = [...new Set(spans)].sort((a, b) => a.start - b.start);
         return {
-            start: Math.min(covered.start, spans[0].start),
-            end: Math.max(covered.end, spans[spans.length - 1].end),
+            start: Math.min(covered.start, distinct[0].start),
+            end: Math.max(covered.end, ...distinct.map(s => s.end)),
             kind: 'unwrap',
-            changes: spans.flatMap(span => [
-                { start: span.start, end: span.start + length, text: '', kind: 'delete' as const },
-                { start: span.end - length, end: span.end, text: '', kind: 'delete' as const },
+            changes: distinct.flatMap(span => [
+                { start: span.start, end: span.start + span.markup.length, text: '', kind: 'delete' as const },
+                { start: span.end - span.markup.length, end: span.end, text: '', kind: 'delete' as const },
             ]),
         };
+    }
+
+    /** The marker pair at a cursor with no word, if the line stays text with it written. */
+    private pair(position: vscode.Position, at: number): Toggle | undefined {
+        const pair = this.marker + this.marker;
+        if (!this.staysText(position, pair)) {return undefined;}
+        return { start: at, end: at, kind: 'pair', changes: [{ start: at, end: at, text: pair, kind: 'pair' }] };
+    }
+
+    /**
+     * Whether a line is still text, or blank, with `inserted` written at
+     * `position`: `~~~~` at a line's start opens a fence, `====` under a
+     * paragraph makes it a heading. The block the line is in is read again with
+     * the insertion; a block that read alone is not what it is in the document
+     * (a footnote's continuation, which is indented code on its own) is read
+     * with the whole document.
+     */
+    private staysText(position: vscode.Position, inserted: string): boolean {
+        const { line, character } = position;
+        const env = engineEnvironment(this.document.uri);
+        const kindIn = (lines: string[], at: number): LineKind => readInlineSource(this.md, lines.join('\n'), env).kindOf(at);
+        const textOf = (from: number, to: number) => Array.from({ length: to - from }, (_, n) => this.document.lineAt(from + n).text);
+        const original = this.document.lineAt(line).text;
+        const written = original.slice(0, character) + inserted + original.slice(character);
+        // From the block before it on: a paragraph above takes in a line written under it (`====`).
+        const own = this.source.blockOf(line);
+        const block = { start: line > 0 ? Math.min(this.source.blockOf(line - 1).start, own.start) : own.start, end: own.end };
+        const lines = textOf(block.start, Math.min(block.end, this.document.lineCount));
+        let kind: LineKind;
+        if (kindIn(lines, line - block.start) === this.source.kindOf(line)) {
+            lines[line - block.start] = written;
+            kind = kindIn(lines, line - block.start);
+        } else {
+            const all = textOf(0, this.document.lineCount);
+            all[line] = written;
+            kind = kindIn(all, line);
+        }
+        return kind === 'text' || kind === 'blank';
     }
 
     /** A part taken out to the ends of the words its ends touch, so no word character stands outside its markers. */
@@ -262,32 +351,33 @@ class InlineToggler {
         return { start, end };
     }
 
-    /** The spans of the marker on the line a stretch starts on. */
-    private spansAt(stretch: Stretch): Stretch[] {
+    /** The exact spans of the marker on the line a stretch starts on. */
+    private spansAt(stretch: Stretch): SourceSpan[] {
         return this.spansOn(this.document.positionAt(stretch.start).line);
     }
 
-    /** The spans of the marker on a line, as document offsets. */
-    private spansOn(line: number): Stretch[] {
-        let spans = this.spans.get(line);
-        if (!spans) {
-            const base = this.document.offsetAt(new vscode.Position(line, 0));
-            spans = findSpans(this.document.lineAt(line).text, this.marker)
-                .map(s => ({ start: base + s.start, end: base + s.end }));
-            this.spans.set(line, spans);
-        }
-        return spans;
+    /** The exact spans of the marker on a line: only these are ever removed. */
+    private spansOn(line: number): SourceSpan[] {
+        return this.source.spansOn(line, this.marker).filter(s => s.exact);
+    }
+
+    /** Whether an offset stands inside a code span, between its backtick runs. */
+    private inCode(line: number, at: number): boolean {
+        return this.source.spansOn(line, INLINE_MARKERS.codeInline).some(s => s.start < at && at < s.end);
     }
 
     /**
      * Whether the cursor stands between the markers of a pair with nothing in
-     * it, as a toggle with no word inserts one: no word touching it from
-     * outside (VS Code's word, as when the pair was inserted), so the inner
-     * markers of `**bold**` are not taken for a pair.
+     * it, as a toggle with no word inserts one: not inside a longer run of the
+     * marker's character on both sides (`***‸***` holds no empty `*`), and no
+     * word touching it from outside (VS Code's word, as when the pair was
+     * inserted), so the inner markers of `**bold**` are not taken for a pair.
      */
     private inEmptyPair(at: number): boolean {
         const start = at - this.marker.length, end = at + this.marker.length;
         if (start < 0 || this.text.slice(start, at) !== this.marker || this.text.slice(at, end) !== this.marker) {return false;}
+        const c = this.marker[0];
+        if (this.text[start - 1] === c && this.text[end] === c) {return false;}
         const wordAt = (offset: number) => !!this.document.getWordRangeAtPosition(this.document.positionAt(offset));
         return !wordAt(start) && !wordAt(end);
     }

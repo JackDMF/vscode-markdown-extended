@@ -256,6 +256,7 @@ class DocumentInlineSource implements InlineSource {
         const src = norm.src;
         const { units, roles, barriers, spans, codes } = emit(group);
         const { toSource, toUnit, exact } = align(src, units);
+        settleRuns(src, units, roles, toSource, toUnit, spans);
         const at = (index: number) => base + norm.toBody[index];
 
         // Where the spelling of the character at `i` ends: past an entity whose first character it is.
@@ -402,6 +403,104 @@ class DocumentInlineSource implements InlineSource {
         }
         return { stretches, spans: sourceSpans };
     }
+}
+
+/**
+ * Where text and a marker share a run of one character (`~~~x~~~` read as a
+ * `~` and a strikethrough), which characters are the text's is a tie the
+ * alignment settles to the earlier ones — right before a marker's gap, wrong
+ * after one: `x ~~a~~~` would give the closing `~~` the text's place. Text
+ * that a span's marker stands right before is moved to the run's end, so the
+ * marker keeps the characters next to the gap it was written in. The same tie
+ * between an escaped character and a marker beside it (`\**a*`) goes to the
+ * escape.
+ */
+function settleRuns(src: string, units: readonly Unit[], roles: readonly number[], toSource: Int32Array, toUnit: Int32Array, spans: readonly TokenSpan[]): void {
+    const markerAt = new Set<number>();
+    for (const span of spans) {
+        markerAt.add(span.open);
+        markerAt.add(span.close);
+    }
+    for (const first of markerAt) {
+        const at = toSource[first];
+        if (at < 0) {
+            continue;
+        }
+        const c = src.charCodeAt(at);
+        // The text's characters of the run, from the marker on, one after another.
+        let count = 1;
+        while (first + count < toSource.length && !markerAt.has(first + count)
+            && toSource[first + count] === at + count && src.charCodeAt(at + count) === c) {
+            count++;
+        }
+        let end = at + count;
+        while (end < src.length && src.charCodeAt(end) === c && toUnit[end] < 0) {
+            end++;
+        }
+        // Only text inside one run: it moves to the run's end.
+        const shift = end - (at + count);
+        if (shift <= 0) {
+            continue;
+        }
+        for (let k = count - 1; k >= 0; k--) {
+            toUnit[at + k] = -1;
+            toSource[first + k] = at + k + shift;
+            toUnit[at + k + shift] = first + k;
+        }
+    }
+    // An escaped character is always text, so a `\*` left unmatched near a
+    // matched, unescaped `*` — nothing but `*`s and backslashes between them —
+    // means the text took a marker's `*`: it gets the escaped one. Backward
+    // from left to right, then forward from right to left, so matches stay in order.
+    const move = (unit: number, to: number) => {
+        toUnit[toSource[unit]] = -1;
+        toSource[unit] = to;
+        toUnit[to] = unit;
+    };
+    const escapedAt = (i: number, c: number) => i > 0 && src.charCodeAt(i) === c && src.charCodeAt(i - 1) === 92 && toUnit[i] < 0 && toUnit[i - 1] < 0;
+    const between = (from: number, to: number, c: number) => {
+        for (let i = from; i < to; i++) {
+            if (src.charCodeAt(i) !== c && src.charCodeAt(i) !== 92) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const misplaced = (unit: number) => {
+        const at = toSource[unit];
+        return at >= 0 && roles[unit] === TEXT && isAsciiPunctuation(units[unit].code) && !(at > 0 && src.charCodeAt(at - 1) === 92);
+    };
+    let previous = -1;
+    for (let u = 0; u < units.length; u++) {
+        if (misplaced(u)) {
+            const c = units[u].code;
+            for (let i = previous + 2; i < toSource[u]; i++) {
+                if (escapedAt(i, c) && between(i + 1, toSource[u], c)) {
+                    move(u, i);
+                    break;
+                }
+            }
+        }
+        previous = toSource[u] >= 0 ? toSource[u] : previous;
+    }
+    let next = src.length;
+    for (let u = units.length - 1; u >= 0; u--) {
+        if (misplaced(u)) {
+            const c = units[u].code;
+            for (let i = next - 1; i > toSource[u]; i--) {
+                if (escapedAt(i, c) && between(toSource[u] + 1, i - 1, c)) {
+                    move(u, i);
+                    break;
+                }
+            }
+        }
+        next = toSource[u] >= 0 ? toSource[u] : next;
+    }
+}
+
+/** The characters a backslash escapes. */
+function isAsciiPunctuation(code: number): boolean {
+    return (code >= 33 && code <= 47) || (code >= 58 && code <= 64) || (code >= 91 && code <= 96) || (code >= 123 && code <= 126);
 }
 
 /** A note's anchors by its token types: `sidenote_open`, `sidenote_content_open`, `sidenote_close`. */

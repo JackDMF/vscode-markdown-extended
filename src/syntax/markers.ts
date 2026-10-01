@@ -52,15 +52,6 @@ export function opensInsideWords(marker: string): boolean {
 }
 
 /**
- * Whether a marker is half of a longer one in the table: `*` of `**`, `~` of
- * `~~`, `_` of `__`. Where such a marker opens or closes, a run of two is the
- * longer marker, not this one.
- */
-export function isHalfMarker(marker: string): boolean {
-    return Object.values(INLINE_MARKERS).some(m => m !== marker && m.startsWith(marker));
-}
-
-/**
  * `markdown-it-kbd`'s delimiters, `[[Ctrl+S]]`. The package states them, not
  * this extension; they are written down here so the toolbar and the Visual
  * Editor's serializer take them from one place.

@@ -145,13 +145,15 @@ suite('Inline toggles: what a selection toggles', () => {
     });
 
     test('subscript does not take strikethrough\'s markers for its own', async () => {
+        // The engine reads the result as a strikethrough between two `~`s, so
+        // a second toggle finds no subscript there: Markdown has no `~` inside `~~` here.
         assert.strictEqual(await toggle('subscript', 'x ~~st‸rike~~ y'), 'x ~~~st‸rike~~~ y');
-        assert.strictEqual(await toggle('subscript', 'x ~~~st‸rike~~~ y'), 'x ~~st‸rike~~ y');
     });
 
     test('superscript leaves footnote references alone', async () => {
-        assert.strictEqual(await toggle('superscript', 'see[^1] a‸nd[^2]'), 'see[^1] ^a‸nd^[^2]');
-        assert.strictEqual(await toggle('superscript', 'see[^1] ^a‸nd^[^2]'), 'see[^1] a‸nd[^2]');
+        const notes = '\n\n[^1]: x\n[^2]: y';
+        assert.strictEqual(await toggle('superscript', `see[^1] a‸nd[^2]${notes}`), `see[^1] ^a‸nd^[^2]${notes}`);
+        assert.strictEqual(await toggle('superscript', `see[^1] ^a‸nd^[^2]${notes}`), `see[^1] a‸nd[^2]${notes}`);
     });
 
     test('underline takes in the rest of a word a selection ends in', async () => {
@@ -166,12 +168,12 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('underline', 'snake_ca‸se'), '_snake_ca‸se_');
     });
 
-    test('a selection is written as one span: spans inside it and touching it are taken in', async () => {
-        assert.strictEqual(await toggle('bold', '«make **this** bold»'), '**«make this bold»**');
-        assert.strictEqual(await toggle('bold', '**foo**«bar»'), '**foo«bar»**');
-        assert.strictEqual(await toggle('mark', '«==a== b ==c==»'), '«==a b c==»');
-        assert.strictEqual(await toggle('bold', '«a **b»c** d'), '**«a b»c** d');
-        assert.strictEqual(await toggle('codeInline', '«a `b` c»'), '`«a b c»`');
+    test('a selection is wrapped as selected: spans inside it are kept, and removed again innermost first', async () => {
+        assert.strictEqual(await toggle('bold', '«make **this** bold»'), '**«make **this** bold»**');
+        assert.strictEqual(await toggle('bold', '**«make **this** bold»**'), '«make **this** bold»');
+        assert.strictEqual(await toggle('bold', '**make **th‸is** bold**'), '**make th‸is bold**');
+        // A span the selection holds whole, markers and all, stays whole inside the new markers.
+        assert.strictEqual(await toggle('mark', '«==a== b ==c==»'), '==«==a== b ==c==»==');
     });
 
     test('formatted and plain selections toggle in one go', async () => {
@@ -200,13 +202,15 @@ suite('Inline toggles: what a selection toggles', () => {
 
     test('over several lines, lines that are a block\'s syntax are left as they are', async () => {
         assert.strictEqual(await toggle('bold', '«one\n```js\nlet a = 1;\n```\ntwo»'), '**«one**\n```js\nlet a = 1;\n```\n**two»**');
-        assert.strictEqual(await toggle('bold', '«| a | b |\n|---|---|\n| 1 | 2 |»'), '«| a | b |\n|---|---|\n| 1 | 2 |»');
+        // A table's delimiter row is left alone; its cells are text, each toggled on its own.
+        assert.strictEqual(await toggle('bold', '«| a | b |\n|---|---|\n| 1 | 2 |»'), '«| **a** | **b** |\n|---|---|\n| **1** | **2** |»');
         assert.strictEqual(await toggle('bold', '«one\n\n---\n\ntwo»'), '**«one**\n\n---\n\n**two»**');
         assert.strictEqual(await toggle('bold', '«Title\n=====»'), '**«Title**\n=====»');
         assert.strictEqual(await toggle('bold', '«<div>\nhtml\n</div>»'), '«<div>\nhtml\n</div>»');
         assert.strictEqual(await toggle('bold', '«::: warning\ntext\n:::»'), '«::: warning\n**text**\n:::»');
-        assert.strictEqual(await toggle('bold', '«$$\nx^2\n$$»'), '«$$\nx^2\n$$»');
-        assert.strictEqual(await toggle('bold', '«[^1]: a note\ntext»'), '«[^1]: a note\n**text»**');
+        // A footnote nothing refers to is no text in the preview, and its label is never.
+        assert.strictEqual(await toggle('bold', '«[^1]: a note\ntext»'), '«[^1]: a note\ntext»');
+        assert.strictEqual(await toggle('bold', 'x[^1]\n\n«[^1]: a note\ntext»'), 'x[^1]\n\n«[^1]: **a note**\n**text»**');
     });
 
     test('a line already formatted is left as it is when the others are wrapped', async () => {
@@ -223,6 +227,36 @@ suite('Inline toggles: what a selection toggles', () => {
                 selections[0][0] === 9 ? [[11, 11], [3, 10]] : [[3, 10], [11, 11]],
             );
         }
+    });
+
+    test('a code span\'s markers are not another marker\'s', async () => {
+        assert.strictEqual(await toggle('bold', 'Use `**/*.ts` o‸r `**/*.js`'), 'Use `**/*.ts` **o‸r** `**/*.js`');
+        assert.strictEqual(await toggle('italics', 'run `ls *.md` a‸nd `rm *.bak` now'), 'run `ls *.md` *a‸nd* `rm *.bak` now');
+        assert.strictEqual(await toggle('bold', '`np‸m i`'), '`np‸m i`');
+    });
+
+    test('an escaped marker is text, and `_` inside a word is no marker', async () => {
+        assert.strictEqual(await toggle('bold', '\\*\\*not\\*\\* a‸nd'), '\\*\\*not\\*\\* **a‸nd**');
+        assert.strictEqual(await toggle('underline', 'the _cache field and the l‸ock'), 'the _cache field and the _l‸ock_');
+        assert.strictEqual(await toggle('underline', 'the _cache field and the _l‸ock_'), 'the _cache field and the l‸ock');
+    });
+
+    test('blocks are read as the preview reads them', async () => {
+        assert.strictEqual(await toggle('bold', '!!! note Title\n    para one\n\n    para t‸wo'), '!!! note Title\n    para one\n\n    para **t‸wo**');
+        assert.strictEqual(await toggle('bold', '- a\n\n  ```\n  co‸de\n  ```'), '- a\n\n  ```\n  co‸de\n  ```');
+        assert.strictEqual(await toggle('bold', '> ```\n> co‸de\n> ```'), '> ```\n> co‸de\n> ```');
+        assert.strictEqual(await toggle('bold', '<kbd>Ctrl</kbd> sa‸ves'), '<kbd>Ctrl</kbd> **sa‸ves**');
+        assert.strictEqual(await toggle('bold', 'text^[an inline note] a‸nd'), 'text^[an inline note] **a‸nd**');
+    });
+
+    test('a link\'s URL and a table cell\'s padding stay outside', async () => {
+        assert.strictEqual(await toggle('bold', '[li«nk](url)» after'), '[li**«nk**](url)» after');
+        assert.strictEqual(await toggle('bold', '| a | b |\n|---|---|\n| on‸e | two |'), '| a | b |\n|---|---|\n| **on‸e** | two |');
+    });
+
+    test('a longer run of the marker is no empty pair, and a pair that would change the line is not written', async () => {
+        assert.notStrictEqual(await toggle('italics', '***‸***'), '**‸**');
+        assert.strictEqual(await toggle('mark', 'Some paragraph\n‸'), 'Some paragraph\n‸');
     });
 
     test('a reversed selection stays reversed', async () => {

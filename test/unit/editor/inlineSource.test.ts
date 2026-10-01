@@ -78,6 +78,14 @@ suite('Inline source: the document as the engine reads it', () => {
         assert.deepStrictEqual(stretches('\\*\\*not\\*\\*'), [['\\*\\*not\\*\\*']]);
     });
 
+    test('text beside a marker of its own character leaves the marker its characters', () => {
+        assert.deepStrictEqual(spans('x ~~~strike~~~ y', '~~'), ['~~strike~~']);
+        assert.deepStrictEqual(stretches('x ~~~strike~~~ y'), [['x ~', '+strike', '+~ y']]);
+        assert.deepStrictEqual(spans('**a***', '**'), ['**a**']);
+        assert.deepStrictEqual(spans('not \\**emph*\\* here', '*'), ['*emph*']);
+        assert.deepStrictEqual(spans('lit \\*\\***not**\\*\\* bold', '**'), ['**not**']);
+    });
+
     test('a `_` inside a word opens no span', () => {
         assert.deepStrictEqual(spans('the _cache field and the _lock_', '_'), ['_lock_']);
     });
