@@ -1,6 +1,6 @@
 import { parseMDTAble } from "./mdTableParse";
 import { stringifyMDTable } from "./mdTableStringify";
-import { MonoSpaceLength } from "./monospace";
+import { MonoSpaceLength, isPrintableAscii } from "./monospace";
 
 export enum TableAlign {
     Auto,
@@ -17,6 +17,7 @@ export class MDTable {
     private _columnCount: number;
     private _rowCount: number;
     private _rowMergeFlags: boolean[] = [];
+    private _cellWidths = new Map<string, number>();
 
     constructor(data: string[][], headerRowCount: number, indentation: string = "") {
         this.data = data;
@@ -114,13 +115,26 @@ export class MDTable {
         this._columnWidths.splice(pos, count);
         this._columnCount -= count;
     }
+    /**
+     * A cell's monospace width, measured once per text however often the table
+     * is laid out; printable ASCII is its length, cheaper than a lookup.
+     */
+    public cellWidth(cell: string): number {
+        if (isPrintableAscii(cell)) {return cell.length;}
+        let width = this._cellWidths.get(cell);
+        if (width === undefined) {
+            width = MonoSpaceLength(cell);
+            this._cellWidths.set(cell, width);
+        }
+        return width;
+    }
     private calcColumnWidths(): number[] {
         return [...Array(this._data[0].length).keys()].map(
             i => {
                 const ws = this._data.map(
                     row => {
                         return i > row.length - 1 ? 0 :
-                            row[i] === null ? 0 : MonoSpaceLength(row[i]);
+                            row[i] === null ? 0 : this.cellWidth(row[i]);
                     }
                 );
                 switch (this._aligns[i]) {
