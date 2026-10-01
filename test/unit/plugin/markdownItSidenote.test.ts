@@ -187,7 +187,7 @@ function sidebars(html: string): string[] {
     return [...html.matchAll(/<span class="(left|right)-sidebar">(.*?)<\/span>/g)].map(([, side, inner]) => `${side}:${inner}`);
 }
 
-suite('Sidebars: the closing marker is found by the inline parser, and markers flank', () => {
+suite('Sidebars: the closing marker is found by the inline parser, and the opening one flanks', () => {
     const md = preview();
     const inline = (text: string) => md.renderInline(text);
 
@@ -196,9 +196,30 @@ suite('Sidebars: the closing marker is found by the inline parser, and markers f
         assert.strictEqual(inline('mail me@example.com and `@x`'), 'mail <a href="mailto:me@example.com">me@example.com</a> and <code>@x</code>');
     });
 
-    test('a marker after a letter or digit opens nothing, one before a letter or digit closes nothing', () => {
-        for (const text of ['costs $5 and $10', 'user@host and more@', 'a@b.c', 'US$5 or US$6', 'write to @{name} later', 'a@b@ c']) {
+    test('a marker after an ASCII letter or digit opens nothing, a $ before a digit closes nothing', () => {
+        for (const text of ['costs $5 and $10', 'user@host and more@', 'a@b.c', 'US$5 or US$6', 'write to @{name} later', 'a@b@ c', 'Text$x$ mehr']) {
             assert.deepStrictEqual(sidebars(inline(text)), [], text);
+        }
+    });
+
+    test('beside CJK and other non-ASCII text a sidebar opens as it always did', () => {
+        assert.deepStrictEqual(sidebars(inline('这是$侧边栏内容$的例子')), ['left:侧边栏内容']);
+        assert.deepStrictEqual(sidebars(inline('本文@右侧注释@继续')), ['right:右侧注释']);
+        assert.deepStrictEqual(sidebars(inline('é$x$ mehr')), ['left:x']);
+        assert.deepStrictEqual(sidebars(inline('a @note@x and $y$z')), ['right:note', 'left:y'], 'what follows a closer may be a letter');
+    });
+
+    test('a bracketed span inside a sidebar is rendered once', () => {
+        assert.strictEqual(inline('$see [x]{.c} here$'), '<span class="left-sidebar">see <span class="c">x</span> here</span>');
+        assert.strictEqual(inline('[[$see [x]{.c} here$]]'), '<kbd><span class="left-sidebar">see <span class="c">x</span> here</span></kbd>');
+    });
+
+    test('many markers without a closer are read in linear time, not once per marker', () => {
+        for (const text of ['$a @a '.repeat(400) + '`$@`', '[$a '.repeat(400), '$a '.repeat(2000) + '$']) {
+            const started = Date.now();
+            md.render(text);
+            const took = Date.now() - started;
+            assert.ok(took < 400, `${took} ms for ${text.slice(0, 12)}…`);
         }
     });
 

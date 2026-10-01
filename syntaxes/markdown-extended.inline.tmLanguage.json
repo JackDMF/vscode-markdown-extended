@@ -112,8 +112,9 @@
       }
     },
     "left_sidebar": {
+      "comment": "As sidebarCanOpen/sidebarCanClose in src/syntax/markers.ts: no ASCII letter or digit before the opening $, no digit after the closing one. Residuals a regex cannot follow: the plugin also allows a space inside ($ left $), and skips code spans, links, autolinks, HTML and escapes when it looks for the end; a sidebar here is one line.",
       "name": "markup.leftsidebar.markdown",
-      "match": "\\$(\\S(?:.*?\\S)?)\\$",
+      "match": "(?<![A-Za-z0-9])\\$(\\S(?:.*?\\S)?)\\$(?![0-9])",
       "captures": {
         "0": {
           "name": "markup.leftsidebar.container.markdown"
@@ -129,8 +130,9 @@
       }
     },
     "right_sidebar": {
+      "comment": "As sidebarCanOpen in src/syntax/markers.ts: no ASCII letter or digit before the opening @, so an email address opens nothing. Residuals a regex cannot follow: the plugin also allows a space inside (@ right @), and skips code spans, links, autolinks, HTML and escapes when it looks for the end; a sidebar here is one line.",
       "name": "markup.rightsidebar.markdown",
-      "match": "@(\\S(?:.*?\\S)?)@",
+      "match": "(?<![A-Za-z0-9])@(\\S(?:.*?\\S)?)@",
       "captures": {
         "0": {
           "name": "markup.rightsidebar.container.markdown"

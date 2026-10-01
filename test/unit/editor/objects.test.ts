@@ -131,13 +131,10 @@ suite('Editor objects: a note\'s verbs', () => {
     });
 
     test('a conversion whose result could not be written back is refused, with the reason', () => {
-        // Code in a sidenote may hold `!!`; in a marginal note it would end the note.
-        const state = caretAt(stateOf('A ++ref|see `a!!b` here++ b.\n'), 'ref');
+        // Code in a left sidebar may hold `@`; in a right one it would end the sidebar.
+        const state = caretAt(stateOf('A $see `a@b` here$ b.\n'), 'see');
         const reason = convertNoteRefusal(state, objectHere(state).from);
-        assert.ok(reason?.includes('"!!"'), String(reason));
-        // A sidebar's end is found by the inline parser, which skips code whole: code holding `@` moves to the right.
-        const sidebar = caretAt(stateOf('A $see `a@b` here$ b.\n'), 'see');
-        assert.strictEqual(convertNoteRefusal(sidebar, objectHere(sidebar).from), null);
+        assert.ok(reason?.includes('"@"'), String(reason));
         const plain = caretAt(stateOf('A ++ref|body++ b.\n'), 'ref');
         assert.strictEqual(convertNoteRefusal(plain, objectHere(plain).from), null);
     });

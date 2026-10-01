@@ -249,4 +249,24 @@ suite('Markdown Grammar: multiline emphasis', () => {
             assertNotEmphasized(text, 3, ' end');
         });
     });
+
+    suite('sidebars, as the notes plugin reads their markers', () => {
+        const LEFT = 'markup.leftsidebar.markdown';
+        const RIGHT = 'markup.rightsidebar.markdown';
+        const notIn = (text: string, substr: string, scope: string) =>
+            assert.ok(!scopesAt(text, 0, substr).includes(scope), `"${substr}" is no sidebar in "${text}"`);
+
+        test('a sidebar is one, beside CJK text too', () => {
+            assertScoped('Text $left$ and @right@ end', 0, 'left', LEFT);
+            assertScoped('Text $left$ and @right@ end', 0, 'right', RIGHT);
+            assertScoped('这是$侧边栏内容$的例子', 0, '侧边栏', LEFT);
+            assertScoped('本文@右侧注释@继续', 0, '右侧', RIGHT);
+        });
+
+        test('an email address and a price are none', () => {
+            notIn('mail a@b.c and x@y.z', 'b.c', RIGHT);
+            notIn('costs $5 and $10', '5 and', LEFT);
+            notIn('US$5 or US$6', '5 or', LEFT);
+        });
+    });
 });

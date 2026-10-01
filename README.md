@@ -832,11 +832,10 @@ rather than a second heading, so the id and the anchor are never written twice.
 - **Some characters cannot be in inline code inside a note.** The notes plugin finds a
   note's end and its `|` before anything else is read, and a code span has no escapes: so
   inline code in a note cannot hold the note's marker pair (`++`, `!!`), in a reference
-  not `|` (superscript and subscript not `|` either). The editor refuses such an edit and
-  says why beside the caret, and the Code, Superscript and Subscript buttons are disabled
-  with the reason in their tooltip — also over a selection that holds a note, which those
-  three cannot hold at all. A sidebar has no such limit: its end is found by the inline
-  parser, which skips code whole.
+  not `|`, in a sidebar not its `$` or `@` (superscript and subscript not these last three
+  either). The editor refuses such an edit and says why beside the caret, and the Code,
+  Superscript and Subscript buttons are disabled with the reason in their tooltip — also
+  over a selection that holds a note, which those three cannot hold at all.
 - **Left sidebars need `"markdown.math.enabled": false`.** VS Code's built-in math
   extension (on by default) claims `$…$` before the sidebar rule runs, in the preview, the
   export and this editor alike, so a left sidebar shows as a formula in a source block.
@@ -903,8 +902,8 @@ $This appears in the left sidebar with [links](url) and other markdown$
 @This appears in the right sidebar with `code` and formatting@
 ```
 
-A marker opens a sidebar only where no letter or digit stands right before it, and closes
-one only where none follows it, so an email address (`write to a@b.c`), `user@host` and
+A marker opens a sidebar only where no ASCII letter or digit stands right before it, and a
+`$` closes one only where no digit follows, so an email address (`a@b.c`), `user@host` and
 prices (`$5 and $10`) stay text. A marker inside inline code, a link, an autolink, inline
 HTML or after a backslash (`\@`) closes nothing.
 

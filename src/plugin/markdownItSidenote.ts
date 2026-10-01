@@ -155,10 +155,19 @@ interface MarkdownItState {
     posMax: number;
     /** Markdown-it instance for recursive parsing */
     md: MarkdownIt;
-    /** Where each construct `skipToken` skipped ends, by its start */
-    cache: Record<number, number>;
     /** Push a new token to the stream */
     push: (type: string, tag: string, nesting: number) => any;
+    /** The token stream, and the delimiter lists per opening token */
+    tokens: unknown[];
+    tokens_meta: unknown[];
+    /** Text not yet pushed as a token, and its level */
+    pending: string;
+    pendingLevel: number;
+    /** Nesting level of the next token */
+    level: number;
+    /** Emphasis-like delimiters of the current tag, and those of the tags around it */
+    delimiters: unknown[];
+    _prev_delimiters: unknown[];
 }
 
 /**
@@ -342,11 +351,10 @@ export default function (md: MarkdownIt) {
  * Sidebars are simple wrappers that support markdown content.
  * Unlike notes, they don't have separate reference text.
  *
- * A marker opens only where no letter or digit stands before it, and closes
- * only where none follows it (`sidebarCanOpen`, `sidebarCanClose` in
- * `src/syntax/markers.ts`, which the Visual Editor's serializer escapes by);
- * the closing one is found by the inline parser (`findSidebarClose`), so an
- * email address followed by code holding an `@` makes no sidebar.
+ * A marker opens only where `sidebarCanOpen` allows it (no ASCII letter or
+ * digit before it, so `a@b.c` opens nothing); the closing marker is the first
+ * that `sidebarCanClose` allows outside code, links and the like
+ * (`findSidebarClose`). Both rules live in `src/syntax/markers.ts`.
  *
  * @param state - Markdown-it inline parsing state
  * @param silent - If true, only check syntax without creating tokens
@@ -376,19 +384,15 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
         return false;
     }
 
-    // While a sidebar's closing marker is looked for, no sidebar of its kind opens.
-    if (lookingFor(state).has(char)) {
-        return false;
-    }
-
-    // `a@b.c`, `user@host`: a marker right after a letter or digit opens nothing.
-    const before = start > 0 ? state.src.charAt(start - 1) : '';
-    const after = start + 1 < state.posMax ? state.src.charAt(start + 1) : '';
+    const src = state.src;
+    const max = state.posMax;
+    const before = start > 0 ? src.charAt(start - 1) : '';
+    const after = start + 1 < max ? src.charAt(start + 1) : '';
     if (!sidebarCanOpen(before, after)) {
         return false;
     }
 
-    const endPos = findSidebarClose(state, start, config);
+    const endPos = findSidebarClose(state, start, char);
     if (endPos === -1) {return false;}
 
     // In silent mode, we must still update state.pos before returning true
@@ -398,104 +402,98 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
         return true;
     }
 
-    // Extract content
-    const content = state.src.slice(start + 1, endPos);
+    // The content is tokenized in place, as the link rule tokenizes a label:
+    // the same state and environment, the closing marker as the end.
+    const tokenOpen = state.push(`${config.type}_open`, 'span', 1);
+    tokenOpen.markup = config.openMarker;
+    state.pos = start + 1;
+    state.posMax = endPos;
+    inlineParser(state).tokenize(state);
+    state.push(`${config.type}_close`, 'span', -1);
 
-    // Create token structure
-    createSidebarTokens(state, content, config);
-
-    // Update position
     state.pos = endPos + 1;
+    state.posMax = max;
     return true;
 }
 
-/** The sidebar markers (as character codes) whose closing marker is being looked for, per state. */
-const lookingForMap = new WeakMap<MarkdownItState, Set<number>>();
+/** The two parts of markdown-it's inline parser the sidebar rule drives, which its declarations leave out. */
+interface InlineParser {
+    tokenize(state: MarkdownItState): void;
+    skipToken(state: MarkdownItState): void;
+}
 
-function lookingFor(state: MarkdownItState): Set<number> {
-    let set = lookingForMap.get(state);
-    if (set === undefined) {
-        set = new Set();
-        lookingForMap.set(state, set);
-    }
-    return set;
+function inlineParser(state: MarkdownItState): InlineParser {
+    return state.md.inline as unknown as InlineParser;
 }
 
 /**
  * The position of the marker that closes the sidebar opened at `start`, or -1.
  *
- * It is found as markdown-it finds a link label's end: by the inline parser,
- * one construct at a time (`skipToken`), so a marker inside a code span, an
- * autolink, inline HTML, a link, a backslash escape or a character reference
- * closes nothing. A marker closes where `sidebarCanClose` allows it — no letter
- * or digit right after it — so `$5 and $10` and an email address close
- * nothing. While it looks, a sidebar of the same kind does not open, so the
- * first closing marker is the one; one of the other kind is skipped whole.
+ * Found the way markdown-it's link rule finds a label's end
+ * (`parseLinkLabel`): one construct at a time with `skipToken`, which keeps
+ * its cache, so a marker inside a code span, an autolink, inline HTML, a
+ * link, a backslash escape or a character reference closes nothing. A marker
+ * of the sidebar's own kind that does not close is passed over, so the first
+ * one that closes (`sidebarCanClose`) is the end, as before; a sidebar of the
+ * other kind is skipped whole.
+ *
+ * A rule that ignores `silent` (markdown-it-bracketed-spans pushes tokens
+ * while it is asked only to skip) leaves nothing behind: the tokens, the
+ * pending text, the level and the delimiters are put back as they were.
  */
-function findSidebarClose(state: MarkdownItState, start: number, config: SidebarConfig): number {
+function findSidebarClose(state: MarkdownItState, start: number, code: number): number {
     const src = state.src;
     const max = state.posMax;
-    const code = config.openMarkerCode;
+    const marker = src.charAt(start);
     const closesAt = (pos: number) => src.charCodeAt(pos) === code
-        && sidebarCanClose(pos + 1 < max ? src.charAt(pos + 1) : '');
+        && sidebarCanClose(marker, pos + 1 < max ? src.charAt(pos + 1) : '');
 
     // Nothing to look for when no marker in the rest of the text could close.
-    let candidate = src.indexOf(config.closeMarker, start + 1);
+    let candidate = src.indexOf(marker, start + 1);
     while (candidate !== -1 && candidate < max && !closesAt(candidate)) {
-        candidate = src.indexOf(config.closeMarker, candidate + 1);
+        candidate = src.indexOf(marker, candidate + 1);
     }
     if (candidate === -1 || candidate >= max) {
         return -1;
     }
 
-    const looking = lookingFor(state);
-    const already = looking.has(code);
-    const pos = state.pos;
-    // `skipToken` remembers where each construct ends; what it learns while a
-    // sidebar is closed to itself is not what it would learn otherwise.
-    const cache = state.cache;
-    looking.add(code);
-    state.cache = {};
-    state.pos = start + 1;
+    const saved = {
+        pos: state.pos,
+        tokens: state.tokens.length,
+        tokensMeta: state.tokens_meta.length,
+        pending: state.pending,
+        pendingLevel: state.pendingLevel,
+        level: state.level,
+        delimiters: state.delimiters,
+        delimitersLength: state.delimiters.length,
+        prevDelimiters: state._prev_delimiters.length,
+    };
     let found = -1;
+    state.pos = start + 1;
     try {
         while (state.pos < max) {
             if (closesAt(state.pos)) {
                 found = state.pos;
                 break;
             }
-            (state.md.inline as unknown as { skipToken(s: MarkdownItState): void }).skipToken(state);
+            if (src.charCodeAt(state.pos) === code) {
+                state.pos++;
+            } else {
+                inlineParser(state).skipToken(state);
+            }
         }
     } finally {
-        state.pos = pos;
-        state.cache = cache;
-        if (!already) {
-            looking.delete(code);
-        }
+        state.pos = saved.pos;
+        state.tokens.length = saved.tokens;
+        state.tokens_meta.length = saved.tokensMeta;
+        state.pending = saved.pending;
+        state.pendingLevel = saved.pendingLevel;
+        state.level = saved.level;
+        state.delimiters = saved.delimiters;
+        state.delimiters.length = saved.delimitersLength;
+        state._prev_delimiters.length = saved.prevDelimiters;
     }
     return found;
-}
-
-/**
- * Create tokens for sidebar elements.
- * Sidebars have a simple structure: open tag, content, close tag.
- * 
- * @param state - Markdown-it parsing state
- * @param content - Sidebar content (supports markdown)
- * @param config - Sidebar configuration
- */
-function createSidebarTokens(state: MarkdownItState, content: string, config: SidebarConfig): void {
-    const type = config.type;
-    
-    // Create opening token
-    const tokenOpen = state.push(`${type}_open`, 'span', 1);
-    tokenOpen.markup = config.openMarker;
-    
-    // Process content with markdown support (with error handling)
-    processContentSafely(state, content, type);
-    
-    // Create closing token
-    state.push(`${type}_close`, 'span', -1);
 }
 
 /**

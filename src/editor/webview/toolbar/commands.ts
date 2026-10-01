@@ -377,7 +377,7 @@ export function insertionPoint(state: EditorState): number {
 
 /**
  * Stand-ins for the markers while the block is serialized. The serializer
- * escapes `==`, `^`, `++`, `!!`, … in text (`ESCAPE_EXTRA`), which is exactly
+ * escapes `==`, `^`, `++`, `$`, … in text (`ESCAPE_EXTRA`), which is exactly
  * what must not happen to them; private-use characters pass unescaped and are
  * replaced afterwards. One per marker character, so the wrapper measures the
  * line as it will be, and no space inside, so it never breaks a line in one.

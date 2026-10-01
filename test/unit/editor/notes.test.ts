@@ -282,18 +282,6 @@ suite('Editor notes: what the serializer cannot write back is not made', () => {
         assert.deepStrictEqual(notesAfterSave(coded), ['sidenote']);
     });
 
-    test('a sidebar has no terminator: code and superscript in one may hold its marker character, and it stays a sidebar', () => {
-        const sidebar = select(stateOf('Mail @ write user&#64;host now, or me&#64; @ end.\n'), 'user@host');
-        assert.strictEqual(markRefusal(sidebar, code, null), null);
-        assert.strictEqual(markRefusal(sidebar, sup, null), null, 'nor superscript');
-        const coded = run(sidebar, toggleMarkup(code, null));
-        assert.strictEqual(text(coded), 'Mail @ write `user@host` now, or me\\@ @ end.\n');
-        assert.deepStrictEqual(notesAfterSave(coded), ['right_sidebar']);
-        const raised = run(select(stateOf('Mail @ write me&#64; now @ end.\n'), 'me@'), toggleMarkup(sup, null));
-        assert.strictEqual(text(raised), 'Mail @ write ^me\\@^ now @ end.\n');
-        assert.deepStrictEqual(notesAfterSave(raised), ['right_sidebar']);
-    });
-
     test('code holding the part\'s terminator or the marker pair is refused, whether typed, toggled or made', () => {
         // Typing | into a code span in a reference.
         const ref = stateOf('Alpha ++the `ab` ref|body++ gamma.\n');
@@ -307,6 +295,11 @@ suite('Editor notes: what the serializer cannot write back is not made', () => {
         body = body.apply(body.tr.insertText('+'));
         assert.strictEqual(text(body), 'Alpha ++ref|see `i+` here++ gamma.\n');
         assert.strictEqual(body.apply(body.tr.insertText('+')).doc, body.doc, '++ in code in a body');
+        // Code or superscript over text in a right sidebar holding its @.
+        const sidebar = select(stateOf('Mail @ write user&#64;host now @ end.\n'), 'user@host');
+        assert.strictEqual(toggleMarkup(code, null)(sidebar), false);
+        assert.ok(markRefusal(sidebar, code, null)?.includes('"@"'));
+        assert.ok(markRefusal(sidebar, sup, null)?.includes('"@"'), 'superscript cannot hold it either');
         // A note made of a code span that holds |: its reference would.
         const made = select(stateOf('A `a|b` c.\n'), 'a|b');
         assert.ok(wrapNodeLockReason(made, 'sidenote')?.includes('"|"'));
