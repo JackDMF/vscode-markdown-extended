@@ -124,10 +124,16 @@ suite('markdown-it-table-of-contents links the ids the preview gives the heading
     });
 
     test('a TOC body without the parse\'s state is still linked by the preview rule, never by the plugin\'s slug', () => {
-        const tokens = md.parse(['[[TOC]]', '', '## What is new?', '## What is new?', ''].join('\n'), {});
-        tokens.filter(t => t.type === 'toc_body').forEach(t => { t.meta = null; });
+        // A copy of the TOC token is one no parse knows.
+        const tokens = md.parse(['[[TOC]]', '', '## What is new?', '## What is new?', ''].join('\n'), {})
+            .map(t => t.type === 'toc_body' ? Object.assign(Object.create(Object.getPrototypeOf(t)), t) : t);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         assert.deepStrictEqual(tocHrefs(md.renderer.render(tokens, (md as any).options, {})), ['what-is-new', 'what-is-new-1']);
+    });
+
+    test('a document with a TOC parses to plain data: VS Code\'s language server receives the tokens as JSON', () => {
+        const tokens = md.parse(['[[TOC]]', '', '## A', '', '@[toc](Title)', ''].join('\n'), {});
+        assert.doesNotThrow(() => JSON.stringify(tokens));
     });
 });
 

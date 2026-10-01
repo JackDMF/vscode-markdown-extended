@@ -22,8 +22,12 @@ import { headingText, slugBuilder, TextToken } from '../syntax/headingSlug';
 // its entry is its text, unlinked. A heading with no text at all
 // (`## ![](x.png)`) has no entry; it still counts for the repeats after it.
 
-const STATE = 'mepTocState';
 const TITLE = 'mepTocTitle';
+
+// The parse each TOC came from, held outside the tokens: a token stream must
+// stay plain data, because VS Code's Markdown language server receives it as
+// JSON, and `state.tokens` holds the TOC itself.
+const parseOf = new WeakMap<Token, StateBase>();
 
 /**
  * `@[toc]`, the marker of markdown-it-toc, optionally with a title:
@@ -64,7 +68,7 @@ export function MarkdownItTableOfContents(md: MarkdownIt, options: Record<string
     md.core.ruler.push('mep_toc_state', (state: StateBase) => {
         for (const token of state.tokens) {
             if (token.type === 'toc_body') {
-                token.meta = { ...((token.meta as Meta) ?? {}), [STATE]: state };
+                parseOf.set(token, state);
             }
         }
     });
@@ -72,7 +76,7 @@ export function MarkdownItTableOfContents(md: MarkdownIt, options: Record<string
     const body = md.renderer.rules.toc_body;
     md.renderer.rules.toc_body = (tokens, idx, opts, env, self) => {
         const meta = tokens[idx].meta as Meta;
-        const stream = (meta?.[STATE] as StateBase | undefined)?.tokens ?? tokens;
+        const stream = parseOf.get(tokens[idx])?.tokens ?? tokens;
         const title = meta?.[TITLE] as string | undefined;
         const heading = title ? `<p class="table-of-contents-title">${md.utils.escapeHtml(title)}</p>` : '';
         return heading + body(anchoredHeadings(stream), idx, opts, env, self);
