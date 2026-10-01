@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### 🐛 Bug Fixes
+
+- **A table with two columns spanning many rows keeps every row** ([#3](https://github.com/JackDMF/vscode-markdown-extended/issues/3)). With two `^^` columns spanning five rows, the preview and the exports dropped the fourth and fifth rows. markdown-it-multimd-table laid the spans out correctly, but markdown-it-attrs then laid them out a second time, as if they were its own `{rowspan=…}`, and hid every cell from the fourth spanned row on. attrs now sees only the spans written in its own syntax, and a multimd table's `^^` and `||` are rendered as multimd laid them out.
+
 ## v4.0.0 — The Visual Editor
 
 *2026-09-30*
