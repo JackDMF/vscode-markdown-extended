@@ -190,6 +190,14 @@ suite('Editor containers and admonitions: the toolbar, the keys and the object v
         assert.strictEqual(stateOf(text(state)).doc.nodeAt(at)?.attrs.title, '"Quoted" start');
     });
 
+    test('a quoted title keeps its spaces, as the preview keeps them: a new type writes them back', () => {
+        let state = stateOf('!!! note " padded "\n    Body.\n');
+        const at = firstOf(state.doc, 'admonition').pos;
+        assert.strictEqual(state.doc.nodeAt(at)?.attrs.title, ' padded ');
+        state = apply(state, changeAdmonitionTransaction(state, at, { type: 'tip' }));
+        assert.strictEqual(text(state), '!!! tip " padded "\n    Body.\n');
+    });
+
     test('a tab-indented admonition is the box, its body read as the preview reads it, and written back byte for byte (qjebbs/vscode-markdown-extended#110)', () => {
         const source = '!!! tip "Tabs"\n\tBody.\n\n\tMore.\n';
         const state = stateOf(source);

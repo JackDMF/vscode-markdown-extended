@@ -69,6 +69,28 @@ suite('MarkdownItAdmonition: the opening line', () => {
         assert.deepStrictEqual(admonitionParams(' note Say "hi"'), { type: 'note', classes: ['note', 'Say'], title: 'hi' });
         assert.deepStrictEqual(admonitionParams(' note "Unclosed'), { type: 'note', classes: ['note'], title: '"Unclosed' });
         assert.deepStrictEqual(admonitionParams(' note ""'), { type: 'note', classes: ['note'], title: '' });
+        assert.deepStrictEqual(admonitionParams(' warning Do not run "rm -rf"'),
+            { type: 'warning', classes: ['warning', 'Do', 'not', 'run'], title: 'rm -rf' }, 'a quoted phrase ending the line makes the words before it classes, as in python-markdown');
+    });
+
+    test('a class is any word without a quote, as before: non-ASCII, dotted', () => {
+        assert.deepStrictEqual(admonitionParams(' warning größe "Titel"'), { type: 'warning', classes: ['warning', 'größe'], title: 'Titel' });
+        assert.deepStrictEqual(admonitionParams(' note 重要 "标题"'), { type: 'note', classes: ['note', '重要'], title: '标题' });
+        assert.deepStrictEqual(admonitionParams(' 注意 "标题"'), { type: 'note', classes: ['note', '注意'], title: '标题' });
+        assert.deepStrictEqual(admonitionParams(' note my.class "Title"'), { type: 'note', classes: ['note', 'my.class'], title: 'Title' });
+    });
+
+    test('a lone type may touch its quote, and the type is lowercased when the title is quoted too', () => {
+        assert.deepStrictEqual(head(md.render('!!! warning"Careful"\n    Body.\n')),
+            { box: '<div class="admonition warning">', title: '<p class="admonition-title">Careful</p>' });
+        assert.deepStrictEqual(head(md.render('!!! WARNING "Big"\n    Body.\n')),
+            { box: '<div class="admonition warning">', title: '<p class="admonition-title">Big</p>' });
+    });
+
+    test('a quoted title is kept as written; "" is no title, a {…} after it too', () => {
+        assert.deepStrictEqual(admonitionParams(' note " padded "'), { type: 'note', classes: ['note'], title: ' padded ' });
+        assert.strictEqual(head(md.render('!!! note "  "\n    Body.\n')).title, '<p class="admonition-title">  </p>', 'a blank title bar, as python-markdown draws it');
+        assert.deepStrictEqual(head(md.render('!!! note "" {.x}\n    Body.\n')), { box: '<div class="admonition note">', title: null });
     });
 });
 
@@ -94,6 +116,14 @@ suite('MarkdownItAdmonition: the body', () => {
     test('a tab past the body\'s indentation still counts: code stays code, a fence keeps its inner tab', () => {
         assert.ok(md.render('!!! hint\n\t\tcode\n').includes('<pre><code>code\n</code></pre>'));
         assert.ok(md.render('!!! hint\n\t```\n\tx\n\t\ty\n\t```\n').includes('<pre><code>x\n\ty\n</code></pre>'));
+    });
+
+    test('a tab the body\'s indentation ends inside keeps its remaining columns: a list item\'s admonition reads tabs as spaces', () => {
+        // The list's content starts at column 2, the body at 6: the second tab (columns 4 to 8) straddles it.
+        const tabs = md.render('- !!! hint\n\t\t```\n\t\tx\n\t\t\ty\n\t\t```\n');
+        const spaces = md.render('- !!! hint\n        ```\n        x\n        \ty\n        ```\n');
+        assert.ok(tabs.includes('<pre><code>x\n\ty\n</code></pre>'), tabs);
+        assert.strictEqual(tabs, spaces);
     });
 
     test('the lines after the box are read as before: the offsets the body changed are put back', () => {

@@ -103,13 +103,7 @@ function admonition(state: any, startLine: number, endLine: number, silent: bool
     const saved = indentBody(state, startLine + 1, nextLine, state.blkIndent);
     state.blkIndent = 0;
     state.md.block.tokenize(state, startLine + 1, nextLine);
-    saved.forEach((s, i) => {
-        const line = startLine + 1 + i;
-        state.bMarks[line] = s[0];
-        state.tShift[line] = s[1];
-        state.sCount[line] = s[2];
-        state.bsCount[line] = s[3];
-    });
+    restoreBody(state, startLine + 1, saved);
 
     token = state.push("admonition_close", "div", -1);
     token.markup = markup;
@@ -143,8 +137,7 @@ function indentBody(state: any, startLine: number, endLine: number, indent: numb
         let pos: number = state.bMarks[line];
         let col = 0;
         while (pos < max && col < indent) {
-            const ch = state.src.charCodeAt(pos);
-            const width = ch === 0x09 ? 4 - (col + bsCount) % 4 : ch === 0x20 ? 1 : 0;
+            const width = columnsOf(state.src.charCodeAt(pos), col, bsCount);
             if (width === 0 || col + width > indent) {break;}
             col += width;
             pos++;
@@ -152,16 +145,8 @@ function indentBody(state: any, startLine: number, endLine: number, indent: numb
         // `pos` is where the body's text starts, or a tab reaching past it.
         const start = pos;
         let offset = col;
-        while (pos < max) {
-            const ch = state.src.charCodeAt(pos);
-            if (ch === 0x09) {
-                offset += 4 - (offset + bsCount) % 4;
-            } else if (ch === 0x20) {
-                offset++;
-            } else {
-                break;
-            }
-            pos++;
+        for (let width; pos < max && (width = columnsOf(state.src.charCodeAt(pos), offset, bsCount)) > 0; pos++) {
+            offset += width;
         }
         state.bMarks[line] = start;
         state.tShift[line] = pos - start;
@@ -171,28 +156,53 @@ function indentBody(state: any, startLine: number, endLine: number, indent: numb
     return saved;
 }
 
+/** Puts back the offsets `indentBody` replaced, from `startLine` on. */
+function restoreBody(state: any, startLine: number, saved: number[][]) {
+    saved.forEach(([bMarks, tShift, sCount, bsCount], i) => {
+        state.bMarks[startLine + i] = bMarks;
+        state.tShift[startLine + i] = tShift;
+        state.sCount[startLine + i] = sCount;
+        state.bsCount[startLine + i] = bsCount;
+    });
+}
+
+/**
+ * How many columns the character at column `col` takes: a space one, a tab
+ * up to the next tab stop, as markdown-it counts it (`bsCount` being the
+ * line's columns before its `bMarks`); `0` for anything else.
+ */
+function columnsOf(ch: number, col: number, bsCount: number): number {
+    return ch === 0x09 ? 4 - (col + bsCount) % 4 : ch === 0x20 ? 1 : 0;
+}
+
 /**
  * The opening line after the marker
  * (https://python-markdown.github.io/extensions/admonition/):
  * `type "Title"`, `type class … "Title"` or `type Title`. A title is quoted
  * only when its `"` follows the type and its classes, words separated by
- * whitespace, and its closing `"` ends the line; otherwise the rest of the
- * line after the type is the title, quotes and all, so
- * `!!! note <font color="red">…</font>` is a note titled by its HTML
- * (qjebbs/vscode-markdown-extended#131). A `{…}` after the closing quote
- * stays with the title, where markdown-it-attrs gives it to the title bar.
- * A first word that is no type is a note's title, unless a quoted title
- * follows it: then it is a class beside `note`.
+ * whitespace (a lone type may touch it: `!!! warning"Careful"`), and its
+ * closing `"` ends the line; otherwise the rest of the line after the type
+ * is the title, quotes and all, so `!!! note <font color="red">…</font>` is
+ * a note titled by its HTML (qjebbs/vscode-markdown-extended#131). A quoted
+ * title is kept as written, spaces and all, and `""` is none; an unquoted
+ * one is trimmed. A `{…}` after the closing quote stays with the title,
+ * where markdown-it-attrs gives it to the title bar. The type is the first
+ * word, lowercased; a first word that is no type is a note's title, unless a
+ * quoted title follows it: then it is a class beside `note`.
  */
 export function admonitionParams(line: string): { type: string; classes: string[]; title: string } {
     const params = line.trim();
-    const quoted = /^(?:([\w-]+(?:\s+[\w-]+)*)\s+)?"([\s\S]*)"(\s*\{[^{}]*\})?$/.exec(params);
+    const quoted = /^(?:([^\s"]+(?:\s+[^\s"]+)*)\s+|([^\s"]+))?"([\s\S]*)"(\s*\{[^{}]*\})?$/.exec(params);
     if (quoted) {
-        const classes = (quoted[1] ?? "").split(/\s+/).filter(s => !!s);
+        const classes = (quoted[1] ?? quoted[2] ?? "").split(/\s+/).filter(s => !!s);
+        if (classes.length) {
+            classes[0] = classes[0].toLowerCase();
+        }
         if (_types.indexOf(classes[0]) < 0) {
             classes.unshift("note");
         }
-        return { type: classes[0], classes, title: (quoted[2] + (quoted[3] ?? "")).trim() };
+        const title = quoted[3] === "" ? "" : quoted[3] + (quoted[4] ?? "");
+        return { type: classes[0], classes, title };
     }
     const [, first, rest] = /^(\S*)\s*([\s\S]*)$/.exec(params);
     const type = first.toLowerCase();
