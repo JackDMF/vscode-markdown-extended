@@ -15,7 +15,7 @@ import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
 import { SessionHost, SessionWebview, VisualEditorSession, revealInVisualEditor } from '../../../src/editor/host/session';
 import { fillDestination } from '../../../src/editor/host/images';
 import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
-import { GITHUB_SLUG_REPLACE } from '../../../src/editor/host/githubSlugRegex';
+import { GITHUB_SLUG_REPLACE } from '../../../src/syntax/githubSlugRegex';
 import { blockLineRanges } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { ActiveVisualEditor, ActiveVisualEditorTracker, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
@@ -864,7 +864,7 @@ suite('Editor host: a link lands on the element its fragment names', () => {
         const start = src.indexOf(key);
         assert.ok(start >= 0, 'the built-in names its slug regex githubSlugReplaceRegex');
         const shipped = src.slice(start + key.length, src.indexOf('/g;', start));
-        assert.strictEqual(GITHUB_SLUG_REPLACE.source, shipped, 'regenerate src/editor/host/githubSlugRegex.ts from this VS Code');
+        assert.strictEqual(GITHUB_SLUG_REPLACE.source, shipped, 'regenerate src/syntax/githubSlugRegex.ts from this VS Code');
         assert.strictEqual(githubSlug('  Second Heading, with `code` & punctuation!  '), 'second-heading-with-code--punctuation');
     });
 

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { Environment, MarkdownIt, Token } from '../../@types/markdown-it';
+import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { decode, schemeOf } from '../paths';
-import { GITHUB_SLUG_REPLACE } from './githubSlugRegex';
+import { headingText, slugBuilder } from '../../syntax/headingSlug';
 
 /**
  * Where a link the person Ctrl/Cmd+clicked in the rich editor goes.
@@ -64,35 +64,13 @@ export function resolveLinkTarget(href: string, documentUri: vscode.Uri, workspa
 // Fragments: the element a link lands on
 // ---------------------------------------------------------------------------
 
-/**
- * A heading's GitHub-style slug, by the rule VS Code's built-in Markdown
- * language server resolves a link's fragment with (`githubSlugifier`): trimmed,
- * lower-cased, stripped of `GITHUB_SLUG_REPLACE`, each white-space character a
- * hyphen. No public command of that extension opens a document at a fragment
- * for another extension (`openDocumentLink` is internal to it), so its rule is
- * ported here, the regex generated from its bundle.
+/*
+ * A heading's slug is the built-in's (`src/syntax/headingSlug.ts`): no public
+ * command of that extension opens a document at a fragment for another
+ * extension (`openDocumentLink` is internal to it), so its rule is ported, and
+ * the preview's table of contents links with the same one.
  */
-export function githubSlug(heading: string): string {
-    return heading.trim().toLowerCase().replace(GITHUB_SLUG_REPLACE, '').replace(/\s/g, '-');
-}
-
-/**
- * The slugs of a document's headings in order, as the built-in's slug builder
- * gives them: a repeated slug gets `-1`, `-2`, … by how often it came before.
- */
-export function slugBuilder(): (heading: string) => string {
-    const seen = new Map<string, { count: number }>();
-    return heading => {
-        const slug = githubSlug(heading);
-        const entry = seen.get(slug);
-        if (entry) {
-            entry.count++;
-            return githubSlug(`${slug}-${entry.count}`);
-        }
-        seen.set(slug, { count: 0 });
-        return slug;
-    };
-}
+export { githubSlug, slugBuilder } from '../../syntax/headingSlug';
 
 /** A heading a fragment can name: its 0-based line, its explicit `{#id}`, its slug, and the text the slug is made of. */
 export interface HeadingAnchor {
@@ -100,17 +78,6 @@ export interface HeadingAnchor {
     id: string | null;
     slug: string;
     text: string;
-}
-
-/** A heading's text as the built-in slugs it: the text, emoji and inline code of its inline children. */
-function headingText(inline: Token | undefined): string {
-    const walk = (tokens: readonly Token[]): string => tokens.map(t => {
-        if (t.children && t.children.length > 0) {
-            return walk(t.children);
-        }
-        return t.type === 'text' || t.type === 'emoji' || t.type === 'code_inline' ? t.content : '';
-    }).join('');
-    return inline ? walk(inline.children ?? []) : '';
 }
 
 /**
