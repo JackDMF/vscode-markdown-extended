@@ -5,6 +5,7 @@
 ### 🐛 Bug Fixes
 
 - **A table with two columns spanning many rows keeps every row** ([#3](https://github.com/JackDMF/vscode-markdown-extended/issues/3)). With two `^^` columns spanning five rows, the preview and the exports dropped the fourth and fifth rows. markdown-it-multimd-table laid the spans out correctly, but markdown-it-attrs then laid them out a second time, as if they were its own `{rowspan=…}`, and hid every cell from the fourth spanned row on. attrs now sees only the spans written in its own syntax, and a multimd table's `^^` and `||` are rendered as multimd laid them out.
+- **A checkbox keeps the text before it, and a bare `[ ]` is a checkbox** ([qjebbs/vscode-markdown-extended#158](https://github.com/qjebbs/vscode-markdown-extended/issues/158)). `para [ ] mid` rendered only the box and `mid`, in a paragraph and in a table cell alike: markdown-it-checkbox replaced the whole text with the box and its label and lost what stood before the box. And a `[ ]` or `[x]` with no label after it, such as a table cell holding nothing else, was never a box, since the plugin asks for a space after one. The text before a box is now kept, and a box that ends its line is a box with an empty label. A task list `- [ ] task` renders as before.
 
 ## v4.0.0 — The Visual Editor
 

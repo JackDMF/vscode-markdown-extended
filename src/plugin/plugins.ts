@@ -4,6 +4,7 @@ import { MarkdownItAnchorLink } from './markdownItAnchorLink';
 import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { MarkdownItAttrs } from './markdownItAttrs';
+import { MarkdownItCheckbox } from './markdownItCheckbox';
 import { Config } from '../services/common/config';
 // eslint-disable-next-line @typescript-eslint/naming-convention
 import * as MarkdownItSidenote from './markdownItSidenote';
@@ -14,7 +15,6 @@ import markdownItFootnote from 'markdown-it-footnote';
 import markdownItAbbr from 'markdown-it-abbr';
 import markdownItSupAlt from 'markdown-it-sup-alt';
 import markdownItSubAlt from 'markdown-it-sub-alt';
-import markdownItCheckbox from 'markdown-it-checkbox';
 import markdownItKbd from 'markdown-it-kbd';
 import markdownItIb from 'markdown-it-ib';
 import markdownItMark from 'markdown-it-mark';
@@ -43,7 +43,8 @@ const myPlugins: Record<string, any> = {
     'markdown-it-abbr': markdownItAbbr,
     'markdown-it-sup-alt': markdownItSupAlt,
     'markdown-it-sub-alt': markdownItSubAlt,
-    'markdown-it-checkbox': markdownItCheckbox,
+    // Wrapped: keeps the text before a box, and renders a bare `[ ]` as one.
+    'markdown-it-checkbox': MarkdownItCheckbox,
     // Wrapped: leaves the spans markdown-it-multimd-table laid out alone.
     'markdown-it-attrs': MarkdownItAttrs,
     'markdown-it-kbd': markdownItKbd,
