@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
-import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
+import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, WORD_CHARACTER, opensInsideWords } from '../syntax/markers';
 import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
@@ -133,7 +133,7 @@ function gluedAt(mark: Mark, parent: Node, index: number, side: 'before' | 'afte
         return false;
     }
     const ch = side === 'before' ? (node.text ?? '').slice(-1) : (node.text ?? '').slice(0, 1);
-    return /[\p{L}\p{N}]/u.test(ch);
+    return WORD_CHARACTER.test(ch);
 }
 
 /**
@@ -144,7 +144,7 @@ function gluedAt(mark: Mark, parent: Node, index: number, side: 'before' | 'afte
  */
 function emphasisDelimiter(mark: Mark, parent: Node, index: number, opening: boolean, star: string): string {
     const markup = String(mark.attrs.markup || star);
-    if (!markup.startsWith('_')) {
+    if (opensInsideWords(markup)) {
         return star;
     }
     const at = opening ? index : Math.max(0, index - 1);

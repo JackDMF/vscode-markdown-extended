@@ -32,6 +32,27 @@ export const INLINE_MARKERS = {
 export type InlineMarkerName = keyof typeof INLINE_MARKERS;
 
 /**
+ * A character of a word: a letter or a digit of any script, or `_`. What `_`
+ * and `__` may not open or close next to (Markdown's rule for them; `*` and
+ * `**` may), and what the text editor's Underline toggle widens a selection to.
+ */
+export const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
+
+/** Whether a marker may stand next to a word character: `*` and `**` may, `_` and `__` may not. */
+export function opensInsideWords(marker: string): boolean {
+    return !marker.startsWith('_');
+}
+
+/**
+ * Whether a marker is half of a longer one in the table: `*` of `**`, `~` of
+ * `~~`, `_` of `__`. Where such a marker opens or closes, a run of two is the
+ * longer marker, not this one.
+ */
+export function isHalfMarker(marker: string): boolean {
+    return Object.values(INLINE_MARKERS).some(m => m !== marker && m.startsWith(marker));
+}
+
+/**
  * `markdown-it-kbd`'s delimiters, `[[Ctrl+S]]`. The package states them, not
  * this extension; they are written down here so the toolbar and the Visual
  * Editor's serializer take them from one place.

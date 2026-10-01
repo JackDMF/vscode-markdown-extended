@@ -1,9 +1,8 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { BLOCK_TOGGLE_ARGS } from '../../../src/commands/blockToggleArgs';
-import { inlineToggleArgs, ToggleArgs } from '../../../src/commands/inlineToggleArgs';
-import { toggleFormat } from '../../../src/services/helpers/toggleFormat';
-import { InlineMarkerName } from '../../../src/syntax/markers';
+import { toggleFormat, toggleInlineFormat } from '../../../src/services/helpers/toggleFormat';
+import { INLINE_MARKERS, InlineMarkerName } from '../../../src/syntax/markers';
 
 /**
  * The text editor's toggles, on a real editor. A document is written with its
@@ -35,18 +34,17 @@ function read(editor: vscode.TextEditor): string {
     return result;
 }
 
-async function run(args: ToggleArgs, content: string, selections: [number, number][]): Promise<vscode.TextEditor> {
+async function open(content: string, selections: [number, number][]): Promise<vscode.TextEditor> {
     const document = await vscode.workspace.openTextDocument({ language: 'markdown', content });
     const editor = await vscode.window.showTextDocument(document);
     editor.selections = selections.map(([a, b]) => new vscode.Selection(document.positionAt(a), document.positionAt(b)));
-    const [detect, multiLine, on, onReplace, off, offReplace] = args;
-    await toggleFormat(editor, detect, on, onReplace, off, offReplace, multiLine);
     return editor;
 }
 
-/** The inline toggles' arguments, guarded as `toggleFormats.ts` registers them. */
-function inline(name: InlineMarkerName): ToggleArgs {
-    return inlineToggleArgs(name, name === 'italics' || name === 'subscript');
+async function inline(name: InlineMarkerName, content: string, selections: [number, number][]): Promise<vscode.TextEditor> {
+    const editor = await open(content, selections);
+    await toggleInlineFormat(editor, INLINE_MARKERS[name]);
+    return editor;
 }
 
 suite('Inline toggles: what a selection toggles', () => {
@@ -56,7 +54,7 @@ suite('Inline toggles: what a selection toggles', () => {
 
     async function toggle(name: InlineMarkerName, marked: string): Promise<string> {
         const { content, selections } = parse(marked);
-        return read(await run(inline(name), content, selections));
+        return read(await inline(name, content, selections));
     }
 
     test('a cursor in a word bolds the word, not the punctuation after it (#173)', async () => {
@@ -89,21 +87,32 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('codeInline', '`‸`'), '‸');
     });
 
+    test('an empty pair next to another marker is removed again', async () => {
+        assert.strictEqual(await toggle('italics', '**b**‸'), '**b***‸*');
+        assert.strictEqual(await toggle('italics', '**b***‸*'), '**b**‸');
+    });
+
+    test('no pair is inserted where it would open a fence', async () => {
+        assert.strictEqual(await toggle('strikethrough', '‸'), '‸');
+    });
+
     test('every cursor and selection is toggled, in one undo step (#180)', async () => {
-        assert.strictEqual(await toggle('bold', 'al‸pha beta «gam»ma\ndel‸ta'), '**al‸pha** beta **«gam»**ma\n**del‸ta**');
+        const { content, selections } = parse('al‸pha beta «gam»ma\ndel‸ta');
+        const editor = await inline('bold', content, selections);
+        assert.strictEqual(read(editor), '**al‸pha** beta **«gam»**ma\n**del‸ta**');
+        // `undo` acts on the focused editor: focus this one, whatever the suites before left open.
+        await vscode.window.showTextDocument(editor.document, { preserveFocus: false });
         await vscode.commands.executeCommand('undo');
-        assert.strictEqual(vscode.window.activeTextEditor.document.getText(), 'alpha beta gamma\ndelta');
+        assert.strictEqual(editor.document.getText(), 'alpha beta gamma\ndelta');
     });
 
     test('two cursors in one word bold it once and both stay', async () => {
         assert.strictEqual(await toggle('bold', 'a‸lph‸a beta'), '**a‸lph‸a** beta');
     });
 
-    test('adjacent selections are each wrapped, and each is found again', async () => {
-        assert.strictEqual(await toggle('bold', '«foo»«bar»'), '**«foo»****«bar»**');
-        assert.strictEqual(await toggle('bold', '**«foo»****«bar»**'), '«foo»«bar»');
-        assert.strictEqual(await toggle('bold', '**a**‸**b**'), 'a‸**b**');
-        assert.strictEqual(await toggle('bold', '**a****‸b**'), '**a**‸b');
+    test('selections side by side are written as one span', async () => {
+        assert.strictEqual(await toggle('bold', '«foo»«bar»'), '**«foo»«bar»**');
+        assert.strictEqual(await toggle('bold', '**«foo»«bar»**'), '«foo»«bar»');
     });
 
     test('a cursor in or at a formatted word removes its markers', async () => {
@@ -119,10 +128,34 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('superscript', '2^1‸^'), '21‸');
     });
 
-    test('italics and subscript do not take bold\'s or strikethrough\'s markers for their own', async () => {
+    test('markers side by side are read as Markdown reads them: one span', async () => {
+        assert.strictEqual(await toggle('bold', '**a**‸**b**'), 'a**‸**b');
+    });
+
+    test('italics finds its span around or inside bold, and not in bold\'s markers', async () => {
         assert.strictEqual(await toggle('italics', 'x **bo‸ld** y'), 'x ***bo‸ld*** y');
+        assert.strictEqual(await toggle('italics', 'x ***bo‸ld*** y'), 'x **bo‸ld** y');
+        assert.strictEqual(await toggle('bold', 'x ***bo‸ld*** y'), 'x *bo‸ld* y');
+        assert.strictEqual(await toggle('bold', 'x *bo‸ld* y'), 'x ***bo‸ld*** y');
+        assert.strictEqual(await toggle('italics', '*see **th‸is***'), 'see **th‸is**');
         assert.strictEqual(await toggle('italics', 'x *it‸al* y'), 'x it‸al y');
+    });
+
+    test('subscript does not take strikethrough\'s markers for its own', async () => {
         assert.strictEqual(await toggle('subscript', 'x ~~st‸rike~~ y'), 'x ~~~st‸rike~~~ y');
+        assert.strictEqual(await toggle('subscript', 'x ~~~st‸rike~~~ y'), 'x ~~st‸rike~~ y');
+    });
+
+    test('superscript leaves footnote references alone', async () => {
+        assert.strictEqual(await toggle('superscript', 'see[^1] a‸nd[^2]'), 'see[^1] ^a‸nd^[^2]');
+        assert.strictEqual(await toggle('superscript', 'see[^1] ^a‸nd^[^2]'), 'see[^1] a‸nd[^2]');
+    });
+
+    test('underline takes in the rest of a word a selection ends in', async () => {
+        assert.strictEqual(await toggle('underline', 'fo«ob»ar baz'), '_fo«ob»ar_ baz');
+        assert.strictEqual(await toggle('underline', '体验这个«插件»之后，发现问题。'), '_体验这个«插件»之后_，发现问题。');
+        assert.strictEqual(await toggle('underline', 'x «a» y'), 'x _«a»_ y');
+        assert.strictEqual(await toggle('underline', 'x a«(b)»c y'), 'x _a«(b)»c_ y');
     });
 
     test('underline\'s marker is no marker inside a word', async () => {
@@ -130,20 +163,21 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('underline', 'snake_ca‸se'), '_snake_ca‸se_');
     });
 
-    test('a selection only touching a formatted word is formatted itself', async () => {
-        assert.strictEqual(await toggle('bold', '**foo**«bar»'), '**foo****«bar»**');
-    });
-
-    test('a selection that is not within one span is wrapped, the spans inside it kept', async () => {
-        assert.strictEqual(await toggle('bold', '«make **this** bold»'), '**«make **this** bold»**');
-    });
-
-    test('a selection is cut short of a span it only partly covers', async () => {
-        assert.strictEqual(await toggle('bold', '«a **b»c** d'), '**«a** **b»c** d');
+    test('a selection is written as one span: spans inside it and touching it are taken in', async () => {
+        assert.strictEqual(await toggle('bold', '«make **this** bold»'), '**«make this bold»**');
+        assert.strictEqual(await toggle('bold', '**foo**«bar»'), '**foo«bar»**');
+        assert.strictEqual(await toggle('mark', '«==a== b ==c==»'), '«==a b c==»');
+        assert.strictEqual(await toggle('bold', '«a **b»c** d'), '**«a b»c** d');
+        assert.strictEqual(await toggle('codeInline', '«a `b` c»'), '`«a b c»`');
     });
 
     test('formatted and plain selections toggle in one go', async () => {
         assert.strictEqual(await toggle('bold', '**on‸e** tw‸o'), 'on‸e **tw‸o**');
+    });
+
+    test('nothing is written into code', async () => {
+        assert.strictEqual(await toggle('codeInline', '```j‸s'), '```j‸s');
+        assert.strictEqual(await toggle('bold', '```\nco‸de\n```'), '```\nco‸de\n```');
     });
 
     test('a selection over several lines wraps each line\'s text, and is unwrapped again', async () => {
@@ -154,10 +188,22 @@ suite('Inline toggles: what a selection toggles', () => {
 
     test('over several lines, block prefixes, blank lines and trailing whitespace stay outside', async () => {
         assert.strictEqual(await toggle('bold', '«- item one\n- item two»'), '«- **item one**\n- **item two»**');
+        assert.strictEqual(await toggle('bold', '«- [ ] task one\n- [x] task two»'), '«- [ ] **task one**\n- [x] **task two»**');
         assert.strictEqual(await toggle('bold', '«# Title\n> quoted»'), '«# **Title**\n> **quoted»**');
         assert.strictEqual(await toggle('bold', 'o«ne\n   \ntw»o'), 'o**«ne**\n   \n**tw»**o');
         assert.strictEqual(await toggle('bold', '«one two \nthree»'), '**«one two** \n**three»**');
         assert.strictEqual(await toggle('bold', '«- **item one**\n- **item two»**'), '«- item one\n- item two»');
+    });
+
+    test('over several lines, lines that are a block\'s syntax are left as they are', async () => {
+        assert.strictEqual(await toggle('bold', '«one\n```js\nlet a = 1;\n```\ntwo»'), '**«one**\n```js\nlet a = 1;\n```\n**two»**');
+        assert.strictEqual(await toggle('bold', '«| a | b |\n|---|---|\n| 1 | 2 |»'), '«| a | b |\n|---|---|\n| 1 | 2 |»');
+        assert.strictEqual(await toggle('bold', '«one\n\n---\n\ntwo»'), '**«one**\n\n---\n\n**two»**');
+        assert.strictEqual(await toggle('bold', '«Title\n=====»'), '**«Title**\n=====»');
+        assert.strictEqual(await toggle('bold', '«<div>\nhtml\n</div>»'), '«<div>\nhtml\n</div>»');
+        assert.strictEqual(await toggle('bold', '«::: warning\ntext\n:::»'), '«::: warning\n**text**\n:::»');
+        assert.strictEqual(await toggle('bold', '«$$\nx^2\n$$»'), '«$$\nx^2\n$$»');
+        assert.strictEqual(await toggle('bold', '«[^1]: a note\ntext»'), '«[^1]: a note\n**text»**');
     });
 
     test('a line already formatted is left as it is when the others are wrapped', async () => {
@@ -167,7 +213,7 @@ suite('Inline toggles: what a selection toggles', () => {
     test('overlapping selections are toggled as one, whichever is primary', async () => {
         const content = 'ab bar bar';
         for (const selections of [[[9, 9], [1, 8]], [[1, 8], [9, 9]]] as [number, number][][]) {
-            const editor = await run(inline('strikethrough'), content, selections);
+            const editor = await inline('strikethrough', content, selections);
             assert.strictEqual(editor.document.getText(), 'a~~b bar bar~~');
             assert.deepStrictEqual(
                 editor.selections.map(s => [editor.document.offsetAt(s.anchor), editor.document.offsetAt(s.active)]),
@@ -177,7 +223,7 @@ suite('Inline toggles: what a selection toggles', () => {
     });
 
     test('a reversed selection stays reversed', async () => {
-        const editor = await run(inline('bold'), 'one two', [[7, 4]]);
+        const editor = await inline('bold', 'one two', [[7, 4]]);
         assert.strictEqual(editor.document.getText(), 'one **two**');
         assert.deepStrictEqual([editor.selection.anchor.character, editor.selection.active.character], [9, 6]);
     });
@@ -195,7 +241,10 @@ suite('Block toggles: as they were', () => {
 
     async function toggle(name: keyof typeof BLOCK_TOGGLE_ARGS, marked: string): Promise<string> {
         const { content, selections } = parse(marked);
-        return (await run(BLOCK_TOGGLE_ARGS[name], content, selections)).document.getText();
+        const editor = await open(content, selections);
+        const [detect, on, onReplace, off, offReplace] = BLOCK_TOGGLE_ARGS[name];
+        await toggleFormat(editor, detect, on, onReplace, off, offReplace);
+        return editor.document.getText();
     }
 
     test('lines are quoted and unquoted again', async () => {
