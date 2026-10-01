@@ -267,6 +267,7 @@ suite('Markdown Grammar: multiline emphasis', () => {
             notIn('mail a@b.c and x@y.z', 'b.c', RIGHT);
             notIn('costs $5 and $10', '5 and', LEFT);
             notIn('US$5 or US$6', '5 or', LEFT);
+            notIn('an escaped \\$opener$ here', 'opener', LEFT);
         });
     });
 });

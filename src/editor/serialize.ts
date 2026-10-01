@@ -40,8 +40,8 @@ interface StateInternals {
     noteMarker?: string;
     /** Whether a table cell is being written (`writeTable`); this module's own field. */
     inTableCell?: boolean;
-    /** Whether the text written next starts with a character a sidebar's closing marker must not touch (`writeSidebar`); this module's own field. */
-    referenceFirst?: boolean;
+    /** Where the output ended right after a sidebar's closing marker, and that marker (`writeSidebar`); this module's own field. */
+    sidebarEnd?: { at: number; marker: string };
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
     flushClose(size?: number): void;
 }
@@ -61,18 +61,21 @@ function breakMarkerRuns(text: string, ch: string | undefined, replace: (ch: str
 }
 
 /**
- * The parts of a note whose text needs more than CommonMark escaping, because
- * `markdownItSidenote.ts` finds their ends in the raw source, before any
- * backslash escape is read: a reference ends at the first `|`, a left
- * sidebar at the next `$`, a right one at the next `@`. Those characters are
- * written as numeric character references there, which the inline parser of
- * the part turns back into the character. A note ends at its marker pair,
+ * The parts of a note whose text needs more than CommonMark escaping. A
+ * reference ends at the first `|`, which `markdownItSidenote.ts` finds in the
+ * raw source before any backslash escape is read; a left sidebar ends at the
+ * first `$`, a right one at the first `@`, that the inline parser reads as a
+ * marker (`sidebarCanClose`), outside code, links and escapes. Those
+ * characters are written as numeric character references in their part,
+ * which the inline parser of the part turns back into the character, and
+ * which no rule reads as a marker. A note ends at its marker pair,
  * which the escape of `ESCAPE_EXTRA` breaks up in text (`\+\+`); in a link's
  * destination and title, which take no backslash escape, a run of the marker
  * character is percent-encoded or a character reference (`breakMarkerRuns`),
  * and a bare or angle link holding it is written inline. Text under the
  * raw marks — code, and the terminator under sup and sub — has no escape at
- * all; the editor refuses to make it (`unwritableInNote`).
+ * all; the editor refuses to make it (`unwritableInNote`) — in a sidebar too,
+ * although the sidebar rule skips a code span whole.
  */
 type NotePart = 'ref' | 'body' | 'left' | 'right';
 
@@ -96,7 +99,8 @@ function internals(state: MarkdownSerializerState): StateInternals {
  * What prosemirror-markdown's CommonMark escaping does not cover and this
  * engine would otherwise read as syntax: an HTML tag or entity (`html: true`),
  * `==mark==`, `^sup^`, `++sidenote++`, `!!marginal note!!`, the sidebars'
- * `$`/`@` (the sidebar rule pairs any two in a paragraph) and an emoji
+ * `$`/`@` (every one, although the sidebar rule reads only those its
+ * flanking allows as markers: `sidebarCanOpen`, `sidebarCanClose`) and an emoji
  * shortcode. Each gets a CommonMark backslash escape, which every rule
  * respects because the escape is consumed before they see the character.
  */
@@ -342,8 +346,11 @@ const inlineNodes: NodeSerializers = {
     text(state, node) {
         let text = (node.text ?? '').replace(HOLD_RE, '');
         const st = internals(state);
-        if (st.referenceFirst) {
-            st.referenceFirst = false;
+        const sidebarEnd = st.sidebarEnd;
+        st.sidebarEnd = undefined;
+        // Written right after a sidebar's closing marker, a character it must not touch is a character reference.
+        if (sidebarEnd !== undefined && sidebarEnd.at === st.out.length && !st.inAutolink && text !== ''
+            && !sidebarCanClose(sidebarEnd.marker, text.charAt(0))) {
             state.text(`&#${text.charCodeAt(0)};`, false);
             text = text.slice(1);
         }
@@ -376,11 +383,11 @@ const inlineNodes: NodeSerializers = {
     marginal_note(state, node) {
         writeNote(state, node, NOTE_SYNTAX.marginalNote.marker);
     },
-    left_sidebar(state, node, parent, index) {
-        writeSidebar(state, node, parent, index, NOTE_SYNTAX.leftSidebar.marker, 'left');
+    left_sidebar(state, node) {
+        writeSidebar(state, node, NOTE_SYNTAX.leftSidebar.marker, 'left');
     },
-    right_sidebar(state, node, parent, index) {
-        writeSidebar(state, node, parent, index, NOTE_SYNTAX.rightSidebar.marker, 'right');
+    right_sidebar(state, node) {
+        writeSidebar(state, node, NOTE_SYNTAX.rightSidebar.marker, 'right');
     },
 };
 
@@ -555,26 +562,24 @@ function writeNote(state: MarkdownSerializerState, node: Node, marker: string): 
  * inside it. The spaces the corpus writes inside the markers (`$ … $`) are the
  * body's own text and are written as they are read, so `$x$` stays `$x$`.
  */
-function writeSidebar(state: MarkdownSerializerState, node: Node, parent: Node, index: number, marker: string, part: NotePart): void {
+function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string, part: NotePart): void {
     const st = internals(state);
     // The plugin opens a sidebar only where no ASCII letter or digit stands
     // before the marker, and a `$` closes only where no digit follows
-    // (`sidebarCanOpen`, `sidebarCanClose`). Text of the same marks touching
-    // the sidebar there has that character written as a character reference.
-    const before = index > 0 ? parent.child(index - 1) : null;
+    // (`sidebarCanOpen`, `sidebarCanClose`). The character written right
+    // before the marker, or right after the closing one, is read off the
+    // output; where it would stop the marker, it is written as a character
+    // reference. Only text ends the output with a letter or digit: what is
+    // written as it is (code, a bare URL, a key, …) ends in a hold marker.
     state.write();
-    if (before !== null && before.isText && Mark.sameSet(before.marks, node.marks)) {
-        const last = st.out.slice(-1);
-        if (last !== '' && last === (before.text ?? '').slice(-1) && !sidebarCanOpen(last, marker)) {
-            st.out = `${st.out.slice(0, -1)}&#${last.charCodeAt(0)};`;
-        }
+    const last = st.out.slice(-1);
+    if (last !== '' && !sidebarCanOpen(last, marker)) {
+        st.out = `${st.out.slice(0, -1)}&#${last.charCodeAt(0)};`;
     }
     state.text(marker, false);
     renderPart(state, node, part);
     state.text(marker, false);
-    const after = index + 1 < parent.childCount ? parent.child(index + 1) : null;
-    st.referenceFirst = after !== null && after.isText && Mark.sameSet(after.marks, node.marks)
-        && (after.text ?? '') !== '' && !sidebarCanClose(marker, (after.text ?? '').charAt(0));
+    st.sidebarEnd = { at: st.out.length, marker };
 }
 
 /**

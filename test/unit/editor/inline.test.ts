@@ -213,6 +213,20 @@ suite('Editor inline constructs: written back by rule', () => {
         assert.strictEqual(assertRoundTrip([t('x'), left('y'), t('5 and z'), right('r'), t('2')]), '&#120;$y$&#53; and &#122;@r@2\n');
         assert.strictEqual(assertRoundTrip([t('a '), right('note'), t('x')]), 'a @note@x\n', 'a letter after a closer needs none');
         assert.strictEqual(assertRoundTrip([t('这是'), left('侧边栏'), t('的')]), '这是$侧边栏$的\n', 'nor CJK text');
+        // What touches the marker is read off the output: a mark with no delimiter, or an atom that writes nothing, stands between no characters.
+        const sidebarsOf = (text: string) => {
+            const found: string[] = [];
+            topChildren(parseDocument(md, text).doc)[0].forEach(child => found.push(child.type.name));
+            return found.filter(name => name.endsWith('_sidebar'));
+        };
+        const ref = schema.marks.req_ref.create({});
+        const reference = written([t('see '), t('REQ-1', ref), left('y'), t(' z')]);
+        assert.strictEqual(reference, 'see REQ-&#49;$y$ z\n');
+        assert.deepStrictEqual(sidebarsOf(reference), ['left_sidebar']);
+        const badge = schema.nodes.inline_atom.create({ html: '<b>B</b>' });
+        const badged = written([t('see x'), badge, left('y'), badge, t('5 z')]);
+        assert.strictEqual(badged, 'see &#120;$y$&#53; z\n');
+        assert.deepStrictEqual(sidebarsOf(badged), ['left_sidebar']);
     });
 
     test('an email address before code holding an @ is text and code, and is written back so', () => {

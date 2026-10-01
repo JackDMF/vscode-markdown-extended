@@ -214,13 +214,48 @@ suite('Sidebars: the closing marker is found by the inline parser, and the openi
         assert.strictEqual(inline('[[$see [x]{.c} here$]]'), '<kbd><span class="left-sidebar">see <span class="c">x</span> here</span></kbd>');
     });
 
-    test('many markers without a closer are read in linear time, not once per marker', () => {
-        for (const text of ['$a @a '.repeat(400) + '`$@`', '[$a '.repeat(400), '$a '.repeat(2000) + '$']) {
-            const started = Date.now();
-            md.render(text);
-            const took = Date.now() - started;
-            assert.ok(took < 400, `${took} ms for ${text.slice(0, 12)}…`);
+    test('many markers without a closer: four times the text takes well under sixteen times as long', () => {
+        // The plugin alone: the whole registry grows faster than linearly on such text without it.
+        const alone = new MarkdownIt({ html: true, linkify: true });
+        alone.use(sidenotePlugin);
+        const fastest = (text: string) => {
+            let best = Infinity;
+            for (let run = 0; run < 3; run++) {
+                const started = process.hrtime.bigint();
+                alone.render(text);
+                best = Math.min(best, Number(process.hrtime.bigint() - started) / 1e6);
+            }
+            return best;
+        };
+        for (const unit of ['$a @a ', '$x @y ', '[$a ']) {
+            const small = fastest(unit.repeat(500) + '`$@`');
+            const large = fastest(unit.repeat(2000) + '`$@`');
+            assert.ok(large < Math.max(small, 1) * 10, `${unit}: ${small.toFixed(1)} ms for 500, ${large.toFixed(1)} ms for 2000`);
         }
+    });
+
+    test('a URL in a sidebar ends at the sidebar\'s closing marker, as it always did, wherever the sidebar stands', () => {
+        assert.strictEqual(inline('A @see https://medium.com/@user here@ and more'),
+            'A <span class="right-sidebar">see <a href="https://medium.com/">https://medium.com/</a></span>user here@ and more');
+        for (const before of ['A', 'Longer text']) {
+            assert.strictEqual(inline(`${before} $see https://example.com/docs/$ more`),
+                `${before} <span class="left-sidebar">see <a href="https://example.com/docs/">https://example.com/docs/</a></span> more`);
+        }
+        assert.strictEqual(inline('See @http://a.co/x@'), 'See <span class="right-sidebar"><a href="http://a.co/x">http://a.co/x</a></span>');
+        // An @ of the other kind in a URL opens nothing: the URL is read whole.
+        for (const before of ['a', 'Some text']) {
+            assert.strictEqual(inline(`${before} $see https://medium.com/@user now$ and @r@ end.`),
+                `${before} <span class="left-sidebar">see <a href="https://medium.com/@user">https://medium.com/@user</a> now</span> and <span class="right-sidebar">r</span> end.`);
+        }
+    });
+
+    test('what the look-ahead learns does not leak: a sidebar nested in one is read within it, a footnote is counted once', () => {
+        assert.strictEqual(inline('x $Note @costs $5 total@ end$ y'),
+            'x <span class="left-sidebar">Note <span class="right-sidebar">costs $5 total</span> end</span> y');
+        const html = md.render('[[$see [x^[inl] ]{.c} here$]]');
+        assert.strictEqual(html.match(/class="footnote-item"/g)?.length, 1, html);
+        assert.ok(html.includes('<kbd><span class="left-sidebar">see <span class="c">x<sup class="footnote-ref">'), html);
+        assert.strictEqual(inline('@ [[ ab[]{.c}@'), '<span class="right-sidebar"> [[ ab<span class="c"></span></span>');
     });
 
     test('the sidebars the corpus writes still are sidebars', () => {
