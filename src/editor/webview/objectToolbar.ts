@@ -45,8 +45,8 @@ import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
-    removeSpanTransaction, sameObject, unwrapTransaction,
+    deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
+    removeLinkTransaction, removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { attributesStep } from './attributes';
 import { Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
@@ -1276,6 +1276,7 @@ class ObjectToolbarView implements PluginView {
                             id: 'remove-link',
                             label: 'Remove link',
                             title: 'The link goes; its text stays.',
+                            refusal: removeLinkRefusal(view.state, object),
                             run: () => this.act(object, current => {
                                 if (current.kind !== 'link') {
                                     return false;

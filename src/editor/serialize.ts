@@ -72,9 +72,10 @@ function breakMarkerRuns(text: string, ch: string | undefined, replace: (ch: str
  * character is percent-encoded or a character reference (`breakMarkerRuns`),
  * and a bare or angle link holding it is written inline. Text under the
  * raw marks — code, and the terminator under sup and sub — has no escape at
- * all; the editor refuses to make it (`unwritableInNote`). In a sidebar only
- * superscript and subscript are refused: the sidebar rule skips a code span
- * whole.
+ * all; the editor refuses to make it (`unwritableInNote`). In a sidebar
+ * nothing is refused: the sidebar rule skips a code span whole, and text under
+ * superscript and subscript keeps the backslash escape (`\$`), which their
+ * plugins unescape and read no character reference in.
  */
 type NotePart = 'ref' | 'body' | 'left' | 'right';
 
@@ -346,11 +347,21 @@ const inlineNodes: NodeSerializers = {
         const text = (node.text ?? '').replace(HOLD_RE, '');
         const st = internals(state);
         if (st.notePart === undefined || st.inAutolink) {
+            const from = st.out.length;
             state.text(text, !st.inAutolink);
+            // Text linkify reads a URL in: outside a note, a code span, a link's label, `<…>` (`readIntoUrl`).
+            if (seamCollector !== null && st.notePart === undefined && st.linkForm !== 'inline' && st.linkForm !== 'angle'
+                && !node.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
+                seamCollector.plain.push([from, st.out.length]);
+            }
             return;
         }
+        // Superscript and subscript in a sidebar keep the backslash escape:
+        // their plugins read no character reference, the sidebar rule reads
+        // an escaped marker as no end, and the plugins unescape it.
+        const sidebarRaw = (st.notePart === 'left' || st.notePart === 'right') && node.marks.some(m => m.type.name === 'sup' || m.type.name === 'sub');
         // Never at a line start: the note's opening marker is before it.
-        state.text(partText(st.notePart, state.esc(text, false)), false);
+        state.text(sidebarRaw ? state.esc(text, false) : partText(st.notePart, state.esc(text, false)), false);
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
@@ -409,12 +420,8 @@ const MARKER_GUARD = HOLD_OPEN + HOLD_CLOSE;
  */
 export const RAW_TEXT_MARKS: ReadonlySet<string> = new Set(['code', 'sup', 'sub']);
 
-/** The terminator each note part must not hold raw (`PART_TERMINATORS`), by the node holding the part's text. */
-const TERMINATOR_OF_PART: Readonly<Record<string, string>> = {
-    note_ref: PART_TERMINATORS.ref?.raw ?? '|',
-    left_sidebar: PART_TERMINATORS.left?.raw ?? '$',
-    right_sidebar: PART_TERMINATORS.right?.raw ?? '@',
-};
+/** The terminator a reference must not hold under a raw mark (`PART_TERMINATORS`): the plugin finds it in the raw source. */
+const REFERENCE_TERMINATOR = PART_TERMINATORS.ref?.raw ?? '|';
 
 /** Why `note` cannot be written so that it reads back as itself, or `null`. */
 function noteUnwritable(note: Node): string | null {
@@ -427,39 +434,29 @@ function noteUnwritable(note: Node): string | null {
     note.forEach(child => {
         parts.push(child);
     });
+    // A part holds no note or sidebar (`note_inline`), so its text is all there is to check.
     for (const part of marker === null ? [note] : parts) {
+        // Only a reference's `|` is found in the raw source. A sidebar's end
+        // is found by the inline parser, which skips a code span whole and
+        // reads the backslash escape superscript and subscript keep there.
+        const terminator = part.type.name === 'note_ref' ? REFERENCE_TERMINATOR : undefined;
         let reason: string | null = null;
-        // Descend: whatever stands in a part — a sidebar in a note's body
-        // too — is inside the note, and inside each part around it.
-        const check = (container: Node, terminators: readonly { ch: string; sidebar: boolean }[]) => {
-            container.forEach(child => {
-                if (reason !== null) {
-                    return;
-                }
-                if (!child.isText) {
-                    const own = TERMINATOR_OF_PART[child.type.name];
-                    check(child, own === undefined ? terminators : [...terminators, { ch: own, sidebar: child.type.name !== 'note_ref' }]);
-                    return;
-                }
-                const text = child.text ?? '';
-                const code = child.marks.some(m => m.type.name === 'code');
-                const supOrSub = child.marks.some(m => m.type.name !== 'code' && RAW_TEXT_MARKS.has(m.type.name));
-                const span = child.marks.find(m => m.type.name === 'attr_span' && NOTE_SYNTAX_CHARS.test(m.attrs.literal as string));
-                // A sidebar's end is found by the inline parser, which skips a code span whole and reads superscript and subscript character by character.
-                const held = terminators.find(term => text.includes(term.ch) && (supOrSub || (code && !term.sidebar)));
-                if (span !== undefined) {
-                    reason = `An attribute span in a note cannot hold ${span.attrs.literal as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
-                } else if (held !== undefined) {
-                    reason = held.sidebar
-                        ? `Superscript and subscript in a sidebar cannot hold "${held.ch}": the sidebar rule reads it as the sidebar's end, and no character reference is read there.`
-                        : `Inline code, superscript and subscript in this part of a note cannot hold "${held.ch}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
-                } else if (code && marker !== null && text.includes(marker)) {
-                    reason = `Inline code in a note cannot hold "${marker}": the notes plugin reads it as the note's end, and nothing escapes it there.`;
-                }
-            });
-        };
-        const own = TERMINATOR_OF_PART[part.type.name];
-        check(part, own === undefined ? [] : [{ ch: own, sidebar: part.type.name !== 'note_ref' }]);
+        part.forEach(child => {
+            if (reason !== null || !child.isText) {
+                return;
+            }
+            const text = child.text ?? '';
+            const code = child.marks.some(m => m.type.name === 'code');
+            const raw = child.marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
+            const span = child.marks.find(m => m.type.name === 'attr_span' && NOTE_SYNTAX_CHARS.test(m.attrs.literal as string));
+            if (span !== undefined) {
+                reason = `An attribute span in a note cannot hold ${span.attrs.literal as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+            } else if (raw && terminator !== undefined && text.includes(terminator)) {
+                reason = `Inline code, superscript and subscript in this part of a note cannot hold "${terminator}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
+            } else if (code && marker !== null && text.includes(marker)) {
+                reason = `Inline code in a note cannot hold "${marker}": the notes plugin reads it as the note's end, and nothing escapes it there.`;
+            }
+        });
         if (reason !== null) {
             return reason;
         }
@@ -472,9 +469,9 @@ function noteUnwritable(note: Node): string | null {
  * reads back as itself, or `null` — the one thing the serializer cannot do,
  * so the editor refuses the edit that would make it (`webview/notes.ts`)
  * rather than save a document the next parse restructures: a raw mark over a
- * note, text under a raw mark that holds the part's terminator or the note's
- * marker pair, or a sidebar touching a letter or digit that would keep its
- * marker from being read (`sidebarSeamRefusal`).
+ * note, text under a raw mark that holds a reference's `|` or the note's
+ * marker pair, or a sidebar touching a letter, a digit or a URL that would
+ * keep its marker from being read (`sidebarSeamRefusal`).
  */
 export function unwritableInNote(doc: Node, from = 0, to = doc.content.size): string | null {
     let reason: string | null = null;
@@ -590,7 +587,7 @@ function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string
     state.text(marker, false);
     renderPart(state, node, part);
     state.text(marker, false);
-    seamCollector?.push({ open, close: st.out.length, marker });
+    seamCollector?.seams.push({ open, close: st.out.length, marker });
 }
 
 /** Where a sidebar's markers stand in the output being written: before the opening one, after the closing one. */
@@ -600,36 +597,76 @@ interface SidebarSeam {
     marker: string;
 }
 
-/** The sidebars `sidebarSeamRefusal` is collecting, while it writes a textblock. */
-let seamCollector: SidebarSeam[] | null = null;
+/**
+ * What `sidebarSeamRefusal` collects while it writes a textblock: where each
+ * sidebar's markers stand, and the stretches of the output written as text
+ * linkify can read a URL in (`readIntoUrl`).
+ */
+let seamCollector: { seams: SidebarSeam[]; plain: [number, number][] } | null = null;
 
 /** Why a sidebar right after a letter or digit is not made. */
 export const SIDEBAR_GLUED_BEFORE = 'A sidebar right after a letter or digit would not be read as a sidebar: put a space before it.';
 /** Why a left sidebar right before a digit is not made. */
 export const SIDEBAR_GLUED_AFTER = 'A left sidebar right before a digit would not be read as a sidebar: put a space after it.';
+/** Why a sidebar right after a URL is not made. */
+export const SIDEBAR_GLUED_URL = 'A sidebar right after a web address can be read as part of the address: put a space before it.';
+
+/** What ends a URL wherever it stands, for linkify-it: whitespace, a control character, and its text separators `<`, `>`, `｜`. */
+const ENDS_URL = /[\s\p{Cc}<>｜]/u;
+
+/**
+ * Whether the marker written at `open` may be read into a bare URL before it,
+ * as markdown-it's linkify rule reads one: at a `://` it takes the scheme
+ * from at most ten scheme characters of plain text before it (`plain`: not in
+ * code, a link's label or a note), linkify-it knows `http`, `https` and `ftp`,
+ * and from there linkify-it reads on into the marker almost wherever it
+ * stands: `$` is a letter of a host to it (it is no punctuation), `$` and `@`
+ * are characters of a path, `@` ends a user name (`http://e.com.$y$`,
+ * `http://e.com/(a)@y@`, `http://e.com:@y@` are each one URL). What stops it
+ * short depends on its whole grammar (an unpaired bracket, a `_` before a
+ * `$`), which this page does not hold, so a marker after such a URL is
+ * refused unless something between ends every URL (`ENDS_URL`).
+ */
+function readIntoUrl(written: string, open: number, plain: readonly [number, number][]): boolean {
+    let runStart = open;
+    while (runStart > 0 && !ENDS_URL.test(written.charAt(runStart - 1))) {
+        runStart--;
+    }
+    for (let at = written.indexOf('://', runStart); at !== -1 && at < open; at = written.indexOf('://', at + 1)) {
+        let proto = at;
+        while (proto > Math.max(runStart, at - 10) && /[A-Za-z0-9+.-]/.test(written.charAt(proto - 1))) {
+            proto--;
+        }
+        if (/^(?:https?|ftp)$/i.test(written.slice(proto, at)) && plain.some(([from, to]) => proto >= from && proto < to)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /**
  * Why a sidebar in `textblock` would not read back as one, or `null`: the
  * plugin opens one only where no ASCII letter or digit stands right before
  * its marker, and a `$` closes only where no digit follows
- * (`sidebarCanOpen`, `sidebarCanClose`). The characters are read off the
- * textblock as it is written — a mark without a delimiter or a badge writes
- * nothing between, a bare URL or an email address writes its own text — with
- * the wrapper's hold markers skipped. Nothing is written to escape them: a
- * character reference in a word changes what the word is (a link, an
+ * (`sidebarCanOpen`, `sidebarCanClose`); and linkify may read a marker right
+ * after a bare URL into the URL (`readIntoUrl`). The characters are read
+ * off the textblock as it is written — a mark without a delimiter or a badge
+ * writes nothing between, a bare URL or an email address writes its own text
+ * — with the wrapper's hold markers skipped. Nothing is written to escape
+ * them: a character reference in a word changes what the word is (a link, an
  * abbreviation, an id someone searches for), so the edit is refused instead.
  */
 function sidebarSeamRefusal(textblock: Node): string | null {
-    const seams: SidebarSeam[] = [];
+    const collected: { seams: SidebarSeam[]; plain: [number, number][] } = { seams: [], plain: [] };
     let written: string;
-    seamCollector = seams;
+    seamCollector = collected;
     try {
         written = inlineMarkdown(textblock, false);
     } finally {
         seamCollector = null;
     }
     const isHold = (ch: string) => ch === HOLD_OPEN || ch === HOLD_CLOSE;
-    for (const seam of seams) {
+    for (const seam of collected.seams) {
         let before = seam.open - 1;
         while (before >= 0 && isHold(written.charAt(before))) {
             before--;
@@ -643,6 +680,9 @@ function sidebarSeamRefusal(textblock: Node): string | null {
         }
         if (after < written.length && !sidebarCanClose(seam.marker, written.charAt(after))) {
             return SIDEBAR_GLUED_AFTER;
+        }
+        if (readIntoUrl(written, seam.open, collected.plain)) {
+            return SIDEBAR_GLUED_URL;
         }
     }
     return null;

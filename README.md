@@ -832,9 +832,10 @@ rather than a second heading, so the id and the anchor are never written twice.
 - **Some characters cannot be in inline code inside a note.** The notes plugin finds a
   note's end and its `|` before anything else is read, and a code span has no escapes: so
   inline code in a note cannot hold the note's marker pair (`++`, `!!`), in a reference
-  not `|` (superscript and subscript not `|` either, nor a sidebar's `$` or `@`; inline
-  code in a sidebar may hold them, since the sidebar's end is found by the inline parser,
-  which skips code). The editor refuses such an edit and says why beside the caret, and the Code,
+  not `|` (superscript and subscript not `|` either). Inline code, superscript and
+  subscript in a sidebar may hold its `$` or `@`: the sidebar's end is found by the inline
+  parser, which skips code and reads the backslash escape superscript and subscript are
+  written with there (`^a\$b^`). The editor refuses such an edit and says why beside the caret, and the Code,
   Superscript and Subscript buttons are disabled with the reason in their tooltip — also
   over a selection that holds a note, which those three cannot hold at all.
 - **Left sidebars need `"markdown.math.enabled": false`.** VS Code's built-in math
@@ -907,9 +908,12 @@ A marker opens a sidebar only where no ASCII letter or digit stands right before
 `$` closes one only where no digit follows, so an email address (`a@b.c`) and `user@host`
 stay text, and so does a price as long as no later `$` can close it (`$5 and $10`; but
 `Pay $5 and see $the note$.` holds a sidebar from `5` to `see `). A marker inside inline
-code, a link, an autolink, inline HTML or after a backslash (`\@`) closes nothing. The
-Visual Editor does not let a sidebar touch a letter or digit before it (or a left one a
-digit after it): put a space there.
+code, a link, an autolink, inline HTML or after a backslash (`\@`) closes nothing. A
+character reference beside a marker counts as the character it stands for, so
+`REQ-&#49;$x$` is text as `REQ-1$x$` is. The Visual Editor does not let a sidebar touch a
+letter or digit before it (or a left one a digit after it), nor stand right after a bare
+web address (`http://e.com/$x$`, which linkify reads as one address): put a space there. A formatting button, or **Remove link**, whose result would do that is disabled,
+with the reason in its tooltip.
 
 **Using left sidebars: turn VS Code's math off in that workspace.** VS Code's built-in
 math extension claims `$…$` before this extension's sidebar rule runs — in the preview,

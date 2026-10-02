@@ -361,7 +361,9 @@ export default function (md: MarkdownIt) {
  * A marker opens only where `sidebarCanOpen` allows it (no ASCII letter or
  * digit before it, so `a@b.c` opens nothing); the closing marker is the first
  * that `sidebarCanClose` allows outside code, links and the like
- * (`findSidebarClose`). Both rules live in `src/syntax/markers.ts`.
+ * (`findSidebarClose`). Both rules live in `src/syntax/markers.ts`; the
+ * character beside a marker is the one the source reads as there, a
+ * character reference decoded (`readBefore`, `readAfter`).
  *
  * @param state - Markdown-it inline parsing state
  * @param silent - If true, only check syntax without creating tokens
@@ -393,9 +395,8 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
 
     const src = state.src;
     const max = state.posMax;
-    const before = start > 0 ? src.charAt(start - 1) : '';
     const after = start + 1 < max ? src.charAt(start + 1) : '';
-    if (!sidebarCanOpen(before, after)) {
+    if (!sidebarCanOpen(readBefore(state, start), after)) {
         return false;
     }
 
@@ -464,6 +465,60 @@ interface InlineParser {
 
 function inlineParser(state: MarkdownItState): InlineParser {
     return state.md.inline as unknown as InlineParser;
+}
+
+/** A character reference as markdown-it's entity rule reads one (`&#120;`, `&#x78;`, `&amp;`), at the end of the text before a marker. */
+const REFERENCE_BEFORE = /&(?:#(?:[xX][0-9a-fA-F]{1,6}|[0-9]{1,7})|[A-Za-z][A-Za-z0-9]{1,31});$/;
+/** The same, at the start of the text after a marker. */
+const REFERENCE_AFTER = /^&(?:#(?:[xX][0-9a-fA-F]{1,6}|[0-9]{1,7})|[A-Za-z][A-Za-z0-9]{1,31});/;
+/** The longest text `REFERENCE_BEFORE` can match: `&`, 32 characters of a name, `;`. */
+const REFERENCE_MAX = 34;
+
+/** What a character reference reads as, or the reference itself where it decodes to nothing (`&nosuch;`). */
+function decodeReference(state: MarkdownItState, reference: string): string {
+    return (state.md as unknown as { utils: { unescapeAll(text: string): string } }).utils.unescapeAll(reference);
+}
+
+/**
+ * The character the source reads as right before `pos`, for `sidebarCanOpen`:
+ * the one written there, or — where a character reference ends there that no
+ * backslash escapes — the last character it decodes to, so `REQ-&#49;$x$`
+ * opens nothing, as `REQ-1$x$` does not.
+ */
+function readBefore(state: MarkdownItState, pos: number): string {
+    const src = state.src;
+    const written = pos > 0 ? src.charAt(pos - 1) : '';
+    if (written !== ';') {
+        return written;
+    }
+    const reference = REFERENCE_BEFORE.exec(src.slice(Math.max(0, pos - REFERENCE_MAX), pos));
+    if (reference === null) {
+        return written;
+    }
+    let backslashes = 0;
+    const amp = pos - reference[0].length;
+    while (amp - 1 - backslashes >= 0 && src.charCodeAt(amp - 1 - backslashes) === 0x5c) {
+        backslashes++;
+    }
+    const decoded = backslashes % 2 === 0 ? decodeReference(state, reference[0]) : reference[0];
+    return decoded === reference[0] ? written : decoded.slice(-1);
+}
+
+/**
+ * The character the source reads as at `pos`, before `max`, for
+ * `sidebarCanClose`: the one written there, or the first character a
+ * character reference starting there decodes to, so `$x$&#53;` closes
+ * nothing, as `$x$5` does not.
+ */
+function readAfter(state: MarkdownItState, pos: number, max: number): string {
+    const src = state.src;
+    const written = pos < max ? src.charAt(pos) : '';
+    if (written !== '&') {
+        return written;
+    }
+    const reference = REFERENCE_AFTER.exec(src.slice(pos, max));
+    const decoded = reference === null ? '' : decodeReference(state, reference[0]);
+    return reference === null || decoded === reference[0] ? written : decoded.charAt(0);
 }
 
 /** What markdown-it-footnote keeps in the environment. */
@@ -638,7 +693,7 @@ function findSidebarClose(state: MarkdownItState, start: number, code: number): 
     const max = state.posMax;
     const marker = src.charAt(start);
     const closesAt = (pos: number) => src.charCodeAt(pos) === code
-        && sidebarCanClose(marker, pos + 1 < max ? src.charAt(pos + 1) : '');
+        && sidebarCanClose(marker, readAfter(state, pos + 1, max));
 
     // Nothing to look for when no marker in the rest of the text could close.
     let candidate = src.indexOf(marker, start + 1);

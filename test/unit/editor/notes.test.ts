@@ -10,7 +10,9 @@ import {
     NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal, previousNotePart,
     toggleNote, unwrapNote, wrapInNote, wrapNodeLockReason,
 } from '../../../src/editor/webview/notes';
-import { markRefusal, toggleMarkup } from '../../../src/editor/webview/toolbar/commands';
+import { objectAtSelection, removeLinkRefusal } from '../../../src/editor/webview/objects';
+import { TOOLBAR_ACTIONS } from '../../../src/editor/webview/toolbar/actions';
+import { inlineSourceTransaction, markRefusal, toggleMarkup, wrapSourceTransaction } from '../../../src/editor/webview/toolbar/commands';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine } from './helpers';
 
@@ -295,26 +297,16 @@ suite('Editor notes: what the serializer cannot write back is not made', () => {
         body = body.apply(body.tr.insertText('+'));
         assert.strictEqual(text(body), 'Alpha ++ref|see `i+` here++ gamma.\n');
         assert.strictEqual(body.apply(body.tr.insertText('+')).doc, body.doc, '++ in code in a body');
-        // In a right sidebar, code may hold its @ (the sidebar rule skips a code span whole); superscript may not.
+        // In a right sidebar, code may hold its @ (the sidebar rule skips a code span whole), and superscript too, written `\@`.
         const sidebar = select(stateOf('Mail @ write user&#64;host now @ end.\n'), 'user@host');
         assert.strictEqual(markRefusal(sidebar, code, null), null);
         const coded = run(sidebar, toggleMarkup(code, null));
         assert.strictEqual(text(coded), 'Mail @ write `user@host` now @ end.\n');
         assert.deepStrictEqual(notesAfterSave(coded), ['right_sidebar']);
-        assert.ok(markRefusal(sidebar, sup, null)?.includes('"@"'), 'superscript cannot hold it');
-        // A sidebar inside a note's body is inside the note: its code cannot hold the note's marker pair.
-        const nested = editorSchema.nodes.paragraph.create(null, [
-            editorSchema.text('x '),
-            editorSchema.nodes.sidenote.create(null, [
-                editorSchema.nodes.note_ref.create(null, [editorSchema.text('ref')]),
-                editorSchema.nodes.sidenote_body.create(null, [
-                    editorSchema.text('b '),
-                    editorSchema.nodes.left_sidebar.create(null, [editorSchema.text('a++b', [code.create()])]),
-                ]),
-            ]),
-            editorSchema.text(' y'),
-        ]);
-        assert.ok(unwritableInNote(editorSchema.topNodeType.create(null, [nested]))?.includes('"++"'));
+        assert.strictEqual(markRefusal(sidebar, sup, null), null, 'superscript may hold it');
+        const raised = run(sidebar, toggleMarkup(sup, null));
+        assert.strictEqual(text(raised), 'Mail @ write ^user\\@host^ now @ end.\n');
+        assert.deepStrictEqual(notesAfterSave(raised), ['right_sidebar']);
         // An edit beside a sidebar that would glue it to a letter, or a left one to a digit, is refused with what to do.
         const glued = stateOf('Alpha $side$ beta.\n');
         const space = posOf(glued.doc, 'Alpha ') + 'Alpha'.length;
@@ -329,10 +321,81 @@ suite('Editor notes: what the serializer cannot write back is not made', () => {
         assert.strictEqual(wrapNodeLockReason(made, 'right_sidebar'), null, 'a sidebar may hold | in code');
     });
 
+    test('every mark button whose toggle would glue a sidebar to a letter is disabled with the reason the filter gives', () => {
+        // Taking a mark off `x` takes its delimiters with it: `a x$y$ z`.
+        for (const action of TOOLBAR_ACTIONS) {
+            if (action.apply.kind !== 'mark') {
+                continue;
+            }
+            const type = editorSchema.marks[action.apply.mark];
+            const source = `a ${action.syntax.replace('text', 'x')}$y$ z.\n`;
+            const state = select(stateOf(source), 'x');
+            assert.deepStrictEqual(notesAfterSave(state), ['left_sidebar'], `${action.id}: ${source}`);
+            const reason = markRefusal(state, type, action.apply.markup);
+            assert.strictEqual(reason, SIDEBAR_GLUED_BEFORE, action.id);
+            assert.strictEqual(toggleMarkup(type, action.apply.markup)(state), false, `${action.id}: not run`);
+            // What the button would do, made by hand: the filter refuses it with the same reason.
+            const removed = state.tr.removeMark(state.selection.from, state.selection.to, type);
+            assert.strictEqual(noteRefusal(removed), reason, `${action.id}: the filter's reason`);
+            assert.strictEqual(state.apply(removed).doc, state.doc, `${action.id}: the filter refuses it`);
+        }
+        // Remove link likewise: `[x](u)$y$` would be `x$y$`.
+        const linked = stateOf('a [x](u)$y$ z.\n');
+        const link = objectAtSelection(select(linked, 'x'));
+        assert.ok(link?.kind === 'link');
+        assert.strictEqual(removeLinkRefusal(linked, link), SIDEBAR_GLUED_BEFORE);
+        const spaced = stateOf('a [x](u) $y$ z.\n');
+        const free = objectAtSelection(select(spaced, 'x'));
+        assert.ok(free?.kind === 'link');
+        assert.strictEqual(removeLinkRefusal(spaced, free), null);
+    });
+
     test('the host\'s re-sync is never refused', () => {
         const state = stateOf('Alpha ++the `ab` ref|body++ gamma.\n');
         const tr = state.tr.insertText('|', posOf(state.doc, 'ab') + 1).setMeta(PRESERVE_SOURCE_META, true);
         assert.strictEqual(noteRefusal(tr), null);
+    });
+});
+
+suite('Editor notes: a character reference glued to a sidebar\'s marker is text, as the parser reads it', () => {
+    test('an edit elsewhere in the block is saved as edited', () => {
+        const list = stateOf('- a &#120;$y$ z\n- other item\n');
+        const edited = list.apply(list.tr.insertText(' EDITED', posOf(list.doc, 'other') + 'other'.length));
+        assert.notStrictEqual(edited.doc, list.doc, 'the edit is applied');
+        assert.strictEqual(text(edited), '- a x\\$y\\$ z\n- other EDITED item\n');
+        assert.deepStrictEqual(notesAfterSave(edited), []);
+    });
+
+    test('a typo fixed beside it is applied, and no toolbar button is disabled for it', () => {
+        const base = stateOf('Typo heer, see REQ-&#49;$the note$ later.\n');
+        const fixed = base.apply(base.tr.insertText('re', posOf(base.doc, 'heer') + 2, posOf(base.doc, 'heer') + 4));
+        assert.strictEqual(text(fixed), 'Typo here, see REQ-1\\$the note\\$ later.\n');
+        const word = select(base, 'Typo');
+        for (const action of TOOLBAR_ACTIONS) {
+            if (action.apply.kind === 'mark') {
+                assert.strictEqual(markRefusal(word, editorSchema.marks[action.apply.mark], action.apply.markup), null, action.id);
+            }
+        }
+        assert.strictEqual(wrapNodeLockReason(word, 'left_sidebar'), null);
+    });
+
+    test('a footnote added and a note\'s Edit source in that block write no sidebar the file did not hold', () => {
+        const source = 'See &#120;$y$ and the claim.\n';
+        const state = caretAt(stateOf(source), posOf(stateOf(source).doc, 'claim') + 'claim'.length);
+        const footnote = TOOLBAR_ACTIONS.find(a => a.id === 'footnote-reference')?.apply;
+        assert.ok(footnote?.kind === 'wrap-source');
+        const tr = wrapSourceTransaction(state, footnote, { eol: '\n', defaultWrap: 90, documentText: source });
+        assert.ok(tr);
+        const noted = state.apply(tr);
+        assert.strictEqual(noted.doc.child(0).attrs.src, 'See x\\$y\\$ and the claim[^1].\n');
+        assert.deepStrictEqual(notesAfterSave(noted), []);
+        const withNote = 'See &#120;$y$ and the ++claim|old++.\n';
+        const inNote = caretAt(stateOf(withNote), posOf(stateOf(withNote).doc, 'claim') + 1);
+        const note = objectAtSelection(inNote);
+        assert.ok(note?.kind === 'note');
+        const edited = inNote.apply(inlineSourceTransaction(inNote, note.from, note.to, '++claim|new++', note.node.marks, { eol: '\n', defaultWrap: 90, documentText: withNote }) as Transaction);
+        assert.strictEqual(text(edited), 'See x\\$y\\$ and the ++claim|new++.\n');
+        assert.deepStrictEqual(notesAfterSave(edited), ['sidenote']);
     });
 });
 

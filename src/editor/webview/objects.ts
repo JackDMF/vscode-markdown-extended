@@ -334,6 +334,15 @@ export function changeLinkTransaction(state: EditorState, link: Extract<EditorOb
     return state.tr.removeMark(link.from, link.to, link.mark).addMark(link.from, link.to, mark).scrollIntoView();
 }
 
+/**
+ * Why **Remove link** is refused, or `null` — asked of the filter's own check
+ * (`noteRefusal`): with `](…)` gone its text may touch a sidebar's marker
+ * (`[x](u)$y$` would be `x$y$`).
+ */
+export function removeLinkRefusal(state: EditorState, link: Extract<EditorObject, { kind: 'link' }>): string | null {
+    return noteRefusal(removeLinkTransaction(state, link));
+}
+
 /** The link's mark taken off its text, which stays; the caret at the text's end. */
 export function removeLinkTransaction(state: EditorState, link: Extract<EditorObject, { kind: 'link' }>): Transaction {
     const tr = state.tr.removeMark(link.from, link.to, link.mark);
