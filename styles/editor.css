@@ -1157,8 +1157,9 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     outline-offset: 1px;
 }
 
-/* A block brought into view (a followed link's fragment) stands below the formatting row, not under it. */
-.mep-editor .ProseMirror > * { scroll-margin-top: 64px; }
+/* A block brought into view (a followed link's fragment) stands below the formatting row, not under it; so does an element inside one found by its id. */
+.mep-editor .ProseMirror > *,
+.mep-editor .ProseMirror [id] { scroll-margin-top: 64px; }
 
 /* ------------------------------------------------------------------------- */
 /* The document cannot be shown without loss                                 */

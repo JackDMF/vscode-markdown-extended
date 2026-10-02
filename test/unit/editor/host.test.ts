@@ -943,8 +943,16 @@ suite('Editor host: a link lands on the element its fragment names', () => {
     });
 
     test('a heading without a source line that first carries a fragment names no line, not a later heading', () => {
-        const anchor = (line: number | null) => ({ line, id: 'setup', explicit: false, anchor: null, text: 'Setup' });
+        const anchor = (line: number | null) => ({ line, id: 'setup', explicit: false, slug: 'setup', anchor: null, text: 'Setup' });
         assert.strictEqual(fragmentLine([anchor(null), anchor(4)], 'setup'), null);
+    });
+
+    test('an explicit id that is the heading\'s own slug matches without case, as a plain heading\'s slug does', async () => {
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const anchors = headingAnchors(md, ['## Intro', '', '## Setup {#setup}', '', '## Other {#Custom}', ''].join('\n'), {});
+        assert.strictEqual(fragmentLine(anchors, 'Setup'), 2);
+        assert.strictEqual(fragmentLine(anchors, 'Intro'), 0);
+        assert.strictEqual(fragmentLine(anchors, 'custom'), null, 'any other explicit id is compared as written');
     });
 
     test('a link to another file opens it at the heading; a fragment it lacks opens it at the top, logged as info at most', async function () {
@@ -1000,7 +1008,8 @@ suite('Editor host: a link lands on the element its fragment names', () => {
         const uri = tempMarkdown(FRAGMENT_TARGET);
         const second = tempMarkdown(FRAGMENT_TARGET);
         const engineChanged = new vscode.EventEmitter<void>();
-        const host = { engine: () => buildEditorEngine(EXTENSION_ID, () => undefined), onDidChangeEngine: engineChanged.event, log: () => undefined };
+        const logged: string[] = [];
+        const host = { engine: () => buildEditorEngine(EXTENSION_ID, () => undefined), onDidChangeEngine: engineChanged.event, log: (line: string) => { logged.push(line); } };
         const webview = new FakeWebview();
         const otherWebview = new FakeWebview();
         const session = new VisualEditorSession(await vscode.workspace.openTextDocument(uri), webview, host);
@@ -1020,6 +1029,19 @@ suite('Editor host: a link lands on the element its fragment names', () => {
             webview.send({ type: 'openLink', href: '#fn1' });
             await until(() => reveals(webview)[2], 5000);
             assert.deepStrictEqual(reveals(webview)[2], { type: 'revealAnchor', anchor: 'fn1', line: null }, 'no heading: the page looks among its own elements');
+            assert.ok(logged.some(l => l.includes('has no #fn1')), 'a fragment of this document nothing carries is logged');
+
+            // A heading's second anchor: the page is sent the heading's explicit id, to find it inside a block.
+            webview.send({ type: 'openLink', href: '#frs-tst-001-smoke' });
+            await until(() => reveals(webview)[3], 5000);
+            assert.deepStrictEqual(reveals(webview)[3], { type: 'revealAnchor', anchor: 'frs-tst-001-1a2b3c4d', line: 2 });
+
+            // A link right behind an edit is resolved in the edited text: the queue holds it behind the edit.
+            const posted = webview.documents()[0];
+            webview.send({ type: 'edit', text: `${FRAGMENT_TARGET}\n## Pasted {#pasted}\n`, baseVersion: posted.version });
+            webview.send({ type: 'openLink', href: '#pasted' });
+            await until(() => reveals(webview)[4], 5000);
+            assert.deepStrictEqual(reveals(webview)[4], { type: 'revealAnchor', anchor: 'pasted', line: FRAGMENT_TARGET.split('\n').length });
 
             // Before the other page has its document the reveal waits, then follows the document.
             revealInVisualEditor(second, { anchor: 'frs-tst-001-1a2b3c4d', line: 2 });

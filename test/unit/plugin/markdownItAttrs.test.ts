@@ -346,8 +346,13 @@ suite('An explicit heading id in VS Code\'s own render (markdown.api.render)', (
     });
 
     test('the second anchor is part of the preview\'s source map, as VS Code\'s preview looks a fragment up there', async () => {
-        const html = await vscode.commands.executeCommand<string>('markdown.api.render', 'Text.\n\n## FR-1: Name {#fr-1}\n');
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', 'Text.\n\n## FR-1: Name {#fr-1}\n\nBody.\n');
         assert.ok(/<h2 [^>]*data-line="2"[^>]*><a id="fr-1-name" class="code-line" data-line="2"><\/a>FR-1: Name<\/h2>/.test(html), html);
+    });
+
+    test('a last heading\'s second anchor stays out of the source map: no block after it for the scroll sync to measure to', async () => {
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', 'Text.\n\n## FR-1: Name {#fr-1}\n');
+        assert.ok(/<h2 [^>]*data-line="2"[^>]*><a id="fr-1-name"><\/a>FR-1: Name<\/h2>/.test(html), html);
     });
 
     test('slugged headings keep VS Code\'s slug and count an explicit-id heading among the repeats', async () => {

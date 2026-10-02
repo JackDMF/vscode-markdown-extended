@@ -948,7 +948,7 @@ text the other — never a diff:
 | host → page | `lenses { version, blocks, rows }` | Other extensions' code lenses, one row of `{ id?, title, tooltip?, surface?, artifact?, relation? }` per top-level block index (below) |
 | host → page | `actions { requestId, blockIndex, items }` | The code actions for one block, `{ id, title, kind, refusal? }` each (below) |
 | host → page | `invalidateActions { refused? }` | Every answer the page holds may be stale; ask again. With `refused`, that action was not applied (below) |
-| host → page | `revealAnchor { anchor, line }` | Bring a followed link's fragment into view and put the caret there: the block `line` starts, else (no line) the page's element with the id `anchor` (below) |
+| host → page | `revealAnchor { anchor, line }` | Bring a followed link's fragment into view and put the caret there: the block `line` starts, and in it the element with the id `anchor` (a nested heading's explicit id); else (no line) the page's element with that id (below) |
 | host → page | `includeChosen { requestId, insert? }` | The include line chosen in the QuickPick, as its provider offered it; none when dismissed or nothing was offered (below) |
 | host → page | `linkChoicesResult { requestId, items }` | Completions for a link's field, `{ value, label, detail?, kind }` each, best first, capped (below, *Links and images*) |
 | host → page | `filesChosen { requestId, files }` | The answer to `pickImage`, `insertFiles` and `saveImage`: the files to insert, `{ src, alt, image }` each — `src` relative to the document, POSIX, percent-encoded; for `saveImage` the copy the host wrote; empty when the dialog was dismissed or nothing could be written (below) |
@@ -1034,8 +1034,9 @@ before opening it (`fragmentLine`, `host/links.ts`), as the browser finds it in 
 preview: the first heading in document order that carries the fragment — as the one id it
 has by `headingIds` (`src/syntax/headingSlug.ts`: its explicit `{#id}`, else its slug, the
 slug counted either way), or as the slug a heading with a `{#id}` keeps as a second anchor;
-else the first one of whose slugs equals it without case, as the built-in compares — further
-than the browser, which finds no element for `#Setup`, so the editor lands where the preview
+else the first one of whose slugs equals it without case, as the built-in compares (a slug is
+a plain heading's id, an explicit id that is the heading's own slug, `## Setup {#setup}`, or
+a second anchor; any other explicit id is compared as written) — further than the browser, which finds no element for `#Setup`, so the editor lands where the preview
 lands nowhere; else a line fragment (`L12`, `L12,5`). A heading without a source line that is
 the first to carry the fragment names no line (`null`), never a later heading. See *Explicit
 heading ids* below. The slug is the built-in's, read from where it is true: no public
@@ -1059,14 +1060,24 @@ kept by uri for this, and a reveal for a page whose session does not exist yet w
 A link to the document itself opens nothing and reveals in its own page: the page posts
 every fragment it follows, its own document's too, as `openLink`, since its DOM carries only
 the headings' explicit ids and the first heading the browser finds may be one that carries a
-slug (`# Title` before `## Other {#title}`). A fragment another file does not have opens it
-at the top and logs an `[INFO]` line: the link may be older than the heading it named. The
-page (`revealAnchor` in `webview/main.ts`) takes the top-level block the host's line starts
-in — found by bisection over `lineAt`, since block start lines only grow — so the slug rule
-lives only on the host; it puts the caret at the block's start and scrolls it to the top,
-where `scroll-margin-top` keeps it clear of the formatting row fixed at the top. Without a
-line — a fragment no heading carries, such as a footnote's — it scrolls to the page's
-element with that id, if there is one.
+slug (`# Title` before `## Other {#title}`). It flushes its pending edit first, and the host
+resolves the link in its queue, behind that edit, so a fragment is looked up in the text the
+page holds (a heading pasted a moment before); the opening itself is started there, not
+waited for. A fragment another file does not have opens it at the top and logs an `[INFO]`
+line: the link may be older than the heading it named. A heading there that carries it but
+has no source line opens the file at the top unlogged, since its preview has the element; a
+fragment of this document that names no heading and no element its render carries is
+logged too. The page (`revealAnchor` in `webview/main.ts`) takes the top-level block the
+host's line starts in — found by bisection over `lineAt`, since block start lines only grow
+— so the slug rule lives only on the host; it puts the caret at the block's start and
+scrolls it to the top, where `scroll-margin-top` keeps it clear of the formatting row fixed
+at the top. The page knows the lines of top-level blocks only, so a heading nested in a
+blockquote, an admonition or a `:::` container names its block; the host therefore sends
+the heading's explicit id as `anchor`, and the page brings the element with that id inside
+the block into view, the caret in it when the block is editable (a rendered block is one
+atom and keeps its selection). A nested heading without an explicit id lands on its block's
+start. Without a line — a fragment no heading carries, such as a footnote's — the page
+scrolls to its element with that id, if there is one.
 
 **Explicit heading ids** (Daniel, 2026-10-01: Req Explorer's `{#fr-1}` anchors landed
 nowhere outside the Visual Editor). VS Code's engine installs its heading rule after every
@@ -1081,9 +1092,16 @@ the `heading_open` rule VS Code's wraps. That rule sets the id back and keeps th
 VS Code set as an empty `<a id="fr-1-name"></a>` at the start of the heading's content, so a
 link written to the slug still lands. VS Code's preview follows a fragment from another
 document only to an element of its source map (`.code-line`), so the anchor carries the
-heading's `data-line` and the `code-line` class; its scroll sync takes the heading, the
-first element of that line, measures it only down to the anchor inside it, and never sees
-the anchor, which has no size. No second anchor is written when some heading's explicit id
+heading's `data-line` and the `code-line` class. That puts the anchor into the preview's
+scroll sync (VS Code 1.140's `media/index.js`). Editor → preview and the active-line marker
+take the last element at or before a line, so a line between the heading and the next block
+marks the anchor (a bar one text line high) and a fractional line inside the heading scrolls
+to the heading's top. Preview → editor skips the anchor, which has no size, and measures the
+heading only down to it (one pixel): with a block after the heading it interpolates to that
+block as before; with none it divides by that pixel and runs past the document's end. So
+the anchor joins the source map only when a source-mapped block follows the heading; a last
+heading's anchor is a plain `<a id>`, which a link inside the preview finds and a link from
+another document's preview does not. No second anchor is written when some heading's explicit id
 is that slug (`## Setup {#install}`, `## Configuration {#setup}`: `#setup` is the author's),
 nor when the id VS Code set is not the slug `headingIds` counts (another rule's id, or a
 render without `env.slugifier`, which slugs repeats its own way). The heading has taken its

@@ -398,7 +398,12 @@ suite('Editor revealing a link\'s fragment (e2e)', () => {
     let page: puppeteer.Page;
 
     const filler = Array.from({ length: 40 }, (_, k) => `Paragraph ${k} of filler.\n`).join('\n');
-    const SOURCE_TEXT = `# Top\n\n${filler}\n## Far away {#far-away}\n\n${filler}\n## Slugged heading\n\n${filler}`;
+    // A long blockquote and an admonition, each with an explicit-id heading deep inside.
+    const quoted = Array.from({ length: 30 }, (_, k) => `> Quoted paragraph ${k}.\n>`).join('\n');
+    const boxed = Array.from({ length: 30 }, (_, k) => `    Boxed paragraph ${k}.\n`).join('\n');
+    const SOURCE_TEXT = `# Top\n\n${filler}\n## Far away {#far-away}\n\n${filler}\n## Slugged heading\n\n${filler}\n`
+        + `${quoted}\n> ## Inside quote {#in-quote}\n>\n${quoted}\n\n`
+        + `!!! note "Box"\n${boxed}\n    ## In note {#in-note}\n\n${boxed}\n${filler}`;
 
     /** Where the heading with `text` stands in the window, and whether the caret is in it. */
     const headingState = (text: string) => page.evaluate(t => {
@@ -459,4 +464,22 @@ suite('Editor revealing a link\'s fragment (e2e)', () => {
         });
         assert.strictEqual(caretInTop, true, 'the caret in "# Top", not in "## Far away {#far-away}"');
     });
+
+    for (const [where, id, heading] of [['a long blockquote', 'in-quote', 'Inside quote'], ['an admonition', 'in-note', 'In note']]) {
+        test(`a heading deep inside ${where} is brought into view by its id, not the block's start`, async () => {
+            const line = SOURCE_TEXT.split('\n').findIndex(l => l.includes(`{#${id}}`));
+            await (editor as EditorPage).send({ type: 'revealAnchor', anchor: id, line });
+            await delay(150);
+            const state = await page.evaluate(i => {
+                const target = document.getElementById(i);
+                const anchor = window.getSelection()?.anchorNode ?? null;
+                return {
+                    top: target ? Math.round(target.getBoundingClientRect().top) : null,
+                    caretIn: target !== null && anchor !== null && target.contains(anchor),
+                };
+            }, id);
+            assert.ok(state.top !== null && state.top >= 40 && state.top < 120, `"${heading}" at the top: ${state.top}`);
+            assert.strictEqual(state.caretIn, true, `the caret in "${heading}"`);
+        });
+    }
 });

@@ -159,11 +159,13 @@ export type HostMessage =
     /**
      * Bring the element a link's fragment names into view and put the caret
      * there: a link followed to this document, from another one or from
-     * itself. `anchor` is the fragment; `line` is the 0-based line the host
-     * resolved it to in the document's text (a `{#id}`, a heading's slug, a
-     * line fragment — `host/links.ts`), `null` when it names none there. The
-     * page takes a heading whose `anchor` is the fragment first, else the
-     * block that line starts, so the slug rule lives only on the host.
+     * itself. `line` is the 0-based line the host resolved the fragment to in
+     * the document's text (a heading by the preview's rule, or a line
+     * fragment — `host/links.ts`), `null` when it names none there; `anchor`
+     * is the explicit id of the heading it names, else the fragment. The page
+     * takes the block that line starts, and in it the element whose id is
+     * `anchor` (a heading nested in the block); without a line, the page's
+     * element with that id (a footnote's). The slug rule lives only on the host.
      */
     | { type: 'revealAnchor'; anchor: string; line: number | null }
     /**
@@ -292,7 +294,8 @@ export type WebviewMessage =
      * block — or plain-clicked in a read model (Req Explorer's summary table),
      * with its `href` exactly as the element carries it. The host
      * resolves a relative one against the document (`host/links.ts`); a link
-     * to a heading of this very document never comes here, the page scrolls.
+     * to this very document (`#…`) comes here too, sent after any pending
+     * edit, and is answered with `revealAnchor`.
      */
     | { type: 'openLink'; href: string }
     /** Open the text editor beside this one, revealing a 0-based line. */

@@ -89,11 +89,20 @@ export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
 // VS Code set is that slug: an id another rule set (`perma-0`) is no slug.
 // VS Code's preview follows a fragment from another document only to an
 // element of its own source map, so the anchor carries the heading's
-// `data-line` and `code-line` class. The preview's scroll sync then takes the
-// heading, the first element of that line, for the line, and the anchor, with
-// no size, is never visible to it; it measures the heading only down to the
-// anchor inside it (one pixel), and a scroll position within the heading is
-// still interpolated between the heading's line and the next block's.
+// `data-line` and `code-line` class. That puts it in the preview's scroll
+// sync too (VS Code 1.140's `media/index.js`):
+// - editor → preview, and the active-line marker, take the last element at or
+//   before a line: for the heading's own line the heading, for a line between
+//   it and the next block the anchor — the marker then stands on the anchor
+//   (its bar one text line high, not the heading's height), and a fractional
+//   line inside the heading scrolls to the heading's top;
+// - preview → editor skips the anchor, which has no size, and measures the
+//   heading only down to the anchor inside it (one pixel): with a block after
+//   the heading it interpolates to that block as before, but with none it
+//   divides by that pixel and runs far past the document's end. The anchor
+//   therefore joins the source map only when a mapped block follows the
+//   heading; a last heading's anchor is a plain `<a id>`, which a link in the
+//   same preview finds and one from another document's preview does not.
 //
 // Three limits, all outside what this rule can see: an id a core rule of
 // another plugin sets on a heading before `curly_attributes` is read as the
@@ -126,16 +135,26 @@ function setMeta(token: Token, key: string, value: unknown) {
     (token.meta as Record<string, unknown>)[key] = value;
 }
 
-/** The second anchors of a rendered stream's headings by their index, read once per stream. */
-const anchorsOf = new WeakMap<Token[], Map<number, string>>();
+/** A rendered stream's second anchors by their heading's index, and the index of its last source-mapped block token. */
+interface StreamAnchors {
+    anchors: Map<number, string>;
+    lastMapped: number;
+}
 
-function secondAnchors(tokens: Token[]): Map<number, string> {
-    let anchors = anchorsOf.get(tokens);
-    if (!anchors) {
-        anchors = new Map(headingIds(tokens).filter(h => h.anchor !== null).map(h => [h.index, h.anchor]));
-        anchorsOf.set(tokens, anchors);
+/** Read once per stream. */
+const anchorsOf = new WeakMap<Token[], StreamAnchors>();
+
+function secondAnchors(tokens: Token[]): StreamAnchors {
+    let read = anchorsOf.get(tokens);
+    if (!read) {
+        let lastMapped = -1;
+        tokens.forEach((t, i) => {
+            if (t.map && t.type !== 'inline') { lastMapped = i; }
+        });
+        read = { anchors: new Map(headingIds(tokens).filter(h => h.anchor !== null).map(h => [h.index, h.anchor])), lastMapped };
+        anchorsOf.set(tokens, read);
     }
-    return anchors;
+    return read;
 }
 
 /** The heading renderer, giving a heading its explicit id back and keeping its slug as a second anchor. */
@@ -148,10 +167,12 @@ function wrapHeading(md: MarkdownIt) {
         const set = id !== null ? token.attrGet('id') : null;
         if (id !== null) { token.attrSet('id', id); }
         const html = open ? open(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
-        const anchor = id !== null ? secondAnchors(tokens).get(idx) : undefined;
+        const stream = id !== null ? secondAnchors(tokens) : null;
+        const anchor = stream?.anchors.get(idx);
         if (anchor === undefined || set !== anchor) { return html; }
         const line = token.attrGet('data-line');
-        const sourceMap = line !== null ? ` class="code-line" data-line="${md.utils.escapeHtml(line)}"` : '';
+        // In the source map only with a mapped block after the heading (`heading_close` is idx + 2).
+        const sourceMap = line !== null && stream.lastMapped > idx + 2 ? ` class="code-line" data-line="${md.utils.escapeHtml(line)}"` : '';
         return `${html}<a id="${md.utils.escapeHtml(anchor)}"${sourceMap}></a>`;
     };
 }
