@@ -1,6 +1,7 @@
 import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
 import markdownItAttrs from 'markdown-it-attrs';
 import { findLeftDelimiter, isTextBrace, textBraceCloses, withoutTextBraceEnd } from '../syntax/attrsLiteral';
+import { EXPLICIT_ID, explicitHeadingId, headingIds } from '../syntax/headingSlug';
 
 // markdown-it-attrs recomputes a table's cells from every `rowspan` and
 // `colspan` it finds, to honour its own `{rowspan=2}`. It cannot tell those
@@ -66,7 +67,114 @@ export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
             textBraceSpansAsText(state, inline.children);
         }
     });
+    md.core.ruler.after('curly_attributes', 'mep_explicit_heading_id', (state: StateBase) => keepHeadingIds(state.tokens));
     wrapFence(md);
+    wrapHeading(md);
+}
+
+// An explicit `{#id}` on a heading is the id the author links it by (Req
+// Explorer writes `## FR-1: Name {#fr-1}`), but VS Code's heading rule, which
+// wraps every rule the extensions installed, sets each heading's id from its
+// slug before it calls the rule it wrapped — `fr-1-name` in the preview, in
+// `markdown.api.render` and in the exports. The id attrs read is therefore
+// kept under the token's `meta` (`explicitHeadingId`, `src/syntax/headingSlug.ts`),
+// where a render cannot overwrite it, and the heading rule installed here —
+// the one VS Code's calls — sets it back. VS Code has slugged the heading by
+// then, so the headings after it count its slug as they did; the slug it set
+// is kept as a second anchor at the start of the heading's content
+// (`<a id="fr-1-name"></a>`), so a link written to the slug still lands, and
+// so does the one VS Code's language server completes, which knows only slugs.
+// The anchor is the heading's `anchor` by `headingIds` — none when some
+// heading's explicit id is that slug — and it is written only when the id
+// VS Code set is that slug: an id another rule set (`perma-0`) is no slug.
+// VS Code's preview follows a fragment from another document only to an
+// element of its own source map, so the anchor carries the heading's
+// `data-line` and `code-line` class. That puts it in the preview's scroll
+// sync too (VS Code 1.140's `media/index.js`):
+// - editor → preview, and the active-line marker, take the last element at or
+//   before a line: for the heading's own line the heading, for a line between
+//   it and the next block the anchor — the marker then stands on the anchor
+//   (its bar one text line high, not the heading's height), and a fractional
+//   line inside the heading scrolls to the heading's top;
+// - preview → editor skips the anchor, which has no size, and measures the
+//   heading only down to the anchor inside it (one pixel): with a block after
+//   the heading it interpolates to that block as before, but with none it
+//   divides by that pixel and runs far past the document's end. The anchor
+//   therefore joins the source map only when a mapped block follows the
+//   heading; a last heading's anchor is a plain `<a id>`, which a link in the
+//   same preview finds and one from another document's preview does not.
+//
+// Three limits, all outside what this rule can see: an id a core rule of
+// another plugin sets on a heading before `curly_attributes` is read as the
+// author's; a `heading_open` rule another extension installs after this one
+// runs between VS Code's and this one, and reads the slug as the id; and a
+// render without VS Code's slug builder (`env.slugifier`) slugs repeats its
+// own way, so a repeated heading's slug is not the one `headingIds` counts,
+// and it gets no second anchor.
+
+/** Every heading's explicit id, kept under its `meta`. */
+function keepHeadingIds(tokens: Token[]) {
+    for (const token of tokens) {
+        if (token.type !== 'heading_open') { continue; }
+        const id = token.attrGet('id');
+        if (id) { setMeta(token, EXPLICIT_ID, id); }
+    }
+}
+
+/**
+ * `value` under `key` of the token's `meta`, written into the object already
+ * there, as Req Explorer's marks are: a plugin holding that object keeps
+ * seeing its own data. A `meta` that is not an object belongs to nobody and
+ * is replaced.
+ */
+function setMeta(token: Token, key: string, value: unknown) {
+    if (typeof token.meta !== 'object' || token.meta === null) {
+        token.meta = { [key]: value };
+        return;
+    }
+    (token.meta as Record<string, unknown>)[key] = value;
+}
+
+/** A rendered stream's second anchors by their heading's index, and the index of its last source-mapped block token. */
+interface StreamAnchors {
+    anchors: Map<number, string>;
+    lastMapped: number;
+}
+
+/** Read once per stream. */
+const anchorsOf = new WeakMap<Token[], StreamAnchors>();
+
+function secondAnchors(tokens: Token[]): StreamAnchors {
+    let read = anchorsOf.get(tokens);
+    if (!read) {
+        let lastMapped = -1;
+        tokens.forEach((t, i) => {
+            if (t.map && t.type !== 'inline') { lastMapped = i; }
+        });
+        read = { anchors: new Map(headingIds(tokens).filter(h => h.anchor !== null).map(h => [h.index, h.anchor])), lastMapped };
+        anchorsOf.set(tokens, read);
+    }
+    return read;
+}
+
+/** The heading renderer, giving a heading its explicit id back and keeping its slug as a second anchor. */
+function wrapHeading(md: MarkdownIt) {
+    const open = md.renderer.rules.heading_open;
+    md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
+        const token = tokens[idx];
+        const id = explicitHeadingId(token);
+        // VS Code's rule set the slug; without it (an engine of its own) the id is attrs' and no anchor is written.
+        const set = id !== null ? token.attrGet('id') : null;
+        if (id !== null) { token.attrSet('id', id); }
+        const html = open ? open(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
+        const stream = id !== null ? secondAnchors(tokens) : null;
+        const anchor = stream?.anchors.get(idx);
+        if (anchor === undefined || set !== anchor) { return html; }
+        const line = token.attrGet('data-line');
+        // In the source map only with a mapped block after the heading (`heading_close` is idx + 2).
+        const sourceMap = line !== null && stream.lastMapped > idx + 2 ? ` class="code-line" data-line="${md.utils.escapeHtml(line)}"` : '';
+        return `${html}<a id="${md.utils.escapeHtml(anchor)}"${sourceMap}></a>`;
+    };
 }
 
 /** A new text token holding `content`, at `level`. */
@@ -196,7 +304,7 @@ function setAside(tokens: Token[]) {
         const spans = token.attrs.filter(([name]) => SPANS.includes(name));
         if (!spans.length) { continue; }
         token.attrs = token.attrs.filter(([name]) => !SPANS.includes(name));
-        token.meta = { ...((token.meta as Meta) ?? {}), [STASH]: spans };
+        setMeta(token, STASH, spans);
     }
 }
 

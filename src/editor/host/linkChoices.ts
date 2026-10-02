@@ -95,8 +95,10 @@ function candidateOf(uri: vscode.Uri, documentUri: vscode.Uri): Candidate[] {
  * Completion for a link's field (`linkChoices`): what a path typed into it may
  * become, from where each fact is true — the files from the workspace
  * (`findFiles`, excludes respected), the anchors from the target document's
- * headings as the editor's engine reads them (`headingAnchors`: an explicit
- * `{#id}`, else the heading's GitHub slug, the rule a followed link lands by).
+ * headings as the editor's engine reads them (`headingAnchors`: the id each
+ * carries, an explicit `{#id}`, else its GitHub slug, the rule a followed link
+ * lands by; the slug an explicit-id heading keeps as a second anchor is not
+ * offered).
  *
  * - `#…`: the current document's headings.
  * - `path#…`: that file's headings, when the path names a Markdown file.
@@ -194,9 +196,15 @@ export class LinkChoiceController {
         const anchors: HeadingAnchor[] = headingAnchors(md, document.getText(), { currentDocument: document.uri } as unknown as Environment);
         const wanted = decode(fragment).toLowerCase();
         const choices: LinkChoice[] = [];
+        // An id an earlier heading carries names that heading, as in the browser: offered once.
+        const offered = new Set<string>();
         for (const anchor of anchors) {
-            const name = anchor.id ?? anchor.slug;
-            if (name === '' || (wanted !== '' && !name.toLowerCase().includes(wanted) && !anchor.text.toLowerCase().includes(wanted))) {
+            const name = anchor.id;
+            if (name === '' || offered.has(name)) {
+                continue;
+            }
+            offered.add(name);
+            if (wanted !== '' && !name.toLowerCase().includes(wanted) && !anchor.text.toLowerCase().includes(wanted)) {
                 continue;
             }
             // The path is fixed once `#` is typed: the list shows the anchor, the value is the whole destination.

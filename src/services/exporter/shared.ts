@@ -61,7 +61,9 @@ export function renderHTML(doc: MarkdownDocument): string {
     // VS Code's engine gives a heading its id from `env.slugifier` when the
     // render brings one, and from a stateless slugifier when not — then two
     // headings of the same text share an id. Bring the preview's builder, so a
-    // repeated heading gets `-1`, `-2` as it does there.
+    // repeated heading gets `-1`, `-2` as it does there. A heading's explicit
+    // `{#id}` takes its slug too, and is given its id back by the rule
+    // VS Code's calls after it (`src/plugin/markdownItAttrs.ts`).
     const slug = slugBuilder();
     const env: MarkdownItEnv = {
         htmlExporter: {

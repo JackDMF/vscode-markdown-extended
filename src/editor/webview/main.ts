@@ -223,11 +223,11 @@ const imageSources = new ImageSources(
 
 const port: EditorPort = {
     showImages: container => showImagesIn(container, imageSources),
+    // A fragment of this document goes to the host too, which names a heading
+    // by the preview's rule (`fragmentLine`) and answers with `revealAnchor`;
+    // behind the pending edit, so the host reads the text the page holds.
     openLink: href => {
-        // A heading or footnote of this document is in the page: scrolled to, not opened.
-        if (href.startsWith('#') && followFragment(href.slice(1))) {
-            return;
-        }
+        flush();
         post({ type: 'openLink', href });
     },
     requestRender: src => {
@@ -596,40 +596,43 @@ function placeDrop(target: EditorView, event: DragEvent): void {
     }
 }
 
-/** Scroll to the element of the document with this id; false when the page has none. */
-function followFragment(fragment: string): boolean {
-    let id = fragment;
-    try {
-        id = decodeURIComponent(fragment);
-    } catch {
-        // As written.
-    }
-    const target = id === '' ? null : document.getElementById(id);
-    if (!target || !mount.contains(target)) {
-        return false;
-    }
-    target.scrollIntoView({ block: 'start' });
-    return true;
+/** The element of the document, or of `within`, with the id `id` — decoded already, as the host sends it. */
+function elementWithId(id: string, within: Element = mount): HTMLElement | null {
+    const target = id === '' ? null : within.querySelector(`[id="${CSS.escape(id)}"]`);
+    return target instanceof HTMLElement ? target : null;
 }
 
 /**
  * Bring the element a followed link's fragment names into view and put the
- * caret there (`revealAnchor`). A top-level heading whose `anchor` is the
- * fragment first — the `{#id}` the file carries — else the top-level block
- * the host's line starts in, since the host resolved slugs and line
- * fragments against the document's text and the page has no second slug
- * rule. Blocks' start lines only grow, so the block is found by bisection
- * over `lineAt`, which serializes what stands before a block.
+ * caret there (`revealAnchor`): the top-level block the host's line starts
+ * in. The host resolved the fragment against the document's text by the
+ * preview's rule (`fragmentLine`), the one place that rule lives, so the page
+ * does not look for a heading's `anchor` of its own: the first heading the
+ * browser finds may be one that carries a slug. Without a line (a fragment no
+ * heading carries) the page's element with that id, such as a footnote's, is
+ * scrolled to. Blocks' start lines only grow, so the block is found by
+ * bisection over `lineAt`, which serializes what stands before a block.
+ *
+ * A heading inside a block (a blockquote, an admonition, a `:::` container)
+ * comes with its own line, but the page knows the lines of top-level blocks
+ * only, so that line names the block. The host sends the heading's explicit
+ * id as `anchor`, so the element with that id inside the block is brought
+ * into view and the caret put in it; a nested heading without one lands on
+ * the block's start.
  */
 function revealAnchor(anchor: string, line: number | null): void {
     if (!view) {
         return;
     }
+    if (line === null) {
+        elementWithId(anchor)?.scrollIntoView({ block: 'start' });
+        return;
+    }
     const doc = view.state.doc;
     const offsets: number[] = [];
     doc.forEach((_child, offset) => offsets.push(offset));
-    let index = offsets.findIndex((_offset, i) => doc.child(i).type === editorSchema.nodes.heading && doc.child(i).attrs.anchor === anchor);
-    if (index < 0 && line !== null && offsets.length > 0) {
+    let index = -1;
+    if (offsets.length > 0) {
         let low = 0;
         let high = offsets.length - 1;
         while (low < high) {
@@ -647,14 +650,20 @@ function revealAnchor(anchor: string, line: number | null): void {
     }
     const node = doc.child(index);
     const offset = offsets[index];
-    const selection = node.isTextblock
+    const dom = view.nodeDOM(offset);
+    const nested = dom instanceof HTMLElement && !node.isTextblock ? elementWithId(anchor, dom) : null;
+    let selection = node.isTextblock
         ? TextSelection.create(doc, offset + 1)
         : node.isAtom ? NodeSelection.create(doc, offset) : Selection.near(doc.resolve(offset + 1));
+    if (nested && !node.isAtom) {
+        // A rendered block is one atom; inside an editable one the caret goes into the heading.
+        selection = Selection.near(doc.resolve(view.posAtDOM(nested, 0)));
+    }
     view.focus();
     view.dispatch(view.state.tr.setSelection(selection).setMeta('addToHistory', false));
-    const dom = view.nodeDOM(offset);
-    if (dom instanceof HTMLElement) {
-        dom.scrollIntoView({ block: 'start' });
+    const target = nested ?? dom;
+    if (target instanceof HTMLElement) {
+        target.scrollIntoView({ block: 'start' });
     }
 }
 

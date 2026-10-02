@@ -8,30 +8,17 @@ import { plugins } from '../../../../src/plugin/plugins';
 import { renderHTML } from '../../../../src/services/exporter/shared';
 import { ExtensionContext } from '../../../../src/services/common/extensionContext';
 import { MarkdownDocument } from '../../../../src/services/common/markdownDocument';
-import { githubSlug, headingText } from '../../../../src/syntax/headingSlug';
+import { headingIds, withVscodeHeadingRule } from '../../vscodeHeadings';
 
 /**
  * The preview's engine as the export reaches it: the extension's plugins, and
- * the heading id rule VS Code's Markdown engine adds (as its bundle has it):
- * `env.slugifier ? env.slugifier.add(title) : this.slugifier.fromHeading(title)`,
- * the attribute set over any id already there.
+ * the heading id rule VS Code's Markdown engine adds over any id already there.
  */
 function vscodeEngine(): MarkdownIt.MarkdownIt {
     const md = new MarkdownIt({ html: true });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     plugins.forEach(p => md.use(p.plugin as any, ...p.args));
-    const original = md.renderer.rules.heading_open;
-    md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
-        const title = headingText(tokens[idx + 1]);
-        const slugifier = (env as { slugifier?: { add(heading: string): { value: string } } }).slugifier;
-        tokens[idx].attrSet('id', slugifier ? slugifier.add(title).value : githubSlug(title));
-        return original ? original(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
-    };
-    return md;
-}
-
-function headingIds(html: string): string[] {
-    return [...html.matchAll(/<h\d[^>]*\bid="([^"]*)"/g)].map(([, id]) => id);
+    return withVscodeHeadingRule(md);
 }
 
 function tocHrefs(html: string): string[] {

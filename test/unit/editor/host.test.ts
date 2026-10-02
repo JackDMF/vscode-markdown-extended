@@ -16,6 +16,8 @@ import { SessionHost, SessionWebview, VisualEditorSession, revealInVisualEditor 
 import { fillDestination } from '../../../src/editor/host/images';
 import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
 import { GITHUB_SLUG_REPLACE } from '../../../src/syntax/githubSlugRegex';
+import { headingIds } from '../../../src/syntax/headingSlug';
+import { headingIds as renderedHeadingIds, secondAnchors } from '../vscodeHeadings';
 import { blockLineRanges } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { ActiveVisualEditor, ActiveVisualEditorTracker, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
@@ -884,19 +886,73 @@ suite('Editor host: a link lands on the element its fragment names', () => {
         assert.strictEqual(GITHUB_SLUG_REPLACE.source, shipped, 'regenerate src/syntax/githubSlugRegex.ts from this VS Code');
     });
 
-    test('a {#id} heading, a slugged heading, a repeated slug, a line fragment; an id wins over a slug; a missing one is none', async () => {
+    test('a {#id} heading, a slugged heading, a repeated slug, a line fragment; the first carrier in document order wins; a missing one is none', async () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const anchors = headingAnchors(md, FRAGMENT_TARGET, {});
         const line = (fragment: string) => fragmentLine(anchors, fragment);
         assert.strictEqual(line('frs-tst-001-1a2b3c4d'), 2, 'the explicit id');
-        assert.strictEqual(line('frs-tst-001-smoke'), 2, 'its slug too: the id is not in the slugged text');
+        assert.strictEqual(line('frs-tst-001-smoke'), 2, 'its slug too: the heading keeps it as a second anchor');
         assert.strictEqual(line('second-heading-with-code--punctuation'), 4);
         assert.strictEqual(line('Second-Heading-With-Code--Punctuation'), 4, 'compared without case');
         assert.strictEqual(line('second-heading-with-code--punctuation-1'), 6, 'the second of a repeated slug');
-        assert.strictEqual(line('title'), 8, 'an id wins over the slug of "# Title"');
+        assert.strictEqual(line('title'), 0, '"# Title" comes first: the browser lands there, not on "## Other {#title}"');
+        assert.strictEqual(line('other'), 8, 'the slug "## Other {#title}" keeps as a second anchor');
         assert.strictEqual(line('L11'), 10);
         assert.strictEqual(line('no-such-heading'), null);
         assert.strictEqual(line(''), null);
+    });
+
+    test('a fragment lands where the preview\'s id or second anchor is, around explicit-id headings too (markdown.api.render)', async () => {
+        const text = ['## Setup', '', '## Setup {#intro}', '', '## Setup', '', '## FR-1: Name {#fr-1}', ''].join('\n');
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', text);
+        assert.deepStrictEqual(renderedHeadingIds(html), ['setup', 'intro', 'setup-2', 'fr-1'], 'the preview\'s ids');
+        assert.deepStrictEqual(secondAnchors(html), ['setup-1', 'fr-1-name'], 'the preview\'s second anchors');
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const anchors = headingAnchors(md, text, {});
+        assert.deepStrictEqual(renderedHeadingIds(html).map(id => fragmentLine(anchors, id)), [0, 2, 4, 6], 'each id lands on its heading');
+        assert.deepStrictEqual(secondAnchors(html).map(id => fragmentLine(anchors, id)), [2, 6], 'each second anchor on its heading');
+    });
+
+    test('an explicit id another heading\'s slug repeats names the first of the two, as in the browser', async () => {
+        const text = ['## Setup {#setup-1}', '', '## Setup', '', '## Setup', ''].join('\n');
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', text);
+        assert.deepStrictEqual(renderedHeadingIds(html), ['setup-1', 'setup-1', 'setup-2'], 'nothing is renamed');
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        assert.strictEqual(fragmentLine(headingAnchors(md, text, {}), 'setup-1'), 0);
+    });
+
+    test('every heading_open counts for the repeats, one without a source line too', () => {
+        const heading = (content: string, map: [number, number] | null) => [
+            { type: 'heading_open', content: '', map },
+            { type: 'inline', content, children: [{ type: 'text', content }] },
+            { type: 'heading_close', content: '' },
+        ];
+        const ids = headingIds([...heading('Setup', null), ...heading('Setup', [2, 3])]);
+        assert.deepStrictEqual(ids.map(h => h.id), ['setup', 'setup-1']);
+    });
+
+    test('a slug that is some heading\'s explicit id is no second anchor: the fragment is the author\'s', async () => {
+        const text = ['## Setup {#install}', '', '## Configuration {#setup}', ''].join('\n');
+        const html = await vscode.commands.executeCommand<string>('markdown.api.render', text);
+        assert.deepStrictEqual(secondAnchors(html), ['configuration'], 'the first heading keeps no <a id="setup">');
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const anchors = headingAnchors(md, text, {});
+        assert.strictEqual(fragmentLine(anchors, 'setup'), 2);
+        assert.strictEqual(fragmentLine(anchors, 'Setup'), null, 'an explicit id is compared as written, and the first heading\'s slug is no anchor to match without case');
+        assert.strictEqual(fragmentLine(anchors, 'install'), 0);
+    });
+
+    test('a heading without a source line that first carries a fragment names no line, not a later heading', () => {
+        const anchor = (line: number | null) => ({ line, id: 'setup', explicit: false, slug: 'setup', anchor: null, text: 'Setup' });
+        assert.strictEqual(fragmentLine([anchor(null), anchor(4)], 'setup'), null);
+    });
+
+    test('an explicit id that is the heading\'s own slug matches without case, as a plain heading\'s slug does', async () => {
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const anchors = headingAnchors(md, ['## Intro', '', '## Setup {#setup}', '', '## Other {#Custom}', ''].join('\n'), {});
+        assert.strictEqual(fragmentLine(anchors, 'Setup'), 2);
+        assert.strictEqual(fragmentLine(anchors, 'Intro'), 0);
+        assert.strictEqual(fragmentLine(anchors, 'custom'), null, 'any other explicit id is compared as written');
     });
 
     test('a link to another file opens it at the heading; a fragment it lacks opens it at the top, logged as info at most', async function () {
@@ -952,7 +1008,8 @@ suite('Editor host: a link lands on the element its fragment names', () => {
         const uri = tempMarkdown(FRAGMENT_TARGET);
         const second = tempMarkdown(FRAGMENT_TARGET);
         const engineChanged = new vscode.EventEmitter<void>();
-        const host = { engine: () => buildEditorEngine(EXTENSION_ID, () => undefined), onDidChangeEngine: engineChanged.event, log: () => undefined };
+        const logged: string[] = [];
+        const host = { engine: () => buildEditorEngine(EXTENSION_ID, () => undefined), onDidChangeEngine: engineChanged.event, log: (line: string) => { logged.push(line); } };
         const webview = new FakeWebview();
         const otherWebview = new FakeWebview();
         const session = new VisualEditorSession(await vscode.workspace.openTextDocument(uri), webview, host);
@@ -964,6 +1021,27 @@ suite('Editor host: a link lands on the element its fragment names', () => {
             webview.send({ type: 'openLink', href: `${path.basename(uri.fsPath)}#second-heading-with-code--punctuation-1` });
             await until(() => reveals(webview)[0], 5000);
             assert.deepStrictEqual(reveals(webview), [{ type: 'revealAnchor', anchor: 'second-heading-with-code--punctuation-1', line: 6 }]);
+
+            // The page asks for a bare fragment too: the host names the heading the browser lands on.
+            webview.send({ type: 'openLink', href: '#title' });
+            await until(() => reveals(webview)[1], 5000);
+            assert.deepStrictEqual(reveals(webview)[1], { type: 'revealAnchor', anchor: 'title', line: 0 }, '"# Title", not "## Other {#title}"');
+            webview.send({ type: 'openLink', href: '#fn1' });
+            await until(() => reveals(webview)[2], 5000);
+            assert.deepStrictEqual(reveals(webview)[2], { type: 'revealAnchor', anchor: 'fn1', line: null }, 'no heading: the page looks among its own elements');
+            assert.ok(logged.some(l => l.includes('has no #fn1')), 'a fragment of this document nothing carries is logged');
+
+            // A heading's second anchor: the page is sent the heading's explicit id, to find it inside a block.
+            webview.send({ type: 'openLink', href: '#frs-tst-001-smoke' });
+            await until(() => reveals(webview)[3], 5000);
+            assert.deepStrictEqual(reveals(webview)[3], { type: 'revealAnchor', anchor: 'frs-tst-001-1a2b3c4d', line: 2 });
+
+            // A link right behind an edit is resolved in the edited text: the queue holds it behind the edit.
+            const posted = webview.documents()[0];
+            webview.send({ type: 'edit', text: `${FRAGMENT_TARGET}\n## Pasted {#pasted}\n`, baseVersion: posted.version });
+            webview.send({ type: 'openLink', href: '#pasted' });
+            await until(() => reveals(webview)[4], 5000);
+            assert.deepStrictEqual(reveals(webview)[4], { type: 'revealAnchor', anchor: 'pasted', line: FRAGMENT_TARGET.split('\n').length });
 
             // Before the other page has its document the reveal waits, then follows the document.
             revealInVisualEditor(second, { anchor: 'frs-tst-001-1a2b3c4d', line: 2 });
@@ -1484,6 +1562,7 @@ suite('Editor host: links and images', () => {
         fs.mkdirSync(path.join(dir, 'pictures'));
         fs.writeFileSync(path.join(dir, 'doc.md'), TEXT, 'utf8');
         fs.writeFileSync(path.join(dir, 'docs', 'other file.md'), '# Other Heading\n\nText.\n', 'utf8');
+        fs.writeFileSync(path.join(dir, 'docs', 'repeats.md'), '## Setup {#setup-1}\n\n## Setup\n\n## Setup\n', 'utf8');
         fs.writeFileSync(path.join(dir, 'pictures', 'my pic.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
         fs.writeFileSync(path.join(dir, 'z.txt'), 'z', 'utf8');
         docUri = vscode.Uri.file(path.join(dir, 'doc.md'));
@@ -1549,6 +1628,11 @@ suite('Editor host: links and images', () => {
         assert.deepStrictEqual((await choices('docs/other%20file.md#')).map(c => [c.value, c.label]), [['docs/other%20file.md#other-heading', '#other-heading']],
             'the path is fixed once # is typed: the list shows the anchor, the value is the whole destination');
         assert.deepStrictEqual(await choices('z.txt#'), [], 'a file that is not Markdown has no headings to offer');
+    });
+
+    test('an id two headings carry is offered once, for the first of them', async function () {
+        this.timeout(10000);
+        assert.deepStrictEqual((await choices('docs/repeats.md#')).map(c => c.label), ['#setup-1', '#setup-2']);
     });
 
     test('Insert → Image… asks VS Code\'s open dialog in the document\'s folder for an image, and answers its path relative to the document, POSIX, spaces encoded, its stem the alt text', async function () {

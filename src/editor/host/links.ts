@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { decode, schemeOf } from '../paths';
-import { headingText, slugBuilder } from '../../syntax/headingSlug';
+import { headingIds } from '../../syntax/headingSlug';
 
 /**
  * Where a link the person Ctrl/Cmd+clicked in the rich editor goes.
@@ -72,51 +72,67 @@ export function resolveLinkTarget(href: string, documentUri: vscode.Uri, workspa
  */
 export { githubSlug, slugBuilder } from '../../syntax/headingSlug';
 
-/** A heading a fragment can name: its 0-based line, its explicit `{#id}`, its slug, and the text the slug is made of. */
+/**
+ * A heading a fragment can name: its 0-based line (`null` for a heading
+ * without a source line, which a core rule may push), the id it carries and
+ * whether it is `explicit` (`headingIds`: its explicit `{#id}`, else its
+ * slug), the slug it took from the count, its second anchor, and the text its
+ * slug is made of.
+ */
 export interface HeadingAnchor {
-    line: number;
-    id: string | null;
+    line: number | null;
+    id: string;
+    explicit: boolean;
     slug: string;
+    anchor: string | null;
     text: string;
 }
 
 /**
  * Every heading of `text` as the engine parses it — the preview's composition,
- * so `markdown-it-attrs` has read a `{#id}` into the heading's `id` and taken
- * it out of the text that is slugged.
+ * so `markdown-it-attrs` has read a `{#id}` and taken it out of the text that
+ * is slugged — named by the preview's rule (`headingIds`).
  */
 export function headingAnchors(md: MarkdownIt, text: string, env: Environment): HeadingAnchor[] {
     const tokens = md.parse(text, env);
-    const slug = slugBuilder();
-    const anchors: HeadingAnchor[] = [];
-    tokens.forEach((token, i) => {
-        if (token.type === 'heading_open' && token.map) {
-            const text = headingText(tokens[i + 1]);
-            anchors.push({ line: token.map[0], id: token.attrGet('id'), slug: slug(text), text: text.trim() });
-        }
-    });
-    return anchors;
+    return headingIds(tokens).map(({ index, id, explicit, slug, anchor, text }) => ({
+        line: tokens[index].map?.[0] ?? null, id, explicit, slug, anchor, text: text.trim(),
+    }));
 }
 
 /**
- * The 0-based line a fragment names, or `null`: a heading whose explicit `id`
- * is the fragment — Req Explorer's anchors are written as `{#id}`, and an id
- * the author wrote wins over a slug — else a heading whose slug is the
- * fragment, compared without case as the built-in does, else a line fragment
- * (`L12`, `12`, `L12,5`) as the built-in reads one.
+ * The heading a fragment names, or `null`: the first in document order that
+ * carries it — as its id, or as its second anchor — the element the browser
+ * lands on, so an explicit id another heading's slug repeats names the first
+ * of the two; else the first one of whose slugs it is without case, as the
+ * built-in compares a fragment — further than the browser goes, which finds
+ * no element for `#Setup`. A slug is the id of a heading without an explicit
+ * one, an explicit id that is the heading's slug (`## Setup {#setup}`), or a
+ * second anchor; any other explicit id is compared as written.
  */
-export function fragmentLine(anchors: readonly HeadingAnchor[], fragment: string): number | null {
+export function fragmentHeading(anchors: readonly HeadingAnchor[], fragment: string): HeadingAnchor | null {
     if (fragment === '') {
         return null;
     }
-    const byId = anchors.find(a => a.id === fragment);
-    if (byId) {
-        return byId.line;
+    const exact = anchors.find(a => a.id === fragment || a.anchor === fragment);
+    if (exact) {
+        return exact;
     }
     const lower = fragment.toLowerCase();
-    const bySlug = anchors.find(a => a.slug.toLowerCase() === lower);
-    if (bySlug) {
-        return bySlug.line;
+    const slugs = (a: HeadingAnchor) => [!a.explicit || a.id === a.slug ? a.id : null, a.anchor];
+    return anchors.find(a => slugs(a).some(s => s !== null && s.toLowerCase() === lower)) ?? null;
+}
+
+/**
+ * The 0-based line a fragment names, or `null`: the line of the heading it
+ * names (`fragmentHeading`), else a line fragment (`L12`, `12`, `L12,5`) as
+ * the built-in reads one. A heading without a source line that is the first
+ * to carry the fragment names no line: `null`, never a later heading.
+ */
+export function fragmentLine(anchors: readonly HeadingAnchor[], fragment: string): number | null {
+    const heading = fragmentHeading(anchors, fragment);
+    if (heading) {
+        return heading.line;
     }
     const line = /^L?(\d+)(?:,\d+)?(?:-L?\d+(?:,\d+)?)?$/i.exec(fragment);
     const n = line ? parseInt(line[1], 10) : NaN;
