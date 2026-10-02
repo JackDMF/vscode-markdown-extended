@@ -40,7 +40,7 @@ import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
-import { NoteNodeName, unwrapNote } from './notes';
+import { NoteNodeName, unwrapNote, unwrapNoteRefusal } from './notes';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
@@ -1226,6 +1226,7 @@ class ObjectToolbarView implements PluginView {
                             title: sidebar
                                 ? 'The sidebar goes; its text stays in the sentence, with its formatting.'
                                 : 'The note goes; its reference stays in the sentence, with its formatting. The note\'s own text is dropped.',
+                            refusal: unwrapNoteRefusal(view.state, name),
                             run: () => this.act(object, () => unwrapNote(name)(view.state, dispatch), sidebar ? 'Sidebar removed' : 'Note removed'),
                         },
                         {

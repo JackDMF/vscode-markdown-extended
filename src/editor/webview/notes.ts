@@ -571,6 +571,20 @@ export function unwrapNote(name: NoteNodeName): Command {
     };
 }
 
+/**
+ * Why `unwrapNote(name)` is not run here, so Remove note and Remove sidebar
+ * are disabled with it: the filter's reason for the transaction it would
+ * dispatch (`noteRefusal`) — a sidebar's text glued to a letter, a reference's
+ * to a sidebar — or that there is no such note at the selection.
+ */
+export function unwrapNoteRefusal(state: EditorState, name: NoteNodeName): string | null {
+    let reason: string | null = 'There is no note here.';
+    unwrapNote(name)(state, tr => {
+        reason = noteRefusal(tr);
+    });
+    return reason;
+}
+
 /** A note action: inside a note of its kind it removes the note (`unwrapNote`), elsewhere it makes one (`wrapInNote`). */
 export function toggleNote(name: NoteNodeName): Command {
     return (state, dispatch, view) => unwrapNote(name)(state, dispatch, view) || wrapInNote(name)(state, dispatch, view);

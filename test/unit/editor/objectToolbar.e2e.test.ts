@@ -424,7 +424,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'A styled word.\n');
     });
 
-    test('a verb that would glue a sidebar to a letter is disabled with the reason, and one the filter refuses says no success', async function () {
+    test('a verb that would glue a sidebar to a letter is disabled with the reason, and a click on it says no success', async function () {
         this.timeout(15000);
         const verbState = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
         // Right sidebars: VS Code's math extension, on in the test instance, claims every `$` first.
@@ -437,22 +437,32 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(removeAttributes.title.endsWith(SIDEBAR_GLUED_BEFORE), removeAttributes.title);
 
         await showDocument('An![pic](p.png)@y@ here.\n', 'An');
-        await page.addStyleTag({ content: '.ProseMirror img { display: inline-block; width: 60px; height: 30px; }' });
-        const img = await (await page.$('.ProseMirror img'))?.boundingBox();
-        assert.ok(img);
-        await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
-        await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
-        const removeImage = await verbState('remove-image');
-        assert.strictEqual(removeImage.disabled, 'true');
-        assert.ok(removeImage.title.endsWith(SIDEBAR_GLUED_BEFORE), removeImage.title);
+        // A broken image has no size of its own; give it one to click, for this test only.
+        const sized = await page.addStyleTag({ content: '.ProseMirror img { display: inline-block; width: 60px; height: 30px; }' });
+        try {
+            const img = await (await page.$('.ProseMirror img'))?.boundingBox();
+            assert.ok(img);
+            await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
+            await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
+            const removeImage = await verbState('remove-image');
+            assert.strictEqual(removeImage.disabled, 'true');
+            assert.ok(removeImage.title.endsWith(SIDEBAR_GLUED_BEFORE), removeImage.title);
+        } finally {
+            await sized.evaluate(el => el.remove());
+        }
 
-        // Remove note asks nothing beforehand; the filter refuses it, and the hint is its reason, not "Note removed".
+        // Remove note likewise: its reference would be `beta@y@`.
         await showDocument('Alpha ++beta|the body++@y@ gamma.\n', 'Alpha');
-        const edits = (await (editor as EditorPage).edits()).length;
         await clickBefore('body', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        const removeNote = await verbState('remove-note');
+        assert.strictEqual(removeNote.disabled, 'true');
+        assert.ok(removeNote.title.endsWith(SIDEBAR_GLUED_BEFORE), removeNote.title);
+        // Disabled, a click runs nothing: no success is said and nothing is posted.
+        const edits = (await (editor as EditorPage).edits()).length;
         await clickVerb('remove-note');
         await settle();
-        assert.deepStrictEqual(await hint(), { text: SIDEBAR_GLUED_BEFORE, tone: 'refusal', shown: true });
+        assert.notStrictEqual((await hint()).text, 'Note removed — Ctrl+Z');
         assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'nothing posted');
     });
 });

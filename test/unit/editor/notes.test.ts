@@ -7,8 +7,8 @@ import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
 import { editorSchema } from '../../../src/editor/schema';
 import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, serializeDocument, unwritableInNote } from '../../../src/editor/serialize';
 import {
-    NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal, previousNotePart,
-    toggleNote, unwrapNote, wrapInNote, wrapNodeLockReason,
+    NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, NoteNodeName, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal,
+    previousNotePart, toggleNote, unwrapNote, unwrapNoteRefusal, wrapInNote, wrapNodeLockReason,
 } from '../../../src/editor/webview/notes';
 import { convertNoteRefusal, deleteObjectRefusal, objectAtSelection, removeLinkRefusal, removeSpanRefusal } from '../../../src/editor/webview/objects';
 import { TOOLBAR_ACTIONS } from '../../../src/editor/webview/toolbar/actions';
@@ -405,6 +405,13 @@ suite('Editor notes: a character reference glued to a sidebar\'s marker is text,
 suite('Editor notes: a seam the file already holds is never refused, only one the edit makes', () => {
     const linkifyOff = createEditorEngine({ linkify: false, typographer: false, plugins, extend: [] });
     const read = (source: string, md = hostEngine()) => EditorState.create({ doc: parseDocument(md, source, {}).doc, plugins: editorPlugins() });
+    const sidebarAt = (doc: Node) => {
+        let at = -1;
+        doc.descendants((node, pos) => {
+            at = at < 0 && node.type.name.endsWith('_sidebar') ? pos : at;
+        });
+        return at;
+    };
     const files: [string, string, MarkdownIt][] = [
         ['a URL in parentheses', 'See (http://e.com)$note$ here.\n', hostEngine()],
         ['a URL in quotes', 'See "http://e.com"$note$ here.\n', hostEngine()],
@@ -447,13 +454,43 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
         // A letter put before a marker the file holds after a URL fails another way: the plugin's own rule, a loss the edit makes.
         const letter = closed.tr.insertText('x', posOf(closed.doc, 'note') - 1);
         assert.strictEqual(noteRefusal(letter), SIDEBAR_GLUED_BEFORE);
-        // A sidebar made anew is a new seam, even where the old one failed the same way.
+        // A sidebar converted to the other kind is judged on its own: a `$` closer before a digit is new.
         const right = read('a @y@5 z.\n');
-        let at = -1;
-        right.doc.descendants((node, pos) => {
-            at = node.type.name === 'right_sidebar' ? pos : at;
-        });
-        assert.strictEqual(convertNoteRefusal(right, at), SIDEBAR_GLUED_AFTER);
+        assert.strictEqual(convertNoteRefusal(right, sidebarAt(right.doc)), SIDEBAR_GLUED_AFTER);
+        // Even where the old marker failed the same way after the same text: linkify reads `@` and `$` apart,
+        // and `See http://e.com,@note@` would be one address.
+        for (const source of ['See (http://e.com)$note$ here.\n', 'See http://e.com,$note$ here.\n']) {
+            const held = read(source);
+            const at = sidebarAt(held.doc);
+            const converted = held.tr.setNodeMarkup(at, editorSchema.nodes.right_sidebar);
+            assert.strictEqual(noteRefusal(converted), SIDEBAR_GLUED_URL, `${source}: a kind changed in place`);
+            assert.strictEqual(convertNoteRefusal(held, at), SIDEBAR_GLUED_URL, `${source}: Convert`);
+        }
+    });
+
+    test('an edit to the text from a URL\'s scheme to a marker the file holds is refused: linkify may read on through it', () => {
+        const edits: [string, string, (state: EditorState, at: number) => Transaction][] = [
+            ['delete ")"', 'See (http://e.com/)$note$ here.\n', (s, at) => s.tr.delete(at - 1, at)],
+            ['delete the closing quote', 'See "http://e.com/"$note$ here.\n', (s, at) => s.tr.delete(at - 1, at)],
+            ['replace ")" by "/"', 'See (http://e.com)$note$ here.\n', (s, at) => s.tr.insertText('/', at - 1, at)],
+            ['replace ")" by ","', 'See (http://e.com/)$note$ here.\n', (s, at) => s.tr.insertText(',', at - 1, at)],
+        ];
+        for (const [label, source, edit] of edits) {
+            const state = read(source);
+            const tr = edit(state, sidebarAt(state.doc));
+            assert.strictEqual(noteRefusal(tr), SIDEBAR_GLUED_URL, label);
+            assert.ok(state.apply(tr).doc === state.doc, `${label}: the filter refuses it`);
+            // Elsewhere in the paragraph, before the scheme and after the sidebar, edits still apply.
+            const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'See') + 1));
+            assert.strictEqual(text(typed), source.replace('See', 'SXee'), `${label}: before the scheme`);
+            const after = state.apply(state.tr.insertText('X', posOf(state.doc, 'here') + 1));
+            assert.strictEqual(text(after), source.replace('here', 'hXere'), `${label}: after the sidebar`);
+        }
+        // Text before the scheme is not linkify's: deleting the `(` keeps the run, and the sidebar.
+        const opened = read('See (http://e.com)$note$ here.\n');
+        const unopened = opened.apply(opened.tr.delete(posOf(opened.doc, '('), posOf(opened.doc, '(') + 1));
+        assert.strictEqual(text(unopened), 'See http://e.com)$note$ here.\n');
+        assert.deepStrictEqual(notesAfterSave(unopened), ['left_sidebar']);
     });
 
     test('Remove attributes and Remove image that would glue a sidebar give the filter\'s reason', () => {
@@ -475,6 +512,24 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
             const object = objectAtSelection(selected);
             assert.ok(object?.kind === 'image', source);
             assert.strictEqual(deleteObjectRefusal(selected, object), reason, source);
+        }
+    });
+
+    test('Remove note and Remove sidebar that would glue a sidebar give the filter\'s reason', () => {
+        const cases: [string, string, NoteNodeName, string | null][] = [
+            ['Alpha ++beta|the body++@y@ gamma.\n', 'body', 'sidenote', SIDEBAR_GLUED_BEFORE],
+            ['Alpha ++beta|the body++ @y@ gamma.\n', 'body', 'sidenote', null],
+            ['Alpha $beta$@y@ gamma.\n', 'beta', 'left_sidebar', SIDEBAR_GLUED_BEFORE],
+            ['Alpha $beta$ @y@ gamma.\n', 'beta', 'left_sidebar', null],
+            ['Alpha $beta$ @y@ gamma.\n', 'Alpha', 'left_sidebar', 'There is no note here.'],
+        ];
+        for (const [source, needle, name, reason] of cases) {
+            const state = read(source);
+            const inside = caretAt(state, posOf(state.doc, needle) + 1);
+            assert.strictEqual(unwrapNoteRefusal(inside, name), reason, `${source} at ${needle}`);
+            if (reason === SIDEBAR_GLUED_BEFORE) {
+                assert.strictEqual(run(inside, unwrapNote(name)).doc, inside.doc, `${source}: the filter refuses it`);
+            }
         }
     });
 });

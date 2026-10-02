@@ -913,10 +913,12 @@ character reference beside a marker counts as the character it stands for, so
 `REQ-&#49;$x$` is text as `REQ-1$x$` is. The Visual Editor does not let a sidebar touch a
 letter or digit before it (or a left one a digit after it), nor stand right after a bare
 web address (`http://e.com/$x$`, which linkify reads as one address): put a space there. A
-formatting button, **Remove link**, **Remove attributes** or **Remove image** whose result
-would do that is disabled, with the reason in its tooltip. Only an edit that makes such a
-seam is refused: a sidebar the file already holds is never in the way of editing its
-paragraph, even where the editor cannot tell that it reads back (`See (http://e.com)$x$`).
+formatting button, **Remove link**, **Remove attributes**, **Remove image** or **Remove
+note** whose result would do that is disabled, with the reason in its tooltip. Only an edit
+that makes such a seam is refused: a sidebar the file already holds is never in the way of
+editing its paragraph, even where the editor cannot tell that it reads back
+(`See (http://e.com)$x$`) — except the address right before it, where deleting the `)`
+would let the address take the marker, and moving it to the other side.
 
 **Using left sidebars: turn VS Code's math off in that workspace.** VS Code's built-in
 math extension claims `$…$` before this extension's sidebar rule runs — in the preview,

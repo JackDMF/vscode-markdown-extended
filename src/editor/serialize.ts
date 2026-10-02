@@ -480,10 +480,15 @@ function noteUnwritable(note: Node): string | null {
  * same way at the same side of the same sidebar before (`seamFailedBefore`)
  * is one the file already held, which the parser read as a sidebar and will
  * again, and refusing it would make every edit in that paragraph impossible.
- * What stays open: the URL check guesses where linkify stops, so an edit at
- * such a seam that keeps it failing that way (`http://e.com,$x$` with the
- * comma deleted) is let through, as nothing on the page can tell. Every
- * refusal the editor asks — the notes filter, the toolbar's disabled
+ * A seam failing the URL check is the same only while the text written from
+ * the URL's scheme to the marker is: the check guesses where linkify stops,
+ * so one reason stands for a seam the parser read as a sidebar and for one
+ * linkify swallows, and an edit to that text (`(http://e.com/)$x$` with the
+ * `)` deleted) turns the first into the second. What stays open: linkify
+ * also reads on past the marker, and a bracket the URL opened that the
+ * sidebar's text or the text after it closes (`http://e.com/(-$no)te$`, a
+ * `)` typed into the sidebar) is let through, as that text is not compared.
+ * Every refusal the editor asks — the notes filter, the toolbar's disabled
  * buttons, the object bar's verbs — goes through here with the
  * transaction's origin (`noteRefusal`).
  */
@@ -614,11 +619,17 @@ interface SidebarSeam {
     marker: string;
 }
 
-/** A sidebar marker the parser would not read: the sidebar at `offset` in its textblock, at its opener or its closer. */
+/**
+ * A sidebar marker the parser would not read: the sidebar at `offset` in its
+ * textblock, at its opener or its closer. For `SIDEBAR_GLUED_URL`, `url` is
+ * the text written from the URL's scheme to the marker — what linkify reads
+ * before it.
+ */
 interface FailingSeam {
     offset: number;
     side: 'open' | 'close';
     reason: string;
+    url?: string;
 }
 
 /**
@@ -654,8 +665,9 @@ export const SIDEBAR_GLUED_URL = 'A sidebar right after a web address can be rea
 const ENDS_URL = /[\p{Z}\p{Cc}<>｜]/u;
 
 /**
- * Whether the marker written at `open` may be read into a bare URL before it,
- * as markdown-it's linkify rule reads one: at a `://` it takes the scheme
+ * Where the scheme of a bare URL before the marker written at `open` starts,
+ * if the marker may be read into that URL, or -1 — as markdown-it's linkify
+ * rule reads one: at a `://` it takes the scheme
  * from at most ten scheme characters of plain text before it (`plain`: not in
  * code, a link's label or a note), linkify-it knows `http`, `https` and `ftp`,
  * and from there linkify-it reads on into the marker almost wherever it
@@ -666,7 +678,7 @@ const ENDS_URL = /[\p{Z}\p{Cc}<>｜]/u;
  * `$`), which this page does not hold, so a marker after such a URL is
  * refused unless something between ends every URL (`ENDS_URL`).
  */
-function readIntoUrl(written: string, open: number, plain: readonly [number, number][]): boolean {
+function readIntoUrl(written: string, open: number, plain: readonly [number, number][]): number {
     let runStart = open;
     while (runStart > 0 && !ENDS_URL.test(written.charAt(runStart - 1))) {
         runStart--;
@@ -677,10 +689,10 @@ function readIntoUrl(written: string, open: number, plain: readonly [number, num
             proto--;
         }
         if (/^(?:https?|ftp)$/i.test(written.slice(proto, at)) && plain.some(([from, to]) => proto >= from && proto < to)) {
-            return true;
+            return proto;
         }
     }
-    return false;
+    return -1;
 }
 
 /**
@@ -725,8 +737,11 @@ function failingSidebarSeams(textblock: Node): FailingSeam[] {
         }
         if (before >= 0 && !sidebarCanOpen(written.charAt(before), seam.marker)) {
             failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_BEFORE });
-        } else if (readIntoUrl(written, seam.open, collected.plain)) {
-            failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_URL });
+        } else {
+            const scheme = readIntoUrl(written, seam.open, collected.plain);
+            if (scheme !== -1) {
+                failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_URL, url: written.slice(scheme, seam.open).replace(HOLD_RE, '') });
+            }
         }
         if (after < written.length && !sidebarCanClose(seam.marker, written.charAt(after))) {
             failing.push({ offset, side: 'close', reason: SIDEBAR_GLUED_AFTER });
@@ -741,7 +756,10 @@ const SIDEBAR_NODES: ReadonlySet<string> = new Set(['left_sidebar', 'right_sideb
  * Where the sidebar at `pos` in the edit's starting document stands in the
  * document it made, or `null` when the edit took it out or made it something
  * else: a step that deleted across its opening or closing token, or changed
- * its kind or its size, made a new sidebar there.
+ * its kind or its size, made a new sidebar there. A sidebar converted to the
+ * other kind is new even where the text before it is unchanged: linkify reads
+ * `$` and `@` differently (`http://e.com,$x$` is a sidebar, `http://e.com,@x@`
+ * a user name and a host), so its new marker is judged on its own.
  */
 function sidebarAfterEdit(origin: EditOrigin, doc: Node, pos: number, sidebar: Node): number | null {
     const end = pos + sidebar.nodeSize;
@@ -758,7 +776,10 @@ function sidebarAfterEdit(origin: EditOrigin, doc: Node, pos: number, sidebar: N
  * way at that side of the same sidebar before the edit (`sidebarAfterEdit`).
  * The same way: a letter or digit the edit put beside a marker the file
  * held after a URL is a loss the edit causes — the URL check guesses where
- * linkify stops, the letter check is the plugin's own rule.
+ * linkify stops, the letter check is the plugin's own rule; and a seam
+ * failing the URL check failed the same way only if the text from the URL's
+ * scheme to the marker is written as it was (`FailingSeam.url`), as that
+ * text is what decides whether linkify stops before the marker.
  */
 function seamFailedBefore(origin: EditOrigin, doc: Node, pos: number, seam: FailingSeam): boolean {
     let failed = false;
@@ -768,7 +789,7 @@ function seamFailedBefore(origin: EditOrigin, doc: Node, pos: number, seam: Fail
         }
         node.forEach((child, offset) => {
             if (!failed && SIDEBAR_NODES.has(child.type.name) && sidebarAfterEdit(origin, doc, start + 1 + offset, child) === pos) {
-                failed = failingSidebarSeams(node).some(old => old.offset === offset && old.side === seam.side && old.reason === seam.reason);
+                failed = failingSidebarSeams(node).some(old => old.offset === offset && old.side === seam.side && old.reason === seam.reason && old.url === seam.url);
             }
         });
         return false;
