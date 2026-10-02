@@ -1,5 +1,5 @@
 import { MarkdownIt } from 'markdown-it';
-import { NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
+import { NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 
 /**
  * Markdown-it plugin for sidenotes, marginal notes, and sidebar annotations.
@@ -11,8 +11,10 @@ import { NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
  * - Right sidebar: @content@
  * 
  * Features:
- * - Full markdown support within notes (bold, italic, links, code, etc.)
- * - Recursion depth limiting to prevent stack overflow
+ * - Full markdown support within notes and sidebars (bold, italic, links, code, etc.)
+ * - A sidebar's end is found by the inline parser and its content tokenized
+ *   in place (`findSidebarClose`); a note's end is searched in the raw source
+ *   and its parts parsed on their own, with recursion depth limiting
  * - Thread-safe state management using WeakMap
  * - Graceful error handling with fallback to plain text
  * 
@@ -136,8 +138,6 @@ interface SidebarConfig {
   openMarker: string;
   /** Character code of opening marker */
   openMarkerCode: number;
-  /** Closing marker character (e.g., '$') */
-  closeMarker: string;
   /** CSS class for sidebar content */
   cssClass: string;
 }
@@ -151,12 +151,32 @@ interface MarkdownItState {
     src: string;
     /** Current position in source */
     pos: number;
-    /** Maximum position (source length) */
+    /** Where the text being read ends (the source's length, or a construct's end while its content is read) */
     posMax: number;
     /** Markdown-it instance for recursive parsing */
     md: MarkdownIt;
     /** Push a new token to the stream */
     push: (type: string, tag: string, nesting: number) => any;
+    /** The token stream, and the delimiter lists per opening token */
+    tokens: unknown[];
+    tokens_meta: unknown[];
+    /** Text not yet pushed as a token, and its level */
+    pending: string;
+    pendingLevel: number;
+    /** Nesting level of the next token */
+    level: number;
+    /** Emphasis-like delimiters of the current tag, and those of the tags around it */
+    delimiters: unknown[];
+    _prev_delimiters: unknown[];
+    /** The environment the document is parsed in */
+    env: unknown;
+    /** Above 0 inside a link, where linkify does not run */
+    linkLevel: number;
+    /** Where `skipToken` found each construct to end, by its start */
+    cache: Record<number, number>;
+    /** The code-span closers the backtick rule has seen, and whether it has looked to the end */
+    backticks: Record<number, number>;
+    backticksScanned: boolean;
 }
 
 /**
@@ -206,7 +226,6 @@ const leftSidebarConfig: SidebarConfig = {
     type: 'left_sidebar',
     openMarker: LEFT_SIDEBAR_TOKEN,
     openMarkerCode: LEFT_SIDEBAR_TOKEN_CODE,
-    closeMarker: LEFT_SIDEBAR_TOKEN,
     cssClass: NOTE_SYNTAX.leftSidebar.cssClass
 };
 
@@ -217,7 +236,6 @@ const rightSidebarConfig: SidebarConfig = {
     type: 'right_sidebar',
     openMarker: RIGHT_SIDEBAR_TOKEN,
     openMarkerCode: RIGHT_SIDEBAR_TOKEN_CODE,
-    closeMarker: RIGHT_SIDEBAR_TOKEN,
     cssClass: NOTE_SYNTAX.rightSidebar.cssClass
 };
 
@@ -339,7 +357,12 @@ export default function (md: MarkdownIt) {
  * 
  * Sidebars are simple wrappers that support markdown content.
  * Unlike notes, they don't have separate reference text.
- * 
+ *
+ * A marker opens only where `sidebarCanOpen` allows it (no ASCII letter or
+ * digit before it, so `a@b.c` opens nothing); the closing marker is the first
+ * that `sidebarCanClose` allows outside code, links and the like
+ * (`findSidebarClose`). Both rules live in `src/syntax/markers.ts`.
+ *
  * @param state - Markdown-it inline parsing state
  * @param silent - If true, only check syntax without creating tokens
  * @returns true if a sidebar was found and processed
@@ -368,13 +391,15 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
         return false;
     }
 
-    // Check if we have enough characters
-    if (start + 1 >= state.posMax) {
+    const src = state.src;
+    const max = state.posMax;
+    const before = start > 0 ? src.charAt(start - 1) : '';
+    const after = start + 1 < max ? src.charAt(start + 1) : '';
+    if (!sidebarCanOpen(before, after)) {
         return false;
     }
 
-    // Find closing marker
-    const endPos = state.src.indexOf(config.closeMarker, start + 1);
+    const endPos = findSidebarClose(state, start, char);
     if (endPos === -1) {return false;}
 
     // In silent mode, we must still update state.pos before returning true
@@ -384,37 +409,288 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
         return true;
     }
 
-    // Extract content
-    const content = state.src.slice(start + 1, endPos);
+    // The content is tokenized in place, as the link rule tokenizes a label —
+    // the same state and environment — but bounded: the source ends at the
+    // closing marker while it is read, so no rule reads past it (linkify and
+    // a code span's closer look beyond `posMax`), and a URL in a sidebar ends
+    // at the sidebar's end, as the closing marker was found.
+    const saved = saveInline(state);
+    const backticks = state.backticks;
+    const backticksScanned = state.backticksScanned;
+    const cache = state.cache;
+    try {
+        const tokenOpen = state.push(`${config.type}_open`, 'span', 1);
+        tokenOpen.markup = config.openMarker;
+        // An empty text first, at the content's level: markdown-it-bracketed-
+        // spans tells a look-ahead from a real parse by the last token's
+        // level, and an opening token right before would make it push its
+        // tokens while another rule only looks ahead. text_join drops it.
+        state.push('text', '', 0).content = '';
+        state.src = src.slice(0, endPos);
+        state.pos = start + 1;
+        state.posMax = endPos;
+        state.backticks = {};
+        state.backticksScanned = false;
+        state.cache = {};
+        inlineParser(state).tokenize(state);
+        state.src = src;
+        state.posMax = max;
+        state.push(`${config.type}_close`, 'span', -1);
+    } catch {
+        // As the content parse always did: a rule that throws leaves the sidebar's text as plain text.
+        restoreInline(state, saved);
+        state.src = src;
+        state.posMax = max;
+        state.push(`${config.type}_open`, 'span', 1).markup = config.openMarker;
+        state.push('text', '', 0).content = src.slice(start + 1, endPos);
+        state.push(`${config.type}_close`, 'span', -1);
+    } finally {
+        state.src = src;
+        state.posMax = max;
+        state.backticks = backticks;
+        state.backticksScanned = backticksScanned;
+        state.cache = cache;
+    }
 
-    // Create token structure
-    createSidebarTokens(state, content, config);
-
-    // Update position
     state.pos = endPos + 1;
     return true;
 }
 
+/** The two parts of markdown-it's inline parser the sidebar rule drives, which its declarations leave out. */
+interface InlineParser {
+    tokenize(state: MarkdownItState): void;
+    skipToken(state: MarkdownItState): void;
+}
+
+function inlineParser(state: MarkdownItState): InlineParser {
+    return state.md.inline as unknown as InlineParser;
+}
+
+/** What markdown-it-footnote keeps in the environment. */
+interface FootnoteEnv {
+    footnotes?: { refs?: Record<string, number>; list?: { label?: string; count?: number }[] };
+}
+
+/** What a rule may leave in the inline state or the environment, to be put back after a look-ahead. */
+interface SavedInline {
+    pos: number;
+    tokens: number;
+    tokensMeta: number;
+    pending: string;
+    pendingLevel: number;
+    level: number;
+    linkLevel: number;
+    delimiters: unknown[];
+    delimitersLength: number;
+    prevDelimiters: number;
+    backticks: Record<number, number>;
+    backticksScanned: boolean;
+    footnotes: FootnoteEnv['footnotes'];
+    hadRefs: boolean;
+    /** How many footnotes were listed, and their counts; -1 when there was no list. */
+    footnoteListLength: number;
+    footnoteCounts: (number | undefined)[];
+}
+
+function saveInline(state: MarkdownItState): SavedInline {
+    const footnotes = (state.env as FootnoteEnv | undefined)?.footnotes;
+    return {
+        pos: state.pos,
+        tokens: state.tokens.length,
+        tokensMeta: state.tokens_meta.length,
+        pending: state.pending,
+        pendingLevel: state.pendingLevel,
+        level: state.level,
+        linkLevel: state.linkLevel,
+        delimiters: state.delimiters,
+        delimitersLength: state.delimiters.length,
+        prevDelimiters: state._prev_delimiters.length,
+        backticks: { ...state.backticks },
+        backticksScanned: state.backticksScanned,
+        footnotes,
+        hadRefs: footnotes?.refs !== undefined,
+        // Not the definitions: a look-ahead only lists footnotes and counts references.
+        footnoteListLength: footnotes?.list ? footnotes.list.length : -1,
+        footnoteCounts: footnotes?.list ? footnotes.list.map(item => item?.count) : [],
+    };
+}
+
+function restoreInline(state: MarkdownItState, saved: SavedInline): void {
+    state.pos = saved.pos;
+    state.tokens.length = saved.tokens;
+    state.tokens_meta.length = saved.tokensMeta;
+    state.pending = saved.pending;
+    state.pendingLevel = saved.pendingLevel;
+    state.level = saved.level;
+    state.linkLevel = saved.linkLevel;
+    state.delimiters = saved.delimiters;
+    state.delimiters.length = saved.delimitersLength;
+    state._prev_delimiters.length = saved.prevDelimiters;
+    // The backtick rule remembers which closers it has seen as if the text were read once, forwards.
+    state.backticks = saved.backticks;
+    state.backticksScanned = saved.backticksScanned;
+    const env = state.env as FootnoteEnv | undefined;
+    if (env === undefined || env === null) {
+        return;
+    }
+    if (saved.footnotes === undefined) {
+        delete env.footnotes;
+        return;
+    }
+    const footnotes = saved.footnotes;
+    env.footnotes = footnotes;
+    const list = footnotes.list ?? [];
+    // A footnote listed since: a reference to a definition made it the definition's id, which was -1 before.
+    for (let i = Math.max(saved.footnoteListLength, 0); i < list.length; i++) {
+        const label = list[i]?.label;
+        if (label !== undefined && footnotes.refs !== undefined && footnotes.refs[`:${label}`] === i) {
+            footnotes.refs[`:${label}`] = -1;
+        }
+    }
+    if (!saved.hadRefs) {
+        delete footnotes.refs;
+    }
+    if (saved.footnoteListLength === -1) {
+        delete footnotes.list;
+        return;
+    }
+    list.length = saved.footnoteListLength;
+    saved.footnoteCounts.forEach((count, i) => {
+        if (list[i]) {
+            list[i].count = count;
+        }
+    });
+}
+
+/** The caches the look-ahead keeps per state and per end of text, apart from the inline parser's own. */
+const scanCaches = new WeakMap<object, Map<number, Record<number, number>>>();
+
+function scanCache(state: MarkdownItState): Record<number, number> {
+    let byEnd = scanCaches.get(state);
+    if (byEnd === undefined) {
+        byEnd = new Map();
+        scanCaches.set(state, byEnd);
+    }
+    let cache = byEnd.get(state.posMax);
+    if (cache === undefined) {
+        cache = {};
+        byEnd.set(state.posMax, cache);
+    }
+    return cache;
+}
+
 /**
- * Create tokens for sidebar elements.
- * Sidebars have a simple structure: open tag, content, close tag.
- * 
- * @param state - Markdown-it parsing state
- * @param content - Sidebar content (supports markdown)
- * @param config - Sidebar configuration
+ * Where the bare URL that markdown-it's linkify rule would read at `pos` (its
+ * `://`) ends, or -1 — found as that rule finds it: the scheme in at most ten
+ * characters of text before `pos` (from `textStart` on), the URL by
+ * linkify-it, a trailing `*` left out, a link markdown-it would not follow
+ * refused. The text ends at `max`.
  */
-function createSidebarTokens(state: MarkdownItState, content: string, config: SidebarConfig): void {
-    const type = config.type;
-    
-    // Create opening token
-    const tokenOpen = state.push(`${type}_open`, 'span', 1);
-    tokenOpen.markup = config.openMarker;
-    
-    // Process content with markdown support (with error handling)
-    processContentSafely(state, content, type);
-    
-    // Create closing token
-    state.push(`${type}_close`, 'span', -1);
+function bareUrlEnd(state: MarkdownItState, textStart: number, pos: number, max: number): number {
+    const src = state.src;
+    if (pos + 3 > max || src.charCodeAt(pos) !== 0x3a || src.charCodeAt(pos + 1) !== 0x2f || src.charCodeAt(pos + 2) !== 0x2f) {
+        return -1;
+    }
+    const protoMin = pos - Math.min(10, pos - textStart, pos);
+    let protoStart = pos;
+    while (protoStart > protoMin && /[A-Za-z0-9+.-]/.test(src.charAt(protoStart - 1))) {
+        protoStart--;
+    }
+    if (protoStart === pos || !/[A-Za-z]/.test(src.charAt(protoStart))) {
+        return -1;
+    }
+    const linkify = (state.md as unknown as { linkify: { matchAtStart(text: string): { url: string } | null } }).linkify;
+    const link = linkify.matchAtStart(src.slice(protoStart, max));
+    if (link === null || link.url.length <= pos - protoStart) {
+        return -1;
+    }
+    const url = link.url.replace(/\*+$/, '');
+    const md = state.md as unknown as { normalizeLink(url: string): string; validateLink(url: string): boolean };
+    if (!md.validateLink(md.normalizeLink(url))) {
+        return -1;
+    }
+    return protoStart + url.length;
+}
+
+/**
+ * The position of the marker that closes the sidebar opened at `start`, or -1.
+ *
+ * Found the way markdown-it's link rule finds a label's end
+ * (`parseLinkLabel`): one construct at a time with `skipToken`, so a marker
+ * inside a code span, an autolink, inline HTML, a link, a backslash escape or
+ * a character reference closes nothing. A marker of the sidebar's own kind
+ * that does not close is passed over, so the first one that closes
+ * (`sidebarCanClose`) is the end; a sidebar of the other kind is skipped
+ * whole. A bare URL is read as linkify will read it in the content
+ * (`bareUrlEnd`, with linkify itself off while looking): up to the first
+ * closing marker in it, so a URL in a sidebar ends at the sidebar's end, and
+ * a marker of the other kind in it opens nothing.
+ *
+ * The look-ahead keeps its own cache per end of text (`scanCache`): what it
+ * learns with linkify off and at this `posMax` is not what the inline parser
+ * would learn elsewhere. A rule that ignores `silent` (markdown-it-bracketed-
+ * spans tokenizes while it is asked only to skip) leaves nothing behind: the
+ * tokens, the pending text, the levels, the delimiters and the footnotes in
+ * the environment are put back as they were.
+ */
+function findSidebarClose(state: MarkdownItState, start: number, code: number): number {
+    const src = state.src;
+    const max = state.posMax;
+    const marker = src.charAt(start);
+    const closesAt = (pos: number) => src.charCodeAt(pos) === code
+        && sidebarCanClose(marker, pos + 1 < max ? src.charAt(pos + 1) : '');
+
+    // Nothing to look for when no marker in the rest of the text could close.
+    let candidate = src.indexOf(marker, start + 1);
+    while (candidate !== -1 && candidate < max && !closesAt(candidate)) {
+        candidate = src.indexOf(marker, candidate + 1);
+    }
+    if (candidate === -1 || candidate >= max) {
+        return -1;
+    }
+
+    const saved = saveInline(state);
+    // As before the content (see `sidebarTokenizer`): a last token at this
+    // level keeps markdown-it-bracketed-spans from tokenizing during each
+    // look-ahead. The rollback removes it.
+    state.push('text', '', 0).content = '';
+    const cache = state.cache;
+    // Linkify does not run while looking (as inside a link): its URL is read here, bounded (`bareUrlEnd`).
+    const urlAware = Boolean((state.md as unknown as { options: { linkify?: boolean } }).options.linkify) && state.linkLevel === 0;
+    state.cache = scanCache(state);
+    state.linkLevel++;
+    let found = -1;
+    state.pos = start + 1;
+    try {
+        while (state.pos < max) {
+            if (closesAt(state.pos)) {
+                found = state.pos;
+                break;
+            }
+            if (src.charCodeAt(state.pos) === code) {
+                state.pos++;
+                continue;
+            }
+            // A bare URL is skipped as linkify will read it in the content —
+            // up to the first closing marker in it, where the content ends.
+            const urlEnd = urlAware ? bareUrlEnd(state, start + 1, state.pos, max) : -1;
+            if (urlEnd !== -1) {
+                for (let at = state.pos; at < urlEnd && found === -1; at++) {
+                    found = closesAt(at) ? at : -1;
+                }
+                if (found !== -1) {
+                    break;
+                }
+                state.pos = urlEnd;
+                continue;
+            }
+            inlineParser(state).skipToken(state);
+        }
+    } finally {
+        restoreInline(state, saved);
+        state.cache = cache;
+    }
+    return found;
 }
 
 /**
@@ -612,8 +888,10 @@ function createNoteTokens(state: MarkdownItState, text: string, note: string, co
 /**
  * Process text with inline markdown support.
  * 
- * This function recursively parses markdown within note/sidebar content,
- * enabling features like **bold**, *italic*, `code`, [links](url), etc.
+ * This function recursively parses markdown within a note's reference and
+ * body (a sidebar's content is tokenized in place instead, see
+ * `sidebarTokenizer`), enabling features like **bold**, *italic*, `code`,
+ * [links](url), etc.
  * 
  * **Recursion Protection:**
  * - Uses WeakMap-based depth tracking (thread-safe, no memory leaks)

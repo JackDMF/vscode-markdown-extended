@@ -52,6 +52,35 @@ export const NOTE_SYNTAX = {
     rightSidebar: { marker: '@', cssClass: 'right-sidebar' },
 } as const;
 
+const ASCII_LETTER_OR_DIGIT = /^[A-Za-z0-9]$/;
+const ASCII_DIGIT = /^[0-9]$/;
+
+/**
+ * Whether a sidebar marker (`$` or `@`) with `before` and `after` around it
+ * opens a sidebar (`''` is the edge of the text): something follows it, and
+ * no ASCII letter or digit stands right before it, so `a@b.c`, `user@host`
+ * and `US$5` open nothing. Only ASCII counts: a sidebar right after CJK or
+ * other non-ASCII text opens as it always did (`这是$侧边栏内容$的例子`), one
+ * glued to an ASCII word (`Text$x$`) is text. The side inside may be a
+ * space: `$ left $` is a sidebar.
+ *
+ * The notes plugin parses by this and `sidebarCanClose`
+ * (`markdownItSidenote.ts`); the Visual Editor writes a sidebar so that both
+ * hold (`serialize.ts`), and the grammar follows them as far as a regex can.
+ */
+export function sidebarCanOpen(before: string, after: string): boolean {
+    return after !== '' && !ASCII_LETTER_OR_DIGIT.test(before);
+}
+
+/**
+ * Whether a sidebar marker of `marker`, with `after` right after it, closes
+ * the sidebar being read: a `$` followed by an ASCII digit closes nothing, so
+ * `$5 and $10` is text. An `@` closes wherever it stands.
+ */
+export function sidebarCanClose(marker: string, after: string): boolean {
+    return !(marker === '$' && ASCII_DIGIT.test(after));
+}
+
 /** What opens an admonition block (`markdownItAdmonition.ts`): at least this many `!`. */
 export const ADMONITION_MARKER = '!!!';
 

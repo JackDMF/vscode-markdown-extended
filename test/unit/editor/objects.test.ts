@@ -131,10 +131,16 @@ suite('Editor objects: a note\'s verbs', () => {
     });
 
     test('a conversion whose result could not be written back is refused, with the reason', () => {
-        // Code in a left sidebar may hold `@`; in a right one it would end the sidebar.
-        const state = caretAt(stateOf('A $see `a@b` here$ b.\n'), 'see');
+        // Code in a sidenote may hold `!!`; in a marginal note it would end the note.
+        const state = caretAt(stateOf('A ++ref|see `a!!b` here++ b.\n'), 'ref');
         const reason = convertNoteRefusal(state, objectHere(state).from);
-        assert.ok(reason?.includes('"@"'), String(reason));
+        assert.ok(reason?.includes('"!!"'), String(reason));
+        // Superscript in a left sidebar may hold `@`; in a right one it would end the sidebar.
+        const raised = caretAt(stateOf('A $see ^a@b^ here$ b.\n'), 'see');
+        assert.ok(convertNoteRefusal(raised, objectHere(raised).from)?.includes('"@"'));
+        // Code may hold it in either: the sidebar rule skips a code span whole.
+        const coded = caretAt(stateOf('A $see `a@b` here$ b.\n'), 'see');
+        assert.strictEqual(convertNoteRefusal(coded, objectHere(coded).from), null);
         const plain = caretAt(stateOf('A ++ref|body++ b.\n'), 'ref');
         assert.strictEqual(convertNoteRefusal(plain, objectHere(plain).from), null);
     });

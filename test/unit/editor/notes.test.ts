@@ -5,7 +5,7 @@ import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 
 import { parseDocument } from '../../../src/editor/parse';
 import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
 import { editorSchema } from '../../../src/editor/schema';
-import { serializeDocument } from '../../../src/editor/serialize';
+import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, serializeDocument, unwritableInNote } from '../../../src/editor/serialize';
 import {
     NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal, previousNotePart,
     toggleNote, unwrapNote, wrapInNote, wrapNodeLockReason,
@@ -295,11 +295,33 @@ suite('Editor notes: what the serializer cannot write back is not made', () => {
         body = body.apply(body.tr.insertText('+'));
         assert.strictEqual(text(body), 'Alpha ++ref|see `i+` here++ gamma.\n');
         assert.strictEqual(body.apply(body.tr.insertText('+')).doc, body.doc, '++ in code in a body');
-        // Code or superscript over text in a right sidebar holding its @.
+        // In a right sidebar, code may hold its @ (the sidebar rule skips a code span whole); superscript may not.
         const sidebar = select(stateOf('Mail @ write user&#64;host now @ end.\n'), 'user@host');
-        assert.strictEqual(toggleMarkup(code, null)(sidebar), false);
-        assert.ok(markRefusal(sidebar, code, null)?.includes('"@"'));
-        assert.ok(markRefusal(sidebar, sup, null)?.includes('"@"'), 'superscript cannot hold it either');
+        assert.strictEqual(markRefusal(sidebar, code, null), null);
+        const coded = run(sidebar, toggleMarkup(code, null));
+        assert.strictEqual(text(coded), 'Mail @ write `user@host` now @ end.\n');
+        assert.deepStrictEqual(notesAfterSave(coded), ['right_sidebar']);
+        assert.ok(markRefusal(sidebar, sup, null)?.includes('"@"'), 'superscript cannot hold it');
+        // A sidebar inside a note's body is inside the note: its code cannot hold the note's marker pair.
+        const nested = editorSchema.nodes.paragraph.create(null, [
+            editorSchema.text('x '),
+            editorSchema.nodes.sidenote.create(null, [
+                editorSchema.nodes.note_ref.create(null, [editorSchema.text('ref')]),
+                editorSchema.nodes.sidenote_body.create(null, [
+                    editorSchema.text('b '),
+                    editorSchema.nodes.left_sidebar.create(null, [editorSchema.text('a++b', [code.create()])]),
+                ]),
+            ]),
+            editorSchema.text(' y'),
+        ]);
+        assert.ok(unwritableInNote(editorSchema.topNodeType.create(null, [nested]))?.includes('"++"'));
+        // An edit beside a sidebar that would glue it to a letter, or a left one to a digit, is refused with what to do.
+        const glued = stateOf('Alpha $side$ beta.\n');
+        const space = posOf(glued.doc, 'Alpha ') + 'Alpha'.length;
+        assert.strictEqual(noteRefusal(glued.tr.delete(space, space + 1)), SIDEBAR_GLUED_BEFORE);
+        const after = posOf(glued.doc, ' beta');
+        assert.strictEqual(noteRefusal(glued.tr.insertText('5', after)), SIDEBAR_GLUED_AFTER);
+        assert.strictEqual(noteRefusal(glued.tr.insertText('x', after)), null, 'a letter after it is fine');
         // A note made of a code span that holds |: its reference would.
         const made = select(stateOf('A `a|b` c.\n'), 'a|b');
         assert.ok(wrapNodeLockReason(made, 'sidenote')?.includes('"|"'));
