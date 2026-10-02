@@ -1,37 +1,36 @@
-import { InputRule } from 'prosemirror-inputrules';
-import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
+import { InputRule, inputRules } from 'prosemirror-inputrules';
+import { Fragment, Mark, Node, Slice } from 'prosemirror-model';
 import { EditorState, Plugin } from 'prosemirror-state';
+import { EditorView } from 'prosemirror-view';
 import { WIKI_EMBED_MARKERS } from '../../syntax/markers';
+import { escapeRegExp } from '../../syntax/regExp';
 import { editorSchema } from '../schema';
 import { RAW_TEXT_MARKS } from '../serialize';
 
 /**
- * A wiki embed typed as text (`![[img.png]]`), or in plain text pasted from
- * outside the editor, becomes the atom the editor reads one as (`wiki_embed`,
+ * A wiki embed typed as text (`![[img.png]]`), or in text pasted from outside
+ * this editor, becomes the atom the editor reads one as (`wiki_embed`,
  * `markdownItWikiEmbed.ts`), so it is saved as written instead of as escaped
  * text. Only where the engine reads embeds (the page's `enabled`), never in
  * code or under superscript or subscript, whose text is read as it is, and
  * only an embed of the shape the plugin reads: `![[`, a name with no bracket
  * and no line break, `]]`.
  *
- * Text that is already in the document is never made an embed: a cut and
- * paste or a drag inside the editor carries its own nodes (an atom stays one,
- * literal text stays text), and the rule fires on the `]` just typed, not on
- * the end of a composition.
+ * Text that is already in the document is never made an embed: a drag inside
+ * the editor, and a paste of the editor's own copy (its HTML carries
+ * ProseMirror's `data-pm-slice`, plain paste included), carry their own nodes
+ * — an atom stays one, literal text stays text; and the input rule fires on
+ * the `]` just typed, not on the end of a composition.
  */
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const NAME = '[^[\\]\\n\\ufffc]+';
-const EMBED_SOURCE = `${escape(WIKI_EMBED_MARKERS.open)}${NAME}${escape(WIKI_EMBED_MARKERS.close)}`;
+const EMBED_SOURCE = `${escapeRegExp(WIKI_EMBED_MARKERS.open)}[^[\\]\\n\\ufffc]+${escapeRegExp(WIKI_EMBED_MARKERS.close)}`;
 const EMBED = new RegExp(EMBED_SOURCE, 'g');
 const EMBED_TYPED = new RegExp(`${EMBED_SOURCE}$`);
 
+/** What ProseMirror writes into the HTML it copies: a clipboard holding it came from an editor like this one. */
+const EDITOR_COPY = 'data-pm-slice';
+
 function rawMarked(marks: readonly Mark[]): boolean {
     return marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
-}
-
-/** The marks text typed or pasted at `$pos` takes. */
-function marksAt(state: EditorState, $pos: ResolvedPos): readonly Mark[] {
-    return state.storedMarks ?? $pos.marks();
 }
 
 /** `text` as text and wiki embed atoms, each carrying `marks`; `null` when it holds no embed or `marks` cannot hold one. */
@@ -56,6 +55,19 @@ export function textWithEmbeds(text: string, marks: readonly Mark[]): Node[] | n
         nodes.push(editorSchema.text(text.slice(at), marks));
     }
     return nodes;
+}
+
+/** `fragment` with the embeds in its text made atoms, each with its text's marks, except inside a code block. */
+function embedsInFragment(fragment: Fragment, inCode: boolean): Fragment {
+    const out: Node[] = [];
+    fragment.forEach(node => {
+        if (node.isText) {
+            out.push(...((inCode ? null : textWithEmbeds(node.text ?? '', node.marks)) ?? [node]));
+            return;
+        }
+        out.push(node.copy(embedsInFragment(node.content, inCode || node.type.spec.code === true)));
+    });
+    return Fragment.from(out);
 }
 
 /**
@@ -91,7 +103,7 @@ export function wikiEmbedInputRule(enabled: () => boolean): InputRule {
         if (!enabled() || end - start !== match[0].length - 1 || !oneTextRun(state, start, end)) {
             return null;
         }
-        const marks = marksAt(state, state.doc.resolve(end));
+        const marks = state.storedMarks ?? state.doc.resolve(end).marks();
         if (rawMarked(marks)) {
             return null;
         }
@@ -100,36 +112,62 @@ export function wikiEmbedInputRule(enabled: () => boolean): InputRule {
 }
 
 /**
- * Plain text pasted from outside the editor (the clipboard holds no HTML of
- * the editor's): its lines are paragraphs, as ProseMirror's own reading makes
- * them, and its embeds atoms. ProseMirror does not ask in a code block; a
- * drop is no paste, and the plugin reads only what a `paste` event brought.
+ * The input rule in a plugin of its own, so a note's own text insertion
+ * (`notes.ts`) can run it and nothing else — no block rule there — and
+ * `undoInputRule` (Backspace) still gives back what was typed.
+ */
+export function wikiEmbedInputRules(enabled: () => boolean): Plugin {
+    return inputRules({ rules: [wikiEmbedInputRule(enabled)] });
+}
+
+/** Run the embed input rule of `plugin` (`wikiEmbedInputRules`) for `text` typed over `[from, to)`; whether it made an embed. */
+export function runWikiEmbedInput(plugin: Plugin, view: EditorView, from: number, to: number, text: string): boolean {
+    type Handle = (this: Plugin, view: EditorView, from: number, to: number, text: string, deflt: () => unknown) => boolean;
+    const handle = plugin.props.handleTextInput as Handle | undefined;
+    return handle?.call(plugin, view, from, to, text, () => view.state.tr.insertText(text, from, to)) === true;
+}
+
+/**
+ * A paste of text from outside this editor — a browser's, Obsidian's, VS
+ * Code's text editor's (whose copy is HTML) or plain text — has the embeds in
+ * its text made atoms, each with its text's marks, as ProseMirror's own
+ * reading gives them; a paste of this editor's own copy (its HTML carries
+ * `data-pm-slice`), plain or not, does not, nor does a drop. The decision is
+ * the paste event's, read from its clipboard, and that paste's parse
+ * (`transformPasted`) consumes it; a drop clears one left over. Never into a
+ * code block.
  */
 export function wikiEmbedPastePlugin(enabled: () => boolean): Plugin {
-    let pasting = false;
+    // `true` from outside, `false` from this editor, `null` when the event had
+    // no clipboard data (ProseMirror then reads the paste back from the DOM, and
+    // its HTML decides), `undefined` with no paste pending.
+    let pending: boolean | null | undefined;
     return new Plugin({
         props: {
             handleDOMEvents: {
-                paste() {
-                    pasting = true;
-                    setTimeout(() => {
-                        pasting = false;
-                    });
+                paste(_view, event) {
+                    const data = (event as ClipboardEvent).clipboardData;
+                    pending = data ? !data.getData('text/html').includes(EDITOR_COPY) : null;
+                    return false;
+                },
+                drop() {
+                    pending = undefined;
                     return false;
                 },
             },
-            clipboardTextParser(text, $context, _plain, view) {
-                const marks = marksAt(view.state, $context);
-                if (!pasting || !enabled() || $context.parent.type.spec.code === true || rawMarked(marks)) {
-                    return null as unknown as Slice;
+            transformPastedHTML(html) {
+                if (pending === null) {
+                    pending = !html.includes(EDITOR_COPY);
                 }
-                const lines = text.split(/(?:\r\n?|\n)+/);
-                if (!lines.some(line => textWithEmbeds(line, marks) !== null)) {
-                    return null as unknown as Slice;
+                return html;
+            },
+            transformPasted(slice, view) {
+                const fromOutside = pending === true;
+                pending = undefined;
+                if (!fromOutside || !enabled() || view.state.selection.$from.parent.type.spec.code === true) {
+                    return slice;
                 }
-                const paragraphs = lines.map(line => editorSchema.nodes.paragraph.create(null,
-                    textWithEmbeds(line, marks) ?? (line === '' ? [] : [editorSchema.text(line, marks)])));
-                return new Slice(Fragment.from(paragraphs), 1, 1);
+                return new Slice(embedsInFragment(slice.content, false), slice.openStart, slice.openEnd);
             },
         },
     });

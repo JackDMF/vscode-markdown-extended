@@ -35,7 +35,7 @@ import { PRESERVE_SOURCE_META } from '../fidelity';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, unwritableEmbed, unwritableInNote } from '../serialize';
 import { showHint } from './hint';
-import { inlineForNote } from './wikiEmbeds';
+import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
 
 const nodes = editorSchema.nodes;
 
@@ -335,13 +335,7 @@ export function noteRefusal(tr: Transaction): string | null {
     return range === null ? null : unwritableInNote(tr.doc, range.from, range.to);
 }
 
-/** Why the transaction must not be applied: it puts a wiki embed under a raw mark (`unwritableEmbed`). */
-export function embedRefusal(tr: Transaction): string | null {
-    const range = refusableRange(tr);
-    return range === null ? null : unwritableEmbed(tr.doc, range.from, range.to);
-}
-
-/** `noteRefusal`, then `embedRefusal`, over the range the transaction changed, read once. */
+/** `noteRefusal`, then a wiki embed under a raw mark (`unwritableEmbed`), over the range the transaction changed, read once. */
 function refusal(tr: Transaction): string | null {
     const range = refusableRange(tr);
     return range === null ? null : unwritableInNote(tr.doc, range.from, range.to) ?? unwritableEmbed(tr.doc, range.from, range.to);
@@ -379,13 +373,13 @@ export function refusableRange(tr: Transaction): { from: number; to: number } | 
  * browser would put the text into the neighbouring span), and pastes into a
  * part as text — a slice of paragraphs would split the note in two.
  */
-export function notesPlugin(): Plugin {
+export function notesPlugin(embedInput?: Plugin): Plugin {
     let editorView: EditorView | null = null;
     return new Plugin({
         // The one edit the serializer cannot write back is refused here,
         // whatever made it — a key, the toolbar, a paste, typing into a code
         // span — with the reason shown beside the caret (`noteRefusal`); and
-        // so is a wiki embed made code, superscript or subscript (`embedRefusal`).
+        // so is a wiki embed made code, superscript or subscript (`unwritableEmbed`).
         filterTransaction(tr) {
             const reason = refusal(tr);
             if (reason !== null) {
@@ -420,10 +414,11 @@ export function notesPlugin(): Plugin {
                     }
                     if (e.inputType === 'insertText' && typeof e.data === 'string') {
                         e.preventDefault();
-                        // The input rules first, as for text typed anywhere else (a `]]` closing an embed).
+                        // The embed input rule first (a `]]` closing `![[name]]`), and no
+                        // other: a block rule (three backticks, `# `, `- `) would turn the line holding the note into a block.
                         const { from, to } = view.state.selection;
                         const text = e.data;
-                        if (!view.someProp('handleTextInput', f => f(view, from, to, text, () => view.state.tr.insertText(text, from, to)))) {
+                        if (embedInput === undefined || !runWikiEmbedInput(embedInput, view, from, to, text)) {
                             view.dispatch(view.state.tr.insertText(text).scrollIntoView());
                         }
                         return true;

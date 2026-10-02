@@ -1,7 +1,7 @@
 import { Node } from 'prosemirror-model';
 import { Selection, TextSelection } from 'prosemirror-state';
-import { NOTE_SEPARATOR, NOTE_SYNTAX, WIKI_EMBED_MARKERS, plainWikiEmbed } from '../syntax/markers';
-import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize';
+import { NOTE_SEPARATOR, NOTE_SYNTAX, WIKI_EMBED_MARKERS } from '../syntax/markers';
+import { NotePart, SerializeOptions, SerializedLayout, WikiEmbedPlace, serializeLayout, writtenWikiEmbed } from './serialize';
 
 /**
  * Where a place in the page stands in the document's text, and back.
@@ -267,14 +267,24 @@ const NOTE_ANCHORS: Readonly<Record<string, { open: string; between?: string; cl
     right_sidebar: { open: NOTE_SYNTAX.rightSidebar.marker, close: NOTE_SYNTAX.rightSidebar.marker },
 };
 
+/** The note part each child of a note node is, by index, and the marker the note is written with. */
+const NOTE_PARTS: Readonly<Record<string, { parts: readonly NotePart[]; marker?: string }>> = {
+    sidenote: { parts: ['ref', 'body'], marker: NOTE_SYNTAX.sidenote.marker.charAt(0) },
+    marginal_note: { parts: ['ref', 'body'], marker: NOTE_SYNTAX.marginalNote.marker.charAt(0) },
+    left_sidebar: { parts: ['left'] },
+    right_sidebar: { parts: ['right'] },
+};
+
 function collectUnits(block: Node): Unit[] {
     const units: Unit[] = [];
+    // An untouched block is its source, an embed in it spelled as read; a changed one is written by rule.
+    const written = (block.attrs.src ?? null) === null;
     const anchor = (text: string) => {
         for (let k = 0; k < text.length; k++) {
             units.push({ pos: -1, code: text.charCodeAt(k) });
         }
     };
-    const visit = (node: Node, pos: number): void => {
+    const visit = (node: Node, pos: number, place: WikiEmbedPlace): void => {
         if (node.isText) {
             const text = node.text ?? '';
             for (let k = 0; k < text.length; k++) {
@@ -286,9 +296,11 @@ function collectUnits(block: Node): Unit[] {
             // The atom matches its source's `!`, and its spelling runs to the
             // `]]` that closes it (`spellingEnd`), as an entity's runs to its
             // `;`: the position before it is the source's start, the one after
-            // it its end, however the place spelled the name (`writtenWikiEmbed`:
-            // `\|` in a cell, `&#124;` in a note). Its plain name anchors it.
-            const source = plainWikiEmbed(node.attrs.source as string);
+            // it its end. The spelling it has in this place anchors it: as read
+            // in an untouched block, as `writtenWikiEmbed` writes it in a changed
+            // one (`\|` in a cell, `&#124;` in a note's reference).
+            const read = node.attrs.source as string;
+            const source = written ? writtenWikiEmbed(read, place) : read;
             units.push({ pos, code: source.charCodeAt(0), spelledTo: WIKI_EMBED_MARKERS.close });
             anchor(source.slice(1));
             return;
@@ -309,11 +321,13 @@ function collectUnits(block: Node): Unit[] {
         if (note) {
             anchor(note.open);
         }
+        const parts = NOTE_PARTS[node.type.name];
         node.forEach((child, offset, index) => {
             if (note?.between !== undefined && index === 1) {
                 anchor(note.between);
             }
-            visit(child, pos + 1 + offset);
+            const part = parts === undefined ? place : { ...place, notePart: parts.parts[Math.min(index, parts.parts.length - 1)], noteMarker: parts.marker ?? place.noteMarker };
+            visit(child, pos + 1 + offset, part);
         });
         if (note) {
             anchor(note.close);
@@ -336,7 +350,7 @@ function collectUnits(block: Node): Unit[] {
             row.forEach((cell, cellOffset) => {
                 anchor('|');
                 const cellPos = rowPos + 1 + cellOffset;
-                cell.forEach((child, childOffset) => visit(child, cellPos + 1 + childOffset));
+                cell.forEach((child, childOffset) => visit(child, cellPos + 1 + childOffset, { inTableCell: true }));
             });
             anchor('|');
             if (r === 0) {
@@ -345,7 +359,7 @@ function collectUnits(block: Node): Unit[] {
             }
         });
     };
-    visit(block, 0);
+    visit(block, 0, {});
     return units;
 }
 

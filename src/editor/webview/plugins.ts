@@ -12,7 +12,7 @@ import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
 import { tableKeymap, tablesPlugins } from './tables';
 import { toggleMarkType } from './toolbar/commands';
-import { wikiEmbedInputRule, wikiEmbedPastePlugin } from './wikiEmbeds';
+import { wikiEmbedInputRules, wikiEmbedPastePlugin } from './wikiEmbeds';
 import { admonitionTitlesPlugin, wrapperKeymap } from './wrappers';
 
 const nodes = editorSchema.nodes;
@@ -22,11 +22,9 @@ const marks = editorSchema.marks;
  * Markdown's own block syntax, typed at the start of a line, turns the line into
  * the block — the shortcut a Markdown author already knows.
  */
-function markdownInputRules(wikiEmbeds: () => boolean): Plugin {
+function markdownInputRules(): Plugin {
     return inputRules({
         rules: [
-            // `![[name]]` typed: an embed atom, where the engine reads embeds (`wikiEmbeds.ts`).
-            wikiEmbedInputRule(wikiEmbeds),
             textblockTypeInputRule(/^(#{1,6})\s$/, nodes.heading, match => ({ level: match[1].length })),
             wrappingInputRule(/^\s*([-*])\s$/, nodes.bullet_list, match => ({ bullet: match[1] })),
             wrappingInputRule(
@@ -122,10 +120,14 @@ export function domSelectionFirst(): Plugin {
  * `wikiEmbeds` says whether the host's engine reads wiki embeds (`readsWikiEmbeds`).
  */
 export function editorPlugins(wikiEmbeds: () => boolean = () => true): Plugin[] {
+    const embedInput = wikiEmbedInputRules(wikiEmbeds);
     return [
         // First: every key below reads the selection the DOM shows.
         domSelectionFirst(),
-        markdownInputRules(wikiEmbeds),
+        markdownInputRules(),
+        // `![[name]]` typed: an embed atom, where the engine reads embeds; a plugin of its own,
+        // which a note's own text insertion runs and no other rule (`wikiEmbeds.ts`).
+        embedInput,
         // Ahead of the Markdown keys: Tab, Enter and Backspace mean something else inside a note,
         // Enter and Backspace in an empty paragraph of a container or an admonition,
         // and Tab, Enter and Shift+Enter in a table cell (a sidebar in a cell keeps its own keys).
@@ -138,7 +140,7 @@ export function editorPlugins(wikiEmbeds: () => boolean = () => true): Plugin[] 
         dropCursor(),
         gapCursor(),
         hintPlugin(),
-        notesPlugin(),
+        notesPlugin(embedInput),
         wikiEmbedPastePlugin(wikiEmbeds),
         admonitionTitlesPlugin(),
         ...tablesPlugins(),

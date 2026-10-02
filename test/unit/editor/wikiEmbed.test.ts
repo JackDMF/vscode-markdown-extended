@@ -269,6 +269,17 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             if (node.type.name === 'wiki_embed') { at = p; }
         });
         assert.deepStrictEqual(map.sourcePositionOf(at + 1), { line: 2, character: 11, approximate: false });
+        // A changed note reference writes `&#124;`: the anchors are that spelling, the text after it exact.
+        const note = paragraph(text('A '), n.sidenote.create(null, [n.note_ref.create(null, [embed('![[a|b]]')]), n.sidenote_body.create(null, [text('n')])]), text(' b'));
+        const noteMap = createPositionMap({ doc: note, eol: '\n', tail: '' }, { defaultWrap: 90 });
+        assert.strictEqual(noteMap.text, 'A ++![[a&#124;b]]|n++ b\n');
+        let inRef = -1;
+        note.descendants((node, p) => {
+            if (node.type.name === 'wiki_embed') { inRef = p; }
+        });
+        assert.deepStrictEqual([noteMap.sourcePositionOf(inRef), noteMap.sourcePositionOf(inRef + 1)],
+            [{ line: 0, character: 4, approximate: false }, { line: 0, character: 17, approximate: false }]);
+        assert.deepStrictEqual(noteMap.pagePositionOf({ line: 0, character: 19 }), { pos: inRef + 4, approximate: false });
     });
 
     test('a block the host renders from the editor\'s engine shows an embed in an image\'s alt, as the preview does', () => {
@@ -307,26 +318,52 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.strictEqual(off.handler(EditorState.create({ doc: paragraph(text('![[x]')) }), ['![[x]]'] as unknown as RegExpMatchArray, 1, 6), null);
     });
 
-    test('plain text pasted from outside is read with its embeds as atoms; nothing else is', () => {
+    test('a paste from outside this editor has its embeds made atoms; its own copy, a drop and a code block do not', () => {
         const nodes = textWithEmbeds('see ![[x]] and ![[a b.png]] end', []);
         assert.deepStrictEqual(nodes?.map(n => n.type.name === 'wiki_embed' ? `atom ${n.attrs.source as string}` : n.text), ['see ', 'atom ![[x]]', ' and ', 'atom ![[a b.png]]', ' end']);
         assert.strictEqual(textWithEmbeds('no embed ![[a [[b]] c]]', []), null);
         assert.strictEqual(textWithEmbeds('![[x]]', [schema.marks.code.create()]), null);
-        const doc = paragraph(text('ab'));
-        const view = { state: EditorState.create({ doc }) };
-        const plugin = wikiEmbedPastePlugin(() => true);
-        const parse = plugin.props.clipboardTextParser as unknown as (t: string, $c: ResolvedPos, plain: boolean, v: unknown) => Slice | null;
-        const paste = (plugin.props.handleDOMEvents as { paste: () => boolean }).paste;
-        // Not from a paste event (a drop): ProseMirror's own reading, no embed.
-        assert.strictEqual(parse('see ![[x]]', doc.resolve(2), false, view), null);
-        paste();
-        const slice = parse('see ![[x]]\nmore', doc.resolve(2), false, view);
-        assert.ok(slice);
-        assert.deepStrictEqual(embedsOf(schema.topNodeType.create(null, slice.content)), ['![[x]]']);
-        // Under inline code the text is the code's.
-        const coded = paragraph(text('ab', schema.marks.code.create()));
-        assert.strictEqual(parse('see ![[x]]', coded.resolve(2), false, { state: EditorState.create({ doc: coded }) }), null);
-        assert.strictEqual(wikiEmbedPastePlugin(() => false).props.clipboardTextParser?.call(plugin, 'see ![[x]]', doc.resolve(2), false, view as never), null);
+        type Props = {
+            handleDOMEvents: { paste: (view: unknown, event: unknown) => boolean; drop: () => boolean };
+            transformPasted: (slice: Slice, view: unknown) => Slice;
+            transformPastedHTML: (html: string) => string;
+        };
+        const em = schema.marks.em.create();
+        const pasted = () => new Slice(Fragment.from(schema.nodes.paragraph.create(null, [text('see ![[x]] '), text('![[y]]', em)])), 1, 1);
+        const viewAt = (doc: Node) => ({ state: EditorState.create({ doc }) });
+        const view = viewAt(paragraph(text('ab')));
+        /** A paste event whose clipboard holds `html` (null: no clipboard data). */
+        const event = (html: string | null) => ({ clipboardData: html === null ? null : { getData: (type: string) => (type === 'text/html' ? html : 'see') } });
+        const run = (enabled: boolean, before: (props: Props) => void, at = view) => {
+            const props = wikiEmbedPastePlugin(() => enabled).props as unknown as Props;
+            before(props);
+            return embedsOf(schema.topNodeType.create(null, props.transformPasted(pasted(), at).content));
+        };
+        // From outside: plain text, or HTML from VS Code's text editor or a browser. An atom takes its text's marks.
+        assert.deepStrictEqual(run(true, p => p.handleDOMEvents.paste(view, event(''))), ['![[x]]', '![[y]]']);
+        assert.deepStrictEqual(run(true, p => p.handleDOMEvents.paste(view, event('<div><span>see ![[x]]</span></div>'))), ['![[x]]', '![[y]]']);
+        const props = wikiEmbedPastePlugin(() => true).props as unknown as Props;
+        props.handleDOMEvents.paste(view, event(''));
+        props.transformPasted(pasted(), view).content.descendants(n => {
+            if (n.type.name === 'wiki_embed' && n.attrs.source === '![[y]]') { assert.ok(em.isInSet(n.marks)); }
+        });
+        // This editor's own copy, plain paste included: as it was.
+        assert.deepStrictEqual(run(true, p => p.handleDOMEvents.paste(view, event('<p data-pm-slice="1 1 []">see ![[x]]</p>'))), []);
+        // No clipboard data: the HTML ProseMirror reads back decides.
+        assert.deepStrictEqual(run(true, p => { p.handleDOMEvents.paste(view, event(null)); p.transformPastedHTML('<p data-pm-slice="1 1 []">x</p>'); }), []);
+        assert.deepStrictEqual(run(true, p => { p.handleDOMEvents.paste(view, event(null)); p.transformPastedHTML('<p>x</p>'); }), ['![[x]]', '![[y]]']);
+        // No paste event (a drop), or a drop after a paste that was never parsed: as it was.
+        assert.deepStrictEqual(run(true, () => undefined), []);
+        assert.deepStrictEqual(run(true, p => { p.handleDOMEvents.paste(view, event('')); p.handleDOMEvents.drop(); }), []);
+        // A paste is consumed by its own parse.
+        const once = wikiEmbedPastePlugin(() => true).props as unknown as Props;
+        once.handleDOMEvents.paste(view, event(''));
+        once.transformPasted(pasted(), view);
+        assert.deepStrictEqual(embedsOf(schema.topNodeType.create(null, once.transformPasted(pasted(), view).content)), []);
+        // Into a code block, or with the engine not reading embeds: as it was, after a real paste event.
+        const fence = schema.topNodeType.create(null, [schema.nodes.code_block.create(null, [text('ab')])]);
+        assert.deepStrictEqual(run(true, p => p.handleDOMEvents.paste(view, event('')), { state: EditorState.create({ doc: fence, selection: TextSelection.create(fence, 2) }) }), []);
+        assert.deepStrictEqual(run(false, p => p.handleDOMEvents.paste(view, event(''))), []);
     });
 
     test('a paste into a note keeps an atom an atom and literal text literal, with the marks typed text takes', () => {

@@ -80,7 +80,14 @@ function breakMarkerRuns(text: string, ch: string | undefined, replace: (ch: str
  * raw marks — code, and the terminator under sup and sub — has no escape at
  * all; the editor refuses to make it (`unwritableInNote`).
  */
-type NotePart = 'ref' | 'body' | 'left' | 'right';
+export type NotePart = 'ref' | 'body' | 'left' | 'right';
+
+/** Where a wiki embed is written: a table cell, a note's part and the note's marker (`writtenWikiEmbed`; the positions read it too). */
+export interface WikiEmbedPlace {
+    inTableCell?: boolean;
+    notePart?: NotePart;
+    noteMarker?: string;
+}
 
 /** The character each part must not hold raw, as the escaped form `esc` gives it, and what it is written as instead. */
 const PART_TERMINATORS: Readonly<Record<NotePart, { escaped: RegExp; raw: string; entity: string } | null>> = {
@@ -107,7 +114,7 @@ function internals(state: MarkdownSerializerState): StateInternals {
  * (`markdownItWikiEmbed.ts`), so each form is the same embed to it and to Foam,
  * and a block read from the file is written back as it was read.
  */
-export function writtenWikiEmbed(source: string, place: { inTableCell?: boolean; notePart?: NotePart; noteMarker?: string }): string {
+export function writtenWikiEmbed(source: string, place: WikiEmbedPlace): string {
     // A source as characters: an escape pair is one, `\|` stands for `|`.
     const units = plainWikiEmbed(source).match(/\\.|[^]/g) ?? [];
     const charOf = (unit: string) => (unit.length === 2 ? unit[1] : unit);
@@ -127,10 +134,6 @@ export function writtenWikiEmbed(source: string, place: { inTableCell?: boolean;
         return unit;
     }).join('');
     return place.inTableCell ? written.replace(/(?<!\\)\|/g, '\\|') : written;
-}
-
-function embedSource(st: StateInternals, source: string): string {
-    return writtenWikiEmbed(source, { inTableCell: st.inTableCell, notePart: st.notePart, noteMarker: st.noteMarker });
 }
 
 /**
@@ -438,8 +441,8 @@ const inlineNodes: NodeSerializers = {
         } else {
             escapeTrailingBang(st);
         }
-        // Its source, as it was written, held on one line (`embedSource`).
-        state.text(HOLD_OPEN + embedSource(st, node.attrs.source as string) + HOLD_CLOSE, false);
+        // Its source, as it was written, held on one line (`writtenWikiEmbed`).
+        state.text(HOLD_OPEN + writtenWikiEmbed(node.attrs.source as string, st) + HOLD_CLOSE, false);
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
