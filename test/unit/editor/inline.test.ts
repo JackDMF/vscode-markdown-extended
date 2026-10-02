@@ -251,6 +251,9 @@ suite('Editor inline constructs: written back by rule', () => {
             ['emphasis between', [t('a http://e.com/'), t('b', schema.marks.strong.create()), left(t('y')), t(' z')]],
             ['a host: $ is a letter to linkify', [t('see http://e.com.'), left(t('y')), t(' z')]],
             ['a user name: @ ends one', [t('see http://e.com:'), right(t('y')), t(' z')]],
+            // U+FEFF is whitespace to `\s` but no separator to linkify-it, which reads on through it.
+            ['a zero-width no-break space between, left', [t('a http://e.com/﻿'), left(t('y')), t(' z')]],
+            ['a zero-width no-break space between, right', [t('a http://e.com/﻿'), right(t('y')), t(' z')]],
         ] as [string, Node[]][]) {
             assert.strictEqual(refusal(content), SIDEBAR_GLUED_URL, label);
             // What the refusal prevents: written anyway, the sidebar is read into the URL.

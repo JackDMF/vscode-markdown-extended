@@ -297,8 +297,9 @@ export function convertNoteTransaction(state: EditorState, pos: number): Transac
 
 /**
  * Why the note at `pos` cannot be converted, or `null`: its counterpart could
- * not be written back (`noteRefusal` — a right sidebar's superscript holding `@`, say),
- * which the notes plugin would refuse anyway.
+ * not be written back (`noteRefusal` — a right sidebar before a digit, say:
+ * `@y@5` reads as a sidebar, `$y$5` would not), which the notes plugin would
+ * refuse anyway.
  */
 export function convertNoteRefusal(state: EditorState, pos: number): string | null {
     const tr = convertNoteTransaction(state, pos);
@@ -444,6 +445,15 @@ export function editImageTransaction(state: EditorState, pos: number, alt: strin
 // ---------------------------------------------------------------------------
 
 /**
+ * Why deleting the object is refused, or `null` — asked of the filter's own
+ * check (`noteRefusal`): an image gone from between a letter and a sidebar
+ * leaves the two touching (`a![i](u.png)$y$` would be `a$y$`).
+ */
+export function deleteObjectRefusal(state: EditorState, object: EditorObject): string | null {
+    return noteRefusal(deleteObjectTransaction(state, object));
+}
+
+/**
  * The node object at `from`–`to` deleted — an image, a source block, an
  * expansion (whose directive line goes with it) — the caret put where it was.
  */
@@ -517,6 +527,15 @@ export function changeSpanTransaction(state: EditorState, span: Extract<EditorOb
     const type = editorSchema.marks.attr_span;
     const tr = state.tr.removeMark(span.from, span.to, span.mark).addMark(span.from, span.to, type.create({ literal: value }));
     return noteRefusal(tr) === null ? tr.scrollIntoView() : null;
+}
+
+/**
+ * Why **Remove attributes** is refused, or `null` — asked of the filter's own
+ * check (`noteRefusal`): with `]{…}` gone its text may touch a sidebar's
+ * marker (`[x]{.c}$y$` would be `x$y$`).
+ */
+export function removeSpanRefusal(state: EditorState, span: Extract<EditorObject, { kind: 'span' }>): string | null {
+    return noteRefusal(removeSpanTransaction(state, span));
 }
 
 /** The span's mark taken off its text, which stays; the caret at the text's end. */

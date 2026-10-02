@@ -5,15 +5,18 @@ import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 
 import { parseDocument } from '../../../src/editor/parse';
 import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
 import { editorSchema } from '../../../src/editor/schema';
-import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, serializeDocument, unwritableInNote } from '../../../src/editor/serialize';
+import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, serializeDocument, unwritableInNote } from '../../../src/editor/serialize';
 import {
     NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal, previousNotePart,
     toggleNote, unwrapNote, wrapInNote, wrapNodeLockReason,
 } from '../../../src/editor/webview/notes';
-import { objectAtSelection, removeLinkRefusal } from '../../../src/editor/webview/objects';
+import { convertNoteRefusal, deleteObjectRefusal, objectAtSelection, removeLinkRefusal, removeSpanRefusal } from '../../../src/editor/webview/objects';
 import { TOOLBAR_ACTIONS } from '../../../src/editor/webview/toolbar/actions';
 import { inlineSourceTransaction, markRefusal, toggleMarkup, wrapSourceTransaction } from '../../../src/editor/webview/toolbar/commands';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
+import { MarkdownIt } from '../../../src/@types/markdown-it';
+import { createEditorEngine } from '../../../src/editor';
+import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine } from './helpers';
 
 function stateOf(text: string): EditorState {
@@ -396,6 +399,83 @@ suite('Editor notes: a character reference glued to a sidebar\'s marker is text,
         const edited = inNote.apply(inlineSourceTransaction(inNote, note.from, note.to, '++claim|new++', note.node.marks, { eol: '\n', defaultWrap: 90, documentText: withNote }) as Transaction);
         assert.strictEqual(text(edited), 'See x\\$y\\$ and the ++claim|new++.\n');
         assert.deepStrictEqual(notesAfterSave(edited), ['sidenote']);
+    });
+});
+
+suite('Editor notes: a seam the file already holds is never refused, only one the edit makes', () => {
+    const linkifyOff = createEditorEngine({ linkify: false, typographer: false, plugins, extend: [] });
+    const read = (source: string, md = hostEngine()) => EditorState.create({ doc: parseDocument(md, source, {}).doc, plugins: editorPlugins() });
+    const files: [string, string, MarkdownIt][] = [
+        ['a URL in parentheses', 'See (http://e.com)$note$ here.\n', hostEngine()],
+        ['a URL in quotes', 'See "http://e.com"$note$ here.\n', hostEngine()],
+        ['a URL before a comma', 'See http://e.com,$note$ here.\n', hostEngine()],
+        ['a URL ending in /, linkify off', 'See http://e.com/$note$ here.\n', linkifyOff],
+        ['a URL ending in /, linkify off, right sidebar', 'See http://e.com/@note@ here.\n', linkifyOff],
+    ];
+
+    test('a sidebar the parser read after a URL leaves its paragraph editable: a typo is fixed, bold applies', () => {
+        for (const [label, source, md] of files) {
+            const state = read(source, md);
+            assert.notStrictEqual(unwritableInNote(state.doc), null, `${label}: the seam fails on its own`);
+            const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'See') + 1));
+            // Compared by identity, not by `notStrictEqual`: a failure would print two whole documents.
+            assert.ok(typed.doc !== state.doc, `${label}: the letter is applied`);
+            assert.strictEqual(text(typed), source.replace('See', 'SXee'), label);
+            const word = select(state, 'See');
+            assert.strictEqual(markRefusal(word, editorSchema.marks.strong, '**'), null, `${label}: bold is not disabled`);
+            assert.strictEqual(text(run(word, toggleMarkup(editorSchema.marks.strong, '**'))), source.replace('See', '**See**'), label);
+            assert.strictEqual(wrapNodeLockReason(word, 'sidenote'), null, `${label}: a note can be made`);
+        }
+    });
+
+    test('a seam the edit makes is still refused, in a plain paragraph and beside one the file holds', () => {
+        // Deleting the space glues the sidebar to the URL.
+        const spaced = read('See http://e.com/ $note$ here.\n');
+        const sidebar = posOf(spaced.doc, 'note') - 1;
+        const glue = spaced.tr.delete(sidebar - 1, sidebar);
+        assert.strictEqual(noteRefusal(glue), SIDEBAR_GLUED_URL);
+        assert.ok(spaced.apply(glue).doc === spaced.doc, 'the filter refuses it');
+        // A second sidebar in a paragraph whose first one already fails is judged on its own.
+        const both = read('See (http://e.com)$note$ and $more$ here.\n');
+        const second = both.tr.delete(posOf(both.doc, 'and ') + 3, posOf(both.doc, 'and ') + 4);
+        assert.strictEqual(noteRefusal(second), SIDEBAR_GLUED_BEFORE);
+        assert.ok(both.apply(second).doc === both.doc, 'the filter refuses it');
+        // The closing side of a sidebar is its own seam: a digit after it is new.
+        const closed = read('See (http://e.com)$note$ here.\n');
+        const digit = closed.tr.insertText('5', posOf(closed.doc, ' here'));
+        assert.strictEqual(noteRefusal(digit), SIDEBAR_GLUED_AFTER);
+        // A letter put before a marker the file holds after a URL fails another way: the plugin's own rule, a loss the edit makes.
+        const letter = closed.tr.insertText('x', posOf(closed.doc, 'note') - 1);
+        assert.strictEqual(noteRefusal(letter), SIDEBAR_GLUED_BEFORE);
+        // A sidebar made anew is a new seam, even where the old one failed the same way.
+        const right = read('a @y@5 z.\n');
+        let at = -1;
+        right.doc.descendants((node, pos) => {
+            at = node.type.name === 'right_sidebar' ? pos : at;
+        });
+        assert.strictEqual(convertNoteRefusal(right, at), SIDEBAR_GLUED_AFTER);
+    });
+
+    test('Remove attributes and Remove image that would glue a sidebar give the filter\'s reason', () => {
+        const spanned = select(read('a [x]{.c}$y$ z.\n'), 'x');
+        const span = objectAtSelection(spanned);
+        assert.ok(span?.kind === 'span');
+        assert.strictEqual(removeSpanRefusal(spanned, span), SIDEBAR_GLUED_BEFORE);
+        const free = select(read('a [x]{.c} $y$ z.\n'), 'x');
+        const freeSpan = objectAtSelection(free);
+        assert.ok(freeSpan?.kind === 'span');
+        assert.strictEqual(removeSpanRefusal(free, freeSpan), null);
+        for (const [source, reason] of [['a![i](u.png)$y$ z.\n', SIDEBAR_GLUED_BEFORE], ['a ![i](u.png)$y$ z.\n', null]] as [string, string | null][]) {
+            const state = read(source);
+            let image = -1;
+            state.doc.descendants((node, pos) => {
+                image = node.type.name === 'image' ? pos : image;
+            });
+            const selected = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, image)));
+            const object = objectAtSelection(selected);
+            assert.ok(object?.kind === 'image', source);
+            assert.strictEqual(deleteObjectRefusal(selected, object), reason, source);
+        }
     });
 });
 

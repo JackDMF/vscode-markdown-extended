@@ -45,8 +45,8 @@ import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
-    removeLinkTransaction, removeSpanTransaction, sameObject, unwrapTransaction,
+    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
+    removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { attributesStep } from './attributes';
 import { Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
@@ -1106,12 +1106,16 @@ class ObjectToolbarView implements PluginView {
      * goes back into the text **first**: a field's commit has already removed
      * the input, and the dispatch's own refresh, seeing the focus on the body,
      * would hide the bar and re-arm the inline delay — the bar blinking out and
-     * coming back late after every change of a URL or a source.
+     * coming back late after every change of a URL or a source. The hint that
+     * it was done is said only when the state moved: a transaction a plugin's
+     * filter refused leaves the view on the very state it had (the notes
+     * filter says why instead).
      */
     private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string): void {
         this.view.focus();
-        const current = currentObject(this.view.state, object);
-        if (current !== null && make(current) && hint !== undefined) {
+        const before = this.view.state;
+        const current = currentObject(before, object);
+        if (current !== null && make(current) && this.view.state !== before && hint !== undefined) {
             this.say(`${hint} — ${undoKey()}`, 'neutral');
         }
     }
@@ -1317,7 +1321,13 @@ class ObjectToolbarView implements PluginView {
                             },
                         },
                         { id: 'open-image', label: 'Open file', title: `Open ${src} (as Ctrl+click on a link does).`, run: () => host.openLink(src) },
-                        { id: 'remove-image', label: 'Remove image', title: 'The image goes from the text.', run: () => this.remove(object, 'Image removed') },
+                        {
+                            id: 'remove-image',
+                            label: 'Remove image',
+                            title: 'The image goes from the text.',
+                            refusal: deleteObjectRefusal(view.state, object),
+                            run: () => this.remove(object, 'Image removed'),
+                        },
                     ],
                 };
             }
@@ -1342,6 +1352,7 @@ class ObjectToolbarView implements PluginView {
                             id: 'remove-attributes',
                             label: 'Remove attributes, keep text',
                             title: 'The span goes; its text stays, with its formatting.',
+                            refusal: removeSpanRefusal(view.state, object),
                             run: () => this.apply(object, current => (current.kind === 'span' ? removeSpanTransaction(view.state, current) : null), 'Attributes removed'),
                         },
                     ],

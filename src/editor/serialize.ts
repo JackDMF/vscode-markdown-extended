@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
+import type { Mappable } from 'prosemirror-transform';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
@@ -471,19 +472,32 @@ function noteUnwritable(note: Node): string | null {
  * rather than save a document the next parse restructures: a raw mark over a
  * note, text under a raw mark that holds a reference's `|` or the note's
  * marker pair, or a sidebar touching a letter, a digit or a URL that would
- * keep its marker from being read (`sidebarSeamRefusal`).
+ * keep its marker from being read (`failingSidebarSeams`).
+ *
+ * With `origin`, the edit that made `doc` is judged by what it changed: **a
+ * document the parser produced is always writable**, so a sidebar seam that
+ * fails is refused only if the edit created it — a seam that failed the
+ * same way at the same side of the same sidebar before (`seamFailedBefore`)
+ * is one the file already held, which the parser read as a sidebar and will
+ * again, and refusing it would make every edit in that paragraph impossible.
+ * What stays open: the URL check guesses where linkify stops, so an edit at
+ * such a seam that keeps it failing that way (`http://e.com,$x$` with the
+ * comma deleted) is let through, as nothing on the page can tell. Every
+ * refusal the editor asks — the notes filter, the toolbar's disabled
+ * buttons, the object bar's verbs — goes through here with the
+ * transaction's origin (`noteRefusal`).
  */
-export function unwritableInNote(doc: Node, from = 0, to = doc.content.size): string | null {
+export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin): string | null {
     let reason: string | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
-    const textblocks: Node[] = [];
-    doc.nodesBetween(start, end, node => {
+    const textblocks: { node: Node; pos: number }[] = [];
+    doc.nodesBetween(start, end, (node, pos) => {
         if (reason !== null) {
             return false;
         }
         if (node.isTextblock) {
-            textblocks.push(node);
+            textblocks.push({ node, pos });
         }
         if (NOTE_NODES.has(node.type.name)) {
             reason = noteUnwritable(node);
@@ -497,10 +511,12 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size): st
             break;
         }
         let holdsSidebar = false;
-        textblock.forEach(child => {
-            holdsSidebar = holdsSidebar || child.type.name === 'left_sidebar' || child.type.name === 'right_sidebar';
+        textblock.node.forEach(child => {
+            holdsSidebar = holdsSidebar || SIDEBAR_NODES.has(child.type.name);
         });
-        reason = holdsSidebar ? sidebarSeamRefusal(textblock) : null;
+        const created = (holdsSidebar ? failingSidebarSeams(textblock.node) : []).find(seam =>
+            origin === undefined || !seamFailedBefore(origin, doc, textblock.pos + 1 + seam.offset, seam));
+        reason = created?.reason ?? null;
     }
     return reason;
 }
@@ -587,18 +603,36 @@ function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string
     state.text(marker, false);
     renderPart(state, node, part);
     state.text(marker, false);
-    seamCollector?.seams.push({ open, close: st.out.length, marker });
+    seamCollector?.seams.push({ node, open, close: st.out.length, marker });
 }
 
 /** Where a sidebar's markers stand in the output being written: before the opening one, after the closing one. */
 interface SidebarSeam {
+    node: Node;
     open: number;
     close: number;
     marker: string;
 }
 
+/** A sidebar marker the parser would not read: the sidebar at `offset` in its textblock, at its opener or its closer. */
+interface FailingSeam {
+    offset: number;
+    side: 'open' | 'close';
+    reason: string;
+}
+
 /**
- * What `sidebarSeamRefusal` collects while it writes a textblock: where each
+ * Where an edit started: the document a transaction was applied to and how it
+ * moved positions (`Transaction.before`, `Transaction.mapping`), so that only
+ * a seam the edit made is refused (`unwritableInNote`).
+ */
+export interface EditOrigin {
+    doc: Node;
+    mapping: Mappable;
+}
+
+/**
+ * What `failingSidebarSeams` collects while it writes a textblock: where each
  * sidebar's markers stand, and the stretches of the output written as text
  * linkify can read a URL in (`readIntoUrl`).
  */
@@ -611,8 +645,13 @@ export const SIDEBAR_GLUED_AFTER = 'A left sidebar right before a digit would no
 /** Why a sidebar right after a URL is not made. */
 export const SIDEBAR_GLUED_URL = 'A sidebar right after a web address can be read as part of the address: put a space before it.';
 
-/** What ends a URL wherever it stands, for linkify-it: whitespace, a control character, and its text separators `<`, `>`, `｜`. */
-const ENDS_URL = /[\s\p{Cc}<>｜]/u;
+/**
+ * What ends a URL wherever it stands, for linkify-it: a separator (its `Z`,
+ * from uc.micro, which is `\p{Z}`), a control character (`Cc`), and its text
+ * separators `<`, `>`, `｜`. Not `\s`: that holds U+FEFF, which linkify-it
+ * reads on through.
+ */
+const ENDS_URL = /[\p{Z}\p{Cc}<>｜]/u;
 
 /**
  * Whether the marker written at `open` may be read into a bare URL before it,
@@ -645,7 +684,7 @@ function readIntoUrl(written: string, open: number, plain: readonly [number, num
 }
 
 /**
- * Why a sidebar in `textblock` would not read back as one, or `null`: the
+ * The sidebar markers in `textblock` that would not read back as one: the
  * plugin opens one only where no ASCII letter or digit stands right before
  * its marker, and a `$` closes only where no digit follows
  * (`sidebarCanOpen`, `sidebarCanClose`); and linkify may read a marker right
@@ -656,7 +695,7 @@ function readIntoUrl(written: string, open: number, plain: readonly [number, num
  * them: a character reference in a word changes what the word is (a link, an
  * abbreviation, an id someone searches for), so the edit is refused instead.
  */
-function sidebarSeamRefusal(textblock: Node): string | null {
+function failingSidebarSeams(textblock: Node): FailingSeam[] {
     const collected: { seams: SidebarSeam[]; plain: [number, number][] } = { seams: [], plain: [] };
     let written: string;
     seamCollector = collected;
@@ -665,8 +704,17 @@ function sidebarSeamRefusal(textblock: Node): string | null {
     } finally {
         seamCollector = null;
     }
+    // Sidebars are a textblock's own children (none is held in a note), written in their order.
+    const offsets: number[] = [];
+    textblock.forEach((child, offset) => {
+        if (SIDEBAR_NODES.has(child.type.name)) {
+            offsets.push(offset);
+        }
+    });
+    const failing: FailingSeam[] = [];
     const isHold = (ch: string) => ch === HOLD_OPEN || ch === HOLD_CLOSE;
-    for (const seam of collected.seams) {
+    collected.seams.forEach((seam, i) => {
+        const offset = offsets[i];
         let before = seam.open - 1;
         while (before >= 0 && isHold(written.charAt(before))) {
             before--;
@@ -676,16 +724,56 @@ function sidebarSeamRefusal(textblock: Node): string | null {
             after++;
         }
         if (before >= 0 && !sidebarCanOpen(written.charAt(before), seam.marker)) {
-            return SIDEBAR_GLUED_BEFORE;
+            failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_BEFORE });
+        } else if (readIntoUrl(written, seam.open, collected.plain)) {
+            failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_URL });
         }
         if (after < written.length && !sidebarCanClose(seam.marker, written.charAt(after))) {
-            return SIDEBAR_GLUED_AFTER;
+            failing.push({ offset, side: 'close', reason: SIDEBAR_GLUED_AFTER });
         }
-        if (readIntoUrl(written, seam.open, collected.plain)) {
-            return SIDEBAR_GLUED_URL;
-        }
+    });
+    return failing;
+}
+
+const SIDEBAR_NODES: ReadonlySet<string> = new Set(['left_sidebar', 'right_sidebar']);
+
+/**
+ * Where the sidebar at `pos` in the edit's starting document stands in the
+ * document it made, or `null` when the edit took it out or made it something
+ * else: a step that deleted across its opening or closing token, or changed
+ * its kind or its size, made a new sidebar there.
+ */
+function sidebarAfterEdit(origin: EditOrigin, doc: Node, pos: number, sidebar: Node): number | null {
+    const end = pos + sidebar.nodeSize;
+    if (origin.mapping.mapResult(pos + 1, -1).deletedAcross || origin.mapping.mapResult(end - 1, 1).deletedAcross) {
+        return null;
     }
-    return null;
+    const at = origin.mapping.map(pos, 1);
+    const now = at < doc.content.size ? doc.nodeAt(at) : null;
+    return now !== null && now.type === sidebar.type && at + now.nodeSize === origin.mapping.map(end, -1) ? at : null;
+}
+
+/**
+ * Whether `seam`, failing in `doc` at the sidebar at `pos`, failed the same
+ * way at that side of the same sidebar before the edit (`sidebarAfterEdit`).
+ * The same way: a letter or digit the edit put beside a marker the file
+ * held after a URL is a loss the edit causes — the URL check guesses where
+ * linkify stops, the letter check is the plugin's own rule.
+ */
+function seamFailedBefore(origin: EditOrigin, doc: Node, pos: number, seam: FailingSeam): boolean {
+    let failed = false;
+    origin.doc.descendants((node, start) => {
+        if (failed || !node.isTextblock) {
+            return !failed;
+        }
+        node.forEach((child, offset) => {
+            if (!failed && SIDEBAR_NODES.has(child.type.name) && sidebarAfterEdit(origin, doc, start + 1 + offset, child) === pos) {
+                failed = failingSidebarSeams(node).some(old => old.offset === offset && old.side === seam.side && old.reason === seam.reason);
+            }
+        });
+        return false;
+    });
+    return failed;
 }
 
 /**

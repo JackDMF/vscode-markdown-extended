@@ -323,13 +323,15 @@ const HISTORY_META = 'history$';
 
 /**
  * Why the transaction must not be applied: it leaves a note in the range it
- * changed that the serializer cannot write back (`unwritableInNote`). A
+ * changed that the serializer cannot write back (`unwritableInNote`), judged
+ * against the document the transaction started from: a sidebar seam the file
+ * already held is never refused, only one the transaction created. A
  * re-sync from the host and an undo are never refused; each puts back a
  * document that was written or allowed.
  */
 export function noteRefusal(tr: Transaction): string | null {
     const range = refusableRange(tr);
-    return range === null ? null : unwritableInNote(tr.doc, range.from, range.to);
+    return range === null ? null : unwritableInNote(tr.doc, range.from, range.to, { doc: tr.before, mapping: tr.mapping });
 }
 
 /**
@@ -495,7 +497,7 @@ export function wrapNodeLockReason(state: EditorState, name?: NoteNodeName): str
         return NESTED_NOTE_LOCK;
     }
     const tr = name === undefined ? null : wrapTransaction(state, name);
-    return tr === null ? null : unwritableInNote(tr.doc, tr.selection.from, tr.selection.to);
+    return tr === null ? null : noteRefusal(tr);
 }
 
 /** Whether the selection is inside a note of this kind. */
