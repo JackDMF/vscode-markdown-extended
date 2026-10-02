@@ -24,9 +24,10 @@ import { RAW_TEXT_MARKS } from '../serialize';
  * set by any Visual Editor, before a restart or after). A paste as plain text
  * (Ctrl+Shift+V) brings only the text, and there a copy is the editor's own
  * when its text is the text of the last copy made in this webview. Two limits
- * follow: a plain paste of a copy made in another document's Visual Editor
- * converts like outside text, and outside text that is the same as this
- * webview's last copy is taken as that copy on a plain paste.
+ * follow: a plain paste of a copy made in any other Visual Editor page
+ * (another document's, or this document's before it was reopened) converts
+ * like outside text, and outside text that is the same as this webview's last
+ * copy is taken as that copy on a plain paste.
  */
 const EMBED_SOURCE = `${escapeRegExp(WIKI_EMBED_MARKERS.open)}[^[\\]\\n\\ufffc]+${escapeRegExp(WIKI_EMBED_MARKERS.close)}`;
 const EMBED = new RegExp(EMBED_SOURCE, 'g');
@@ -166,8 +167,108 @@ export function runWikiEmbedInput(plugin: Plugin, view: EditorView, from: number
 /** The attribute every top-level element of this editor's copied HTML carries. */
 export const OWN_COPY = 'data-mep-copy';
 
-/** An HTML element carrying `OWN_COPY`: text content cannot hold a `<`, so the match is a tag's. */
-const OWN_COPY_TAG = new RegExp(`<[^>]*\\s${OWN_COPY}[\\s=/>]`);
+const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+/** Elements whose content is text, up to their own end tag: a `<` in it opens nothing. */
+const RAW_TEXT_ELEMENTS = new Set(['script', 'style', 'textarea', 'title']);
+/** Elements of the page around a fragment, which are no part of it. */
+const OUTSIDE_FRAGMENT = new Set(['meta', 'link', 'base', 'script', 'style', 'title']);
+/**
+ * Elements a clipboard puts around a fragment, and so looks through while
+ * they carry no marker: a document's (Windows' CF_HTML) and the table
+ * ProseMirror wraps a copied cell or row in, so it parses outside a table.
+ */
+const WRAPPERS = new Set(['html', 'head', 'body', 'table', 'tbody', 'tr']);
+
+/** The top-level elements of a fragment of HTML, whether each carries `OWN_COPY`, or `null` where its tags do not close. */
+function topLevelMarks(html: string): boolean[] | null {
+    const marks: boolean[] = [];
+    const open: { name: string; wrapper: boolean }[] = [];
+    const topLevel = () => open.every(e => e.wrapper);
+    /** Where `pattern` ends in the HTML from `from`, or its end. */
+    const endOf = (pattern: RegExp, from: number): number => {
+        pattern.lastIndex = from;
+        const found = pattern.exec(html);
+        return found === null ? html.length : found.index + found[0].length;
+    };
+    const endTag = /<\/([^\s/>]+)[^>]*(?:>|$)/y;
+    const startTag = /<([^\s/>]+)/y;
+    // An attribute: its name, and a value that is quoted or runs to a space or the tag's end.
+    const attribute = /[\s/]*(?:([^\s/>=]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))?)?/y;
+    let i = 0;
+    while (i < html.length) {
+        const next = html.indexOf('<', i);
+        // Text outside every element is no copy of ours.
+        if (/\S/.test(html.slice(i, next < 0 ? html.length : next)) && topLevel()) {
+            marks.push(false);
+        }
+        if (next < 0) {
+            break;
+        }
+        i = next;
+        const after = html[i + 1] ?? '';
+        if (html.startsWith('<!--', i)) {
+            i = endOf(/-->/g, i + 4);
+        } else if (after === '!' || after === '?') {
+            i = endOf(/>/g, i + 2);
+        } else if (after === '/' && /[a-z]/i.test(html[i + 2] ?? '')) {
+            endTag.lastIndex = i;
+            const end = endTag.exec(html) as RegExpExecArray;
+            const index = open.map(e => e.name).lastIndexOf(end[1].toLowerCase());
+            if (index >= 0) {
+                open.length = index;
+            }
+            i += end[0].length;
+        } else if (/[a-z]/i.test(after)) {
+            startTag.lastIndex = i;
+            const tag = startTag.exec(html) as RegExpExecArray;
+            const name = tag[1].toLowerCase();
+            const attributes = new Set<string>();
+            i += tag[0].length;
+            while (i < html.length && html[i] !== '>') {
+                attribute.lastIndex = i;
+                const found = attribute.exec(html) as RegExpExecArray;
+                if (found[1] !== undefined) {
+                    attributes.add(found[1].toLowerCase());
+                }
+                i += found[0].length;
+                // A character no attribute starts with.
+                if (found[0] === '' && html[i] !== '>') {
+                    i++;
+                }
+            }
+            i++;
+            const marked = attributes.has(OWN_COPY);
+            if (topLevel() && (marked || !(WRAPPERS.has(name) || OUTSIDE_FRAGMENT.has(name)))) {
+                marks.push(marked);
+            }
+            if (RAW_TEXT_ELEMENTS.has(name)) {
+                i = endOf(new RegExp(`</${name}[\\s/>][^>]*>`, 'gi'), i);
+            } else if (!VOID_ELEMENTS.has(name)) {
+                open.push({ name, wrapper: WRAPPERS.has(name) && !marked });
+            }
+        } else {
+            // A `<` that opens nothing is text.
+            if (topLevel()) {
+                marks.push(false);
+            }
+            i++;
+        }
+    }
+    return open.some(e => !e.wrapper) ? null : marks;
+}
+
+/**
+ * Whether HTML from the clipboard is a copy of this editor's: it has an
+ * element, and every top-level element of it carries `OWN_COPY`. The HTML is
+ * read as HTML is — the marker's name in a comment, in an attribute's value or
+ * in text is no marker, and an attribute's name is the same in any case. A
+ * fragment mixing marked and unmarked elements is not our own copy, so what
+ * came from outside in it is not left as literal text.
+ */
+export function isOwnCopyHtml(html: string): boolean {
+    const marks = topLevelMarks(html);
+    return marks !== null && marks.length > 0 && marks.every(m => m);
+}
 
 /** The schema's serializer, with `OWN_COPY` set on each top-level element of what it serializes. */
 class OwnCopySerializer extends DOMSerializer {
@@ -191,8 +292,8 @@ class OwnCopySerializer extends DOMSerializer {
  * or plain text — has the embeds in its text made atoms, each with its text's
  * marks, as ProseMirror's own reading gives them. A paste of this editor's own
  * copy keeps what it carried: its atoms are atoms and its literal text stays
- * literal. As HTML a copy is the editor's own when it carries `OWN_COPY`
- * (`clipboardSerializer`); as plain text (Ctrl+Shift+V, which brings only
+ * literal. As HTML a copy is the editor's own when every top-level element of
+ * it carries `OWN_COPY` (`clipboardSerializer`, `isOwnCopyHtml`); as plain text (Ctrl+Shift+V, which brings only
  * `text/plain`), when its text is the text of the last copy or cut made here
  * (`clipboardTextSerializer` during a `copy` or `cut` event — a drag
  * serializes too, and is no copy). A drop is no paste: the decision belongs to
@@ -241,7 +342,7 @@ export function wikiEmbedPastePlugin(enabled: () => boolean): Plugin {
                 },
             },
             transformPastedHTML(html) {
-                ownHtml = pasting && OWN_COPY_TAG.test(html);
+                ownHtml = pasting && isOwnCopyHtml(html);
                 return html;
             },
             transformPasted(slice, view, asText) {

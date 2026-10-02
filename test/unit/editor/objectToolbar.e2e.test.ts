@@ -344,6 +344,19 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'An ![[a_b.png]] here.\n');
     });
 
+    /** ProseMirror's selection read from the DOM's now, not when the browser gets to its `selectionchange`. */
+    const selectionRead = () => page.evaluate(() => new Promise(resolve => {
+        document.dispatchEvent(new Event('selectionchange'));
+        requestAnimationFrame(() => resolve(null));
+    }));
+
+    /** A real click before `needle`'s character `index`, returned once the editor has read the caret it put there: a paste or a key before that goes to the old selection. */
+    const clickBeforeRead = async (needle: string, index = 0) => {
+        await clickBefore(needle, index);
+        await page.waitForFunction(() => document.getSelection()?.isCollapsed === true, { timeout: 2000 });
+        await selectionRead();
+    };
+
     const pasteText = (text: string) => page.evaluate(t => {
         const data = new DataTransfer();
         data.setData('text/plain', t);
@@ -353,11 +366,11 @@ suite('Editor object toolbar (e2e)', () => {
     test('text pasted with ![[name]] in it, into a paragraph or a note, holds an embed atom and is saved as written', async function () {
         this.timeout(15000);
         await showDocument('An here.\n\nAlpha ++beta|the body++ gamma.\n', 'An');
-        await clickBefore('here', 0);
+        await clickBeforeRead('here', 0);
         await pasteText('see ![[x]] ');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An see ![[x]] here.\n\nAlpha ++beta|the body++ gamma.\n');
-        await clickBefore('body', 0);
+        await clickBeforeRead('body', 0);
         await pasteText('see ![[y]] ');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An see ![[x]] here.\n\nAlpha ++beta|the see ![[y]] body++ gamma.\n');
@@ -367,11 +380,6 @@ suite('Editor object toolbar (e2e)', () => {
     test('a paste of the editor\'s own copy keeps what it carried — literal text, atoms — through the clipboard, as plain text too, a drag between; HTML from elsewhere converts', async function () {
         this.timeout(20000);
         const source = 'Lit !\\[\\[x\\]\\] ![[a]] here.\n';
-        /** ProseMirror's selection read from the DOM's now, not when the browser gets to its `selectionchange`. */
-        const selectionRead = () => page.evaluate(() => new Promise(resolve => {
-            document.dispatchEvent(new Event('selectionchange'));
-            requestAnimationFrame(() => resolve(null));
-        }));
         /** Ctrl+`key`, or Ctrl+Shift+`key`, as typed: the browser's own copy and paste, through its clipboard. */
         const pressCtrl = async (key: puppeteer.KeyInput, shift = false) => {
             await page.keyboard.down('Control');
@@ -416,9 +424,7 @@ suite('Editor object toolbar (e2e)', () => {
             }, await pointAt('here', 1));
             assert.strictEqual(dragged, 'here', 'the drag serialized its text');
             await delay(100);
-            await clickBefore('here', 0);
-            await page.waitForFunction(() => document.getSelection()?.isCollapsed === true, { timeout: 2000 });
-            await selectionRead();
+            await clickBeforeRead('here', 0);
             // Ctrl+V, or Ctrl+Shift+V, which brings the text alone.
             await pressCtrl('KeyV', plain);
             await settle();
