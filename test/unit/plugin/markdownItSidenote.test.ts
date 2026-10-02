@@ -214,7 +214,7 @@ suite('Sidebars: the closing marker is found by the inline parser, and the openi
         assert.strictEqual(inline('[[$see [x]{.c} here$]]'), '<kbd><span class="left-sidebar">see <span class="c">x</span> here</span></kbd>');
     });
 
-    test('many markers without a closer: four times the text takes well under sixteen times as long', () => {
+    test('many markers without a closer: four times the text grows the time about as text without markers does', () => {
         // The plugin alone: the whole registry grows faster than linearly on such text without it.
         const alone = new MarkdownIt({ html: true, linkify: true });
         alone.use(sidenotePlugin);
@@ -227,11 +227,24 @@ suite('Sidebars: the closing marker is found by the inline parser, and the openi
             }
             return best;
         };
+        // A slow machine slows both sizes alike; what is asserted is the growth, against this run's own
+        // growth on text of the same length without markers, with room for noise (quadratic would be 16).
+        const growth = (unit: string) => fastest(unit.repeat(2000) + '`$@`') / Math.max(fastest(unit.repeat(500) + '`$@`'), 0.5);
         for (const unit of ['$a @a ', '$x @y ', '[$a ']) {
-            const small = fastest(unit.repeat(500) + '`$@`');
-            const large = fastest(unit.repeat(2000) + '`$@`');
-            assert.ok(large < Math.max(small, 1) * 10, `${unit}: ${small.toFixed(1)} ms for 500, ${large.toFixed(1)} ms for 2000`);
+            const baseline = growth('x'.repeat(unit.length - 1) + ' ');
+            const measured = growth(unit);
+            assert.ok(measured < 3 * Math.max(baseline, 4), `${unit}: grew ${measured.toFixed(1)}× for four times the text; text without markers grew ${baseline.toFixed(1)}×`);
         }
+    });
+
+    test('bracketed spans nested in sidebars are not tokenized during every look-ahead', () => {
+        const text = '$['.repeat(48) + 'a' + ']{.c}$'.repeat(48);
+        md.render(text);
+        const started = process.hrtime.bigint();
+        md.render(text);
+        const took = Number(process.hrtime.bigint() - started) / 1e6;
+        // About 8 ms; 340 ms when every look-ahead let markdown-it-bracketed-spans tokenize.
+        assert.ok(took < 150, `${took.toFixed(0)} ms`);
     });
 
     test('a URL in a sidebar ends at the sidebar\'s closing marker, as it always did, wherever the sidebar stands', () => {

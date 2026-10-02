@@ -297,7 +297,7 @@ export function convertNoteTransaction(state: EditorState, pos: number): Transac
 
 /**
  * Why the note at `pos` cannot be converted, or `null`: its counterpart could
- * not be written back (`noteRefusal` — a right sidebar's code holding `@`, say),
+ * not be written back (`noteRefusal` — a right sidebar's superscript holding `@`, say),
  * which the notes plugin would refuse anyway.
  */
 export function convertNoteRefusal(state: EditorState, pos: number): string | null {

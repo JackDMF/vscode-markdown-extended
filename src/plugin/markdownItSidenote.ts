@@ -151,7 +151,7 @@ interface MarkdownItState {
     src: string;
     /** Current position in source */
     pos: number;
-    /** Maximum position (source length) */
+    /** Where the text being read ends (the source's length, or a construct's end while its content is read) */
     posMax: number;
     /** Markdown-it instance for recursive parsing */
     md: MarkdownIt;
@@ -468,7 +468,7 @@ function inlineParser(state: MarkdownItState): InlineParser {
 
 /** What markdown-it-footnote keeps in the environment. */
 interface FootnoteEnv {
-    footnotes?: { refs?: Record<string, number>; list?: { count?: number }[] };
+    footnotes?: { refs?: Record<string, number>; list?: { label?: string; count?: number }[] };
 }
 
 /** What a rule may leave in the inline state or the environment, to be put back after a look-ahead. */
@@ -486,9 +486,10 @@ interface SavedInline {
     backticks: Record<number, number>;
     backticksScanned: boolean;
     footnotes: FootnoteEnv['footnotes'];
-    footnoteRefs?: Record<string, number>;
-    footnoteList?: { count?: number }[];
-    footnoteCounts?: (number | undefined)[];
+    hadRefs: boolean;
+    /** How many footnotes were listed, and their counts; -1 when there was no list. */
+    footnoteListLength: number;
+    footnoteCounts: (number | undefined)[];
 }
 
 function saveInline(state: MarkdownItState): SavedInline {
@@ -507,9 +508,10 @@ function saveInline(state: MarkdownItState): SavedInline {
         backticks: { ...state.backticks },
         backticksScanned: state.backticksScanned,
         footnotes,
-        footnoteRefs: footnotes?.refs ? { ...footnotes.refs } : undefined,
-        footnoteList: footnotes?.list ? footnotes.list.slice() : undefined,
-        footnoteCounts: footnotes?.list?.map(item => item?.count),
+        hadRefs: footnotes?.refs !== undefined,
+        // Not the definitions: a look-ahead only lists footnotes and counts references.
+        footnoteListLength: footnotes?.list ? footnotes.list.length : -1,
+        footnoteCounts: footnotes?.list ? footnotes.list.map(item => item?.count) : [],
     };
 }
 
@@ -535,22 +537,29 @@ function restoreInline(state: MarkdownItState, saved: SavedInline): void {
         delete env.footnotes;
         return;
     }
-    env.footnotes = saved.footnotes;
-    if (saved.footnoteRefs === undefined) {
-        delete saved.footnotes.refs;
-    } else {
-        saved.footnotes.refs = saved.footnoteRefs;
+    const footnotes = saved.footnotes;
+    env.footnotes = footnotes;
+    const list = footnotes.list ?? [];
+    // A footnote listed since: a reference to a definition made it the definition's id, which was -1 before.
+    for (let i = Math.max(saved.footnoteListLength, 0); i < list.length; i++) {
+        const label = list[i]?.label;
+        if (label !== undefined && footnotes.refs !== undefined && footnotes.refs[`:${label}`] === i) {
+            footnotes.refs[`:${label}`] = -1;
+        }
     }
-    if (saved.footnoteList === undefined) {
-        delete saved.footnotes.list;
-    } else {
-        saved.footnoteList.forEach((item, i) => {
-            if (item) {
-                item.count = saved.footnoteCounts?.[i];
-            }
-        });
-        saved.footnotes.list = saved.footnoteList;
+    if (!saved.hadRefs) {
+        delete footnotes.refs;
     }
+    if (saved.footnoteListLength === -1) {
+        delete footnotes.list;
+        return;
+    }
+    list.length = saved.footnoteListLength;
+    saved.footnoteCounts.forEach((count, i) => {
+        if (list[i]) {
+            list[i].count = count;
+        }
+    });
 }
 
 /** The caches the look-ahead keeps per state and per end of text, apart from the inline parser's own. */
@@ -612,9 +621,10 @@ function bareUrlEnd(state: MarkdownItState, textStart: number, pos: number, max:
  * a character reference closes nothing. A marker of the sidebar's own kind
  * that does not close is passed over, so the first one that closes
  * (`sidebarCanClose`) is the end; a sidebar of the other kind is skipped
- * whole. A bare URL is no construct here (linkify is off while looking, as
- * inside a link), so a URL in a sidebar ends at the sidebar's closing marker,
- * as the content is then read.
+ * whole. A bare URL is read as linkify will read it in the content
+ * (`bareUrlEnd`, with linkify itself off while looking): up to the first
+ * closing marker in it, so a URL in a sidebar ends at the sidebar's end, and
+ * a marker of the other kind in it opens nothing.
  *
  * The look-ahead keeps its own cache per end of text (`scanCache`): what it
  * learns with linkify off and at this `posMax` is not what the inline parser
@@ -640,6 +650,10 @@ function findSidebarClose(state: MarkdownItState, start: number, code: number): 
     }
 
     const saved = saveInline(state);
+    // As before the content (see `sidebarTokenizer`): a last token at this
+    // level keeps markdown-it-bracketed-spans from tokenizing during each
+    // look-ahead. The rollback removes it.
+    state.push('text', '', 0).content = '';
     const cache = state.cache;
     // Linkify does not run while looking (as inside a link): its URL is read here, bounded (`bareUrlEnd`).
     const urlAware = Boolean((state.md as unknown as { options: { linkify?: boolean } }).options.linkify) && state.linkLevel === 0;
@@ -874,8 +888,10 @@ function createNoteTokens(state: MarkdownItState, text: string, note: string, co
 /**
  * Process text with inline markdown support.
  * 
- * This function recursively parses markdown within note/sidebar content,
- * enabling features like **bold**, *italic*, `code`, [links](url), etc.
+ * This function recursively parses markdown within a note's reference and
+ * body (a sidebar's content is tokenized in place instead, see
+ * `sidebarTokenizer`), enabling features like **bold**, *italic*, `code`,
+ * [links](url), etc.
  * 
  * **Recursion Protection:**
  * - Uses WeakMap-based depth tracking (thread-safe, no memory leaks)

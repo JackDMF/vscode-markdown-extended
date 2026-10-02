@@ -40,8 +40,6 @@ interface StateInternals {
     noteMarker?: string;
     /** Whether a table cell is being written (`writeTable`); this module's own field. */
     inTableCell?: boolean;
-    /** Where the output ended right after a sidebar's closing marker, and that marker (`writeSidebar`); this module's own field. */
-    sidebarEnd?: { at: number; marker: string };
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
     flushClose(size?: number): void;
 }
@@ -74,8 +72,9 @@ function breakMarkerRuns(text: string, ch: string | undefined, replace: (ch: str
  * character is percent-encoded or a character reference (`breakMarkerRuns`),
  * and a bare or angle link holding it is written inline. Text under the
  * raw marks — code, and the terminator under sup and sub — has no escape at
- * all; the editor refuses to make it (`unwritableInNote`) — in a sidebar too,
- * although the sidebar rule skips a code span whole.
+ * all; the editor refuses to make it (`unwritableInNote`). In a sidebar only
+ * superscript and subscript are refused: the sidebar rule skips a code span
+ * whole.
  */
 type NotePart = 'ref' | 'body' | 'left' | 'right';
 
@@ -344,16 +343,8 @@ type NodeSerializers = ConstructorParameters<typeof MarkdownSerializer>[0];
 /** The inline node serializers, shared by the block serializer and the inline-only one. */
 const inlineNodes: NodeSerializers = {
     text(state, node) {
-        let text = (node.text ?? '').replace(HOLD_RE, '');
+        const text = (node.text ?? '').replace(HOLD_RE, '');
         const st = internals(state);
-        const sidebarEnd = st.sidebarEnd;
-        st.sidebarEnd = undefined;
-        // Written right after a sidebar's closing marker, a character it must not touch is a character reference.
-        if (sidebarEnd !== undefined && sidebarEnd.at === st.out.length && !st.inAutolink && text !== ''
-            && !sidebarCanClose(sidebarEnd.marker, text.charAt(0))) {
-            state.text(`&#${text.charCodeAt(0)};`, false);
-            text = text.slice(1);
-        }
         if (st.notePart === undefined || st.inAutolink) {
             state.text(text, !st.inAutolink);
             return;
@@ -437,24 +428,38 @@ function noteUnwritable(note: Node): string | null {
         parts.push(child);
     });
     for (const part of marker === null ? [note] : parts) {
-        const terminator = TERMINATOR_OF_PART[part.type.name] ?? null;
         let reason: string | null = null;
-        part.forEach(child => {
-            if (reason !== null || !child.isText) {
-                return;
-            }
-            const text = child.text ?? '';
-            const code = child.marks.some(m => m.type.name === 'code');
-            const raw = code || child.marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
-            const span = child.marks.find(m => m.type.name === 'attr_span' && NOTE_SYNTAX_CHARS.test(m.attrs.literal as string));
-            if (span !== undefined) {
-                reason = `An attribute span in a note cannot hold ${span.attrs.literal as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
-            } else if (raw && terminator !== null && text.includes(terminator)) {
-                reason = `Inline code, superscript and subscript in this part of a note cannot hold "${terminator}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
-            } else if (code && marker !== null && text.includes(marker)) {
-                reason = `Inline code in a note cannot hold "${marker}": the notes plugin reads it as the note's end, and nothing escapes it there.`;
-            }
-        });
+        // Descend: whatever stands in a part — a sidebar in a note's body
+        // too — is inside the note, and inside each part around it.
+        const check = (container: Node, terminators: readonly { ch: string; sidebar: boolean }[]) => {
+            container.forEach(child => {
+                if (reason !== null) {
+                    return;
+                }
+                if (!child.isText) {
+                    const own = TERMINATOR_OF_PART[child.type.name];
+                    check(child, own === undefined ? terminators : [...terminators, { ch: own, sidebar: child.type.name !== 'note_ref' }]);
+                    return;
+                }
+                const text = child.text ?? '';
+                const code = child.marks.some(m => m.type.name === 'code');
+                const supOrSub = child.marks.some(m => m.type.name !== 'code' && RAW_TEXT_MARKS.has(m.type.name));
+                const span = child.marks.find(m => m.type.name === 'attr_span' && NOTE_SYNTAX_CHARS.test(m.attrs.literal as string));
+                // A sidebar's end is found by the inline parser, which skips a code span whole and reads superscript and subscript character by character.
+                const held = terminators.find(term => text.includes(term.ch) && (supOrSub || (code && !term.sidebar)));
+                if (span !== undefined) {
+                    reason = `An attribute span in a note cannot hold ${span.attrs.literal as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+                } else if (held !== undefined) {
+                    reason = held.sidebar
+                        ? `Superscript and subscript in a sidebar cannot hold "${held.ch}": the sidebar rule reads it as the sidebar's end, and no character reference is read there.`
+                        : `Inline code, superscript and subscript in this part of a note cannot hold "${held.ch}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
+                } else if (code && marker !== null && text.includes(marker)) {
+                    reason = `Inline code in a note cannot hold "${marker}": the notes plugin reads it as the note's end, and nothing escapes it there.`;
+                }
+            });
+        };
+        const own = TERMINATOR_OF_PART[part.type.name];
+        check(part, own === undefined ? [] : [{ ch: own, sidebar: part.type.name !== 'note_ref' }]);
         if (reason !== null) {
             return reason;
         }
@@ -467,16 +472,21 @@ function noteUnwritable(note: Node): string | null {
  * reads back as itself, or `null` — the one thing the serializer cannot do,
  * so the editor refuses the edit that would make it (`webview/notes.ts`)
  * rather than save a document the next parse restructures: a raw mark over a
- * note, or text under a raw mark that holds the part's terminator or the
- * note's marker pair.
+ * note, text under a raw mark that holds the part's terminator or the note's
+ * marker pair, or a sidebar touching a letter or digit that would keep its
+ * marker from being read (`sidebarSeamRefusal`).
  */
 export function unwritableInNote(doc: Node, from = 0, to = doc.content.size): string | null {
     let reason: string | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
+    const textblocks: Node[] = [];
     doc.nodesBetween(start, end, node => {
         if (reason !== null) {
             return false;
+        }
+        if (node.isTextblock) {
+            textblocks.push(node);
         }
         if (NOTE_NODES.has(node.type.name)) {
             reason = noteUnwritable(node);
@@ -484,6 +494,17 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size): st
         }
         return true;
     });
+    // A sidebar's markers depend on what touches them, which an edit beside the sidebar changes.
+    for (const textblock of textblocks) {
+        if (reason !== null) {
+            break;
+        }
+        let holdsSidebar = false;
+        textblock.forEach(child => {
+            holdsSidebar = holdsSidebar || child.type.name === 'left_sidebar' || child.type.name === 'right_sidebar';
+        });
+        reason = holdsSidebar ? sidebarSeamRefusal(textblock) : null;
+    }
     return reason;
 }
 
@@ -564,22 +585,67 @@ function writeNote(state: MarkdownSerializerState, node: Node, marker: string): 
  */
 function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string, part: NotePart): void {
     const st = internals(state);
-    // The plugin opens a sidebar only where no ASCII letter or digit stands
-    // before the marker, and a `$` closes only where no digit follows
-    // (`sidebarCanOpen`, `sidebarCanClose`). The character written right
-    // before the marker, or right after the closing one, is read off the
-    // output; where it would stop the marker, it is written as a character
-    // reference. Only text ends the output with a letter or digit: what is
-    // written as it is (code, a bare URL, a key, …) ends in a hold marker.
     state.write();
-    const last = st.out.slice(-1);
-    if (last !== '' && !sidebarCanOpen(last, marker)) {
-        st.out = `${st.out.slice(0, -1)}&#${last.charCodeAt(0)};`;
-    }
+    const open = st.out.length;
     state.text(marker, false);
     renderPart(state, node, part);
     state.text(marker, false);
-    st.sidebarEnd = { at: st.out.length, marker };
+    seamCollector?.push({ open, close: st.out.length, marker });
+}
+
+/** Where a sidebar's markers stand in the output being written: before the opening one, after the closing one. */
+interface SidebarSeam {
+    open: number;
+    close: number;
+    marker: string;
+}
+
+/** The sidebars `sidebarSeamRefusal` is collecting, while it writes a textblock. */
+let seamCollector: SidebarSeam[] | null = null;
+
+/** Why a sidebar right after a letter or digit is not made. */
+export const SIDEBAR_GLUED_BEFORE = 'A sidebar right after a letter or digit would not be read as a sidebar: put a space before it.';
+/** Why a left sidebar right before a digit is not made. */
+export const SIDEBAR_GLUED_AFTER = 'A left sidebar right before a digit would not be read as a sidebar: put a space after it.';
+
+/**
+ * Why a sidebar in `textblock` would not read back as one, or `null`: the
+ * plugin opens one only where no ASCII letter or digit stands right before
+ * its marker, and a `$` closes only where no digit follows
+ * (`sidebarCanOpen`, `sidebarCanClose`). The characters are read off the
+ * textblock as it is written — a mark without a delimiter or a badge writes
+ * nothing between, a bare URL or an email address writes its own text — with
+ * the wrapper's hold markers skipped. Nothing is written to escape them: a
+ * character reference in a word changes what the word is (a link, an
+ * abbreviation, an id someone searches for), so the edit is refused instead.
+ */
+function sidebarSeamRefusal(textblock: Node): string | null {
+    const seams: SidebarSeam[] = [];
+    let written: string;
+    seamCollector = seams;
+    try {
+        written = inlineMarkdown(textblock, false);
+    } finally {
+        seamCollector = null;
+    }
+    const isHold = (ch: string) => ch === HOLD_OPEN || ch === HOLD_CLOSE;
+    for (const seam of seams) {
+        let before = seam.open - 1;
+        while (before >= 0 && isHold(written.charAt(before))) {
+            before--;
+        }
+        let after = seam.close;
+        while (after < written.length && isHold(written.charAt(after))) {
+            after++;
+        }
+        if (before >= 0 && !sidebarCanOpen(written.charAt(before), seam.marker)) {
+            return SIDEBAR_GLUED_BEFORE;
+        }
+        if (after < written.length && !sidebarCanClose(seam.marker, written.charAt(after))) {
+            return SIDEBAR_GLUED_AFTER;
+        }
+    }
+    return null;
 }
 
 /**

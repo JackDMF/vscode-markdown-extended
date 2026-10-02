@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
+import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, unwritableInNote } from '../../../src/editor/serialize';
 import { drawInline } from './fakeDom';
 import { hostEngine, topChildren, touched } from './helpers';
 
@@ -206,27 +207,46 @@ suite('Editor inline constructs: written back by rule', () => {
         assert.strictEqual(assertRoundTrip([left, t(' and '), right, t(' $ @')]), '$costs &#36;5$ and @ mail a&#64;b.c @ \\$ \\@\n');
     });
 
-    test('a letter before a sidebar and a digit after a left one are character references, so the markers are still read', () => {
-        const left = (s: string) => schema.nodes.left_sidebar.create(null, [t(s)]);
-        const right = (s: string) => schema.nodes.right_sidebar.create(null, [t(s)]);
-        assert.strictEqual(assertRoundTrip([t('x '), left('a'), t('b'), left('c')]), 'x $a$&#98;$c$\n');
-        assert.strictEqual(assertRoundTrip([t('x'), left('y'), t('5 and z'), right('r'), t('2')]), '&#120;$y$&#53; and &#122;@r@2\n');
-        assert.strictEqual(assertRoundTrip([t('a '), right('note'), t('x')]), 'a @note@x\n', 'a letter after a closer needs none');
-        assert.strictEqual(assertRoundTrip([t('这是'), left('侧边栏'), t('的')]), '这是$侧边栏$的\n', 'nor CJK text');
-        // What touches the marker is read off the output: a mark with no delimiter, or an atom that writes nothing, stands between no characters.
-        const sidebarsOf = (text: string) => {
-            const found: string[] = [];
-            topChildren(parseDocument(md, text).doc)[0].forEach(child => found.push(child.type.name));
-            return found.filter(name => name.endsWith('_sidebar'));
-        };
+    test('a sidebar touching a letter before it, or a left one a digit after it, is refused; the text is never rewritten', () => {
+        const left = (...c: Node[]) => schema.nodes.left_sidebar.create(null, c);
+        const right = (...c: Node[]) => schema.nodes.right_sidebar.create(null, c);
+        const refusal = (content: Node[]) => unwritableInNote(schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, content)]));
+        assert.strictEqual(refusal([t('x '), left(t('a')), t('b'), left(t('c'))]), SIDEBAR_GLUED_BEFORE);
+        assert.strictEqual(refusal([t('x'), left(t('y')), t(' z')]), SIDEBAR_GLUED_BEFORE);
+        assert.strictEqual(refusal([t('x '), left(t('y')), t('5 and z')]), SIDEBAR_GLUED_AFTER);
+        // Read off the output: a mark that writes no delimiter or a badge that writes nothing stands between no characters.
         const ref = schema.marks.req_ref.create({});
-        const reference = written([t('see '), t('REQ-1', ref), left('y'), t(' z')]);
-        assert.strictEqual(reference, 'see REQ-&#49;$y$ z\n');
-        assert.deepStrictEqual(sidebarsOf(reference), ['left_sidebar']);
+        assert.strictEqual(refusal([t('see '), t('FRS-RXE-040', ref), left(t('y')), t(' z')]), SIDEBAR_GLUED_BEFORE);
         const badge = schema.nodes.inline_atom.create({ html: '<b>B</b>' });
-        const badged = written([t('see x'), badge, left('y'), badge, t('5 z')]);
-        assert.strictEqual(badged, 'see &#120;$y$&#53; z\n');
-        assert.deepStrictEqual(sidebarsOf(badged), ['left_sidebar']);
+        assert.strictEqual(refusal([t('see x'), badge, left(t('y')), t(' z')]), SIDEBAR_GLUED_BEFORE);
+        assert.strictEqual(refusal([t('see '), left(t('y')), badge, t('5 z')]), SIDEBAR_GLUED_AFTER);
+        // A bare URL writes its own text: one ending in a letter, or starting with a digit after a left sidebar.
+        const bare = (s: string) => schema.text(s, [schema.marks.link.create({ href: `http://${s}`, markup: 'linkify' })]);
+        assert.strictEqual(refusal([t('visit '), bare('example.com'), left(t('y')), t(' z')]), SIDEBAR_GLUED_BEFORE);
+        assert.strictEqual(refusal([t('see '), left(t('y')), bare('1.example.com'), t(' z')]), SIDEBAR_GLUED_AFTER);
+        // What the plugin reads as a sidebar is written as one.
+        assert.strictEqual(refusal([t('a '), right(t('note')), t('x')]), null, 'a letter after a closer stops nothing');
+        assert.strictEqual(assertRoundTrip([t('a '), right(t('note')), t('x')]), 'a @note@x\n');
+        assert.strictEqual(refusal([t('这是'), left(t('侧边栏')), t('的')]), null, 'nor CJK text');
+        assert.strictEqual(assertRoundTrip([t('这是'), left(t('侧边栏')), t('的')]), '这是$侧边栏$的\n');
+        assert.strictEqual(refusal([t('x '), t('word', schema.marks.em.create()), left(t('y')), t(' z')]), null, 'a delimiter between is no letter');
+        assert.strictEqual(refusal([t('x '), right(t('y')), t('5 z')]), null, 'an @ closes before a digit');
+    });
+
+    test('code in a sidebar may hold the sidebar\'s marker: the sidebar rule skips a code span whole', () => {
+        const code = schema.marks.code.create();
+        const left = (...c: Node[]) => schema.nodes.left_sidebar.create(null, c);
+        const right = (...c: Node[]) => schema.nodes.right_sidebar.create(null, c);
+        for (const held of ['a$b', '$', 'x $ y', '$$', '$5']) {
+            const content = [t('x '), left(t(held, code)), t(' y')];
+            assert.strictEqual(unwritableInNote(schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, content)])), null, held);
+            assertRoundTrip(content);
+        }
+        assertRoundTrip([t('x '), right(t('see '), t('a@b', code)), t(' y')]);
+        // Superscript and subscript are read character by character: still refused.
+        const sup = schema.marks.sup.create();
+        const raised = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [t('x '), left(t('a$b', sup)), t(' y')])]);
+        assert.ok(unwritableInNote(raised)?.includes('"$"'));
     });
 
     test('an email address before code holding an @ is text and code, and is written back so', () => {

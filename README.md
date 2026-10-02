@@ -832,8 +832,9 @@ rather than a second heading, so the id and the anchor are never written twice.
 - **Some characters cannot be in inline code inside a note.** The notes plugin finds a
   note's end and its `|` before anything else is read, and a code span has no escapes: so
   inline code in a note cannot hold the note's marker pair (`++`, `!!`), in a reference
-  not `|`, in a sidebar not its `$` or `@` (superscript and subscript not these last three
-  either). The editor refuses such an edit and says why beside the caret, and the Code,
+  not `|` (superscript and subscript not `|` either, nor a sidebar's `$` or `@`; inline
+  code in a sidebar may hold them, since the sidebar's end is found by the inline parser,
+  which skips code). The editor refuses such an edit and says why beside the caret, and the Code,
   Superscript and Subscript buttons are disabled with the reason in their tooltip — also
   over a selection that holds a note, which those three cannot hold at all.
 - **Left sidebars need `"markdown.math.enabled": false`.** VS Code's built-in math
@@ -903,9 +904,12 @@ $This appears in the left sidebar with [links](url) and other markdown$
 ```
 
 A marker opens a sidebar only where no ASCII letter or digit stands right before it, and a
-`$` closes one only where no digit follows, so an email address (`a@b.c`), `user@host` and
-prices (`$5 and $10`) stay text. A marker inside inline code, a link, an autolink, inline
-HTML or after a backslash (`\@`) closes nothing.
+`$` closes one only where no digit follows, so an email address (`a@b.c`) and `user@host`
+stay text, and so does a price as long as no later `$` can close it (`$5 and $10`; but
+`Pay $5 and see $the note$.` holds a sidebar from `5` to `see `). A marker inside inline
+code, a link, an autolink, inline HTML or after a backslash (`\@`) closes nothing. The
+Visual Editor does not let a sidebar touch a letter or digit before it (or a left one a
+digit after it): put a space there.
 
 **Using left sidebars: turn VS Code's math off in that workspace.** VS Code's built-in
 math extension claims `$…$` before this extension's sidebar rule runs — in the preview,

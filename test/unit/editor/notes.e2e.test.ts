@@ -177,9 +177,9 @@ suite('Editor notes and links (e2e)', () => {
             }
         });
         await delay(150);
+        // A sidebar's end is found by the inline parser, which skips a code span whole: Code stays enabled there.
         const button = await page.$eval('.mep-toolbar [data-action="code"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
-        assert.strictEqual(button.disabled, 'true');
-        assert.ok(button.title.includes('"@"'), button.title);
+        assert.notStrictEqual(button.disabled, 'true', button.title);
     });
 
     test('a click into a note and the Sidenote entry again removes the note, the reference text in its place', async function () {
