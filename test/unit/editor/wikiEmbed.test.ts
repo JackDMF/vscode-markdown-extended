@@ -1,14 +1,15 @@
 import * as assert from 'assert';
-import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
+import { DOMSerializer, Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { createPositionMap } from '../../../src/editor/positions';
 import { unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
 import { headingAnchors } from '../../../src/editor/host/links';
-import { inlineForNote, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
+import { OWN_COPY, inlineForNote, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
 import { tokenText } from '../../../src/syntax/tokenText';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
+import { FakeNode, fakeDocument } from './fakeDom';
 import markdownIt from 'markdown-it';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 
@@ -318,22 +319,33 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.strictEqual(off.handler(EditorState.create({ doc: paragraph(text('![[x]')) }), ['![[x]]'] as unknown as RegExpMatchArray, 1, 6), null);
     });
 
+    type PasteProps = {
+        handleDOMEvents: { paste: () => boolean; copy: () => boolean; cut: () => boolean };
+        transformPastedHTML: (html: string, view: unknown) => string;
+        transformPasted: (slice: Slice, view: unknown, asText: boolean) => Slice;
+        clipboardTextSerializer: (slice: Slice) => string;
+        clipboardSerializer: DOMSerializer;
+    };
+    const inline = (...content: Node[]) => new Slice(Fragment.from(schema.nodes.paragraph.create(null, content)), 1, 1);
+    const view = { state: EditorState.create({ doc: paragraph(text('ab')) }) };
+    const atoms = (slice: Slice) => embedsOf(schema.topNodeType.create(null, slice.content));
+    /** A paste plugin as one webview's editor has it: a new one is another webview, or the same after a restart. */
+    const plugin = (enabled = true) => wikiEmbedPastePlugin(() => enabled).props as unknown as PasteProps;
+    /** A copy made in `p`'s editor: the copy event, then ProseMirror's serializing of it. */
+    const copyOf = (p: PasteProps, slice: Slice) => {
+        p.handleDOMEvents.copy();
+        p.clipboardTextSerializer(slice);
+    };
+    /** The HTML `p`'s editor puts on the clipboard for `slice`. */
+    const copiedHtml = (p: PasteProps, slice: Slice) => (p.clipboardSerializer.serializeFragment(slice.content, { document: fakeDocument as unknown as Document }) as unknown as FakeNode).html();
+
     test('a paste from outside this editor has its embeds made atoms; its own copy keeps what it carried; a drop and a code block do not', () => {
         const nodes = textWithEmbeds('see ![[x]] and ![[a b.png]] end', []);
         assert.deepStrictEqual(nodes?.map(n => n.type.name === 'wiki_embed' ? `atom ${n.attrs.source as string}` : n.text), ['see ', 'atom ![[x]]', ' and ', 'atom ![[a b.png]]', ' end']);
         assert.strictEqual(textWithEmbeds('no embed ![[a [[b]] c]]', []), null);
         assert.strictEqual(textWithEmbeds('![[x]]', [schema.marks.code.create()]), null);
-        type Props = {
-            handleDOMEvents: { paste: () => boolean };
-            transformPasted: (slice: Slice, view: unknown, asText: boolean) => Slice;
-            clipboardTextSerializer: (slice: Slice) => string;
-        };
         const em = schema.marks.em.create();
-        const inline = (...content: Node[]) => new Slice(Fragment.from(schema.nodes.paragraph.create(null, content)), 1, 1);
         const outside = () => inline(text('see ![[x]] '), text('![[y]]', em));
-        const view = { state: EditorState.create({ doc: paragraph(text('ab')) }) };
-        const atoms = (slice: Slice) => embedsOf(schema.topNodeType.create(null, slice.content));
-        const plugin = (enabled = true) => wikiEmbedPastePlugin(() => enabled).props as unknown as Props;
         // From outside, as text or as HTML: atoms, each with its text's marks.
         for (const asText of [true, false]) {
             const p = plugin();
@@ -346,11 +358,12 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         }
         // This editor's own copy: literal text stays literal, an atom stays an atom — as text (Ctrl+Shift+V) too.
         const own = plugin();
-        own.clipboardTextSerializer(inline(text('Lit ![[x]] and '), embed('![[a&#124;b]]'), text(' here.')));
+        const carried = inline(text('Lit ![[x]] and '), embed('![[a&#124;b]]'), text(' here.'));
+        copyOf(own, carried);
         own.handleDOMEvents.paste();
         assert.deepStrictEqual(atoms(own.transformPasted(inline(text('Lit ![[x]] and ![[a|b]] here.')), view, true)), ['![[a&#124;b]]']);
         own.handleDOMEvents.paste();
-        const carried = inline(text('Lit ![[x]] and '), embed('![[a&#124;b]]'), text(' here.'));
+        own.transformPastedHTML(copiedHtml(own, carried), view);
         assert.strictEqual(own.transformPasted(carried, view, false), carried);
         // Other text after the same copy is outside text.
         own.handleDOMEvents.paste();
@@ -373,6 +386,52 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             off.handleDOMEvents.paste();
             assert.deepStrictEqual(atoms(off.transformPasted(outside(), view, true)), []);
         })();
+    });
+
+    test('the editor\'s own HTML copy is known by its marker in any Visual Editor; its plain text by the last copy made here, which a drag does not replace', async () => {
+        const literal = inline(text('Lit ![[x]] here'));
+        // The copied HTML: each top-level element carries the marker, nothing inside it does.
+        const quoted = new Slice(Fragment.from([
+            schema.nodes.paragraph.create(null, [text('Lit ![[x]]')]),
+            schema.nodes.blockquote.create(null, [schema.nodes.paragraph.create(null, [text('q')])]),
+        ]), 0, 0);
+        const html = copiedHtml(plugin(), quoted);
+        assert.strictEqual(html, `<p ${OWN_COPY}="">Lit ![[x]]</p><blockquote ${OWN_COPY}=""><p>q</p></blockquote>`);
+        // Pasted as HTML into another webview's editor, or after a restart, with no copy made there: as it was.
+        const other = plugin();
+        other.handleDOMEvents.paste();
+        assert.strictEqual(other.transformPastedHTML(copiedHtml(plugin(), literal), view), copiedHtml(plugin(), literal));
+        assert.strictEqual(other.transformPasted(literal, view, false), literal);
+        // Another ProseMirror editor's copy has no marker, and the marker's name as text is no marker: converted.
+        for (const foreign of ['<p data-pm-slice="1 1 []">Lit ![[x]] here</p>', `<p data-pm-slice="1 1 []">Lit ![[x]] here ${OWN_COPY}=""</p>`]) {
+            other.handleDOMEvents.paste();
+            other.transformPastedHTML(foreign, view);
+            assert.deepStrictEqual(atoms(other.transformPasted(literal, view, false)), ['![[x]]'], foreign);
+        }
+        // The marker is read for a paste only, and only for the paste it came with.
+        other.transformPastedHTML(copiedHtml(plugin(), literal), view);
+        other.handleDOMEvents.paste();
+        assert.deepStrictEqual(atoms(other.transformPasted(literal, view, false)), ['![[x]]']);
+        // As plain text, a copy made in another webview is outside text (the README's first limit).
+        other.handleDOMEvents.paste();
+        assert.deepStrictEqual(atoms(other.transformPasted(literal, view, true)), ['![[x]]']);
+        // A drag serializes its slice like a copy, but it is no copy: the last copy stays the literal.
+        const here = plugin();
+        copyOf(here, literal);
+        here.clipboardTextSerializer(inline(text('dragged ![[y]]')));
+        // A copy event with nothing serialized (an empty selection) leaves nothing for the next drag either.
+        here.handleDOMEvents.copy();
+        await Promise.resolve();
+        here.clipboardTextSerializer(inline(text('dragged ![[z]]')));
+        here.handleDOMEvents.paste();
+        assert.deepStrictEqual(atoms(here.transformPasted(literal, view, true)), []);
+        // A cut is a copy.
+        here.handleDOMEvents.cut();
+        here.clipboardTextSerializer(inline(text('cut ![[y]]')));
+        here.handleDOMEvents.paste();
+        assert.deepStrictEqual(atoms(here.transformPasted(inline(text('cut ![[y]]')), view, true)), []);
+        here.handleDOMEvents.paste();
+        assert.deepStrictEqual(atoms(here.transformPasted(literal, view, true)), ['![[x]]']);
     });
 
     test('a paste into a note keeps an atom an atom and literal text literal, with the marks typed text takes', () => {

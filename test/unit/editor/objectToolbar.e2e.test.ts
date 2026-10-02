@@ -4,6 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
+import { OWN_COPY } from '../../../src/editor/webview/wikiEmbeds';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
 
 /** The selection's object toolbar, shown. */
@@ -363,47 +364,72 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2);
     });
 
-    test('a paste of the editor\'s own copy keeps what it carried — literal text, atoms — as plain text too; HTML from elsewhere converts', async function () {
+    test('a paste of the editor\'s own copy keeps what it carried — literal text, atoms — through the clipboard, as plain text too, a drag between; HTML from elsewhere converts', async function () {
         this.timeout(20000);
         const source = 'Lit !\\[\\[x\\]\\] ![[a]] here.\n';
-        /** Copy the whole line, as the editor writes it to the clipboard. */
-        const copyLiteral = async () => {
-            // The whole document, the one paragraph.
+        /** ProseMirror's selection read from the DOM's now, not when the browser gets to its `selectionchange`. */
+        const selectionRead = () => page.evaluate(() => new Promise(resolve => {
+            document.dispatchEvent(new Event('selectionchange'));
+            requestAnimationFrame(() => resolve(null));
+        }));
+        /** Ctrl+`key`, or Ctrl+Shift+`key`, as typed: the browser's own copy and paste, through its clipboard. */
+        const pressCtrl = async (key: puppeteer.KeyInput, shift = false) => {
+            await page.keyboard.down('Control');
+            if (shift) {
+                await page.keyboard.down('Shift');
+            }
+            await page.keyboard.press(key);
+            if (shift) {
+                await page.keyboard.up('Shift');
+            }
+            await page.keyboard.up('Control');
+        };
+        // The HTML each paste brings, read before the editor's handling.
+        await page.evaluate(() => {
+            const w = window as unknown as { pastedHtml: string[] };
+            w.pastedHtml = [];
+            document.addEventListener('paste', e => w.pastedHtml.push(e.clipboardData?.getData('text/html') ?? ''), { capture: true });
+        });
+        for (const plain of [false, true]) {
+            await showDocument(source, 'Lit');
+            // The whole document, the one paragraph, copied through the clipboard.
             await clickBefore('Lit', 0);
             await page.keyboard.down('Control');
             await page.keyboard.press('a');
             await page.keyboard.up('Control');
             await delay(100);
-            await page.evaluate(() => {
-                const data = new DataTransfer();
-                (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
-                (window as unknown as { copied: string[] }).copied = [data.getData('text/html'), data.getData('text/plain')];
-            });
-        };
-        /** The copy pasted back: its HTML and its text, or (Chromium's paste as plain text) its text alone. */
-        const pasteCopied = (textOnly: boolean) => page.evaluate(only => {
-            const [html, plain] = (window as unknown as { copied: string[] }).copied;
-            const data = new DataTransfer();
-            if (!only) {
-                data.setData('text/html', html);
-            }
-            data.setData('text/plain', plain);
-            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
-        }, textOnly);
-        for (const plain of [false, true]) {
-            await showDocument(source, 'Lit');
-            await copyLiteral();
+            await pressCtrl('KeyC');
+            // Then a drag of other text, which serializes it like a copy: it is no copy.
             await clickBefore('here', 0);
-            if (plain) {
-                // Shift+Ctrl+V: ProseMirror reads the text, not the HTML.
+            for (let k = 0; k < 4; k++) {
                 await page.keyboard.down('Shift');
-            }
-            await pasteCopied(plain);
-            if (plain) {
+                await page.keyboard.press('ArrowRight');
                 await page.keyboard.up('Shift');
             }
+            await selectionRead();
+            const dragged = await page.evaluate(({ x, y }) => {
+                const data = new DataTransfer();
+                const editor = document.querySelector('.ProseMirror') as HTMLElement;
+                editor.dispatchEvent(new DragEvent('dragstart', { dataTransfer: data, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+                editor.dispatchEvent(new DragEvent('dragend', { dataTransfer: data, bubbles: true }));
+                return data.getData('text/plain');
+            }, await pointAt('here', 1));
+            assert.strictEqual(dragged, 'here', 'the drag serialized its text');
+            await delay(100);
+            await clickBefore('here', 0);
+            await page.waitForFunction(() => document.getSelection()?.isCollapsed === true, { timeout: 2000 });
+            await selectionRead();
+            // Ctrl+V, or Ctrl+Shift+V, which brings the text alone.
+            await pressCtrl('KeyV', plain);
             await settle();
             const how = plain ? 'plain paste' : 'paste';
+            const html = await page.evaluate(() => (window as unknown as { pastedHtml: string[] }).pastedHtml.splice(0));
+            if (plain) {
+                assert.deepStrictEqual(html, [''], how);
+            } else {
+                // One paste, its HTML with the marker come through the clipboard, beside ProseMirror's own.
+                assert.ok(html.length === 1 && html[0].includes(`${OWN_COPY}=`) && html[0].includes('data-pm-slice='), html.join('\n'));
+            }
             assert.strictEqual(await page.evaluate(() => document.querySelector('.ProseMirror')?.textContent), 'Lit ![[x]] ![[a]] Lit ![[x]] ![[a]] here.here.', how);
             // The literal stays literal, the atom stays an atom, in the copy as in the original.
             assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2, how);

@@ -1,5 +1,5 @@
 import { InputRule, inputRules } from 'prosemirror-inputrules';
-import { Fragment, Mark, Node, Slice } from 'prosemirror-model';
+import { DOMSerializer, Fragment, Mark, Node, Slice } from 'prosemirror-model';
 import { EditorState, Plugin } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { WIKI_EMBED_MARKERS } from '../../syntax/markers';
@@ -17,10 +17,16 @@ import { RAW_TEXT_MARKS } from '../serialize';
  * and no line break, `]]`.
  *
  * Text that is already in the document is never made an embed: a drag inside
- * the editor, and a paste of the editor's own copy (its HTML carries
- * ProseMirror's `data-pm-slice`, plain paste included), carry their own nodes
- * — an atom stays one, literal text stays text; and the input rule fires on
- * the `]` just typed, not on the end of a composition.
+ * the editor carries its own nodes, and so does a paste of the editor's own
+ * copy — an atom stays one, literal text stays text; and the input rule fires
+ * on the `]` just typed, not on the end of a composition. A copy is the
+ * editor's own by its HTML, which carries this editor's marker (`OWN_COPY`,
+ * set by any Visual Editor, before a restart or after). A paste as plain text
+ * (Ctrl+Shift+V) brings only the text, and there a copy is the editor's own
+ * when its text is the text of the last copy made in this webview. Two limits
+ * follow: a plain paste of a copy made in another document's Visual Editor
+ * converts like outside text, and outside text that is the same as this
+ * webview's last copy is taken as that copy on a plain paste.
  */
 const EMBED_SOURCE = `${escapeRegExp(WIKI_EMBED_MARKERS.open)}[^[\\]\\n\\ufffc]+${escapeRegExp(WIKI_EMBED_MARKERS.close)}`;
 const EMBED = new RegExp(EMBED_SOURCE, 'g');
@@ -157,51 +163,100 @@ export function runWikiEmbedInput(plugin: Plugin, view: EditorView, from: number
     return handle?.call(plugin, view, from, to, text, () => view.state.tr.insertText(text, from, to)) === true;
 }
 
+/** The attribute every top-level element of this editor's copied HTML carries. */
+export const OWN_COPY = 'data-mep-copy';
+
+/** An HTML element carrying `OWN_COPY`: text content cannot hold a `<`, so the match is a tag's. */
+const OWN_COPY_TAG = new RegExp(`<[^>]*\\s${OWN_COPY}[\\s=/>]`);
+
+/** The schema's serializer, with `OWN_COPY` set on each top-level element of what it serializes. */
+class OwnCopySerializer extends DOMSerializer {
+    serializeFragment(fragment: Fragment, options: { document?: Document } = {}, target?: HTMLElement | DocumentFragment): HTMLElement | DocumentFragment {
+        const dom = super.serializeFragment(fragment, options, target);
+        // A node's content is serialized into its own element (`target`); only the top level is marked.
+        if (target === undefined) {
+            dom.childNodes.forEach(child => {
+                if (child.nodeType === 1) {
+                    (child as Element).setAttribute(OWN_COPY, '');
+                }
+            });
+        }
+        return dom;
+    }
+}
+
 /**
  * A paste of text from outside this editor — a browser's, Obsidian's, VS
- * Code's text editor's (whose copy is HTML) or plain text — has the embeds in
- * its text made atoms, each with its text's marks, as ProseMirror's own
- * reading gives them. A paste of this editor's own copy keeps what it
- * carried: its atoms are atoms and its literal text stays literal, also when
- * pasted as plain text (Ctrl+Shift+V, which brings only `text/plain`). A copy
- * is the editor's own when its text is the text of the last copy made here
- * (`clipboardTextSerializer`). A drop is no paste: the decision belongs to a
- * paste event, and is cleared once the paste's own handling is over. Never
+ * Code's text editor's or another ProseMirror editor's (whose copy is HTML),
+ * or plain text — has the embeds in its text made atoms, each with its text's
+ * marks, as ProseMirror's own reading gives them. A paste of this editor's own
+ * copy keeps what it carried: its atoms are atoms and its literal text stays
+ * literal. As HTML a copy is the editor's own when it carries `OWN_COPY`
+ * (`clipboardSerializer`); as plain text (Ctrl+Shift+V, which brings only
+ * `text/plain`), when its text is the text of the last copy or cut made here
+ * (`clipboardTextSerializer` during a `copy` or `cut` event — a drag
+ * serializes too, and is no copy). A drop is no paste: the decision belongs to
+ * a paste event, and is cleared once the paste's own handling is over. Never
  * into a code block.
  */
 export function wikiEmbedPastePlugin(enabled: () => boolean): Plugin {
     let pasting = false;
+    let ownHtml = false;
+    let copying = false;
     let lastCopy: { text: string; embeds: (string | null)[] } | null = null;
+    // The copy serializes in this event's handling; one that does not (an empty
+    // selection) leaves no copy behind for the next drag.
+    const copy = () => {
+        copying = true;
+        queueMicrotask(() => {
+            copying = false;
+        });
+        return false;
+    };
     return new Plugin({
         props: {
+            clipboardSerializer: new OwnCopySerializer(DOMSerializer.nodesFromSchema(editorSchema), DOMSerializer.marksFromSchema(editorSchema)),
             clipboardTextSerializer(slice) {
-                lastCopy = { text: clipboardText(slice), embeds: embedsIn(slice.content) };
+                if (copying) {
+                    copying = false;
+                    lastCopy = { text: clipboardText(slice), embeds: embedsIn(slice.content) };
+                }
                 // ProseMirror's own text for a copy.
                 return slice.content.textBetween(0, slice.content.size, '\n\n');
             },
             handleDOMEvents: {
+                copy,
+                cut: copy,
                 paste() {
                     pasting = true;
+                    ownHtml = false;
                     // The paste parses in this event's handling; whatever does not
                     // (an image the images plugin takes, a paste ProseMirror leaves
                     // to the browser) leaves no decision behind.
                     queueMicrotask(() => {
                         pasting = false;
+                        ownHtml = false;
                     });
                     return false;
                 },
             },
+            transformPastedHTML(html) {
+                ownHtml = pasting && OWN_COPY_TAG.test(html);
+                return html;
+            },
             transformPasted(slice, view, asText) {
                 const isPaste = pasting;
+                const isOwnHtml = ownHtml;
                 pasting = false;
+                ownHtml = false;
                 if (!isPaste || !enabled() || view.state.selection.$from.parent.type.spec.code === true
                     || !slice.content.textBetween(0, slice.content.size, '\n').includes(WIKI_EMBED_MARKERS.open)) {
                     return slice;
                 }
-                const own = lastCopy !== null && clipboardText(slice) === lastCopy.text;
-                if (own && !asText) {
+                if (!asText && isOwnHtml) {
                     return slice;
                 }
+                const own = asText && lastCopy !== null && clipboardText(slice) === lastCopy.text;
                 // The editor's own copy as text: each run is an atom where the copy had one.
                 const embeds = own ? [...(lastCopy as { embeds: (string | null)[] }).embeds] : null;
                 const ownCount = embeds === null ? 0 : embedsIn(slice.content).length;
