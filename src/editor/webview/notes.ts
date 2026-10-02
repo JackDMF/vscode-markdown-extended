@@ -373,7 +373,7 @@ export function refusableRange(tr: Transaction): { from: number; to: number } | 
  * browser would put the text into the neighbouring span), and pastes into a
  * part as text — a slice of paragraphs would split the note in two.
  */
-export function notesPlugin(embedInput?: Plugin): Plugin {
+export function notesPlugin(embedInput: Plugin): Plugin {
     let editorView: EditorView | null = null;
     return new Plugin({
         // The one edit the serializer cannot write back is refused here,
@@ -418,7 +418,7 @@ export function notesPlugin(embedInput?: Plugin): Plugin {
                         // other: a block rule (three backticks, `# `, `- `) would turn the line holding the note into a block.
                         const { from, to } = view.state.selection;
                         const text = e.data;
-                        if (embedInput === undefined || !runWikiEmbedInput(embedInput, view, from, to, text)) {
+                        if (!runWikiEmbedInput(embedInput, view, from, to, text)) {
                             view.dispatch(view.state.tr.insertText(text).scrollIntoView());
                         }
                         return true;

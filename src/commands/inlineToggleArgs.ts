@@ -1,8 +1,5 @@
 import { INLINE_MARKERS, InlineMarkerName } from '../syntax/markers';
-
-function escapeRegExp(text: string): string {
-    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+import { escapeRegExp } from '../syntax/regExp';
 
 /** What `toggleFormat` takes for one toggle: detect, multi-line, on, on-replacement, off, off-replacement. */
 export type ToggleArgs = [RegExp, boolean, RegExp, string, RegExp, string];
