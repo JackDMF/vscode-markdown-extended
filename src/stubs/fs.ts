@@ -26,6 +26,16 @@ export function statSync(_path: string): never {
     throw new Error('fs.statSync is not available in the web extension host');
 }
 
+// The export helper follows a path's links before it asks whether the file
+// exists: on the web it finds no path, and embeds nothing.
+export function lstatSync(_path: string): never {
+    throw new Error('fs.lstatSync is not available in the web extension host');
+}
+
+export function readlinkSync(_path: string): never {
+    throw new Error('fs.readlinkSync is not available in the web extension host');
+}
+
 export function exists(_path: string, callback: (exists: boolean) => void): void {
     callback(false);
 }

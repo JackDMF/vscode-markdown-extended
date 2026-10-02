@@ -59,6 +59,7 @@ suite('Linked stylesheet (e2e)', () => {
                 workspaceFolder: undefined,
                 vsUri: 'vscode-resource:',
                 embedImage: true,
+                embedFiles: 'workspace',
             },
         });
         const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>${body}</body></html>`;

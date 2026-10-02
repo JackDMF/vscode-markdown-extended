@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import { ContributesService } from '../../services/contributes/contributesService';
 import { BUILTIN_MARKDOWN_EXTENSION } from './engineHost';
-import { lowerDrive } from './images';
+import { documentRoots } from './roots';
 
 function escapeAttribute(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
@@ -37,22 +37,8 @@ export function localResourceRoots(extensionUri: vscode.Uri, documentUri?: vscod
     if (builtin) {
         roots.push(builtin.extensionUri);
     }
-    for (const folder of vscode.workspace.workspaceFolders ?? []) {
-        roots.push(folder.uri);
-    }
-    if (documentUri) {
-        const dir = vscode.Uri.joinPath(documentUri, '..');
-        const dirPath = lowerDrive(dir.path);
-        const inside = (root: vscode.Uri) => {
-            const rootPath = lowerDrive(root.path);
-            return root.scheme === dir.scheme && root.authority === dir.authority
-                && (dirPath === rootPath || dirPath.startsWith(rootPath.endsWith('/') ? rootPath : `${rootPath}/`));
-        };
-        if (!roots.some(inside)) {
-            roots.push(dir);
-        }
-    }
-    return roots;
+    // The same folders an export embeds a document's files from (`documentRoots`).
+    return [...roots, ...documentRoots(documentUri)];
 }
 
 /**

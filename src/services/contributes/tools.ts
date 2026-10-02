@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { cssFileToDataUri, fileToDataUri } from '../common/dataUri';
+import { cssFileToDataUri, fileToDataUri, UNRESTRICTED } from '../common/dataUri';
 
 /**
  * create contribute item of given file
@@ -11,8 +11,9 @@ export function readContributeFile(file: string, isStyle: boolean): string {
     if (!fs.existsSync(file))
         {return "";}
     const cmt = `<!-- ${path.basename(file)} -->\n`;
+    // A configured or contributed stylesheet is configuration, embedded in every mode.
     if (isStyle)
-        {return cmt + `<link rel="stylesheet" type="text/css" href="${cssFileToDataUri(file)}"/>`;}
+        {return cmt + `<link rel="stylesheet" type="text/css" href="${cssFileToDataUri(file, UNRESTRICTED)}"/>`;}
     return cmt + `<script type="text/javascript" src="${fileToDataUri(file)}"/></script>`;
 
 }
