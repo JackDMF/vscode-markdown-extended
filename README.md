@@ -115,7 +115,7 @@ To disable integrated plugins, add their names (comma-separated, without `markdo
 
 > The pre-3.0 key `markdownExtended.disabledPlugins` still works but is deprecated.
 
-**Available plugin names:** `table-of-contents`, `container`, `admonition`, `footnote`, `abbr`, `sup-alt`, `sub-alt`, `checkbox`, `attrs`, `kbd`, `ib`, `mark`, `deflist`, `emoji`, `multimd-table`, `html5-embed`, `sidenote`, `bracketed-spans`, `cjk-friendly`, `helper`
+**Available plugin names:** `table-of-contents`, `container`, `admonition`, `footnote`, `abbr`, `sup-alt`, `sub-alt`, `checkbox`, `attrs`, `wiki-embed`, `kbd`, `ib`, `mark`, `deflist`, `emoji`, `multimd-table`, `html5-embed`, `sidenote`, `bracketed-spans`, `cjk-friendly`, `helper`
 
 ## Architecture & Development
 
@@ -1187,6 +1187,8 @@ $left sidebar${.my-class}
 ```
 
 Renders keyboard shortcuts with proper styling.
+
+**Wiki embeds and links (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key. It is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it, and nothing inside it is read as syntax: `![[x]](y)` is the embed followed by `(y)`, not an image, and a `{…}` right after it stays text. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor an embed is one unit, drawn as its source and written back exactly as it was; typing `![[name]]`, or pasting it from anywhere but the Visual Editor itself, makes one; a paste of the editor's own copy keeps what it carries. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one.
 
 ### markdown-it-ib
 

@@ -263,6 +263,18 @@ export function fidelityPlugin(): Plugin {
                     tr.setNodeMarkup(pos, undefined, { ...node.attrs, literal: null });
                 }
             }
+            // An input rule that just fired (a typed `]]` making an embed) stays
+            // undoable with Backspace: this transaction only changes attributes,
+            // which moves no position the rule recorded.
+            const appended = tr as Transaction | null;
+            if (appended !== null) {
+                for (const plugin of newState.plugins) {
+                    const undoable: unknown = plugin.spec.isInputRules ? plugin.getState(newState) : null;
+                    if (undoable) {
+                        appended.setMeta(plugin, undoable);
+                    }
+                }
+            }
             return tr;
         },
     });

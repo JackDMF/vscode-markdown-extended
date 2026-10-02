@@ -7,10 +7,12 @@ import { MarkdownItAttrs } from './markdownItAttrs';
 import { MarkdownItTableOfContents } from './markdownItTableOfContents';
 import { MarkdownItHtml5Embed } from './markdownItHtml5Embed';
 import { MarkdownItCheckbox } from './markdownItCheckbox';
+import { MarkdownItWikiEmbed } from './markdownItWikiEmbed';
+import { tokenText } from '../syntax/tokenText';
 import { Config } from '../services/common/config';
 // eslint-disable-next-line @typescript-eslint/naming-convention
 import * as MarkdownItSidenote from './markdownItSidenote';
-import { MarkdownIt } from '../@types/markdown-it';
+import { MarkdownIt, Token } from '../@types/markdown-it';
 
 // Import all external markdown-it plugins statically for bundling
 import markdownItFootnote from 'markdown-it-footnote';
@@ -47,6 +49,8 @@ const myPlugins: Record<string, any> = {
     'markdown-it-checkbox': MarkdownItCheckbox,
     // Wrapped: leaves the spans markdown-it-multimd-table laid out alone.
     'markdown-it-attrs': MarkdownItAttrs,
+    // Before kbd: `![[...]]` is a wiki embed, read as literal text, never a key.
+    'markdown-it-wiki-embed': MarkdownItWikiEmbed,
     'markdown-it-kbd': markdownItKbd,
     'markdown-it-ib': markdownItIb,
     'markdown-it-mark': markdownItMark,
@@ -68,7 +72,8 @@ export const plugins: MarkdownItPlugin[] = [
     // markdown-it-front-matter here, as it conflicts with the built-in renderer.
     // $('markdown-it-toc'),
     // $('markdown-it-anchor'), // MarkdownItAnchorLink requires MarkdownItTOC
-    $('markdown-it-table-of-contents', { includeLevel: Config.instance.tocLevels }),
+    // An entry's text as every other reader takes it (`tokenText`), a wiki embed's included; not an image's alt, as the plugin's own.
+    $('markdown-it-table-of-contents', { includeLevel: Config.instance.tocLevels, getTokensText: (tokens: Token[]) => tokenText(tokens, { nested: false }) }),
     $('markdown-it-container'),
     $('markdown-it-admonition'),
     $('markdown-it-footnote'),
@@ -77,6 +82,7 @@ export const plugins: MarkdownItPlugin[] = [
     $('markdown-it-sub-alt'),
     $('markdown-it-checkbox'),
     $('markdown-it-attrs'),
+    $('markdown-it-wiki-embed'),
     $('markdown-it-kbd'),
     $('markdown-it-ib'),
     $('markdown-it-mark'),

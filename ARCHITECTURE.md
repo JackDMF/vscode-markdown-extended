@@ -319,6 +319,30 @@ same tokens into a ProseMirror document. Two parsers would be two answers to
 "what does this file contain", and the first construct they disagreed on would be
 edited as something it is not.
 
+**The one exception: wiki embeds.** The two engines differ in one option,
+`WIKI_EMBED_TOKENS_OPTION` (`src/syntax/markers.ts`), which only the editor
+engine sets. `markdownItWikiEmbed.ts` reads `![[name]]` into a `wiki_embed`
+token on both; on the preview's it turns that token into plain text just before
+`text_join`, so the text joins its neighbours and an extension that renders
+embeds from text (Foam's core rule) finds it; on the editor's the token is kept,
+so the editor can hold each embed as one atom carrying its source. The
+difference is in token types only: the token's `content` is the text the
+preview's joined text holds. What reads text from tokens reads it through
+`tokenText` (`src/syntax/tokenText.ts`), which counts a `wiki_embed` as its
+text — an image's alt in the editor, a heading's slug for links and fragment
+completion, the table of contents' entries — and the plugin renders a kept
+token as its text, in its own rule and in markdown-it's `renderInlineAsText`
+(an image's alt), so a block the editor or the host renders from the editor's
+engine shows what the preview shows. An extension that reads `text` tokens on
+the editor's engine (Foam's core rule) does not see an embed there; the editor
+draws the atom instead.
+
+A known interplay on the preview's engine: a rule of another extension that
+splits text tokens (Req Explorer's status badges, at an id it recognises) runs
+on the embed's joined text like on any other and can split it, and Foam's rule
+then no longer finds that embed. Not handled here; it is the order of two other
+extensions' rules.
+
 markdown-it is pinned to major 14, which is what VS Code's preview bundles, so the
 two engines tokenize alike. The engine is built once per provider and rebuilt when
 the set of extensions or one of those preview settings changes.

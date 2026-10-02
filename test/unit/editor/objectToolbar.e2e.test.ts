@@ -318,6 +318,175 @@ suite('Editor object toolbar (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
+    test('a wiki embed is one unit drawn as its source: a click selects it, its bar names it, and Remove embed takes it out whole', async function () {
+        this.timeout(15000);
+        await showDocument('An ![[assets/_img.png]] here.\n', 'An');
+        const drawn = await page.$eval('.ProseMirror .mep-wiki-embed', el => ({ text: el.textContent, editable: (el as HTMLElement).contentEditable }));
+        assert.deepStrictEqual(drawn, { text: '![[assets/_img.png]]', editable: 'false' });
+        const box = await (await page.$('.ProseMirror .mep-wiki-embed'))?.boundingBox();
+        assert.ok(box);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForSelector(`${BAR}[data-object="wiki_embed"]`, { timeout: 2000 });
+        assert.deepStrictEqual(await barState(), { object: 'wiki_embed', label: 'Wiki embed', verbs: ['remove-wiki-embed'] });
+        await clickVerb('remove-wiki-embed');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An here.\n');
+    });
+
+    test('![[name]] typed becomes an embed atom at its closing ]], and is saved as written', async function () {
+        this.timeout(15000);
+        await showDocument('An here.\n', 'An');
+        await clickBefore('here', 0);
+        await page.keyboard.type('![[a_b.png]] ');
+        await settle();
+        assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.textContent), '![[a_b.png]]');
+        assert.strictEqual((await lastEdit())?.text, 'An ![[a_b.png]] here.\n');
+    });
+
+    const pasteText = (text: string) => page.evaluate(t => {
+        const data = new DataTransfer();
+        data.setData('text/plain', t);
+        (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    }, text);
+
+    test('text pasted with ![[name]] in it, into a paragraph or a note, holds an embed atom and is saved as written', async function () {
+        this.timeout(15000);
+        await showDocument('An here.\n\nAlpha ++beta|the body++ gamma.\n', 'An');
+        await clickBefore('here', 0);
+        await pasteText('see ![[x]] ');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An see ![[x]] here.\n\nAlpha ++beta|the body++ gamma.\n');
+        await clickBefore('body', 0);
+        await pasteText('see ![[y]] ');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An see ![[x]] here.\n\nAlpha ++beta|the see ![[y]] body++ gamma.\n');
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2);
+    });
+
+    test('a paste of the editor\'s own copy keeps what it carried — literal text, atoms — as plain text too; HTML from elsewhere converts', async function () {
+        this.timeout(20000);
+        const source = 'Lit !\\[\\[x\\]\\] ![[a]] here.\n';
+        /** Copy the whole line, as the editor writes it to the clipboard. */
+        const copyLiteral = async () => {
+            // The whole document, the one paragraph.
+            await clickBefore('Lit', 0);
+            await page.keyboard.down('Control');
+            await page.keyboard.press('a');
+            await page.keyboard.up('Control');
+            await delay(100);
+            await page.evaluate(() => {
+                const data = new DataTransfer();
+                (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+                (window as unknown as { copied: string[] }).copied = [data.getData('text/html'), data.getData('text/plain')];
+            });
+        };
+        /** The copy pasted back: its HTML and its text, or (Chromium's paste as plain text) its text alone. */
+        const pasteCopied = (textOnly: boolean) => page.evaluate(only => {
+            const [html, plain] = (window as unknown as { copied: string[] }).copied;
+            const data = new DataTransfer();
+            if (!only) {
+                data.setData('text/html', html);
+            }
+            data.setData('text/plain', plain);
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+        }, textOnly);
+        for (const plain of [false, true]) {
+            await showDocument(source, 'Lit');
+            await copyLiteral();
+            await clickBefore('here', 0);
+            if (plain) {
+                // Shift+Ctrl+V: ProseMirror reads the text, not the HTML.
+                await page.keyboard.down('Shift');
+            }
+            await pasteCopied(plain);
+            if (plain) {
+                await page.keyboard.up('Shift');
+            }
+            await settle();
+            const how = plain ? 'plain paste' : 'paste';
+            assert.strictEqual(await page.evaluate(() => document.querySelector('.ProseMirror')?.textContent), 'Lit ![[x]] ![[a]] Lit ![[x]] ![[a]] here.here.', how);
+            // The literal stays literal, the atom stays an atom, in the copy as in the original.
+            assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2, how);
+            const saved = (await lastEdit())?.text ?? '';
+            assert.deepStrictEqual([saved.split('Lit !\\[\\[x\\]\\] ![[a]]').length - 1, saved.includes('!\\[\\[a')], [2, false], saved);
+        }
+        // HTML from elsewhere — VS Code's text editor copies with highlighting — converts.
+        await showDocument(source, 'Lit');
+        await clickBefore('here', 0);
+        await page.evaluate(() => {
+            const data = new DataTransfer();
+            data.setData('text/html', '<div><span>copy ![[y]]</span></div>');
+            data.setData('text/plain', 'copy ![[y]]');
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+        });
+        await settle();
+        // The document's own `![[a]]` and the pasted one.
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2);
+        assert.ok((await lastEdit())?.text.includes('copy ![[y]]'), (await lastEdit())?.text);
+    });
+
+    test('Backspace right after ]] gives back the typed text when the ] is the block\'s first edit', async function () {
+        this.timeout(15000);
+        // [source, a needle, the arrow presses from before it to right after the first `]`, what Backspace leaves].
+        for (const [source, needle, arrows, written] of [
+            ['Para ![[ab] tail\n', 'tail', -1, 'Para !\\[\\[ab\\]\\] tail\n'],
+            ['A ++r|![[x]++ b\n', 'x', 2, 'A ++r|!\\[\\[x\\]\\]++ b\n'],
+        ] as const) {
+            await showDocument(source, needle);
+            await clickBefore(needle, 0);
+            for (let k = 0; k < Math.abs(arrows); k++) {
+                await page.keyboard.press(arrows < 0 ? 'ArrowLeft' : 'ArrowRight');
+            }
+            await delay(100);
+            await page.keyboard.type(']');
+            await delay(100);
+            assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 1, source);
+            await page.keyboard.press('Backspace');
+            await settle();
+            assert.strictEqual(await page.$('.ProseMirror .mep-wiki-embed'), null, source);
+            assert.strictEqual((await lastEdit())?.text, written, source);
+        }
+    });
+
+    test('Backspace right after ]] made an embed in a note gives back the typed text', async function () {
+        this.timeout(15000);
+        await showDocument('Alpha ++beta|the body++ gamma.\n', 'Alpha');
+        await clickBefore('body', 0);
+        await page.keyboard.type('![[z]]');
+        await delay(100);
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 1);
+        await page.keyboard.press('Backspace');
+        await settle();
+        assert.strictEqual(await page.$('.ProseMirror .mep-wiki-embed'), null);
+        assert.strictEqual((await lastEdit())?.text, 'Alpha ++beta|the !\\[\\[z\\]\\]body++ gamma.\n');
+    });
+
+    test('at a note\'s edge only the embed rule runs: a third backtick or "# " there is text, and the note stays', async function () {
+        this.timeout(20000);
+        const shape = () => page.evaluate(() => ({
+            blocks: Array.from(document.querySelectorAll('.ProseMirror > *')).map(el => el.tagName),
+            notes: document.querySelectorAll('.ProseMirror .sn-ref').length,
+        }));
+        await showDocument('``++r|b++ tail\n', 'tail');
+        await clickBefore('tail', 0);
+        await page.keyboard.press('Home');
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.type('`');
+        await settle();
+        assert.deepStrictEqual(await shape(), { blocks: ['P'], notes: 1 });
+        await showDocument('++r|b++ tail\n', 'tail');
+        await clickBefore('tail', 0);
+        await page.keyboard.press('Home');
+        await page.keyboard.type('# ');
+        await settle();
+        assert.deepStrictEqual(await shape(), { blocks: ['P'], notes: 1 });
+        // The embed rule does run there.
+        await page.keyboard.type('![[e]]');
+        await settle();
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 1);
+    });
+
     test('a source block shows its bar while the pointer is on it, keeps it while the pointer crosses to it, and Delete block removes it', async function () {
         this.timeout(15000);
         await showDocument('Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n', 'Before');

@@ -1,6 +1,7 @@
 import markdownIt from 'markdown-it';
 import frontMatter from 'markdown-it-front-matter';
 import { MarkdownIt } from '../@types/markdown-it';
+import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
 
 /**
  * One entry of a plugin registry, in the shape `src/plugin/plugins.ts` exports
@@ -40,6 +41,12 @@ export interface EditorEngineOptions {
  * rule first, then this extension's registry, then every other extension's
  * extender.
  *
+ * One option differs from the preview's engine: `WIKI_EMBED_TOKENS_OPTION`,
+ * which keeps each wiki embed a `wiki_embed` token where the preview's engine
+ * makes it text (`markdownItWikiEmbed.ts`, and "The one exception: wiki
+ * embeds" in ARCHITECTURE.md). Text read from tokens goes through `tokenText`,
+ * which reads both alike.
+ *
  * The front-matter rule is registered here and nowhere else. The preview engine
  * must not get one from this extension — VS Code's own preview already
  * registers it, and the comment on `plugins` in `src/plugin/plugins.ts` records
@@ -58,7 +65,9 @@ export function createEditorEngine(options: EditorEngineOptions): MarkdownIt {
         html: true,
         linkify: options.linkify,
         typographer: options.typographer,
-    });
+        // A wiki embed stays a token of its own, edited as one atom (`markdownItWikiEmbed.ts`).
+        [WIKI_EMBED_TOKENS_OPTION]: true,
+    } as Parameters<typeof markdownIt>[0]);
     // The plugin's declarations are written against @types/markdown-it, which is
     // not the declaration this project compiles against; the runtime contract
     // (a plugin taking the instance and a callback) is the same.

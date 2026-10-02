@@ -38,6 +38,47 @@ export type InlineMarkerName = keyof typeof INLINE_MARKERS;
  */
 export const KBD_MARKERS = { open: '[[', close: ']]' } as const;
 
+/**
+ * A wiki embed, Foam's, Obsidian's and Markdown Notes' `![[note]]` or
+ * `![[path/to/image.png]]` (qjebbs/vscode-markdown-extended#168): `open`, a
+ * name with no bracket and no line break, `close` — the shape Foam's own
+ * embed rule matches. `src/plugin/markdownItWikiEmbed.ts` reads it as one run
+ * of literal text, so no key, image or other inline rule starts inside it. A
+ * plain `[[note]]` stays a key: it is this extension's syntax as much as a
+ * wiki link, and nothing in it tells the two apart.
+ */
+export const WIKI_EMBED_MARKERS = { open: '![[', close: ']]' } as const;
+
+/**
+ * The engine option that keeps a wiki embed a token of its own to the end of
+ * the parse. Without it the embed plugin makes it plain text, joined with the
+ * text around it, so an extension that renders embeds from text (Foam) finds
+ * it; the Visual Editor's engine sets it (`src/editor/engine.ts`) and edits each
+ * embed as one atom carrying its source.
+ */
+export const WIKI_EMBED_TOKENS_OPTION = 'mepWikiEmbedTokens';
+
+/**
+ * The spellings the Visual Editor writes a character of an embed's name in
+ * where the place would read the bare character as its own syntax (a table
+ * cell's `|` and backtick, a note's terminator and marker), each read back by
+ * the embed plugin as the character itself.
+ */
+const WIKI_EMBED_ENCODINGS: Readonly<Record<string, string>> = {
+    '&#124;': '|', '&#36;': '$', '&#64;': '@', '&#43;': '+', '&#33;': '!', '&#96;': '`', '\\|': '|',
+};
+const WIKI_EMBED_ENCODED = /\\.|&#(?:124|36|64|43|33|96);/g;
+
+/**
+ * An embed's source with exactly those spellings read back, other escapes
+ * kept: the form written where nothing needs encoding, and the one the
+ * editor shows. `![[a&#124;b]]` and `![[a\|b]]` are `![[a|b]]`; `![[a\\|b]]`
+ * keeps its escaped backslash.
+ */
+export function plainWikiEmbed(source: string): string {
+    return source.replace(WIKI_EMBED_ENCODED, found => WIKI_EMBED_ENCODINGS[found] ?? found);
+}
+
 /** Between a note's reference text and its content: `++reference|note++`. */
 export const NOTE_SEPARATOR = '|';
 

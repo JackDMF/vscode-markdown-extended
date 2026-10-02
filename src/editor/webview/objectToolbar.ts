@@ -1428,6 +1428,14 @@ class ObjectToolbarView implements PluginView {
                     verbs: [this.attributesVerb(object)],
                 };
             }
+            case 'wiki_embed':
+                return {
+                    label: 'Wiki embed',
+                    title: `${object.node.attrs.source as string}: kept as written, for the extension that renders embeds (Foam).`,
+                    verbs: [
+                        { id: 'remove-wiki-embed', label: 'Remove embed', title: 'The embed goes from the text.', run: () => this.remove(object, 'Embed removed') },
+                    ],
+                };
             case 'badge': {
                 const mark = object.node.attrs.mark as { rule?: unknown } | null;
                 return {

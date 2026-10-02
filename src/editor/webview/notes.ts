@@ -26,14 +26,16 @@
  *   and `Delete` right before one select it the same way. `Delete` at the end
  *   of a part does nothing: parts are not joined.
  */
-import { Fragment, Mark, Node, ResolvedPos } from 'prosemirror-model';
+import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, Transaction } from 'prosemirror-state';
+import { undoInputRule } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { EditorView } from 'prosemirror-view';
 import { PRESERVE_SOURCE_META } from '../fidelity';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
-import { RAW_TEXT_MARKS, unwritableInNote } from '../serialize';
+import { RAW_TEXT_MARKS, unwritableEmbed, unwritableInNote } from '../serialize';
 import { showHint } from './hint';
+import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
 
 const nodes = editorSchema.nodes;
 
@@ -268,7 +270,8 @@ export function noteKeymap(): Plugin {
         'Escape': leaveNote,
         'ArrowRight': chain(arrowRightInPart, enterAdjacentNote(1)),
         'ArrowLeft': chain(arrowLeftInPart, enterAdjacentNote(-1)),
-        'Backspace': chain(backspaceInPart, deleteCharInPart(-1), selectAdjacentNote(-1)),
+        // Right after an input rule (a typed `]]` made an embed), Backspace gives back what was typed.
+        'Backspace': chain(undoInputRule, backspaceInPart, deleteCharInPart(-1), selectAdjacentNote(-1)),
         'Delete': chain(deleteInPart, deleteCharInPart(1), selectAdjacentNote(1)),
     });
 }
@@ -332,6 +335,12 @@ export function noteRefusal(tr: Transaction): string | null {
     return range === null ? null : unwritableInNote(tr.doc, range.from, range.to);
 }
 
+/** `noteRefusal`, then a wiki embed under a raw mark (`unwritableEmbed`), over the range the transaction changed, read once. */
+function refusal(tr: Transaction): string | null {
+    const range = refusableRange(tr);
+    return range === null ? null : unwritableInNote(tr.doc, range.from, range.to) ?? unwritableEmbed(tr.doc, range.from, range.to);
+}
+
 /**
  * The range of the new document a transaction changed, which a refusal is
  * decided over — the notes' here, the tables' (`tables.ts`) — or `null` for one
@@ -364,14 +373,15 @@ export function refusableRange(tr: Transaction): { from: number; to: number } | 
  * browser would put the text into the neighbouring span), and pastes into a
  * part as text — a slice of paragraphs would split the note in two.
  */
-export function notesPlugin(): Plugin {
+export function notesPlugin(embedInput: Plugin): Plugin {
     let editorView: EditorView | null = null;
     return new Plugin({
         // The one edit the serializer cannot write back is refused here,
         // whatever made it — a key, the toolbar, a paste, typing into a code
-        // span — with the reason shown beside the caret (`noteRefusal`).
+        // span — with the reason shown beside the caret (`noteRefusal`); and
+        // so is a wiki embed made code, superscript or subscript (`unwritableEmbed`).
         filterTransaction(tr) {
-            const reason = noteRefusal(tr);
+            const reason = refusal(tr);
             if (reason !== null) {
                 if (editorView) {
                     showHint(editorView, reason, 'refusal');
@@ -404,7 +414,13 @@ export function notesPlugin(): Plugin {
                     }
                     if (e.inputType === 'insertText' && typeof e.data === 'string') {
                         e.preventDefault();
-                        view.dispatch(view.state.tr.insertText(e.data).scrollIntoView());
+                        // The embed input rule first (a `]]` closing `![[name]]`), and no
+                        // other: a block rule (three backticks, `# `, `- `) would turn the line holding the note into a block.
+                        const { from, to } = view.state.selection;
+                        const text = e.data;
+                        if (!runWikiEmbedInput(embedInput, view, from, to, text)) {
+                            view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+                        }
                         return true;
                     }
                     // A deletion the keymap did not take (a word, a line): what the
@@ -430,8 +446,14 @@ export function notesPlugin(): Plugin {
                 if (noteContextAt(sel.$from) === null && noteContextAt(sel.$to) === null) {
                     return false;
                 }
-                const text = slice.content.textBetween(0, slice.content.size, ' ', ' ');
-                view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+                // One line of the slice's text, with the marks typed text takes
+                // here; a wiki embed atom stays one, text stays text (`inlineForNote`).
+                const marks = view.state.storedMarks ?? sel.$from.marks();
+                const inline = inlineForNote(slice, marks);
+                const tr = inline.some(n => n.type === editorSchema.nodes.wiki_embed)
+                    ? view.state.tr.replaceSelection(new Slice(Fragment.from(inline), 0, 0))
+                    : view.state.tr.insertText(inline.map(n => n.text ?? '').join(''));
+                view.dispatch(tr.scrollIntoView());
                 return true;
             },
         },

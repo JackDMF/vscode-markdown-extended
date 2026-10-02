@@ -1,7 +1,7 @@
 import { Node } from 'prosemirror-model';
 import { Selection, TextSelection } from 'prosemirror-state';
-import { NOTE_SEPARATOR, NOTE_SYNTAX } from '../syntax/markers';
-import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize';
+import { NOTE_SEPARATOR, NOTE_SYNTAX, WIKI_EMBED_MARKERS } from '../syntax/markers';
+import { NotePart, SerializeOptions, SerializedLayout, WikiEmbedPlace, serializeLayout, writtenWikiEmbed } from './serialize';
 
 /**
  * Where a place in the page stands in the document's text, and back.
@@ -46,7 +46,11 @@ import { SerializeOptions, SerializedLayout, serializeLayout } from './serialize
  * `NOTE_SEPARATOR` — read from where the syntax is stated), so the text of one
  * part cannot be matched into another, and a table's line breaks and `|`s
  * (`visitTable`: a cell is a textblock that starts after a `|`, not on a line
- * of its own). The alignment runs in a band around the
+ * of its own). A wiki embed, an atom, matches its source's `!`, the rest of
+ * its plain name anchors it, and its spelling runs to its closing `]]`
+ * however the place spelled it; a source position right after that is after
+ * the atom.
+ * The alignment runs in a band around the
  * diagonal (the source is the page text plus delimiters); a block too large for
  * the band's budget is aligned greedily instead and every answer in it is
  * approximate.
@@ -251,6 +255,8 @@ const UNMATCHABLE = -1;
 interface Unit {
     pos: number;
     code: number;
+    /** An atom spelled by a run of source characters up to and including `spelledTo` (a wiki embed: `]]`). */
+    spelledTo?: string;
 }
 
 /** The markers the notes plugin reads around a note's parts (`markdownItSidenote.ts`), as anchors. */
@@ -261,19 +267,42 @@ const NOTE_ANCHORS: Readonly<Record<string, { open: string; between?: string; cl
     right_sidebar: { open: NOTE_SYNTAX.rightSidebar.marker, close: NOTE_SYNTAX.rightSidebar.marker },
 };
 
+/** The note part each child of a note node is, by index, and the marker the note is written with. */
+const NOTE_PARTS: Readonly<Record<string, { parts: readonly NotePart[]; marker?: string }>> = {
+    sidenote: { parts: ['ref', 'body'], marker: NOTE_SYNTAX.sidenote.marker.charAt(0) },
+    marginal_note: { parts: ['ref', 'body'], marker: NOTE_SYNTAX.marginalNote.marker.charAt(0) },
+    left_sidebar: { parts: ['left'] },
+    right_sidebar: { parts: ['right'] },
+};
+
 function collectUnits(block: Node): Unit[] {
     const units: Unit[] = [];
+    // An untouched block is its source, an embed in it spelled as read; a changed one is written by rule.
+    const written = (block.attrs.src ?? null) === null;
     const anchor = (text: string) => {
         for (let k = 0; k < text.length; k++) {
             units.push({ pos: -1, code: text.charCodeAt(k) });
         }
     };
-    const visit = (node: Node, pos: number): void => {
+    const visit = (node: Node, pos: number, place: WikiEmbedPlace): void => {
         if (node.isText) {
             const text = node.text ?? '';
             for (let k = 0; k < text.length; k++) {
                 units.push({ pos: pos + k, code: text.charCodeAt(k) });
             }
+            return;
+        }
+        if (node.type.name === 'wiki_embed') {
+            // The atom matches its source's `!`, and its spelling runs to the
+            // `]]` that closes it (`spellingEnd`), as an entity's runs to its
+            // `;`: the position before it is the source's start, the one after
+            // it its end. The spelling it has in this place anchors it: as read
+            // in an untouched block, as `writtenWikiEmbed` writes it in a changed
+            // one (`\|` in a cell, `&#124;` in a note's reference).
+            const read = node.attrs.source as string;
+            const source = written ? writtenWikiEmbed(read, place) : read;
+            units.push({ pos, code: source.charCodeAt(0), spelledTo: WIKI_EMBED_MARKERS.close });
+            anchor(source.slice(1));
             return;
         }
         if (node.isLeaf) {
@@ -292,11 +321,13 @@ function collectUnits(block: Node): Unit[] {
         if (note) {
             anchor(note.open);
         }
+        const parts = NOTE_PARTS[node.type.name];
         node.forEach((child, offset, index) => {
             if (note?.between !== undefined && index === 1) {
                 anchor(note.between);
             }
-            visit(child, pos + 1 + offset);
+            const part = parts === undefined ? place : { ...place, notePart: parts.parts[Math.min(index, parts.parts.length - 1)], noteMarker: parts.marker ?? place.noteMarker };
+            visit(child, pos + 1 + offset, part);
         });
         if (note) {
             anchor(note.close);
@@ -319,7 +350,7 @@ function collectUnits(block: Node): Unit[] {
             row.forEach((cell, cellOffset) => {
                 anchor('|');
                 const cellPos = rowPos + 1 + cellOffset;
-                cell.forEach((child, childOffset) => visit(child, cellPos + 1 + childOffset));
+                cell.forEach((child, childOffset) => visit(child, cellPos + 1 + childOffset, { inTableCell: true }));
             });
             anchor('|');
             if (r === 0) {
@@ -328,7 +359,7 @@ function collectUnits(block: Node): Unit[] {
             }
         });
     };
-    visit(block, 0);
+    visit(block, 0, {});
     return units;
 }
 
@@ -561,6 +592,8 @@ class BlockMap {
     private readonly spellingEnd: Int32Array;
     /** For each normalized position, whether it stands inside a delimiter: a line's prefix, an entity's tail. */
     private readonly inside: Uint8Array;
+    /** The unit of the atom whose spelling ends at a normalized position (a wiki embed's `]]`). */
+    private readonly atomEndingAt = new Map<number, number>();
 
     constructor(block: Node, readonly body: string) {
         this.units = collectUnits(block);
@@ -604,6 +637,17 @@ class BlockMap {
         // A character spelled as an entity whose first character it is
         // (`&amp;` for `&`) matches that first character: its spelling runs to
         // the `;`, as an escape's (`\*`) runs to the character.
+        // An atom spelled by a run of source (a wiki embed) runs to its closing marker.
+        this.units.forEach((unit, j) => {
+            const i = this.alignment.toSource[j];
+            const close = unit.spelledTo === undefined || i < 0 ? -1 : src.indexOf(unit.spelledTo, i + 1);
+            if (close >= 0) {
+                const end = close + (unit.spelledTo as string).length;
+                this.spellingEnd[i] = end;
+                this.inside.fill(1, i + 1, end);
+                this.atomEndingAt.set(end, j);
+            }
+        });
         for (let i = 0; i < src.length; i++) {
             if (src.charCodeAt(i) !== AMPERSAND || toUnit[i] < 0) {
                 continue;
@@ -656,6 +700,11 @@ class BlockMap {
         const afterPos = after >= 0 ? this.units[after].pos : -1;
         // Inside a delimiter the place is only near one: the rules below still find it.
         const within = exact && this.inside[l] === 0;
+        // Right after an atom's spelling: after the atom, wherever it stands in its block.
+        const atom = this.atomEndingAt.get(l);
+        if (atom !== undefined) {
+            return { rel: this.units[atom].pos + 1, exact: within };
+        }
         if (beforePos >= 0 && src.charCodeAt(l - 1) !== NEWLINE) {
             return { rel: beforePos + 1, exact: within };
         }

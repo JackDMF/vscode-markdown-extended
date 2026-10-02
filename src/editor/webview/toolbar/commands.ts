@@ -327,6 +327,8 @@ export function blockCommand(node: BlockTarget, level?: number): Command {
 export interface SourceContext {
     eol: '\n' | '\r\n';
     defaultWrap: number;
+    /** Whether the host's engine reads wiki embeds (`SerializeOptions.wikiEmbeds`). */
+    wikiEmbeds?: boolean;
     /** The document's text as it would be saved, to pick a footnote label it does not use. */
     documentText: string;
 }
@@ -421,7 +423,7 @@ function count(haystack: string, needle: string): number {
  * the text exactly once.
  */
 function asSourceBlock(block: Node, runs: readonly (readonly [string, string])[], context: SourceContext, gap: string | null): Node | null {
-    let written = serializeNode(block.type.create({ ...block.attrs, src: null }, block.content, block.marks), { defaultWrap: context.defaultWrap });
+    let written = serializeNode(block.type.create({ ...block.attrs, src: null }, block.content, block.marks), { defaultWrap: context.defaultWrap, wikiEmbeds: context.wikiEmbeds });
     for (const [run, literal] of runs) {
         if (run === '') {
             continue;

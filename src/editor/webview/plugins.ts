@@ -12,6 +12,7 @@ import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
 import { tableKeymap, tablesPlugins } from './tables';
 import { toggleMarkType } from './toolbar/commands';
+import { wikiEmbedInputRules, wikiEmbedPastePlugin } from './wikiEmbeds';
 import { admonitionTitlesPlugin, wrapperKeymap } from './wrappers';
 
 const nodes = editorSchema.nodes;
@@ -114,12 +115,19 @@ export function domSelectionFirst(): Plugin {
     });
 }
 
-/** Every plugin the editor state is built with, in the order they must run. */
-export function editorPlugins(): Plugin[] {
+/**
+ * Every plugin the editor state is built with, in the order they must run.
+ * `wikiEmbeds` says whether the host's engine reads wiki embeds (`readsWikiEmbeds`).
+ */
+export function editorPlugins(wikiEmbeds: () => boolean = () => true): Plugin[] {
+    const embedInput = wikiEmbedInputRules(wikiEmbeds);
     return [
         // First: every key below reads the selection the DOM shows.
         domSelectionFirst(),
         markdownInputRules(),
+        // `![[name]]` typed: an embed atom, where the engine reads embeds; a plugin of its own,
+        // which a note's own text insertion runs and no other rule (`wikiEmbeds.ts`).
+        embedInput,
         // Ahead of the Markdown keys: Tab, Enter and Backspace mean something else inside a note,
         // Enter and Backspace in an empty paragraph of a container or an admonition,
         // and Tab, Enter and Shift+Enter in a table cell (a sidebar in a cell keeps its own keys).
@@ -132,7 +140,8 @@ export function editorPlugins(): Plugin[] {
         dropCursor(),
         gapCursor(),
         hintPlugin(),
-        notesPlugin(),
+        notesPlugin(embedInput),
+        wikiEmbedPastePlugin(wikiEmbeds),
         admonitionTitlesPlugin(),
         ...tablesPlugins(),
         fidelityPlugin(),

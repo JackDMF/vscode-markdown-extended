@@ -102,7 +102,7 @@ export function headingText(inline: TextToken | undefined): string {
         if (t.children && t.children.length > 0) {
             return walk(t.children);
         }
-        return t.type === 'text' || t.type === 'emoji' || t.type === 'code_inline' ? t.content : '';
+        return t.type === 'text' || t.type === 'emoji' || t.type === 'code_inline' || t.type === 'wiki_embed' ? t.content : '';
     }).join('');
     return inline ? walk(inline.children ?? []) : '';
 }

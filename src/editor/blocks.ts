@@ -233,6 +233,8 @@ export const EDITABLE_INLINE_TOKENS: ReadonlySet<string> = new Set([
     // The extension's inline syntax: `==`, `^`, `~`, `~~`, `[[…]]` …
     'mark_open', 'mark_close', 'sup_open', 'sup_close', 'sub_open', 'sub_close',
     's_open', 's_close', 'kbd_open', 'kbd_close',
+    // A wiki embed, `![[…]]` (`markdownItWikiEmbed.ts`): one atom carrying its source.
+    'wiki_embed',
     // … and the note family (`markdownItSidenote.ts`), whose reference and body are inline content.
     'sidenote_open', 'sidenote_ref_open', 'sidenote_ref_close', 'sidenote_content_open', 'sidenote_content_close', 'sidenote_close',
     'marginal_note_open', 'marginal_note_ref_open', 'marginal_note_ref_close',

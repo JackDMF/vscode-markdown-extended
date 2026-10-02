@@ -1,6 +1,6 @@
 import { DOMOutputSpec, DOMParser, Fragment, Mark, Node, NodeSpec, Schema, TagParseRule } from 'prosemirror-model';
 import { tableNodes } from 'prosemirror-tables';
-import { ADMONITION_TYPES, NOTE_SYNTAX } from '../syntax/markers';
+import { ADMONITION_TYPES, NOTE_SYNTAX, plainWikiEmbed } from '../syntax/markers';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { domAttrsOf } from './attrs';
 
@@ -305,7 +305,7 @@ export function alignOfStyle(style: string | null | undefined): TableAlign {
 }
 
 /** The inline content of a table cell: the paragraph's, without hard breaks and the notes with a reference. */
-export const TABLE_CELL_CONTENT = '(text | image | inline_atom | left_sidebar | right_sidebar)*';
+export const TABLE_CELL_CONTENT = '(text | image | inline_atom | wiki_embed | left_sidebar | right_sidebar)*';
 
 const tableSpecs = tableNodes({
     tableGroup: 'top_block',
@@ -363,7 +363,7 @@ export const editorSchema = new Schema({
         },
         heading: {
             // A note is written inside the heading's one line; a hard break is not.
-            content: '(text | image | inline_atom | sidenote | marginal_note | left_sidebar | right_sidebar)*',
+            content: '(text | image | inline_atom | wiki_embed | sidenote | marginal_note | left_sidebar | right_sidebar)*',
             group: 'block',
             defining: true,
             attrs: {
@@ -643,6 +643,30 @@ export const editorSchema = new Schema({
             },
             toDOM(): DOMOutputSpec {
                 return ['span', { class: 'mep-inline-atom', 'data-mep-inline-atom': '' }];
+            },
+        },
+        // A wiki embed, `![[path/to/img.png]]` (`markdownItWikiEmbed.ts`): one
+        // unit, drawn as the text the preview shows and written back as `source`,
+        // exactly as it was written, never escaped.
+        wiki_embed: {
+            inline: true,
+            group: 'inline note_inline',
+            atom: true,
+            selectable: true,
+            draggable: true,
+            attrs: {
+                source: {},
+            },
+            // Its text, where ProseMirror reads text (a copy, an emptiness check): the source, plain (`plainWikiEmbed`).
+            leafText: node => plainWikiEmbed(node.attrs.source as string),
+            parseDOM: [{
+                tag: 'span[data-mep-wiki-embed]',
+                getAttrs: (dom: HTMLElement) => ({ source: dom.getAttribute('data-mep-wiki-embed') || dom.textContent || '' }),
+            }],
+            toDOM(node): DOMOutputSpec {
+                const source = node.attrs.source as string;
+                // Shown plain: a place's encoding of a character (`&#124;` in a note) is how it is written, not its name.
+                return ['span', { class: 'mep-wiki-embed', 'data-mep-wiki-embed': source, title: 'Wiki embed' }, plainWikiEmbed(source)];
             },
         },
         sidenote: noteNode(SN.refClass, 'sidenote_body', SN.noteClass),

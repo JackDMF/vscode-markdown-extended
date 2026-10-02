@@ -29,6 +29,9 @@
           "include": "#toc"
         },
         {
+          "include": "#wiki_embed"
+        },
+        {
           "include": "#kbd"
         },
         {
@@ -163,6 +166,11 @@
           ]
         }
       }
+    },
+    "wiki_embed": {
+      "comment": "The shape src/plugin/markdownItWikiEmbed.ts reads (WIKI_EMBED_MARKERS): `![[`, a name with no bracket and no line break, `]]`. It starts one character before a key would, so a key never starts inside it. No lookbehind for a backslash: the host grammar's escape takes `\\!` first, and `\\\\` before a bare `!`, which counts them as the parser does. Where it disagrees with the preview: (1) `![[x]](y)` and `![[x]][ref]` are scoped as images, because the host grammar's image rules start at the same `!` and win over this injection there (the preview reads the embed and the text after it); (2) after a marginal note closed by `!!` with no space after it, which the marginal_note rule here does not take, its last `!` opens an embed (`!!ref|note!![[Ctrl]]` is a key in the preview).",
+      "name": "meta.embed.wiki.markdown",
+      "match": "!\\[\\[[^\\[\\]]+\\]\\]"
     },
     "kbd": {
       "name": "markup.kbd.markdown",

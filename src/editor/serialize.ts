@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
-import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
+import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, plainWikiEmbed, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { NOTE_SYNTAX_CHARS, endLiteralOf, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
@@ -25,6 +25,12 @@ export interface SerializeOptions {
      * that line's width (`lineWidth`). The host passes its setting (default 90).
      */
     defaultWrap: number;
+    /**
+     * Whether the engine reads wiki embeds (`markdownItWikiEmbed.ts`, unless
+     * `plugins.disabled` names `wiki-embed`): only then is a `!` right before a
+     * key escaped, since only then would `![[` read as an embed. Default `true`.
+     */
+    wikiEmbeds?: boolean;
 }
 
 /** The parts of prosemirror-markdown's state it keeps internal but a wrapping serializer has to read. Stable since 1.0. */
@@ -40,6 +46,8 @@ interface StateInternals {
     noteMarker?: string;
     /** Whether a table cell is being written (`writeTable`); this module's own field. */
     inTableCell?: boolean;
+    /** `SerializeOptions.wikiEmbeds`, for the marks and nodes to read; this module's own field. */
+    wikiEmbeds?: boolean;
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
     flushClose(size?: number): void;
 }
@@ -76,7 +84,14 @@ function breakMarkerRuns(text: string, ch: string | undefined, replace: (ch: str
  * superscript and subscript are refused: the sidebar rule skips a code span
  * whole.
  */
-type NotePart = 'ref' | 'body' | 'left' | 'right';
+export type NotePart = 'ref' | 'body' | 'left' | 'right';
+
+/** Where a wiki embed is written: a table cell, a note's part and the note's marker (`writtenWikiEmbed`; the positions read it too). */
+export interface WikiEmbedPlace {
+    inTableCell?: boolean;
+    notePart?: NotePart;
+    noteMarker?: string;
+}
 
 /** The character each part must not hold raw, as the escaped form `esc` gives it, and what it is written as instead. */
 const PART_TERMINATORS: Readonly<Record<NotePart, { escaped: RegExp; raw: string; entity: string } | null>> = {
@@ -88,6 +103,60 @@ const PART_TERMINATORS: Readonly<Record<NotePart, { escaped: RegExp; raw: string
 
 function internals(state: MarkdownSerializerState): StateInternals {
     return state as unknown as StateInternals;
+}
+
+/**
+ * A wiki embed's source as it is written where it stands. It starts from the
+ * plain form (`plainWikiEmbed`: the encodings below read back, every other
+ * escape kept), and encodes only a character the place reads as its own
+ * syntax: in a table cell a `|` no backslash precedes (the table plugin's
+ * reading: any backslash before it escapes it) as `\|` and a bare backtick as
+ * `&#96;`; in a note's part its terminator (`PART_TERMINATORS`), bare or
+ * escaped (the notes plugin finds it in the raw source either way), and a run
+ * of the note's marker character as character references. The embed plugin
+ * reads its name with escapes and references resolved
+ * (`markdownItWikiEmbed.ts`), so each form is the same embed to it and to Foam,
+ * and a block read from the file is written back as it was read.
+ */
+export function writtenWikiEmbed(source: string, place: WikiEmbedPlace): string {
+    // A source as characters: an escape pair is one, `\|` stands for `|`.
+    const units = plainWikiEmbed(source).match(/\\.|[^]/g) ?? [];
+    const charOf = (unit: string) => (unit.length === 2 ? unit[1] : unit);
+    const terminator = place.notePart === undefined ? null : PART_TERMINATORS[place.notePart];
+    const marker = place.noteMarker;
+    const written = units.map((unit, i) => {
+        const ch = charOf(unit);
+        if (terminator !== null && ch === terminator.raw) {
+            return terminator.entity;
+        }
+        if (marker !== undefined && ch === marker && (charOf(units[i - 1] ?? '') === marker || charOf(units[i + 1] ?? '') === marker)) {
+            return MARKER_REFERENCES[ch] ?? unit;
+        }
+        if (place.inTableCell && unit === '`') {
+            return '&#96;';
+        }
+        return unit;
+    }).join('');
+    return place.inTableCell ? written.replace(/(?<!\\)\|/g, '\\|') : written;
+}
+
+/**
+ * Escape a `!` that ends the output, unless a backslash already escapes it,
+ * before a `[` that would make it part of the next construct: `![` an image,
+ * `![[` a wiki embed. An escaped backslash (`\\!`) leaves the `!` bare, so the
+ * backslashes before it are counted.
+ */
+function escapeTrailingBang(st: StateInternals): void {
+    if (!st.out.endsWith('!')) {
+        return;
+    }
+    let backslashes = 0;
+    while (st.out.charAt(st.out.length - 2 - backslashes) === '\\') {
+        backslashes++;
+    }
+    if (backslashes % 2 === 0) {
+        st.out = st.out.slice(0, -1) + '\\!';
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +335,12 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // Mixable, as a link is: a span in a link's text and a link in a span's are
     // written nested (`[see [term]{.x}](url)`), not as the one closed to open the other.
     attr_span: {
-        open: '[',
+        // prosemirror-markdown escapes a `!` before a `[` only when no
+        // backslash precedes it; an escaped backslash leaves the `!` bare.
+        open(state) {
+            escapeTrailingBang(internals(state));
+            return '[';
+        },
         close: (_state, mark) => HOLD_OPEN + ']' + (mark.attrs.literal as string) + HOLD_CLOSE,
         mixable: true,
     },
@@ -293,9 +367,7 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
                 // (`measureWrapWidth` holds it the same way). With the hold marker
                 // first, prosemirror-markdown no longer sees the `[` after a `!`
                 // that would make it an image, so that `!` is escaped here.
-                if (/(^|[^\\])!$/.test(st.out)) {
-                    st.out = st.out.slice(0, -1) + '\\!';
-                }
+                escapeTrailingBang(st);
                 return HOLD_OPEN + '[';
             }
             // Written unescaped: a backslash inside a URL is part of the URL.
@@ -324,7 +396,20 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // each is a held run the wrapper keeps on one line, as a code span is.
     // Mixable, so emphasis inside a key is written inside it (`[[a *b*]]`),
     // not as a second key inside the emphasis.
-    kbd: { open: HOLD_OPEN + KBD_MARKERS.open, close: KBD_MARKERS.close + HOLD_CLOSE, mixable: true },
+    // A key right after a `!` would be read as a wiki embed's `![[…]]`
+    // where the engine reads embeds (`markdownItWikiEmbed.ts`), so there that
+    // `!` is escaped, as a link's is.
+    kbd: {
+        open(state) {
+            const st = internals(state);
+            if (st.wikiEmbeds !== false) {
+                escapeTrailingBang(st);
+            }
+            return HOLD_OPEN + KBD_MARKERS.open;
+        },
+        close: KBD_MARKERS.close + HOLD_CLOSE,
+        mixable: true,
+    },
     sup: { open: HOLD_OPEN + INLINE_MARKERS.superscript, close: INLINE_MARKERS.superscript + HOLD_CLOSE },
     sub: { open: HOLD_OPEN + INLINE_MARKERS.subscript, close: INLINE_MARKERS.subscript + HOLD_CLOSE },
     code: {
@@ -351,6 +436,18 @@ const inlineNodes: NodeSerializers = {
         }
         // Never at a line start: the note's opening marker is before it.
         state.text(partText(st.notePart, state.esc(text, false)), false);
+    },
+    wiki_embed(state, node) {
+        const st = internals(state);
+        // A `!` before it would pair with the embed's own: escaped, or in a
+        // marginal note (which finds `!!` in the raw source) a reference.
+        if (st.noteMarker === '!') {
+            referenceMarkerAt(st, st.out.length - 1, '!', 0);
+        } else {
+            escapeTrailingBang(st);
+        }
+        // Its source, as it was written, held on one line (`writtenWikiEmbed`).
+        state.text(HOLD_OPEN + writtenWikiEmbed(node.attrs.source as string, st) + HOLD_CLOSE, false);
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
@@ -468,6 +565,25 @@ function noteUnwritable(note: Node): string | null {
 }
 
 /**
+ * Why a wiki embed between `from` and `to` cannot be written so that it reads
+ * back as itself, or `null`: one under inline code, superscript or subscript
+ * (`RAW_TEXT_MARKS`), whose text is read as it is, so the embed would be text
+ * after a save. The editor refuses the edit that makes it (`webview/notes.ts`).
+ */
+export function unwritableEmbed(doc: Node, from = 0, to = doc.content.size): string | null {
+    let reason: string | null = null;
+    const start = Math.max(0, Math.min(from, to));
+    const end = Math.min(doc.content.size, Math.max(from, to));
+    doc.nodesBetween(start, end, node => {
+        if (reason === null && node.type.name === 'wiki_embed' && node.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
+            reason = 'A wiki embed cannot be inline code, superscript or subscript: their text is written as it is, and the embed would be plain text after a save.';
+        }
+        return reason === null;
+    });
+    return reason;
+}
+
+/**
  * Why a note or sidebar between `from` and `to` cannot be written so that it
  * reads back as itself, or `null` — the one thing the serializer cannot do,
  * so the editor refuses the edit that would make it (`webview/notes.ts`)
@@ -520,11 +636,11 @@ function renderPart(state: MarkdownSerializerState, parent: Node, part: NotePart
     }
 }
 
-/** The plugin refuses a reference with no text (`++ |note++` is prose); an image counts, as its source is not blank. */
+/** The plugin refuses a reference with no text (`++ |note++` is prose); an image or a wiki embed counts, as its source is not blank. */
 function writableReference(ref: Node): boolean {
     let writable = ref.textContent.trim() !== '';
     ref.forEach(child => {
-        writable = writable || child.type.name === 'image';
+        writable = writable || child.type.name === 'image' || child.type.name === 'wiki_embed';
     });
     return writable;
 }
@@ -657,20 +773,30 @@ function sidebarSeamRefusal(textblock: Node): string | null {
  */
 const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, 'g');
 
-function inlineSerializer(fromBlockStart: boolean, inTableCell = false): MarkdownSerializer {
+function inlineSerializer(fromBlockStart: boolean, inTableCell: boolean, wikiEmbeds: boolean): MarkdownSerializer {
     return new MarkdownSerializer({
         ...inlineNodes,
         paragraph(state, node) {
             internals(state).inTableCell = inTableCell;
+            internals(state).wikiEmbeds = wikiEmbeds;
             state.renderInline(node, fromBlockStart);
             state.closeBlock(node);
         },
     }, marks, { escapeExtraCharacters: inTableCell ? ESCAPE_IN_CELL : ESCAPE_EXTRA });
 }
 
-const inlineAtStart = inlineSerializer(true);
-const inlineMidLine = inlineSerializer(false);
-const inlineInCell = inlineSerializer(false, true);
+const inlineSerializers = new Map<string, MarkdownSerializer>();
+
+/** The inline serializer for a line's start or its middle, a table cell, and whether the engine reads wiki embeds. */
+function inlineFor(fromBlockStart: boolean, inTableCell: boolean, wikiEmbeds: boolean): MarkdownSerializer {
+    const key = `${fromBlockStart}/${inTableCell}/${wikiEmbeds}`;
+    let serializer = inlineSerializers.get(key);
+    if (serializer === undefined) {
+        serializer = inlineSerializer(fromBlockStart, inTableCell, wikiEmbeds);
+        inlineSerializers.set(key, serializer);
+    }
+    return serializer;
+}
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -723,9 +849,9 @@ const BACKSLASH_BEFORE_CODE = new RegExp(`\\\\\\\\(?=[${HOLD_CLOSE}]*${HOLD_OPEN
 const READS_AS_DELIMITER = /^:?(?:-+|=+):?\+?$/;
 
 /** One cell's inline content as the tidy form writes it (see above), unpadded. */
-export function tableCellMarkdown(cell: Node): string {
+export function tableCellMarkdown(cell: Node, wikiEmbeds = true): string {
     const paragraph = editorSchema.nodes.paragraph.create(null, cell.content);
-    const written = inlineInCell.serialize(editorSchema.topNodeType.create(null, [paragraph]))
+    const written = inlineFor(false, true, wikiEmbeds).serialize(editorSchema.topNodeType.create(null, [paragraph]))
         .replace(BACKSLASH_BEFORE_CODE, '&#92;')
         .replace(HOLD_RE, '')
         .replace(/\r?\n/g, ' ')
@@ -747,12 +873,12 @@ const FORMATTER_ALIGN: Readonly<Record<Exclude<TableAlign, null>, MDTableAlign>>
  * which a pipe table has no spelling for and the schema never parses, is
  * written as itself and empty cells after it, so the rows stay rectangular.
  */
-export function tableLines(table: Node): string[] {
+export function tableLines(table: Node, wikiEmbeds = true): string[] {
     const rows: { text: string; align: TableAlign }[][] = [];
     table.forEach(row => {
         const cells: { text: string; align: TableAlign }[] = [];
         row.forEach(cell => {
-            cells.push({ text: tableCellMarkdown(cell), align: (cell.attrs.align as TableAlign | undefined) ?? null });
+            cells.push({ text: tableCellMarkdown(cell, wikiEmbeds), align: (cell.attrs.align as TableAlign | undefined) ?? null });
             for (let k = 1; k < ((cell.attrs.colspan as number | undefined) ?? 1); k++) {
                 cells.push({ text: '', align: null });
             }
@@ -810,13 +936,14 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
 }
 
 /** A textblock's inline content as one line of Markdown, hold markers included, hard breaks as `\` + newline. */
-function inlineMarkdown(node: Node, fromBlockStart: boolean): string {
+function inlineMarkdown(node: Node, fromBlockStart: boolean, wikiEmbeds = true): string {
     const paragraph = editorSchema.nodes.paragraph.create(null, node.content);
     const doc = editorSchema.topNodeType.create(null, [paragraph]);
-    return (fromBlockStart ? inlineAtStart : inlineMidLine).serialize(doc);
+    return inlineFor(fromBlockStart, false, wikiEmbeds).serialize(doc);
 }
 
 function blockSerializer(options: SerializeOptions): MarkdownSerializer {
+    const wikiEmbeds = options.wikiEmbeds !== false;
     return new MarkdownSerializer({
         ...inlineNodes,
         paragraph(state, node) {
@@ -827,8 +954,8 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             const column = characterCount(st.out.slice(st.out.lastIndexOf('\n') + 1));
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
-            const lines = wrapInline(inlineMarkdown(node, true), limit - column, limit - characterCount(st.delim));
-            if (endsInLiteralText(node)) {
+            const lines = wrapInline(inlineMarkdown(node, true, wikiEmbeds), limit - column, limit - characterCount(st.delim));
+            if (endsInLiteralText(node, wikiEmbeds)) {
                 lines[lines.length - 1] = escapeTrailingLiteral(lines[lines.length - 1]);
             }
             state.text(lines.join('\n'), false);
@@ -837,12 +964,12 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
         heading(state, node) {
             const suffix = node.attrs.attrsSuffix as string | null;
             // A heading is one line; a hard break a note inside it holds is a space here.
-            let text = inlineMarkdown(node, false).replace(HOLD_RE, '').replace(/\\\n/g, ' ').replace(/\s+$/, '');
+            let text = inlineMarkdown(node, false, wikiEmbeds).replace(HOLD_RE, '').replace(/\\\n/g, ' ').replace(/\s+$/, '');
             if (suffix === null && /(^| )#+$/.test(text)) {
                 // A trailing ` #` run is an ATX closing sequence and would be dropped.
                 text = text.replace(/#+$/, run => '\\' + run);
             }
-            if (endsInLiteralText(node)) {
+            if (endsInLiteralText(node, wikiEmbeds)) {
                 text = escapeTrailingLiteral(text);
             }
             const line = '#'.repeat(node.attrs.level as number) + ' ' + ((node.attrs.reqPrefix as string | null) ?? '') + text;
@@ -915,7 +1042,7 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
         },
         table(state, node) {
             // The tidy form (above); never wrapped, since a row is one line.
-            state.text(tableLines(node).join('\n'), false);
+            state.text(tableLines(node, wikiEmbeds).join('\n'), false);
             state.closeBlock(node);
         },
         container(state, node) {
@@ -1018,9 +1145,16 @@ function listTakesLineLiteral(list: Node): boolean {
  * plugin would take it for attributes — at once, or once a literal after it is
  * removed — so its braces are escaped (`escapeTrailingLiteral`).
  */
-function endsInLiteralText(node: Node): boolean {
+function endsInLiteralText(node: Node, wikiEmbeds = true): boolean {
     const last = node.lastChild;
-    return last !== null && last.isText && last.marks.length === 0 && endLiteralOf(last.text ?? '') !== null;
+    if (last === null || !last.isText || last.marks.length > 0 || endLiteralOf(last.text ?? '') === null) {
+        return false;
+    }
+    // A `{…}` right after a wiki embed is text the plugin never reads (`markdownItWikiEmbed.ts`).
+    const text = last.text ?? '';
+    const before = node.childCount > 1 ? node.child(node.childCount - 2) : null;
+    // Only after an embed with no mark: a mark's closing delimiter (`*![[x]]*{.a}`) is what attrs reads a literal after.
+    return !(wikiEmbeds && before?.type.name === 'wiki_embed' && before.marks.length === 0 && text.lastIndexOf('{') === 0);
 }
 
 /** The line's trailing `{…}` as text, `\{x\}`, which the plugin reads as no literal. */
@@ -1155,7 +1289,7 @@ export function serializeNode(node: Node, options: SerializeOptions): string {
  * `tail`. A changed block is written with the document's `eol` and ends with
  * one, so a changed last line of a file that had no final newline gains one.
  */
-export function serializeDocument(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions): string {
+export function serializeDocument(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string; wikiEmbeds?: boolean }, options: SerializeOptions): string {
     return serializeLayout(parsed, options).text;
 }
 
@@ -1184,9 +1318,9 @@ export interface SerializedLayout {
  * (`positions.ts`) reads the offsets from where they are made rather than
  * counting them a second time.
  */
-export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions): SerializedLayout {
+export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string; wikiEmbeds?: boolean }, options: SerializeOptions): SerializedLayout {
     const { doc, eol, tail } = parsed;
-    const serializer = blockSerializer(options);
+    const serializer = blockSerializer({ ...options, wikiEmbeds: options.wikiEmbeds ?? parsed.wikiEmbeds });
     const blocks: BlockSpan[] = [];
     let out = '';
     let literalLineBefore = false;

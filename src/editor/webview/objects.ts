@@ -14,6 +14,7 @@
  * | `link` | A run of text carrying one `link` mark | The mark's run in its textblock |
  * | `image` | An `image` node | The node |
  * | `badge` | An `inline_atom` (Req Explorer's status badge) | The node |
+ * | `wiki_embed` | A `wiki_embed` node (`![[…]]`, `markdownItWikiEmbed.ts`) | The node |
  * | `span` | A run of text carrying one `attr_span` mark (`[text]{…}`) | The mark's run in its textblock |
  * | `container` | A `container` node (`::: name`) | The node |
  * | `admonition` | An `admonition` node (`!!! type "Title"`) | The node |
@@ -44,7 +45,7 @@ import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 
 const nodes = editorSchema.nodes;
 
-export type NodeObjectKind = 'note' | 'image' | 'badge' | 'container' | 'admonition' | 'table' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
+export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'container' | 'admonition' | 'table' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
 
 export type EditorObject =
     | { kind: 'link'; from: number; to: number; mark: Mark }
@@ -88,6 +89,7 @@ const NODE_KINDS: Readonly<Record<string, NodeObjectKind>> = {
     right_sidebar: 'note',
     image: 'image',
     inline_atom: 'badge',
+    wiki_embed: 'wiki_embed',
     container: 'container',
     admonition: 'admonition',
     table: 'table',
