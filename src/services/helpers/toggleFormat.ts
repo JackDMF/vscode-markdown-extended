@@ -603,18 +603,31 @@ class Verifier {
 
     /**
      * Toggles a reading together found what is no one toggle's in — a
-     * block's structure, a line's kind, a definition: each is read again with
-     * its own lines alone (`rangeOf`), once, as it means to be made. Those
-     * that go wrong there are tried one after another (`oneByOne`), with
+     * block's structure, a line's kind, a definition: those that find it with
+     * their own lines alone (`rangeOf`), as they mean to be made, are found
+     * by halves, and tried one after another (`oneByOne`), with
      * their alternatives, after the rest are read together again; where no
      * toggle goes wrong alone, it is what some make together, and all are
      * tried one after another.
      */
     private isolated(part: Part, toggles: Toggle[]): Toggle[] {
-        const wrong = toggles.map(t => {
-            const range = this.rangeOf(t);
-            return this.check(this.part(range.start, range.end), [t]) === 'all';
-        });
+        // By halves: toggles read together with their own lines that find
+        // nothing of the kind hold none that would alone, so where all share
+        // one long block, one going wrong costs a few readings of it, not one each.
+        const wrong = toggles.map(() => false);
+        const find = (ks: number[]) => {
+            const ranges = ks.map(k => this.rangeOf(toggles[k]));
+            const start = Math.min(...ranges.map(r => r.start)), end = Math.max(...ranges.map(r => r.end));
+            if (this.check(this.part(start, end), ks.map(k => toggles[k])) !== 'all') {return;}
+            if (ks.length === 1) {
+                wrong[ks[0]] = true;
+                return;
+            }
+            const half = ks.length >> 1;
+            find(ks.slice(0, half));
+            find(ks.slice(half));
+        };
+        find(toggles.map((_, k) => k));
         if (!wrong.includes(true)) {return this.oneByOne(toggles);}
         const rest = toggles.filter((_, k) => !wrong[k]);
         const restPicked = rest.length ? this.together(part, rest) ?? this.oneByOne(rest) : [];

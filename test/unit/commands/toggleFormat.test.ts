@@ -463,6 +463,15 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.ok(parsed <= 20 * content.length, `${parsed} characters parsed for ${content.length}`);
     });
 
+    test('one cursor changing a block all the others stand in is found in a few readings, not one per cursor', async () => {
+        // `==` on the line under `- Title` would make it a heading; every item's cursor wraps its word.
+        const items = Array.from({ length: 100 }, (_, i) => `- item zed number ${i}`);
+        const content = '- Title\n  \n' + items.join('\n');
+        const { parsed, text } = await parsedFor(INLINE_MARKERS.mark, content, [[1, 2], ...items.map((_, i) => [2 + i, 7] as [number, number])]);
+        assert.strictEqual(text, '- Title\n  \n' + items.map(item => item.replace('zed', '==zed==')).join('\n'));
+        assert.ok(parsed <= 40 * content.length, `${parsed} characters parsed for ${content.length}`);
+    });
+
     test('one cursor going wrong among many in one paragraph is found in a few readings, not one per cursor', async () => {
         // At the first line's cursor `~**zed**~` does not read as written, `**~zed~**` does.
         const lines = Array.from({ length: 100 }, (_, i) => (i === 0 ? 'line ~zed~ number ' : 'line zed number ') + i);
