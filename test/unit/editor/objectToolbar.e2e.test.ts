@@ -28,7 +28,7 @@ suite('Editor object toolbar (e2e)', () => {
     const showDocument = async (text: string, marker: string) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, linkify: true });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         // Out of any object the last test left the caret or the pointer in.
         await page.mouse.move(2, 2);
@@ -460,9 +460,10 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(removeNote.title.endsWith(SIDEBAR_GLUED_BEFORE), removeNote.title);
         // Disabled, a click runs nothing: no success is said and nothing is posted.
         const edits = (await (editor as EditorPage).edits()).length;
+        const hintBefore = await hint();
         await clickVerb('remove-note');
         await settle();
-        assert.notStrictEqual((await hint()).text, 'Note removed — Ctrl+Z');
+        assert.deepStrictEqual(await hint(), hintBefore, 'the hint is as it was: nothing said');
         assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'nothing posted');
     });
 });

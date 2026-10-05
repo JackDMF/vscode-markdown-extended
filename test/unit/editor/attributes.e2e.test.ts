@@ -98,7 +98,7 @@ suite('Editor Attributes… (e2e)', () => {
     const showDocument = async (text: string) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, linkify: true });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('last paragraph'));
         await page.mouse.move(2, 2);
         await page.evaluate(() => {

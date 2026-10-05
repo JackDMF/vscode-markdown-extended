@@ -911,14 +911,17 @@ stay text, and so does a price as long as no later `$` can close it (`$5 and $10
 code, a link, an autolink, inline HTML or after a backslash (`\@`) closes nothing. A
 character reference beside a marker counts as the character it stands for, so
 `REQ-&#49;$x$` is text as `REQ-1$x$` is. The Visual Editor does not let a sidebar touch a
-letter or digit before it (or a left one a digit after it), nor stand right after a bare
-web address (`http://e.com/$x$`, which linkify reads as one address): put a space there. A
-formatting button, **Remove link**, **Remove attributes**, **Remove image** or **Remove
-note** whose result would do that is disabled, with the reason in its tooltip. Only an edit
-that makes such a seam is refused: a sidebar the file already holds is never in the way of
-editing its paragraph, even where the editor cannot tell that it reads back
-(`See (http://e.com)$x$`) — except the address right before it, where deleting the `)`
-would let the address take the marker, and moving it to the other side.
+letter or digit before it (or a left one a digit after it): put a space there. Nor does it
+let a bare web address before a sidebar read the sidebar's marker into the address
+(`http://e.com/$x$` is one address): it asks the same linkify the preview uses, set as the
+preview sets it, on the paragraph as it would be written, so `See (http://e.com)$x$` and
+`**See (http://e.com)**$x$` are sidebars and editable, while deleting that `)`, or typing
+one into `See http://e.com/($x$` that closes the address's bracket, is refused. With
+`markdown.preview.linkify` off nothing reads an address, and nothing is refused for one. A
+formatting button, **Remove link**, **Remove attributes**, **Remove image**, **Remove note,
+keep text** or **Remove sidebar, keep text** whose result would do that is disabled, with
+the reason in its tooltip. Only an edit that makes such a seam is refused: a sidebar the
+file already holds is never in the way of editing its paragraph.
 
 **Using left sidebars: turn VS Code's math off in that workspace.** VS Code's built-in
 math extension claims `$…$` before this extension's sidebar rule runs — in the preview,

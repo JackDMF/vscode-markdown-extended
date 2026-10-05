@@ -56,7 +56,7 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
     const send = (m: HostMessage) => (editor as EditorPage).send(m);
     const showText = async (text: string) => {
         version++;
-        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
+        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, linkify: true });
     };
     /** The centre of `word`'s first occurrence in the editor's text, in viewport coordinates. */
     const centreOf = (word: string) => page.evaluate(w => {
@@ -93,7 +93,7 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         }
         page = editor.page;
         md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false });
+        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false, linkify: true });
         await page.waitForSelector('.ProseMirror');
     });
 

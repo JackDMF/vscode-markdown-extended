@@ -1,12 +1,13 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
-import type { Mappable } from 'prosemirror-transform';
+import type { Mapping } from 'prosemirror-transform';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
+import { UrlMatcher, bareUrlAt, createLinkify } from '../syntax/linkify';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -350,7 +351,7 @@ const inlineNodes: NodeSerializers = {
         if (st.notePart === undefined || st.inAutolink) {
             const from = st.out.length;
             state.text(text, !st.inAutolink);
-            // Text linkify reads a URL in: outside a note, a code span, a link's label, `<…>` (`readIntoUrl`).
+            // Text linkify reads a URL in: outside a note, a code span, a link's label, `<…>` (`bareUrlsIn`).
             if (seamCollector !== null && st.notePart === undefined && st.linkForm !== 'inline' && st.linkForm !== 'angle'
                 && !node.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
                 seamCollector.plain.push([from, st.out.length]);
@@ -480,17 +481,14 @@ function noteUnwritable(note: Node): string | null {
  * same way at the same side of the same sidebar before (`seamFailedBefore`)
  * is one the file already held, which the parser read as a sidebar and will
  * again, and refusing it would make every edit in that paragraph impossible.
- * A seam failing the URL check is the same only while the text written from
- * the URL's scheme to the marker is: the check guesses where linkify stops,
- * so one reason stands for a seam the parser read as a sidebar and for one
- * linkify swallows, and an edit to that text (`(http://e.com/)$x$` with the
- * `)` deleted) turns the first into the second. What stays open: linkify
- * also reads on past the marker, and a bracket the URL opened that the
- * sidebar's text or the text after it closes (`http://e.com/(-$no)te$`, a
- * `)` typed into the sidebar) is let through, as that text is not compared.
- * Every refusal the editor asks — the notes filter, the toolbar's disabled
- * buttons, the object bar's verbs — goes through here with the
- * transaction's origin (`noteRefusal`).
+ * A seam failing the URL check never failed before: the check asks linkify
+ * itself whether it reads the marker into a URL (`bareUrlsIn`), and a
+ * sidebar the parser read is one linkify did not read into a URL, so a URL
+ * seam failing after the edit is one the edit made — the closing bracket
+ * of the URL deleted, or one typed into the sidebar that lets linkify read
+ * on through it. Every refusal the editor asks — the notes filter, the
+ * toolbar's disabled buttons, the object bar's verbs — goes through here
+ * with the transaction's origin (`noteRefusal`).
  */
 export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin): string | null {
     let reason: string | null = null;
@@ -520,7 +518,7 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
             holdsSidebar = holdsSidebar || SIDEBAR_NODES.has(child.type.name);
         });
         const created = (holdsSidebar ? failingSidebarSeams(textblock.node) : []).find(seam =>
-            origin === undefined || !seamFailedBefore(origin, doc, textblock.pos + 1 + seam.offset, seam));
+            origin === undefined || seam.reason === SIDEBAR_GLUED_URL || !seamFailedBefore(origin, doc, textblock.pos + 1 + seam.offset, seam));
         reason = created?.reason ?? null;
     }
     return reason;
@@ -621,15 +619,12 @@ interface SidebarSeam {
 
 /**
  * A sidebar marker the parser would not read: the sidebar at `offset` in its
- * textblock, at its opener or its closer. For `SIDEBAR_GLUED_URL`, `url` is
- * the text written from the URL's scheme to the marker — what linkify reads
- * before it.
+ * textblock, at its opener or its closer.
  */
 interface FailingSeam {
     offset: number;
     side: 'open' | 'close';
     reason: string;
-    url?: string;
 }
 
 /**
@@ -639,13 +634,13 @@ interface FailingSeam {
  */
 export interface EditOrigin {
     doc: Node;
-    mapping: Mappable;
+    mapping: Mapping;
 }
 
 /**
  * What `failingSidebarSeams` collects while it writes a textblock: where each
  * sidebar's markers stand, and the stretches of the output written as text
- * linkify can read a URL in (`readIntoUrl`).
+ * markdown-it's linkify rule reads a URL in (`bareUrlsIn`).
  */
 let seamCollector: { seams: SidebarSeam[]; plain: [number, number][] } | null = null;
 
@@ -654,57 +649,88 @@ export const SIDEBAR_GLUED_BEFORE = 'A sidebar right after a letter or digit wou
 /** Why a left sidebar right before a digit is not made. */
 export const SIDEBAR_GLUED_AFTER = 'A left sidebar right before a digit would not be read as a sidebar: put a space after it.';
 /** Why a sidebar right after a URL is not made. */
-export const SIDEBAR_GLUED_URL = 'A sidebar right after a web address can be read as part of the address: put a space before it.';
+export const SIDEBAR_GLUED_URL = 'A sidebar right after a web address would be read as part of the address: put a space before it.';
 
 /**
- * What ends a URL wherever it stands, for linkify-it: a separator (its `Z`,
- * from uc.micro, which is `\p{Z}`), a control character (`Cc`), and its text
- * separators `<`, `>`, `｜`. Not `\s`: that holds U+FEFF, which linkify-it
- * reads on through.
+ * Whether linkify reads bare URLs, as `markdown.preview.linkify` says for the
+ * document the page shows; the page sets it from each document the host
+ * posts (`setLinkify`), which the host parsed with that same setting.
  */
-const ENDS_URL = /[\p{Z}\p{Cc}<>｜]/u;
+let linkifyOn = true;
+/** The page's linkify-it, made when first asked (`createLinkify`): the engine's is on the host. */
+let pageLinkify: UrlMatcher | null = null;
+
+/** Read bare URLs as linkify does (`enabled`), or read none, as the document the page shows was parsed. */
+export function setLinkify(enabled: boolean): void {
+    linkifyOn = enabled;
+}
 
 /**
- * Where the scheme of a bare URL before the marker written at `open` starts,
- * if the marker may be read into that URL, or -1 — as markdown-it's linkify
- * rule reads one: at a `://` it takes the scheme
- * from at most ten scheme characters of plain text before it (`plain`: not in
- * code, a link's label or a note), linkify-it knows `http`, `https` and `ftp`,
- * and from there linkify-it reads on into the marker almost wherever it
- * stands: `$` is a letter of a host to it (it is no punctuation), `$` and `@`
- * are characters of a path, `@` ends a user name (`http://e.com.$y$`,
- * `http://e.com/(a)@y@`, `http://e.com:@y@` are each one URL). What stops it
- * short depends on its whole grammar (an unpaired bracket, a `_` before a
- * `$`), which this page does not hold, so a marker after such a URL is
- * refused unless something between ends every URL (`ENDS_URL`).
+ * The bare URLs markdown-it's linkify rule reads in `text` — a textblock as
+ * written, the wrapper's hold markers taken out — as `[start, end)`, none
+ * while linkify is off. Walked as the inline parser walks it: at each `://`
+ * in plain text (`plain`: written as text, not in code, a link's label, `<…>`
+ * or a note) linkify-it is asked where the URL there ends (`bareUrlAt`, the
+ * scheme read only from the plain text it stands in, as the rule reads it
+ * from its pending text), and the walk goes on after that URL. linkify-it
+ * reads the rest of the text as it is written, delimiters, markers and all,
+ * so whatever it reads into a URL is decided by its own grammar, never by a
+ * guess at where a URL stops.
  */
-function readIntoUrl(written: string, open: number, plain: readonly [number, number][]): number {
-    let runStart = open;
-    while (runStart > 0 && !ENDS_URL.test(written.charAt(runStart - 1))) {
-        runStart--;
+function bareUrlsIn(text: string, plain: readonly [number, number][]): [number, number][] {
+    if (!linkifyOn) {
+        return [];
     }
-    for (let at = written.indexOf('://', runStart); at !== -1 && at < open; at = written.indexOf('://', at + 1)) {
-        let proto = at;
-        while (proto > Math.max(runStart, at - 10) && /[A-Za-z0-9+.-]/.test(written.charAt(proto - 1))) {
-            proto--;
+    pageLinkify ??= createLinkify();
+    const urls: [number, number][] = [];
+    let at = text.indexOf('://');
+    while (at !== -1) {
+        const run = plain.find(([from, to]) => at >= from && at < to);
+        const url = run === undefined ? null : bareUrlAt(pageLinkify, text, at, run[0]);
+        if (url !== null) {
+            urls.push(url);
         }
-        if (/^(?:https?|ftp)$/i.test(written.slice(proto, at)) && plain.some(([from, to]) => proto >= from && proto < to)) {
-            return proto;
+        at = text.indexOf('://', url === null ? at + 1 : url[1]);
+    }
+    return urls;
+}
+
+/**
+ * `ranges` of `written`, as positions in it with the hold markers taken out;
+ * ranges that meet once they are out are one (a bare URL's held text and the
+ * text before it are one run of pending text to the parser).
+ */
+function withoutHolds(written: string, ranges: readonly [number, number][]): { text: string; at: (pos: number) => number; ranges: [number, number][] } {
+    const before: number[] = [0];
+    for (let i = 0; i < written.length; i++) {
+        const ch = written.charAt(i);
+        before.push(before[i] + (ch === HOLD_OPEN || ch === HOLD_CLOSE ? 1 : 0));
+    }
+    const at = (pos: number) => pos - before[pos];
+    const merged: [number, number][] = [];
+    for (const [from, to] of ranges.map(([from, to]): [number, number] => [at(from), at(to)]).sort((a, b) => a[0] - b[0])) {
+        const last = merged[merged.length - 1];
+        if (last !== undefined && from <= last[1]) {
+            last[1] = Math.max(last[1], to);
+        } else if (from < to) {
+            merged.push([from, to]);
         }
     }
-    return -1;
+    return { text: written.replace(HOLD_RE, ''), at, ranges: merged };
 }
 
 /**
  * The sidebar markers in `textblock` that would not read back as one: the
  * plugin opens one only where no ASCII letter or digit stands right before
  * its marker, and a `$` closes only where no digit follows
- * (`sidebarCanOpen`, `sidebarCanClose`); and linkify may read a marker right
- * after a bare URL into the URL (`readIntoUrl`). The characters are read
- * off the textblock as it is written — a mark without a delimiter or a badge
- * writes nothing between, a bare URL or an email address writes its own text
- * — with the wrapper's hold markers skipped. Nothing is written to escape
- * them: a character reference in a word changes what the word is (a link, an
+ * (`sidebarCanOpen`, `sidebarCanClose`); and markdown-it's linkify rule
+ * reads an opening marker into a bare URL before it when linkify-it's URL
+ * there reaches it (`bareUrlsIn`). The characters are read off the
+ * textblock as it is written — a mark without a delimiter or a badge writes
+ * nothing between, a bare URL or an email address writes its own text, a
+ * mark's delimiters are written where linkify reads them — with the
+ * wrapper's hold markers skipped. Nothing is written to escape them: a
+ * character reference in a word changes what the word is (a link, an
  * abbreviation, an id someone searches for), so the edit is refused instead.
  */
 function failingSidebarSeams(textblock: Node): FailingSeam[] {
@@ -723,6 +749,8 @@ function failingSidebarSeams(textblock: Node): FailingSeam[] {
             offsets.push(offset);
         }
     });
+    const read = withoutHolds(written, collected.plain);
+    const urls = bareUrlsIn(read.text, read.ranges);
     const failing: FailingSeam[] = [];
     const isHold = (ch: string) => ch === HOLD_OPEN || ch === HOLD_CLOSE;
     collected.seams.forEach((seam, i) => {
@@ -735,13 +763,11 @@ function failingSidebarSeams(textblock: Node): FailingSeam[] {
         while (after < written.length && isHold(written.charAt(after))) {
             after++;
         }
+        const open = read.at(seam.open);
         if (before >= 0 && !sidebarCanOpen(written.charAt(before), seam.marker)) {
             failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_BEFORE });
-        } else {
-            const scheme = readIntoUrl(written, seam.open, collected.plain);
-            if (scheme !== -1) {
-                failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_URL, url: written.slice(scheme, seam.open).replace(HOLD_RE, '') });
-            }
+        } else if (urls.some(([from, to]) => from < open && to > open)) {
+            failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_URL });
         }
         if (after < written.length && !sidebarCanClose(seam.marker, written.charAt(after))) {
             failing.push({ offset, side: 'close', reason: SIDEBAR_GLUED_AFTER });
@@ -756,10 +782,7 @@ const SIDEBAR_NODES: ReadonlySet<string> = new Set(['left_sidebar', 'right_sideb
  * Where the sidebar at `pos` in the edit's starting document stands in the
  * document it made, or `null` when the edit took it out or made it something
  * else: a step that deleted across its opening or closing token, or changed
- * its kind or its size, made a new sidebar there. A sidebar converted to the
- * other kind is new even where the text before it is unchanged: linkify reads
- * `$` and `@` differently (`http://e.com,$x$` is a sidebar, `http://e.com,@x@`
- * a user name and a host), so its new marker is judged on its own.
+ * its kind or its size, made a new sidebar there.
  */
 function sidebarAfterEdit(origin: EditOrigin, doc: Node, pos: number, sidebar: Node): number | null {
     const end = pos + sidebar.nodeSize;
@@ -773,28 +796,24 @@ function sidebarAfterEdit(origin: EditOrigin, doc: Node, pos: number, sidebar: N
 
 /**
  * Whether `seam`, failing in `doc` at the sidebar at `pos`, failed the same
- * way at that side of the same sidebar before the edit (`sidebarAfterEdit`).
- * The same way: a letter or digit the edit put beside a marker the file
- * held after a URL is a loss the edit causes — the URL check guesses where
- * linkify stops, the letter check is the plugin's own rule; and a seam
- * failing the URL check failed the same way only if the text from the URL's
- * scheme to the marker is written as it was (`FailingSeam.url`), as that
- * text is what decides whether linkify stops before the marker.
+ * way at that side of the same sidebar before the edit (`sidebarAfterEdit`):
+ * the sidebar is found in the starting document by mapping `pos` back
+ * through the edit, and its textblock there checked. A seam failing the URL
+ * check is never asked (`unwritableInNote`).
  */
 function seamFailedBefore(origin: EditOrigin, doc: Node, pos: number, seam: FailingSeam): boolean {
-    let failed = false;
-    origin.doc.descendants((node, start) => {
-        if (failed || !node.isTextblock) {
-            return !failed;
+    const back = origin.mapping.invert();
+    for (const bias of [-1, 1]) {
+        const old = back.map(pos, bias);
+        const sidebar = old < origin.doc.content.size ? origin.doc.nodeAt(old) : null;
+        if (sidebar === null || !SIDEBAR_NODES.has(sidebar.type.name) || sidebarAfterEdit(origin, doc, old, sidebar) !== pos) {
+            continue;
         }
-        node.forEach((child, offset) => {
-            if (!failed && SIDEBAR_NODES.has(child.type.name) && sidebarAfterEdit(origin, doc, start + 1 + offset, child) === pos) {
-                failed = failingSidebarSeams(node).some(old => old.offset === offset && old.side === seam.side && old.reason === seam.reason && old.url === seam.url);
-            }
-        });
-        return false;
-    });
-    return failed;
+        const $old = origin.doc.resolve(old);
+        const offset = old - $old.start();
+        return failingSidebarSeams($old.parent).some(failed => failed.offset === offset && failed.side === seam.side && failed.reason === seam.reason);
+    }
+    return false;
 }
 
 /**

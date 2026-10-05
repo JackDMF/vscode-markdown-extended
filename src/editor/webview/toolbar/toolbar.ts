@@ -35,7 +35,7 @@ import { chevronNode } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
-import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
+import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
     applySpanTransaction, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
     LINK_LOCK, literalRefusal, objectAtSelection, spanLockReason,
@@ -137,9 +137,11 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
             return { enabled: reason === null && toggleMarkup(type, apply.markup)(state), active: markActive(state, type, apply.markup), reason };
         }
         case 'wrap-node': {
-            // Inside a note of its kind the action removes it, like a mark's button.
+            // Inside a note of its kind the action removes it, like a mark's button,
+            // and is refused where the object bar's Remove note is (`unwrapNoteRefusal`).
             if (inNoteOf(state, apply.node)) {
-                return { enabled: true, active: true, reason: null };
+                const unwrap = unwrapNoteRefusal(state, apply.node);
+                return { enabled: unwrap === null, active: true, reason: unwrap };
             }
             const reason = wrapNodeLockReason(state, apply.node);
             return { enabled: reason === null, active: false, reason };

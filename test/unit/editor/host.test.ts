@@ -327,6 +327,32 @@ suite('Editor host: session protocol', () => {
     });
 });
 
+suite('Editor host: the page reads URLs as the engine that parsed its document', () => {
+    test('the document says whether its engine reads bare URLs, and markdown.preview.linkify turned off posts it again, saying so', async function () {
+        this.timeout(30000);
+        const uri = tempMarkdown('See http://e.com/ $note$ here.\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const engines = new EditorEngineHost(EXTENSION_ID, () => undefined);
+        const webview = new FakeWebview();
+        const session = new VisualEditorSession(document, webview, { engine: () => engines.get(), onDidChangeEngine: engines.onDidChange, log: () => undefined });
+        const preview = () => vscode.workspace.getConfiguration('markdown.preview');
+        try {
+            webview.send({ type: 'ready' });
+            await session.settled();
+            assert.deepStrictEqual(webview.documents().map(d => d.linkify), [true], 'on, as VS Code ships it');
+            await preview().update('linkify', false, vscode.ConfigurationTarget.Global);
+            assert.ok(await until(() => (webview.documents().length > 1 ? true : undefined), 10000), 'the document is posted again');
+            await session.settled();
+            assert.deepStrictEqual(webview.documents().map(d => d.linkify), [true, false]);
+        } finally {
+            await preview().update('linkify', undefined, vscode.ConfigurationTarget.Global);
+            session.dispose();
+            engines.dispose();
+            fs.rmSync(uri.fsPath, { force: true });
+        }
+    });
+});
+
 /** The text the lens suite opens: front matter, a heading, a blank line, a paragraph. */
 const LENS_SOURCE = [
     '---',            // 0

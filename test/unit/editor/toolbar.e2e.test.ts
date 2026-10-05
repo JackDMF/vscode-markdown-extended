@@ -48,7 +48,7 @@ suite('Editor toolbar (e2e)', () => {
             heading.content = [{ ...heading.content[0], text: heading.content[0].text.slice('FRS-TST-001: '.length) }];
         }
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, linkify: true });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Alpha'));
         await delay(50);
     };

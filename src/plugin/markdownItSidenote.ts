@@ -1,5 +1,6 @@
 import { MarkdownIt } from 'markdown-it';
 import { NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
+import { UrlMatcher, bareUrlAt } from '../syntax/linkify';
 
 /**
  * Markdown-it plugin for sidenotes, marginal notes, and sidebar annotations.
@@ -636,35 +637,15 @@ function scanCache(state: MarkdownItState): Record<number, number> {
 
 /**
  * Where the bare URL that markdown-it's linkify rule would read at `pos` (its
- * `://`) ends, or -1 — found as that rule finds it: the scheme in at most ten
- * characters of text before `pos` (from `textStart` on), the URL by
- * linkify-it, a trailing `*` left out, a link markdown-it would not follow
- * refused. The text ends at `max`.
+ * `://`) ends, or -1 — asked as the editor's serializer asks it
+ * (`bareUrlAt`), of the engine's own linkify-it, the text starting at
+ * `textStart` and ending at `max`, a link markdown-it would not follow
+ * refused.
  */
 function bareUrlEnd(state: MarkdownItState, textStart: number, pos: number, max: number): number {
-    const src = state.src;
-    if (pos + 3 > max || src.charCodeAt(pos) !== 0x3a || src.charCodeAt(pos + 1) !== 0x2f || src.charCodeAt(pos + 2) !== 0x2f) {
-        return -1;
-    }
-    const protoMin = pos - Math.min(10, pos - textStart, pos);
-    let protoStart = pos;
-    while (protoStart > protoMin && /[A-Za-z0-9+.-]/.test(src.charAt(protoStart - 1))) {
-        protoStart--;
-    }
-    if (protoStart === pos || !/[A-Za-z]/.test(src.charAt(protoStart))) {
-        return -1;
-    }
-    const linkify = (state.md as unknown as { linkify: { matchAtStart(text: string): { url: string } | null } }).linkify;
-    const link = linkify.matchAtStart(src.slice(protoStart, max));
-    if (link === null || link.url.length <= pos - protoStart) {
-        return -1;
-    }
-    const url = link.url.replace(/\*+$/, '');
-    const md = state.md as unknown as { normalizeLink(url: string): string; validateLink(url: string): boolean };
-    if (!md.validateLink(md.normalizeLink(url))) {
-        return -1;
-    }
-    return protoStart + url.length;
+    const md = state.md as unknown as { linkify: UrlMatcher; normalizeLink(url: string): string; validateLink(url: string): boolean };
+    const url = bareUrlAt(md.linkify, state.src, pos, textStart, max, link => md.validateLink(md.normalizeLink(link)));
+    return url === null ? -1 : url[1];
 }
 
 /**

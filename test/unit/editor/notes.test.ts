@@ -5,7 +5,7 @@ import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 
 import { parseDocument } from '../../../src/editor/parse';
 import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
 import { editorSchema } from '../../../src/editor/schema';
-import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, serializeDocument, unwritableInNote } from '../../../src/editor/serialize';
+import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, serializeDocument, setLinkify, unwritableInNote } from '../../../src/editor/serialize';
 import {
     NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, NoteNodeName, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal,
     previousNotePart, toggleNote, unwrapNote, unwrapNoteRefusal, wrapInNote, wrapNodeLockReason,
@@ -17,7 +17,7 @@ import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { createEditorEngine } from '../../../src/editor';
 import { plugins } from '../../../src/plugin/plugins';
-import { hostEngine } from './helpers';
+import { hostEngine, topChildren, touched } from './helpers';
 
 function stateOf(text: string): EditorState {
     const { doc } = parseDocument(hostEngine(), text, {});
@@ -412,6 +412,22 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
         });
         return at;
     };
+    /** The sidebars `markdown` holds, read by `md`. */
+    const sidebarsIn = (markdown: string, md = hostEngine()) => {
+        const found: string[] = [];
+        parseDocument(md, markdown, {}).doc.descendants(node => {
+            if (node.type.name.endsWith('_sidebar')) {
+                found.push(node.type.name);
+            }
+        });
+        return found;
+    };
+    /** The sidebars `state`'s document holds once saved and read again, by the engine it was read with. */
+    const sidebarsAfterSave = (state: EditorState, md = hostEngine()) => sidebarsIn(text(state), md);
+    /** `doc` written by rule, every block as if edited, as the save after an edit the filter let through would write it. */
+    const writtenByRule = (doc: Node) => serializeDocument({ doc: doc.type.create(null, topChildren(doc).map(n => touched(n))), eol: '\n', tail: '' }, { defaultWrap: 90 });
+    // The page reads URLs as the engine that parsed its document does (`setLinkify`); every test leaves it on, as it starts.
+    teardown(() => setLinkify(true));
     const files: [string, string, MarkdownIt][] = [
         ['a URL in parentheses', 'See (http://e.com)$note$ here.\n', hostEngine()],
         ['a URL in quotes', 'See "http://e.com"$note$ here.\n', hostEngine()],
@@ -422,8 +438,9 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
 
     test('a sidebar the parser read after a URL leaves its paragraph editable: a typo is fixed, bold applies', () => {
         for (const [label, source, md] of files) {
+            setLinkify(md === linkifyOff ? false : true);
             const state = read(source, md);
-            assert.notStrictEqual(unwritableInNote(state.doc), null, `${label}: the seam fails on its own`);
+            assert.strictEqual(unwritableInNote(state.doc), null, `${label}: linkify reads no URL into the marker`);
             const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'See') + 1));
             // Compared by identity, not by `notStrictEqual`: a failure would print two whole documents.
             assert.ok(typed.doc !== state.doc, `${label}: the letter is applied`);
@@ -442,7 +459,7 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
         const glue = spaced.tr.delete(sidebar - 1, sidebar);
         assert.strictEqual(noteRefusal(glue), SIDEBAR_GLUED_URL);
         assert.ok(spaced.apply(glue).doc === spaced.doc, 'the filter refuses it');
-        // A second sidebar in a paragraph whose first one already fails is judged on its own.
+        // A second sidebar in a paragraph whose first one is held after a URL is judged on its own.
         const both = read('See (http://e.com)$note$ and $more$ here.\n');
         const second = both.tr.delete(posOf(both.doc, 'and ') + 3, posOf(both.doc, 'and ') + 4);
         assert.strictEqual(noteRefusal(second), SIDEBAR_GLUED_BEFORE);
@@ -451,46 +468,122 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
         const closed = read('See (http://e.com)$note$ here.\n');
         const digit = closed.tr.insertText('5', posOf(closed.doc, ' here'));
         assert.strictEqual(noteRefusal(digit), SIDEBAR_GLUED_AFTER);
-        // A letter put before a marker the file holds after a URL fails another way: the plugin's own rule, a loss the edit makes.
+        // A letter put before a marker the file holds after a URL: the plugin's own rule, a loss the edit makes.
         const letter = closed.tr.insertText('x', posOf(closed.doc, 'note') - 1);
         assert.strictEqual(noteRefusal(letter), SIDEBAR_GLUED_BEFORE);
         // A sidebar converted to the other kind is judged on its own: a `$` closer before a digit is new.
         const right = read('a @y@5 z.\n');
         assert.strictEqual(convertNoteRefusal(right, sidebarAt(right.doc)), SIDEBAR_GLUED_AFTER);
-        // Even where the old marker failed the same way after the same text: linkify reads `@` and `$` apart,
-        // and `See http://e.com,@note@` would be one address.
-        for (const source of ['See (http://e.com)$note$ here.\n', 'See http://e.com,$note$ here.\n']) {
+    });
+
+    test('Convert on a sidebar held after a URL is decided by linkify on the converted text', () => {
+        // linkify-it reads `@` and `$` apart: `http://e.com,@x@` is one address, `(http://e.com)@x@` stops at `)`.
+        for (const [source, reason] of [
+            ['See (http://e.com)$x$ here.\n', null],
+            ['See http://e.com,$x$ here.\n', SIDEBAR_GLUED_URL],
+        ] as [string, string | null][]) {
             const held = read(source);
             const at = sidebarAt(held.doc);
             const converted = held.tr.setNodeMarkup(at, editorSchema.nodes.right_sidebar);
-            assert.strictEqual(noteRefusal(converted), SIDEBAR_GLUED_URL, `${source}: a kind changed in place`);
-            assert.strictEqual(convertNoteRefusal(held, at), SIDEBAR_GLUED_URL, `${source}: Convert`);
+            assert.strictEqual(noteRefusal(converted), reason, `${source}: a kind changed in place`);
+            assert.strictEqual(convertNoteRefusal(held, at), reason, `${source}: Convert`);
+            if (reason === null) {
+                assert.deepStrictEqual(sidebarsAfterSave(held.apply(converted)), ['right_sidebar'], `${source}: read back as converted`);
+            }
         }
     });
 
-    test('an edit to the text from a URL\'s scheme to a marker the file holds is refused: linkify may read on through it', () => {
-        const edits: [string, string, (state: EditorState, at: number) => Transaction][] = [
-            ['delete ")"', 'See (http://e.com/)$note$ here.\n', (s, at) => s.tr.delete(at - 1, at)],
-            ['delete the closing quote', 'See "http://e.com/"$note$ here.\n', (s, at) => s.tr.delete(at - 1, at)],
-            ['replace ")" by "/"', 'See (http://e.com)$note$ here.\n', (s, at) => s.tr.insertText('/', at - 1, at)],
-            ['replace ")" by ","', 'See (http://e.com/)$note$ here.\n', (s, at) => s.tr.insertText(',', at - 1, at)],
+    test('an edit after which linkify reads a marker the file holds into the URL is refused, wherever it is made', () => {
+        const at = (needle: string, offset = 0) => (s: EditorState) => posOf(s.doc, needle) + offset;
+        const edits: [string, string, (state: EditorState) => Transaction][] = [
+            // The URL's closing bracket or quote deleted, or replaced by a character a URL holds.
+            ['delete ")"', 'See (http://e.com/)$note$ here.\n', s => s.tr.delete(sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
+            ['delete the closing quote', 'See "http://e.com/"$note$ here.\n', s => s.tr.delete(sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
+            ['replace ")" by "/"', 'See (http://e.com)$note$ here.\n', s => s.tr.insertText('/', sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
+            ['replace ")" by ","', 'See (http://e.com/)$note$ here.\n', s => s.tr.insertText(',', sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
+            // A bracket the URL opened, closed by the sidebar's text or the text after it: linkify reads on through the marker.
+            ['")" typed at the end of the sidebar', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at('note', 4)(s))],
+            ['")" typed at the start of the sidebar', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at('note')(s))],
+            ['")" typed right after the closer', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at(' here')(s))],
+            ['")x" typed right after the closer', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')x', at(' here')(s))],
+            ['" x" deleted after the closer', 'See http://e.com/($note$ x) here.\n', s => s.tr.delete(at(' x')(s), at(' x', 2)(s))],
+            ['"]" typed at the end of the sidebar', 'See http://e.com/[$note$ here.\n', s => s.tr.insertText(']', at('note', 4)(s))],
+            ['"}" typed at the end of the sidebar', 'See http://e.com/{$note$ here.\n', s => s.tr.insertText('}', at('note', 4)(s))],
         ];
         for (const [label, source, edit] of edits) {
             const state = read(source);
-            const tr = edit(state, sidebarAt(state.doc));
+            assert.deepStrictEqual(sidebarsAfterSave(state), ['left_sidebar'], `${label}: the file holds a sidebar`);
+            const tr = edit(state);
             assert.strictEqual(noteRefusal(tr), SIDEBAR_GLUED_URL, label);
             assert.ok(state.apply(tr).doc === state.doc, `${label}: the filter refuses it`);
+            // What it prevents: written anyway, the sidebar is part of the address.
+            assert.deepStrictEqual(sidebarsIn(writtenByRule(tr.doc)), [], `${label}: the loss`);
             // Elsewhere in the paragraph, before the scheme and after the sidebar, edits still apply.
+            // (A `[` in text is written escaped, which ends no URL earlier: the sidebar was never part of it.)
             const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'See') + 1));
-            assert.strictEqual(text(typed), source.replace('See', 'SXee'), `${label}: before the scheme`);
+            assert.strictEqual(text(typed).replace('\\[', '['), source.replace('See', 'SXee'), `${label}: before the scheme`);
+            assert.deepStrictEqual(sidebarsAfterSave(typed), ['left_sidebar'], `${label}: before the scheme, read back`);
             const after = state.apply(state.tr.insertText('X', posOf(state.doc, 'here') + 1));
-            assert.strictEqual(text(after), source.replace('here', 'hXere'), `${label}: after the sidebar`);
+            assert.strictEqual(text(after).replace('\\[', '['), source.replace('here', 'hXere'), `${label}: after the sidebar`);
+            assert.deepStrictEqual(sidebarsAfterSave(after), ['left_sidebar'], `${label}: after the sidebar, read back`);
         }
         // Text before the scheme is not linkify's: deleting the `(` keeps the run, and the sidebar.
         const opened = read('See (http://e.com)$note$ here.\n');
         const unopened = opened.apply(opened.tr.delete(posOf(opened.doc, '('), posOf(opened.doc, '(') + 1));
         assert.strictEqual(text(unopened), 'See http://e.com)$note$ here.\n');
         assert.deepStrictEqual(notesAfterSave(unopened), ['left_sidebar']);
+    });
+
+    test('an edit linkify reads no marker into is applied: inside the sidebar, after a space in it, formatting over the URL', () => {
+        const harmless: [string, string, (state: EditorState) => Transaction, string][] = [
+            ['x typed into the sidebar', 'See (http://e.com)$note$ here.\n', s => s.tr.insertText('x', posOf(s.doc, 'note') + 4), 'See (http://e.com)$notex$ here.\n'],
+            ['")" typed after a space in the sidebar', 'See http://e.com/($no te$ here.\n', s => s.tr.insertText(')', posOf(s.doc, 'te') + 2), 'See http://e.com/($no te)$ here.\n'],
+            ['" x" deleted after a sidebar holding a space', 'See http://e.com/($a b$ x) here.\n', s => s.tr.delete(posOf(s.doc, ' x'), posOf(s.doc, ' x') + 2), 'See http://e.com/($a b$) here.\n'],
+        ];
+        for (const [label, source, edit, saved] of harmless) {
+            const state = read(source);
+            const tr = edit(state);
+            assert.strictEqual(noteRefusal(tr), null, label);
+            const next = state.apply(tr);
+            assert.strictEqual(text(next), saved, label);
+            assert.deepStrictEqual(sidebarsAfterSave(next), ['left_sidebar'], `${label}: read back`);
+        }
+        // Bold, italic, highlight and strikethrough over the URL and the text before it, or over its `)` alone:
+        // linkify reads the delimiters as they are written, and stops before the marker.
+        const source = 'See (http://e.com)$note$ here.\n';
+        for (const [mark, markup] of [['strong', '**'], ['em', '*'], ['mark', '=='], ['strike', '~~']] as [string, string][]) {
+            for (const needle of ['See (http://e.com)', ')']) {
+                const held = read(source);
+                // From `See` or the `)` to the sidebar: the URL is a text node of its own, its link's.
+                const from = needle === ')' ? posOf(held.doc, ')') : posOf(held.doc, 'See');
+                const state = held.apply(held.tr.setSelection(TextSelection.create(held.doc, from, sidebarAt(held.doc))));
+                const type = editorSchema.marks[mark];
+                assert.strictEqual(markRefusal(state, type, markup), null, `${mark} over ${needle}: not disabled`);
+                const formatted = run(state, toggleMarkup(type, markup));
+                assert.ok(formatted.doc !== state.doc, `${mark} over ${needle}: applied`);
+                assert.deepStrictEqual(sidebarsAfterSave(formatted), ['left_sidebar'], `${mark} over ${needle}: ${text(formatted)}`);
+            }
+        }
+    });
+
+    test('with linkify off no URL refuses anything: a sidebar after an address is edited like any other', () => {
+        setLinkify(false);
+        const source = 'See http://e.com/($note$ here.\n';
+        for (const [label, edit, saved] of [
+            ['")" typed at the end of the sidebar', (s: EditorState) => s.tr.insertText(')', posOf(s.doc, 'note') + 4), 'See http://e.com/($note)$ here.\n'],
+            ['"(" deleted', (s: EditorState) => s.tr.delete(posOf(s.doc, '('), posOf(s.doc, '(') + 1), 'See http://e.com/$note$ here.\n'],
+        ] as [string, (s: EditorState) => Transaction, string][]) {
+            const state = read(source, linkifyOff);
+            const tr = edit(state);
+            assert.strictEqual(noteRefusal(tr), null, label);
+            const next = state.apply(tr);
+            assert.strictEqual(text(next), saved, label);
+            assert.deepStrictEqual(sidebarsAfterSave(next, linkifyOff), ['left_sidebar'], `${label}: read back with linkify off`);
+        }
+        // A sidebar glued to an address the edit makes, too: nothing reads the address.
+        const spaced = read('See http://e.com/ $note$ here.\n', linkifyOff);
+        const sidebar = posOf(spaced.doc, 'note') - 1;
+        assert.strictEqual(noteRefusal(spaced.tr.delete(sidebar - 1, sidebar)), null);
     });
 
     test('Remove attributes and Remove image that would glue a sidebar give the filter\'s reason', () => {

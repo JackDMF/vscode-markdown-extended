@@ -19,7 +19,7 @@ import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap } from '../positions';
 import type { CodeActionItem, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
-import { serializeDocument } from '../serialize';
+import { serializeDocument, setLinkify } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
@@ -790,7 +790,7 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
     }
 }
 
-function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: number, includes: boolean): void {
+function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: number, includes: boolean, linkify: boolean): void {
     // An edit still waiting in the delay is dropped: it was computed against
     // the document this one supersedes, and the host would refuse it for its
     // stale base. The keystrokes it carried vanish with it — the price of never
@@ -804,6 +804,8 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     actionEpoch++;
     // Read by the toolbars as they redraw for the state below.
     includesOffered = includes;
+    // Before the state below: the refusals read URLs as the engine that parsed it does.
+    setLinkify(linkify);
     hideError();
     const doc = Node.fromJSON(editorSchema, json.doc);
     current = { eol: json.eol, tail: json.tail, version, defaultWrap };
@@ -956,7 +958,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     const msg = event.data;
     switch (msg.type) {
         case 'document':
-            showDocument(msg.json, msg.version, msg.defaultWrap, msg.includes);
+            showDocument(msg.json, msg.version, msg.defaultWrap, msg.includes, msg.linkify);
             break;
         case 'rendered':
             applyRendered(msg.requestId, msg.html);

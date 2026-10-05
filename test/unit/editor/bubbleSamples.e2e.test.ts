@@ -53,7 +53,7 @@ suite('Bubble samples (e2e)', () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const json = parsedDocumentToJSON(parseDocument(md, text, {}));
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, linkify: true });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('gamma'));
         await delay(50);
     };

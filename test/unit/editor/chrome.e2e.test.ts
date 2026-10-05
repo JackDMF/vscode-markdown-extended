@@ -55,7 +55,7 @@ suite('Editor chrome (e2e)', () => {
         heading.attrs.reqPrefix = PREFIX;
         heading.content = [{ ...heading.content[0], text: heading.content[0].text.slice(PREFIX.length) }];
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, linkify: true });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('buildIndex'));
         await showDiagnostics(editor as EditorPage, version, [
             { range: { start: { line: 2, character: 0 }, end: { line: 2, character: 11 } }, severity: 'error', message: 'Unknown requirement state' },

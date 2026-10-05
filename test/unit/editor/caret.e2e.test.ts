@@ -34,7 +34,7 @@ suite('Editor caret (e2e)', () => {
         }
         page = editor.page;
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-        await editor.send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version: 1, defaultWrap: 90, includes: false });
+        await editor.send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version: 1, defaultWrap: 90, includes: false, linkify: true });
         await page.waitForSelector('.ProseMirror');
     });
 

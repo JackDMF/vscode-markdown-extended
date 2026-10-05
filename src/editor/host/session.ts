@@ -559,6 +559,8 @@ export class VisualEditorSession implements vscode.Disposable {
             version,
             defaultWrap: Config.instance.editorWrapColumn(this.document.uri),
             includes,
+            // Read off the engine that parsed it: a changed setting builds a new engine and posts the document again.
+            linkify: Boolean(md.options.linkify),
         });
         // A link followed here before the page had the document lands now.
         await this.postReveal();

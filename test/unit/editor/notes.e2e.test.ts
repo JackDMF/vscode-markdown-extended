@@ -3,6 +3,9 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
+import { createEditorEngine } from '../../../src/editor/engine';
+import { SIDEBAR_GLUED_BEFORE } from '../../../src/editor/serialize';
+import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine } from './helpers';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
 
@@ -31,7 +34,7 @@ suite('Editor notes and links (e2e)', () => {
     const showDocument = async (text: string, marker: string, extensionOnly = false) => {
         const md = extensionOnly ? hostEngine() : await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, linkify: true });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         await delay(80);
     };
@@ -182,6 +185,30 @@ suite('Editor notes and links (e2e)', () => {
         assert.notStrictEqual(button.disabled, 'true', button.title);
     });
 
+    test('the page reads URLs as the engine that parsed the document: a ")" that lets linkify read a sidebar into the address is refused with linkify on, typed with it off', async function () {
+        this.timeout(20000);
+        const source = 'See http://e.com/($note$ here.\n';
+        // This extension's plugins alone: VS Code's math would claim `$…$`.
+        for (const md of [hostEngine(), createEditorEngine({ linkify: false, typographer: false, plugins, extend: [] })]) {
+            const linkify = Boolean(md.options.linkify);
+            version++;
+            await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, source, {})), version, defaultWrap: 90, includes: false, linkify });
+            await page.waitForFunction(() => document.querySelector('.ProseMirror .left-sidebar') !== null);
+            await delay(80);
+            const before = (await (editor as EditorPage).edits()).length;
+            await clickBefore('note', 3);
+            await page.keyboard.type(')');
+            await settle();
+            if (linkify) {
+                await page.waitForSelector('.mep-hint:not([hidden])', { timeout: 2000 });
+                assert.ok((await page.$eval('.mep-hint', el => el.textContent ?? '')).includes('web address'), 'the hint says why');
+                assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'linkify on: nothing typed');
+            } else {
+                assert.strictEqual((await lastEdit())?.text, 'See http://e.com/($not)e$ here.\n', 'linkify off: typed');
+            }
+        }
+    });
+
     test('a click into a note and the Sidenote entry again removes the note, the reference text in its place', async function () {
         this.timeout(15000);
         await showDocument('Alpha ++beta ref|the body++ gamma.\n', 'Alpha');
@@ -197,6 +224,17 @@ suite('Editor notes and links (e2e)', () => {
         await page.keyboard.type('!');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Alpha beta ref! gamma.\n', 'the caret is at the end of the kept text');
+    });
+
+    test('where removing the note would glue a sidebar to its reference, the Sidenote entry, and so the Annotation menu, is disabled with the reason, as the object bar\'s Remove note is', async function () {
+        this.timeout(15000);
+        // Right sidebars: VS Code's math extension claims every `$` first.
+        await showDocument('Alpha ++beta|the body++@y@ gamma.\n', 'Alpha');
+        await clickBefore('body', 1);
+        const face = await page.$eval('.mep-toolbar .mep-menu-face[data-menu="annotation"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        // Its only entry that applies there is Sidenote, which removes the note: refused, the menu is too, with that reason.
+        assert.strictEqual(face.disabled, 'true', face.title);
+        assert.ok(face.title.endsWith(SIDEBAR_GLUED_BEFORE), face.title);
     });
 
     test('Backspace through an emptied reference removes the whole note', async function () {

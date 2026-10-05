@@ -130,9 +130,12 @@ export type HostMessage =
      * `markdownExtended.editor.wrapColumn` as it applies to this file.
      * `includes` says whether any installed extension offers include choices
      * (`host/includes.ts`): the page enables **Insert → Include…** and an
-     * expansion's **Change snippet…** only then.
+     * expansion's **Change snippet…** only then. `linkify` is whether the
+     * engine that parsed it reads bare URLs (`markdown.preview.linkify`): the
+     * page asks linkify-it, set as the engine's is, where an edit would let a
+     * URL read a sidebar's marker, and asks nothing while it is off.
      */
-    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean }
+    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; linkify: boolean }
     /** The answer to a `render` request: the raw block's source rendered by the host's engine. */
     | { type: 'rendered'; requestId: number; html: string }
     /** The document cannot be shown without losing a byte; the webview offers the text editor instead. */

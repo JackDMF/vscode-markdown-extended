@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
-import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, unwritableInNote } from '../../../src/editor/serialize';
+import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, setLinkify, unwritableInNote } from '../../../src/editor/serialize';
 import { drawInline } from './fakeDom';
 import { hostEngine, topChildren, touched } from './helpers';
 
@@ -242,6 +242,7 @@ suite('Editor inline constructs: written back by rule', () => {
         const right = (...c: Node[]) => schema.nodes.right_sidebar.create(null, c);
         const refusal = (content: Node[]) => unwritableInNote(schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, content)]));
         const bare = (s: string) => schema.text(s, [schema.marks.link.create({ href: s, markup: 'linkify' })]);
+        const strong = schema.marks.strong.create();
         for (const [label, content] of [
             ['bare URL ending in /, left', [t('a '), bare('http://e.com/'), left(t('y')), t('x z')]],
             ['bare URL ending in /, right', [t('a '), bare('http://e.com/'), right(t('y')), t(' z')]],
@@ -254,6 +255,10 @@ suite('Editor inline constructs: written back by rule', () => {
             // U+FEFF is whitespace to `\s` but no separator to linkify-it, which reads on through it.
             ['a zero-width no-break space between, left', [t('a http://e.com/\uFEFF'), left(t('y')), t(' z')]],
             ['a zero-width no-break space between, right', [t('a http://e.com/\uFEFF'), right(t('y')), t(' z')]],
+            // The scheme is read from the text after the note's closing marker, as the rule reads its pending text.
+            ['right after a note', [t('a '), sidenote([t('r')], [t('b')]), t('http://e.com/'), left(t('y')), t(' z')]],
+            // A bracket the URL opened and the sidebar's text closes: linkify reads on through the marker.
+            ['a bracket closed in the sidebar', [t('a http://e.com/('), left(t('y)')), t(' z')]],
         ] as [string, Node[]][]) {
             assert.strictEqual(refusal(content), SIDEBAR_GLUED_URL, label);
             // What the refusal prevents: written anyway, the sidebar is read into the URL.
@@ -267,9 +272,22 @@ suite('Editor inline constructs: written back by rule', () => {
             ['a scheme linkify does not know', [t('a foo://e.com/'), left(t('y')), t(' z')]],
             ['the URL in a link\'s destination', [t('a '), t('x', schema.marks.link.create({ href: 'http://e.com/' })), left(t('y')), t(' z')]],
             ['the URL in code', [t('a '), t('http://e.com/', schema.marks.code.create()), left(t('y')), t(' z')]],
+            // linkify-it itself says where the URL stops: before an unpaired `)`, a trailing `,`, a `)` and `**` it reads as written.
+            ['a URL in parentheses', [t('a ('), bare('http://e.com'), t(')'), left(t('y')), t(' z')]],
+            ['a URL before a comma', [t('a '), bare('http://e.com'), t(','), left(t('y')), t(' z')]],
+            ['bold over the URL in parentheses', [t('a '), t('(', strong), schema.text('http://e.com', strong.addToSet(bare('http://e.com').marks)), t(')', strong), left(t('y')), t(' z')]],
+            ['a bracket the sidebar does not close', [t('a '), bare('http://e.com/'), t('('), left(t('y z')), t(' z')]],
         ] as [string, Node[]][]) {
             assert.strictEqual(refusal(content), null, label);
             assertRoundTrip(content);
+        }
+        // With linkify off nothing reads a URL, so no URL refuses a sidebar (`setLinkify`, as the page is told).
+        setLinkify(false);
+        try {
+            assert.strictEqual(refusal([t('a '), bare('http://e.com/'), left(t('y')), t('x z')]), null);
+            assert.strictEqual(refusal([t('a http://e.com/('), left(t('y)')), t(' z')]), null);
+        } finally {
+            setLinkify(true);
         }
     });
 
