@@ -58,8 +58,6 @@ interface Current {
     tail: string;
     version: number;
     defaultWrap: number;
-    /** Whether the host's engine reads wiki embeds (`SerializeOptions.wikiEmbeds`). */
-    wikiEmbeds: boolean;
 }
 
 let view: EditorView | undefined;
@@ -94,7 +92,7 @@ function pageMap(doc: Node): PositionMap {
     if (known && known.meta === meta) {
         return known.map;
     }
-    const map = createPositionMap({ doc, eol: meta.eol, tail: meta.tail }, { defaultWrap: meta.defaultWrap, wikiEmbeds: meta.wikiEmbeds });
+    const map = createPositionMap({ doc, eol: meta.eol, tail: meta.tail }, { defaultWrap: meta.defaultWrap });
     pageMaps.set(doc, { meta, map });
     return map;
 }
@@ -212,7 +210,7 @@ function lineAt(pos: number): number {
     }
     const prefix = serializeDocument(
         { doc: editorSchema.topNodeType.create(null, before), eol: current.eol, tail: '' },
-        { defaultWrap: current.defaultWrap, wikiEmbeds: current.wikiEmbeds },
+        { defaultWrap: current.defaultWrap },
     );
     const node = index < doc.childCount ? doc.child(index) : null;
     const gap = (node?.attrs.gap as string | null | undefined) ?? (prefix === '' ? '' : '\n');
@@ -711,7 +709,6 @@ const nodeViews: Record<string, NodeViewConstructor> = {
 const sourceContext = () => ({
     eol: current?.eol ?? '\n',
     defaultWrap: current?.defaultWrap ?? 90,
-    wikiEmbeds: current?.wikiEmbeds ?? true,
     documentText: view ? serialize(view.state.doc) : '',
 });
 
@@ -746,7 +743,7 @@ function showDiagnostics(version: number, items: Extract<HostMessage, { type: 'd
 const plugins = [
     // First, before the editor's keymaps: while its list is open, Enter, Tab and the arrows are the list's.
     completionPlugin(languagePort),
-    ...editorPlugins(() => current?.wikiEmbeds ?? true),
+    ...editorPlugins(),
     pendingRangePlugin(),
     linkClickPlugin(href => port.openLink(href)),
     toolbarPlugin({
@@ -823,7 +820,7 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     setWriteOptions({ defaultWrap });
     hideError();
     const doc = Node.fromJSON(editorSchema, json.doc);
-    current = { eol: json.eol, tail: json.tail, version, defaultWrap, wikiEmbeds: json.wikiEmbeds ?? true };
+    current = { eol: json.eol, tail: json.tail, version, defaultWrap };
     hostText = serialize(doc);
     if (view) {
         // Changed in place rather than rebuilt, so the undo history survives a

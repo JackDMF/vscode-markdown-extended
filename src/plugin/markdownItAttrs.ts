@@ -110,6 +110,17 @@ const GIVEN = 'mepAttrsGiven';
  * `after` names (a closing tag — a span's `]`, emphasis, a link — inline code
  * or an image), `first` when no `{…}` was cut there before it: a span's own
  * literal is the first after its `span_close`.
+ *
+ * Recorded as the plugin met the tokens, inside its rule, while the text
+ * braces are split (`mep_text_braces_aside` runs before the rule and
+ * `mep_text_braces_back` joins the pieces after it): a text token holding a
+ * text brace is then pieces, each but the first starting at a text brace's
+ * `}` (`splitText`). So `text` is the piece the plugin cut — a verbatim run
+ * still, but shorter than the token the finished parse holds — and `from`
+ * and `to` are in that piece. A cut at the start is only ever in a first
+ * piece (the others start with `}`), so its `after` is the token before the
+ * whole text token; a text brace is never cut, so no cut spans two pieces.
+ * `textBeforeAttrs` is such a piece too.
  */
 export interface AttrsCut {
     text: string;
@@ -270,7 +281,9 @@ export function attrsCutsIn(inline: Token): readonly AttrsCut[] {
 /**
  * The text token of `inline` (an inline token) whose end markdown-it-attrs
  * cut a `{…}` off — the last, when it cut more — as it was before, or `null`
- * when the plugin took nothing off the end of any.
+ * when the plugin took nothing off the end of any. Where a text brace split
+ * that token, it is the piece after the brace's `}` (`AttrsCut`): what the
+ * plugin read, and found the last `{` in.
  */
 export function textBeforeAttrs(inline: Token): string | null {
     return takenAtEnd.get(inline) ?? null;

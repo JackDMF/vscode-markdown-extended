@@ -180,6 +180,17 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('bold', '**on‸e** tw‸o'), 'on‸e **tw‸o**');
     });
 
+    test('a wiki embed is toggled whole, and nothing is written into it', async () => {
+        assert.strictEqual(await toggle('bold', 'x «see ![[a b]] here» y'), 'x **«see ![[a b]] here»** y');
+        assert.strictEqual(await toggle('italics', 'x «see ![[a b]] here» y'), 'x *«see ![[a b]] here»* y');
+        // The embed alone is no text a part takes, as a code span or an image alone is not: nothing to wrap.
+        assert.strictEqual(await toggle('bold', 'see «![[a b]]» here'), 'see «![[a b]]» here');
+        assert.strictEqual(await toggle('italics', 'see «![[a b]]» here'), 'see «![[a b]]» here');
+        assert.strictEqual(await toggle('bold', 'see «![a](b)» here'), 'see «![a](b)» here');
+        assert.strictEqual(await toggle('bold', '**see ![[a b]] he‸re**'), 'see ![[a b]] he‸re');
+        assert.strictEqual(await toggle('bold', 'see ![[a ‸b]] here'), 'see ![[a ‸b]] here');
+    });
+
     test('nothing is written into code', async () => {
         assert.strictEqual(await toggle('codeInline', '```j‸s'), '```j‸s');
         assert.strictEqual(await toggle('bold', '```\nco‸de\n```'), '```\nco‸de\n```');

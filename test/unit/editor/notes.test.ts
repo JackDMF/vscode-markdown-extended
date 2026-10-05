@@ -667,6 +667,7 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
             typographer: true,
             plugins: DEFAULT_INLINE_ENGINE.plugins.filter(p => p.name !== 'markdown-it-kbd'),
             math: false,
+            wikiEmbeds: true,
         });
     });
 

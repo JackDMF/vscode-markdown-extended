@@ -31,12 +31,6 @@ export interface SerializeOptions {
      * that line's width (`lineWidth`). The host passes its setting (default 90).
      */
     defaultWrap: number;
-    /**
-     * Whether the engine reads wiki embeds (`markdownItWikiEmbed.ts`, unless
-     * `plugins.disabled` names `wiki-embed`): only then is a `!` right before a
-     * key escaped, since only then would `![[` read as an embed. Default `true`.
-     */
-    wikiEmbeds?: boolean;
 }
 
 /** The parts of prosemirror-markdown's state it keeps internal but a wrapping serializer has to read. Stable since 1.0. */
@@ -54,8 +48,6 @@ interface StateInternals {
     noteMarker?: string;
     /** Whether a table cell is being written (`writeTable`); this module's own field. */
     inTableCell?: boolean;
-    /** `SerializeOptions.wikiEmbeds`, for the marks and nodes to read; this module's own field. */
-    wikiEmbeds?: boolean;
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
     flushClose(size?: number): void;
 }
@@ -406,13 +398,12 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // Mixable, so emphasis inside a key is written inside it (`[[a *b*]]`),
     // not as a second key inside the emphasis.
     // A key right after a `!` would be read as a wiki embed's `![[…]]`
-    // where the engine reads embeds (`markdownItWikiEmbed.ts`), so there that
-    // `!` is escaped, as a link's is.
+    // where the engine reads embeds (`InlineEngineDefinition.wikiEmbeds`), so
+    // there that `!` is escaped, as a link's is.
     kbd: {
         open(state) {
-            const st = internals(state);
-            if (st.wikiEmbeds !== false) {
-                escapeTrailingBang(st);
+            if (currentReadsWikiEmbeds()) {
+                escapeTrailingBang(internals(state));
             }
             return HOLD_OPEN + KBD_MARKERS.open;
         },
@@ -839,10 +830,12 @@ const READ_CACHE_SIZE = 512;
 /**
  * Read textblocks with the engine `definition` describes — the host's, posted
  * with each document (`inlineEngineDefinition`): its linkify and typographer
- * settings, the registry's plugins the page runs, and whether VS Code's math
- * claims `$`. The literals the page writes are read back with it too
- * (`attrs.ts`, `readUnit`): the engine is one, `currentInlineEngine`, and
- * `attrsEngineFor` is it with markdown-it-attrs.
+ * settings, the registry's plugins the page runs, whether VS Code's math
+ * claims `$`, and whether it reads wiki embeds. The literals the page writes
+ * are read back with it too (`attrs.ts`, `readUnit`): the engine is one,
+ * `currentInlineEngine`, and `attrsEngineFor` is it with markdown-it-attrs.
+ * The save and the check of an edit write by it alike: whether a `!` before
+ * a key is escaped is its `wikiEmbeds`, read where the key is written.
  */
 export function setInlineEngine(definition: InlineEngineDefinition): void {
     if (!setCurrentInlineDefinition(definition)) {
@@ -1189,12 +1182,11 @@ export function literalRewrittenBeside(block: Node, textblock: Node, lost: Liter
  */
 const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, 'g');
 
-function inlineSerializer(fromBlockStart: boolean, inTableCell: boolean, wikiEmbeds: boolean): MarkdownSerializer {
+function inlineSerializer(fromBlockStart: boolean, inTableCell: boolean): MarkdownSerializer {
     return new MarkdownSerializer({
         ...inlineNodes,
         paragraph(state, node) {
             internals(state).inTableCell = inTableCell;
-            internals(state).wikiEmbeds = wikiEmbeds;
             state.renderInline(node, fromBlockStart);
             state.closeBlock(node);
         },
@@ -1203,12 +1195,12 @@ function inlineSerializer(fromBlockStart: boolean, inTableCell: boolean, wikiEmb
 
 const inlineSerializers = new Map<string, MarkdownSerializer>();
 
-/** The inline serializer for a line's start or its middle, a table cell, and whether the engine reads wiki embeds. */
-function inlineFor(fromBlockStart: boolean, inTableCell: boolean, wikiEmbeds: boolean): MarkdownSerializer {
-    const key = `${fromBlockStart}/${inTableCell}/${wikiEmbeds}`;
+/** The inline serializer for a line's start or its middle, or a table cell. */
+function inlineFor(fromBlockStart: boolean, inTableCell: boolean): MarkdownSerializer {
+    const key = `${fromBlockStart}/${inTableCell}`;
     let serializer = inlineSerializers.get(key);
     if (serializer === undefined) {
-        serializer = inlineSerializer(fromBlockStart, inTableCell, wikiEmbeds);
+        serializer = inlineSerializer(fromBlockStart, inTableCell);
         inlineSerializers.set(key, serializer);
     }
     return serializer;
@@ -1265,22 +1257,22 @@ const BACKSLASH_BEFORE_CODE = new RegExp(`\\\\\\\\(?=[${HOLD_CLOSE}]*${HOLD_OPEN
 const READS_AS_DELIMITER = /^:?(?:-+|=+):?\+?$/;
 
 /** One cell's inline content as its row writes it, hold markers included, before the tidy form's last touches (`tableCellMarkdown`). */
-function cellMarkdown(cell: Node, wikiEmbeds = currentReadsWikiEmbeds()): string {
+function cellMarkdown(cell: Node): string {
     const paragraph = editorSchema.nodes.paragraph.create(null, cell.content);
-    return inlineFor(false, true, wikiEmbeds).serialize(editorSchema.topNodeType.create(null, [paragraph]));
+    return inlineFor(false, true).serialize(editorSchema.topNodeType.create(null, [paragraph]));
 }
 
-/** Each cell as `tableCellMarkdown` writes it, by the node: a table is written whole for every keystroke in it (`unitsOf`). Made anew with the engine, which decides its escapes. */
-let cellCache = new WeakMap<Node, { wikiEmbeds: boolean; text: string }>();
+/** Each cell as `tableCellMarkdown` writes it, by the node: a table is written whole for every keystroke in it (`unitsOf`). Made anew with the engine, which decides its escapes (`setInlineEngine`). */
+let cellCache = new WeakMap<Node, string>();
 
 /** One cell's inline content as the tidy form writes it (see above), unpadded. Remembered by the node. */
-export function tableCellMarkdown(cell: Node, wikiEmbeds = currentReadsWikiEmbeds()): string {
+export function tableCellMarkdown(cell: Node): string {
     let written = cellCache.get(cell);
-    if (written === undefined || written.wikiEmbeds !== wikiEmbeds) {
-        written = { wikiEmbeds, text: cellText(cell, { text: cellMarkdown(cell, wikiEmbeds), at: [] }).text };
+    if (written === undefined) {
+        written = cellText(cell, { text: cellMarkdown(cell), at: [] }).text;
         cellCache.set(cell, written);
     }
-    return written.text;
+    return written;
 }
 
 /**
@@ -1317,12 +1309,12 @@ const FORMATTER_ALIGN: Readonly<Record<Exclude<TableAlign, null>, MDTableAlign>>
  * which a pipe table has no spelling for and the schema never parses, is
  * written as itself and empty cells after it, so the rows stay rectangular.
  */
-export function tableLines(table: Node, wikiEmbeds = currentReadsWikiEmbeds()): string[] {
+export function tableLines(table: Node): string[] {
     const rows: { text: string; align: TableAlign }[][] = [];
     table.forEach(row => {
         const cells: { text: string; align: TableAlign }[] = [];
         row.forEach(cell => {
-            cells.push({ text: tableCellMarkdown(cell, wikiEmbeds), align: (cell.attrs.align as TableAlign | undefined) ?? null });
+            cells.push({ text: tableCellMarkdown(cell), align: (cell.attrs.align as TableAlign | undefined) ?? null });
             for (let k = 1; k < ((cell.attrs.colspan as number | undefined) ?? 1); k++) {
                 cells.push({ text: '', align: null });
             }
@@ -1380,10 +1372,10 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
 }
 
 /** A textblock's inline content as one line of Markdown, hold markers included, hard breaks as `\` + newline. */
-function inlineMarkdown(node: Node, fromBlockStart: boolean, wikiEmbeds = currentReadsWikiEmbeds()): string {
+function inlineMarkdown(node: Node, fromBlockStart: boolean): string {
     const paragraph = editorSchema.nodes.paragraph.create(null, node.content);
     const doc = editorSchema.topNodeType.create(null, [paragraph]);
-    return inlineFor(fromBlockStart, false, wikiEmbeds).serialize(doc);
+    return inlineFor(fromBlockStart, false).serialize(doc);
 }
 
 /**
@@ -1391,8 +1383,8 @@ function inlineMarkdown(node: Node, fromBlockStart: boolean, wikiEmbeds = curren
  * the line-start form, as a paragraph starts a line. The one call both the
  * save (`blockSerializer`) and the check of an edit (`writtenTextblock`) make.
  */
-function paragraphMarkdown(node: Node, wikiEmbeds = currentReadsWikiEmbeds()): string {
-    return inlineMarkdown(node, true, wikiEmbeds);
+function paragraphMarkdown(node: Node): string {
+    return inlineMarkdown(node, true);
 }
 
 /**
@@ -1422,7 +1414,6 @@ export function literalHolder(node: Node): string {
 }
 
 function blockSerializer(options: SerializeOptions): MarkdownSerializer {
-    const wikiEmbeds = options.wikiEmbeds !== false;
     return new MarkdownSerializer({
         ...inlineNodes,
         paragraph(state, node) {
@@ -1433,14 +1424,14 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             const column = characterCount(st.out.slice(st.out.lastIndexOf('\n') + 1));
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
-            const wrapped = wrapInline(paragraphMarkdown(node, wikiEmbeds), limit - column, limit - characterCount(st.delim)).join('\n');
+            const wrapped = wrapInline(paragraphMarkdown(node), limit - column, limit - characterCount(st.delim)).join('\n');
             state.text(escapedLiterals(node, wrapped, 'paragraph').text, false);
             state.closeBlock(node);
         },
         heading(state, node) {
             const suffix = node.attrs.attrsSuffix as string | null;
             // One line (`headingText`); a trailing ` #` run is an ATX closing sequence and is escaped there.
-            const line = '#'.repeat(node.attrs.level as number) + ' ' + headingText(node, { text: inlineMarkdown(node, false, wikiEmbeds), at: [] }).text;
+            const line = '#'.repeat(node.attrs.level as number) + ' ' + headingText(node, { text: inlineMarkdown(node, false), at: [] }).text;
             state.write(suffix === null ? line.replace(/\s+$/, '') : line.replace(/\s+$/, '') + ' ' + suffix);
             state.closeBlock(node);
         },
@@ -1501,7 +1492,7 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
         },
         table(state, node) {
             // The tidy form (above); never wrapped, since a row is one line.
-            state.text(tableLines(node, wikiEmbeds).join('\n'), false);
+            state.text(tableLines(node).join('\n'), false);
             state.closeBlock(node);
         },
         container(state, node) {
@@ -2467,8 +2458,10 @@ export function serializeNode(node: Node, options: SerializeOptions): string {
  * A `gap` of `null` — a node the UI inserted — is one blank line. Then the
  * `tail`. A changed block is written with the document's `eol` and ends with
  * one, so a changed last line of a file that had no final newline gains one.
+ * What the engine reads as syntax is escaped by the engine the page reads
+ * with (`setInlineEngine`), whether it reads wiki embeds among it.
  */
-export function serializeDocument(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string; wikiEmbeds?: boolean }, options: SerializeOptions): string {
+export function serializeDocument(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions): string {
     return serializeLayout(parsed, options).text;
 }
 
@@ -2497,9 +2490,9 @@ export interface SerializedLayout {
  * (`positions.ts`) reads the offsets from where they are made rather than
  * counting them a second time.
  */
-export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string; wikiEmbeds?: boolean }, options: SerializeOptions): SerializedLayout {
+export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions): SerializedLayout {
     const { doc, eol, tail } = parsed;
-    const serializer = blockSerializer({ ...options, wikiEmbeds: options.wikiEmbeds ?? parsed.wikiEmbeds });
+    const serializer = blockSerializer(options);
     const blocks: BlockSpan[] = [];
     let out = '';
     let literalLineBefore = false;

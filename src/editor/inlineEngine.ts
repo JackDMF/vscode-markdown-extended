@@ -4,6 +4,7 @@ import { PAGE_PLUGINS, PAGE_PLUGINS_IN_ORDER, isPagePlugin } from '../plugin/inl
 import { MarkdownItAttrs } from '../plugin/markdownItAttrs';
 import { useMathStandIn } from './mathStandIn';
 import { SIDEBAR_SPAN_META } from '../plugin/markdownItSidenote';
+import { WIKI_EMBED_TOKEN, readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
 import { configureLinkify } from '../syntax/linkify';
 import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
 
@@ -30,6 +31,8 @@ import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
  * the one the definition names (`math`): the page does not bundle it, and runs
  * its tokenizer instead (`mathStandIn.ts`), so what the preview takes for
  * math the page does too — a left sidebar and a literal holding a `$` alike.
+ * Whether the host reads wiki embeds is named too (`wikiEmbeds`), read off
+ * the engine as built, for an extender may have turned the rule off.
  * Nor does it see the document's own reference and
  * footnote definitions, as a textblock is read on its own, or the plugins that
  * add no inline rule, which make or unmake no sidebar (`inlinePlugins.ts`).
@@ -43,9 +46,22 @@ export interface EngineOptions {
     typographer: boolean;
 }
 
+/**
+ * A plugin of the host's registry the page runs, by name, with its arguments.
+ * `threw` marks one whose `md.use` threw on the host after it had changed the
+ * engine's rules: the host keeps what it installed, as the preview does
+ * (`extendMarkdownIt`), so the page runs it as far as it gets too
+ * (`createInlineEngine`), rather than reading without the rules the host has.
+ */
+export interface DefinedPlugin {
+    name: string;
+    args: unknown[];
+    threw?: true;
+}
+
 /** What the page's engine is built from: the host's options and the plugins of its registry the page runs (`PAGE_PLUGINS`), by name, with their arguments. */
 export interface InlineEngineDefinition extends EngineOptions {
-    plugins: { name: string; args: unknown[] }[];
+    plugins: DefinedPlugin[];
     /**
      * Whether the host's engine reads `$…$` as math before the sidebar rule
      * and markdown-it-attrs see it: VS Code's math extension
@@ -55,6 +71,17 @@ export interface InlineEngineDefinition extends EngineOptions {
      * no left sidebar (`SIDEBAR_LEFT_MATH` in `serialize.ts`) and no literal.
      */
     math: boolean;
+    /**
+     * Whether the host's engine reads wiki embeds: its `wiki_embed` rule is in
+     * the inline chain as the engine was finally built (`readsWikiEmbeds`) —
+     * the registry ran `markdown-it-wiki-embed`, `plugins.disabled` does not
+     * name it, and no extender disabled the rule after it. The one answer to
+     * "would `![[` read as an embed": the save's escape of a `!` before a key
+     * and the check of an edit write by it (`serialize.ts`), the page's
+     * engine reads by it (`createInlineEngine`), and the page makes an embed
+     * from typed or pasted `![[…]]` only where it holds (`wikiEmbeds.ts`).
+     */
+    wikiEmbeds: boolean;
 }
 
 /**
@@ -93,14 +120,16 @@ const definitions = new WeakMap<object, InlineEngineDefinition>();
  * Record what `md` was built from, for `inlineEngineDefinition`: its options,
  * of the registry `plugins` it ran those the page runs too, in their order,
  * and whether the extenders that ran after them left VS Code's math reading
- * `$` — read off the engine, not the setting, so it is what the host does.
+ * `$` and the wiki embed rule reading `![[` — read off the engine, not the
+ * settings, so it is what the host does. Made once, when the engine is built.
  */
-export function recordInlineDefinition(md: MarkdownIt, options: EngineOptions, plugins: readonly { name: string; args: unknown[] }[]): void {
+export function recordInlineDefinition(md: MarkdownIt, options: EngineOptions, plugins: readonly DefinedPlugin[]): void {
     definitions.set(md, {
         linkify: options.linkify,
         typographer: options.typographer,
-        plugins: plugins.filter(p => isPagePlugin(p.name)).map(p => ({ name: p.name, args: p.args })),
+        plugins: plugins.filter(p => isPagePlugin(p.name)).map(p => (p.threw ? { name: p.name, args: p.args, threw: true } : { name: p.name, args: p.args })),
         math: hasInlineRule(md, MATH_INLINE_RULE),
+        wikiEmbeds: readsWikiEmbeds(md),
     });
 }
 
@@ -124,6 +153,8 @@ export const DEFAULT_INLINE_ENGINE: InlineEngineDefinition = {
     plugins: PAGE_PLUGINS_IN_ORDER.map(({ name, args }) => ({ name, args: [...args] })),
     // VS Code's math is another extension's extender, which the registry does not hold.
     math: false,
+    // The registry holds markdown-it-wiki-embed.
+    wikiEmbeds: true,
 };
 
 /**
@@ -137,15 +168,31 @@ export function definitionOf(md: MarkdownIt): InlineEngineDefinition {
 
 /**
  * The page's engine, built from `definition`; a plugin the page does not
- * bundle is skipped. With `math`, the stand-in for VS Code's math is added
- * after the plugins, as the host's extenders run after its registry.
+ * bundle is skipped, and one that threw on the host after changing its rules
+ * (`threw`) runs as far as it gets here too. Then what the host's extenders
+ * did after its registry: the wiki embed rule disabled where the host's is
+ * not read (`wikiEmbeds`), and with `math` the stand-in for VS Code's math.
  */
 export function createInlineEngine(definition: InlineEngineDefinition): MarkdownIt {
     const md = baseEngine(definition);
-    for (const { name, args } of definition.plugins) {
+    for (const { name, args, threw } of definition.plugins) {
         if (isPagePlugin(name)) {
-            md.use(PAGE_PLUGINS[name] as unknown as (md: MarkdownIt, ...args: unknown[]) => void, ...args);
+            const plugin = PAGE_PLUGINS[name] as unknown as (md: MarkdownIt, ...args: unknown[]) => void;
+            if (threw) {
+                try {
+                    md.use(plugin, ...args);
+                } catch {
+                    // It threw on the host too; what it installed before that stays, as there.
+                }
+            } else {
+                md.use(plugin, ...args);
+            }
         }
+    }
+    // Only the registry's plugin is the rule `readsWikiEmbeds` reads, so a host
+    // that reads embeds listed it above; one that does not may still have run it.
+    if (!definition.wikiEmbeds && readsWikiEmbeds(md)) {
+        md.inline.ruler.disable(WIKI_EMBED_TOKEN);
     }
     return definition.math ? useMathStandIn(md) : md;
 }
@@ -176,13 +223,12 @@ export function currentInlineDefinition(): InlineEngineDefinition {
 }
 
 /**
- * Whether the current definition's engine reads wiki embeds: the host's
- * registry ran `markdown-it-wiki-embed` (`readsWikiEmbeds`, `markdownItWikiEmbed.ts`).
- * What the serializer writes by (`SerializeOptions.wikiEmbeds`) where no caller
- * passes it: the check of an edit writes as the save does.
+ * Whether the current definition's engine reads wiki embeds
+ * (`InlineEngineDefinition.wikiEmbeds`): what the serializer writes by, the
+ * save and the check of an edit alike, and what the page's embed input asks.
  */
 export function currentReadsWikiEmbeds(): boolean {
-    return currentDefinition.plugins.some(plugin => plugin.name === 'markdown-it-wiki-embed');
+    return currentDefinition.wikiEmbeds;
 }
 
 /** The page's engine (`createInlineEngine`) for the current definition. */

@@ -5,7 +5,9 @@ import { history, redo, undo } from 'prosemirror-history';
 import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { createPositionMap } from '../../../src/editor/positions';
-import { unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
+import { setInlineEngine, tableLines, unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
+import { DEFAULT_INLINE_ENGINE, InlineEngineDefinition, createInlineEngine, currentInlineDefinition, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
+import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { headingAnchors } from '../../../src/editor/host/links';
 import { noteRefusal } from '../../../src/editor/webview/notes';
 import { tableRefusal } from '../../../src/editor/webview/tables';
@@ -29,6 +31,17 @@ function previewEngine(): MarkdownIt {
     const md = markdownIt() as unknown as MarkdownIt;
     plugins.forEach(p => md.use(p.plugin as never, ...p.args));
     return md;
+}
+
+/** Run `body` with the page reading and writing by `definition`, as after a document posted with it. */
+function withDefinition(definition: InlineEngineDefinition, body: () => void): void {
+    const before = currentInlineDefinition();
+    setInlineEngine(definition);
+    try {
+        body();
+    } finally {
+        setInlineEngine(before);
+    }
 }
 
 /** Every top-level editable node treated as changed, so the whole document is written by rule. */
@@ -55,7 +68,7 @@ function keysOf(doc: Node): string[] {
 
 suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdown-extended#168)', () => {
     const md = hostEngine();
-    const serialize = (parsed: ParsedDocument, wikiEmbeds?: boolean) => serializeDocument(parsed, { defaultWrap: 90, wikiEmbeds });
+    const serialize = (parsed: ParsedDocument) => serializeDocument(parsed, { defaultWrap: 90 });
 
     /** Parse, rewrite every editable block, parse and rewrite again: both writes are the source. */
     function assertVerbatim(source: string, editable: string): void {
@@ -122,14 +135,63 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             assert.strictEqual(topChildren(reparsed.doc)[0].textContent, `${before}Ctrl`);
             assert.deepStrictEqual(keysOf(reparsed.doc), ['Ctrl'], first);
         }
-        // With wiki-embed disabled the engine says so, and `Wow![[Ctrl]]` is a `!` and a key as written.
-        const doc = paragraph(text('Wow!'), text('Ctrl', kbd));
-        assert.strictEqual(serialize({ doc, eol: '\n', tail: '' }, false), 'Wow![[Ctrl]]\n');
+        // With wiki-embed disabled the engine's definition says so, and `Wow![[Ctrl]]` is a `!` and a key as written.
         const noEmbeds = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.plugin.name !== 'MarkdownItWikiEmbed') });
-        const parsed = parseDocument(noEmbeds, 'Wow![[Ctrl]]\n');
-        assert.strictEqual(parsed.wikiEmbeds, false);
-        assert.strictEqual(parseDocument(md, 'x\n').wikiEmbeds, true);
-        assert.strictEqual(serialize(allTouched(parsed)), 'Wow![[Ctrl]]\n');
+        assert.strictEqual(inlineEngineDefinition(noEmbeds).wikiEmbeds, false);
+        assert.strictEqual(inlineEngineDefinition(md).wikiEmbeds, true);
+        withDefinition(inlineEngineDefinition(noEmbeds), () => {
+            const doc = paragraph(text('Wow!'), text('Ctrl', kbd));
+            assert.strictEqual(serialize({ doc, eol: '\n', tail: '' }), 'Wow![[Ctrl]]\n');
+            assert.strictEqual(serialize(allTouched(parseDocument(noEmbeds, 'Wow![[Ctrl]]\n'))), 'Wow![[Ctrl]]\n');
+        });
+    });
+
+    test('the save, a table, the check of an edit and the page\'s engine read one fact for whether ![[ is an embed: the engine\'s, as built', () => {
+        const kbd = schema.marks.kbd.create();
+        const line = () => schema.nodes.paragraph.create(null, [text('Wow!'), text('Ctrl', kbd)]);
+        const table = () => schema.nodes.table.create(null, [
+            schema.nodes.table_row.create(null, [schema.nodes.table_header.create(null, [text('h')])]),
+            schema.nodes.table_row.create(null, [schema.nodes.table_cell.create(null, [text('Wow!'), text('Ctrl', kbd)])]),
+        ]);
+        // An extender that turns the rule off after the registry ran it: the
+        // plugin is still in the definition's list, and the engine reads no embed.
+        const offByExtender = createEditorEngine({
+            linkify: true, typographer: false, plugins,
+            extend: [m => { m.inline.ruler.disable('wiki_embed'); }],
+        });
+        const definition = inlineEngineDefinition(offByExtender);
+        assert.ok(definition.plugins.some(p => p.name === 'markdown-it-wiki-embed'), 'the registry ran it');
+        assert.strictEqual(definition.wikiEmbeds, false, 'read off the engine as built, not the plugin list');
+        const page = createInlineEngine(definition);
+        assert.ok(!page.parseInline('a ![[x]] b', {})[0].children!.some(t => t.type === 'wiki_embed'), 'the page reads with the rule off too');
+        assert.ok(createInlineEngine(DEFAULT_INLINE_ENGINE).parseInline('a ![[x]] b', {})[0].children!.some(t => t.type === 'wiki_embed'));
+        for (const [def, bang] of [[definition, '!'], [DEFAULT_INLINE_ENGINE, '\\!']] as const) {
+            withDefinition(def, () => {
+                const doc = schema.topNodeType.create(null, [line(), table()]);
+                const saved = serialize({ doc, eol: '\n', tail: '' });
+                assert.ok(saved.startsWith(`Wow${bang}[[Ctrl]]\n`), saved);
+                assert.ok(tableLines(doc.child(1)).some(l => l.includes(`Wow${bang}[[Ctrl]]`)), 'a cell writes as a paragraph does');
+                assert.ok(saved.includes(`Wow${bang}[[Ctrl]]`, 10), 'the save writes the cell as tableLines does');
+                // The check of an edit writes with the same fact (`setWriteOptions` never carried it): the edit is kept.
+                const state = EditorState.create({ doc: schema.topNodeType.create(null, [touched(line())]), plugins: editorPlugins() });
+                const typed = state.apply(state.tr.insert(state.doc.child(0).nodeSize - 1, text(' now')));
+                assert.notStrictEqual(typed.doc, state.doc, 'the edit filter let it through');
+                assert.strictEqual(serialize({ doc: typed.doc, eol: '\n', tail: '' }), `Wow${bang}[[Ctrl]] now\n`);
+            });
+        }
+    });
+
+    test('a registry plugin that throws after adding its rules is in the definition, marked, and the page runs it as far as it gets', () => {
+        const wikiEmbed = plugins.find(p => p.plugin.name === 'MarkdownItWikiEmbed')!;
+        const half = { name: 'markdown-it-wiki-embed', plugin: (m: MarkdownIt) => { wikiEmbed.plugin(m); throw new Error('half'); }, args: [] };
+        const none = { name: 'markdown-it-kbd', plugin: () => { throw new Error('none'); }, args: [] };
+        const log: string[] = [];
+        const host = createEditorEngine({ linkify: true, typographer: false, plugins: [half, none], log: line => log.push(line) });
+        const definition = inlineEngineDefinition(host);
+        assert.strictEqual(log.length, 2);
+        assert.deepStrictEqual(definition.plugins, [{ name: 'markdown-it-wiki-embed', args: [], threw: true }], 'one that changed nothing is left out');
+        assert.strictEqual(definition.wikiEmbeds, true, 'the host reads embeds with what it installed');
+        assert.ok(createInlineEngine(definition).parseInline('a ![[x]] b', {})[0].children!.some(t => t.type === 'wiki_embed'), 'and so does the page');
     });
 
     test('a link or an attribute span right after x\\! gets its ! escaped: an escaped backslash leaves the ! bare', () => {
@@ -197,6 +259,28 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             assert.match(unwritableEmbed(paragraph(embed('![[x]]', mark.create()))) ?? '', /wiki embed/);
         }
         assert.strictEqual(unwritableEmbed(paragraph(embed('![[x]]', schema.marks.em.create()))), null);
+    });
+
+    test('the edit filter refuses an embed made code, superscript or subscript, in a paragraph and a table cell, with the reason a verb is disabled with', () => {
+        const inParagraph = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [text('a '), embed('![[x]]'), text(' b')])]);
+        const inCell = schema.topNodeType.create(null, [schema.nodes.table.create(null, [
+            schema.nodes.table_row.create(null, [schema.nodes.table_header.create(null, [text('h')])]),
+            schema.nodes.table_row.create(null, [schema.nodes.table_cell.create(null, [text('a '), embed('![[x]]')])]),
+        ])]);
+        for (const doc of [inParagraph, inCell]) {
+            let at = -1;
+            doc.descendants((n, pos) => {
+                if (n.type.name === 'wiki_embed') { at = pos; }
+            });
+            const state = EditorState.create({ doc, plugins: editorPlugins() });
+            for (const mark of [schema.marks.code, schema.marks.sup, schema.marks.sub]) {
+                const tr = state.tr.addMark(at, at + 1, mark.create());
+                // The order the filters run in (`editorPlugins`): the notes' first, then the tables'.
+                assert.match(noteRefusal(tr) ?? tableRefusal(tr) ?? '', /wiki embed/, `${mark.name} in a ${doc.firstChild!.type.name}`);
+                assert.strictEqual(state.apply(tr).doc, state.doc, `${mark.name} in a ${doc.firstChild!.type.name}: the filter refuses it`);
+            }
+            assert.notStrictEqual(state.apply(state.tr.addMark(at, at + 1, schema.marks.em.create())).doc, state.doc, 'emphasis is let through');
+        }
     });
 
     test('a {…} after an embed under a mark is a literal to attrs, so it is escaped; after a bare embed it is text', () => {

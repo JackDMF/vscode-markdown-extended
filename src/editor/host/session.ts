@@ -559,7 +559,6 @@ export class VisualEditorSession implements vscode.Disposable {
         return md.render(this.document.getText(), this.env()).includes(`id="${md.utils.escapeHtml(id)}"`);
     }
 
-
     /** Parse the document as it is now and hand it to the webview, or say why it cannot be shown. */
     private async post(): Promise<void> {
         let md: MarkdownIt;

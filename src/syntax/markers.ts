@@ -73,8 +73,9 @@ export const WIKI_EMBED_MARKERS = { open: '![[', close: ']]' } as const;
  * The engine option that keeps a wiki embed a token of its own to the end of
  * the parse. Without it the embed plugin makes it plain text, joined with the
  * text around it, so an extension that renders embeds from text (Foam) finds
- * it; the Visual Editor's engine sets it (`src/editor/engine.ts`) and edits each
- * embed as one atom carrying its source.
+ * it; the Visual Editor's engines set it, the host's and the page's alike
+ * (`baseEngine` in `src/editor/inlineEngine.ts`), and it edits each embed as
+ * one atom carrying its source.
  */
 export const WIKI_EMBED_TOKENS_OPTION = 'mepWikiEmbedTokens';
 

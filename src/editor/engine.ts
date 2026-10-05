@@ -1,6 +1,6 @@
 import frontMatter from 'markdown-it-front-matter';
 import { MarkdownIt } from '../@types/markdown-it';
-import { baseEngine, recordInlineDefinition } from './inlineEngine';
+import { DefinedPlugin, baseEngine, recordInlineDefinition } from './inlineEngine';
 
 /**
  * One entry of a plugin registry, in the shape `src/plugin/plugins.ts` exports
@@ -32,6 +32,23 @@ export interface EditorEngineOptions {
     extend?: MarkdownItExtender[];
     /** Where a registry plugin that fails to load is reported; it is skipped either way. */
     log?: (line: string) => void;
+}
+
+/**
+ * The rules of `md`'s four chains in their order — each one's function and
+ * whether it is enabled, a chain's end marked — what a plugin that threw may
+ * have changed (`sameRules`).
+ */
+function rulesOf(md: MarkdownIt): unknown[] {
+    const chains = [md.core.ruler, md.block.ruler, md.inline.ruler, (md.inline as unknown as { ruler2: unknown }).ruler2];
+    return chains.flatMap(ruler => [
+        ...((ruler as { __rules__?: { enabled: boolean; fn: unknown }[] }).__rules__ ?? []).flatMap(rule => [rule.fn, rule.enabled]),
+        null,
+    ]);
+}
+
+function sameRules(a: readonly unknown[], b: readonly unknown[]): boolean {
+    return a.length === b.length && a.every((x, i) => x === b[i]);
 }
 
 /**
@@ -73,16 +90,21 @@ export function createEditorEngine(options: EditorEngineOptions): MarkdownIt {
     const frontMatterPlugin = frontMatter as unknown as MarkdownItPlugin['plugin'];
     // The callback receives the YAML; the editor reads the block from its token.
     md.use(frontMatterPlugin, () => undefined);
-    // The plugins that loaded, which the page's engine runs too (`recordInlineDefinition`).
-    const used: MarkdownItPlugin[] = [];
+    // The plugins that changed the engine, which the page's engine runs too (`recordInlineDefinition`).
+    const used: DefinedPlugin[] = [];
     for (const entry of options.plugins) {
         if (typeof entry.plugin === 'function') {
             // One plugin that throws must not take the engine down with it, as in `extendMarkdownIt`.
+            const before = rulesOf(md);
             try {
                 md.use(entry.plugin, ...entry.args);
-                used.push(entry);
+                used.push({ name: entry.name, args: entry.args });
             } catch (error) {
                 options.log?.(`[ERROR] Failed to load markdown plugin: ${error instanceof Error ? error.message : String(error)}`);
+                // What it installed before it threw stays, as in the preview: the page must read with it too.
+                if (!sameRules(rulesOf(md), before)) {
+                    used.push({ name: entry.name, args: entry.args, threw: true });
+                }
             }
         }
     }

@@ -7,6 +7,7 @@ import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
 import { Command, Plugin } from 'prosemirror-state';
 import { fidelityPlugin } from '../fidelity';
+import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
@@ -117,9 +118,10 @@ export function domSelectionFirst(): Plugin {
 
 /**
  * Every plugin the editor state is built with, in the order they must run.
- * `wikiEmbeds` says whether the host's engine reads wiki embeds (`readsWikiEmbeds`).
+ * `wikiEmbeds` says whether the host's engine reads wiki embeds: the page's
+ * definition of it (`currentReadsWikiEmbeds`), unless a test says otherwise.
  */
-export function editorPlugins(wikiEmbeds: () => boolean = () => true): Plugin[] {
+export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds): Plugin[] {
     const embedInput = wikiEmbedInputRules(wikiEmbeds);
     return [
         // First: every key below reads the selection the DOM shows.

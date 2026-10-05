@@ -72,6 +72,14 @@ suite('Inline source: the document as the engine reads it', () => {
         assert.deepStrictEqual(source.spansOn(0, '`').map(s => [s.start, s.end, s.markup, s.exact]), [[2, 7, '``', true]]);
     });
 
+    test('a wiki embed, kept a token by the editor\'s engine, is its source as written: no marker inside it, a span around it exact', () => {
+        assert.deepStrictEqual(spans('**a ![[x*]]**', '**'), ['**a ![[x*]]**']);
+        assert.deepStrictEqual(spans('**a ![[x*]]**', '*'), []);
+        assert.deepStrictEqual(spans('*a ![[x_y]]* b', '*'), ['*a ![[x_y]]*']);
+        assert.deepStrictEqual(spans('*a ![[x_y]]* b', '_'), []);
+        assert.deepStrictEqual(stretches('see ![[a b]] here'), [['see ', '+ here']]);
+    });
+
     test('an escaped marker is text, no span', () => {
         assert.deepStrictEqual(spans('\\*\\*not\\*\\*', '**'), []);
         assert.deepStrictEqual(spans('\\*\\*not\\*\\*', '*'), []);

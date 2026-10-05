@@ -19,7 +19,6 @@ import { InlineEngineDefinition, definitionOf } from './inlineEngine';
 import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
 import { endLiteralOf } from './attrs';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
-import { readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
 import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
@@ -33,8 +32,6 @@ export interface ParsedDocument {
     eol: '\n' | '\r\n';
     /** The text after the last block (blank lines, the final newline), written back verbatim. */
     tail: string;
-    /** Whether the engine reads wiki embeds, for the serializer (`SerializeOptions.wikiEmbeds`); unknown is `true`. */
-    wikiEmbeds?: boolean;
 }
 
 /** `ParsedDocument` as it crosses to the webview: the tree as ProseMirror JSON. */
@@ -42,15 +39,14 @@ export interface ParsedDocumentJSON {
     doc: Record<string, unknown>;
     eol: '\n' | '\r\n';
     tail: string;
-    wikiEmbeds?: boolean;
 }
 
 export function parsedDocumentToJSON(parsed: ParsedDocument): ParsedDocumentJSON {
-    return { doc: parsed.doc.toJSON() as Record<string, unknown>, eol: parsed.eol, tail: parsed.tail, wikiEmbeds: parsed.wikiEmbeds };
+    return { doc: parsed.doc.toJSON() as Record<string, unknown>, eol: parsed.eol, tail: parsed.tail };
 }
 
 export function parsedDocumentFromJSON(json: ParsedDocumentJSON): ParsedDocument {
-    return { doc: Node.fromJSON(editorSchema, json.doc), eol: json.eol, tail: json.tail, wikiEmbeds: json.wikiEmbeds };
+    return { doc: Node.fromJSON(editorSchema, json.doc), eol: json.eol, tail: json.tail };
 }
 
 /**
@@ -522,5 +518,5 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     if (opened !== made) {
         throw new Error(`Rich editor: ${opened} notes became ${made} note nodes.`);
     }
-    return { doc, eol: detectEol(text), tail, wikiEmbeds: readsWikiEmbeds(md) };
+    return { doc, eol: detectEol(text), tail };
 }

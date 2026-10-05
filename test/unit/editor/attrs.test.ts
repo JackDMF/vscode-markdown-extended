@@ -163,6 +163,12 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
         const unwritable = new Set(['{title="a "b"" #w}']);
         // A space beside the `=` that separates a key makes a brace the text's own (`isTextBrace`): no literal to copy.
         assert.strictEqual(parseAttrsLiteral('{k= #w}'), null, 'a text brace');
+        for (const [shape, [source]] of Object.entries(HOST_SHAPES)) {
+            // Nor does the preview read one: a copy carrying it as written duplicates no id.
+            const html = md.render(source('{k= #w}'));
+            // A fence renders no info string past its language, whatever it holds.
+            assert.ok(!/\bid="w"/.test(html) && (shape === 'fence' || html.includes('{k= #w}')), `${shape}: the preview shows {k= #w} as text, no id: ${html}`);
+        }
         for (const literal of literals) {
             const pairs = parseAttrsLiteral(literal);
             assert.ok(pairs, `the port accepts ${literal}`);
