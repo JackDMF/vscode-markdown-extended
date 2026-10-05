@@ -225,6 +225,22 @@ export function normalizedLiteral(attrs: readonly AttrPair[]): string {
 }
 
 /**
+ * `literal` without the id it gives, read as the plugin reads it: `{.wide #w}`
+ * is `{.wide}` (written as `normalizedLiteral` writes it), `{#w}` is `null`,
+ * nothing being left. A literal that gives no id, or that the plugin does not
+ * take as attributes, is returned as it is. What a copy keeps of a literal: an
+ * id must not be written twice, a class may (`fidelity.ts`).
+ */
+export function withoutId(literal: string): string | null {
+    const pairs = parseAttrsLiteral(literal);
+    if (pairs === null || pairs.every(([name]) => name !== 'id')) {
+        return literal;
+    }
+    const rest = pairs.filter(([name]) => name !== 'id');
+    return rest.length === 0 ? null : normalizedLiteral(rest);
+}
+
+/**
  * Whether the text ends in a `{…}` the plugin would take as attributes of the
  * block or element it ends (its `hasDelimiters('end')`), so a name or title
  * written there would lose its end to an attribute list.

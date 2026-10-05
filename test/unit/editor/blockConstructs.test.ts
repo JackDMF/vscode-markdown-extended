@@ -180,6 +180,10 @@ suite('Editor block attributes: kept verbatim, written where they stood', () => 
         state = state.apply(state.tr.split(posOf(state.doc, 'beta')));
         assert.deepStrictEqual(topChildren(state.doc).map(n => n.attrs.attrsSuffix), ['{#p1}', null]);
         assert.strictEqual(text(state), 'Alpha {#p1}\n\nbeta.\n');
+        // Only the id: a class is the half's as much as the paragraph's, as a copy keeps it.
+        let classed = stateOf('Alpha beta. {.lead #p1}\n');
+        classed = classed.apply(classed.tr.split(posOf(classed.doc, 'beta')));
+        assert.strictEqual(text(classed), 'Alpha {.lead #p1}\n\nbeta. {.lead}\n');
 
         let quoted = stateOf('Alpha beta. {.lead}\n');
         const $from = quoted.doc.resolve(1);

@@ -60,7 +60,7 @@
 import { Node } from 'prosemirror-model';
 import { EditorState, Plugin, PluginKey, PluginView, Transaction } from 'prosemirror-state';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
-import { descent, topLevelChildren } from '../fidelity';
+import { descent } from '../fidelity';
 import type { LensDirection, LensItem, LensRow } from '../protocol';
 import { objectOfNode } from './objects';
 
@@ -722,7 +722,7 @@ export function lensPlugin(run: (id: string) => void): Plugin<LensState> {
                 if (!tr.docChanged) {
                     return value;
                 }
-                const from = descent([tr], topLevelChildren(oldState.doc), topLevelChildren(newState.doc));
+                const from = descent([tr], oldState.doc, newState.doc);
                 const blocks = from.map(i => (i < 0 ? null : value.blocks[i] ?? null));
                 return { blocks, decorations: decorate(newState.doc, blocks, run) };
             },

@@ -1,6 +1,7 @@
 import { Attrs, Mark, Node, Slice } from 'prosemirror-model';
 import { Plugin, PluginKey, Transaction } from 'prosemirror-state';
 import { Transform } from 'prosemirror-transform';
+import { withoutId } from './attrs';
 import { EDITABLE_TOP_NODES } from './schema';
 import { itemTakesLiteral, quoteLostLiteral } from './serialize';
 
@@ -45,8 +46,8 @@ const HISTORY_META = 'history$';
  * The heading attributes that name something and must not be written twice: the
  * requirement id and the anchor. `attrsSuffix` is not compared — a class-only
  * suffix (`{.unnumbered}`) may legitimately repeat, and one that carries an id
- * has it in `anchor` — but it is cleared with them, since it is where the
- * anchor is written.
+ * has it in `anchor` — but the id in it is cleared with them, since it is where
+ * the anchor is written.
  */
 const IDENTITY_ATTRS = ['reqPrefix', 'anchor'] as const;
 const STRIPPED_ATTRS = ['reqPrefix', 'anchor', 'attrsSuffix'] as const;
@@ -64,29 +65,45 @@ export interface TopLevelChild {
     offset: number;
 }
 
-export function topLevelChildren(doc: Node): TopLevelChild[] {
-    const out: TopLevelChild[] = [];
-    doc.forEach((node, offset) => {
-        out.push({ node, offset });
-    });
-    return out;
+/**
+ * Where `transactions` take a position of the document they started from: the
+ * position the content after it now starts at (`assoc` 1). For the start of an
+ * old block that is where the block itself now starts, also when something was
+ * inserted right before it — the insertion point is the inserted content's.
+ */
+function mapForward(transactions: readonly Transaction[], pos: number): number {
+    return transactions.reduce((at, tr) => tr.mapping.map(at, 1), pos);
 }
 
 /**
- * How many top-level children two documents share, as the same objects at the
- * same index, from the start (`head`) and, after those, from the end (`tail`),
- * where `same(i, j)` says whether child `i` of the first is child `j` of the
- * second: the children no step of an edit rebuilt, around the ones it did. A
- * pointer comparison per child.
+ * How many top-level children `transactions` left as they were, from the start
+ * (`head`) and, after those, from the end (`tail`): the same object at the same
+ * index, starting where its old start maps to (`mapForward`) — the children no
+ * step of an edit rebuilt, around the ones it did. The identity alone is not
+ * enough: a drag-copy of a whole block carries the same object, and a copy
+ * dropped directly before its original stands at the original's old index,
+ * where the original's start does not map to (a copy directly after its
+ * original, at the index from the end, alike). A pointer comparison and a
+ * mapped position per child.
  */
-function unchangedEnds(before: number, after: number, same: (i: number, j: number) => boolean): { head: number; tail: number } {
-    const most = Math.min(before, after);
+function unchangedEnds(transactions: readonly Transaction[], before: Node, after: Node): { head: number; tail: number } {
+    const most = Math.min(before.childCount, after.childCount);
     let head = 0;
-    while (head < most && same(head, head)) {
+    let offset = 0;
+    while (head < most && before.child(head) === after.child(head) && mapForward(transactions, offset) === offset) {
+        offset += before.child(head).nodeSize;
         head++;
     }
     let tail = 0;
-    while (head + tail < most && same(before - 1 - tail, after - 1 - tail)) {
+    let oldEnd = before.content.size;
+    let newEnd = after.content.size;
+    while (head + tail < most) {
+        const node = before.child(before.childCount - 1 - tail);
+        if (node !== after.child(after.childCount - 1 - tail) || mapForward(transactions, oldEnd - node.nodeSize) !== newEnd - node.nodeSize) {
+            break;
+        }
+        oldEnd -= node.nodeSize;
+        newEnd -= node.nodeSize;
         tail++;
     }
     return { head, tail };
@@ -103,9 +120,11 @@ function unchangedEnds(before: number, after: number, same: (i: number, j: numbe
  * after the last (`unchangedEnds`) are the ones they were; among the others,
  * where one old child stands more than once (a drag-copy of a whole block
  * carries the same object), the occurrence that starts where the old child's
- * start maps to is that child, and every other occurrence — one of those, or
- * one of a child that stands unchanged — is a copy that descends from none: a
- * copy dropped before its original is the copy, and the original keeps its id.
+ * start maps to (`mapForward`: past content inserted right before it, which is
+ * the copy's place) is that child, and every other occurrence — one of those,
+ * or one of a child that stands unchanged — is a copy that descends from none:
+ * a copy dropped before its original, directly before it included, is the
+ * copy, and the original keeps its id.
  * A child that is a new object descends from the old child
  * whose start the transactions map onto its start: typing into a node, setting
  * its markup or changing its type keep its start where it was, while the second
@@ -115,11 +134,11 @@ function unchangedEnds(before: number, after: number, same: (i: number, j: numbe
  * bias, for content inserted exactly at an old start that took that node's
  * place (typing `- ` wraps a paragraph in a list that starts where it did).
  */
-export function descent(transactions: readonly Transaction[], before: readonly TopLevelChild[], after: readonly TopLevelChild[]): number[] {
-    const { head, tail } = unchangedEnds(before.length, after.length, (i, j) => before[i].node === after[j].node);
-    const shift = before.length - after.length;
-    const result = after.map((_c, j) => (j < head ? j : j >= after.length - tail ? j + shift : -1));
-    const inner = changedDescent(transactions, before.slice(head, before.length - tail), after.slice(head, after.length - tail));
+export function descent(transactions: readonly Transaction[], before: Node, after: Node): number[] {
+    const { head, tail } = unchangedEnds(transactions, before, after);
+    const shift = before.childCount - after.childCount;
+    const result = Array.from({ length: after.childCount }, (_c, j) => (j < head ? j : j >= after.childCount - tail ? j + shift : -1));
+    const inner = changedDescent(transactions, childrenBetween(before, head, before.childCount - tail), childrenBetween(after, head, after.childCount - tail));
     inner.forEach((i, k) => {
         result[head + k] = i < 0 ? -1 : head + i;
     });
@@ -131,7 +150,6 @@ function changedDescent(transactions: readonly Transaction[], before: readonly T
     const result = after.map(() => -1);
     const claimed = new Set<number>();
 
-    const mappedStart = (i: number, assoc: 1 | -1): number => transactions.reduce((pos, tr) => tr.mapping.map(pos, assoc), before[i].offset);
     const byIdentity = new Map<Node, number[]>();
     before.forEach((c, i) => {
         const list = byIdentity.get(c.node) ?? [];
@@ -151,8 +169,9 @@ function changedDescent(transactions: readonly Transaction[], before: readonly T
         const free = [...js];
         if (free.length > 1) {
             for (const i of olds) {
-                const starts = [mappedStart(i, 1), mappedStart(i, -1)];
-                const k = free.findIndex(j => starts.includes(after[j].offset));
+                // Only where its content now starts: the other bias is the insertion point, where a copy dropped directly before it stands.
+                const start = mapForward(transactions, before[i].offset);
+                const k = free.findIndex(j => after[j].offset === start);
                 if (k >= 0) {
                     result[free[k]] = i;
                     claimed.add(i);
@@ -304,7 +323,7 @@ function planFor(transactions: readonly Transaction[], oldDoc: Node, newDoc: Nod
     if (!transactions.some(tr => tr.docChanged) || transactions.some(isPreserving)) {
         return NO_PLAN;
     }
-    const { head, tail } = unchangedEnds(oldDoc.childCount, newDoc.childCount, (i, j) => oldDoc.child(i) === newDoc.child(j));
+    const { head, tail } = unchangedEnds(transactions, oldDoc, newDoc);
     // The changed children, and an unchanged one on either side: the one before is what the first of
     // them follows, the one after is judged too. `before`, `after` and `from` index into these alone.
     const lo = Math.max(0, head - 1);
@@ -397,9 +416,25 @@ function planFor(transactions: readonly Transaction[], oldDoc: Node, newDoc: Nod
         }
     }
 
+    // The literals of the list items in the changed children, by position: an edited or new block's
+    // (`itemLiterals`), and a copy's, whose items lose only their ids — and the copy its `src`,
+    // which writes them, when one does.
+    const items = new Map<number, string | null>();
+    // The changed children that are edited or new: their nested blocks are judged too.
+    const fresh: TopLevelChild[] = [];
     if (!undo) {
         stripDuplicatedIds(newDoc, after, lo, first, end, ancestor, set);
         stripCopiedSuffixes(after, first, end, from, set);
+        const literals = itemLiterals(transactions, oldDoc);
+        for (let j = first; j < end; j++) {
+            const c = after[j];
+            if (!present(c.node)) {
+                fresh.push(c);
+                literals(c, false, items);
+            } else if (from[j] < 0 && literals(c, true, items) && EDITABLE_TOP_NODES.has(c.node.type.name)) {
+                set(j, 'src', null);
+            }
+        }
         for (let j = first; j < end; j++) {
             const node = after[j].node;
             // A quote an edit left ending in another block than a paragraph has no `> {…}` line left;
@@ -421,18 +456,12 @@ function planFor(transactions: readonly Transaction[], oldDoc: Node, newDoc: Nod
         const nested = (pos: number, patch: Attrs) => {
             plan.set(pos, { ...(plan.get(pos) ?? (newDoc.nodeAt(pos) as Node).attrs), ...patch });
         };
-        const fresh: TopLevelChild[] = [];
-        for (let j = first; j < end; j++) {
-            if (rewrites.has(j) || !present(after[j].node)) {
-                fresh.push(after[j]);
-            }
-        }
         for (const pos of nestedSuffixes(fresh)) {
             nested(pos, { attrsSuffix: null, attrsPlacement: null });
         }
-        for (const pos of strayItemLiterals(transactions, oldDoc, fresh)) {
-            nested(pos, { literal: null });
-        }
+        items.forEach((literal, pos) => {
+            nested(pos, { literal });
+        });
     }
     const rewritten: RewrittenBlock[] = [];
     for (const j of [...rewrites].sort((a, b) => a - b)) {
@@ -478,15 +507,20 @@ function sameBody(a: Node, b: Node): boolean {
  * A node whose predecessor is unchanged keeps its gap even when its own content
  * changed: typing in a paragraph does not touch the blank lines around it.
  *
- * **Attribute literals** (`attrsSuffix`) are a top-level block's own: the second
- * half of a split paragraph does not carry `{#id}` again, nor does a copy of a
- * whole block (which is then written by rule), and a block wrapped inside
- * another loses the literal only a top-level block writes
- * (`stripCopiedSuffixes`, `nestedSuffixes`).
+ * **Attribute literals** (`attrsSuffix`, a list item's `literal`) are a block's
+ * own, and an id in one names a single element: the second half of a split
+ * paragraph or item does not carry `{#id}` again, nor does a copy of a whole
+ * block or a pasted one, nor any item in it (the block is then written by
+ * rule). A class, and any other attribute, is kept: a copy of
+ * `A wide one. {.wide #w}` is `A wide one. {.wide}`, one of `Classed. {.c}` is
+ * the same text again. A block wrapped inside another loses the literal only a
+ * top-level block writes (`stripCopiedSuffixes`, `itemLiterals`,
+ * `nestedSuffixes`).
  *
  * **Requirement ids** must not be written twice. A top-level heading that did
  * not carry its `reqPrefix`, `anchor` and `attrsSuffix` before this transaction
- * (a split, a paste, a copy) loses all three, and its `src`, when another top-level heading carries the
+ * (a split, a paste, a copy) loses its `reqPrefix` and `anchor`, the id in its
+ * `attrsSuffix` (a class stays) and its `src`, when another top-level heading carries the
  * same non-null `reqPrefix` or `anchor` — two `## ID: … {#anchor}` lines are the
  * duplicate Req Explorer's checks refuse. The heading that had them keeps them,
  * so typing in one of two headings a file already duplicated changes nothing.
@@ -518,21 +552,27 @@ export function fidelityPlugin(): Plugin {
 
 /**
  * The attribute-literal rule of `fidelityPlugin`, for every block but a heading
- * (whose literal is its anchor, `stripDuplicatedIds`): a top-level block that
- * descends from none loses the literal it carries. Splitting a paragraph copies
- * its attributes into the second half, and `{#id}` written twice is two elements
- * with one id; the half that stands where the paragraph stood keeps it. A copy
- * of a whole block (a drag-copy carries the same node, whose `src` holds the
- * literal) loses it as well, and its `src` with it, as a heading's copy does
- * its duplicated id: page and save then agree that the copy has none. Asked of
- * the changed children (`first`–`end`); every other one descends from itself.
+ * (whose literal holds its anchor, `stripDuplicatedIds`): a top-level block
+ * that descends from none loses the id its literal gives (`withoutId`), and
+ * keeps the rest. Splitting a paragraph copies its attributes into the second
+ * half, and `{#id}` written twice is two elements with one id; the half that
+ * stands where the paragraph stood keeps it. A copy of a whole block (a
+ * drag-copy carries the same node, whose `src` holds the literal) loses it as
+ * well, and its `src` with it, as a heading's copy does its duplicated id: page
+ * and save then agree that the copy has no id. A literal without an id is left
+ * as it is, and so is a copy's `src`. Asked of the changed children
+ * (`first`–`end`); every other one descends from itself.
  */
 function stripCopiedSuffixes(after: TopLevelChild[], first: number, end: number, from: number[], set: (j: number, key: string, value: unknown) => void): void {
     for (let j = first; j < end; j++) {
         const node = after[j].node;
-        if (from[j] < 0 && node.type.name !== 'heading' && (node.attrs.attrsSuffix ?? null) !== null) {
-            set(j, 'attrsSuffix', null);
-            set(j, 'attrsPlacement', null);
+        const literal = (node.attrs.attrsSuffix ?? null) as string | null;
+        const kept = literal === null ? null : withoutId(literal);
+        if (from[j] < 0 && node.type.name !== 'heading' && kept !== literal) {
+            set(j, 'attrsSuffix', kept);
+            if (kept === null) {
+                set(j, 'attrsPlacement', null);
+            }
             if (EDITABLE_TOP_NODES.has(node.type.name)) {
                 set(j, 'src', null);
             }
@@ -563,17 +603,23 @@ function nestedSuffixes(changed: readonly TopLevelChild[]): number[] {
 }
 
 /**
- * List items of a changed top-level node whose literal the file will not hold
- * as it stands, by position: one on an item that descends from no old item —
+ * The list items of a changed top-level node whose literal the file will not
+ * hold as it stands, added to `out` by position with the literal they keep;
+ * whether there was one. In an edited or new node (`copy` false): an item that
+ * descends from no old item keeps its literal without the id (`withoutId`) —
  * the second half of a split item copies its attributes, and `{#id}` written
  * twice is two elements with one id; the half that starts where the item
- * started keeps it (at the start of its text, the empty first half), as a
- * pasted item does not — and one on an item that no longer starts with a
- * paragraph (`itemTakesLiteral`), where it cannot be written; an empty one
- * keeps it (`- {.a}`), so deleting the text to retype it loses nothing. An item descends from an old one when an old item started
- * at the position its start maps to; setting a literal keeps the item's start.
+ * started keeps it whole (at the start of its text, the empty first half), as
+ * a pasted item does not — and one on an item that no longer starts with a
+ * paragraph (`itemTakesLiteral`) loses it, since it cannot be written there;
+ * an empty one keeps it (`- {.a}`), so deleting the text to retype it loses
+ * nothing. An item descends from an old one when an old item started at the
+ * position its start maps to; setting a literal keeps the item's start. In a
+ * copy of a whole block (`copy` true) every item is a copy and keeps its
+ * literal without the id, whatever the block's own literal: the rule of the
+ * block's literal (`stripCopiedSuffixes`), for its items.
  */
-function strayItemLiterals(transactions: readonly Transaction[], before: Node, changed: readonly TopLevelChild[]): number[] {
+function itemLiterals(transactions: readonly Transaction[], before: Node): (c: TopLevelChild, copy: boolean, out: Map<number, string | null>) => boolean {
     // Made when the first item with a literal is met: most edits are in no such list.
     let starts: Set<number> | null = null;
     const itemStarts = (): Set<number> => {
@@ -583,7 +629,7 @@ function strayItemLiterals(transactions: readonly Transaction[], before: Node, c
                 if (node.type.name === 'list_item') {
                     // Where the item starts now. Not asked whether it was deleted: setting
                     // its markup replaces its opening token, which maps as a deletion.
-                    found.add(transactions.reduce((at, tr) => tr.mapping.map(at, 1), pos));
+                    found.add(mapForward(transactions, pos));
                 }
                 return !node.isTextblock;
             });
@@ -591,28 +637,33 @@ function strayItemLiterals(transactions: readonly Transaction[], before: Node, c
         }
         return starts;
     };
-    const out: number[] = [];
-    for (const c of changed) {
+    return (c, copy, out) => {
+        let found = false;
         if (c.node.isTextblock || c.node.isAtom) {
-            continue;
+            return found;
         }
         c.node.descendants((node, pos) => {
             const literal = node.type.name === 'list_item' ? (node.attrs.literal as string | null) : null;
             const at = c.offset + 1 + pos;
-            if (literal !== null && (!itemStarts().has(at) || !itemTakesLiteral(node))) {
-                out.push(at);
+            if (literal !== null) {
+                const kept = !copy && !itemTakesLiteral(node) ? null : copy || !itemStarts().has(at) ? withoutId(literal) : literal;
+                if (kept !== literal) {
+                    out.set(at, kept);
+                    found = true;
+                }
             }
             return !node.isTextblock;
         });
-    }
-    return out;
+        return found;
+    };
 }
 
 /**
  * The heading rule of `fidelityPlugin`: a heading among the changed children
  * (`first`–`end` of `after`, which starts at index `lo` of `doc`) that newly
- * carries a duplicated id loses it. One outside them is the heading it was and
- * had its ids before.
+ * carries a duplicated id loses it — its requirement id, its anchor and the id
+ * its literal gives, the rest of the literal kept. One outside them is the
+ * heading it was and had its ids before.
  */
 function stripDuplicatedIds(
     doc: Node,
@@ -655,9 +706,12 @@ function stripDuplicatedIds(
         if (!duplicated) {
             continue;
         }
-        for (const key of STRIPPED_ATTRS) {
+        for (const key of IDENTITY_ATTRS) {
             set(j, key, null);
         }
+        // The literal writes the anchor; what else it gives (`{.unnumbered}`) a copy keeps.
+        const literal = (node.attrs.attrsSuffix ?? null) as string | null;
+        set(j, 'attrsSuffix', literal === null ? null : withoutId(literal));
         // The slice held the id; whatever carried it along is not this node's text.
         set(j, 'src', null);
     }

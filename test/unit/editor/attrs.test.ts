@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { Mark, Node } from 'prosemirror-model';
-import { domAttrsOf, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from '../../../src/editor/attrs';
+import { domAttrsOf, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs, withoutId } from '../../../src/editor/attrs';
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -56,6 +56,20 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
 
     test('the editor draws no event handler and nothing that changes how an element is edited', () => {
         assert.deepStrictEqual(domAttrsOf('{onclick="x()" contenteditable=true .ok tabindex=1}'), { class: 'ok' });
+    });
+
+    test('a literal without its id gives every other attribute the plugin read, and nothing when the id was all', () => {
+        for (const [literal, kept] of [
+            ['{.wide #w}', '{.wide}'], ['{#w}', null], ['{id=w}', null], ['{#x .a style="color:red"}', '{.a style=color:red}'],
+            ['{.a}', '{.a}'], ['{ .spaced  #id }', '{.spaced}'], ['{title="a b" #x}', '{title="a b"}'], ['{.a}}', '{.a}}'],
+        ] as [string, string | null][]) {
+            assert.strictEqual(withoutId(literal), kept, literal);
+            const before = parseAttrsLiteral(literal);
+            if (before) {
+                const rendered = kept === null ? [] : attrsOfFirst(md.renderInline(`[x]${kept}`), 'span');
+                assert.deepStrictEqual(rendered, joinAttrs(before).filter(([n]) => n !== 'id'), `${literal}: the plugin reads the rest as it read it`);
+            }
+        }
     });
 
     test('the normalized form reads as the same attributes', () => {

@@ -267,6 +267,12 @@ suite('Editor Attributes…: what an edit leaves of a literal', () => {
             state = state.apply(tr);
         });
         assert.strictEqual(text(state), '- alpha {#a}\n- beta\n');
+        // Only its id: the class stays on both halves, as on a copy.
+        let classed = caretAt(stateOf('- alpha beta {.x #a}\n'), 'beta');
+        splitListItem(editorSchema.nodes.list_item)(classed, tr => {
+            classed = classed.apply(tr);
+        });
+        assert.strictEqual(text(classed), '- alpha {.x #a}\n- beta {.x}\n');
     });
 
     test('typing in an item keeps its literal', () => {

@@ -4,7 +4,7 @@ import { closeHistory, undo } from 'prosemirror-history';
 import { splitBlock } from 'prosemirror-commands';
 import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
-import { PRESERVE_SOURCE_META, asRepair, fidelityPlan, fidelityPlugin, isRepair, writtenEdit } from '../../../src/editor/fidelity';
+import { PRESERVE_SOURCE_META, asRepair, descent, fidelityPlan, fidelityPlugin, isRepair, writtenEdit } from '../../../src/editor/fidelity';
 import { resyncTransaction } from '../../../src/editor/webview/resync';
 import { editorSchema } from '../../../src/editor/schema';
 import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
@@ -849,8 +849,6 @@ suite('Editor notes: the check reads the plan the fidelity plugin applies', () =
         assert.ok(slice.content.firstChild === state.doc.nodeAt(from));
         return state.tr.replaceRange(at, at, slice);
     };
-    /** What the page shows of a top-level block's attributes, and what the saved text reads back as. */
-    const literals = (doc: Node) => topChildren(doc).map(n => (n.attrs.attrsSuffix ?? null) as string | null);
 
     test('a copy of a heading carrying an id is written without it, by rule, and refused where it would then lose its sidebar', () => {
         const source = `## ${SPELLED} {#t}\n\nEnd.\n`;
@@ -874,15 +872,94 @@ suite('Editor notes: the check reads the plan the fidelity plugin applies', () =
         assert.deepStrictEqual(topChildren(copied.doc).filter(n => n.type.name === 'heading').map(n => n.attrs.anchor as unknown), [null, 't']);
     });
 
-    test('a copied block whose literal the page drops is saved without it: page and save agree', () => {
-        for (const [source, copy] of [['A wide one. {.wide #w}\n\nEnd.\n', 'A wide one.\n'], ['- one\n- two\n{.wide}\n\nEnd.\n', '- one\n- two\n']]) {
+    test('a copy keeps its classes and every other attribute and loses only its ids, its items\' too: page and save agree', () => {
+        /** Every literal and id the page holds, by top-level block: its own, its anchor, its items'. */
+        const held = (doc: Node) => topChildren(doc).map(n => {
+            const items: unknown[] = [];
+            n.descendants(d => {
+                if (d.type.name === 'list_item') {
+                    items.push(d.attrs.literal);
+                }
+            });
+            return [n.attrs.attrsSuffix ?? null, n.attrs.anchor ?? null, items] as unknown;
+        });
+        const cases: [string, string, boolean][] = [
+            // [block, its copy as saved, whether the copy keeps its src: nothing of it changes]
+            ['A wide one. {.wide #w}', 'A wide one. {.wide}', false],
+            ['Classed. {.c}', 'Classed. {.c}', true],
+            ['## Title {.unnumbered}', '## Title {.unnumbered}', true],
+            ['## Head {.c #t}', '## Head {.c}', false],
+            ['- one\n- two\n{.wide}', '- one\n- two\n{.wide}', true],
+            ['- one {.a}\n- two {.b}\n{.wide}', '- one {.a}\n- two {.b}\n{.wide}', true],
+            ['- one {.a}\n- two {.b}', '- one {.a}\n- two {.b}', true],
+            ['- one {#i1}\n- two', '- one\n- two', false],
+            ['- one {#i1}\n- two\n{.wide}', '- one\n- two\n{.wide}', false],
+            ['- one {#i1 .x}\n- two {.b}\n{.wide #l}', '- one {.x}\n- two {.b}\n{.wide}', false],
+            ['> q\n> {.note #n}', '> q\n> {.note}', false],
+            ['| a |\n| - |\n| b |\n{.grid}', '| a |\n| - |\n| b |\n{.grid}', true],
+        ];
+        for (const [block, copy, keepsSrc] of cases) {
+            const source = `${block}\n\nEnd.\n`;
             const state = read(source);
             const tr = copyBlock(state, 0, state.doc.content.size);
-            assert.strictEqual(noteRefusal(tr), null, source);
+            assert.strictEqual(noteRefusal(tr), null, block);
             const copied = state.apply(tr);
-            assert.strictEqual(text(copied), `${source}\n${copy}`, source);
-            assert.deepStrictEqual(literals(copied.doc), literals(parseDocument(hostEngine(), text(copied), {}).doc), `${source}: what the page shows is what is read back`);
+            assert.strictEqual(text(copied), `${source}\n${copy}\n`, block);
+            assert.deepStrictEqual(held(copied.doc), held(parseDocument(hostEngine(), text(copied), {}).doc), `${block}: what the page shows is what is read back`);
+            assert.strictEqual(copied.doc.child(0).attrs.src, state.doc.child(0).attrs.src, `${block}: the original keeps its src`);
+            assert.strictEqual(copied.doc.lastChild?.attrs.src === state.doc.child(0).attrs.src, keepsSrc, `${block}: the copy's src`);
         }
+    });
+
+    test('a copy dropped directly before or after its original is the copy, and the original keeps its id and its src', () => {
+        const heading = (doc: Node) => topChildren(doc).map(n => (n.attrs.anchor ?? n.attrs.attrsSuffix ?? null) as unknown);
+        for (const [source, copied] of [
+            ['Intro.\n\n## Head {#t}\n\nBody.\n', 'Intro.\n\n## Head\n\n## Head {#t}\n\nBody.\n'],
+            ['Intro.\n\nA wide one. {.wide #w}\n\nBody.\n', 'Intro.\n\nA wide one. {.wide}\n\nA wide one. {.wide #w}\n\nBody.\n'],
+            ['## Head {#t}\n\nBody.\n', '## Head\n\n## Head {#t}\n\nBody.\n'],
+            ['A wide one. {.wide #w}\n', 'A wide one. {.wide}\n\nA wide one. {.wide #w}\n'],
+        ]) {
+            const state = read(source);
+            const index = state.doc.child(0).type.name === 'paragraph' && state.doc.childCount > 2 ? 1 : 0;
+            const at = index === 0 ? 0 : state.doc.child(0).nodeSize;
+            const tr = copyBlock(state, at, at);
+            const original = state.doc.child(index);
+            const result = state.apply(tr);
+            assert.strictEqual(text(result), copied, source);
+            assert.strictEqual(result.doc.child(index + 1).attrs.src, original.attrs.src, `${source}: the original is not rewritten`);
+            // The lenses follow a block the same way: the original's, not the copy's.
+            const from = descent([tr], state.doc, tr.doc);
+            assert.strictEqual(from[index + 1], index, `${source}: the original descends from itself`);
+            assert.strictEqual(from[index], -1, `${source}: the copy descends from none`);
+            assert.deepStrictEqual(heading(result.doc), heading(parseDocument(hostEngine(), copied, {}).doc), `${source}: page and save agree`);
+        }
+
+        // A list carrying `{.wide}` keeps it on both; the copy's src is the original's, the original's not rewritten.
+        const list = read('Intro.\n\n- one {#i1}\n- two\n{.wide}\n\nBody.\n');
+        const listCopied = list.apply(copyBlock(list, list.doc.child(0).nodeSize, list.doc.child(0).nodeSize));
+        assert.deepStrictEqual(topChildren(listCopied.doc).map(n => [n.attrs.attrsSuffix ?? null, n.firstChild?.attrs.literal ?? null]),
+            [[null, null], ['{.wide}', null], ['{.wide}', '{#i1}'], [null, null]]);
+        assert.strictEqual(listCopied.doc.child(2).attrs.src, list.doc.child(1).attrs.src);
+
+        // A run of blocks pasted directly before itself: both of the run are copies.
+        const run = read('Intro.\n\n## Head {#t}\n\nA wide one. {.wide #w}\n\nBody.\n');
+        const runFrom = run.doc.child(0).nodeSize;
+        const runTr = run.tr.replaceRange(runFrom, runFrom, run.doc.slice(runFrom, runFrom + run.doc.child(1).nodeSize + run.doc.child(2).nodeSize));
+        assert.ok(runTr.doc.child(1) === run.doc.child(1), 'the slice carries the same objects');
+        assert.strictEqual(text(run.apply(runTr)), 'Intro.\n\n## Head\n\nA wide one. {.wide}\n\n## Head {#t}\n\nA wide one. {.wide #w}\n\nBody.\n');
+        assert.deepStrictEqual(descent([runTr], run.doc, runTr.doc), [0, -1, -1, 1, 2, 3]);
+
+        // The mirror, at the end: a copy directly after its original, in a transaction that also types
+        // into an earlier block, is the copy too (the original is the one the end walk passes first).
+        const tail = read('Intro.\n\n## Head {#t}\n\nBody.\n');
+        const after = tail.doc.child(0).nodeSize + tail.doc.child(1).nodeSize;
+        const tailTr = tail.tr.insertText('Z', posOf(tail.doc, 'Intro'));
+        tailTr.replaceRange(tailTr.mapping.map(after), tailTr.mapping.map(after), NodeSelection.create(tail.doc, tail.doc.child(0).nodeSize).content());
+        assert.ok(tailTr.doc.child(2) === tail.doc.child(1), 'the copy is the same object');
+        const tailed = tail.apply(tailTr);
+        assert.strictEqual(text(tailed), 'ZIntro.\n\n## Head {#t}\n\n## Head\n\nBody.\n');
+        assert.strictEqual(tailed.doc.child(1).attrs.src, tail.doc.child(1).attrs.src, 'the original is not rewritten');
+        assert.deepStrictEqual(descent([tailTr], tail.doc, tailTr.doc), [0, 1, -1, 2]);
     });
 
     test('the repair the plugin appends is exactly the plan the check read', () => {
