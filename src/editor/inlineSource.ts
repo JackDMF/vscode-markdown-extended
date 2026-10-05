@@ -135,7 +135,10 @@ export interface InlineContent {
     /**
      * Each element's (a link's, a task's label, in the order they open) text
      * it holds itself, code spans' included and whitespace left out, so no
-     * text goes from one element to another unseen.
+     * text goes from one element to another unseen. A code span's text is
+     * read as it would be outside the span, its entities and escapes decoded
+     * as a text token's are, so a code span written or taken out keeps its
+     * element's text the same.
      */
     texts: readonly string[];
 }
@@ -357,7 +360,7 @@ function parsePart(md: MarkdownIt, text: string, env: Environment): Token[] {
 }
 
 /** A part's inline tokens and what each holds besides text and spans' markers (`InlineContent`). */
-function contentsOf(tokens: Token[], env: Environment): InlineContent[] {
+function contentsOf(md: MarkdownIt, tokens: Token[], env: Environment): InlineContent[] {
     const notes = (env as { footnotes?: { list?: { content?: string }[] } }).footnotes?.list ?? [];
     const contents: InlineContent[] = [];
     for (const token of tokens) {
@@ -370,8 +373,9 @@ function contentsOf(tokens: Token[], env: Environment): InlineContent[] {
         const open: number[] = [];
         for (const child of token.children ?? []) {
             if (open.length > 0 && (child.type === 'text' || child.type === 'code_inline')) {
-                // A code span's text counts with the text: a code span written or taken out keeps it in its element.
-                texts[open[open.length - 1]] += child.content.replace(/\s+/g, '');
+                // A code span's text counts with the text, decoded as the text is (`InlineContent.texts`).
+                const content = child.type === 'code_inline' ? md.utils.unescapeAll(child.content) : child.content;
+                texts[open[open.length - 1]] += content.replace(/\s+/g, '');
             }
             if (child.type === 'text' || (child.nesting !== 0 && PAIR_MARKERS.has(child.markup))) {
                 continue;
@@ -479,7 +483,7 @@ class DocumentIndex implements InlineSource {
             structure: part
                 ? tokens.filter(t => t.map && t.type !== 'inline').map(t => ({ type: t.type, nesting: t.nesting, first: t.map[0], end: t.map[1], attrs: attrsOf(t) }))
                 : undefined,
-            inlines: part ? contentsOf(tokens, env) : undefined,
+            inlines: part ? contentsOf(md, tokens, env) : undefined,
         };
         return new DocumentIndex(text, md, base, definitionsOf(env), parts);
     }

@@ -279,6 +279,18 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('codeInline', '- [x] see ‸this'), '- [x] see `‸this`');
     });
 
+    test('Code over an entity or an escape in a link or a task\'s label keeps the element\'s text', async () => {
+        assert.strictEqual(await toggle('codeInline', '[a «&amp; b»](u) c'), '[a `«&amp; b»`](u) c');
+        assert.strictEqual(await toggle('codeInline', '- [ ] a «&amp; b» c'), '- [ ] a `«&amp; b»` c');
+        assert.strictEqual(await toggle('codeInline', '- [ ] a `&amp;‸` c'), '- [ ] a &amp;‸ c');
+        assert.strictEqual(await toggle('codeInline', '- [ ] a «\\*b\\*» c'), '- [ ] a `«\\*b\\*»` c');
+        assert.strictEqual(await toggle('codeInline', '- [ ] rename «foo\\_bar»'), '- [ ] rename `«foo\\_bar»`');
+        assert.strictEqual(await toggle('codeInline', '- [ ] rename `foo\\_bar‸`'), '- [ ] rename foo\\_bar‸');
+        // In a paragraph, as before.
+        assert.strictEqual(await toggle('codeInline', 'a «&amp; b» c'), 'a `«&amp; b»` c');
+        assert.strictEqual(await toggle('codeInline', 'a `&amp;‸` c'), 'a &amp;‸ c');
+    });
+
     test('a span of the marker the selection touches becomes part of it; one it crosses is not broken', async () => {
         assert.strictEqual(await toggle('bold', '**foo**«bar»'), '**foo«bar»**');
         assert.strictEqual(await toggle('bold', '«foo»**bar**'), '**«foo»bar**');
