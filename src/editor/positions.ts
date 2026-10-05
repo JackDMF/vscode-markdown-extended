@@ -743,6 +743,37 @@ function blockMapOf(node: Node, body: string): BlockMap {
     return made;
 }
 
+/**
+ * The text the textblock at `pos` in `doc` was read from: its slice of its
+ * top-level block's `src`, found by the same alignment as every other
+ * position, or `null` when the block holds no `src` (an edit has cleared it,
+ * and the text it was read from is no longer known). A top-level textblock's
+ * is its whole `src`. For a refusal that names the file's spelling of a
+ * paragraph as its cause (`EditOrigin.sourceOf` in `serialize.ts`).
+ */
+export function textblockSource(doc: Node, pos: number): string | null {
+    try {
+        const $pos = doc.resolve(pos);
+        const textblock = doc.nodeAt(pos);
+        const index = $pos.index(0);
+        const block = doc.child(index);
+        const src = block.attrs.src as string | null | undefined;
+        if (textblock === null || !textblock.isTextblock || typeof src !== 'string') {
+            return null;
+        }
+        if ($pos.depth === 0) {
+            return src;
+        }
+        const offset = $pos.posAtIndex(index, 0);
+        const map = blockMapOf(block, src);
+        const from = map.toBody(pos + 1 - offset);
+        const to = map.toBody(pos + textblock.nodeSize - 1 - offset);
+        return from === null || to === null ? null : src.slice(from.offset, Math.max(from.offset, to.offset));
+    } catch {
+        return null;
+    }
+}
+
 /** The length of the line terminator a body ends with. */
 function terminatorLength(body: string): number {
     return body.endsWith('\r\n') ? 2 : body.endsWith('\n') || body.endsWith('\r') ? 1 : 0;

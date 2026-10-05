@@ -133,10 +133,12 @@ export type HostMessage =
      * (`host/includes.ts`): the page enables **Insert → Include…** and an
      * expansion's **Change snippet…** only then. `inline` is the engine that
      * parsed it, as far as the page runs it (`inlineEngineDefinition`): its
-     * `markdown.preview.linkify` and `markdown.preview.typographer`, and the
-     * inline plugins of the registry it runs. The page reads each textblock an
-     * edit touches with an engine built from it, so that it refuses an edit
-     * after which a sidebar would not read back as it is shown.
+     * `markdown.preview.linkify` and `markdown.preview.typographer`, the
+     * inline plugins of the registry it runs, and whether VS Code's math read
+     * `$` in it (`math`, `markdown.math.enabled` as the engine applied it). The
+     * page reads each textblock an edit makes the save write again with an
+     * engine built from it, so that it refuses an edit after which a sidebar
+     * would not read back as it is shown, and makes no left sidebar under math.
      */
     | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; inline: InlineEngineDefinition }
     /** The answer to a `render` request: the raw block's source rendered by the host's engine. */

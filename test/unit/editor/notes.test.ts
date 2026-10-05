@@ -3,11 +3,12 @@ import { Node } from 'prosemirror-model';
 import { undo } from 'prosemirror-history';
 import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
-import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
+import { PRESERVE_SOURCE_META, fidelityPlugin } from '../../../src/editor/fidelity';
 import { editorSchema } from '../../../src/editor/schema';
 import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import {
-    SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, SIDEBAR_MADE, SIDEBAR_REWRITTEN_REFERENCE, serializeDocument, setInlineEngine, unwritableInNote,
+    SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, SIDEBAR_LEFT_MATH, SIDEBAR_MADE, SIDEBAR_REWRITTEN, SIDEBAR_REWRITTEN_REFERENCE,
+    serializeDocument, setInlineEngine, sidebarRewrittenBeside, unwritableInNote,
 } from '../../../src/editor/serialize';
 import {
     NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, NoteNodeName, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal,
@@ -663,6 +664,7 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
             linkify: false,
             typographer: true,
             plugins: DEFAULT_INLINE_ENGINE.plugins.filter(p => p.name !== 'markdown-it-kbd'),
+            math: false,
         });
     });
 
@@ -736,6 +738,141 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
         // Typing between them is fine.
         const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'three')));
         assert.deepStrictEqual(sidebarsIn(text(typed)), ['left_sidebar', 'right_sidebar', 'left_sidebar']);
+    });
+});
+
+suite('Editor notes: what the save writes again is what is read back', () => {
+    const read = (source: string) => EditorState.create({ doc: parseDocument(hostEngine(), source, {}).doc, plugins: editorPlugins() });
+    const sidebarsIn = (markdown: string) => {
+        const found: string[] = [];
+        parseDocument(hostEngine(), markdown, {}).doc.descendants(node => {
+            if (node.type.name.endsWith('_sidebar')) {
+                found.push(node.type.name);
+            }
+        });
+        return found;
+    };
+    /** The textblock holding `needle`, and the top-level block around it. */
+    const textblockOf = (doc: Node, needle: string) => {
+        const $pos = doc.resolve(posOf(doc, needle));
+        return { textblock: $pos.parent, block: $pos.node(1) };
+    };
+    // The other textblock spells `$x$` so that, written out, it reads otherwise: in each list, quote and table the edit is in another one.
+    const besides: [string, string, string[], string[]][] = [
+        ['a list, a sidebar lost', '- edit me\n- See h&#116;tp://e.com/$x$ here.\n', ['left_sidebar'], []],
+        ['a quote, a sidebar lost', '> edit me\n>\n> See h&#116;tp://e.com/$x$ here.\n', ['left_sidebar'], []],
+        ['a table, a sidebar lost', '| a | b |\n| - | - |\n| edit me | See h&#116;tp://e.com/$x$ here. |\n', ['left_sidebar'], []],
+        ['a list, a sidebar made', '- edit me\n- x&#46;http://e.com/$x$ y\n', [], ['left_sidebar']],
+        ['a quote, a sidebar made', '> edit me\n>\n> x&#46;http://e.com/$x$ y\n', [], ['left_sidebar']],
+        ['a table, a sidebar made', '| a | b |\n| - | - |\n| edit me | x&#46;http://e.com/$x$ y |\n', [], ['left_sidebar']],
+    ];
+
+    test('an edit is refused where the save would write another item, paragraph or cell of its block so that it reads otherwise', () => {
+        for (const [label, source, before, after] of besides) {
+            const state = read(source);
+            assert.deepStrictEqual(sidebarsIn(source), before, label);
+            const tr = state.tr.insertText('Z', posOf(state.doc, 'edit'));
+            const other = textblockOf(state.doc, 'e.com');
+            assert.strictEqual(noteRefusal(tr), sidebarRewrittenBeside(other.block, other.textblock, true), label);
+            assert.ok(state.apply(tr).doc === state.doc, `${label}: the filter refuses it`);
+            // What it prevents: the fidelity plugin clears the block's `src`, and the save writes the other textblock out.
+            const unfiltered = EditorState.create({ doc: state.doc, plugins: [fidelityPlugin()] }).apply(tr);
+            assert.deepStrictEqual(sidebarsIn(text(unfiltered)), after, `${label}: the change`);
+        }
+    });
+
+    test('the refusal beside an edit names the block and the textblock, and the reference only where that textblock spells one', () => {
+        const state = read('| a | b |\n| - | - |\n| edit me | See h&#116;tp://e.com/$x$ here. |\n');
+        const reason = noteRefusal(state.tr.insertText('Z', posOf(state.doc, 'edit')));
+        assert.ok(reason?.includes('the whole table') && reason.includes('another cell') && reason.includes('character reference'), reason ?? 'none');
+        // `&amp;` stands in the first item; the second reads otherwise for another cause (`\/` written out as `/`).
+        const source = '- Tom &amp; Jerry\n- See http:\\/\\/e.com/$x$ here.\n';
+        assert.deepStrictEqual(sidebarsIn(source), ['left_sidebar']);
+        const list = read(source);
+        assert.strictEqual(noteRefusal(list.tr.insertText('Z', posOf(list.doc, 'here'))), SIDEBAR_REWRITTEN, 'its own text holds no reference');
+        const other = textblockOf(list.doc, 'e.com');
+        assert.strictEqual(noteRefusal(list.tr.insertText('Z', posOf(list.doc, 'Tom'))), sidebarRewrittenBeside(other.block, other.textblock, false), 'beside it, neither');
+    });
+
+    test('a line whose source an earlier edit has cleared is refused without naming a cause it can no longer see', () => {
+        const state = read('See h&#116;tp://e.com/$x$ here.\n');
+        const cleared = EditorState.create({ doc: state.doc.type.create(null, topChildren(state.doc).map(n => touched(n))), plugins: editorPlugins() });
+        assert.strictEqual(noteRefusal(cleared.tr.insertText('Z', posOf(cleared.doc, 'here'))), SIDEBAR_REWRITTEN);
+    });
+
+    test('a heading and a cell are read as their own writers write them, each marker followed through their last touches', () => {
+        // The requirement prefix goes first; in the cell `\\` before code is written `&#92;`, three characters longer.
+        for (const source of ['## REQ-001: See $x$ and @y@ here\n', '| a |\n| - |\n| See a\\\\`c` $x$ and @y@ here |\n']) {
+            const state = read(source);
+            assert.deepStrictEqual(sidebarsIn(source), ['left_sidebar', 'right_sidebar'], source);
+            const tr = state.tr.insertText('Z', posOf(state.doc, 'here'));
+            assert.strictEqual(noteRefusal(tr), null, source);
+            assert.deepStrictEqual(sidebarsIn(text(state.apply(tr))), ['left_sidebar', 'right_sidebar'], `${source}: read back`);
+            // The space before the right one deleted glues it to `and`: refused for that, found where it stands.
+            const space = posOf(state.doc, 'and ') + 3;
+            assert.strictEqual(noteRefusal(state.tr.delete(space, space + 1)), SIDEBAR_GLUED_BEFORE, source);
+        }
+    });
+
+    test('an edit in a list whose other items hold sidebars that read back applies, and they stay sidebars', () => {
+        const source = '- edit me\n- See $x$ here.\n- And @y@ there.\n';
+        const state = read(source);
+        const tr = state.tr.insertText('Z', posOf(state.doc, 'edit'));
+        assert.strictEqual(noteRefusal(tr), null);
+        const typed = state.apply(tr);
+        assert.strictEqual(text(typed), source.replace('edit', 'Zedit'));
+        assert.deepStrictEqual(sidebarsIn(text(typed)), ['left_sidebar', 'right_sidebar']);
+    });
+});
+
+suite('Editor notes: with VS Code\'s math reading $, no left sidebar is made', () => {
+    /** The extender VS Code's math adds, as far as the definition reads it: an inline rule `math_inline` after `escape`. */
+    const mathLike = (md: MarkdownIt) => {
+        md.inline.ruler.after('escape', 'math_inline', () => false);
+        return md;
+    };
+    const read = (source: string) => {
+        setInlineEngine({ ...DEFAULT_INLINE_ENGINE, math: true });
+        return EditorState.create({ doc: parseDocument(hostEngine(), source, {}).doc, plugins: editorPlugins() });
+    };
+    teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
+    const sidebarAt = (doc: Node) => {
+        let at = -1;
+        doc.descendants((node, pos) => {
+            at = at < 0 && node.type.name.endsWith('_sidebar') ? pos : at;
+        });
+        return at;
+    };
+
+    test('the definition says math is on when the engine holds its rule, enabled, and off otherwise', () => {
+        assert.strictEqual(inlineEngineDefinition(hostEngine([mathLike])).math, true);
+        assert.strictEqual(inlineEngineDefinition(hostEngine()).math, false);
+        const disabled = (md: MarkdownIt) => {
+            mathLike(md).inline.ruler.disable('math_inline');
+            return md;
+        };
+        assert.strictEqual(inlineEngineDefinition(hostEngine([disabled])).math, false, 'a disabled rule reads nothing');
+    });
+
+    test('Left sidebar and Move to left are disabled with the math reason; right sidebars are not affected', () => {
+        const state = read('See @a note@ here.\n');
+        assert.strictEqual(convertNoteRefusal(state, sidebarAt(state.doc)), SIDEBAR_LEFT_MATH, 'Move to left');
+        const word = select(state, 'here');
+        assert.strictEqual(wrapNodeLockReason(word, 'left_sidebar'), SIDEBAR_LEFT_MATH, 'Left sidebar');
+        assert.strictEqual(wrapNodeLockReason(word, 'right_sidebar'), null, 'Right sidebar');
+        assert.strictEqual(noteRefusal(state.tr.insertText('Z', posOf(state.doc, 'here'))), null, 'typing beside a right sidebar');
+        assert.strictEqual(markRefusal(select(state, 'See'), editorSchema.marks.strong, '**'), null, 'bold');
+    });
+
+    test('the filter refuses any edit that would leave a left sidebar', () => {
+        const state = read('See here.\n');
+        const at = posOf(state.doc, 'here');
+        const tr = state.tr.insert(at, [editorSchema.nodes.left_sidebar.create(null, editorSchema.text('note')), editorSchema.text(' ')]);
+        assert.strictEqual(noteRefusal(tr), SIDEBAR_LEFT_MATH);
+        assert.ok(state.apply(tr).doc === state.doc, 'the filter refuses it');
+        // Without math the same insertion is made.
+        setInlineEngine(DEFAULT_INLINE_ENGINE);
+        assert.strictEqual(noteRefusal(tr), null);
     });
 });
 

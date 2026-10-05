@@ -1,5 +1,6 @@
 import { Mark, Node } from 'prosemirror-model';
 import { Plugin, PluginKey, Transaction } from 'prosemirror-state';
+import type { Mapping } from 'prosemirror-transform';
 import { EDITABLE_TOP_NODES } from './schema';
 import { itemTakesLiteral, quoteLostLiteral } from './serialize';
 
@@ -114,6 +115,55 @@ export function descent(transactions: readonly Transaction[], before: readonly T
     return result;
 }
 
+/**
+ * Whether the save writes the top-level `node` by rule after an edit whose
+ * starting document's top-level children are `present`: an editable node that
+ * is none of them, which `fidelityPlugin` clears `src` on. The one rule both
+ * the plugin and the check of an edit (`rewrittenBlocks`) read.
+ */
+export function rewritesSource(node: Node, present: ReadonlySet<Node>): boolean {
+    return EDITABLE_TOP_NODES.has(node.type.name) && !present.has(node);
+}
+
+/**
+ * The top-level children of `after` the save writes by rule once an edit of
+ * `before` into `after` is applied (`rewritesSource`): every textblock in them
+ * is written again, the ones the edit did not touch included — a list item
+ * beside the one typed in, the other cells of a table.
+ *
+ * Asked of the range the edit changed (`from`, `to` in `after`; `mapping` takes
+ * it back into `before`): a step rebuilds only the nodes around its range, so
+ * every top-level child outside it is the same object it was, and a child
+ * moved into it came from inside the range in `before`. So only the children
+ * on either side of the range are compared, and a keystroke in a long document
+ * costs what the blocks it touches cost.
+ */
+export function rewrittenBlocks(before: Node, after: Node, from: number, to: number, mapping: Mapping): TopLevelChild[] {
+    const back = mapping.invert();
+    const present = new Set(topLevelBetween(before, back.map(from, -1), back.map(to, 1)).map(c => c.node));
+    return topLevelBetween(after, from, to).filter(c => rewritesSource(c.node, present));
+}
+
+/**
+ * The top-level children of `doc` that overlap `from`–`to`, as `nodesBetween`
+ * finds them, but found from the resolved ends rather than by walking every
+ * child before them.
+ */
+function topLevelBetween(doc: Node, from: number, to: number): TopLevelChild[] {
+    const size = doc.content.size;
+    const $from = doc.resolve(Math.max(0, Math.min(from, size)));
+    const $to = doc.resolve(Math.max(0, Math.min(to, size)));
+    const end = $to.depth > 0 ? $to.index(0) + 1 : $to.index(0);
+    const out: TopLevelChild[] = [];
+    let offset = $from.depth > 0 ? $from.before(1) : $from.pos;
+    for (let i = $from.index(0); i < end; i++) {
+        const node = doc.child(i);
+        out.push({ node, offset });
+        offset += node.nodeSize;
+    }
+    return out;
+}
+
 /** The same node apart from `src` and `gap`: same type, attributes, marks and content. */
 function sameBody(a: Node, b: Node): boolean {
     if (a.type !== b.type || !a.content.eq(b.content) || !Mark.sameSet(a.marks, b.marks)) {
@@ -221,7 +271,7 @@ export function fidelityPlugin(): Plugin {
                     }
                     return;
                 }
-                if (EDITABLE_TOP_NODES.has(node.type.name) && !present.has(node)) {
+                if (rewritesSource(node, present)) {
                     set(j, 'src', null);
                 }
                 if ('gap' in node.attrs && node.attrs.gap !== null && !keepsGap(j)) {

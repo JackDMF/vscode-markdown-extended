@@ -30,7 +30,8 @@ import { Fragment, Mark, Node, ResolvedPos } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { keymap } from 'prosemirror-keymap';
 import { EditorView } from 'prosemirror-view';
-import { PRESERVE_SOURCE_META } from '../fidelity';
+import { PRESERVE_SOURCE_META, rewrittenBlocks } from '../fidelity';
+import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, unwritableInNote } from '../serialize';
 import { showHint } from './hint';
@@ -325,13 +326,25 @@ const HISTORY_META = 'history$';
  * Why the transaction must not be applied: it leaves a note in the range it
  * changed that the serializer cannot write back (`unwritableInNote`), judged
  * against the document the transaction started from: a sidebar seam the file
- * already held is never refused, only one the transaction created. A
+ * already held is never refused, only one the transaction created. Checked
+ * is what the save will write again: the range, and every textblock of each
+ * top-level block the fidelity plugin will clear `src` on (`rewrittenBlocks`)
+ * — the other items of the list typed in, the other cells of its table. A
  * re-sync from the host and an undo are never refused; each puts back a
  * document that was written or allowed.
  */
 export function noteRefusal(tr: Transaction): string | null {
     const range = refusableRange(tr);
-    return range === null ? null : unwritableInNote(tr.doc, range.from, range.to, { doc: tr.before, mapping: tr.mapping });
+    if (range === null) {
+        return null;
+    }
+    const before = tr.before;
+    return unwritableInNote(tr.doc, range.from, range.to, {
+        doc: before,
+        mapping: tr.mapping,
+        rewritten: rewrittenBlocks(before, tr.doc, range.from, range.to, tr.mapping),
+        sourceOf: pos => textblockSource(before, pos),
+    });
 }
 
 /**

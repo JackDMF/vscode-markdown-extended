@@ -114,6 +114,23 @@ const webNodeShimPlugin = {
 };
 
 /**
+ * esbuild plugin for the Visual Editor's page: `markdown-it` imported by
+ * prosemirror-markdown resolves to a stub, so its unused default parser is not
+ * built as the page loads; every other import of it — the page's own engine —
+ * gets the real one (see the stub's header).
+ */
+const prosemirrorMarkdownParserStub = {
+    name: 'prosemirror-markdown-parser-stub',
+    setup(build) {
+        build.onResolve({ filter: /^markdown-it$/ }, args => (
+            /[\\/]node_modules[\\/]prosemirror-markdown[\\/]/.test(args.importer)
+                ? { path: path.resolve(__dirname, 'src/editor/webview/stubs/markdown-it.ts') }
+                : undefined
+        ));
+    }
+};
+
+/**
  * The codicon font for the Visual Editor's page (`$(icon)` in a lens title).
  * Copied out of node_modules, which the package leaves out, into dist/, which it
  * keeps; the page links the stylesheet, which finds the font beside it.
@@ -219,9 +236,10 @@ async function main() {
         outfile: 'dist/editor-webview.js',
         logLevel: 'silent',
         metafile: analyze,
-        plugins: sharedPlugins,
         // markdown-it is bundled: the page reads the textblocks an edit
         // touches with the registry's inline plugins (src/editor/inlineEngine.ts).
+        // prosemirror-markdown's default parser gets a stub in its place.
+        plugins: [...sharedPlugins, prosemirrorMarkdownParserStub],
         define: {
             'process.env.NODE_ENV': production ? '"production"' : '"development"',
         },

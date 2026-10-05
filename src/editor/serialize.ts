@@ -471,11 +471,17 @@ function noteUnwritable(note: Node): string | null {
  * marker pair, or a textblock that would not read back as the sidebars it
  * holds (`sidebarRefusal`).
  *
- * The sidebars are not modelled, they are read: each textblock in the range
- * that holds a sidebar, or a `$` or `@` that could be read as one, is written
- * as the save writes it (`writtenTextblock`) and parsed by the page's own
- * engine, built from the host's definition (`setInlineEngine`), and every
- * sidebar it holds must come back where it stands, and no other. Whatever
+ * The sidebars are not modelled, they are read: each textblock the save will
+ * write again — every one in the range, and with the edit's `origin` every
+ * one of each top-level block the save then writes by rule (`rewritten`: a
+ * list, a quote or a table is written whole, the items and cells the edit did
+ * not touch included) — that holds a sidebar, or a `$` or `@` that could be
+ * read as one, is written as the save writes it (`writtenTextblock`) and
+ * parsed by the page's own engine, built from the host's definition
+ * (`setInlineEngine`), and every sidebar it holds must come back where it
+ * stands, and no other. Where another extension claims every `$` (VS Code's
+ * math, `InlineEngineDefinition.math`), no left sidebar is written at all
+ * (`SIDEBAR_LEFT_MATH`). Whatever
  * stands beside a marker — a letter, a digit, a web address linkify reads on
  * into it, an escape the line start takes — is judged by the parser that will
  * read the file. So **a document the parser produced is always writable**
@@ -491,13 +497,13 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
     let reason: string | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
-    const textblocks: { node: Node; pos: number }[] = [];
+    const textblocks: CheckedTextblock[] = [];
     doc.nodesBetween(start, end, (node, pos) => {
         if (reason !== null) {
             return false;
         }
         if (node.isTextblock) {
-            textblocks.push({ node, pos });
+            textblocks.push({ node, pos, beside: false });
         }
         if (NOTE_NODES.has(node.type.name)) {
             reason = noteUnwritable(node);
@@ -505,14 +511,31 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
         }
         return true;
     });
+    // The save writes every textblock of a block it rewrites, the edit's neighbours too.
+    const inRange = new Set(textblocks.map(t => t.pos));
+    for (const block of origin?.rewritten ?? []) {
+        if (block.node.isTextblock) {
+            if (!inRange.has(block.offset)) {
+                textblocks.push({ node: block.node, pos: block.offset, beside: false });
+            }
+            continue;
+        }
+        block.node.descendants((node, rel) => {
+            const pos = block.offset + 1 + rel;
+            if (node.isTextblock && !inRange.has(pos)) {
+                textblocks.push({ node, pos, beside: true });
+            }
+            return !node.isTextblock;
+        });
+    }
     // What reads as a sidebar depends on the whole textblock as written, which an edit anywhere in it changes.
     for (const textblock of textblocks) {
         if (reason !== null) {
             break;
         }
-        if (mayHoldSidebar(textblock.node)) {
-            reason = sidebarRefusal(doc, textblock.pos, textblock.node, origin);
-        }
+        reason = inlineDefinition.math && holdsLeftSidebar(textblock.node)
+            ? SIDEBAR_LEFT_MATH
+            : sidebarRefusal(doc, textblock, origin);
     }
     return reason;
 }
@@ -618,6 +641,27 @@ interface SidebarSeam {
 export interface EditOrigin {
     doc: Node;
     mapping: Mapping;
+    /**
+     * The top-level blocks of the edited document the save writes by rule,
+     * with their offsets (`rewrittenBlocks` in `fidelity.ts`, the rule that
+     * clears their `src`): each of their textblocks is checked, not only the
+     * ones in the edit's range.
+     */
+    rewritten?: readonly { node: Node; offset: number }[];
+    /**
+     * The text the textblock at a position of `doc` was read from
+     * (`textblockSource` in `positions.ts`), or `null` where it is no longer
+     * known: whether that text spells a character as a reference decides
+     * which cause a refusal names.
+     */
+    sourceOf?: (pos: number) => string | null;
+}
+
+/** A textblock `unwritableInNote` checks: where it stands, and whether it is only written again beside the edit, outside its range. */
+interface CheckedTextblock {
+    node: Node;
+    pos: number;
+    beside: boolean;
 }
 
 /** Where each sidebar's markers stand while `writtenTextblock` writes a textblock. */
@@ -637,6 +681,33 @@ export const SIDEBAR_REWRITTEN = 'Written by the editor, this line would not rea
 export const SIDEBAR_NOT_READ = 'After this edit a sidebar here would not be read back as a sidebar.';
 /** Why an edit is refused after which text would read as a sidebar the editor does not show. */
 export const SIDEBAR_MADE = 'After this edit text here would be read as a sidebar, which the editor does not show (a $…$ or @…@ in a web address, say).';
+/** Why no left sidebar is made, nor an edit applied that leaves one, while VS Code's math reads every `$` (`InlineEngineDefinition.math`). */
+export const SIDEBAR_LEFT_MATH = 'Left sidebars need markdown.math.enabled off: math reads $…$.';
+
+/** What a block is called in a refusal that names it. */
+const BLOCK_NOUNS: Readonly<Record<string, string>> = {
+    bullet_list: 'list',
+    ordered_list: 'list',
+    blockquote: 'quote',
+    table: 'table',
+    container: 'container',
+    admonition: 'admonition',
+};
+
+/**
+ * Why an edit is refused that makes the save write the whole `block` again
+ * (a list, a quote, a table: `EditOrigin.rewritten`) while another of its
+ * textblocks, `textblock`, written by the editor, would not read a sidebar
+ * back as it is shown — the file's spelling of that one, which the edit does
+ * not touch: with `reference`, a character reference the editor writes as
+ * the character.
+ */
+export function sidebarRewrittenBeside(block: Node, textblock: Node, reference: boolean): string {
+    const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
+    const part = textblock.type.name === 'table_cell' || textblock.type.name === 'table_header' ? 'cell' : textblock.type.name === 'heading' ? 'heading' : 'paragraph';
+    const cause = reference ? `: that ${part} spells a character as a character reference (&#…;), which the editor writes as the character itself` : '';
+    return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then not read a sidebar back as it is shown${cause}. Edit that ${part} once in the text editor to unlock this ${whole}.`;
+}
 
 /** The definition the page's engine was built from, and the engine, made when first asked. */
 let inlineDefinition: InlineEngineDefinition = DEFAULT_INLINE_ENGINE;
@@ -645,11 +716,20 @@ let inlineEngine: MarkdownIt | null = null;
 const readCache = new Map<string, ReadSidebar[]>();
 /** How many texts `readCache` keeps; the oldest is dropped first. */
 const READ_CACHE_SIZE = 512;
+/**
+ * How each textblock reads back once written (`sidebarMismatch`), by the node:
+ * a node never changes, and one an edit did not touch is the same object in
+ * the next state, so the textblocks beside an edit — a list's other items, a
+ * toolbar's queries on every redraw — are written and read once, not per ask.
+ * Made anew with the engine.
+ */
+let mismatchCache = new WeakMap<Node, SidebarMismatch | null>();
 
 /**
  * Read textblocks with the engine `definition` describes — the host's, posted
  * with each document (`inlineEngineDefinition`): its linkify and typographer
- * settings and the registry's inline plugins it runs.
+ * settings, the registry's inline plugins it runs, and whether VS Code's math
+ * claims `$`.
  */
 export function setInlineEngine(definition: InlineEngineDefinition): void {
     if (JSON.stringify(definition) === JSON.stringify(inlineDefinition)) {
@@ -658,6 +738,7 @@ export function setInlineEngine(definition: InlineEngineDefinition): void {
     inlineDefinition = definition;
     inlineEngine = null;
     readCache.clear();
+    mismatchCache = new WeakMap();
 }
 
 function engine(): MarkdownIt {
@@ -699,44 +780,100 @@ const INLINE_TEXTBLOCKS: ReadonlySet<string> = new Set(['paragraph', 'heading', 
  * wrapper's hold markers taken out, and where each sidebar it holds stands in
  * that text: its kind, its opening marker and its closing marker. A paragraph
  * is written in the line-start form, as `blockSerializer` writes it
- * (`paragraphMarkdown`), with a trailing `{…}` as text escaped; a heading as
- * it is written after its `#`, its requirement id's prefix first; a table
- * cell as its row writes it. (A hard break in a heading, which its line
- * writes as a space, is read as the break: either way no marker touches it.)
+ * (`paragraphMarkdown`), with a trailing `{…}` as text escaped; a heading and
+ * a table cell by the save's own writers, `headingText` and `cellText`, which
+ * carry each marker's place through their last touches (`Spelled`).
  */
 function writtenTextblock(textblock: Node): { text: string; sidebars: ReadSidebar[] } {
     const seams: SidebarSeam[] = [];
-    let written: string;
+    const name = textblock.type.name;
+    let inline: string;
     seamCollector = seams;
     try {
-        const name = textblock.type.name;
-        if (name === 'heading') {
-            const prefix = (textblock.attrs.reqPrefix as string | null) ?? '';
-            written = prefix + inlineMarkdown(textblock, false);
-            seams.forEach(seam => {
-                seam.open += prefix.length;
-                seam.close += prefix.length;
-            });
-        } else if (name === 'paragraph') {
-            written = paragraphMarkdown(textblock);
-        } else {
-            written = cellMarkdown(textblock);
-        }
+        inline = name === 'heading' ? inlineMarkdown(textblock, false) : name === 'paragraph' ? paragraphMarkdown(textblock) : cellMarkdown(textblock);
     } finally {
         seamCollector = null;
     }
-    const before: number[] = [0];
-    for (let i = 0; i < written.length; i++) {
-        const ch = written.charAt(i);
-        before.push(before[i] + (ch === HOLD_OPEN || ch === HOLD_CLOSE ? 1 : 0));
+    const spelled: Spelled = { text: inline, at: seams.flatMap(seam => [seam.open, seam.close - 1]) };
+    let written: Spelled;
+    if (name === 'heading') {
+        written = headingText(textblock, spelled);
+    } else if (name === 'paragraph') {
+        written = respelled(spelled, HOLD_RE, () => '');
+        if (endsInLiteralText(textblock)) {
+            // At the text's end, after every sidebar, so no marker moves.
+            written = { text: escapeTrailingLiteral(written.text), at: written.at };
+        }
+    } else {
+        written = cellText(spelled);
     }
-    const at = (pos: number) => pos - before[pos];
-    let text = written.replace(HOLD_RE, '');
-    if (textblock.type.name === 'paragraph' && endsInLiteralText(textblock)) {
+    return { text: written.text, sidebars: seams.map((seam, i) => ({ kind: seam.node.type.name, open: written.at[2 * i], close: written.at[2 * i + 1] })) };
+}
+
+/**
+ * Text being written, and places in it that a check follows through the
+ * writer's last touches (`respelled`): where each sidebar's markers stand, in
+ * `writtenTextblock`; none when the save writes the same text.
+ */
+interface Spelled {
+    text: string;
+    at: number[];
+}
+
+/**
+ * `spelled` with every match of the global `pattern` replaced, and each place
+ * moved by what the replacements before it added or took away; a place inside
+ * a match moves to where its replacement starts.
+ */
+function respelled(spelled: Spelled, pattern: RegExp, replace: (match: string) => string): Spelled {
+    const moves: { start: number; end: number; before: number; after: number }[] = [];
+    let text = '';
+    let last = 0;
+    let shift = 0;
+    for (const match of spelled.text.matchAll(pattern)) {
+        const start = match.index ?? 0;
+        const replacement = replace(match[0]);
+        text += spelled.text.slice(last, start) + replacement;
+        last = start + match[0].length;
+        moves.push({ start, end: last, before: shift, after: shift + replacement.length - match[0].length });
+        shift += replacement.length - match[0].length;
+    }
+    text += spelled.text.slice(last);
+    const at = spelled.at.map(place => {
+        let moved = place;
+        for (const move of moves) {
+            if (place < move.start) {
+                break;
+            }
+            moved = place < move.end ? move.start + move.before : place + move.after;
+        }
+        return moved;
+    });
+    return { text, at };
+}
+
+/** A `#` run ending a heading's text, which its line would read as a closing sequence. */
+const CLOSING_HASHES = /#+$/g;
+
+/**
+ * A heading's text as its line writes it after the `#`s and the space: its
+ * requirement id's prefix, then its inline content on one line — a hard break
+ * a note inside it holds is a space — with a trailing `#` run escaped where no
+ * suffix follows it, and a trailing `{…}` as text escaped. The one spelling
+ * the save (`blockSerializer`) and the check of an edit (`writtenTextblock`)
+ * both write.
+ */
+function headingText(node: Node, inline: Spelled): Spelled {
+    let text = respelled(respelled(respelled(inline, HOLD_RE, () => ''), /\\\n/g, () => ' '), /\s+$/g, () => '');
+    if ((node.attrs.attrsSuffix as string | null) === null && /(^| )#+$/.test(text.text)) {
+        text = respelled(text, CLOSING_HASHES, run => '\\' + run);
+    }
+    if (endsInLiteralText(node)) {
         // At the text's end, after every sidebar, so no marker moves.
-        text = escapeTrailingLiteral(text);
+        text = { text: escapeTrailingLiteral(text.text), at: text.at };
     }
-    return { text, sidebars: seams.map(seam => ({ kind: seam.node.type.name, open: at(seam.open), close: at(seam.close - 1) })) };
+    const prefix = (node.attrs.reqPrefix as string | null) ?? '';
+    return { text: prefix + text.text, at: text.at.map(place => place + prefix.length) };
 }
 
 /** Whether a textblock holds a sidebar, or text that could be read as one once written. */
@@ -755,18 +892,44 @@ function sameSidebar(a: ReadSidebar, b: ReadSidebar): boolean {
     return a.kind === b.kind && a.open === b.open && a.close === b.close;
 }
 
+/** Whether a textblock holds a left sidebar, which no `$` can mark while VS Code's math reads it. */
+function holdsLeftSidebar(textblock: Node): boolean {
+    let holds = false;
+    textblock.forEach(child => {
+        holds = holds || child.type.name === 'left_sidebar';
+    });
+    return holds;
+}
+
+/** How a textblock reads back once written, where not as the sidebars it holds (`sidebarMismatch`). */
+interface SidebarMismatch {
+    written: { text: string; sidebars: ReadSidebar[] };
+    lost?: ReadSidebar;
+    made?: ReadSidebar;
+}
+
 /**
  * How `textblock`, written as the save writes it, reads back, if not as the
  * sidebars it holds: the first of them the parser does not read where it
  * stands (`lost`), or the first sidebar it reads that the textblock does not
- * hold (`made`).
+ * hold (`made`). `null` as well for one that holds no sidebar and nothing that
+ * could be read as one (`mayHoldSidebar`). Remembered by the node.
  */
-function sidebarMismatch(textblock: Node): { written: { text: string; sidebars: ReadSidebar[] }; lost?: ReadSidebar; made?: ReadSidebar } | null {
-    const written = writtenTextblock(textblock);
-    const read = sidebarsRead(written.text);
-    const lost = written.sidebars.find(s => !read.some(r => sameSidebar(r, s)));
-    const made = read.find(r => !written.sidebars.some(s => sameSidebar(r, s)));
-    return lost === undefined && made === undefined ? null : { written, lost, made };
+function sidebarMismatch(textblock: Node): SidebarMismatch | null {
+    const known = mismatchCache.get(textblock);
+    if (known !== undefined) {
+        return known;
+    }
+    let mismatch: SidebarMismatch | null = null;
+    if (mayHoldSidebar(textblock)) {
+        const written = writtenTextblock(textblock);
+        const read = sidebarsRead(written.text);
+        const lost = written.sidebars.find(s => !read.some(r => sameSidebar(r, s)));
+        const made = read.find(r => !written.sidebars.some(s => sameSidebar(r, s)));
+        mismatch = lost === undefined && made === undefined ? null : { written, lost, made };
+    }
+    mismatchCache.set(textblock, mismatch);
+    return mismatch;
 }
 
 /**
@@ -790,25 +953,31 @@ function lostReason(text: string, lost: ReadSidebar): string {
 }
 
 /**
- * Why the textblock at `pos` in `doc` cannot be written so that it reads back
+ * Why the textblock `checked` in `doc` cannot be written so that it reads back
  * as the sidebars it holds, or `null`. When the textblock the edit started
  * from already read back otherwise (`origin`), the cause is how the file
- * spells the line, which the editor rewrites — a character reference it
- * writes as the character (`h&#116;tp://e.com/$x$`, an address once written
- * out, takes the sidebar in) — and the reason says so: the line is edited in
- * the text editor once.
+ * spells it, which the editor rewrites — a character reference it writes as
+ * the character (`h&#116;tp://e.com/$x$`, an address once written out, takes
+ * the sidebar in), when the text that textblock was read from holds one
+ * (`EditOrigin.sourceOf`), else unnamed — and the reason says so: it is
+ * edited in the text editor once. For a textblock only written again beside
+ * the edit (`beside`), the reason names the block the edit rewrites whole.
  */
-function sidebarRefusal(doc: Node, pos: number, textblock: Node, origin?: EditOrigin): string | null {
-    const mismatch = sidebarMismatch(textblock);
+function sidebarRefusal(doc: Node, checked: CheckedTextblock, origin?: EditOrigin): string | null {
+    const mismatch = sidebarMismatch(checked.node);
     if (mismatch === null) {
         return null;
     }
     if (origin !== undefined) {
-        const old = Math.min(origin.mapping.invert().map(pos + 1, -1), origin.doc.content.size);
+        const old = Math.min(origin.mapping.invert().map(checked.pos + 1, -1), origin.doc.content.size);
         const $old = origin.doc.resolve(old);
-        if ($old.depth > 0 && mayHoldSidebar($old.parent) && sidebarMismatch($old.parent) !== null) {
-            const src = $old.node(1).attrs.src as string | null | undefined;
-            return typeof src === 'string' && CHARACTER_REFERENCE.test(src) ? SIDEBAR_REWRITTEN_REFERENCE : SIDEBAR_REWRITTEN;
+        if ($old.depth > 0 && $old.parent.isTextblock && sidebarMismatch($old.parent) !== null) {
+            const source = origin.sourceOf?.($old.before()) ?? null;
+            const reference = source !== null && CHARACTER_REFERENCE.test(source);
+            if (checked.beside) {
+                return sidebarRewrittenBeside(doc.resolve(checked.pos).node(1), checked.node, reference);
+            }
+            return reference ? SIDEBAR_REWRITTEN_REFERENCE : SIDEBAR_REWRITTEN;
         }
     }
     return mismatch.lost !== undefined ? lostReason(mismatch.written.text, mismatch.lost) : SIDEBAR_MADE;
@@ -898,12 +1067,20 @@ function cellMarkdown(cell: Node): string {
 
 /** One cell's inline content as the tidy form writes it (see above), unpadded. */
 export function tableCellMarkdown(cell: Node): string {
-    const written = cellMarkdown(cell)
-        .replace(BACKSLASH_BEFORE_CODE, '&#92;')
-        .replace(HOLD_RE, '')
-        .replace(/\r?\n/g, ' ')
-        .trim();
-    return READS_AS_DELIMITER.test(written) ? `\\${written}` : written;
+    return cellText({ text: cellMarkdown(cell), at: [] }).text;
+}
+
+/**
+ * A cell's inline content, as its row wrote it (`cellMarkdown`), given the
+ * tidy form's last touches: the one spelling the save (`tableCellMarkdown`)
+ * and the check of an edit (`writtenTextblock`) both write.
+ */
+function cellText(inline: Spelled): Spelled {
+    let written = respelled(inline, BACKSLASH_BEFORE_CODE, () => '&#92;');
+    written = respelled(written, HOLD_RE, () => '');
+    written = respelled(written, /\r?\n/g, () => ' ');
+    written = respelled(written, /^\s+|\s+$/g, () => '');
+    return READS_AS_DELIMITER.test(written.text) ? { text: `\\${written.text}`, at: written.at.map(place => place + 1) } : written;
 }
 
 /** The formatter's alignment for a column's. */
@@ -1018,16 +1195,8 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
         },
         heading(state, node) {
             const suffix = node.attrs.attrsSuffix as string | null;
-            // A heading is one line; a hard break a note inside it holds is a space here.
-            let text = inlineMarkdown(node, false).replace(HOLD_RE, '').replace(/\\\n/g, ' ').replace(/\s+$/, '');
-            if (suffix === null && /(^| )#+$/.test(text)) {
-                // A trailing ` #` run is an ATX closing sequence and would be dropped.
-                text = text.replace(/#+$/, run => '\\' + run);
-            }
-            if (endsInLiteralText(node)) {
-                text = escapeTrailingLiteral(text);
-            }
-            const line = '#'.repeat(node.attrs.level as number) + ' ' + ((node.attrs.reqPrefix as string | null) ?? '') + text;
+            // One line (`headingText`); a trailing ` #` run is an ATX closing sequence and is escaped there.
+            const line = '#'.repeat(node.attrs.level as number) + ' ' + headingText(node, { text: inlineMarkdown(node, false), at: [] }).text;
             state.write(suffix === null ? line.replace(/\s+$/, '') : line.replace(/\s+$/, '') + ' ' + suffix);
             state.closeBlock(node);
         },

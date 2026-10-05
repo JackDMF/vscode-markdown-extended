@@ -20,10 +20,12 @@ import { configureLinkify } from '../syntax/linkify';
  *
  * What the page's engine cannot see: other extensions' markdown-it plugins,
  * which run in the host's engine (`extend`) and are not in the page's bundle —
- * VS Code's math extension reading `$…$`, say, or one that teaches linkify a
- * new scheme; the document's own reference and footnote definitions, as a
- * textblock is read on its own; and the plugins that add no inline rule, which
- * make or unmake no sidebar (`inlinePlugins.ts`).
+ * one that teaches linkify a new scheme, say. VS Code's math extension, which
+ * reads every `$…$` as math ahead of the sidebar rule, is the one the
+ * definition names (`math`): the page does not run it, and makes no left
+ * sidebar while it is on. Nor does it see the document's own reference and
+ * footnote definitions, as a textblock is read on its own, or the plugins that
+ * add no inline rule, which make or unmake no sidebar (`inlinePlugins.ts`).
  */
 
 /** The settings the editor's engine and the page's are built with. */
@@ -37,6 +39,26 @@ export interface EngineOptions {
 /** What the page's engine is built from: the host's options and the inline plugins its registry runs, by name, with their arguments. */
 export interface InlineEngineDefinition extends EngineOptions {
     plugins: { name: string; args: unknown[] }[];
+    /**
+     * Whether the host's engine reads every `$` as math before the sidebar
+     * rule sees it: VS Code's math extension (`markdown.math.enabled`, on as
+     * VS Code ships it) added its `math_inline` rule (`MATH_INLINE_RULE`). The
+     * page does not run it; while it is on the host reads no left sidebar, so
+     * the page makes none (`SIDEBAR_LEFT_MATH` in `serialize.ts`).
+     */
+    math: boolean;
+}
+
+/**
+ * The inline rule VS Code's math extension (`@vscode/markdown-it-katex`) adds
+ * after `escape`, ahead of the sidebar rule, and which claims every `$`.
+ */
+export const MATH_INLINE_RULE = 'math_inline';
+
+/** Whether `md` holds an enabled inline rule named `name`, as the engine was actually built. */
+function hasInlineRule(md: MarkdownIt, name: string): boolean {
+    const rules = (md.inline.ruler as unknown as { __rules__?: { name: string; enabled: boolean }[] }).__rules__ ?? [];
+    return rules.some(rule => rule.name === name && rule.enabled);
 }
 
 /**
@@ -54,13 +76,16 @@ const definitions = new WeakMap<object, InlineEngineDefinition>();
 
 /**
  * Record what `md` was built from, for `inlineEngineDefinition`: its options,
- * and of the registry `plugins` it ran those the page runs too, in their order.
+ * of the registry `plugins` it ran those the page runs too, in their order,
+ * and whether the extenders that ran after them left VS Code's math reading
+ * `$` — read off the engine, not the setting, so it is what the host does.
  */
 export function recordInlineDefinition(md: MarkdownIt, options: EngineOptions, plugins: readonly { name: string; args: unknown[] }[]): void {
     definitions.set(md, {
         linkify: options.linkify,
         typographer: options.typographer,
         plugins: plugins.filter(p => isInlinePlugin(p.name)).map(p => ({ name: p.name, args: p.args })),
+        math: hasInlineRule(md, MATH_INLINE_RULE),
     });
 }
 
@@ -82,6 +107,8 @@ export const DEFAULT_INLINE_ENGINE: InlineEngineDefinition = {
     linkify: true,
     typographer: false,
     plugins: Object.keys(INLINE_PLUGINS).map(name => ({ name, args: [] })),
+    // VS Code's math is another extension's extender, which the registry does not hold.
+    math: false,
 };
 
 /** The page's engine, built from `definition`; a plugin the page does not bundle is skipped. */
