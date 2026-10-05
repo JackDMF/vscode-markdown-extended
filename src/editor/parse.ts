@@ -239,6 +239,8 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     const admonitionTitle = new WeakMap<object, string>();
     const spanLiteral = new WeakMap<object, string>();
     const itemLiteral = new WeakMap<object, string>();
+    // A heading's inline token as the engine made it, whose text markdown-it-attrs took the literal off (`headingLiteral`).
+    const headingInline = new WeakMap<object, Token>();
     // A nested paragraph whose lines hold a literal that is not its own — a list
     // item's at its end, a quote's under it — measured without it, as a
     // paragraph's own is: the literal is not wrapped.
@@ -307,6 +309,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                     let children = preprocessInline(engine, env, t.children ?? []);
                     const opener = tokens[i - 1];
                     if (opener?.type === 'heading_open') {
+                        headingInline.set(opener, t);
                         // The summary table right after counts only for a heading that
                         // is the top-level block itself, not one inside a container.
                         const next = blocks[k + 1];
@@ -371,13 +374,12 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             block: 'heading',
             getAttrs: tok => {
                 const t = real(tok);
-                const line = t.map ? lines[t.map[0]]?.text ?? '' : '';
                 return {
                     ...sourceOf(tok),
                     level: Number(t.tag.slice(1)),
                     reqPrefix: headingPrefix.get(tok) ?? null,
                     anchor: attr(t, 'id'),
-                    attrsSuffix: t.attrs && t.attrs.length > 0 ? headingLiteral(line, t, definition) : null,
+                    attrsSuffix: t.attrs && t.attrs.length > 0 ? headingLiteral(headingInline.get(t), t, definition) : null,
                 };
             },
         },

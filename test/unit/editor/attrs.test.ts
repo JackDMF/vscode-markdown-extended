@@ -237,6 +237,26 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
                 }
             }
         }
+        // What stands before a literal on its line: markdown-it-attrs reads the last text token, so a `"`
+        // in another token (an escaped delimiter splits them) opens no quote; one in the same token does.
+        // And a line the wrap left a literal alone on, or a `"` on, is read so too.
+        const lines: string[] = [];
+        for (const [plain, escaped] of [['* b', '\\* b'], ['_b', '\\_b'], ['~ b', '\\~ b'], ['== b', '\\== b'], ['^ b', '\\^ b'], [', 3* b', ', 3\\* b']]) {
+            lines.push(`A 5" display ${plain} {.spec}\n`, `A 5" display ${escaped} {.spec}\n`, `- A 5" display ${escaped} {.spec}\n- two\n`, `# A 5" display ${escaped} {.spec}\n`);
+        }
+        lines.push(
+            'Both screens ship this year: the 5" and 7" models {.spec}\n', 'Both screens ship this year: the 5" and\n7" models {.spec}\n',
+            'Both screens ship this year: the 5" and "seven" {.spec}\n', 'Both screens ship this year: the 5" and\n"seven" {.spec}\n',
+            'Both screens ship this year: the 5" and\n"seven"\n{.spec}\n', '# Size [w]{.wide} of 5"$x$5" {#spec}\n',
+        );
+        for (const [settings, engine] of engines) {
+            for (const src of lines) {
+                const reads = engine.parse(src, {}).some(t => (t.type === 'paragraph_open' || t.type === 'list_item_open' || t.type === 'heading_open') && (t.attrs ?? []).some(([n]) => n === 'class' || (n === 'id' && t.type === 'heading_open')));
+                const kept = groupSourceBlocks(engine.parse(src, {}), splitLines(src), definitionOf(engine)).blocks
+                    .some(b => (b.attrs?.suffix ?? '').endsWith('spec}') || b.itemLiterals.includes('{.spec}'));
+                assert.strictEqual(kept, reads, `${JSON.stringify(src)}, ${settings}: ${reads ? 'the host reads it, the editor must keep it' : 'the host shows it as text, the editor must not take it'}`);
+            }
+        }
         const paragraph = topChildren(parseDocument(engines[1][1], 'Text. {data-u=http://x.org}\n').doc)[0];
         assert.strictEqual(paragraph.attrs.attrsSuffix, '{data-u=http://x.org}', 'the parse judges with the engine that read the file, linkify off');
     });

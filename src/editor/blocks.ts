@@ -1,6 +1,7 @@
 import { Token } from '../@types/markdown-it';
 import { AttrPair, NOTE_SYNTAX_CHARS, attrsReadAt, fenceHolder, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, readsBackAs, sameAttrs } from './attrs';
 import { InlineEngineDefinition } from './inlineEngine';
+import { textBeforeAttrs } from '../plugin/markdownItAttrs';
 
 /**
  * The token stream → top-level source blocks step of the rich editor.
@@ -66,11 +67,14 @@ export function detectEol(text: string): '\n' | '\r\n' {
 }
 
 /**
- * The `{…}` a line ends with as markdown-it-attrs finds it — the last `{`
- * outside a quoted value, through the line's end — when it parses as
- * attributes (`parseAttrsLiteral`); `null` otherwise. It reads a quoted `}`
- * (`{title="a}"}`) as the plugin does. Whether the preview reads it where it
- * stands is the caller's question (`attrsReadAt`).
+ * The `{…}` a raw string ends with as markdown-it-attrs finds it there — the
+ * last `{` outside a quoted value, through the string's end — when it parses
+ * as attributes (`parseAttrsLiteral`); `null` otherwise. It reads a quoted `}`
+ * (`{title="a}"}`) as the plugin does. The plugin reads so a fence's info
+ * string and a rule's line, which no inline rule cuts; a literal at the end of
+ * inline text is the one the plugin took off its last text token
+ * (`takenLiteral`). Whether the preview reads it where it stands is the
+ * caller's question (`attrsReadAt`).
  */
 export function findEndLiteral(line: string): string | null {
     const trimmed = line.replace(/[ \t]+$/, '');
@@ -80,6 +84,34 @@ export function findEndLiteral(line: string): string | null {
     }
     const literal = trimmed.slice(start);
     return parseAttrsLiteral(literal) === null ? null : literal;
+}
+
+/**
+ * The `{…}` markdown-it-attrs took off the end of `inline`'s text, as the
+ * source spells it, or `null`. The plugin's "end of block" and "list item end"
+ * rules (`patterns.js`) read the last text token the inline rules made — not
+ * the line: `A 5" display \* b {.spec}` is three tokens, and the `"` of the
+ * first opens no quote in the last — and take from it what `findLeftDelimiter`
+ * finds there, the last `{` outside a quoted value of *that token* through its
+ * end (`utils.js`). So the literal is read off what the plugin did: the last
+ * text child it cut at the end (`textBeforeAttrs`), the part it cut. The
+ * source spells it so when the inline content's last line ends with it, or
+ * the line before a lone `{…}` line the plugin gave to the block around (`- a
+ * {.i}` + `{.l}`, with `beforeLine`, an item's); otherwise (an escape or an
+ * entity in it) `null`.
+ */
+export function takenLiteral(inline: Token | undefined, beforeLine = false): string | null {
+    const original = inline === undefined ? null : textBeforeAttrs(inline);
+    const start = original === null ? -1 : findLeftDelimiter(original);
+    const literal = original === null || start < 0 ? null : original.slice(start);
+    if (literal === null || parseAttrsLiteral(literal) === null) {
+        return null;
+    }
+    const lines = (inline?.content ?? '').split('\n').map(l => l.replace(/[ \t]+$/, ''));
+    const last = lines[lines.length - 1] ?? '';
+    const spelled = last.endsWith(literal)
+        || (beforeLine && lines.length > 1 && parseAttrsLiteral(last.trim()) !== null && lines[lines.length - 2].endsWith(literal));
+    return spelled ? literal : null;
 }
 
 /**
@@ -559,7 +591,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
             if (!t.markup.startsWith('#') || !t.map || t.map[1] - t.map[0] !== 1) {
                 return 'setext heading: its underline has no place in the heading node';
             }
-            if (literalAttrs(t).length > 0 && headingLiteral(lines[t.map[0]]?.text ?? '', t, definition) === null) {
+            if (literalAttrs(t).length > 0 && headingLiteral(tokens[i + 1], t, definition) === null) {
                 return 'heading attributes that are not written as a trailing {…} on its line';
             }
         }
@@ -684,14 +716,14 @@ function literalHolderOf(open: Token): string {
 }
 
 /**
- * A heading's literal: the `{…}` its line ends with as markdown-it-attrs finds
- * it (`findEndLiteral`), when the preview reads it there as the attributes the
- * heading's token has (`attrsReadAt`); `null` otherwise. The one rule the
+ * A heading's literal: the `{…}` markdown-it-attrs took off the end of its
+ * text (`takenLiteral`, `inline` its inline token — an ATX heading's closing
+ * `#` run is no part of it), when the preview reads it there as the attributes
+ * the heading's token has (`attrsReadAt`); `null` otherwise. The one rule the
  * parse keeps a heading's literal by, at the top level and inside a container.
  */
-export function headingLiteral(line: string, open: Token, definition: InlineEngineDefinition): string | null {
-    // An ATX heading's closing `#` run, after a space, is no text to markdown-it: the literal before it ends the line (`# T {#id} ##`).
-    const literal = findEndLiteral(/^#+$/.test(open.markup) ? line.replace(/[ \t]+$/, '').replace(/([ \t])#+$/, '$1') : line);
+export function headingLiteral(inline: Token | undefined, open: Token, definition: InlineEngineDefinition): string | null {
+    const literal = takenLiteral(inline);
     const read = literal === null ? null : attrsReadAt(literal, 'heading', definition);
     return read !== null && sameAttrs(read, literalAttrs(open)) ? literal : null;
 }
@@ -759,7 +791,7 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
     const where = `${open.type.replace(/_open$/, '')} attributes not written where the editor can keep them`;
     switch (open.type) {
         case 'heading_open': {
-            const literal = headingLiteral(lines[start]?.text ?? '', open, definition);
+            const literal = headingLiteral(tokens[group.start + 1], open, definition);
             return literal === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix: literal, placement: 'end' }, endLine: null };
         }
         case 'fence': {
@@ -774,7 +806,7 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
             if (last > start && reads(lastText)) {
                 return { attrs: { suffix: lastText, placement: 'line' }, endLine: null };
             }
-            const literal = findEndLiteral(lines[last]?.text ?? '');
+            const literal = takenLiteral(tokens[group.start + 1]);
             return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
         }
         case 'blockquote_open': {
@@ -848,14 +880,8 @@ function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines:
         if (children.length > 0 && children[children.length - 1].type === 'hardbreak') {
             return 'list item attributes after a line break';
         }
-        let line = trimTrailingBlank(lines, paragraph.map[0], paragraph.map[1]) - 1;
-        const bare = withoutBlockPrefix(lines[line]?.text ?? '').trim();
-        // The lone line is the list's when the preview reads it as a list's literal;
-        // a bullet and an ordered list read it by the same rule.
-        if (line > paragraph.map[0] && attrsReadAt(bare, 'bullet_list', definition) !== null) {
-            line--;
-        }
-        const literal = findEndLiteral(lines[line]?.text ?? '');
+        // What the plugin took off the paragraph's last text; a lone `{…}` line under it is the list's.
+        const literal = takenLiteral(tokens[i + 2], true);
         const read = literal === null ? null : attrsReadAt(literal, 'list_item', definition);
         if (literal === null || read === null || !sameAttrs(read, wanted)) {
             return 'list item attributes not written where the editor can keep them';
