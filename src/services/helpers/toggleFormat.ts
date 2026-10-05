@@ -79,6 +79,15 @@ interface Toggle extends Stretch {
 
 const KIND_ORDER = { close: 0, pair: 1, open: 2, delete: 3 };
 
+/**
+ * Whether a span of the marker a selection touches becomes part of the new
+ * one: `**foo**«bar»` gives `**foobar**`, `` `foo`«bar» `` gives
+ * `` `foobar` `` (where the code would not read as one span, nothing is
+ * made). Not yet settled with the owner; `false` wraps the selection beside
+ * the span as selected.
+ */
+const JOINS_TOUCHING_SPANS = true;
+
 /** A line's start of nothing but containers' markers: a quote's `>`, a bullet, a number, a task's box, a definition's `:` or `~`, a footnote's label. */
 const CONTAINER_MARKERS = /^(?:[ \t]*(?:>|[-+*]|\d{1,9}[.)]|[:~]|\[[ xX]\]|\[\^[^\]\s]+\]:))*[ \t]*$/;
 
@@ -389,8 +398,9 @@ class InlineToggler {
             let open: Anchor | undefined;
             let close: Anchor | undefined;
             if (code) {
-                // Code does not nest: the code spans the part runs into lose their backticks.
-                const codes = this.spansOn(line).filter(s => s.start < part.end && part.start < s.end);
+                // Code does not nest: the code spans the part runs into lose their backticks, and so do those it touches.
+                const codes = this.spansOn(line).filter(s => (s.start < part.end && part.start < s.end)
+                    || (JOINS_TOUCHING_SPANS && (s.end === part.start || s.start === part.end)));
                 for (const s of codes) {
                     part = { start: Math.min(part.start, s.start), end: Math.max(part.end, s.end) };
                     toggle.changes.push(
@@ -399,7 +409,7 @@ class InlineToggler {
                     );
                     toggle.removes.push(s);
                 }
-            } else if (!whole) {
+            } else if (!whole && JOINS_TOUCHING_SPANS) {
                 // A span of the marker the part touches becomes part of the new one.
                 const left = this.spansOn(line).find(s => s.end === part.start);
                 const right = this.spansOn(this.document.positionAt(part.end).line).find(s => s.start === part.end);

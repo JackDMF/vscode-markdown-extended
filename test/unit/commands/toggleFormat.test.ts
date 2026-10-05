@@ -286,6 +286,13 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('codeInline', '«a `b` c»'), '`«a b c»`');
     });
 
+    test('Code joins a code span the selection touches, as the other markers join theirs', async () => {
+        assert.strictEqual(await toggle('codeInline', 'x `foo`«bar» y'), 'x `foo«bar»` y');
+        assert.strictEqual(await toggle('codeInline', '«foo»`bar`'), '`«foo»bar`');
+        // Its content holds a backtick: joined, it would not be one code span.
+        assert.strictEqual(await toggle('codeInline', '``a`b``«c»'), '``a`b``«c»');
+    });
+
     test('a span the selection holds over two lines stays one, inside the new markers', async () => {
         assert.strictEqual(await toggle('italics', '«x **a\nb** y»'), '*«x **a\nb** y»*');
         assert.strictEqual(await toggle('mark', '«x **a\nb** y»'), '==«x **a\nb** y»==');
