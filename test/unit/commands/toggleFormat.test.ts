@@ -373,6 +373,23 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('bold', '> Term\n> : **‸**'), '> Term\n> : ‸');
     });
 
+    test('a definition made by the pair takes no attribute from its term\'s paragraph, nor gives one back', async () => {
+        // The id would go from the paragraph `Term` stands in to an empty one after the list.
+        assert.strictEqual(await toggle('bold', 'Term\n: ‸\n{#anchor}'), 'Term\n: ‸\n{#anchor}');
+        assert.strictEqual(await toggle('bold', 'Term\n: **‸**\n{#anchor}'), 'Term\n: **‸**\n{#anchor}');
+        // A paragraph of the pair alone keeps its own.
+        assert.strictEqual(await toggle('mark', '‸\n{.c}'), '==‸==\n{.c}');
+    });
+
+    test('a definition made by the pair joins the list before or after it', async () => {
+        assert.strictEqual(await toggle('bold', 'Term1\n: def1\n\nTerm2\n: ‸'), 'Term1\n: def1\n\nTerm2\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term1\n: def1\n\nTerm2\n: **‸**'), 'Term1\n: def1\n\nTerm2\n: ‸');
+        assert.strictEqual(await toggle('bold', 'Term1\n: ‸\n\nTerm2\n: def2'), 'Term1\n: **‸**\n\nTerm2\n: def2');
+        assert.strictEqual(await toggle('bold', 'Term1\n: def1\n\nTerm2\n: ‸\n\nTerm3\n: def3'), 'Term1\n: def1\n\nTerm2\n: **‸**\n\nTerm3\n: def3');
+        // `Term2` continues `def1`: the pair would take it out of that paragraph.
+        assert.strictEqual(await toggle('bold', 'Term1\n: def1\nTerm2\n: ‸'), 'Term1\n: def1\nTerm2\n: ‸');
+    });
+
     test('an empty pair is taken out only where the rest reads as before', async () => {
         for (const [name, marked] of [
             // Its markers are another span's.

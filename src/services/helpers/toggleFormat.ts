@@ -778,7 +778,9 @@ class Verifier {
      *   thematic break and back, and a bare `: ` line, in a quote too, a pair
      *   is written on or taken from, which it makes a definition: the
      *   definition's own tokens, starting on its line or its term's, may
-     *   come or go, the blocks around it may not;
+     *   come or go, and its list may grow by it, joining one before or
+     *   after; the other blocks may not, and a block that comes or goes
+     *   leaves its attributes with the text on its lines;
      * - the part defines the same references (destinations and titles),
      *   footnotes and abbreviations (`InlineSource.defines`);
      * - every inline token holds the same tokens besides text and spans'
@@ -898,16 +900,84 @@ class Verifier {
             }
             if (kinds[0] !== kinds[1] && (kinds.includes('literal') || !free.has(line))) {return 'all';}
         }
-        const kept = (structure: readonly BlockToken[]) => structure.filter(({ type, first, end }) => {
-            // The definition's own tokens start on its term's line or its `:` line; the blocks around it are compared.
-            if (DEFINITION_TOKENS.has(type) && defining.some(line => first === line || first === line - 1)) {return false;}
+        // A definition after its list's first maps from its term's line
+        // (markdown-it-deflist): it is read from the line after, as the first
+        // is, so a list the pair's definition joins reads as it did.
+        const normalized = (structure: readonly BlockToken[]) => {
+            let term = -1;
+            return structure.map(t => {
+                if (t.type === 'dt_open') {term = t.first;}
+                return t.type === 'dd_open' && t.first === term ? { ...t, first: term + 1 } : t;
+            });
+        };
+        const exempt = ({ type, first, end }: BlockToken) => {
+            // The definition's own term, definition and paragraph start on its term's line or its `:` line.
+            if (DEFINITION_TOKENS.has(type) && defining.some(line => first === line || first === line - 1)) {return true;}
             // A paragraph of pairs alone, over one line or more, may come or go.
-            if (!FREE_TOKENS.has(type)) {return true;}
+            if (!FREE_TOKENS.has(type)) {return false;}
             for (let line = first; line < Math.max(end, first + 1); line++) {
-                if (!free.has(line)) {return true;}
+                if (!free.has(line)) {return false;}
             }
-            return false;
-        });
+            return true;
+        };
+        // The definition lists, each by the lines it holds besides those it may
+        // take in or give up at its ends — free lines and the lines of the
+        // definition made, its term's and what it takes in — and one list
+        // where the definition made joins two: a list may grow by that
+        // definition, every other block is compared.
+        const listsOf = (structure: readonly BlockToken[]) => {
+            const definition = new Set<number>();
+            for (const t of structure) {
+                if (t.type !== 'dd_open' || !exempt(t)) {continue;}
+                for (let line = t.first - 1; line < t.end; line++) {definition.add(line);}
+            }
+            const made = (line: number) => defining.includes(line) || defining.includes(line + 1) || definition.has(line);
+            const loose = (line: number) => free.has(line) || made(line);
+            const lists: BlockToken[] = [];
+            for (const t of structure) {
+                if (t.type !== 'dl_open') {continue;}
+                let first = t.first, end = t.end;
+                while (first < end && loose(first)) {first++;}
+                while (end > first && loose(end - 1)) {end--;}
+                if (first === end) {
+                    // A list of the definition alone may come or go, not with attributes.
+                    if (t.attrs !== '') {lists.push(t);}
+                    continue;
+                }
+                const last = lists[lists.length - 1];
+                let joined = last !== undefined && last.end <= first && last.attrs === t.attrs;
+                let through = false;
+                for (let line = last?.end ?? first; joined && line < first; line++) {
+                    joined = loose(line);
+                    through = through || made(line);
+                }
+                if (joined && through) {
+                    lists[lists.length - 1] = { ...last, end };
+                } else {
+                    lists.push({ ...t, first, end });
+                }
+            }
+            return lists;
+        };
+        const kept = (structure: readonly BlockToken[]) => structure.filter(t => t.type !== 'dl_open' && !exempt(t));
+        // A block that may come or go takes no attributes from, nor leaves any
+        // to, another: each one's stay with the text on its lines.
+        // Its text is read without the markers taken out or written.
+        const attributed = (source: InlineSource, of: string, markup: number[][], structure: readonly BlockToken[]) => structure
+            .filter(t => t.type !== 'dl_open' && t.attrs !== '' && exempt(t))
+            .map(({ first, end, attrs }) => {
+                let held = '';
+                for (let line = first; line < Math.max(end, first + 1); line++) {
+                    if (defining.includes(line)) {continue;}
+                    for (const s of source.textOn(line)) {
+                        for (let o = s.start; o < s.end; o++) {
+                            if (!markup.some(([from, to]) => from <= o && o < to)) {held += of[o];}
+                        }
+                    }
+                }
+                return `${attrs} ${held.replace(/\s+/g, '')}`;
+            })
+            .sort();
         // A block keeps its attributes; it may end later or sooner by lines with no text (an item taking in its thematic break).
         const same = (x: BlockToken, y: BlockToken) => {
             if (x.type !== y.type || x.nesting !== y.nesting || x.first !== y.first || x.attrs !== y.attrs) {return false;}
@@ -918,8 +988,10 @@ class Verifier {
             }
             return true;
         };
-        const a = kept(before.structure), b = kept(after.structure);
+        const blocksBefore = normalized(before.structure), blocksAfter = normalized(after.structure);
+        const a = [...listsOf(blocksBefore), ...kept(blocksBefore)], b = [...listsOf(blocksAfter), ...kept(blocksAfter)];
         if (a.length !== b.length || a.some((entry, k) => !same(entry, b[k]))) {return 'all';}
+        if (JSON.stringify(attributed(before, text, takenOf(changes), blocksBefore)) !== JSON.stringify(attributed(after, out, written, blocksAfter))) {return 'all';}
         // The definitions.
         if (before.defines !== after.defines) {return 'all';}
         /** Per line, the first inline token that maps it, or -1. */
@@ -1118,8 +1190,8 @@ function passed(verdict: Verdict): boolean {
 /** A definition's `:` (or `~`) line with nothing after it, inside a quote's `>`s too: a pair written at its end makes it a definition. */
 const BARE_DEFINITION = /^(?:[ \t]*>)*[ \t]*[:~][ \t]+$/;
 
-/** The block tokens of one definition, which a pair written on its `:` line makes, or takes back out: the list, the term, the definition, a paragraph. */
-const DEFINITION_TOKENS: ReadonlySet<string> = new Set(['dl_open', 'dt_open', 'dd_open', 'paragraph_open']);
+/** The block tokens of one definition, which a pair written on its `:` line makes, or takes back out: the term, the definition, a paragraph (its list is compared by its lines). */
+const DEFINITION_TOKENS: ReadonlySet<string> = new Set(['dt_open', 'dd_open', 'paragraph_open']);
 
 /** Block tokens that hold blocks, which may take in or give up a line with no text at their end. */
 const CONTAINERS = /(?:list|item|blockquote|dl|dd|admonition|container)_open$/;
