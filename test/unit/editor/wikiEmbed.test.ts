@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { DOMSerializer, Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
+import { DOMSerializer, Fragment, Mark, MarkType, Node, ResolvedPos, Slice } from 'prosemirror-model';
+import { toggleMark } from 'prosemirror-commands';
 import { history, redo, undo } from 'prosemirror-history';
 import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
@@ -342,9 +343,9 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             if (node.type.name === 'wiki_embed') { assert.deepStrictEqual(node.marks, []); }
         });
         assert.strictEqual(type(paragraph(text('![[a]', code)), ']', [code]), null);
-        // The stored marks decide, as they do for any typed character (ProseMirror's `insertText`): the marks
-        // toggled on before the `]` are the atom's, those toggled off are not, and with none stored it takes
-        // those of the text it replaces — which keeps it in a link or an attribute span that ends there.
+        // The atom takes the marks of the text it replaces — which keeps it in a link or an attribute span that
+        // ends there — with those toggled on before the `]` (stored, the caret's not) added and those toggled
+        // off (the caret's, not stored) taken away.
         const em = schema.marks.em.create();
         const link = schema.marks.link.create({ href: 'https://e.org' });
         const atomMarks = (tr: Transaction | null) => {
@@ -460,7 +461,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.deepStrictEqual(textAndBack(decorated).nodeAt(pos)?.marks.map(m => m.type.name), ['req_ref']);
     });
 
-    test('a ]] typed closes an embed that carries the marks it is typed with (those stored), else those of the text it replaces — in a link, wherever the caret is in it — and not those of the caret', () => {
+    test('a ]] typed closes an embed that carries the marks of the text it replaces, changed by those stored — in a link, wherever the caret is in it — and not those of the caret', () => {
         const link = schema.marks.link.create({ href: 'https://e.org' });
         const span = schema.marks.attr_span.create({ literal: '{.big}' });
         const ref = schema.marks.req_ref.create();
@@ -493,6 +494,45 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.deepStrictEqual(marksOfEmbeds(typeInto(stored(emphasised, []), emphasised.content.size - 1, ']')), [[]]);
         // Under inline code the embed stays text.
         assert.strictEqual(typeInto(EditorState.create({ doc: paragraph(text('![[x]', code)) }), 6, ']'), null);
+    });
+
+    test('a mark toggled before the ]] is added to or taken from the replaced text\'s marks: at the end of a link, an attribute span or a note reference the atom stays in it; under superscript or with code toggled on it stays text', () => {
+        const link = schema.marks.link.create({ href: 'https://e.org' });
+        const span = schema.marks.attr_span.create({ literal: '{.big}' });
+        const ref = schema.marks.req_ref.create();
+        const em = schema.marks.em.create();
+        /** `doc` with the caret at its end, `toggled` toggled there as Ctrl+I or Ctrl+B does, then `]` typed. */
+        const toggleThenType = (doc: Node, toggled: MarkType): Transaction | null => {
+            const end = doc.content.size - 1;
+            let state = EditorState.create({ doc, selection: TextSelection.create(doc, end) });
+            assert.ok(toggleMark(toggled)(state, tr => { state = state.apply(tr); }), `${toggled.name} toggles`);
+            assert.ok(state.storedMarks !== null, 'the toggle is stored');
+            return typeInto(state, end, ']');
+        };
+        const atomMarks = (tr: Transaction | null): readonly Mark[] => {
+            assert.ok(tr, 'the rule fires');
+            const found = embedPositions(tr.doc);
+            assert.strictEqual(found.length, 1);
+            return tr.doc.nodeAt(found[0])?.marks ?? [];
+        };
+        const names = (marks: readonly Mark[]) => marks.map(m => m.type.name);
+
+        // On, at the end of a mark typing does not extend: the atom keeps that mark, with its attributes.
+        const inLink = atomMarks(toggleThenType(paragraph(text('the ![[x]', link)), schema.marks.em));
+        assert.deepStrictEqual(names(inLink).sort(), ['em', 'link']);
+        assert.strictEqual(inLink.find(m => m.type === link.type)?.attrs.href, 'https://e.org', 'the href is kept');
+        const inSpan = atomMarks(toggleThenType(paragraph(text('See '), text('![[x]', span)), schema.marks.strong));
+        assert.deepStrictEqual(names(inSpan).sort(), ['attr_span', 'strong']);
+        assert.strictEqual(inSpan.find(m => m.type === span.type)?.attrs.literal, '{.big}', 'the attributes are kept');
+        assert.deepStrictEqual(names(atomMarks(toggleThenType(paragraph(text('See '), text('![[x]', ref)), schema.marks.em))).sort(), ['em', 'req_ref']);
+        // On over plain text, off over emphasis, off with a link kept.
+        assert.deepStrictEqual(names(atomMarks(toggleThenType(paragraph(text('a ![[x]')), schema.marks.em))), ['em']);
+        assert.deepStrictEqual(names(atomMarks(toggleThenType(paragraph(text('![[x]', em)), schema.marks.em))), []);
+        assert.deepStrictEqual(names(atomMarks(toggleThenType(paragraph(text('![[x]', link, em)), schema.marks.em))), ['link']);
+        // Superscript toggled off over superscript text, or code toggled on: it stays text.
+        assert.strictEqual(toggleThenType(paragraph(text('a'), text('![[x]', schema.marks.sup.create())), schema.marks.sup), null, 'sup text, sup off');
+        assert.strictEqual(toggleThenType(paragraph(text('a'), text('![[x]', schema.marks.code.create())), schema.marks.code), null, 'code text, code off');
+        assert.strictEqual(toggleThenType(paragraph(text('a ![[x]')), schema.marks.code), null, 'code on');
     });
 
     test('Edit as text is refused where the notes\' and the tables\' filters would refuse its text: an attribute span over the atom whose literal holds a note marker or a cell\'s pipe', () => {

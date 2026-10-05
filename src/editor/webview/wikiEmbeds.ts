@@ -130,8 +130,8 @@ function oneTextRun(state: EditorState, from: number, to: number): boolean {
 /**
  * The input rule: the `]` that closes `![[name]]`, typed — one character, the
  * rest of the embed already one run of plain text before the caret — makes
- * it an atom carrying the marks it is typed with: the stored marks, else those
- * of the text it replaces.
+ * it an atom carrying the marks of the text it replaces, with those toggled on
+ * or off before the `]` (the stored marks) added or taken away.
  */
 export function wikiEmbedInputRule(enabled: () => boolean): InputRule {
     return new InputRule(EMBED_TYPED, (state, match, start, end) => {
@@ -141,13 +141,21 @@ export function wikiEmbedInputRule(enabled: () => boolean): InputRule {
         if (!enabled() || end - start !== match[0].length - 1 || !oneTextRun(state, start, end)) {
             return null;
         }
-        // The marks typed text takes, as ProseMirror's own `insertText` decides them: the stored marks (Ctrl+I
-        // toggled on or off before the `]`), else the marks of the text the atom replaces (`oneTextRun`: one
-        // set across all of it), not those at the caret: at the end of a link, an attribute span or a note
-        // reference, which typing does not extend, the caret's marks leave them off and the atom would step
-        // out of what it was typed in.
-        const marks = state.storedMarks ?? state.doc.nodeAt(start)?.marks ?? [];
-        if (rawMarked(marks)) {
+        // The marks of the text the atom replaces (`oneTextRun`: one set across all of it), changed by what was
+        // toggled before the `]` (Ctrl+I on or off). Stored marks are the caret's marks with that change made,
+        // and the caret's leave out a link, an attribute span or a note reference at its end, which typing does
+        // not extend: taken whole, they would move the atom out of what it was typed in. So only what they add
+        // to the caret's or take from them counts. Text under a raw mark is never made an embed, nor is text
+        // with one toggled on.
+        const replaced = state.doc.nodeAt(start)?.marks ?? [];
+        let marks = replaced;
+        const stored = state.storedMarks;
+        if (stored !== null) {
+            const caret = state.doc.resolve(end).marks();
+            stored.filter(m => !m.isInSet(caret)).forEach(m => { marks = m.addToSet(marks); });
+            caret.filter(m => !m.isInSet(stored)).forEach(m => { marks = m.removeFromSet(marks); });
+        }
+        if (rawMarked(replaced) || rawMarked(marks)) {
             return null;
         }
         return state.tr.replaceWith(start, end, editorSchema.nodes.wiki_embed.create({ source: match[0] }, null, marks));
@@ -170,10 +178,11 @@ export function wikiEmbedInputRules(enabled: () => boolean): Plugin {
  * not just typed. It is text, and stays text: the input rule fires only on a
  * typed `]`. `null` when `[from, to)` is not one embed.
  *
- * The two differ at the end of a link or another mark typing does not extend:
- * `undoInputRule` restores the typed `]` with the caret's marks, so outside the
- * mark, and the rest of `![[name]` inside it; here all of `![[name]]` keeps the
- * atom's marks, inside the mark.
+ * The two differ in the closing `]`: here all of `![[name]]` keeps the atom's
+ * marks, while `undoInputRule` gives back the text before the `]` as it was and
+ * the `]` with the caret's marks — so outside a link or another mark typing
+ * does not extend that ends there, and without a mark toggled on or off before
+ * it taking effect.
  */
 export function embedAsTextTransaction(state: EditorState, from: number, to: number): Transaction | null {
     const atom = state.doc.nodeAt(from);
