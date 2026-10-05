@@ -65,6 +65,7 @@ declare module MarkdownIt {
         helpers: Record<string, unknown>;
         inline: ParserInline;
         linkify: LinkifyIt;
+        options: Options;
         renderer: Renderer;
     }
     interface Options {

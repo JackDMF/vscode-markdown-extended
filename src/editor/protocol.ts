@@ -1,3 +1,4 @@
+import type { InlineEngineDefinition } from './inlineEngine';
 import type { ParsedDocumentJSON } from './parse';
 import type { MappedPagePosition, MappedSourcePosition, SourcePosition, SourceRange } from './positions';
 
@@ -130,9 +131,17 @@ export type HostMessage =
      * `markdownExtended.editor.wrapColumn` as it applies to this file.
      * `includes` says whether any installed extension offers include choices
      * (`host/includes.ts`): the page enables **Insert → Include…** and an
-     * expansion's **Change snippet…** only then.
+     * expansion's **Change snippet…** only then. `inline` is the engine that
+     * parsed it, as far as the page runs it (`inlineEngineDefinition`): its
+     * `markdown.preview.linkify` and `markdown.preview.typographer`, the
+     * plugins of the registry the page runs too, and whether VS Code's math read
+     * `$` in it (`math`, `markdown.math.enabled` as the engine applied it). The
+     * page reads each textblock an edit makes the save write again with an
+     * engine built from it, so that it refuses an edit after which a sidebar
+     * would not read back as it is shown — VS Code's math, when it runs, as
+     * a stand-in for its tokenizer, so a left sidebar the math reads is none.
      */
-    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean }
+    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; inline: InlineEngineDefinition }
     /** The answer to a `render` request: the raw block's source rendered by the host's engine. */
     | { type: 'rendered'; requestId: number; html: string }
     /** The document cannot be shown without losing a byte; the webview offers the text editor instead. */

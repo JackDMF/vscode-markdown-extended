@@ -105,9 +105,15 @@ const ASCII_DIGIT = /^[0-9]$/;
  * glued to an ASCII word (`Text$x$`) is text. The side inside may be a
  * space: `$ left $` is a sidebar.
  *
+ * `before` and `after` are the characters the source reads as there: a
+ * character reference counts as what it decodes to, so `REQ-&#49;$x$` is text
+ * as `REQ-1$x$` is, and `$x$&#53;` closes nothing (`sidebarCanClose`).
+ *
  * The notes plugin parses by this and `sidebarCanClose`
- * (`markdownItSidenote.ts`); the Visual Editor writes a sidebar so that both
- * hold (`serialize.ts`), and the grammar follows them as far as a regex can.
+ * (`markdownItSidenote.ts`, which decodes a reference beside a marker); the
+ * Visual Editor refuses an edit after which either would not hold, and never
+ * writes a reference beside a marker (`serialize.ts`); the grammar follows
+ * them as far as a regex can.
  */
 export function sidebarCanOpen(before: string, after: string): boolean {
     return after !== '' && !ASCII_LETTER_OR_DIGIT.test(before);

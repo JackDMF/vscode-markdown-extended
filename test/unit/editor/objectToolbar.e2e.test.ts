@@ -3,9 +3,11 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
+import { SIDEBAR_GLUED_BEFORE } from '../../../src/editor/serialize';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { OWN_COPY } from '../../../src/editor/webview/wikiEmbeds';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 /** The selection's object toolbar, shown. */
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
@@ -28,7 +30,7 @@ suite('Editor object toolbar (e2e)', () => {
     const showDocument = async (text: string, marker: string) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         // Out of any object the last test left the caret or the pointer in, and back at the top it may have scrolled from.
         await page.mouse.move(2, 2);
@@ -838,5 +840,48 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await clickVerb('remove-attributes');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'A styled word.\n');
+    });
+
+    test('a verb that would glue a sidebar to a letter is disabled with the reason, and a click on it says no success', async function () {
+        this.timeout(15000);
+        const verbState = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        // Right sidebars: VS Code's math extension, on in the test instance, claims every `$` first.
+        await showDocument('A [styled]{.c}@y@ word.\n', 'styled');
+        await clickBefore('styled', 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        assert.deepStrictEqual(await barState(), { object: 'span', label: 'Span', verbs: ['edit-attributes', 'remove-attributes'] });
+        const removeAttributes = await verbState('remove-attributes');
+        assert.strictEqual(removeAttributes.disabled, 'true');
+        assert.ok(removeAttributes.title.endsWith(SIDEBAR_GLUED_BEFORE), removeAttributes.title);
+
+        await showDocument('An![pic](p.png)@y@ here.\n', 'An');
+        // A broken image has no size of its own; give it one to click, for this test only.
+        const sized = await page.addStyleTag({ content: '.ProseMirror img { display: inline-block; width: 60px; height: 30px; }' });
+        try {
+            const img = await (await page.$('.ProseMirror img'))?.boundingBox();
+            assert.ok(img);
+            await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
+            await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
+            const removeImage = await verbState('remove-image');
+            assert.strictEqual(removeImage.disabled, 'true');
+            assert.ok(removeImage.title.endsWith(SIDEBAR_GLUED_BEFORE), removeImage.title);
+        } finally {
+            await sized.evaluate(el => el.remove());
+        }
+
+        // Remove note likewise: its reference would be `beta@y@`.
+        await showDocument('Alpha ++beta|the body++@y@ gamma.\n', 'Alpha');
+        await clickBefore('body', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        const removeNote = await verbState('remove-note');
+        assert.strictEqual(removeNote.disabled, 'true');
+        assert.ok(removeNote.title.endsWith(SIDEBAR_GLUED_BEFORE), removeNote.title);
+        // Disabled, a click runs nothing: no success is said and nothing is posted.
+        const edits = (await (editor as EditorPage).edits()).length;
+        const hintBefore = await hint();
+        await clickVerb('remove-note');
+        await settle();
+        assert.deepStrictEqual(await hint(), hintBefore, 'the hint is as it was: nothing said');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'nothing posted');
     });
 });

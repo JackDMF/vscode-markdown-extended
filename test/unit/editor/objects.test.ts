@@ -135,9 +135,10 @@ suite('Editor objects: a note\'s verbs', () => {
         const state = caretAt(stateOf('A ++ref|see `a!!b` here++ b.\n'), 'ref');
         const reason = convertNoteRefusal(state, objectHere(state).from);
         assert.ok(reason?.includes('"!!"'), String(reason));
-        // Superscript in a left sidebar may hold `@`; in a right one it would end the sidebar.
+        // Superscript may hold `@` in either sidebar: in a right one it is written `\@`, which it unescapes.
         const raised = caretAt(stateOf('A $see ^a@b^ here$ b.\n'), 'see');
-        assert.ok(convertNoteRefusal(raised, objectHere(raised).from)?.includes('"@"'));
+        assert.strictEqual(convertNoteRefusal(raised, objectHere(raised).from), null);
+        assert.strictEqual(text(raised.apply(convertNoteTransaction(raised, objectHere(raised).from) as never)), 'A @see ^a\\@b^ here@ b.\n');
         // Code may hold it in either: the sidebar rule skips a code span whole.
         const coded = caretAt(stateOf('A $see `a@b` here$ b.\n'), 'see');
         assert.strictEqual(convertNoteRefusal(coded, objectHere(coded).from), null);

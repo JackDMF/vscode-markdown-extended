@@ -1,5 +1,6 @@
 import { MarkdownIt } from 'markdown-it';
 import { NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
+import { UrlMatcher, bareUrlAt } from '../syntax/linkify';
 
 /**
  * Markdown-it plugin for sidenotes, marginal notes, and sidebar annotations.
@@ -361,7 +362,9 @@ export default function (md: MarkdownIt) {
  * A marker opens only where `sidebarCanOpen` allows it (no ASCII letter or
  * digit before it, so `a@b.c` opens nothing); the closing marker is the first
  * that `sidebarCanClose` allows outside code, links and the like
- * (`findSidebarClose`). Both rules live in `src/syntax/markers.ts`.
+ * (`findSidebarClose`). Both rules live in `src/syntax/markers.ts`; the
+ * character beside a marker is the one the source reads as there, a
+ * character reference decoded (`readBefore`, `readAfter`).
  *
  * @param state - Markdown-it inline parsing state
  * @param silent - If true, only check syntax without creating tokens
@@ -393,9 +396,8 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
 
     const src = state.src;
     const max = state.posMax;
-    const before = start > 0 ? src.charAt(start - 1) : '';
     const after = start + 1 < max ? src.charAt(start + 1) : '';
-    if (!sidebarCanOpen(before, after)) {
+    if (!sidebarCanOpen(readBefore(state, start), after)) {
         return false;
     }
 
@@ -421,6 +423,7 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
     try {
         const tokenOpen = state.push(`${config.type}_open`, 'span', 1);
         tokenOpen.markup = config.openMarker;
+        markSpan(tokenOpen, start, endPos);
         // An empty text first, at the content's level: markdown-it-bracketed-
         // spans tells a look-ahead from a real parse by the last token's
         // level, and an opening token right before would make it push its
@@ -441,7 +444,9 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
         restoreInline(state, saved);
         state.src = src;
         state.posMax = max;
-        state.push(`${config.type}_open`, 'span', 1).markup = config.openMarker;
+        const tokenOpen = state.push(`${config.type}_open`, 'span', 1);
+        tokenOpen.markup = config.openMarker;
+        markSpan(tokenOpen, start, endPos);
         state.push('text', '', 0).content = src.slice(start + 1, endPos);
         state.push(`${config.type}_close`, 'span', -1);
     } finally {
@@ -456,6 +461,19 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
     return true;
 }
 
+/**
+ * The key under a sidebar's opening token's `meta` that says where its
+ * opening and its closing marker stand in the source the rule read
+ * (`[open, close]`). The Visual Editor's page reads it to match each sidebar
+ * it wrote to the one the parser reads back (`readSidebars` in
+ * `src/editor/inlineEngine.ts`); nothing renders it.
+ */
+export const SIDEBAR_SPAN_META = 'sidebarSpan';
+
+function markSpan(token: { meta: unknown }, open: number, close: number): void {
+    token.meta = { ...((token.meta as Record<string, unknown> | null) ?? {}), [SIDEBAR_SPAN_META]: [open, close] };
+}
+
 /** The two parts of markdown-it's inline parser the sidebar rule drives, which its declarations leave out. */
 interface InlineParser {
     tokenize(state: MarkdownItState): void;
@@ -464,6 +482,62 @@ interface InlineParser {
 
 function inlineParser(state: MarkdownItState): InlineParser {
     return state.md.inline as unknown as InlineParser;
+}
+
+/** A character reference as markdown-it's entity rule reads one (`&#120;`, `&#x78;`, `&amp;`). */
+export const CHARACTER_REFERENCE = /&(?:#(?:[xX][0-9a-fA-F]{1,6}|[0-9]{1,7})|[A-Za-z][A-Za-z0-9]{1,31});/;
+/** One at the end of the text before a marker. */
+const REFERENCE_BEFORE = new RegExp(`${CHARACTER_REFERENCE.source}$`);
+/** One at the start of the text after a marker. */
+const REFERENCE_AFTER = new RegExp(`^${CHARACTER_REFERENCE.source}`);
+/** The longest text `REFERENCE_BEFORE` can match: `&`, 32 characters of a name, `;`. */
+const REFERENCE_MAX = 34;
+
+/** What a character reference reads as, or the reference itself where it decodes to nothing (`&nosuch;`). */
+function decodeReference(state: MarkdownItState, reference: string): string {
+    return (state.md as unknown as { utils: { unescapeAll(text: string): string } }).utils.unescapeAll(reference);
+}
+
+/**
+ * The character the source reads as right before `pos`, for `sidebarCanOpen`:
+ * the one written there, or — where a character reference ends there that no
+ * backslash escapes — the last character it decodes to, so `REQ-&#49;$x$`
+ * opens nothing, as `REQ-1$x$` does not.
+ */
+function readBefore(state: MarkdownItState, pos: number): string {
+    const src = state.src;
+    const written = pos > 0 ? src.charAt(pos - 1) : '';
+    if (written !== ';') {
+        return written;
+    }
+    const reference = REFERENCE_BEFORE.exec(src.slice(Math.max(0, pos - REFERENCE_MAX), pos));
+    if (reference === null) {
+        return written;
+    }
+    let backslashes = 0;
+    const amp = pos - reference[0].length;
+    while (amp - 1 - backslashes >= 0 && src.charCodeAt(amp - 1 - backslashes) === 0x5c) {
+        backslashes++;
+    }
+    const decoded = backslashes % 2 === 0 ? decodeReference(state, reference[0]) : reference[0];
+    return decoded === reference[0] ? written : decoded.slice(-1);
+}
+
+/**
+ * The character the source reads as at `pos`, before `max`, for
+ * `sidebarCanClose`: the one written there, or the first character a
+ * character reference starting there decodes to, so `$x$&#53;` closes
+ * nothing, as `$x$5` does not.
+ */
+function readAfter(state: MarkdownItState, pos: number, max: number): string {
+    const src = state.src;
+    const written = pos < max ? src.charAt(pos) : '';
+    if (written !== '&') {
+        return written;
+    }
+    const reference = REFERENCE_AFTER.exec(src.slice(pos, max));
+    const decoded = reference === null ? '' : decodeReference(state, reference[0]);
+    return reference === null || decoded === reference[0] ? written : decoded.charAt(0);
 }
 
 /** What markdown-it-footnote keeps in the environment. */
@@ -581,35 +655,15 @@ function scanCache(state: MarkdownItState): Record<number, number> {
 
 /**
  * Where the bare URL that markdown-it's linkify rule would read at `pos` (its
- * `://`) ends, or -1 — found as that rule finds it: the scheme in at most ten
- * characters of text before `pos` (from `textStart` on), the URL by
- * linkify-it, a trailing `*` left out, a link markdown-it would not follow
- * refused. The text ends at `max`.
+ * `://`) ends, or -1 — asked (`bareUrlAt`) of the engine's own linkify-it,
+ * the text starting at
+ * `textStart` and ending at `max`, a link markdown-it would not follow
+ * refused.
  */
 function bareUrlEnd(state: MarkdownItState, textStart: number, pos: number, max: number): number {
-    const src = state.src;
-    if (pos + 3 > max || src.charCodeAt(pos) !== 0x3a || src.charCodeAt(pos + 1) !== 0x2f || src.charCodeAt(pos + 2) !== 0x2f) {
-        return -1;
-    }
-    const protoMin = pos - Math.min(10, pos - textStart, pos);
-    let protoStart = pos;
-    while (protoStart > protoMin && /[A-Za-z0-9+.-]/.test(src.charAt(protoStart - 1))) {
-        protoStart--;
-    }
-    if (protoStart === pos || !/[A-Za-z]/.test(src.charAt(protoStart))) {
-        return -1;
-    }
-    const linkify = (state.md as unknown as { linkify: { matchAtStart(text: string): { url: string } | null } }).linkify;
-    const link = linkify.matchAtStart(src.slice(protoStart, max));
-    if (link === null || link.url.length <= pos - protoStart) {
-        return -1;
-    }
-    const url = link.url.replace(/\*+$/, '');
-    const md = state.md as unknown as { normalizeLink(url: string): string; validateLink(url: string): boolean };
-    if (!md.validateLink(md.normalizeLink(url))) {
-        return -1;
-    }
-    return protoStart + url.length;
+    const md = state.md as unknown as { linkify: UrlMatcher; normalizeLink(url: string): string; validateLink(url: string): boolean };
+    const url = bareUrlAt(md.linkify, state.src, pos, textStart, max, link => md.validateLink(md.normalizeLink(link)));
+    return url === null ? -1 : url[1];
 }
 
 /**
@@ -638,7 +692,7 @@ function findSidebarClose(state: MarkdownItState, start: number, code: number): 
     const max = state.posMax;
     const marker = src.charAt(start);
     const closesAt = (pos: number) => src.charCodeAt(pos) === code
-        && sidebarCanClose(marker, pos + 1 < max ? src.charAt(pos + 1) : '');
+        && sidebarCanClose(marker, readAfter(state, pos + 1, max));
 
     // Nothing to look for when no marker in the rest of the text could close.
     let candidate = src.indexOf(marker, start + 1);

@@ -6,10 +6,11 @@
  * bring the host's markdown-it composition — this extension's plugins and
  * everything they import — into the browser for nothing.
  *
- * That alone does not keep markdown-it itself out: the serializer comes from
- * `prosemirror-markdown`, whose entry module constructs a default parser, and
- * with it a markdown-it instance, as it loads. The bundle aliases `markdown-it`
- * to a stub for that reason (`stubs/markdown-it.ts`).
+ * markdown-it itself is in the page, with the registry's inline plugins and
+ * the block plugins whose blocks the editor writes (`../inlineEngine.ts`):
+ * the check of an edit reads what the save writes as the host's engine
+ * would, to refuse one after which a sidebar or an attribute literal would
+ * not read back as it is shown.
  */
 import { Node } from 'prosemirror-model';
 import { closeHistory, redo, undo } from 'prosemirror-history';
@@ -19,7 +20,8 @@ import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap } from '../positions';
 import type { CodeActionItem, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
-import { serializeDocument } from '../serialize';
+import type { InlineEngineDefinition } from '../inlineEngine';
+import { serializeDocument, setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
@@ -802,7 +804,7 @@ function dispatchTransaction(this: EditorView, tr: Transaction): void {
     }
 }
 
-function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: number, includes: boolean): void {
+function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: number, includes: boolean, inline: InlineEngineDefinition): void {
     // An edit still waiting in the delay is dropped: it was computed against
     // the document this one supersedes, and the host would refuse it for its
     // stale base. The keystrokes it carried vanish with it — the price of never
@@ -816,6 +818,9 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     actionEpoch++;
     // Read by the toolbars as they redraw for the state below.
     includesOffered = includes;
+    // Before the state below: the refusals read a block as the engine that parsed it does, written as the save writes it.
+    setInlineEngine(inline);
+    setWriteOptions({ defaultWrap });
     hideError();
     const doc = Node.fromJSON(editorSchema, json.doc);
     current = { eol: json.eol, tail: json.tail, version, defaultWrap, wikiEmbeds: json.wikiEmbeds ?? true };
@@ -968,7 +973,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     const msg = event.data;
     switch (msg.type) {
         case 'document':
-            showDocument(msg.json, msg.version, msg.defaultWrap, msg.includes);
+            showDocument(msg.json, msg.version, msg.defaultWrap, msg.includes, msg.inline);
             break;
         case 'rendered':
             applyRendered(msg.requestId, msg.html);

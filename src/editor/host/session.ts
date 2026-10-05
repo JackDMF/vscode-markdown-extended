@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { Config } from '../../services/common/config';
 import { escapeHtml } from '../../services/exporter/shared';
+import { inlineEngineDefinition } from '../inlineEngine';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
 import { MappedPagePosition, SourcePosition, validPosition, validRange } from '../positions';
 import { HostMessage, WebviewMessage } from '../protocol';
@@ -579,8 +580,13 @@ export class VisualEditorSession implements vscode.Disposable {
         const text = this.document.getText();
         const version = this.document.version;
         let json;
+        let inline;
         try {
-            const parsed = parseDocument(md, text, this.env());
+            // Read off the engine that parsed it: a changed setting builds a new engine and posts the document again.
+            // Read before any state is set, so an engine that cannot say fails the document as a parse error does.
+            inline = inlineEngineDefinition(md);
+            // Its literals are judged with that definition, as the page judges them with the one posted.
+            const parsed = parseDocument(md, text, this.env(), inline);
             json = parsedDocumentToJSON(parsed);
             this.snippetPaths = collectSnippetPaths(json.doc);
         } catch (error) {
@@ -598,6 +604,7 @@ export class VisualEditorSession implements vscode.Disposable {
             version,
             defaultWrap: Config.instance.editorWrapColumn(this.document.uri),
             includes,
+            inline,
         });
         // A link followed here before the page had the document lands now.
         await this.postReveal();

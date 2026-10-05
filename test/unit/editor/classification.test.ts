@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { groupSourceBlocks, parseDocument, splitLines } from '../../../src/editor';
+import { definitionOf } from '../../../src/editor/inlineEngine';
 import { conformanceDocument, constructsFixture, hostEngine, readText, topChildren } from './helpers';
 
 /** FR-CON's raw blocks: each one's first line and the reason `blocks.ts` gives. */
@@ -134,7 +135,7 @@ suite('Editor block classification (FR-CON.md)', () => {
 
     check('every block that stays raw, and why: HTML and markup inside a paragraph — the stage-3 constructs are not in this corpus', () => {
         const text = readText(fixture.file).replace(/\r\n/g, '\n');
-        const { blocks: grouped } = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text));
+        const { blocks: grouped } = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text), definitionOf(hostEngine()));
         const raw = grouped.filter(b => b.kind === 'raw').map(b => [(b.src ?? '').split('\n')[0], b.reason]);
         assert.deepStrictEqual(raw, FR_CON_RAW);
     });
@@ -154,7 +155,7 @@ suite('Editor block classification (FR-CON.md)', () => {
  */
 suite('Editor block classification (constructs.md)', () => {
     const text = readText(constructsFixture).replace(/\r\n/g, '\n');
-    const grouped = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text)).blocks;
+    const grouped = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text), definitionOf(hostEngine())).blocks;
     const blocks = topChildren(parseDocument(hostEngine(), text).doc);
 
     /** The one top-level block whose source starts with `prefix`, and its classification. */
@@ -232,7 +233,7 @@ suite('Editor block classification: a container with attributes', () => {
         ['nested in a container', ':::: outer\n::: inner {.c}\nInside.\n:::\n::::\n'],
     ]) {
         test(`${where} is a source block: ${reason}`, () => {
-            const grouped = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text)).blocks;
+            const grouped = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text), definitionOf(hostEngine())).blocks;
             assert.deepStrictEqual(grouped.map(b => [b.kind, b.reason]), [['raw', reason]]);
         });
     }

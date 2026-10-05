@@ -31,7 +31,8 @@ import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, 
 import { undoInputRule } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { EditorView } from 'prosemirror-view';
-import { PRESERVE_SOURCE_META } from '../fidelity';
+import { PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
+import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, unwritableEmbed, unwritableInNote } from '../serialize';
 import { showHint } from './hint';
@@ -326,31 +327,45 @@ const HISTORY_META = 'history$';
 
 /**
  * Why the transaction must not be applied: it leaves a note in the range it
- * changed that the serializer cannot write back (`unwritableInNote`). A
- * re-sync from the host and an undo are never refused; each puts back a
- * document that was written or allowed.
+ * changed that the serializer cannot write back (`unwritableInNote`), judged
+ * against the document the transaction started from: a sidebar seam the file
+ * already held is never refused, only one the transaction created. Checked
+ * is exactly what the save will write again, in the document the fidelity
+ * plugin's repair makes of the edit (`writtenEdit`, from the plan the plugin
+ * applies): every textblock of each top-level block whose `src` that plan
+ * clears, wherever it stands — the other items of the list typed in, the other
+ * cells of its table, a copied heading whose id it strips — and none of a
+ * block it keeps. A re-sync from the host and an undo are never refused; each
+ * puts back a document that was written or allowed. Nor is a repair a plugin
+ * appends (`isRepair`): it follows a transaction checked here, and the
+ * fidelity plugin's applies the very plan checked. Then a wiki embed under a
+ * raw mark in that range (`unwritableEmbed`). The one check the filter makes,
+ * and the one a verb asks before it is dispatched, so a button is disabled with
+ * the filter's own reason.
  */
 export function noteRefusal(tr: Transaction): string | null {
     const range = refusableRange(tr);
-    return range === null ? null : unwritableInNote(tr.doc, range.from, range.to);
-}
-
-/**
- * `noteRefusal`, then a wiki embed under a raw mark (`unwritableEmbed`), over the range the transaction changed, read once:
- * what the notes plugin's filter refuses, asked of a transaction before it is dispatched.
- */
-export function notesFilterRefusal(tr: Transaction): string | null {
-    const range = refusableRange(tr);
-    return range === null ? null : unwritableInNote(tr.doc, range.from, range.to) ?? unwritableEmbed(tr.doc, range.from, range.to);
+    if (range === null) {
+        return null;
+    }
+    const before = tr.before;
+    const written = writtenEdit(tr);
+    return unwritableInNote(written.doc, range.from, range.to, {
+        doc: before,
+        mapping: tr.mapping,
+        rewritten: written.rewritten,
+        sourceOf: pos => textblockSource(before, pos),
+    }) ?? unwritableEmbed(tr.doc, range.from, range.to);
 }
 
 /**
  * The range of the new document a transaction changed, which a refusal is
  * decided over — the notes' here, the tables' (`tables.ts`) — or `null` for one
- * that is never refused: no change, a re-sync from the host, an undo.
+ * that is never refused: no change, a re-sync from the host, an undo, a repair
+ * a plugin appends to a transaction already checked (`isRepair`).
  */
 export function refusableRange(tr: Transaction): { from: number; to: number } | null {
-    if (!tr.docChanged || tr.getMeta(PRESERVE_SOURCE_META) === true || tr.getMeta(HISTORY_META) !== undefined) {
+    if (!tr.docChanged || tr.getMeta(PRESERVE_SOURCE_META) === true || tr.getMeta(HISTORY_META) !== undefined || isRepair(tr)) {
         return null;
     }
     let from = Infinity;
@@ -384,7 +399,7 @@ export function notesPlugin(embedInput: Plugin): Plugin {
         // span — with the reason shown beside the caret (`noteRefusal`); and
         // so is a wiki embed made code, superscript or subscript (`unwritableEmbed`).
         filterTransaction(tr) {
-            const reason = notesFilterRefusal(tr);
+            const reason = noteRefusal(tr);
             if (reason !== null) {
                 if (editorView) {
                     showHint(editorView, reason, 'refusal');
@@ -406,7 +421,7 @@ export function notesPlugin(embedInput: Plugin): Plugin {
                 return null;
             }
             const fixed = normalizedSelection(newState, oldState.selection);
-            return fixed ? newState.tr.setSelection(fixed) : null;
+            return fixed ? asRepair(newState.tr.setSelection(fixed)) : null;
         },
         props: {
             handleDOMEvents: {
@@ -520,7 +535,7 @@ export function wrapNodeLockReason(state: EditorState, name?: NoteNodeName): str
         return NESTED_NOTE_LOCK;
     }
     const tr = name === undefined ? null : wrapTransaction(state, name);
-    return tr === null ? null : unwritableInNote(tr.doc, tr.selection.from, tr.selection.to);
+    return tr === null ? null : noteRefusal(tr);
 }
 
 /** Whether the selection is inside a note of this kind. */
@@ -592,6 +607,20 @@ export function unwrapNote(name: NoteNodeName): Command {
         }
         return true;
     };
+}
+
+/**
+ * Why `unwrapNote(name)` is not run here, so Remove note and Remove sidebar
+ * are disabled with it: the filter's reason for the transaction it would
+ * dispatch (`noteRefusal`) — a sidebar's text glued to a letter, a reference's
+ * to a sidebar — or that there is no such note at the selection.
+ */
+export function unwrapNoteRefusal(state: EditorState, name: NoteNodeName): string | null {
+    let reason: string | null = 'There is no note here.';
+    unwrapNote(name)(state, tr => {
+        reason = noteRefusal(tr);
+    });
+    return reason;
 }
 
 /** A note action: inside a note of its kind it removes the note (`unwrapNote`), elsewhere it makes one (`wrapInNote`). */

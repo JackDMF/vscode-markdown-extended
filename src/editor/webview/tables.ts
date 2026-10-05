@@ -41,7 +41,7 @@ import { Node } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Plugin, PluginKey, TextSelection, Transaction } from 'prosemirror-state';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { CellSelection, TableMap, TableRect, addColumn, addRow, deleteColumn, deleteRow, goToNextCell, isInTable, selectedRect, tableEditing } from 'prosemirror-tables';
-import { PRESERVE_SOURCE_META } from '../fidelity';
+import { PRESERVE_SOURCE_META, asRepair } from '../fidelity';
 import { TableAlign, editorSchema } from '../schema';
 import { CELL_BREAK_REFUSAL, serializeNode, unwritableInTable } from '../serialize';
 import { showHint } from './hint';
@@ -462,6 +462,23 @@ function tableDecorations(state: EditorState, flashed: readonly number[]): Decor
 }
 
 /**
+ * `prosemirror-tables`' editing, with the fix-up it appends (a table with
+ * holes made rectangular, a selection normalised) marked as the repair it is
+ * (`REPAIR_META`), so no content filter drops it after the edit it follows.
+ */
+function repairingTableEditing(): Plugin {
+    const plugin = tableEditing();
+    const append = plugin.spec.appendTransaction;
+    return new Plugin({
+        ...plugin.spec,
+        appendTransaction(transactions, oldState, newState) {
+            const tr = append?.call(plugin, transactions, oldState, newState);
+            return tr ? asRepair(tr) : null;
+        },
+    });
+}
+
+/**
  * `prosemirror-tables`' editing (cell selections, arrows, pasting cells, fixing
  * a table with holes), then this module's refusal, invariants and decorations.
  */
@@ -471,7 +488,7 @@ export function tablesPlugins(): Plugin[] {
     /** Set by the transaction that carries new cells, taken by the next view update to start the timer. */
     let flashArmed = false;
     return [
-        tableEditing(),
+        repairingTableEditing(),
         new Plugin<number[]>({
             key: flashKey,
             state: {
@@ -529,7 +546,7 @@ export function tablesPlugins(): Plugin[] {
                 if (!transactions.some(tr => tr.docChanged) || tableFixes(newState.doc).length === 0) {
                     return null;
                 }
-                const tr = normalizeTables(newState.tr);
+                const tr = asRepair(normalizeTables(newState.tr));
                 // A re-sync is the host's document, which a table always is; the fix-up is not a step anybody took.
                 return transactions.some(t => t.getMeta(PRESERVE_SOURCE_META) === true) ? tr.setMeta('addToHistory', false) : tr;
             },

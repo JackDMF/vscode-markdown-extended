@@ -8,6 +8,7 @@ import {
     EXTENSION_ID, EditorPage, clickText, closeEditorPage, computedColour as computed, delay, openEditorPage, shot as saveShot, showDiagnostics, vscodeMarkdownCss,
 } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
 
@@ -55,7 +56,7 @@ suite('Editor chrome (e2e)', () => {
         heading.attrs.reqPrefix = PREFIX;
         heading.content = [{ ...heading.content[0], text: heading.content[0].text.slice(PREFIX.length) }];
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('buildIndex'));
         await showDiagnostics(editor as EditorPage, version, [
             { range: { start: { line: 2, character: 0 }, end: { line: 2, character: 11 } }, severity: 'error', message: 'Unknown requirement state' },

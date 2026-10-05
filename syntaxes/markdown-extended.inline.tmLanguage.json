@@ -115,7 +115,7 @@
       }
     },
     "left_sidebar": {
-      "comment": "As sidebarCanOpen/sidebarCanClose in src/syntax/markers.ts: no ASCII letter or digit before the opening $, no digit after the closing one. Residuals a regex cannot follow: the plugin also allows a space inside ($ left $), skips code spans, links, autolinks, HTML, escapes and a right sidebar whole when it looks for the end; an escaped opener (\\$) opens nothing here either, but one after an escaped backslash (\\\\$) opens in the plugin and not here; a sidebar here is one line.",
+      "comment": "As sidebarCanOpen/sidebarCanClose in src/syntax/markers.ts: no ASCII letter or digit before the opening $, no digit after the closing one. Residuals a regex cannot follow: the plugin also allows a space inside ($ left $), skips code spans, links, autolinks, HTML, escapes and a right sidebar whole when it looks for the end; an escaped opener (\\$) opens nothing here either, but one after an escaped backslash (\\\\$) opens in the plugin and not here; a character reference counts as what it decodes to in the plugin (REQ-&#49;$x$ opens nothing, $x$&#53; does not close), and a lookbehind of fixed length cannot follow its spellings (leading zeros, hex, named references), so it is coloured here; a sidebar here is one line.",
       "name": "markup.leftsidebar.markdown",
       "match": "(?<![A-Za-z0-9\\\\])\\$(\\S(?:.*?\\S)?)\\$(?![0-9])",
       "captures": {
@@ -133,7 +133,7 @@
       }
     },
     "right_sidebar": {
-      "comment": "As sidebarCanOpen in src/syntax/markers.ts: no ASCII letter or digit before the opening @, so an email address opens nothing. Residuals a regex cannot follow: the plugin also allows a space inside (@ right @), skips code spans, links, autolinks, HTML, escapes and a left sidebar whole when it looks for the end; an escaped opener (\\@) opens nothing here either, but one after an escaped backslash (\\\\@) opens in the plugin and not here; a sidebar here is one line.",
+      "comment": "As sidebarCanOpen in src/syntax/markers.ts: no ASCII letter or digit before the opening @, so an email address opens nothing. Residuals a regex cannot follow: the plugin also allows a space inside (@ right @), skips code spans, links, autolinks, HTML, escapes and a left sidebar whole when it looks for the end; an escaped opener (\\@) opens nothing here either, but one after an escaped backslash (\\\\@) opens in the plugin and not here; a character reference counts as what it decodes to in the plugin (REQ-&#49;@x@ opens nothing), and a lookbehind of fixed length cannot follow its spellings (leading zeros, hex, named references), so it is coloured here; a sidebar here is one line.",
       "name": "markup.rightsidebar.markdown",
       "match": "(?<![A-Za-z0-9\\\\])@(\\S(?:.*?\\S)?)@",
       "captures": {

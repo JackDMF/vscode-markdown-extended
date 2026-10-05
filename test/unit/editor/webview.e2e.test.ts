@@ -4,6 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { closeEditorPage, EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const FRONT_AND_HEADING = [
     '---',
@@ -88,7 +89,7 @@ suite('Editor webview (e2e)', () => {
 
         const json = await requirementDocument();
         assert.deepStrictEqual((await posted()).map(m => m.type), ['ready']);
-        await send({ type: 'document', json, version: 1, defaultWrap: 90, includes: false });
+        await send({ type: 'document', json, version: 1, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForSelector('.ProseMirror');
     });
 
@@ -189,7 +190,7 @@ suite('Editor webview (e2e)', () => {
         this.timeout(15000);
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const next = `${FRONT_AND_HEADING}Rewritten by another writer.\n`;
-        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, next, {})), version: 5, defaultWrap: 90, includes: false });
+        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, next, {})), version: 5, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror p')?.textContent === 'Rewritten by another writer.');
         const before = (await edits()).length;
         await page.click('.ProseMirror p');
@@ -205,7 +206,7 @@ suite('Editor webview (e2e)', () => {
         // Another writer appends a paragraph (or a save trims the file): the
         // host posts the text it now holds.
         const appended = `${typed}\nAppended elsewhere.\n`;
-        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, appended, {})), version: 6, defaultWrap: 90, includes: false });
+        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, appended, {})), version: 6, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelectorAll('.ProseMirror p').length === 2);
         await settle();
         assert.strictEqual((await edits()).length, before + 1, 'taking the host\'s document wrote nothing back');
@@ -261,7 +262,7 @@ suite('Editor webview (e2e)', () => {
                 expansion({ rule: 'req-includes', kind: 'expansion', snippet: 'gone', line: 4, missing: true }, '<p>Snippet not found.</p>'),
             ],
         };
-        await send({ type: 'document', json: { doc, eol: '\n', tail: '' }, version: 9, defaultWrap: 90, includes: true });
+        await send({ type: 'document', json: { doc, eol: '\n', tail: '' }, version: 9, defaultWrap: 90, includes: true, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelectorAll('.mep-injected-block').length === 2);
         // Each expansion selected in turn: its bar names it and lists its verbs.
         const barOf = async (index: number) => {
@@ -299,7 +300,7 @@ suite('Editor webview (e2e)', () => {
 
     test('Enter inside a requirement heading starts a paragraph, so the id is written once', async function () {
         this.timeout(10000);
-        await send({ type: 'document', json: await requirementDocument(), version: 11, defaultWrap: 90, includes: false });
+        await send({ type: 'document', json: await requirementDocument(), version: 11, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForSelector('.ProseMirror h2 .mep-heading-text');
 
         const before = (await edits()).length;
@@ -326,7 +327,7 @@ suite('Editor webview (e2e)', () => {
 
     test('Ctrl+S inside a raw block\'s open source saves that source, and closing it afterwards writes nothing more', async function () {
         this.timeout(15000);
-        await send({ type: 'document', json: await requirementDocument(), version: 12, defaultWrap: 90, includes: false });
+        await send({ type: 'document', json: await requirementDocument(), version: 12, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelectorAll('.mep-raw-block table td').length === 2);
         await page.click('.mep-raw-block .mep-atom-content');
         await page.click(`${SELECTED_BAR} [data-verb="edit-source"]`);
@@ -424,7 +425,7 @@ suite('Editor revealing a link\'s fragment (e2e)', () => {
         }
         page = editor.page;
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-        await editor.send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE_TEXT, {})), version: 1, defaultWrap: 90, includes: false });
+        await editor.send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE_TEXT, {})), version: 1, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Slugged heading'));
     });
 

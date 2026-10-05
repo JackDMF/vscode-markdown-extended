@@ -9,6 +9,7 @@ import { CONTAINER_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import type { WebviewMessage } from '../../../src/editor/protocol';
 import { closeEditorPage, EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -98,7 +99,7 @@ suite('Editor Attributes… (e2e)', () => {
     const showDocument = async (text: string) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('last paragraph'));
         await page.mouse.move(2, 2);
         await page.evaluate(() => {

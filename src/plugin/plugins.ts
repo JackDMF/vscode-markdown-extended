@@ -7,28 +7,22 @@ import { MarkdownItAttrs } from './markdownItAttrs';
 import { MarkdownItTableOfContents } from './markdownItTableOfContents';
 import { MarkdownItHtml5Embed } from './markdownItHtml5Embed';
 import { MarkdownItCheckbox } from './markdownItCheckbox';
-import { MarkdownItWikiEmbed } from './markdownItWikiEmbed';
 import { tokenText } from '../syntax/tokenText';
 import { Config } from '../services/common/config';
-// eslint-disable-next-line @typescript-eslint/naming-convention
-import * as MarkdownItSidenote from './markdownItSidenote';
 import { MarkdownIt, Token } from '../@types/markdown-it';
+import { INLINE_PLUGINS, MULTIMD_TABLE_OPTIONS } from './inlinePlugins';
 
 // Import all external markdown-it plugins statically for bundling
-import markdownItFootnote from 'markdown-it-footnote';
 import markdownItAbbr from 'markdown-it-abbr';
-import markdownItSupAlt from 'markdown-it-sup-alt';
-import markdownItSubAlt from 'markdown-it-sub-alt';
-import markdownItKbd from 'markdown-it-kbd';
 import markdownItIb from 'markdown-it-ib';
-import markdownItMark from 'markdown-it-mark';
 import markdownItDeflist from 'markdown-it-deflist';
 import { full as markdownItEmoji } from 'markdown-it-emoji';
 import markdownItMultimdTable from 'markdown-it-multimd-table';
-import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
 import markdownItCjkFriendly from 'markdown-it-cjk-friendly';
 
 interface MarkdownItPlugin {
+    /** Its name in the registry below (`markdown-it-sidenote`). */
+    name: string;
     plugin: (md: MarkdownIt, ...args: any[]) => void;
     args: any[];
 }
@@ -39,27 +33,22 @@ const myPlugins: Record<string, any> = {
     'markdown-it-admonition': MarkdownItAdmonition,
     'markdown-it-anchor': MarkdownItAnchorLink,
     'markdown-it-helper': MarkdownItExportHelper,
-    'markdown-it-sidenote': MarkdownItSidenote.default,
+    // The plugins with an inline rule, which the Visual Editor's page runs too
+    // (`inlinePlugins.ts`): footnote, sup-alt, sub-alt, wiki-embed, kbd, mark,
+    // sidenote, bracketed-spans.
+    ...INLINE_PLUGINS,
     // External plugins - now statically imported for bundling
-    'markdown-it-footnote': markdownItFootnote,
     'markdown-it-abbr': markdownItAbbr,
-    'markdown-it-sup-alt': markdownItSupAlt,
-    'markdown-it-sub-alt': markdownItSubAlt,
     // Our own rule in markdown-it-checkbox's markup: keeps the text before a box.
     'markdown-it-checkbox': MarkdownItCheckbox,
     // Wrapped: leaves the spans markdown-it-multimd-table laid out alone.
     'markdown-it-attrs': MarkdownItAttrs,
-    // Before kbd: `![[...]]` is a wiki embed, read as literal text, never a key.
-    'markdown-it-wiki-embed': MarkdownItWikiEmbed,
-    'markdown-it-kbd': markdownItKbd,
     'markdown-it-ib': markdownItIb,
-    'markdown-it-mark': markdownItMark,
     'markdown-it-deflist': markdownItDeflist,
     'markdown-it-emoji': markdownItEmoji,
     'markdown-it-multimd-table': markdownItMultimdTable,
     // Wrapped: a media link hides only its own text, and `.ts` stays a link.
     'markdown-it-html5-embed': MarkdownItHtml5Embed,
-    'markdown-it-bracketed-spans': markdownItBracketedSpans,
     // Wrapped: links each heading by the id the preview gives it, and reads `@[toc]`.
     'markdown-it-table-of-contents': MarkdownItTableOfContents,
     'markdown-it-cjk-friendly': markdownItCjkFriendly,
@@ -88,7 +77,7 @@ export const plugins: MarkdownItPlugin[] = [
     $('markdown-it-mark'),
     $('markdown-it-deflist'),
     $('markdown-it-emoji'),
-    $('markdown-it-multimd-table', { multiline: true, rowspan: true, headerless: true }),
+    $('markdown-it-multimd-table', MULTIMD_TABLE_OPTIONS),
     // Registered once per syntax: markdown-it-html5-embed 0.3.3 keeps the
     // default image rule and the default link rule in one hoisted `var`, so
     // with both options in one call every image is rendered by the link's
@@ -108,5 +97,5 @@ function $(name: string, ...args: any[]): MarkdownItPlugin | undefined {
     
     const plugin = myPlugins[name];
     
-    return plugin ? { plugin, args } : undefined;
+    return plugin ? { name, plugin, args } : undefined;
 }

@@ -40,14 +40,14 @@ import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
-import { NoteNodeName, notesFilterRefusal, unwrapNote } from './notes';
+import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
-    changeLinkTransaction, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkTransaction,
-    removeSpanTransaction, sameObject, unwrapTransaction,
+    changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
+    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
+    removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { attributesStep } from './attributes';
 import { Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
@@ -288,46 +288,34 @@ function isSidebar(name: NoteNodeName): boolean {
 }
 
 /**
+ * A verb's refusal builds the whole transaction it would dispatch and asks the
+ * filters' own check of it (`noteRefusal`, `tableRefusal`), and a bar is
+ * presented on every refresh and hover: each is read once per state, by the
+ * verb and the object's place (`key`), not once per presentation.
+ */
+const refusals = new WeakMap<EditorState, Map<string, string | null>>();
+
+/** The refusal `read` gives in `state`, remembered under `key` (`refusals`). */
+function refusalOnce(state: EditorState, key: string, read: () => string | null): string | null {
+    let byKey = refusals.get(state);
+    if (byKey === undefined) {
+        byKey = new Map();
+        refusals.set(state, byKey);
+    }
+    if (!byKey.has(key)) {
+        byKey.set(key, read());
+    }
+    return byKey.get(key) ?? null;
+}
+
+/**
  * Why the plugins' filters (the notes' and the tables') would refuse `tr` — asked
  * of the transaction before it is dispatched, so a verb shows the reason as a
  * disabled button instead of making the filter say it after the click — or `null`.
  * No transaction is no embed to act on.
  */
 function embedRefusal(tr: Transaction | null): string | null {
-    return tr === null ? 'There is no embed here.' : notesFilterRefusal(tr) ?? tableRefusal(tr);
-}
-
-/** The refusals of an embed's two verbs: `null` where the verb can be chosen. */
-interface EmbedRefusals {
-    asText: string | null;
-    remove: string | null;
-}
-
-/**
- * Each verb's refusal builds a whole transaction and reads the range it changed, and a bar is presented on
- * every refresh and hover: an embed's are read once per state (and place), not once per presentation.
- */
-const embedRefusals = new WeakMap<EditorState, Map<string, EmbedRefusals>>();
-
-function refusalsOfEmbed(state: EditorState, object: EditorObject): EmbedRefusals {
-    let byPlace = embedRefusals.get(state);
-    if (byPlace === undefined) {
-        byPlace = new Map();
-        embedRefusals.set(state, byPlace);
-    }
-    const key = `${object.from}:${object.to}`;
-    let found = byPlace.get(key);
-    if (found === undefined) {
-        found = {
-            // Refused as the notes' and the tables' filters would refuse it: the text takes the atom's
-            // marks, and an attribute span over it that holds a note marker (or `|` in a cell) is
-            // allowed over an atom and not over text.
-            asText: embedRefusal(embedAsTextTransaction(state, object.from, object.to)),
-            remove: embedRefusal(deleteObjectTransaction(state, object)),
-        };
-        byPlace.set(key, found);
-    }
-    return found;
+    return tr === null ? 'There is no embed here.' : noteRefusal(tr) ?? tableRefusal(tr);
 }
 
 /** What the verbs of a wiki embed do: the bar gives them, the verbs only say which. */
@@ -338,20 +326,23 @@ export interface EmbedActions {
 
 /** The verbs of the wiki embed `object`, each with the reason it cannot be chosen in `state`, if there is one. */
 export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
-    const refusals = refusalsOfEmbed(state, object);
+    const place = `${object.from}:${object.to}`;
     return [
         {
             id: 'edit-wiki-embed-as-text',
             label: 'Edit as text',
             title: 'Make it plain text, ![[name]], to edit its name; delete the last ] and type it again to make it an embed.',
-            refusal: refusals.asText,
+            // Refused as the notes' and the tables' filters would refuse it: the text takes the atom's
+            // marks, and an attribute span over it that holds a note marker (or `|` in a cell) is
+            // allowed over an atom and not over text.
+            refusal: refusalOnce(state, `edit-wiki-embed-as-text@${place}`, () => embedRefusal(embedAsTextTransaction(state, object.from, object.to))),
             run: () => actions.asText(),
         },
         {
             id: 'remove-wiki-embed',
             label: 'Remove embed',
             title: 'The embed goes from the text.',
-            refusal: refusals.remove,
+            refusal: refusalOnce(state, `remove-wiki-embed@${place}`, () => embedRefusal(deleteObjectTransaction(state, object))),
             run: () => actions.remove(),
         },
     ];
@@ -1177,14 +1168,16 @@ class ObjectToolbarView implements PluginView {
      * goes back into the text **first**: a field's commit has already removed
      * the input, and the dispatch's own refresh, seeing the focus on the body,
      * would hide the bar and re-arm the inline delay — the bar blinking out and
-     * coming back late after every change of a URL or a source.
+     * coming back late after every change of a URL or a source. The hint that
+     * it was done is said only when the state moved: a transaction a plugin's
+     * filter refused leaves the view on the very state it had, and the filter
+     * has said why beside the caret — the success hint would cover that, and
+     * be untrue.
      */
     private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string): void {
         this.view.focus();
-        const current = currentObject(this.view.state, object);
         const before = this.view.state;
-        // A transaction a plugin's filter refused leaves the state the same object, and the filter has said
-        // why beside the caret: the success hint would cover that, and be untrue.
+        const current = currentObject(before, object);
         if (current !== null && make(current) && this.view.state !== before && hint !== undefined) {
             this.say(`${hint} — ${undoKey()}`, 'neutral');
         }
@@ -1296,13 +1289,14 @@ class ObjectToolbarView implements PluginView {
                             title: sidebar
                                 ? 'The sidebar goes; its text stays in the sentence, with its formatting.'
                                 : 'The note goes; its reference stays in the sentence, with its formatting. The note\'s own text is dropped.',
+                            refusal: refusalOnce(view.state, `remove-note@${object.from}:${object.to}`, () => unwrapNoteRefusal(view.state, name)),
                             run: () => this.act(object, () => unwrapNote(name)(view.state, dispatch), sidebar ? 'Sidebar removed' : 'Note removed'),
                         },
                         {
                             id: 'convert-note',
                             label: CONVERT_LABELS[name],
                             title: `Make it a ${NOTE_LABELS[NOTE_CONVERSION[name]].toLowerCase()}, its text kept.`,
-                            refusal: convertNoteRefusal(view.state, object.from),
+                            refusal: refusalOnce(view.state, `convert-note@${object.from}:${object.to}`, () => convertNoteRefusal(view.state, object.from)),
                             run: () => this.act(object, current => {
                                 const tr = convertNoteTransaction(view.state, current.from);
                                 if (tr) {
@@ -1350,6 +1344,7 @@ class ObjectToolbarView implements PluginView {
                             id: 'remove-link',
                             label: 'Remove link',
                             title: 'The link goes; its text stays.',
+                            refusal: refusalOnce(view.state, `remove-link@${object.from}:${object.to}`, () => removeLinkRefusal(view.state, object)),
                             run: () => this.act(object, current => {
                                 if (current.kind !== 'link') {
                                     return false;
@@ -1390,7 +1385,13 @@ class ObjectToolbarView implements PluginView {
                             },
                         },
                         { id: 'open-image', label: 'Open file', title: `Open ${src} (as Ctrl+click on a link does).`, run: () => host.openLink(src) },
-                        { id: 'remove-image', label: 'Remove image', title: 'The image goes from the text.', run: () => this.remove(object, 'Image removed') },
+                        {
+                            id: 'remove-image',
+                            label: 'Remove image',
+                            title: 'The image goes from the text.',
+                            refusal: refusalOnce(view.state, `remove-image@${object.from}:${object.to}`, () => deleteObjectRefusal(view.state, object)),
+                            run: () => this.remove(object, 'Image removed'),
+                        },
                     ],
                 };
             }
@@ -1415,6 +1416,7 @@ class ObjectToolbarView implements PluginView {
                             id: 'remove-attributes',
                             label: 'Remove attributes, keep text',
                             title: 'The span goes; its text stays, with its formatting.',
+                            refusal: refusalOnce(view.state, `remove-attributes@${object.from}:${object.to}`, () => removeSpanRefusal(view.state, object)),
                             run: () => this.apply(object, current => (current.kind === 'span' ? removeSpanTransaction(view.state, current) : null), 'Attributes removed'),
                         },
                     ],
@@ -1718,8 +1720,10 @@ class ObjectToolbarView implements PluginView {
      * where it means "none"); applied otherwise.
      */
     private commitLiteral(object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): void {
-        const place = object.kind === 'span' ? 'span' : 'block';
-        const refusal = hint !== undefined && value.trim() === '' ? null : literalRefusal(value, place);
+        const place = 'node' in object ? literalPlaceOf(object.node) : 'span';
+        const current = currentObject(this.view.state, object);
+        const refusal = hint !== undefined && value.trim() === '' ? null
+            : current?.kind === 'span' ? changeSpanRefusal(this.view.state, current, value) : literalRefusal(value, place);
         if (refusal !== null) {
             this.view.focus();
             this.say(refusal, 'refusal');

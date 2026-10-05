@@ -1,13 +1,16 @@
 /**
- * What `markdown-it` resolves to in the editor page's bundle (the `alias` in
- * `esbuild.js`), in place of the real parser.
+ * What `markdown-it` resolves to for `prosemirror-markdown`, and for it alone,
+ * in the editor page's bundle (`prosemirrorMarkdownParserStub` in
+ * `esbuild.js`). The page bundles the real markdown-it for its own engine
+ * (`src/editor/inlineEngine.ts`), which every other import resolves to.
  *
- * The page serializes and never parses — the host parses and sends the
- * document — but `prosemirror-markdown`'s entry module builds its
- * `defaultMarkdownParser` when it loads, calling `markdownit("commonmark", …)`,
- * and so would carry all of markdown-it into the page for an object nothing
- * uses. `MarkdownParser`'s constructor only stores the tokenizer it is given; it
- * is called in `parse()`, which the page never calls. So the stub has to be
+ * The page serializes and never parses with prosemirror-markdown — the host
+ * parses and sends the document — but `prosemirror-markdown`'s entry module
+ * builds its `defaultMarkdownParser` when it loads, calling
+ * `markdownit("commonmark", …)`, and so would build a whole markdown-it, its
+ * rules and its linkify, as the page loads, for an object nothing uses.
+ * `MarkdownParser`'s constructor only stores the tokenizer it is given; it is
+ * called in `parse()`, which the page never calls. So the stub has to be
  * callable, with or without `new`, and nothing more.
  *
  * What would break it: `prosemirror-markdown` starting to use the tokenizer

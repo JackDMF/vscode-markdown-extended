@@ -18,7 +18,10 @@ import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/ho
 import { GITHUB_SLUG_REPLACE } from '../../../src/syntax/githubSlugRegex';
 import { headingIds } from '../../../src/syntax/headingSlug';
 import { headingIds as renderedHeadingIds, secondAnchors } from '../vscodeHeadings';
-import { blockLineRanges } from '../../../src/editor/parse';
+import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
+import { createEditorEngine } from '../../../src/editor/engine';
+import { blockLineRanges, parseDocument } from '../../../src/editor/parse';
+import { plugins } from '../../../src/plugin/plugins';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { ActiveVisualEditor, ActiveVisualEditorTracker, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
 
@@ -326,6 +329,73 @@ suite('Editor host: session protocol', () => {
         await session.settled();
         assert.strictEqual(document.getText(), plain);
         assert.strictEqual(webview.documents().length, before + 1);
+    });
+});
+
+suite('Editor host: the page reads a textblock as the engine that parsed its document', () => {
+    test('the document carries its engine\'s inline definition, and markdown.preview.linkify turned off posts it again, saying so', async function () {
+        this.timeout(30000);
+        const uri = tempMarkdown('See http://e.com/ $note$ here.\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const engines = new EditorEngineHost(EXTENSION_ID, () => undefined);
+        const webview = new FakeWebview();
+        const session = new VisualEditorSession(document, webview, { engine: () => engines.get(), onDidChangeEngine: engines.onDidChange, log: () => undefined });
+        const preview = () => vscode.workspace.getConfiguration('markdown.preview');
+        try {
+            webview.send({ type: 'ready' });
+            await session.settled();
+            assert.deepStrictEqual(webview.documents().map(d => d.inline), [{ ...DEFAULT_INLINE_ENGINE, math: true }],
+                'linkify and math on, as VS Code ships them, and every inline plugin of the registry');
+            await preview().update('linkify', false, vscode.ConfigurationTarget.Global);
+            assert.ok(await until(() => (webview.documents().length > 1 ? true : undefined), 10000), 'the document is posted again');
+            await session.settled();
+            assert.deepStrictEqual(webview.documents().map(d => d.inline.linkify), [true, false]);
+        } finally {
+            await preview().update('linkify', undefined, vscode.ConfigurationTarget.Global);
+            session.dispose();
+            engines.dispose();
+            fs.rmSync(uri.fsPath, { force: true });
+        }
+    });
+
+    test('VS Code\'s math, its own extender run, is in the definition exactly while it reads $, and markdown.math.enabled turned off posts it again', async function () {
+        this.timeout(30000);
+        const math = vscode.extensions.getExtension<{ extendMarkdownIt(md: MarkdownIt): MarkdownIt }>('vscode.markdown-math');
+        assert.ok(math, 'VS Code ships its math extension');
+        const api = await math.activate();
+        const extended = () => createEditorEngine({ linkify: true, typographer: false, plugins, extend: [md => api.extendMarkdownIt(md)] });
+        const kinds = (md: MarkdownIt) => {
+            const found: string[] = [];
+            parseDocument(md, 'See $a note$ here.\n', {}).doc.descendants(node => {
+                found.push(node.type.name);
+            });
+            return found;
+        };
+        const uri = tempMarkdown('See @a note@ here.\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const engines = new EditorEngineHost(EXTENSION_ID, () => undefined);
+        const webview = new FakeWebview();
+        const session = new VisualEditorSession(document, webview, { engine: () => engines.get(), onDidChangeEngine: engines.onDidChange, log: () => undefined });
+        const settings = () => vscode.workspace.getConfiguration('markdown.math');
+        try {
+            const on = extended();
+            assert.strictEqual(inlineEngineDefinition(on).math, true, 'math on, as VS Code ships it');
+            assert.ok(!kinds(on).includes('left_sidebar'), 'the host reads `$a note$` as math, no left sidebar');
+            webview.send({ type: 'ready' });
+            await session.settled();
+            await settings().update('enabled', false, vscode.ConfigurationTarget.Global);
+            assert.ok(await until(() => (webview.documents().length > 1 ? true : undefined), 10000), 'the document is posted again');
+            await session.settled();
+            assert.deepStrictEqual(webview.documents().map(d => d.inline.math), [true, false]);
+            const off = extended();
+            assert.strictEqual(inlineEngineDefinition(off).math, false, 'the same extender, math off, adds no rule');
+            assert.ok(kinds(off).includes('left_sidebar'), 'the host reads the left sidebar');
+        } finally {
+            await settings().update('enabled', undefined, vscode.ConfigurationTarget.Global);
+            session.dispose();
+            engines.dispose();
+            fs.rmSync(uri.fsPath, { force: true });
+        }
     });
 });
 

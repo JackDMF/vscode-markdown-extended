@@ -5,6 +5,7 @@ import { EditorState, NodeSelection, TextSelection, Transaction } from 'prosemir
 import { splitListItem } from 'prosemirror-schema-list';
 import { splitBlock } from 'prosemirror-commands';
 import { parseDocument, serializeDocument } from '../../../src/editor';
+import { withoutId } from '../../../src/editor/attrs';
 import { editorSchema } from '../../../src/editor/schema';
 import {
     ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, INDENTED_CODE_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt,
@@ -267,6 +268,12 @@ suite('Editor Attributes…: what an edit leaves of a literal', () => {
             state = state.apply(tr);
         });
         assert.strictEqual(text(state), '- alpha {#a}\n- beta\n');
+        // Only its id: the class stays on both halves, as on a copy.
+        let classed = caretAt(stateOf('- alpha beta {.x #a}\n'), 'beta');
+        splitListItem(editorSchema.nodes.list_item)(classed, tr => {
+            classed = classed.apply(tr);
+        });
+        assert.strictEqual(text(classed), '- alpha {.x #a}\n- beta {.x}\n');
     });
 
     test('typing in an item keeps its literal', () => {
@@ -342,5 +349,44 @@ suite('Editor Attributes…: transient states, splits and braces that are text (
         // A heading and an item likewise.
         assert.strictEqual(written('## Sets \\{x\\}\n', 'Sets', '{.s}').out, '## Sets \\{x\\} {.s}\n');
         assert.strictEqual(written('- Sets \\{x\\}\n', 'Sets', '{.s}').out, '- Sets \\{x\\} {.s}\n');
+    });
+});
+
+suite('Editor Attributes…: a fence\'s literal is read on its own fence, a heading\'s whole (review)', () => {
+    const fenceAttrs = (source: string) => hostEngine().parse(source, {}).find(t => t.type === 'fence')?.attrs ?? null;
+
+    test('a ~~~ fence keeps, takes and copies a literal with a backtick, which a ``` fence cannot hold', () => {
+        const opened = stateOf('~~~js {title="a`b"}\ncode\n~~~\n');
+        assert.strictEqual(opened.doc.child(0).type.name, 'code_block');
+        assert.strictEqual(opened.doc.child(0).attrs.attrsSuffix, '{title="a`b"}', 'the file\'s literal is the block\'s');
+        const out = text(set(caretAt(stateOf('~~~js\ncode\n~~~\n'), 'code'), '{k=a`b}'));
+        assert.strictEqual(out, '~~~js {k=a`b}\ncode\n~~~\n');
+        assert.deepStrictEqual(fenceAttrs(out), [['k', 'a`b']]);
+        const backticks = caretAt(stateOf('```js\ncode\n```\n'), 'code');
+        const refused = commitAttributes(backticks, targetAt(backticks), '{k=a`b}');
+        assert.ok(refused !== null && 'refusal' in refused && /backtick/.test(refused.refusal), 'a ``` fence refuses it, saying why');
+        assert.strictEqual(withoutId('{title="a`b" #w}', 'code_block~'), '{title=a`b}', 'a copy on a ~~~ fence keeps it');
+        assert.strictEqual(withoutId('{title="a`b" #w}', 'code_block'), null, 'on a ``` fence there is none to keep');
+    });
+
+    test('a heading whose literal holds a { in a value keeps the whole literal through an edit', () => {
+        const state = stateOf('# H {title="a{b"}\n');
+        assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, '{title="a{b"}');
+        const edited = state.apply(state.tr.insertText('X', posOf(state.doc, 'H') + 1));
+        const out = text(edited);
+        assert.strictEqual(out, '# HX {title="a{b"}\n');
+        assert.deepStrictEqual(hostEngine().parse(out, {}).find(t => t.type === 'heading_open')?.attrs, [['title', 'a{b']]);
+    });
+
+    test('a heading with a closing # run after its literal keeps the literal, which markdown-it reads before the run', () => {
+        const source = '# Title {#id} ##\n';
+        assert.deepStrictEqual(hostEngine().parse(source, {}).find(t => t.type === 'heading_open')?.attrs, [['id', 'id']]);
+        const state = stateOf(source);
+        assert.strictEqual(state.doc.child(0).type.name, 'heading', 'an editable heading, not a source block');
+        assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, '{#id}');
+        assert.strictEqual(state.doc.child(0).attrs.anchor, 'id');
+        const out = text(state.apply(state.tr.insertText('X', posOf(state.doc, 'Title') + 5)));
+        assert.strictEqual(out, '# TitleX {#id}\n');
+        assert.deepStrictEqual(hostEngine().parse(out, {}).find(t => t.type === 'heading_open')?.attrs, [['id', 'id']]);
     });
 });

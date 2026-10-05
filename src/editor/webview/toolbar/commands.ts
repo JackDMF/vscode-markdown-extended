@@ -11,7 +11,8 @@ import { isInTable } from 'prosemirror-tables';
 import { parseAttrsLiteral } from '../../attrs';
 import { PRESERVE_SOURCE_META } from '../../fidelity';
 import { SUFFIX_NODES, editorSchema } from '../../schema';
-import { RAW_TEXT_MARKS, serializeNode, unwritableInNote } from '../../serialize';
+import { serializeNode } from '../../serialize';
+import { noteRefusal } from '../notes';
 import { ActionApply, BlockTarget, FOOTNOTE_LABEL } from './actions';
 
 const nodes = editorSchema.nodes;
@@ -72,22 +73,21 @@ function markTransaction(state: EditorState, type: MarkType, markup: string | nu
 }
 
 /**
- * Why toggling `type` here would make a note the serializer cannot write back
- * (`unwritableInNote`), or `null`. Only code, superscript and subscript can:
- * their text is written as it is, so over a note (`^a ++b|c++ d^`) or over a
- * note part's terminator the next parse would read another document.
+ * Why the notes plugin's filter would refuse a mark toggle's transaction, or
+ * `null` — asked of the filter's own check (`noteRefusal`), so a button is
+ * disabled exactly where pressing it would be refused: code, superscript or
+ * subscript over a note or a reference's `|`, and any mark whose delimiters
+ * would glue a sidebar to a letter or digit (`a **x**$y$`, `a x$y$` once
+ * code is taken off `x`).
  */
-function markRefusalOf(state: EditorState, type: MarkType, tr: Transaction | null): string | null {
-    if (!RAW_TEXT_MARKS.has(type.name) || tr === null || !tr.docChanged) {
-        return null;
-    }
-    return unwritableInNote(tr.doc, state.selection.from, state.selection.to);
+function markRefusalOf(tr: Transaction | null): string | null {
+    return tr === null ? null : noteRefusal(tr);
 }
 
 function toggleMarkWith(type: MarkType, markup: string | null, removes: (state: EditorState) => boolean): Command {
     return (state, dispatch) => {
         const tr = markTransaction(state, type, markup, removes);
-        if (tr === null || markRefusalOf(state, type, tr) !== null) {
+        if (tr === null || markRefusalOf(tr) !== null) {
             return false;
         }
         dispatch?.(tr);
@@ -97,7 +97,7 @@ function toggleMarkWith(type: MarkType, markup: string | null, removes: (state: 
 
 /** Why a toolbar button's mark cannot be toggled here, for its tooltip; `null` when nothing refuses it. */
 export function markRefusal(state: EditorState, type: MarkType, markup: string | null): string | null {
-    return markRefusalOf(state, type, markTransaction(state, type, markup, s => markActive(s, type, markup)));
+    return markRefusalOf(markTransaction(state, type, markup, s => markActive(s, type, markup)));
 }
 
 /**

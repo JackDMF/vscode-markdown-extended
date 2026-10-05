@@ -7,7 +7,7 @@ import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, p
 import { createPositionMap } from '../../../src/editor/positions';
 import { unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
 import { headingAnchors } from '../../../src/editor/host/links';
-import { notesFilterRefusal } from '../../../src/editor/webview/notes';
+import { noteRefusal } from '../../../src/editor/webview/notes';
 import { tableRefusal } from '../../../src/editor/webview/tables';
 import { objectOfNode } from '../../../src/editor/webview/objects';
 import { wikiEmbedVerbs } from '../../../src/editor/webview/objectToolbar';
@@ -550,9 +550,9 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         };
         for (const [source, literal] of [['X $![[x]]$ y.\n', '{title="p$q"}'], ['X @![[x]]@ y.\n', '{title="p@q"}'], ['X ++ref|![[x]]++ y.\n', '{title="p|q"}']]) {
             const state = spanned(source, literal);
-            assert.ok(notesFilterRefusal(asText(state))?.includes('attribute span'), source);
+            assert.ok(noteRefusal(asText(state))?.includes('attribute span'), source);
             const [at] = embedPositions(state.doc);
-            assert.strictEqual(notesFilterRefusal(state.tr.delete(at, at + 1)), null, `the atom alone is removable: ${source}`);
+            assert.strictEqual(noteRefusal(state.tr.delete(at, at + 1)), null, `the atom alone is removable: ${source}`);
         }
         const inCell = spanned('| a |\n| - |\n| ![[x]] |\n', '{title="p|q"}');
         assert.ok(tableRefusal(asText(inCell))?.includes('attribute span'));
@@ -560,7 +560,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         for (const source of ['X $![[x]]$ y.\n', '| a |\n| - |\n| ![[x]] |\n', 'Plain ![[x]].\n']) {
             const state = EditorState.create({ doc: parseDocument(md, source).doc });
             const tr = asText(state);
-            assert.strictEqual(notesFilterRefusal(tr) ?? tableRefusal(tr), null, source);
+            assert.strictEqual(noteRefusal(tr) ?? tableRefusal(tr), null, source);
         }
     });
 
@@ -584,7 +584,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.deepStrictEqual([asText.id, remove.id], ['edit-wiki-embed-as-text', 'remove-wiki-embed']);
         assert.ok(asText.refusal?.startsWith(marker), `Edit as text: ${asText.refusal}`);
         const [at] = embedPositions(over.doc);
-        assert.strictEqual(notesFilterRefusal(over.tr.delete(at, at + 1)), null, 'the filters let the atom go');
+        assert.strictEqual(noteRefusal(over.tr.delete(at, at + 1)), null, 'the filters let the atom go');
         assert.strictEqual(remove.refusal, null, 'Remove embed is offered');
 
         // The span over the text beside it, in a note the filters would refuse a change to: both verbs carry the reason.

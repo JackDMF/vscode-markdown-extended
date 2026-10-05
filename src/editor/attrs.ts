@@ -1,12 +1,11 @@
 /**
  * markdown-it-attrs' `{…}` literal, read the way the plugin reads it.
  *
- * The one piece of syntax the page must understand without the engine: an
- * attribute span (`[text]{.a}`) and a block's attribute suffix are drawn with
- * the attributes their literal gives, and a literal typed into a field has to be
- * checked where no parser is. Everything else about a literal — where it stands,
- * what it attaches to — is the host's parse (`blocks.ts`); this module only
- * turns a literal into attribute pairs and back.
+ * An attribute span (`[text]{.a}`) and a block's attribute suffix are drawn
+ * with the attributes their literal gives, and a literal typed into a field is
+ * checked before it is written. Everything else about a literal — where it
+ * stands, what it attaches to — is the host's parse (`blocks.ts`); this module
+ * only turns a literal into attribute pairs and back.
  *
  * `readAttrs` is a port of the plugin's `getAttrs`, `findRightDelimiter` and
  * `findLeftDelimiter` (markdown-it-attrs 4.5, `utils.js`), with the default
@@ -16,13 +15,24 @@
  *
  * One rule is the extension's own, not the plugin's: a brace that is the text's
  * (`isTextBrace`, `src/syntax/attrsLiteral.ts`) is no literal. The preview's
- * wrapper of the plugin keeps such a brace from it, and this module reads it so,
- * so the preview and the editor agree.
+ * wrapper of the plugin keeps such a brace from it, and `parseAttrsLiteral`
+ * reads it so, so the preview and the editor agree.
  *
- * It imports only that module, which imports nothing, so the page can load it.
+ * What the port does not model is where a literal is read. The plugin reads a
+ * fence's literal off its info string and a table's off the raw text of the
+ * paragraph under it, but a paragraph's, a heading's, a list's, a quote's, a
+ * rule's and a span's off the tokens markdown-it's inline rules made of it —
+ * and there a `\`, an entity, a code span, emphasis, HTML, a URL or a plugin's
+ * markup cuts it into pieces the plugin no longer sees as attributes, so the
+ * preview shows it as text. `parseAttrsLiteral` only parses; whether the
+ * preview reads a literal in a place is asked of markdown-it-attrs itself, in
+ * the smallest source for that place (`attrsReadAt`), and that one answer is
+ * what the host's parse recognises a literal by (`blocks.ts`), what the
+ * Attributes field accepts and what a copy keeps (`withoutId`).
  */
 
 import { findLeftDelimiter, findRightDelimiter, isTextBrace, isUnescapedDoubleQuote } from '../syntax/attrsLiteral';
+import { InlineEngineDefinition, attrsEngineFor, currentInlineDefinition } from './inlineEngine';
 
 export { findLeftDelimiter, findRightDelimiter };
 
@@ -34,9 +44,12 @@ export type AttrPair = [string, string];
  * last `{` outside a quoted value, through the end, trailing spaces aside —
  * when it is a literal the plugin takes as attributes (`parseAttrsLiteral`);
  * `null` otherwise; a quoted `}` (`{title="a}"}`) is read as the plugin reads
- * it. The one reader of a block's or a heading's literal at its line's end — a
- * heading's anchor is a locator Req Explorer owns, so the serializer writes it
- * back as it was — and of a text that would lose its end to an attribute list.
+ * it. The plugin reads so a fence's info string and a rule's line, which no
+ * inline rule cuts, and this is the one reader of those and of a text that
+ * would lose its end to an attribute list; a literal at the end of inline text
+ * is the one the plugin took off its last text token (`takenLiteral`,
+ * `blocks.ts`). Whether the preview reads it where it stands is the caller's
+ * question (`attrsReadAt`).
  */
 export function endLiteralOf(text: string): string | null {
     const trimmed = text.replace(/[ \t]+$/, '');
@@ -139,11 +152,12 @@ export function joinAttrs(pairs: readonly AttrPair[]): AttrPair[] {
 }
 
 /**
- * The attribute pairs of `literal` when it is a whole `{…}` the plugin accepts
- * as attributes: one line, `{` first, the first `}` outside quotes last, long
- * enough (`{.}` and `{#}` are not; `{a}` is), and giving at least one
- * attribute, and no brace of the text's own (`isTextBrace`: `{a = 1}`). `null` otherwise —
- * the plugin would leave it as text, or take it and add nothing.
+ * The attribute pairs of `literal` when it is a whole `{…}` the plugin's
+ * `getAttrs` takes as attributes: one line, `{` first, the first `}` outside
+ * quotes last, long enough (`{.}` and `{#}` are not; `{a}` is), giving at
+ * least one attribute, and no brace of the text's own (`isTextBrace`:
+ * `{a = 1}`). `null` otherwise. It parses only: whether the preview reads the
+ * literal where it stands is the place's question (`attrsReadAt`).
  */
 export function parseAttrsLiteral(literal: string): AttrPair[] | null {
     if (!literal.startsWith('{') || !literal.endsWith('}') || /[\r\n]/.test(literal) || isTextBrace(literal, 0)) {
@@ -186,28 +200,171 @@ export function sameAttrs(a: readonly AttrPair[], b: readonly AttrPair[]): boole
 }
 
 /**
- * A literal that the plugin reads as exactly `attrs` (a token's joined
- * attributes): `{#id .a .b key="v"}`. The form written when the literal an
- * author wrote could not be recovered from the source (`blocks.ts`).
+ * A value written after `name=`, as `readAttrs` and `findRightDelimiter` read it
+ * back: bare unless something in it ends the value or the list — whitespace,
+ * `{`, `}` — or it holds a `=`, which a brace of the text's own is told by
+ * (`isTextBrace`), or it is empty or starts with `"`, which would open a
+ * quote; in quotes otherwise. A `'`, `.`, `#` or a `"` after the first
+ * character ends nothing, so it stays bare (`k=a"b"`). Nothing is escaped: markdown-it
+ * reads a `\` before the plugin does, and a literal holding one is text in the
+ * preview. So a value that holds a `\`, or needs quotes and holds a `"`,
+ * cannot be written, `null`.
  */
-export function normalizedLiteral(attrs: readonly AttrPair[]): string {
+function attrValue(value: string): string | null {
+    if (value.includes('\\')) {
+        return null;
+    }
+    if (value !== '' && !/[\s{}=]/.test(value) && !value.startsWith('"')) {
+        return value;
+    }
+    return value.includes('"') ? null : `"${value}"`;
+}
+
+/**
+ * The literal written for `attrs` (a token's joined attributes, or the pairs a
+ * literal gives): `{#id .a .b key="v"}`, or `null` when a value cannot be
+ * written (`attrValue`). The form written when the literal an author wrote
+ * could not be recovered from the source (`blocks.ts`), and a copy's literal
+ * without its id (`withoutId`). The port reads it back as `attrs`, or it is
+ * `null`: a bare value with an odd number of `"` (`k=a"b`) would open a quote
+ * that runs past the `}`. It is a candidate: whether the preview reads it
+ * where it is written is that place's question (`attrsReadAt`).
+ */
+export function normalizedLiteral(attrs: readonly AttrPair[]): string | null {
+    const written = writtenLiteral(attrs);
+    const back = written === null ? null : parseAttrsLiteral(written);
+    return back !== null && sameAttrs(joinAttrs(back), joinAttrs(attrs)) ? written : null;
+}
+
+/** `normalizedLiteral`'s form for `attrs`, before the port reads it back. */
+function writtenLiteral(attrs: readonly AttrPair[]): string | null {
     const parts: string[] = [];
     const id = attrs.find(([n]) => n === 'id');
-    if (id && id[1] !== '' && !/[\s{}"]/.test(id[1])) {
+    if (id && id[1] !== '' && !/[\s{}"\\]/.test(id[1])) {
         parts.push(`#${id[1]}`);
     }
     for (const [name, value] of attrs) {
         if (name === 'id' && parts[0] === `#${value}`) {
             continue;
         }
-        if ((name === 'class' || name === 'css-module') && value.split(' ').every(v => v !== '' && !/[{}"]/.test(v))) {
+        if ((name === 'class' || name === 'css-module') && value.split(' ').every(v => v !== '' && !/[{}"\\]/.test(v) && !(name === 'class' && v.startsWith('.')))) {
             const dot = name === 'class' ? '.' : '..';
             parts.push(...value.split(' ').map(v => dot + v));
             continue;
         }
-        parts.push(/[\s}=]/.test(value) || value === '' ? `${name}="${value}"` : `${name}=${value}`);
+        const written = attrValue(value);
+        if (written === null) {
+            return null;
+        }
+        parts.push(`${name}=${written}`);
     }
     return `{${parts.join(' ')}}`;
+}
+
+/**
+ * What carries a literal, by the name of its node (`SUFFIX_NODES`, a list
+ * item's `list_item`) or `span` for an attribute span: the smallest source in
+ * which the preview reads a literal where that block's stands, and the token
+ * markdown-it-attrs gives it to. The plugin reads a fence's literal off its
+ * info string and a table's off the paragraph under it, raw; every other one
+ * off the tokens the inline rules made. A fence's is read on the fence it is
+ * written on, by its character (`fenceHolder`): an info string after backticks
+ * holds no backtick, after tildes it may. A paragraph's literal on a line of
+ * its own is one text after a soft break, as at its end; a list's under its
+ * last line the same as after a blank line.
+ */
+const READ_BACK: Record<string, { source: (literal: string) => string; token: string }> = {
+    paragraph: { source: l => `x ${l}`, token: 'paragraph_open' },
+    heading: { source: l => `# x ${l}`, token: 'heading_open' },
+    'list_item': { source: l => `- x ${l}`, token: 'list_item_open' },
+    'bullet_list': { source: l => `- x\n\n${l}`, token: 'bullet_list_open' },
+    'ordered_list': { source: l => `1. x\n\n${l}`, token: 'ordered_list_open' },
+    'code_block': { source: l => `\`\`\`x ${l}\n\`\`\``, token: 'fence' },
+    'code_block~': { source: l => `~~~x ${l}\n~~~`, token: 'fence' },
+    'horizontal_rule': { source: l => `--- ${l}`, token: 'hr' },
+    blockquote: { source: l => `> x\n> ${l}`, token: 'blockquote_open' },
+    table: { source: l => `| x |\n| - |\n\n${l}`, token: 'table_open' },
+    span: { source: l => `[x]${l}`, token: 'span_open' },
+};
+
+/**
+ * The holder (`READ_BACK`) of a fence's literal, by the fence it is written on
+ * (`markup`, its opening run): `code_block~` after tildes, `code_block` after
+ * backticks.
+ */
+export function fenceHolder(markup: string): string {
+    return markup.startsWith('~') ? 'code_block~' : 'code_block';
+}
+
+/**
+ * The attributes markdown-it-attrs gives `holder` (`READ_BACK`) for `literal`,
+ * read with the engine `definition` describes and the plugin itself
+ * (`attrsEngineFor`) — with VS Code's math, when it runs, as its stand-in
+ * (`mathStandIn.ts`), which takes a `$…$` it reads as math first; `null` when
+ * the literal, or part of it, is left as text, or `holder` is none the editor
+ * writes a literal for.
+ */
+export function readBack(literal: string, holder: string, definition: InlineEngineDefinition = currentInlineDefinition()): AttrPair[] | null {
+    const shape = Object.prototype.hasOwnProperty.call(READ_BACK, holder) ? READ_BACK[holder] : undefined;
+    if (shape === undefined) {
+        return null;
+    }
+    const tokens = attrsEngineFor(definition).parse(shape.source(literal), {});
+    const all = tokens.flatMap(t => [t, ...(t.children ?? [])]);
+    if (all.some(t => t.type === 'text' && /[{}]/.test(t.content))) {
+        return null;
+    }
+    const token = all.find(t => t.type === shape.token);
+    return token === undefined ? null : (token.attrs ?? []).map(([name, value]) => [name, value] as AttrPair);
+}
+
+/**
+ * The attributes the preview gives `holder` for `literal` written where that
+ * holder's literal stands, or `null` when it gives none of it: the literal
+ * does not parse (`parseAttrsLiteral`), or the plugin, reading it there
+ * (`readBack`), leaves part of it as text or reads other attributes than it
+ * gives. The one answer to "is this a literal here": the host's parse
+ * recognises a block's or a span's literal by it (`blocks.ts`), the
+ * Attributes field accepts by it (`literalRefusal`), a copy keeps by it
+ * (`withoutId`). `definition` is the engine's that read the file, on the host;
+ * the page's posted one by default.
+ */
+export function attrsReadAt(literal: string, holder: string, definition: InlineEngineDefinition = currentInlineDefinition()): AttrPair[] | null {
+    const pairs = parseAttrsLiteral(literal);
+    if (pairs === null) {
+        return null;
+    }
+    const read = readBack(literal, holder, definition);
+    return read !== null && sameAttrs(read, joinAttrs(pairs)) ? read : null;
+}
+
+/** Whether the preview reads `literal` on `holder` as exactly `attrs`, in any order (`attrsReadAt`). */
+export function readsBackAs(literal: string, holder: string, attrs: readonly AttrPair[], definition: InlineEngineDefinition = currentInlineDefinition()): boolean {
+    const read = attrsReadAt(literal, holder, definition);
+    return read !== null && sameAttrs(read, attrs);
+}
+
+/**
+ * `literal` without the id it gives, on `holder` (`READ_BACK`): `{.wide #w}` is
+ * `{.wide}` (written as `normalizedLiteral` writes it), `{#w}` is `null`,
+ * nothing being left. The form is kept only when the preview reads it on
+ * `holder` as exactly what it reads the original as there, less the id
+ * (`readsBackAs`); otherwise — a value that needs quotes and holds a `"`, a
+ * character the inline rules take there, an original the preview shows as
+ * text there — the copy loses the literal, `null`, and never carries one the
+ * preview would show as text. A literal that gives no id, or does not parse,
+ * is returned as it is. What a copy keeps of a literal: an id must not be
+ * written twice, a class may (`fidelity.ts`).
+ */
+export function withoutId(literal: string, holder: string): string | null {
+    const pairs = parseAttrsLiteral(literal);
+    if (pairs === null || pairs.every(([name]) => name !== 'id')) {
+        return literal;
+    }
+    const rest = pairs.filter(([name]) => name !== 'id');
+    const written = rest.length === 0 ? null : normalizedLiteral(rest);
+    const wanted = attrsReadAt(literal, holder)?.filter(([name]) => name !== 'id');
+    return written !== null && wanted !== undefined && readsBackAs(written, holder, wanted) ? written : null;
 }
 
 /**
@@ -233,7 +390,8 @@ function editorUnsafe(name: string): boolean {
  * The attributes the engine renders for `literal`, as the editor draws them on
  * the element the literal belongs to — class, id, style, `data-*` and the rest,
  * in the plugin's order — so the page's stylesheets style it as they style the
- * preview. Empty for a literal the plugin would not accept.
+ * preview. Empty for a literal that does not parse; a node holds only a
+ * literal its place reads (`attrsReadAt`), so the parse is enough here.
  */
 export function domAttrsOf(literal: string | null | undefined): Record<string, string> {
     const pairs = literal ? parseAttrsLiteral(literal) : null;

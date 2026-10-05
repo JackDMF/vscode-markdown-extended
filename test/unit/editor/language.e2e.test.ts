@@ -5,6 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { closeEditorPage, EditorPage, EXTENSION_ID, openEditorPage, settle, showDiagnostics } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const LINE_2 = 'The installer checks the prerequisites before it copies anything.';
 const SOURCE = [
@@ -56,7 +57,7 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
     const send = (m: HostMessage) => (editor as EditorPage).send(m);
     const showText = async (text: string) => {
         version++;
-        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
+        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
     };
     /** The centre of `word`'s first occurrence in the editor's text, in viewport coordinates. */
     const centreOf = (word: string) => page.evaluate(w => {
@@ -93,7 +94,7 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         }
         page = editor.page;
         md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false });
+        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForSelector('.ProseMirror');
     });
 

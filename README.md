@@ -835,9 +835,10 @@ rather than a second heading, so the id and the anchor are never written twice.
 - **Some characters cannot be in inline code inside a note.** The notes plugin finds a
   note's end and its `|` before anything else is read, and a code span has no escapes: so
   inline code in a note cannot hold the note's marker pair (`++`, `!!`), in a reference
-  not `|` (superscript and subscript not `|` either, nor a sidebar's `$` or `@`; inline
-  code in a sidebar may hold them, since the sidebar's end is found by the inline parser,
-  which skips code). The editor refuses such an edit and says why beside the caret, and the Code,
+  not `|` (superscript and subscript not `|` either). Inline code, superscript and
+  subscript in a sidebar may hold its `$` or `@`: the sidebar's end is found by the inline
+  parser, which skips code and reads the backslash escape superscript and subscript are
+  written with there (`^a\$b^`). The editor refuses such an edit and says why beside the caret, and the Code,
   Superscript and Subscript buttons are disabled with the reason in their tooltip — also
   over a selection that holds a note, which those three cannot hold at all.
 - **Left sidebars need `"markdown.math.enabled": false`.** VS Code's built-in math
@@ -845,7 +846,9 @@ rather than a second heading, so the id and the anchor are never written twice.
   export and this editor alike, so a left sidebar shows as a formula in a source block.
   Set `"markdown.math.enabled": false` in a workspace that uses sidebars (see
   [Sidebars](#sidebars)); you lose `$…$` and `$$…$$` math there. The editor follows the
-  setting without reopening. Right sidebars (`@…@`) are not affected.
+  setting without reopening. While math is on it makes no left sidebar either: **Left
+  sidebar** and **Move to left** are disabled, and an edit that would leave one is refused,
+  with that reason. Right sidebars (`@…@`) are not affected.
 - **An image outside the document's folder and the workspace does not show** — the editor
   may load only from those — and the file is unaffected. An image dropped from another
   drive than the document's is not inserted: no relative path reaches it.
@@ -910,9 +913,39 @@ A marker opens a sidebar only where no ASCII letter or digit stands right before
 `$` closes one only where no digit follows, so an email address (`a@b.c`) and `user@host`
 stay text, and so does a price as long as no later `$` can close it (`$5 and $10`; but
 `Pay $5 and see $the note$.` holds a sidebar from `5` to `see `). A marker inside inline
-code, a link, an autolink, inline HTML or after a backslash (`\@`) closes nothing. The
-Visual Editor does not let a sidebar touch a letter or digit before it (or a left one a
-digit after it): put a space there.
+code, a link, an autolink, inline HTML or after a backslash (`\@`) closes nothing. A
+character reference beside a marker counts as the character it stands for, so
+`REQ-&#49;$x$` is text as `REQ-1$x$` is.
+
+The Visual Editor reads what it writes: after an edit it writes every block the save will
+write again — the edited one, and in a list, a quote or a table every other item, paragraph
+and cell of it, since the save writes that block whole — exactly as the save writes it,
+wrap included, and parses it with the same markdown-it, the same linkify settings and the
+same plugins as the preview's engine (VS Code's math as a stand-in for its tokenizer: see
+below), and an edit after which a sidebar or a `{…}` would not read back where it stands —
+or text would read as a sidebar, a `{…}` or a formula it does not show — is refused with the
+reason.
+So a sidebar may not touch a letter or digit before it (or a left one a digit after it): put
+a space there. Nor may a bare web address before a sidebar read its marker into the address
+(`http://e.com/$x$` is one address): `See (http://e.com)$x$` and
+`**See (http://e.com)**$x$` are sidebars and editable, while deleting that `)`, or typing
+one into `See http://e.com/($x$` that closes the address's bracket, is refused. With
+`markdown.preview.linkify` off nothing reads an address, and nothing is refused for one. A
+formatting button, **Remove link**, **Remove attributes, keep text**, **Remove image**,
+**Remove note, keep text** or **Remove sidebar, keep text** whose result would do that is
+disabled, with the reason in its tooltip. A sidebar the file already holds is never in the
+way of editing its paragraph, with one exception: where the line spells a character as a
+character reference the editor would write out as the character, and the sidebar would then
+read differently (`See h&#116;tp://e.com/$x$`: written out, the address takes the sidebar
+in), every edit of that paragraph is refused, and so is every edit elsewhere in the list,
+quote or table it stands in, which the save writes whole; the hint says which — edit that
+line once in the text editor. The check cannot see other extensions' markdown-it plugins,
+which run in the preview but not in the Visual Editor's page: one that reads `$` or `@`
+itself, or teaches linkify a scheme of its own, is not asked. VS Code's own math is the one
+it knows of: the host tells the page whether `markdown.math.enabled` put math in the
+preview's engine, and while it does the editor makes no left sidebar — **Left sidebar** and
+**Move to left** are disabled and an edit that would leave one is refused, saying
+`markdown.math.enabled` must be off — since the preview would read it as math.
 
 **Using left sidebars: turn VS Code's math off in that workspace.** VS Code's built-in
 math extension claims `$…$` before this extension's sidebar rule runs — in the preview,

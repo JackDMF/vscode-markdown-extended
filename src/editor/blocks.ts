@@ -1,5 +1,7 @@
 import { Token } from '../@types/markdown-it';
-import { AttrPair, NOTE_SYNTAX_CHARS, endLiteralOf, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
+import { AttrPair, NOTE_SYNTAX_CHARS, attrsReadAt, endLiteralOf, fenceHolder, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, readsBackAs, sameAttrs } from './attrs';
+import { InlineEngineDefinition } from './inlineEngine';
+import { textBeforeAttrs } from '../plugin/markdownItAttrs';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 
 /**
@@ -63,6 +65,34 @@ export function isBlankLine(line: SourceLine | undefined): boolean {
 /** The line ending a changed block is written with: `\r\n` if the file has one anywhere, else `\n`. */
 export function detectEol(text: string): '\n' | '\r\n' {
     return text.includes('\r\n') ? '\r\n' : '\n';
+}
+
+/**
+ * The `{…}` markdown-it-attrs took off the end of `inline`'s text, as the
+ * source spells it, or `null`. The plugin's "end of block" and "list item end"
+ * rules (`patterns.js`) read the last text token the inline rules made — not
+ * the line: `A 5" display \* b {.spec}` is three tokens, and the `"` of the
+ * first opens no quote in the last — and take from it what `findLeftDelimiter`
+ * finds there, the last `{` outside a quoted value of *that token* through its
+ * end (`utils.js`). So the literal is read off what the plugin did: the last
+ * text child it cut at the end (`textBeforeAttrs`), the part it cut. The
+ * source spells it so when the inline content's last line ends with it, or
+ * the line before a lone `{…}` line the plugin gave to the block around (`- a
+ * {.i}` + `{.l}`, with `beforeLine`, an item's); otherwise (an escape or an
+ * entity in it) `null`.
+ */
+export function takenLiteral(inline: Token | undefined, beforeLine = false): string | null {
+    const original = inline === undefined ? null : textBeforeAttrs(inline);
+    const start = original === null ? -1 : findLeftDelimiter(original);
+    const literal = original === null || start < 0 ? null : original.slice(start);
+    if (literal === null || parseAttrsLiteral(literal) === null) {
+        return null;
+    }
+    const lines = (inline?.content ?? '').split('\n').map(l => l.replace(/[ \t]+$/, ''));
+    const last = lines[lines.length - 1] ?? '';
+    const spelled = last.endsWith(literal)
+        || (beforeLine && lines.length > 1 && parseAttrsLiteral(last.trim()) !== null && lines[lines.length - 2].endsWith(literal));
+    return spelled ? literal : null;
 }
 
 /**
@@ -536,7 +566,7 @@ function pipeTableNotEditableBecause(tokens: readonly Token[], group: TokenGroup
 }
 
 /** Why the group cannot be edited, or `null` when it can. */
-function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[]): string | null {
+function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], definition: InlineEngineDefinition): string | null {
     if (tokens[group.start].type === 'table_open') {
         return pipeTableNotEditableBecause(tokens, group, lines);
     }
@@ -551,7 +581,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
             if (!t.markup.startsWith('#') || !t.map || t.map[1] - t.map[0] !== 1) {
                 return 'setext heading: its underline has no place in the heading node';
             }
-            if (t.attrs && t.attrs.length > 0 && endLiteralOf(lines[t.map[0]]?.text ?? '') === null) {
+            if (literalAttrs(t).length > 0 && headingLiteral(tokens[i + 1], t, definition) === null) {
                 return 'heading attributes that are not written as a trailing {…} on its line';
             }
         }
@@ -657,6 +687,39 @@ const SUFFIX_BLOCKS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The node each of those openers becomes, by which `attrsReadAt` knows where
+ * its literal stands; a fence's by the fence it stands on (`fenceHolder`).
+ */
+const LITERAL_HOLDER: Readonly<Record<string, string>> = {
+    'paragraph_open': 'paragraph',
+    'heading_open': 'heading',
+    'bullet_list_open': 'bullet_list',
+    'ordered_list_open': 'ordered_list',
+    fence: 'code_block',
+    hr: 'horizontal_rule',
+    'blockquote_open': 'blockquote',
+    'table_open': 'table',
+};
+
+/** Where the literal of the block `open` opens stands, as `attrsReadAt` knows it (`LITERAL_HOLDER`). */
+function literalHolderOf(open: Token): string {
+    return open.type === 'fence' ? fenceHolder(open.markup) : LITERAL_HOLDER[open.type];
+}
+
+/**
+ * A heading's literal: the `{…}` markdown-it-attrs took off the end of its
+ * text (`takenLiteral`, `inline` its inline token — an ATX heading's closing
+ * `#` run is no part of it), when the preview reads it there as the attributes
+ * the heading's token has (`attrsReadAt`); `null` otherwise. The one rule the
+ * parse keeps a heading's literal by, at the top level and inside a container.
+ */
+export function headingLiteral(inline: Token | undefined, open: Token, definition: InlineEngineDefinition): string | null {
+    const literal = takenLiteral(inline);
+    const read = literal === null ? null : attrsReadAt(literal, 'heading', definition);
+    return read !== null && sameAttrs(read, literalAttrs(open)) ? literal : null;
+}
+
+/**
  * The first line after `last` that is not blank, before `nextStart` (the first
  * line a later block's tokens claim), with its text trimmed: where a list's or
  * a table's literal stands when no token's map holds it. `null` when there is none.
@@ -693,8 +756,13 @@ function openingIndex(tokens: readonly Token[], close: number): number {
  * after a blank line (`blank`) is in no token's map, since the plugin removes
  * the paragraph it was, and belongs to the list only when nothing else stands
  * between.
+ *
+ * A literal is the block's when the preview reads it, where the block's stands,
+ * as the attributes the token has (`attrsReadAt`, by the block's node name):
+ * the same answer the page gives when the literal is written back after an
+ * edit, so a block is editable only with a literal that survives the edit.
  */
-function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], nextStart: number): { attrs: BlockAttrs | null; endLine: number | null } | string {
+function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], nextStart: number, definition: InlineEngineDefinition): { attrs: BlockAttrs | null; endLine: number | null } | string {
     const open = tokens[group.start];
     const wanted = literalAttrs(open);
     if (wanted.length === 0) {
@@ -706,9 +774,10 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
     if (!SUFFIX_BLOCKS.has(open.type) || !open.map) {
         return `attributes on ${open.type}`;
     }
+    const holder = literalHolderOf(open);
     const reads = (literal: string | null): literal is string => {
-        const pairs = literal === null ? null : parseAttrsLiteral(literal);
-        return pairs !== null && sameAttrs(joinAttrs(pairs), wanted);
+        const read = literal === null ? null : attrsReadAt(literal, holder, definition);
+        return read !== null && sameAttrs(read, wanted);
     };
     const [start, end] = open.map;
     const last = trimTrailingBlank(lines, start, end) - 1;
@@ -716,8 +785,8 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
     const where = `${open.type.replace(/_open$/, '')} attributes not written where the editor can keep them`;
     switch (open.type) {
         case 'heading_open': {
-            const suffix = endLiteralOf(lines[start]?.text ?? '');
-            return suffix === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix, placement: 'end' }, endLine: null };
+            const literal = headingLiteral(tokens[group.start + 1], open, definition);
+            return literal === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix: literal, placement: 'end' }, endLine: null };
         }
         case 'fence': {
             const literal = endLiteralOf(lines[start]?.text ?? '');
@@ -731,7 +800,7 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
             if (last > start && reads(lastText)) {
                 return { attrs: { suffix: lastText, placement: 'line' }, endLine: null };
             }
-            const literal = endLiteralOf(lines[last]?.text ?? '');
+            const literal = takenLiteral(tokens[group.start + 1]);
             return reads(literal) ? { attrs: { suffix: literal, placement: 'end' }, endLine: null } : where;
         }
         case 'blockquote_open': {
@@ -786,7 +855,7 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
  * closing that paragraph is the list's (`- text` + `{.a}`, `recoverBlockAttrs`),
  * so the item's literal is on the line before it.
  */
-function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[]): string[] | string {
+function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], definition: InlineEngineDefinition): string[] | string {
     const out: string[] = [];
     for (let i = group.start; i < group.end; i++) {
         const t = tokens[i];
@@ -805,14 +874,10 @@ function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines:
         if (children.length > 0 && children[children.length - 1].type === 'hardbreak') {
             return 'list item attributes after a line break';
         }
-        let line = trimTrailingBlank(lines, paragraph.map[0], paragraph.map[1]) - 1;
-        const bare = withoutBlockPrefix(lines[line]?.text ?? '').trim();
-        if (line > paragraph.map[0] && parseAttrsLiteral(bare) !== null) {
-            line--;
-        }
-        const literal = endLiteralOf(lines[line]?.text ?? '');
-        const pairs = literal === null ? null : parseAttrsLiteral(literal);
-        if (literal === null || pairs === null || !sameAttrs(joinAttrs(pairs), wanted)) {
+        // What the plugin took off the paragraph's last text; a lone `{…}` line under it is the list's.
+        const literal = takenLiteral(tokens[i + 2], true);
+        const read = literal === null ? null : attrsReadAt(literal, 'list_item', definition);
+        if (literal === null || read === null || !sameAttrs(read, wanted)) {
             return 'list item attributes not written where the editor can keep them';
         }
         out.push(literal);
@@ -825,8 +890,9 @@ function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines:
  * of their `span_open` tokens, recovered verbatim from the block's lines.
  *
  * Inline tokens carry no line map, so each span is matched to the next `]{…}`
- * in the source whose literal reads as exactly the attributes its token has;
- * a `]{…}` that reads otherwise (inside a code span, say) is passed over. Where
+ * in the source whose literal the preview reads after a span as exactly the
+ * attributes its token has (`readsBackAs`); a `]{…}` that reads otherwise
+ * (inside a code span, say) is passed over. Where
  * no occurrence matches — an entity or a backslash escape markdown-it decoded
  * inside the literal, so the source spells it as the token does not — the
  * span is written in the normalized form `{#id .a .b key="v"}`, which reads as
@@ -836,7 +902,7 @@ function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines:
  * A span inside a note may not hold the characters the notes plugin searches
  * the raw source for; such a block stays a source block.
  */
-function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], endLine: number): string[] | string {
+function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], endLine: number, definition: InlineEngineDefinition): string[] | string {
     const spans: { token: Token; inNote: boolean }[] = [];
     /** The lines of admonition titles: a title is its node's string, and a span in it is no mark (`parse.ts` skips its tokens). */
     const titleLines = new Set<number>();
@@ -874,17 +940,28 @@ function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines:
             const close = findRightDelimiter(src, at + 3);
             const candidate = close < 0 ? null : src.slice(at + 1, close + 1);
             const pairs = candidate === null ? null : parseAttrsLiteral(candidate);
-            if (candidate !== null && pairs !== null && sameAttrs(joinAttrs(pairs), wanted)) {
+            if (candidate !== null && pairs !== null && sameAttrs(joinAttrs(pairs), wanted)
+                && (hasInnerBrace(candidate) || readsBackAs(candidate, 'span', wanted, definition))) {
+                // A quoted `}` is located here and refused below with its own reason.
                 literal = candidate;
                 from = close + 1;
             }
         }
         const written = literal ?? normalizedLiteral(joinAttrs(wanted));
+        if (written === null) {
+            return 'attribute span whose attributes no literal writes';
+        }
         if (hasInnerBrace(written)) {
             // markdown-it-attrs reads a quoted `}` into the value but cuts the
             // text after the span at the first `}`: what follows it stays in
             // the paragraph as text, and every save would write it again.
             return 'attribute span whose literal holds a quoted }';
+        }
+        if (literal === null && !readsBackAs(written, 'span', wanted, definition)) {
+            // No form of these attributes reads back as them after a span: a
+            // value that needs quotes holds a `"`, or the inline rules take
+            // part of it (`readsBackAs`).
+            return 'attribute span whose attributes no literal writes';
         }
         if (inNote && NOTE_SYNTAX_CHARS.test(written)) {
             return 'attribute span in a note whose literal holds a note marker';
@@ -894,7 +971,7 @@ function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines:
     return out;
 }
 
-function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], nextStart: number): Classification {
+function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], nextStart: number, definition: InlineEngineDefinition): Classification {
     const first = tokens[group.start];
     const none = { attrs: null, spanLiterals: [], itemLiterals: [], endLine: null };
     if (first.type === 'front_matter') {
@@ -911,15 +988,15 @@ function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly S
     if (!EDITABLE_TOP_LEVEL_TOKENS.has(first.type)) {
         return raw(first.type);
     }
-    const because = notEditableBecause(tokens, group, lines);
+    const because = notEditableBecause(tokens, group, lines, definition);
     if (because !== null) {
         return raw(because);
     }
-    const recovered = recoverBlockAttrs(tokens, group, lines, nextStart);
+    const recovered = recoverBlockAttrs(tokens, group, lines, nextStart, definition);
     if (typeof recovered === 'string') {
         return raw(recovered);
     }
-    const itemLiterals = recoverItemLiterals(tokens, group, lines);
+    const itemLiterals = recoverItemLiterals(tokens, group, lines, definition);
     if (typeof itemLiterals === 'string') {
         return raw(itemLiterals);
     }
@@ -929,7 +1006,7 @@ function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly S
     if (first.type === CONTAINER_OPEN && isContainerClose(lines[group.map[1]]?.text, first.markup)) {
         endLine = group.map[1] + 1;
     }
-    const spanLiterals = recoverSpanLiterals(tokens, group, lines, Math.max(group.map[1], endLine ?? 0));
+    const spanLiterals = recoverSpanLiterals(tokens, group, lines, Math.max(group.map[1], endLine ?? 0), definition);
     if (typeof spanLiterals === 'string') {
         return raw(spanLiterals);
     }
@@ -971,8 +1048,12 @@ interface LaidOut {
  * left out of its map) become raw blocks of their own, or join the raw block
  * they touch: in a gap they would vanish with whatever block is deleted after
  * them.
+ *
+ * `definition` is the engine's that made `tokens` (`definitionOf`): a literal
+ * is judged with the inline rules that read it (`attrsReadAt`), so the host
+ * and the page give one answer whatever the settings.
  */
-export function groupSourceBlocks(tokens: readonly Token[], lines: readonly SourceLine[]): GroupedBlocks {
+export function groupSourceBlocks(tokens: readonly Token[], lines: readonly SourceLine[], definition: InlineEngineDefinition): GroupedBlocks {
     const groups = topLevelGroups(tokens);
     // The first line a later group's tokens claim, for a literal that no map holds.
     const nextStarts: number[] = [];
@@ -984,7 +1065,7 @@ export function groupSourceBlocks(tokens: readonly Token[], lines: readonly Sour
             next = Math.min(next, map[0]);
         }
     }
-    const classified = groups.map((g, i) => ({ group: g, classification: classify(tokens, g, lines, nextStarts[i]) }));
+    const classified = groups.map((g, i) => ({ group: g, classification: classify(tokens, g, lines, nextStarts[i], definition) }));
     const laid: LaidOut[] = [];
     let cursor = 0;
     let lastMapped: LaidOut | null = null;

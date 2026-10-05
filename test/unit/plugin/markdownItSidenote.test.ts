@@ -182,6 +182,17 @@ function preview(options: MarkdownIt.Options = {}): MarkdownIt.MarkdownIt {
     return md;
 }
 
+/** The fastest of five runs of `run`, in milliseconds: the least a slow or busy machine adds. */
+function fastest(run: () => void): number {
+    let best = Infinity;
+    for (let i = 0; i < 5; i++) {
+        const started = process.hrtime.bigint();
+        run();
+        best = Math.min(best, Number(process.hrtime.bigint() - started) / 1e6);
+    }
+    return best;
+}
+
 /** The sidebars `html` holds, as `left:…`/`right:…` with their inner HTML. */
 function sidebars(html: string): string[] {
     return [...html.matchAll(/<span class="(left|right)-sidebar">(.*?)<\/span>/g)].map(([, side, inner]) => `${side}:${inner}`);
@@ -202,6 +213,20 @@ suite('Sidebars: the closing marker is found by the inline parser, and the openi
         }
     });
 
+    test('a character reference beside a marker counts as the character it decodes to', () => {
+        for (const text of ['See REQ-&#49;$the note$ later.', 'a &#120;$y$ z', 'a &#x78;@y@ z', 'a $y$&#53; z', 'a $y$&#x35; z']) {
+            assert.deepStrictEqual(sidebars(inline(text)), [], text);
+        }
+        assert.strictEqual(inline('a &#120;$y$ z'), 'a x$y$ z');
+        // Decoding to anything but an ASCII letter or digit, escaped, or no reference at all: as before.
+        assert.deepStrictEqual(sidebars(inline('a &amp;$y$ z')), ['left:y']);
+        assert.deepStrictEqual(sidebars(inline('a &#233;$y$ z')), ['left:y']);
+        assert.deepStrictEqual(sidebars(inline('a \\&#120;$y$ z')), ['left:y']);
+        assert.deepStrictEqual(sidebars(inline('a &nosuch;$y$ z')), ['left:y']);
+        assert.deepStrictEqual(sidebars(inline('a @y@&#53; z')), ['right:y'], 'an @ closes before a digit');
+        assert.deepStrictEqual(sidebars(inline('a $y$&#120; z')), ['left:y'], 'a letter after a closer stops nothing');
+    });
+
     test('beside CJK and other non-ASCII text a sidebar opens as it always did', () => {
         assert.deepStrictEqual(sidebars(inline('这是$侧边栏内容$的例子')), ['left:侧边栏内容']);
         assert.deepStrictEqual(sidebars(inline('本文@右侧注释@继续')), ['right:右侧注释']);
@@ -218,33 +243,26 @@ suite('Sidebars: the closing marker is found by the inline parser, and the openi
         // The plugin alone: the whole registry grows faster than linearly on such text without it.
         const alone = new MarkdownIt({ html: true, linkify: true });
         alone.use(sidenotePlugin);
-        const fastest = (text: string) => {
-            let best = Infinity;
-            for (let run = 0; run < 3; run++) {
-                const started = process.hrtime.bigint();
-                alone.render(text);
-                best = Math.min(best, Number(process.hrtime.bigint() - started) / 1e6);
-            }
-            return best;
-        };
         // A slow machine slows both sizes alike; what is asserted is the growth, against this run's own
-        // growth on text of the same length without markers, with room for noise (quadratic would be 16).
-        const growth = (unit: string) => fastest(unit.repeat(2000) + '`$@`') / Math.max(fastest(unit.repeat(500) + '`$@`'), 0.5);
+        // growth on text of the same length without markers. Linear is 4, quadratic 16: at most twice
+        // the baseline's growth, never 10. Both sizes are long enough to be timed, so no floor hides a growth.
+        const growth = (unit: string) => fastest(() => alone.render(unit.repeat(4000) + '`$@`')) / fastest(() => alone.render(unit.repeat(1000) + '`$@`'));
         for (const unit of ['$a @a ', '$x @y ', '[$a ']) {
             const baseline = growth('x'.repeat(unit.length - 1) + ' ');
             const measured = growth(unit);
-            assert.ok(measured < 3 * Math.max(baseline, 4), `${unit}: grew ${measured.toFixed(1)}× for four times the text; text without markers grew ${baseline.toFixed(1)}×`);
+            assert.ok(measured < Math.min(2 * Math.max(baseline, 4), 10), `${unit}: grew ${measured.toFixed(1)}× for four times the text; text without markers grew ${baseline.toFixed(1)}×`);
         }
     });
 
     test('bracketed spans nested in sidebars are not tokenized during every look-ahead', () => {
-        const text = '$['.repeat(48) + 'a' + ']{.c}$'.repeat(48);
-        md.render(text);
-        const started = process.hrtime.bigint();
-        md.render(text);
-        const took = Number(process.hrtime.bigint() - started) / 1e6;
-        // About 8 ms; 340 ms when every look-ahead let markdown-it-bracketed-spans tokenize.
-        assert.ok(took < 150, `${took.toFixed(0)} ms`);
+        const nested = (depth: number) => '$['.repeat(depth) + 'a' + ']{.c}$'.repeat(depth);
+        // Each sidebar's look-ahead reads to its closer, past the ones nested in it: twice the depth is
+        // about four times the time (the square of text without markers, which grows about 2×). When every
+        // look-ahead let markdown-it-bracketed-spans tokenize, it was 15 to 18 times; 16 must fail.
+        const growth = (text: (n: number) => string) => fastest(() => md.render(text(48))) / fastest(() => md.render(text(24)));
+        const baseline = growth(depth => 'x'.repeat(nested(depth).length));
+        const measured = growth(nested);
+        assert.ok(measured < Math.min(2 * Math.max(baseline, 2) ** 2, 10), `grew ${measured.toFixed(1)}× for twice the depth; text without markers grew ${baseline.toFixed(1)}×`);
     });
 
     test('a URL in a sidebar ends at the sidebar\'s closing marker, as it always did, wherever the sidebar stands', () => {
@@ -269,6 +287,42 @@ suite('Sidebars: the closing marker is found by the inline parser, and the openi
         assert.strictEqual(html.match(/class="footnote-item"/g)?.length, 1, html);
         assert.ok(html.includes('<kbd><span class="left-sidebar">see <span class="c">x<sup class="footnote-ref">'), html);
         assert.strictEqual(inline('@ [[ ab[]{.c}@'), '<span class="right-sidebar"> [[ ab<span class="c"></span></span>');
+    });
+
+    test('a rule that tokenizes while it is only asked to skip leaves no footnote behind when no sidebar closes', () => {
+        // As a preview plugin from another extension may: `{{…}}` tokenized
+        // whatever `silent` says, so the footnote rules list footnotes and count
+        // references during a look-ahead that then finds no closer.
+        const noisy = preview();
+        noisy.inline.ruler.before('sidebars', 'noisy', ((inlineState: unknown) => {
+            const state = inlineState as unknown as { src: string; pos: number; posMax: number; md: MarkdownIt.MarkdownIt; push(type: string, tag: string, nesting: number): unknown };
+            const src = state.src;
+            const end = src.indexOf('}}', state.pos + 2);
+            if (src.charCodeAt(state.pos) !== 0x7b || src.charCodeAt(state.pos + 1) !== 0x7b || end === -1 || end > state.posMax) {
+                return false;
+            }
+            const max = state.posMax;
+            state.push('noisy_open', 'b', 1);
+            state.pos += 2;
+            state.posMax = end;
+            (state.md.inline as unknown as { tokenize(s: unknown): void }).tokenize(state);
+            state.posMax = max;
+            state.push('noisy_close', 'b', -1);
+            state.pos = end + 2;
+            return true;
+        }) as never);
+        for (const [text, definitions] of [
+            ['$a {{x[^1]}} b `$`', '\n\n[^1]: one'],
+            ['[^1] $a {{x[^1]}} b `$` [^1]', '\n\n[^1]: one'],
+            ['[^1] $a {{x[^2]}} b `$` [^2] [^1]', '\n\n[^1]: one\n[^2]: two'],
+            ['[^1] $a {{x^[inl]}} b `$` [^1]', '\n\n[^1]: one'],
+            ['$a {{x^[inl]}} b `$` and ^[after]', ''],
+            ['$a @b {{x[^2]}} `@` c `$` [^2]', '\n\n[^2]: two'],
+        ]) {
+            // The same text with the opening marker escaped: no look-ahead at all.
+            const escaped = noisy.render(text.replace('$a', '\\$a') + definitions);
+            assert.strictEqual(noisy.render(text + definitions), escaped, text);
+        }
     });
 
     test('the sidebars the corpus writes still are sidebars', () => {

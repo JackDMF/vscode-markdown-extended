@@ -35,10 +35,10 @@ import { chevronNode } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
-import { inNoteOf, toggleNote, wrapNodeLockReason } from '../notes';
+import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
     applySpanTransaction, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
-    LINK_LOCK, literalRefusal, objectAtSelection, spanLockReason,
+    LINK_LOCK, objectAtSelection, spanLiteralRefusal, spanLockReason,
 } from '../objects';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
@@ -137,9 +137,11 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
             return { enabled: reason === null && toggleMarkup(type, apply.markup)(state), active: markActive(state, type, apply.markup), reason };
         }
         case 'wrap-node': {
-            // Inside a note of its kind the action removes it, like a mark's button.
+            // Inside a note of its kind the action removes it, like a mark's button,
+            // and is refused where the object bar's Remove note is (`unwrapNoteRefusal`).
             if (inNoteOf(state, apply.node)) {
-                return { enabled: true, active: true, reason: null };
+                const unwrap = unwrapNoteRefusal(state, apply.node);
+                return { enabled: unwrap === null, active: true, reason: unwrap };
             }
             const reason = wrapNodeLockReason(state, apply.node);
             return { enabled: reason === null, active: false, reason };
@@ -850,7 +852,7 @@ class ToolbarView implements PluginView {
             keys: ATTRIBUTES_FIELD_KEYS,
             commit: value => {
                 view.focus();
-                const refusal = literalRefusal(value, 'span');
+                const refusal = spanLiteralRefusal(view.state, value);
                 const tr = refusal === null ? applySpanTransaction(view.state, value) : null;
                 if (tr === null) {
                     showHint(view, refusal ?? 'These attributes cannot be given to this text here.', 'refusal');
