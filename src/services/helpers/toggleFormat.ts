@@ -748,8 +748,10 @@ class Verifier {
      * - the part has as many lines, each of the same kind and the same block
      *   tokens, except a line blank before or after, or with no text but the
      *   markers either time, which may become a paragraph of pairs or a
-     *   thematic break and back, and a bare `: ` line a pair is written on or
-     *   taken from (with its term's line), which it makes a definition;
+     *   thematic break and back, and a bare `: ` line, in a quote too, a pair
+     *   is written on or taken from, which it makes a definition: the
+     *   definition's own tokens, starting on its line or its term's, may
+     *   come or go, the blocks around it may not;
      * - the part defines the same references (destinations and titles),
      *   footnotes and abbreviations (`InlineSource.defines`);
      * - every inline token holds the same tokens besides text and spans'
@@ -847,7 +849,7 @@ class Verifier {
                 const c = t.changes[0];
                 // The line without the pair.
                 const bare = line.text.slice(0, c.start - from) + line.text.slice(c.end - from);
-                return /^\s*[:~]\s+$/.test(bare);
+                return BARE_DEFINITION.test(bare);
             })
             .map(t => this.document.positionAt(t.start).line - part.start);
         // The structure. A free line is blank before or after, or holds no text
@@ -870,8 +872,8 @@ class Verifier {
             if (kinds[0] !== kinds[1] && (kinds.includes('literal') || !free.has(line))) {return 'all';}
         }
         const kept = (structure: readonly BlockToken[]) => structure.filter(({ type, first, end }) => {
-            // A term maps no line of its own ([n, n]): it is its line.
-            if (defining.some(line => first <= line && Math.max(end, first + 1) > line - 1)) {return false;}
+            // The definition's own tokens start on its term's line or its `:` line; the blocks around it are compared.
+            if (DEFINITION_TOKENS.has(type) && defining.some(line => first === line || first === line - 1)) {return false;}
             // A paragraph of pairs alone, over one line or more, may come or go.
             if (!FREE_TOKENS.has(type)) {return true;}
             for (let line = first; line < Math.max(end, first + 1); line++) {
@@ -1085,6 +1087,12 @@ class Verifier {
 function passed(verdict: Verdict): boolean {
     return verdict !== 'all' && verdict.failed.size === 0;
 }
+
+/** A definition's `:` (or `~`) line with nothing after it, inside a quote's `>`s too: a pair written at its end makes it a definition. */
+const BARE_DEFINITION = /^(?:[ \t]*>)*[ \t]*[:~][ \t]+$/;
+
+/** The block tokens of one definition, which a pair written on its `:` line makes, or takes back out: the list, the term, the definition, a paragraph. */
+const DEFINITION_TOKENS: ReadonlySet<string> = new Set(['dl_open', 'dt_open', 'dd_open', 'paragraph_open']);
 
 /** Block tokens that hold blocks, which may take in or give up a line with no text at their end. */
 const CONTAINERS = /(?:list|item|blockquote|dl|dd|admonition|container)_open$/;

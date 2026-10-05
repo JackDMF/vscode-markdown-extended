@@ -364,6 +364,13 @@ suite('Inline toggles: what a selection toggles', () => {
 
     test('a definition made by the pair at one cursor does not let another cursor change a block', async () => {
         assert.strictEqual(await toggle('mark', 'foo\n‸\n\nTerm\n: ‸'), 'foo\n‸\n\nTerm\n: ==‸==');
+        // Nor the list item it stands in: `b` would leave it, under a thematic break.
+        assert.strictEqual(await toggle('bold', '- Term\n  : ‸\n\n‸\n  b'), '- Term\n  : **‸**\n\n‸\n  b');
+    });
+
+    test('a pair makes a definition inside a quote as outside one', async () => {
+        assert.strictEqual(await toggle('bold', '> Term\n> : ‸'), '> Term\n> : **‸**');
+        assert.strictEqual(await toggle('bold', '> Term\n> : **‸**'), '> Term\n> : ‸');
     });
 
     test('an empty pair is taken out only where the rest reads as before', async () => {
