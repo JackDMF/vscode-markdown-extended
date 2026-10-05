@@ -554,7 +554,8 @@ export function fidelityPlugin(): Plugin {
  * The attribute-literal rule of `fidelityPlugin`, for every block but a heading
  * (whose literal holds its anchor, `stripDuplicatedIds`): a top-level block
  * that descends from none loses the id its literal gives (`withoutId`), and
- * keeps the rest. Splitting a paragraph copies its attributes into the second
+ * keeps the rest — or loses the whole literal when the rest cannot be written
+ * so that the preview reads it back. Splitting a paragraph copies its attributes into the second
  * half, and `{#id}` written twice is two elements with one id; the half that
  * stands where the paragraph stood keeps it. A copy of a whole block (a
  * drag-copy carries the same node, whose `src` holds the literal) loses it as
@@ -567,7 +568,7 @@ function stripCopiedSuffixes(after: TopLevelChild[], first: number, end: number,
     for (let j = first; j < end; j++) {
         const node = after[j].node;
         const literal = (node.attrs.attrsSuffix ?? null) as string | null;
-        const kept = literal === null ? null : withoutId(literal);
+        const kept = literal === null ? null : withoutId(literal, node.type.name);
         if (from[j] < 0 && node.type.name !== 'heading' && kept !== literal) {
             set(j, 'attrsSuffix', kept);
             if (kept === null) {
@@ -646,7 +647,7 @@ function itemLiterals(transactions: readonly Transaction[], before: Node): (c: T
             const literal = node.type.name === 'list_item' ? (node.attrs.literal as string | null) : null;
             const at = c.offset + 1 + pos;
             if (literal !== null) {
-                const kept = !copy && !itemTakesLiteral(node) ? null : copy || !itemStarts().has(at) ? withoutId(literal) : literal;
+                const kept = !copy && !itemTakesLiteral(node) ? null : copy || !itemStarts().has(at) ? withoutId(literal, 'list_item') : literal;
                 if (kept !== literal) {
                     out.set(at, kept);
                     found = true;
@@ -711,7 +712,7 @@ function stripDuplicatedIds(
         }
         // The literal writes the anchor; what else it gives (`{.unnumbered}`) a copy keeps.
         const literal = (node.attrs.attrsSuffix ?? null) as string | null;
-        set(j, 'attrsSuffix', literal === null ? null : withoutId(literal));
+        set(j, 'attrsSuffix', literal === null ? null : withoutId(literal, 'heading'));
         // The slice held the id; whatever carried it along is not this node's text.
         set(j, 'src', null);
     }

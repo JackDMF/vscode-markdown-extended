@@ -9,7 +9,7 @@ import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
-import { DEFAULT_INLINE_ENGINE, InlineEngineDefinition, ReadSidebar, createInlineEngine, readSidebars } from './inlineEngine';
+import { InlineEngineDefinition, ReadSidebar, currentInlineDefinition, currentInlineEngine, readSidebars, setCurrentInlineDefinition } from './inlineEngine';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -541,7 +541,7 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
         if (reason !== null) {
             break;
         }
-        reason = inlineDefinition.math && holdsLeftSidebar(textblock.node)
+        reason = currentInlineDefinition().math && holdsLeftSidebar(textblock.node)
             ? SIDEBAR_LEFT_MATH
             : sidebarRefusal(doc, textblock, origin);
     }
@@ -725,9 +725,6 @@ export function sidebarRewrittenBeside(block: Node, textblock: Node, reference: 
     return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then not read a sidebar back as it is shown${cause}. Edit that ${part} once in the text editor to unlock this ${whole}.`;
 }
 
-/** The definition the page's engine was built from, and the engine, made when first asked. */
-let inlineDefinition: InlineEngineDefinition = DEFAULT_INLINE_ENGINE;
-let inlineEngine: MarkdownIt | null = null;
 /** The sidebars the engine read in a text, by the text: a textblock is parsed once however often it is asked about. */
 const readCache = new Map<string, ReadSidebar[]>();
 /** How many texts `readCache` keeps; the oldest is dropped first. */
@@ -745,21 +742,19 @@ let mismatchCache = new WeakMap<Node, SidebarMismatch | null>();
  * Read textblocks with the engine `definition` describes — the host's, posted
  * with each document (`inlineEngineDefinition`): its linkify and typographer
  * settings, the registry's inline plugins it runs, and whether VS Code's math
- * claims `$`.
+ * claims `$`. The literals the page writes are read back with it too
+ * (`attrs.ts`): the engine is one, `currentInlineEngine`.
  */
 export function setInlineEngine(definition: InlineEngineDefinition): void {
-    if (JSON.stringify(definition) === JSON.stringify(inlineDefinition)) {
+    if (!setCurrentInlineDefinition(definition)) {
         return;
     }
-    inlineDefinition = definition;
-    inlineEngine = null;
     readCache.clear();
     mismatchCache = new WeakMap();
 }
 
 function engine(): MarkdownIt {
-    inlineEngine ??= createInlineEngine(inlineDefinition);
-    return inlineEngine;
+    return currentInlineEngine();
 }
 
 /** The sidebars the page's engine reads in `text` (`readSidebars`), remembered by the text. */
@@ -784,7 +779,7 @@ function sidebarsReadWithoutLinkify(text: string): ReadSidebar[] {
     try {
         return readSidebars(md, text);
     } finally {
-        md.set({ linkify: inlineDefinition.linkify });
+        md.set({ linkify: currentInlineDefinition().linkify });
     }
 }
 
@@ -962,7 +957,7 @@ function lostReason(text: string, lost: ReadSidebar): string {
     if (lost.close + 1 < text.length && !sidebarCanClose(marker, text.charAt(lost.close + 1))) {
         return SIDEBAR_GLUED_AFTER;
     }
-    if (inlineDefinition.linkify && sidebarsReadWithoutLinkify(text).some(r => sameSidebar(r, lost))) {
+    if (currentInlineDefinition().linkify && sidebarsReadWithoutLinkify(text).some(r => sameSidebar(r, lost))) {
         return SIDEBAR_GLUED_URL;
     }
     return SIDEBAR_NOT_READ;

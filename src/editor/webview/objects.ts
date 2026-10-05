@@ -36,7 +36,7 @@ import { liftTarget } from 'prosemirror-transform';
 import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
-import { endsWithAttrsLiteral, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
+import { endsWithAttrsLiteral, hasInnerBrace, parseAttrsLiteral, readsAsOneText, readsAsRuleLiteral } from '../attrs';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { itemTakesLiteral, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
@@ -483,6 +483,9 @@ export function literalPlaceOf(node: Node): LiteralPlace {
 /** Why `literal` cannot be an attribute span's or a block's literal at `place`, or `null`: the plugin must read it as attributes, all of it. */
 export function literalRefusal(literal: string, place: LiteralPlace = 'block'): string | null {
     const value = literal.trim();
+    if (parseAttrsLiteral(value) === null && value.startsWith('{') && !/[\r\n]/.test(value) && !readsAsOneText(value)) {
+        return `${value} holds what markdown-it reads before markdown-it-attrs — a \\, an entity, code, emphasis, HTML, a link or a plugin's markup — and the preview would show it as text.`;
+    }
     if (parseAttrsLiteral(value) === null) {
         return `${value || 'An empty value'} is no attribute list: write it as {.class}, {#id} or {key="value"}, as markdown-it-attrs reads it.`;
     }

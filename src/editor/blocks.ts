@@ -1,5 +1,5 @@
 import { Token } from '../@types/markdown-it';
-import { AttrPair, NOTE_SYNTAX_CHARS, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs } from './attrs';
+import { AttrPair, NOTE_SYNTAX_CHARS, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, readsBackAs, sameAttrs } from './attrs';
 
 /**
  * The token stream → top-level source blocks step of the rich editor.
@@ -893,6 +893,12 @@ function recoverSpanLiterals(tokens: readonly Token[], group: TokenGroup, lines:
             }
         }
         const written = literal ?? normalizedLiteral(joinAttrs(wanted));
+        if (written === null || (literal === null && !readsBackAs(written, 'span', joinAttrs(wanted)))) {
+            // No form of these attributes reads back as them after a span: a
+            // value that needs quotes holds a `"`, or the inline rules take
+            // part of it (`readsBackAs`).
+            return 'attribute span whose attributes no literal writes';
+        }
         if (hasInnerBrace(written)) {
             // markdown-it-attrs reads a quoted `}` into the value but cuts the
             // text after the span at the first `}`: what follows it stays in

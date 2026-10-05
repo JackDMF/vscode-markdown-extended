@@ -898,6 +898,8 @@ suite('Editor notes: the check reads the plan the fidelity plugin applies', () =
             ['Text. {title="a{b" #w}', 'Text. {title="a{b"}', false],
             ['- one {title="a{b" #i}\n- two', '- one {title="a{b"}\n- two', false],
             ['Text. {title="a}b c" #w .c}', 'Text. {title="a}b c" .c}', false],
+            ['Text. {k=a"b" #w}', 'Text. {k=a"b"}', false],
+            ['Text. {title="a "b"" #w}', 'Text.', false],
             ['> q\n> {.note #n}', '> q\n> {.note}', false],
             ['| a |\n| - |\n| b |\n{.grid}', '| a |\n| - |\n| b |\n{.grid}', true],
         ];
@@ -929,6 +931,40 @@ suite('Editor notes: the check reads the plan the fidelity plugin applies', () =
             const original = attrsOf(block)[0];
             assert.ok(original.some(([n]) => n === 'title'), `${block}: the preview reads the title`);
             assert.deepStrictEqual(attrsOf(saved.slice(source.length + 1))[0], original.filter(([n]) => n !== 'id'), `${block}: the copy reads as the original, minus its id`);
+        }
+    });
+
+    test('a copy\'s literal is one the preview reads as attributes, or none: never one it shows as text', () => {
+        const md = hostEngine();
+        const holders = new Set(['paragraph_open', 'list_item_open', 'heading_open']);
+        /** The attributes the host gives the first paragraph, item or heading of `source`, and whether a `{` is left in its text. */
+        const readOf = (source: string) => {
+            const tokens = md.parse(source, {});
+            const holder = tokens.find(t => holders.has(t.type) && t.attrs !== null) ?? null;
+            const leftover = tokens.some(t => t.type === 'inline' && (t.children ?? []).some(c => c.type === 'text' && c.content.includes('{')));
+            return { attrs: (holder?.attrs ?? []).map(([n, v]) => [n, v]), leftover };
+        };
+        for (const [block, copy] of [
+            // A `"` inside a bare value stays bare: escaped, the preview showed the copy's `{…}` as text.
+            ['Text. {k=a"b" #w}', 'Text. {k=a"b"}'],
+            ['- one {k=a"b" #i}\n- two', '- one {k=a"b"}\n- two'],
+            ['## Head {k=a"b" #t}', '## Head {k=a"b"}'],
+            ['Text. {k=a"b" c #w}', 'Text. {k=a"b" c=""}'],
+            // A value with a space and a `"` has no literal the preview reads back: the copy has none.
+            ['Text. {title="a "b"" #w}', 'Text.'],
+            ['- one {title="a "b"" #i}\n- two', '- one\n- two'],
+            ['## Head {title="a "b"" #t}', '## Head'],
+        ]) {
+            const source = `${block}\n\nEnd.\n`;
+            const state = read(source);
+            const saved = text(state.apply(copyBlock(state, 0, state.doc.content.size)));
+            assert.strictEqual(saved, `${source}\n${copy}\n`, block);
+            const original = readOf(block);
+            assert.ok(!original.leftover && original.attrs.some(([n]) => n === 'id'), `${block}: the preview reads the original's attributes`);
+            const back = readOf(copy);
+            assert.strictEqual(back.leftover, false, `${block}: the preview shows nothing of the copy's literal as text`);
+            const rest = original.attrs.filter(([n]) => n !== 'id');
+            assert.deepStrictEqual(back.attrs, copy.includes('{') ? rest : [], `${block}: the copy reads as the original minus its id, or has no attributes`);
         }
     });
 

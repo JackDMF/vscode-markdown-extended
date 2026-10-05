@@ -1,6 +1,7 @@
 import markdownIt from 'markdown-it';
 import { MarkdownIt, Token } from '../@types/markdown-it';
 import { INLINE_PLUGINS, isInlinePlugin } from '../plugin/inlinePlugins';
+import { MarkdownItAttrs } from '../plugin/markdownItAttrs';
 import { SIDEBAR_SPAN_META } from '../plugin/markdownItSidenote';
 import { configureLinkify } from '../syntax/linkify';
 
@@ -120,6 +121,48 @@ export function createInlineEngine(definition: InlineEngineDefinition): Markdown
         }
     }
     return md;
+}
+
+/** The definition the page reads with now (`setCurrentInlineDefinition`), and the engines built from it, made when first asked. */
+let currentDefinition: InlineEngineDefinition = DEFAULT_INLINE_ENGINE;
+let currentEngines: { inline: MarkdownIt | null; attrs: MarkdownIt | null } = { inline: null, attrs: null };
+
+/**
+ * Read with the engine `definition` describes from now on — the host's, which
+ * the page is posted with each document (`setInlineEngine` in `serialize.ts`).
+ * Whether it changed. Until a document is posted, and wherever nothing sets
+ * one (the extension host, whose parse reads with its full engine), it is
+ * `DEFAULT_INLINE_ENGINE`.
+ */
+export function setCurrentInlineDefinition(definition: InlineEngineDefinition): boolean {
+    if (JSON.stringify(definition) === JSON.stringify(currentDefinition)) {
+        return false;
+    }
+    currentDefinition = definition;
+    currentEngines = { inline: null, attrs: null };
+    return true;
+}
+
+/** The definition the page reads with now. */
+export function currentInlineDefinition(): InlineEngineDefinition {
+    return currentDefinition;
+}
+
+/** The page's engine (`createInlineEngine`) for the current definition. */
+export function currentInlineEngine(): MarkdownIt {
+    currentEngines.inline ??= createInlineEngine(currentDefinition);
+    return currentEngines.inline;
+}
+
+/**
+ * The page's engine with the registry's markdown-it-attrs on top, registered
+ * as the host registers it (`MarkdownItAttrs`, no options): what reads a
+ * literal the editor writes back as the preview reads it (`readsBackAs` in
+ * `attrs.ts`). It runs no block plugin of the registry.
+ */
+export function currentAttrsEngine(): MarkdownIt {
+    currentEngines.attrs ??= createInlineEngine(currentDefinition).use(MarkdownItAttrs);
+    return currentEngines.attrs;
 }
 
 /** A sidebar the parser read: its kind, and where its opening and its closing marker stand in the text read. */

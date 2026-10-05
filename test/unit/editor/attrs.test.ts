@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { Mark, Node } from 'prosemirror-model';
-import { domAttrsOf, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs, withoutId } from '../../../src/editor/attrs';
+import { domAttrsOf, joinAttrs, normalizedLiteral, parseAttrsLiteral, readsAsOneText, sameAttrs, withoutId } from '../../../src/editor/attrs';
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -63,7 +63,7 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
             ['{.wide #w}', '{.wide}'], ['{#w}', null], ['{id=w}', null], ['{#x .a style="color:red"}', '{.a style=color:red}'],
             ['{.a}', '{.a}'], ['{ .spaced  #id }', '{.spaced}'], ['{title="a b" #x}', '{title="a b"}'], ['{.a}}', '{.a}}'],
         ] as [string, string | null][]) {
-            assert.strictEqual(withoutId(literal), kept, literal);
+            assert.strictEqual(withoutId(literal, 'span'), kept, literal);
             const before = parseAttrsLiteral(literal);
             if (before) {
                 const rendered = kept === null ? [] : attrsOfFirst(md.renderInline(`[x]${kept}`), 'span');
@@ -75,34 +75,95 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
     test('the normalized form reads as the same attributes', () => {
         for (const literal of ['{#x .a .b key="v"}', '{class="a b" data-x=1}', '{title="two words" #id}', '{..m .c}']) {
             const pairs = joinAttrs(parseAttrsLiteral(literal) ?? []);
-            const normalized = normalizedLiteral(pairs);
+            const normalized = normalizedLiteral(pairs) ?? '';
             assert.ok(sameAttrs(joinAttrs(parseAttrsLiteral(normalized) ?? []), pairs), `${literal} → ${normalized}`);
         }
         assert.strictEqual(normalizedLiteral(joinAttrs(parseAttrsLiteral('{#x .a .b key="v"}') ?? [])), '{#x .a .b key=v}');
     });
 
-    test('a value the plugin would not read back bare is quoted, and the form reads as the attributes it was made from', () => {
+    /**
+     * The smallest source in which the host's engine — the preview's — reads a
+     * literal on each element a copy keeps one on, and the token it gives it to.
+     */
+    const HOST_SHAPES: Record<string, [(literal: string) => string, string]> = {
+        paragraph: [l => `Text. ${l}`, 'paragraph_open'],
+        heading: [l => `# Head ${l}`, 'heading_open'],
+        'list_item': [l => `- one ${l}\n- two`, 'list_item_open'],
+        span: [l => `A [x]${l} b.`, 'span_open'],
+    };
+    /** The attributes the host's engine gives `holder` for `literal`, or `null` when any of it is left as text. */
+    const hostRead = (literal: string, holder: string): [string, string][] | null => {
+        const [source, type] = HOST_SHAPES[holder];
+        const all = md.parse(source(literal), {}).flatMap(t => [t, ...(t.children ?? [])]);
+        if (all.some(t => t.type === 'text' && /[{}]/.test(t.content))) {
+            return null;
+        }
+        const token = all.find(t => t.type === type);
+        return (token?.attrs ?? []).map(([n, v]) => [n, v] as [string, string]);
+    };
+
+    test('a copy\'s literal reads in the preview as the original\'s attributes minus the id, on every block, or is dropped', () => {
         const literals = [
-            '{title="a{b" #w}', '{title="a}b" #w}', '{title="a{b}"}', "{title='x'}", "{k='a b'}", '{data-x="a\\"b"}', '{k="\\"q\\""}',
-            '{k="a=b"}', '{k=a=b}', '{k="a b=c"}', '{title="a b" .c #w}', '{k=""}', '{k=a\\}', '{k="x\\\\"}', '{class=".m"}', '{.a=b}',
-            '{id="a b" .c}', '{#w title="x{y" key="z}" .c .d}',
+            '{title="a{b" #w}', '{title="a}b" #w}', '{title="a{b}"}', "{title='x'}", "{k='a b'}", '{k="a=b"}', '{k=a=b}', '{k="a b=c"}',
+            '{title="a b" .c #w}', '{k=""}', '{class=".m"}', '{.a=b}', '{id="a b" .c}', '{#w title="x{y" key="z}" .c .d}',
+            '{k=a"b" #w}', '{k=a"b" c #w}', '{title="a "b"" #w}', '{title="é ü" #w}', '{title=日本 #w}', '{class="" #w}', '{k=1 k=2 #w}',
+            '{id=w .c}', '{#w #v .c}', '{k= #w}', '{class=".x" #w}', '{.c}', '{ .c }', '{key="v"}', '{title="#x" .c #w}', '{k="a_b_ c" #w}',
         ];
+        // The rest of these holds a value with a space and a `"`: no literal reads back as it, so a copy has none.
+        const unwritable = new Set(['{title="a "b"" #w}']);
         for (const literal of literals) {
             const pairs = parseAttrsLiteral(literal);
             assert.ok(pairs, `the port accepts ${literal}`);
-            const normalized = normalizedLiteral(joinAttrs(pairs));
-            assert.ok(sameAttrs(joinAttrs(parseAttrsLiteral(normalized) ?? []), joinAttrs(pairs)), `${literal} → ${normalized}: read back as the port reads it`);
-            assert.ok(sameAttrs(attrsOfFirst(md.renderInline(`[x]${normalized}`), 'span'), attrsOfFirst(md.renderInline(`[x]${literal}`), 'span')), `${literal} → ${normalized}: and as the plugin does`);
-            const kept = withoutId(literal);
-            const rest = joinAttrs(pairs).filter(([n]) => n !== 'id');
-            assert.deepStrictEqual(joinAttrs(kept === null ? [] : parseAttrsLiteral(kept) ?? []), rest, `${literal} → ${kept}: without its id`);
+            for (const holder of Object.keys(HOST_SHAPES)) {
+                const original = hostRead(literal, holder);
+                const kept = withoutId(literal, holder);
+                const where = `${literal} on a ${holder} → ${kept}`;
+                if (pairs.every(([n]) => n !== 'id')) {
+                    assert.strictEqual(kept, literal, `${where}: a literal with no id is kept byte for byte`);
+                } else if (original === null) {
+                    // After a span the plugin cuts at the first `}`: the original is text there, and so would a copy be.
+                    assert.strictEqual(kept, null, `${where}: the preview shows the original as text there`);
+                } else if (kept === null) {
+                    assert.ok(unwritable.has(literal) || original.every(([n]) => n === 'id'), `${where}: dropped only when nothing else is left or nothing reads back`);
+                } else {
+                    assert.ok(!kept.includes('\\'), `${where}: nothing is escaped`);
+                    const read = hostRead(kept, holder);
+                    assert.ok(read !== null, `${where}: the preview reads the copy's literal as attributes`);
+                    assert.ok(sameAttrs(read, original.filter(([n]) => n !== 'id')), `${where}: as the original's, less the id`);
+                }
+            }
+        }
+        for (const [literal, kept] of [
+            ['{title="a{b" #w}', '{title="a{b"}'], ['{k=a"b" #w}', '{k=a"b"}'], ['{class=".x" #w}', '{class=.x}'], ['{k= #w}', '{k=""}'],
+            ['{id=w .c}', '{.c}'], ['{k=1 k=2 #w}', '{k=1 k=2}'], ['{title="a "b"" #w}', null],
+        ] as [string, string | null][]) {
+            assert.strictEqual(withoutId(literal, 'paragraph'), kept, literal);
         }
     });
 
-    test('a value no literal can hold is written so that it stays an attribute list', () => {
-        // A trailing backslash would escape the closing quote: it is doubled, and a bare `"` is escaped.
-        assert.ok(parseAttrsLiteral(normalizedLiteral([['k', 'a{b\\']])), 'a trailing backslash');
-        assert.ok(parseAttrsLiteral(normalizedLiteral([['k', 'a"b']])), 'a bare quote');
+    test('a literal the preview shows as text is none to the editor: the port refuses what the engine leaves in pieces', () => {
+        for (const literal of [
+            '{k="a\\"b" #w}', '{data-x="a\\"b"}', '{k="\\"q\\""}', '{k=a\\ #w}', '{k=a\\}', '{k="x\\\\"}', '{k="a\\b" #w}',
+            '{title="a b*c*" #w}', '{k="<b>" #w}', '{k="a&amp;b" #w}', '{k="a&amp;b"}', '{k="a`b`c d" #w}', '{k="a^b^" #w}',
+            '{k="==m==" #w}', '{href="http://x.org" #w}',
+        ]) {
+            assert.strictEqual(parseAttrsLiteral(literal), null, `the port refuses ${literal}`);
+            assert.strictEqual(readsAsOneText(literal), false, literal);
+            assert.deepStrictEqual(domAttrsOf(literal), {}, `${literal}: the editor draws nothing of it`);
+            for (const holder of Object.keys(HOST_SHAPES)) {
+                assert.strictEqual(hostRead(literal, holder), null, `${literal} on a ${holder}: the host shows it as text`);
+                assert.strictEqual(withoutId(literal, holder), literal, `${literal} on a ${holder}: a copy keeps the text as it is`);
+            }
+        }
+    });
+
+    test('no value is written with a backslash, and one that needs quotes and holds a quote is not written at all', () => {
+        assert.strictEqual(normalizedLiteral([['k', 'a"b']]), '{k=a"b}');
+        assert.strictEqual(normalizedLiteral([['k', 'a"b c']]), null, 'a space and a quote');
+        assert.strictEqual(normalizedLiteral([['k', '"a']]), null, 'a quote first would open one');
+        assert.strictEqual(normalizedLiteral([['k', 'a{b\\']]), null, 'a trailing backslash');
+        assert.strictEqual(normalizedLiteral([['k', 'a\\b']]), null, 'a backslash');
+        assert.strictEqual(normalizedLiteral([['id', 'a\\b']]), null, 'an id with a backslash');
     });
 });
 

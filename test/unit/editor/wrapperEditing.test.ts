@@ -246,4 +246,14 @@ suite('Editor stage 3: review findings, in the page', () => {
         const paragraph = stateOf('Some text. {.lead}\n');
         assert.ok(changeBlockAttrsTransaction(paragraph, 0, '{.a title="x{y"}'), 'after a paragraph the plugin reads the whole literal');
     });
+
+    test('7. a literal the preview shows as text — a backslash, an entity, markup inside it — is refused, with the reason', () => {
+        const paragraph = stateOf('Some text. {.lead}\n');
+        for (const literal of ['{k="a\\"b"}', '{k="a&amp;b"}', '{title="a *b*"}', '{k="<b>"}']) {
+            assert.strictEqual(changeBlockAttrsTransaction(paragraph, 0, literal), null, literal);
+            assert.match(literalRefusal(literal) ?? '', /the preview would show it as text/, literal);
+            const state = select(stateOf('Alpha beta gamma.\n'), 'beta');
+            assert.strictEqual(applySpanTransaction(state, literal), null, `${literal}: not as a span either`);
+        }
+    });
 });
