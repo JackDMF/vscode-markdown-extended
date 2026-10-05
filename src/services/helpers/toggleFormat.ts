@@ -584,8 +584,8 @@ class Verifier {
     /**
      * Each toggle, or one of its alternatives, that passes; a `none` toggle for
      * one that does not. The toggles whose lines meet are read again together
-     * (`together`); where what goes wrong is no one toggle's, one after
-     * another (`oneByOne`).
+     * (`together`); where what goes wrong is no one toggle's, the toggles
+     * that go wrong on their own lines alone are found first (`isolated`).
      */
     choose(toggles: Toggle[]): Toggle[] {
         const chosen = toggles.map(t => (t.kind === 'none' ? t : none(t)));
@@ -593,7 +593,8 @@ class Verifier {
             const members = unit.members.filter(i => toggles[i].kind !== 'none');
             if (!members.length) {continue;}
             const own = members.map(i => toggles[i]);
-            const picked = this.together(this.part(unit.start, unit.end), own) ?? this.oneByOne(own);
+            const part = this.part(unit.start, unit.end);
+            const picked = this.together(part, own) ?? this.isolated(part, own);
             members.forEach((i, k) => {
                 chosen[i] = picked[k];
             });
@@ -602,14 +603,37 @@ class Verifier {
     }
 
     /**
+     * Toggles a reading together found what is no one toggle's in — a
+     * block's structure, a line's kind, a definition: each is read again with
+     * its own lines alone (`rangeOf`), once, as it means to be made. Those
+     * that go wrong there are tried one after another (`oneByOne`), with
+     * their alternatives, after the rest are read together again; where no
+     * toggle goes wrong alone, it is what some make together, and all are
+     * tried one after another.
+     */
+    private isolated(part: Part, toggles: Toggle[]): Toggle[] {
+        const wrong = toggles.map(t => {
+            const range = this.rangeOf(t);
+            return this.check(this.part(range.start, range.end), [t]) === 'all';
+        });
+        if (!wrong.includes(true)) {return this.oneByOne(toggles);}
+        const rest = toggles.filter((_, k) => !wrong[k]);
+        const restPicked = rest.length ? this.together(part, rest) ?? this.oneByOne(rest) : [];
+        const taken = restPicked.flatMap((option, k) => (option.kind === 'none' ? [] : [{ toggle: option, ...this.rangeOf(rest[k]) }]));
+        const culprits = this.oneByOne(toggles.filter((_, k) => wrong[k]), taken);
+        let r = 0, c = 0;
+        return toggles.map((_, k) => (wrong[k] ? culprits[c++] : restPicked[r++]));
+    }
+
+    /**
      * The toggles read again together, each as its first option; each one a
      * reading blames on its own goes on to its next option, or is left out
      * after its last, until a reading finds nothing wrong — a few parses of
      * the lines however many toggles there are. Toggles blamed beside each
      * other, for what went wrong where both write, are set aside and tried
-     * after that, one after another in document order, each with the ones
-     * taken before it. `undefined` where a reading finds what is no one
-     * toggle's.
+     * after that in document order, each with the ones taken before it, by
+     * halves that pass together. `undefined` where a reading finds what is no
+     * one toggle's.
      */
     private together(part: Part, toggles: Toggle[]): Toggle[] | undefined {
         const options = toggles.map(t => [t, ...t.alternatives]);
@@ -630,40 +654,44 @@ class Verifier {
             }
         }
         const picked = toggles.map((_, k) => (at[k] < options[k].length && !aside.has(k) ? options[k][at[k]] : undefined));
-        for (const k of [...aside].sort((x, y) => x - y)) {
+        // By halves, the earlier first, each with the ones taken before it: a
+        // half that passes together is taken whole, so of many toggles in one
+        // inline token, one going wrong costs a few readings, not one each.
+        const settle = (ks: number[]) => {
             const taken = picked.filter((p): p is Toggle => p !== undefined);
+            if (ks.length > 1) {
+                if (passed(this.check(part, [...taken, ...ks.map(k => options[k][at[k]])]))) {
+                    for (const k of ks) {picked[k] = options[k][at[k]];}
+                    return;
+                }
+                const half = ks.length >> 1;
+                settle(ks.slice(0, half));
+                settle(ks.slice(half));
+                return;
+            }
+            const k = ks[0];
             picked[k] = options[k].slice(at[k]).find(option => passed(this.check(part, [...taken, option])));
-        }
+        };
+        if (aside.size > 0) {settle([...aside].sort((x, y) => x - y));}
         return picked.map((p, k) => p ?? none(toggles[k]));
     }
 
     /**
-     * Each toggle, one after another, with the ones taken before it: read with
-     * its own lines (`rangeOf`), and those of every toggle taken that they
-     * meet.
+     * Each toggle, one after another, with the ones taken before it (`taken`
+     * to start with): read with its own lines (`rangeOf`) and the lines of
+     * each toggle taken whose own lines meet them — those alone, so the lines
+     * read stay a toggle's neighbourhood however many toggles there are.
      */
-    private oneByOne(toggles: Toggle[]): Toggle[] {
-        const taken: { toggle: Toggle; start: number; end: number }[] = [];
+    private oneByOne(toggles: Toggle[], taken: { toggle: Toggle; start: number; end: number }[] = []): Toggle[] {
         return toggles.map(toggle => {
-            let range = this.rangeOf(toggle);
-            let near: Toggle[] = [];
-            for (let grown = true; grown;) {
-                grown = false;
-                near = [];
-                for (const t of taken) {
-                    if (t.start < range.end && range.start < t.end) {
-                        near.push(t.toggle);
-                        if (t.start < range.start || t.end > range.end) {
-                            range = { start: Math.min(range.start, t.start), end: Math.max(range.end, t.end) };
-                            grown = true;
-                        }
-                    }
-                }
-            }
-            const part = this.part(range.start, range.end);
-            const option = [toggle, ...toggle.alternatives].find(o => passed(this.check(part, [...near, o])));
+            const own = this.rangeOf(toggle);
+            const near = taken.filter(t => t.start < own.end && own.start < t.end);
+            const start = Math.min(own.start, ...near.map(t => t.start));
+            const end = Math.max(own.end, ...near.map(t => t.end));
+            const part = this.part(start, end);
+            const option = [toggle, ...toggle.alternatives].find(o => passed(this.check(part, [...near.map(t => t.toggle), o])));
             if (option === undefined) {return none(toggle);}
-            taken.push({ toggle: option, ...range });
+            taken.push({ toggle: option, ...own });
             return option;
         });
     }

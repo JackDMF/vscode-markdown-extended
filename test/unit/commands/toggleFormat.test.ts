@@ -413,6 +413,40 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.ok(parsed <= 10 * content.length, `${parsed} characters parsed for ${content.length}`);
     });
 
+    /** The characters `md` parses while `marker` is toggled at every cursor of `content`, and the result. */
+    async function parsedFor(marker: string, content: string, cursors: [number, number][]): Promise<{ parsed: number; text: string }> {
+        let parsed = 0;
+        const counting = Object.create(md) as typeof md;
+        counting.parse = (src, env) => {
+            parsed += src.length;
+            return md.parse(src, env);
+        };
+        const editor = await open(content, cursors.map(([line, character]) => {
+            const at = content.split('\n').slice(0, line).reduce((sum, l) => sum + l.length + 1, 0) + character;
+            return [at, at] as [number, number];
+        }));
+        await toggleInlineFormat(editor, marker, counting);
+        return { parsed, text: editor.document.getText() };
+    }
+
+    test('one cursor changing a block among many is found in a few readings, not one per cursor', async () => {
+        // `==` on the blank line under `Title` would make it a heading; every other cursor wraps its word.
+        const paragraphs = Array.from({ length: 100 }, (_, i) => `para zed number ${i}`);
+        const content = 'Title\n\n\n' + paragraphs.join('\n\n');
+        const { parsed, text } = await parsedFor(INLINE_MARKERS.mark, content, [[1, 0], ...paragraphs.map((_, i) => [3 + 2 * i, 6] as [number, number])]);
+        assert.strictEqual(text, 'Title\n\n\n' + paragraphs.map(p => p.replace('zed', '==zed==')).join('\n\n'));
+        assert.ok(parsed <= 20 * content.length, `${parsed} characters parsed for ${content.length}`);
+    });
+
+    test('one cursor going wrong among many in one paragraph is found in a few readings, not one per cursor', async () => {
+        // At the first line's cursor `~**zed**~` does not read as written, `**~zed~**` does.
+        const lines = Array.from({ length: 100 }, (_, i) => (i === 0 ? 'line ~zed~ number ' : 'line zed number ') + i);
+        const content = lines.join('\n');
+        const { parsed, text } = await parsedFor(INLINE_MARKERS.bold, content, lines.map((_, i) => [i, i === 0 ? 7 : 6] as [number, number]));
+        assert.strictEqual(text, lines.map(l => l.replace('~zed~', '**~zed~**').replace(/ zed /, ' **zed** ')).join('\n'));
+        assert.ok(parsed <= 40 * content.length, `${parsed} characters parsed for ${content.length}`);
+    });
+
     test('a reversed selection stays reversed', async () => {
         const editor = await inline('bold', 'one two', [[7, 4]]);
         assert.strictEqual(editor.document.getText(), 'one **two**');
