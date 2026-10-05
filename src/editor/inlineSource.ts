@@ -90,10 +90,37 @@ export interface InlineSource {
     readPart(text: string): InlineSource;
     /** Each mapped block token's type, nesting and lines, of a part read with `readPart`; empty for a document. */
     readonly structure: readonly string[];
+    /**
+     * Each inline token of a part read with `readPart`, with what it holds
+     * besides text and the markers of the spans a toggle writes (`InlineContent`);
+     * empty for a document.
+     */
+    readonly inlines: readonly InlineContent[];
+    /**
+     * What the text itself defines, as one comparable string: each reference's
+     * label with its destination and title, each footnote's label, each
+     * abbreviation with its expansion. Empty where it defines nothing.
+     */
+    readonly defines: string;
     /** How many lines the text has. */
     readonly lineCount: number;
+    /** The line an offset of the text stands on. */
+    lineOf(offset: number): number;
     /** The same document, a later version of its text, read again where it changed (`update`). */
     update(text: string): InlineSource;
+}
+
+/**
+ * An inline token (a paragraph's, a heading's, a cell's), lines `[first, end)`,
+ * and each child that is neither text nor a span's marker a toggle writes —
+ * a link's or an image's destination, inline HTML, math, a code span, an
+ * emoji, a footnote reference with its note, an abbreviation, a line break —
+ * as its type, markup, info, content and attributes.
+ */
+export interface InlineContent {
+    first: number;
+    end: number;
+    tokens: readonly string[];
 }
 
 /** The document `text` read with `md`, the engine the Visual Editor parses with, in `env` (`engineEnvironment`). */
@@ -310,12 +337,56 @@ function parsePart(md: MarkdownIt, text: string, env: Environment): Token[] {
     return tokens;
 }
 
+/** A part's inline tokens and what each holds besides text and spans' markers (`InlineContent`). */
+function contentsOf(tokens: Token[], env: Environment): InlineContent[] {
+    const notes = (env as { footnotes?: { list?: { content?: string }[] } }).footnotes?.list ?? [];
+    const contents: InlineContent[] = [];
+    for (const token of tokens) {
+        if (token.type !== 'inline' || !token.map) {
+            continue;
+        }
+        const held: string[] = [];
+        for (const child of token.children ?? []) {
+            if (child.type === 'text' || (child.nesting !== 0 && PAIR_MARKERS.has(child.markup))) {
+                continue;
+            }
+            // An inline note's text is not among the children: it is the footnote's.
+            const id = (child.meta as { id?: number } | null)?.id;
+            const note = child.type.startsWith('footnote_ref') && id !== undefined ? notes[id]?.content ?? '' : '';
+            held.push(JSON.stringify([child.type, child.markup, child.info, child.content, child.attrs ?? [], note]));
+        }
+        contents.push({ first: token.map[0], end: Math.max(token.map[1], token.map[0] + 1), tokens: held });
+    }
+    return contents;
+}
+
+/**
+ * What `text` itself defines (`InlineSource.defines`). Read by the block rules
+ * alone, which define, in an environment of `base` with no definitions, so a
+ * definition the document makes elsewhere does not hide one the text loses.
+ */
+function definedBy(md: MarkdownIt, text: string, base: Environment): string {
+    const env = { ...base } as Record<string, unknown>;
+    delete env.references;
+    delete env.footnotes;
+    delete env.abbreviations;
+    try {
+        md.block.parse(('\n' + text).replace(/\r\n?/g, '\n').replace(/\0/g, '�'), md, env, []);
+    } catch {
+        md.parse('\n' + text, env);
+    }
+    const e = env as { references?: Record<string, unknown>; footnotes?: { refs?: Record<string, unknown> }; abbreviations?: Record<string, unknown> };
+    const sorted = (o: Record<string, unknown> | undefined) => Object.keys(o ?? {}).sort().map(k => [k, o?.[k]]);
+    const defined = [sorted(e.references), Object.keys(e.footnotes?.refs ?? {}).sort(), sorted(e.abbreviations)];
+    return defined.some(d => d.length > 0) ? JSON.stringify(defined) : '';
+}
+
 /** A document read below this size keeps its tokens; a larger one parses a block again to read it. */
 const KEEP_TOKENS = 200_000;
 /** How many top-level blocks' tokens a large document keeps for reading their groups. */
 const BLOCK_CACHE = 4;
-/** A line that may define a reference, a footnote or an abbreviation: `[label]:`, `[^label]:`, `*[label]:`, after a prefix. */
-const DEFINITION = /\[[^\]]*\]\s*:/;
+/** A line that may define a reference, a footnote or an abbreviation: `[label]:`, `[^label]:`, `*[label]:`, after a prefix; a label may hold an escaped bracket (`[p\]q]:`). */
+const DEFINITION = /\[(?:[^\]\\]|\\[\s\S])*\]\s*:/;
 /** How many more top-level blocks an incremental read takes in before it reads the whole document instead. */
 const MAX_EXTENSIONS = 8;
 
@@ -327,16 +398,19 @@ class DocumentIndex implements InlineSource {
     private blockAt: (Block | undefined)[];
     private readonly blockTokens = new Map<Block, Token[]>();
     readonly structure: readonly string[];
+    readonly inlines: readonly InlineContent[];
+    private defined: string | undefined;
 
     private constructor(
         readonly text: string,
         private readonly md: MarkdownIt,
         private readonly base: Environment,
         readonly definitions: Definitions,
-        parts: { scan: Scan; structure?: string[] },
+        parts: { scan: Scan; structure?: string[]; inlines?: InlineContent[] },
     ) {
         this.lines = new Lines(text);
         this.structure = parts.structure ?? [];
+        this.inlines = parts.inlines ?? [];
         this.kinds = new Uint8Array(0);
         this.groupOf = [];
         this.blocks = [];
@@ -347,7 +421,8 @@ class DocumentIndex implements InlineSource {
     /**
      * The whole of `text`, read with one parse. A `part` of a document is
      * parsed as one (`parsePart`) and keeps each mapped block token's type
-     * and lines, for comparing two readings of it.
+     * and lines and what each inline token holds, for comparing two readings
+     * of it.
      */
     static read(md: MarkdownIt, text: string, base: Environment, part: boolean): DocumentIndex {
         const env: Environment = { ...base };
@@ -356,8 +431,18 @@ class DocumentIndex implements InlineSource {
         const parts = {
             scan: scan(tokens, count, 0, text.length < KEEP_TOKENS),
             structure: part ? tokens.filter(t => t.map && t.type !== 'inline').map(t => `${t.type}:${t.nesting}:${t.map[0]}:${t.map[1]}`) : undefined,
+            inlines: part ? contentsOf(tokens, env) : undefined,
         };
         return new DocumentIndex(text, md, base, definitionsOf(env), parts);
+    }
+
+    get defines(): string {
+        this.defined ??= DEFINITION.test(this.text) ? definedBy(this.md, this.text, this.base) : '';
+        return this.defined;
+    }
+
+    lineOf(offset: number): number {
+        return this.lines.positionAt(offset).line;
     }
 
     private install(s: Scan): void {
@@ -433,7 +518,9 @@ class DocumentIndex implements InlineSource {
      * cursors reads only the blocks it wrote in. The whole document is read
      * again when an edit touches the front matter or a line no top-level block
      * holds (a reference, footnote or abbreviation definition), or a part read
-     * defines something or places a footnote's body.
+     * defines something or places a footnote's body — and when the regions
+     * that meet take in more than half the document, which one parse reads
+     * for less.
      */
     update(text: string): DocumentIndex {
         if (text === this.text) {
@@ -446,24 +533,53 @@ class DocumentIndex implements InlineSource {
         const lines = new Lines(text);
         const delta = lines.count - this.lines.count;
         let stretches = this.changedLines(text, lines);
+        if (2 * this.reach(stretches) > this.lines.count) {
+            return full();
+        }
+        // A stretch's region is read once, however many rounds it stays as it is.
+        const read = new Map<string, Region | undefined>();
+        const regionOf = (stretch: { first: number; last: number }) => {
+            const key = `${stretch.first}:${stretch.last}`;
+            if (!read.has(key)) {
+                read.set(key, this.region(text, lines, stretch.first, stretch.last, delta));
+            }
+            return read.get(key);
+        };
         for (;;) {
             const regions: Region[] = [];
             for (const stretch of stretches) {
-                const region = this.region(text, lines, stretch.first, stretch.last, delta);
+                const region = regionOf(stretch);
                 if (region === undefined) {
                     return full();
                 }
                 regions.push(region);
             }
-            const meets = regions.findIndex((region, k) => k > 0 && region.startLine < regions[k - 1].endOld);
-            if (meets < 0) {
+            // Every run of regions that meet becomes one stretch, in one pass.
+            const merged: { first: number; last: number }[] = [];
+            let meets = false;
+            let covered = 0;
+            let runStart = 0;
+            let runEnd = -1;
+            regions.forEach((region, k) => {
+                if (merged.length > 0 && region.startLine < runEnd) {
+                    merged[merged.length - 1].last = stretches[k].last;
+                    runEnd = Math.max(runEnd, region.endOld);
+                    meets = true;
+                    return;
+                }
+                covered += Math.max(0, runEnd - runStart);
+                merged.push({ ...stretches[k] });
+                runStart = region.startLine;
+                runEnd = region.endOld;
+            });
+            covered += Math.max(0, runEnd - runStart);
+            if (!meets) {
                 return this.spliced(text, lines, regions);
             }
-            stretches = [
-                ...stretches.slice(0, meets - 1),
-                { first: stretches[meets - 1].first, last: stretches[meets].last },
-                ...stretches.slice(meets + 1),
-            ];
+            if (2 * covered > this.lines.count) {
+                return full();
+            }
+            stretches = merged;
         }
     }
 
@@ -516,6 +632,31 @@ class DocumentIndex implements InlineSource {
             }
         }
         return stretches.length ? stretches : [{ first, last }];
+    }
+
+    /**
+     * How many old lines the stretches' regions take in at least, before any
+     * is read: each from the top-level block before it through the block
+     * after it, those that meet counted once.
+     */
+    private reach(stretches: { first: number; last: number }[]): number {
+        let covered = 0;
+        let runStart = 0;
+        let runEnd = 0;
+        for (const stretch of stretches) {
+            const before = this.blocks[Math.max(0, this.blockAfter(stretch.first, 'end') - 1)];
+            const after = this.blocks[this.blockAfter(stretch.last, 'start')];
+            const start = Math.min(before.start, stretch.first);
+            const end = Math.max(after === undefined ? this.lines.count : after.end, stretch.last + 1);
+            if (start < runEnd) {
+                runEnd = Math.max(runEnd, end);
+                continue;
+            }
+            covered += runEnd - runStart;
+            runStart = start;
+            runEnd = end;
+        }
+        return covered + runEnd - runStart;
     }
 
     /** The index of the first top-level block whose end (or start) is after `line`. */
@@ -602,9 +743,14 @@ class DocumentIndex implements InlineSource {
             const tokens = startLine === 0 ? this.md.parse(text.slice(from, to), env) : parsePart(this.md, text.slice(from, to), env);
             const s = scan(tokens, endNew - startLine, startLine, false);
             const defined = definitionsOf(env);
-            const definesMore = Object.keys(defined.references).length > Object.keys(this.definitions.references).length
-                || defined.footnotes.length > this.definitions.footnotes.length
-                || Object.keys(defined.abbreviations).length > Object.keys(this.definitions.abbreviations).length;
+            // A label the part defines that the document did not.
+            const more = (labels: string[], old: string[]) => {
+                const known = new Set(old);
+                return labels.some(label => !known.has(label));
+            };
+            const definesMore = more(Object.keys(defined.references), Object.keys(this.definitions.references))
+                || more(defined.footnotes, this.definitions.footnotes)
+                || more(Object.keys(defined.abbreviations), Object.keys(this.definitions.abbreviations));
             if (s.orphans || definesMore) {
                 return undefined;
             }
@@ -634,6 +780,8 @@ class DocumentIndex implements InlineSource {
         self.definitions = this.definitions;
         self.lines = lines;
         self.structure = [];
+        self.inlines = [];
+        self.defined = undefined;
         self.blockTokens = new Map<Block, Token[]>();
         const count = lines.count;
         const rank = new Uint8Array(count);
@@ -642,25 +790,32 @@ class DocumentIndex implements InlineSource {
         let shift = 0;
         let oldLine = 0;
         let oldBlock = 0;
-        const moved = new Set<Group>();
+        // A group or block an edit above moves is a copy, so this index's own stay as they are.
+        const movedBlocks = new Map<Block, Block>();
+        const movedGroups = new Map<Group, Group>();
         const keep = (to: number, toBlock: number) => {
-            for (let line = oldLine; line < to; line++) {
-                rank[line + shift] = this.kinds[line];
-                const group = this.groupOf[line];
-                if (group !== undefined && shift !== 0 && !moved.has(group)) {
-                    moved.add(group);
-                    group.first += shift;
-                    group.end += shift;
-                }
-                groupOf[line + shift] = group;
-            }
             for (let k = oldBlock; k < toBlock; k++) {
                 const block = this.blocks[k];
                 if (shift !== 0) {
-                    block.start += shift;
-                    block.end += shift;
+                    const copy = { ...block, start: block.start + shift, end: block.end + shift };
+                    movedBlocks.set(block, copy);
+                    blocks.push(copy);
+                } else {
+                    blocks.push(block);
                 }
-                blocks.push(block);
+            }
+            for (let line = oldLine; line < to; line++) {
+                rank[line + shift] = this.kinds[line];
+                let group = this.groupOf[line];
+                if (group !== undefined && shift !== 0) {
+                    let copy = movedGroups.get(group);
+                    if (copy === undefined) {
+                        copy = { ...group, first: group.first + shift, end: group.end + shift, block: group.block === null ? null : movedBlocks.get(group.block) ?? group.block };
+                        movedGroups.set(group, copy);
+                    }
+                    group = copy;
+                }
+                groupOf[line + shift] = group;
             }
         };
         for (const region of regions) {
@@ -677,10 +832,12 @@ class DocumentIndex implements InlineSource {
         keep(this.lines.count, this.blocks.length);
         // Ranks outside the regions are the final kinds already; `install` keeps blank as blank.
         next.install({ rank, groupOf, groups: [], blocks, orphans: false });
+        // A block's tokens map lines from its start: they serve its moved copy as well.
         const kept = new Set(blocks);
         for (const [block, tokens] of this.blockTokens) {
-            if (kept.has(block)) {
-                next.blockTokens.set(block, tokens);
+            const now = movedBlocks.get(block) ?? block;
+            if (kept.has(now)) {
+                next.blockTokens.set(now, tokens);
             }
         }
         return next;

@@ -150,6 +150,48 @@ suite('Inline source: the document as the engine reads it', () => {
         }
     });
 
+    const answers = (source: ReturnType<typeof readInlineSource>, text: string) => text.split(/\r\n|\r|\n/)
+        .map((_, line) => JSON.stringify([source.kindOf(line), source.textOn(line), source.spansOn(line), source.blockOf(line)]));
+
+    test('a definition whose label holds an escaped bracket is read again with the whole document', () => {
+        // The definition stops being one, so `[a][p\]q]` is no link any more.
+        for (const [before, after] of [
+            ['see [a][p\\]q] now\n\n- [p\\]q]: http://x', 'see [a][p\\]q] now\n\n- [p\\]q] http://x'],
+            ['- [p\\]q]: http://w\n\nsee [a][p\\]q] now', '- [p\\]q] http://w\n\nsee [a][p\\]q] now'],
+            ['see [a][p\\]q] now\n\n> [p\\]q]: http://x', 'see [a][p\\]q] now\n\n> [p\\]q] http://x'],
+        ]) {
+            const old = readInlineSource(md, before);
+            old.textOn(0);
+            old.textOn(2);
+            assert.deepStrictEqual(answers(old.update(after), after), answers(readInlineSource(md, after), after), JSON.stringify(after));
+        }
+    });
+
+    test('a version keeps its answers when a later one is read from it', () => {
+        const before = 'one *a*\n\ntwo **b**\n\n- three';
+        const old = readInlineSource(md, before);
+        const was = answers(old, before);
+        // Two lines written above: every block after them moves.
+        old.update('zero\n\n' + before);
+        assert.deepStrictEqual(answers(old, before), was);
+    });
+
+    test('a later version changed at many places is read for no more than one read of it whole', () => {
+        let parsed = 0;
+        const counting = Object.create(md) as typeof md;
+        counting.parse = (src, env) => {
+            parsed += src.length;
+            return md.parse(src, env);
+        };
+        const lines = Array.from({ length: 300 }, (_, i) => `para zed number ${i}`);
+        const old = readInlineSource(counting, lines.join('\n\n'));
+        // A word bolded in every paragraph, as by a cursor in each.
+        const after = lines.map(line => line.replace('zed', '**zed**')).join('\n\n');
+        parsed = 0;
+        old.update(after);
+        assert.ok(parsed <= after.length + 1, `${parsed} characters parsed for ${after.length}`);
+    });
+
     test('the block a line is in', () => {
         const source = readInlineSource(md, 'a\nb\n\n- x\n\n  y\n\nz');
         assert.deepStrictEqual([0, 1, 2, 3, 4, 5, 7].map(l => source.blockOf(l)),
