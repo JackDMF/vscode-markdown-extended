@@ -301,6 +301,45 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('strikethrough', `~«x»~ y${after}`), `~«x»~ y${after}`);
     });
 
+    test('no pair is written into a definition, and no toggle loses one', async () => {
+        for (const [name, marked] of [
+            ['bold', 'see [a][x] and [b][x]\n\n[x]:‸ http://u'],
+            ['bold', 'see [a][x]\n\n‸[x]: http://u'],
+            ['italics', 'see [a][x]\n\n[x]: http://u ‸'],
+            ['mark', 'see [a][x]\n\n[x]: http://u "T"‸'],
+            ['bold', 'see [a][x]\n\n> [x]:‸ http://u'],
+            ['bold', '- [x]:‸ http://u\n\nsee [a][x]'],
+            ['bold', 'the HTML\n\n*[HTML]:‸ Hyper'],
+            // `[x]:` is text until a destination follows: the pair would be one.
+            ['bold', 'see [a][x]\n\n[x]: ‸'],
+        ] as [InlineMarkerName, string][]) {
+            assert.strictEqual(await toggle(name, marked), marked);
+        }
+        // A footnote's label is a container's: its empty body gets the pair.
+        assert.strictEqual(await toggle('bold', 'x[^1]\n\n[^1]: ‸'), 'x[^1]\n\n[^1]: **‸**');
+    });
+
+    test('a pair on a blank line does not join the block below it', async () => {
+        for (const [name, marked] of [
+            ['italics', '# T\n\n‸\n---'],
+            ['italics', 'text\n\n‸\n    code line'],
+            ['italics', 'text\n\n‸\n==='],
+        ] as [InlineMarkerName, string][]) {
+            assert.strictEqual(await toggle(name, marked), marked);
+        }
+        // `****` is a thematic break: the code below stays code.
+        assert.strictEqual(await toggle('bold', 'text\n\n‸\n    code line'), 'text\n\n**‸**\n    code line');
+    });
+
+    test('nothing is written into a link\'s destination or inline HTML', async () => {
+        assert.strictEqual(await toggle('bold', 'see [a](‸./b.md) now'), 'see [a](‸./b.md) now');
+        assert.strictEqual(await toggle('bold', 'x <‸/span> y'), 'x <‸/span> y');
+    });
+
+    test('a definition made by the pair at one cursor does not let another cursor change a block', async () => {
+        assert.strictEqual(await toggle('mark', 'foo\n‸\n\nTerm\n: ‸'), 'foo\n‸\n\nTerm\n: ==‸==');
+    });
+
     test('a reversed selection stays reversed', async () => {
         const editor = await inline('bold', 'one two', [[7, 4]]);
         assert.strictEqual(editor.document.getText(), 'one **two**');

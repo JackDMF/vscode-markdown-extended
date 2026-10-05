@@ -81,6 +81,9 @@ interface Toggle extends Stretch {
 
 const KIND_ORDER = { close: 0, pair: 1, open: 2, delete: 3 };
 
+/** A line's start of nothing but containers' markers: a quote's `>`, a bullet, a number, a task's box, a definition's `:` or `~`, a footnote's label. */
+const CONTAINER_MARKERS = /^(?:[ \t]*(?:>|[-+*]|\d{1,9}[.)]|[:~]|\[[ xX]\]|\[\^[^\]\s]+\]:))*[ \t]*$/;
+
 /** The marker's name in a hint. */
 const MARKER_NAMES: Readonly<Record<string, string>> = {
     '**': 'Bold', '*': 'Italics', '_': 'Underline', '==': 'Mark', '^': 'Superscript', '~': 'Subscript', '~~': 'Strikethrough', '`': 'Code',
@@ -447,7 +450,10 @@ class InlineToggler {
     /**
      * The marker pair at a cursor with no word: in the line's text, or on a
      * line with none — not in a line's prefix before its text, and not inside
-     * a run of another span's marker.
+     * a run of another span's marker. A line of a block's syntax with no text
+     * gets it only at its end, after nothing but a container's marker: an
+     * empty list item, quote or definition (`- `, `> `, `: `); a reference's
+     * or an abbreviation's definition is no place for one.
      */
     private pair(line: number, at: number): Toggle | undefined {
         const stretches = this.source.textOn(line);
@@ -455,6 +461,11 @@ class InlineToggler {
             if (at < stretches[0].start) {return undefined;}
             const before = this.text[at - 1];
             if (before !== undefined && before === this.text[at] && /[*_~^=`]/.test(before)) {return undefined;}
+        }
+        if (stretches.length === 0 && this.source.kindOf(line) === 'structure') {
+            const text = this.document.lineAt(line).text;
+            const column = at - this.document.offsetAt(new vscode.Position(line, 0));
+            if (!/^\s*$/.test(text.slice(column)) || !CONTAINER_MARKERS.test(text.slice(0, column))) {return undefined;}
         }
         const pair = this.marker + this.marker;
         return { start: at, end: at, kind: 'pair', changes: [{ start: at, end: at, text: pair, kind: 'pair' }], writes: [], removes: [], alternatives: [] };
@@ -523,10 +534,27 @@ function isEmptyPair(text: string, at: number, marker: string): boolean {
     return left === length || right === length || nested;
 }
 
+/** Some lines of the document a toggle is read again with: `[start, end)`, from offset `base`, their text and its reading. */
+interface Part {
+    start: number;
+    end: number;
+    base: number;
+    text: string;
+    before: InlineSource;
+}
+
+/**
+ * What reading toggles again found: nothing wrong (an empty set), the toggles
+ * that went wrong, or `'all'` where what went wrong is no one toggle's — a
+ * block's structure, a line's kind, a definition.
+ */
+type Verdict = Set<Toggle> | 'all';
+
 /**
  * Whether toggles do what they mean, by reading the text again: the blocks
  * they touch are written over and parsed once, as the document parses them
- * (`InlineSource.readPart`), and compared with the same lines as they read.
+ * (`InlineSource.readPart`), and compared with the same lines as they read
+ * (`check` states what is compared).
  */
 class Verifier {
     private readonly text: string;
@@ -548,17 +576,15 @@ class Verifier {
         for (const unit of units) {
             const members = unit.members.filter(i => toggles[i].kind !== 'none' && !toggles[i].trusted);
             if (!members.length) {continue;}
-            const base = this.offsetOfLine(unit.start);
-            const text = this.text.slice(base, this.offsetOfLine(unit.end));
-            const before = this.source.readPart(text);
-            if (this.passes(before, text, base, members.map(i => toggles[i]))) {
+            const part = this.part(unit.start, unit.end);
+            if (passed(this.check(part, members.map(i => toggles[i])))) {
                 for (const i of members) {chosen[i] = toggles[i];}
                 continue;
             }
             const accepted: Toggle[] = [];
             for (const i of members) {
                 for (const option of [toggles[i], ...toggles[i].alternatives]) {
-                    if (this.passes(before, text, base, [...accepted, option])) {
+                    if (passed(this.check(part, [...accepted, option]))) {
                         accepted.push(option);
                         chosen[i] = option;
                         break;
@@ -569,34 +595,52 @@ class Verifier {
         return chosen;
     }
 
+    private part(start: number, end: number): Part {
+        const base = this.offsetOfLine(start);
+        const text = this.text.slice(base, this.offsetOfLine(end));
+        return { start, end, base, text, before: this.source.readPart(text) };
+    }
+
     private offsetOfLine(line: number): number {
         return line >= this.lines ? this.text.length : this.document.offsetAt(new vscode.Position(line, 0));
     }
 
     /**
-     * The lines each toggle is read again with: the top-level blocks it
-     * touches, and the block before them when no blank line stands between
-     * (a paragraph takes in a line written under it); the whole document for
-     * a footnote's definition. Units that overlap are one.
+     * The lines a toggle is read again with: the top-level blocks it or one of
+     * its alternatives touches, the block before them, across blank lines (a
+     * paragraph takes in a line written under it, a list's item goes on after
+     * one), and the block after them, across blank lines (a line written
+     * above it may join it: a setext underline, indented code, a table); the
+     * whole document for a footnote's definition.
      */
+    private rangeOf(toggle: Toggle): { start: number; end: number } {
+        const options = [toggle, ...toggle.alternatives];
+        const first = this.document.positionAt(Math.min(...options.map(o => o.start))).line;
+        const last = this.document.positionAt(Math.max(...options.map(o => o.end))).line;
+        const a = this.source.blockOf(first);
+        const b = this.source.blockOf(last);
+        if (a.whole || b.whole) {return { start: 0, end: this.lines };}
+        let start = Math.min(a.start, b.start);
+        let end = Math.max(a.end, b.end);
+        let previous = start - 1;
+        while (previous >= 0 && this.source.kindOf(previous) === 'blank') {previous--;}
+        if (previous >= 0) {
+            const block = this.source.blockOf(previous);
+            start = block.whole ? 0 : Math.min(start, block.start);
+        }
+        let next = end;
+        while (next < this.lines && this.source.kindOf(next) === 'blank') {next++;}
+        if (next < this.lines) {
+            const block = this.source.blockOf(next);
+            end = block.whole ? this.lines : Math.max(end, block.end);
+        }
+        return { start, end };
+    }
+
+    /** Each toggle's lines (`rangeOf`); units that overlap are one. */
     private units(toggles: Toggle[]): { start: number; end: number; members: number[] }[] {
-        const ranges = toggles.map((toggle, i) => {
-            const first = this.document.positionAt(toggle.start).line;
-            const last = this.document.positionAt(toggle.end).line;
-            const a = this.source.blockOf(first);
-            const b = this.source.blockOf(last);
-            let start = Math.min(a.start, b.start);
-            const end = Math.max(a.end, b.end);
-            if (a.whole || b.whole) {return { start: 0, end: this.lines, members: [i] };}
-            // The block before, across blank lines: a paragraph takes in a line under it, a list's item goes on after one.
-            let previous = start - 1;
-            while (previous >= 0 && this.source.kindOf(previous) === 'blank') {previous--;}
-            if (previous >= 0) {
-                const block = this.source.blockOf(previous);
-                start = block.whole ? 0 : Math.min(start, block.start);
-            }
-            return { start, end, members: [i] };
-        }).sort((x, y) => x.start - y.start);
+        const ranges = toggles.map((toggle, i) => ({ ...this.rangeOf(toggle), members: [i] }))
+            .sort((x, y) => x.start - y.start);
         const units: { start: number; end: number; members: number[] }[] = [];
         for (const range of ranges) {
             const last = units[units.length - 1];
@@ -610,30 +654,61 @@ class Verifier {
         return units;
     }
 
-    /** Whether the toggles, made together in `text` (the unit's lines, from document offset `base`), do what they mean. */
-    private passes(before: InlineSource, text: string, base: number, toggles: Toggle[]): boolean {
+    /**
+     * The toggles, made together in a part, read again. What is compared, the
+     * part as it is (`before`) and as written over (`after`), is all here:
+     *
+     * - nothing is written into a literal line (code, HTML, front matter);
+     * - an empty pair written is one the next press finds, to take it out
+     *   again: not a run of its character (`****‸****`);
+     * - the part has as many lines, each of the same kind and the same block
+     *   tokens, except a line with no text before or after, which may become a
+     *   paragraph of the pair or a thematic break, and a definition's `:`
+     *   line a pair is written on (with its term's line), which it makes the
+     *   definition it was meant to be;
+     * - the part defines the same references (destinations and titles),
+     *   footnotes and abbreviations (`InlineSource.defines`);
+     * - every inline token holds the same tokens besides text and spans'
+     *   markers — links' and images' destinations, inline HTML, math, emoji,
+     *   footnote references and their notes, line breaks, and code spans
+     *   unless the toggles write or remove one (`InlineSource.inlines`);
+     * - every span written reads as that span, every span removed is gone,
+     *   and every other span reads as before, moved.
+     *
+     * A failure in an inline token blames the toggles that change its lines.
+     */
+    private check(part: Part, toggles: Toggle[]): Verdict {
+        const { base, text, before } = part;
+        const owner = new Map<MarkerChange, Toggle>();
+        for (const t of toggles) {
+            for (const change of t.changes) {owner.set(change, t);}
+        }
+        const failed = new Set<Toggle>();
         const changes = toggles.flatMap(t => t.changes)
-            .map(change => ({ change, start: change.start - base, end: change.end - base }))
+            .map(change => ({ change, start: change.start - base, end: change.end - base, line: this.document.positionAt(change.start).line - part.start }))
             .sort((a, b) => a.start - b.start || KIND_ORDER[a.change.kind] - KIND_ORDER[b.change.kind]);
+        for (const c of changes) {
+            if (this.source.kindOf(c.line + part.start) === 'literal') {failed.add(owner.get(c.change));}
+        }
         // The text written over, and where each change's text and each old offset land in it.
         const placed = new Map<MarkerChange, number>();
         let out = '';
         let read = 0;
         for (const c of changes) {
-            if (c.start < read) {return false;}
+            if (c.start < read) {return 'all';}
             out += text.slice(read, c.start);
             placed.set(c.change, out.length);
             out += c.change.text;
             read = c.end;
         }
         out += text.slice(read);
-        // An empty pair written must be one the next press finds, to take it out again: not a run of its character (`****‸****`).
         for (const c of changes) {
             if (c.change.kind === 'pair') {
                 const marker = c.change.text.slice(0, c.change.text.length / 2);
-                if (!isEmptyPair(out, (placed.get(c.change) ?? 0) + marker.length, marker)) {return false;}
+                if (!isEmptyPair(out, (placed.get(c.change) ?? 0) + marker.length, marker)) {failed.add(owner.get(c.change));}
             }
         }
+        if (failed.size > 0) {return failed;}
         /** Where offset `o` of the old text lands: before (`left`) or after (`right`) what is inserted there. */
         const mapped = (o: number, side: 'left' | 'right'): number => {
             let shift = 0;
@@ -649,21 +724,29 @@ class Verifier {
         };
         const after = this.source.readPart(out);
         const count = before.lineCount;
-        if (after.lineCount !== count) {return false;}
-        // (1) The structure: every line of the same kind, the same block tokens, except on a
-        // line with no text before or after, which may become a paragraph or a thematic break.
+        if (after.lineCount !== count) {return 'all';}
+        // The structure.
         const free = new Set<number>();
         for (let line = 0; line < count; line++) {
             const kinds = [before.kindOf(line), after.kindOf(line)];
             if (kinds[0] === kinds[1]) {continue;}
-            if (kinds.includes('literal') || (before.textOn(line).length > 0 && after.textOn(line).length > 0)) {return false;}
+            if (kinds.includes('literal') || (before.textOn(line).length > 0 && after.textOn(line).length > 0)) {return 'all';}
             free.add(line);
         }
         for (let line = 0; line < count; line++) {
             if (before.textOn(line).length === 0 || after.textOn(line).length === 0) {free.add(line);}
         }
+        // A definition's `:` alone is text until something follows it: written
+        // there, the pair makes it the definition it was meant to be. Its
+        // line and its term's may change their blocks; no other line may.
+        const defining = toggles.filter(t => t.writes.length === 0 && t.removes.length === 0)
+            .map(t => this.document.positionAt(t.start).line)
+            .filter(line => /^\s*[:~]\s*[*_~^=`]*\s*$/.test(this.document.lineAt(line).text))
+            .map(line => line - part.start);
         const kept = (structure: readonly string[]) => structure.map(entry => entry.split(':')).filter(([type, , from, to]) => {
             const first = Number(from), last = Number(to);
+            // A term maps no line of its own ([n, n]): it is its line.
+            if (defining.some(line => first <= line && Math.max(last, first + 1) > line - 1)) {return false;}
             return !(FREE_TOKENS.has(type) && last - first <= 1 && free.has(first));
         });
         // A block may end later or sooner by lines with no text (an item taking in its thematic break).
@@ -676,22 +759,66 @@ class Verifier {
             }
             return true;
         };
-        // A definition's `:` alone is text until something follows it: written
-        // there, the pair makes it the definition it was meant to be.
-        const defining = toggles.some(t => t.writes.length === 0 && t.removes.length === 0
-            && /^\s*[:~]\s*[*_~^=`]*\s*$/.test(this.document.lineAt(this.document.positionAt(t.start).line).text));
         const a = kept(before.structure), b = kept(after.structure);
-        if (!defining && (a.length !== b.length || a.some((entry, k) => !same(entry, b[k])))) {return false;}
-        // (2) and (3): the spans read again are the old ones, moved, without the removed ones, and the written ones.
+        if (a.length !== b.length || a.some((entry, k) => !same(entry, b[k]))) {return 'all';}
+        // The definitions.
+        if (before.defines !== after.defines) {return 'all';}
+        // What a failure in an inline token's lines blames: the toggles that change them.
+        let unplaced = false;
+        const blame = (first: number, end: number) => {
+            let any = false;
+            for (const c of changes) {
+                if (first <= c.line && c.line < end) {
+                    failed.add(owner.get(c.change));
+                    any = true;
+                }
+            }
+            unplaced = unplaced || !any;
+        };
+        const blameAt = (source: InlineSource, offset: number) => {
+            const line = source.lineOf(offset);
+            const inline = source.inlines.find(c => c.first <= line && line < c.end);
+            blame(inline?.first ?? line, inline?.end ?? line + 1);
+        };
+        // The inline tokens' other tokens.
+        const code = toggles.some(t => t.writes.some(w => w.markup.startsWith('`')) || t.removes.some(s => s.markup.startsWith('`')));
+        const contents = (source: InlineSource) => {
+            const byLine = new Map<string, { first: number; end: number; tokens: string[] }>();
+            const onLine = new Map<number, number>();
+            for (const inline of source.inlines) {
+                const tokens = code ? inline.tokens.filter(t => !t.startsWith('["code_inline"')) : inline.tokens;
+                // A definition's term and its `:` are one paragraph before, two blocks after: read as one, without the break between.
+                const term = defining.find(line => inline.first <= line && inline.end > line - 1);
+                if (term !== undefined) {
+                    const entry = byLine.get(`:${term}`) ?? { first: term - 1, end: term + 1, tokens: [] };
+                    entry.tokens.push(...tokens.filter(t => !t.startsWith('["softbreak"')));
+                    byLine.set(`:${term}`, entry);
+                    continue;
+                }
+                const k = onLine.get(inline.first) ?? 0;
+                onLine.set(inline.first, k + 1);
+                byLine.set(`${inline.first}#${k}`, { first: inline.first, end: inline.end, tokens: [...tokens] });
+            }
+            return byLine;
+        };
+        const was = contents(before), now = contents(after);
+        for (const key of new Set([...was.keys(), ...now.keys()])) {
+            const x = was.get(key), y = now.get(key);
+            if (JSON.stringify(x?.tokens ?? []) !== JSON.stringify(y?.tokens ?? [])) {
+                const inline = x ?? y;
+                blame(inline.first, inline.end);
+            }
+        }
+        // The spans: the old ones, moved, without the removed ones, and the written ones.
         const removed = new Set(toggles.flatMap(t => t.removes).map(s => `${s.markup}@${s.start - base}:${s.end - base}`));
         const spansOf = (source: InlineSource) => {
             const all = new Map<string, SourceSpan>();
             for (let line = 0; line < count; line++) {
                 for (const s of source.spansOn(line)) {all.set(`${s.markup}@${s.start}:${s.end}`, s);}
             }
-            return [...all.values()];
+            return all;
         };
-        const now = new Set(spansOf(after).filter(s => s.exact).map(s => `${s.markup}@${s.start}:${s.end}`));
+        const found = new Map([...spansOf(after)].filter(([, s]) => s.exact));
         const expected = new Set<string>();
         for (const t of toggles) {
             for (const w of t.writes) {
@@ -703,24 +830,34 @@ class Verifier {
                     return mapped(anchor.offset - base, 'left');
                 };
                 const key = `${w.markup}@${position(w.open, 'open')}:${position(w.close, 'close')}`;
-                if (!now.has(key)) {return false;}
-                expected.add(key);
+                if (found.has(key)) {
+                    expected.add(key);
+                } else {
+                    failed.add(t);
+                }
             }
         }
-        for (const s of spansOf(before)) {
-            const key = `${s.markup}@${s.start}:${s.end}`;
+        for (const [key, s] of spansOf(before)) {
             if (removed.has(key)) {continue;}
             const starts = [mapped(s.start, 'left'), mapped(s.start, 'right')];
             const ends = [mapped(s.end, 'left'), mapped(s.end, 'right')];
-            const found = starts.flatMap(x => ends.map(y => `${s.markup}@${x}:${y}`)).find(k => now.has(k));
-            if (found) {
-                expected.add(found);
+            const moved = starts.flatMap(x => ends.map(y => `${s.markup}@${x}:${y}`)).find(k => found.has(k));
+            if (moved) {
+                expected.add(moved);
             } else if (s.exact) {
-                return false;
+                blameAt(before, s.start);
             }
         }
-        return [...now].every(key => expected.has(key));
+        for (const [key, s] of found) {
+            if (!expected.has(key)) {blameAt(after, s.start);}
+        }
+        return unplaced ? 'all' : failed;
     }
+}
+
+/** Whether a check found nothing wrong. */
+function passed(verdict: Verdict): boolean {
+    return verdict !== 'all' && verdict.size === 0;
 }
 
 /** Block tokens that hold blocks, which may take in or give up a line with no text at their end. */

@@ -353,7 +353,9 @@ function contentsOf(tokens: Token[], env: Environment): InlineContent[] {
             // An inline note's text is not among the children: it is the footnote's.
             const id = (child.meta as { id?: number } | null)?.id;
             const note = child.type.startsWith('footnote_ref') && id !== undefined ? notes[id]?.content ?? '' : '';
-            held.push(JSON.stringify([child.type, child.markup, child.info, child.content, child.attrs ?? [], note]));
+            // An id a plugin numbers on every parse (a task box's `checkboxN`, its label's `for`) differs from one reading to the next.
+            const attrs = (child.attrs ?? []).filter(([name]) => name !== 'id' && name !== 'for');
+            held.push(JSON.stringify([child.type, child.markup, child.info, child.content, attrs, note]));
         }
         contents.push({ first: token.map[0], end: Math.max(token.map[1], token.map[0] + 1), tokens: held });
     }
