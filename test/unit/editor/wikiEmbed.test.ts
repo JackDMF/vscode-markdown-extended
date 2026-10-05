@@ -5,7 +5,7 @@ import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, p
 import { createPositionMap } from '../../../src/editor/positions';
 import { unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
 import { headingAnchors } from '../../../src/editor/host/links';
-import { OWN_COPY, inlineForNote, isOwnCopyHtml, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
+import { OWN_COPY, inlineForNote, isOwnCopyDom, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
 import { tokenText } from '../../../src/syntax/tokenText';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -321,7 +321,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
 
     type PasteProps = {
         handleDOMEvents: { paste: () => boolean; copy: () => boolean; cut: () => boolean };
-        transformPastedHTML: (html: string, view: unknown) => string;
+        clipboardParser: { parseSlice: (dom: unknown) => Slice };
         transformPasted: (slice: Slice, view: unknown, asText: boolean) => Slice;
         clipboardTextSerializer: (slice: Slice) => string;
         clipboardSerializer: DOMSerializer;
@@ -337,7 +337,30 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         p.clipboardTextSerializer(slice);
     };
     /** The HTML `p`'s editor puts on the clipboard for `slice`. */
-    const copiedHtml = (p: PasteProps, slice: Slice) => (p.clipboardSerializer.serializeFragment(slice.content, { document: fakeDocument as unknown as Document }) as unknown as FakeNode).html();
+    const copied = (p: PasteProps, slice: Slice) => p.clipboardSerializer.serializeFragment(slice.content, { document: fakeDocument as unknown as Document }) as unknown as FakeNode;
+    const copiedHtml = (p: PasteProps, slice: Slice) => copied(p, slice).html();
+    /** An element of pasted HTML as the browser parsed it, with the marker or not. */
+    const el = (tag: string, marked: boolean, ...children: FakeNode[]) => {
+        const e = new FakeNode(1, tag);
+        if (marked) {
+            e.setAttribute(OWN_COPY, '');
+        }
+        e.childNodes.push(...children);
+        return e;
+    };
+    const txt = (s: string) => new FakeNode(3, '', s);
+    const comment = (s: string) => new FakeNode(8, '', s);
+    /**
+     * A paste's HTML as ProseMirror hands it to its clipboard parser: the body
+     * the browser parsed it into. ProseMirror walks `firstChild` and so reads
+     * this stub as empty, the decision reads its `childNodes`; the slice it
+     * stands for is given to `transformPasted` apart, as before.
+     */
+    const pastedDom = (...children: FakeNode[]) => Object.assign(el('body', false, ...children), { firstChild: null });
+    /** ProseMirror's parsing, in `p`'s editor, of a paste whose HTML the browser parsed into `children`. */
+    const parsePasted = (p: PasteProps, ...children: FakeNode[]) => p.clipboardParser.parseSlice(pastedDom(...children));
+    /** The same, for HTML `q`'s editor copied of `slice`. */
+    const parseCopy = (p: PasteProps, q: PasteProps, slice: Slice) => parsePasted(p, ...copied(q, slice).childNodes);
 
     test('a paste from outside this editor has its embeds made atoms; its own copy keeps what it carried; a drop and a code block do not', () => {
         const nodes = textWithEmbeds('see ![[x]] and ![[a b.png]] end', []);
@@ -363,7 +386,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         own.handleDOMEvents.paste();
         assert.deepStrictEqual(atoms(own.transformPasted(inline(text('Lit ![[x]] and ![[a|b]] here.')), view, true)), ['![[a&#124;b]]']);
         own.handleDOMEvents.paste();
-        own.transformPastedHTML(copiedHtml(own, carried), view);
+        parseCopy(own, own, carried);
         assert.strictEqual(own.transformPasted(carried, view, false), carried);
         // Other text after the same copy is outside text.
         own.handleDOMEvents.paste();
@@ -400,16 +423,18 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         // Pasted as HTML into another webview's editor, or after a restart, with no copy made there: as it was.
         const other = plugin();
         other.handleDOMEvents.paste();
-        assert.strictEqual(other.transformPastedHTML(copiedHtml(plugin(), literal), view), copiedHtml(plugin(), literal));
+        parseCopy(other, plugin(), literal);
         assert.strictEqual(other.transformPasted(literal, view, false), literal);
         // Another ProseMirror editor's copy has no marker, and the marker's name as text is no marker: converted.
-        for (const foreign of ['<p data-pm-slice="1 1 []">Lit ![[x]] here</p>', `<p data-pm-slice="1 1 []">Lit ![[x]] here ${OWN_COPY}=""</p>`]) {
+        for (const foreign of [txt('Lit ![[x]] here'), txt(`Lit ![[x]] here ${OWN_COPY}=""`)]) {
             other.handleDOMEvents.paste();
-            other.transformPastedHTML(foreign, view);
-            assert.deepStrictEqual(atoms(other.transformPasted(literal, view, false)), ['![[x]]'], foreign);
+            const p = el('p', false, foreign);
+            p.setAttribute('data-pm-slice', '1 1 []');
+            parsePasted(other, p);
+            assert.deepStrictEqual(atoms(other.transformPasted(literal, view, false)), ['![[x]]'], foreign.text);
         }
         // The marker is read for a paste only, and only for the paste it came with.
-        other.transformPastedHTML(copiedHtml(plugin(), literal), view);
+        parseCopy(other, plugin(), literal);
         other.handleDOMEvents.paste();
         assert.deepStrictEqual(atoms(other.transformPasted(literal, view, false)), ['![[x]]']);
         // As plain text, a copy made in another webview is outside text (the README's first limit).
@@ -434,47 +459,42 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.deepStrictEqual(atoms(here.transformPasted(literal, view, true)), ['![[x]]']);
     });
 
-    test('HTML is the editor\'s own when every top-level element carries the marker, read as HTML is read', () => {
-        const own = `<p ${OWN_COPY}="">x</p>`;
-        const cases: [string, string, boolean][] = [
-            ['one marked element', own, true],
-            ['an attribute name has any case', '<P DATA-MEP-COPY="">x</P>', true],
-            ['a marker with no value', `<p class=a ${OWN_COPY}>x</p>`, true],
-            ['a quoted value holding a >', `<p title="a>b" ${OWN_COPY}="">x</p>`, true],
-            ['every element marked', `${own}<blockquote ${OWN_COPY}=""><p>q</p></blockquote>`, true],
-            ['Windows CF_HTML around the fragment', `<html>\r\n<body>\r\n<!--StartFragment-->${own}<!--EndFragment-->\r\n</body>\r\n</html>`, true],
-            ['a document\'s head, with the marker in its title, before the fragment', `<!DOCTYPE html><html><head><meta charset="utf-8"><title>t ${OWN_COPY}</title></head><body>${own}</body></html>`, true],
-            ['a meta before a fragment', `<meta charset='utf-8'>${own}`, true],
-            ['ProseMirror\'s table around a copied cell', `<table><tbody><tr><td ${OWN_COPY}="" data-pm-slice="1 1 []">x</td></tr></tbody></table>`, true],
-            ['ProseMirror\'s table around a copied row', `<table><tbody><tr ${OWN_COPY}=""><td>x</td></tr></tbody></table>`, true],
-            ['a copied table', `<table ${OWN_COPY}=""><tbody><tr><td>x</td></tr></tbody></table>`, true],
-            ['the marker in a comment', `<!-- ${OWN_COPY}="" --><p>x</p>`, false],
-            ['the marker in a comment inside an element', `<p><!-- <i ${OWN_COPY}> -->x</p>`, false],
-            ['the marker in another attribute\'s value', `<p title="a ${OWN_COPY}=''">x</p>`, false],
-            ['the marker in a single-quoted value holding a tag', `<p title='<i ${OWN_COPY}>'>x</p>`, false],
-            ['the marker as text', `<p>${OWN_COPY}=""</p>`, false],
-            ['the marker in a script', `<script>"<p ${OWN_COPY}>"</script><p>x</p>`, false],
-            ['the marker inside an unmarked element', `<div><p ${OWN_COPY}="">x</p></div>`, false],
-            ['a longer or a prefixed attribute name', `<p x-${OWN_COPY}="" ${OWN_COPY}-not="">x</p>`, false],
-            ['a marked row beside an unmarked one', `<table><tbody><tr ${OWN_COPY}=""><td>a</td></tr><tr><td>b</td></tr></tbody></table>`, false],
-            ['an unmarked table', '<table><tbody><tr><td>x</td></tr></tbody></table>', false],
-            ['marked and unmarked elements', `${own}<p>new ![[x]]</p>`, false],
-            ['unmarked, then marked', `<p>new</p>${own}`, false],
-            ['text beside a marked element', `new ${own}`, false],
-            ['an unclosed element, where the next may be another', `<p ${OWN_COPY}="">a<p>b`, false],
-            ['nothing', '', false],
-            ['no element', 'x', false],
+    test('HTML is the editor\'s own when every top-level element the browser parsed of it carries the marker', () => {
+        const own = () => el('p', true, txt('x'));
+        const table = (...rows: FakeNode[]) => el('table', false, el('tbody', false, ...rows));
+        // The browser has read the HTML: a comment, an attribute's value, raw text, a name's case are its business (the e2e suite pastes those).
+        const cases: [string, FakeNode[], boolean][] = [
+            ['one marked element', [own()], true],
+            ['every element marked', [own(), el('blockquote', true, el('p', false, txt('q')))], true],
+            ['Windows CF_HTML\'s fragment comments and line breaks around it', [txt('\r\n'), comment('StartFragment'), own(), comment('EndFragment'), txt('\r\n')], true],
+            ['a stylesheet, a title, a meta or a script beside it: no part of the fragment', [el('style', false, txt('a{}')), el('title', false, txt('t')), el('meta', false), el('script', false, txt(`"<p ${OWN_COPY}>"`)), own()], true],
+            ['ProseMirror\'s table around a copied cell', [table(el('tr', false, el('td', true, txt('x'))))], true],
+            ['ProseMirror\'s table around copied rows', [table(el('tr', true, el('td', false, txt('a'))), el('tr', true, el('td', false, txt('b'))))], true],
+            ['a copied table', [el('table', true, el('tbody', false, el('tr', false, el('td', false, txt('x')))))], true],
+            ['the marker as text', [el('p', false, txt(`${OWN_COPY}=""`))], false],
+            ['a script beside an unmarked element', [el('script', false, txt(`"<p ${OWN_COPY}>"`)), el('p', false, txt('x'))], false],
+            ['the marker inside an unmarked element', [el('div', false, own())], false],
+            ['a marked row beside an unmarked one', [table(el('tr', true, el('td', false, txt('a'))), el('tr', false, el('td', false, txt('b'))))], false],
+            ['an unmarked table', [table(el('tr', false, el('td', false, txt('x'))))], false],
+            ['marked and unmarked elements', [own(), el('p', false, txt('new ![[x]]'))], false],
+            ['unmarked, then marked', [el('p', false, txt('new')), own()], false],
+            ['text beside a marked element', [txt('new '), own()], false],
+            ['nothing', [], false],
+            ['a comment alone', [comment(OWN_COPY)], false],
+            ['no element', [txt('x')], false],
         ];
-        for (const [what, html, expected] of cases) {
-            assert.strictEqual(isOwnCopyHtml(html), expected, what);
+        for (const [what, children, expected] of cases) {
+            assert.strictEqual(isOwnCopyDom(pastedDom(...children)), expected, what);
         }
+        // What the editor's serializer copies is its own, as it is parsed for the paste.
+        assert.ok(isOwnCopyDom(pastedDom(...copied(plugin(), inline(text('Lit ![[x]]'))).childNodes)));
         // A fragment of marked and unmarked elements converts: what came from outside in it is not left as literal text.
         const mixed = inline(text('old'), text(' new ![[x]]'));
-        for (const [html, converted] of [[`<p ${OWN_COPY}="">old</p><p>new ![[x]]</p>`, true], [`<p ${OWN_COPY}="">old</p><p ${OWN_COPY}="">new ![[x]]</p>`, false]] as const) {
+        for (const [second, converted] of [[false, true], [true, false]] as const) {
             const p = plugin();
             p.handleDOMEvents.paste();
-            p.transformPastedHTML(html, view);
-            assert.deepStrictEqual(atoms(p.transformPasted(mixed, view, false)), converted ? ['![[x]]'] : [], html);
+            parsePasted(p, el('p', true, txt('old')), el('p', second, txt('new ![[x]]')));
+            assert.deepStrictEqual(atoms(p.transformPasted(mixed, view, false)), converted ? ['![[x]]'] : [], `second marked: ${second}`);
         }
     });
 

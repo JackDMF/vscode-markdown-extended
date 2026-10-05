@@ -13,6 +13,12 @@ export class FakeNode {
     readonly childNodes: FakeNode[] = [];
     constructor(readonly nodeType: number, readonly tag = '', readonly text = '') { }
     readonly attrs: [string, string][] = [];
+    get nodeName(): string {
+        return this.nodeType === 3 ? '#text' : this.nodeType === 8 ? '#comment' : this.nodeType === 11 ? '#document-fragment' : this.tag.toUpperCase();
+    }
+    get nodeValue(): string | null {
+        return this.nodeType === 3 || this.nodeType === 8 ? this.text : null;
+    }
     appendChild(child: FakeNode): FakeNode {
         this.childNodes.push(child);
         return child;

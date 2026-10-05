@@ -30,9 +30,12 @@ suite('Editor object toolbar (e2e)', () => {
         version++;
         await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
-        // Out of any object the last test left the caret or the pointer in.
+        // Out of any object the last test left the caret or the pointer in, and back at the top it may have scrolled from.
         await page.mouse.move(2, 2);
-        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.evaluate(() => {
+            (document.activeElement as HTMLElement | null)?.blur();
+            window.scrollTo(0, 0);
+        });
         await delay(400);
     };
 
@@ -377,27 +380,35 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2);
     });
 
+    /** Ctrl+`key`, or Ctrl+Shift+`key`, as typed: the browser's own copy and paste, through its clipboard (the page's, never the system's: the browser is headless). */
+    const pressCtrl = async (key: puppeteer.KeyInput, shift = false) => {
+        await page.keyboard.down('Control');
+        if (shift) {
+            await page.keyboard.down('Shift');
+        }
+        await page.keyboard.press(key);
+        if (shift) {
+            await page.keyboard.up('Shift');
+        }
+        await page.keyboard.up('Control');
+    };
+
+    /** From now on, the HTML each paste brings, read before the editor's handling (`pastedHtml`). */
+    const watchPastes = () => page.evaluate(() => {
+        const w = window as unknown as { pastedHtml?: string[] };
+        if (w.pastedHtml === undefined) {
+            w.pastedHtml = [];
+            document.addEventListener('paste', e => w.pastedHtml?.push(e.clipboardData?.getData('text/html') ?? ''), { capture: true });
+        }
+    });
+    /** The HTML of every paste since the last call. */
+    const pastedHtml = () => page.evaluate(() => (window as unknown as { pastedHtml: string[] }).pastedHtml.splice(0));
+
     test('a paste of the editor\'s own copy keeps what it carried — literal text, atoms — through the clipboard, as plain text too, a drag between; HTML from elsewhere converts', async function () {
         this.timeout(20000);
         const source = 'Lit !\\[\\[x\\]\\] ![[a]] here.\n';
-        /** Ctrl+`key`, or Ctrl+Shift+`key`, as typed: the browser's own copy and paste, through its clipboard. */
-        const pressCtrl = async (key: puppeteer.KeyInput, shift = false) => {
-            await page.keyboard.down('Control');
-            if (shift) {
-                await page.keyboard.down('Shift');
-            }
-            await page.keyboard.press(key);
-            if (shift) {
-                await page.keyboard.up('Shift');
-            }
-            await page.keyboard.up('Control');
-        };
-        // The HTML each paste brings, read before the editor's handling.
-        await page.evaluate(() => {
-            const w = window as unknown as { pastedHtml: string[] };
-            w.pastedHtml = [];
-            document.addEventListener('paste', e => w.pastedHtml.push(e.clipboardData?.getData('text/html') ?? ''), { capture: true });
-        });
+        await watchPastes();
+        await pastedHtml();
         for (const plain of [false, true]) {
             await showDocument(source, 'Lit');
             // The whole document, the one paragraph, copied through the clipboard.
@@ -429,7 +440,7 @@ suite('Editor object toolbar (e2e)', () => {
             await pressCtrl('KeyV', plain);
             await settle();
             const how = plain ? 'plain paste' : 'paste';
-            const html = await page.evaluate(() => (window as unknown as { pastedHtml: string[] }).pastedHtml.splice(0));
+            const html = await pastedHtml();
             if (plain) {
                 assert.deepStrictEqual(html, [''], how);
             } else {
@@ -455,6 +466,139 @@ suite('Editor object toolbar (e2e)', () => {
         // The document's own `![[a]]` and the pasted one.
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2);
         assert.ok((await lastEdit())?.text.includes('copy ![[y]]'), (await lastEdit())?.text);
+    });
+
+    const atomCount = () => page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length);
+
+    test('an own copy of list items, of a table cell\'s text, of a row of cells and of an embed atom keeps what it carried through the clipboard', async function () {
+        this.timeout(30000);
+        const shiftPress = async (key: puppeteer.KeyInput) => {
+            await page.keyboard.down('Shift');
+            await page.keyboard.press(key);
+            await page.keyboard.up('Shift');
+        };
+        const table = '| h1 | h2 |\n| --- | --- |\n| Lit !\\[\\[x\\]\\] ![[a]] | b |\n\nhere.\n';
+        const cases: { what: string; source: string; select: () => Promise<void>; into: string; literals: number }[] = [
+            {
+                what: 'list items', source: '- Lit !\\[\\[x\\]\\] ![[a]] one\n- two\n\nhere.\n', into: 'here', literals: 2,
+                select: async () => {
+                    await clickBeforeRead('Lit', 0);
+                    await shiftPress('ArrowDown');
+                    await shiftPress('End');
+                },
+            },
+            {
+                what: 'a table cell\'s text', source: table, into: 'here', literals: 2,
+                select: async () => {
+                    await clickBeforeRead('Lit', 0);
+                    await shiftPress('End');
+                },
+            },
+            {
+                // Shift+click in another cell: prosemirror-tables' CellSelection, copied as rows; pasted over the header's cells.
+                what: 'a row of cells', source: table, into: 'h1', literals: 2,
+                select: async () => {
+                    await clickBeforeRead('Lit', 0);
+                    const b = await pointAt('b', 0);
+                    await page.keyboard.down('Shift');
+                    await page.mouse.click(b.x + 2, b.y);
+                    await page.keyboard.up('Shift');
+                    await page.waitForFunction(() => document.querySelectorAll('.ProseMirror .selectedCell').length === 2, { timeout: 2000 });
+                },
+            },
+            {
+                what: 'an embed atom', source: 'Lit !\\[\\[x\\]\\] ![[a]] here.\n', into: 'here', literals: 1,
+                select: async () => {
+                    const box = await (await page.$('.ProseMirror .mep-wiki-embed'))?.boundingBox();
+                    assert.ok(box);
+                    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                    await page.waitForSelector('.ProseMirror .mep-wiki-embed.ProseMirror-selectednode', { timeout: 2000 });
+                },
+            },
+        ];
+        await watchPastes();
+        for (const c of cases) {
+            await showDocument(c.source, c.into);
+            await c.select();
+            await delay(100);
+            await pressCtrl('KeyC');
+            await clickBeforeRead(c.into, 0);
+            await pastedHtml();
+            await pressCtrl('KeyV');
+            await settle();
+            const html = await pastedHtml();
+            assert.ok(html.length === 1 && html[0].includes(`${OWN_COPY}=`), `${c.what}: ${html.join('\n')}`);
+            const saved = (await lastEdit())?.text ?? '';
+            // The literal stays literal, the atom stays an atom, in the copy as in the original.
+            assert.deepStrictEqual({ atoms: await atomCount(), literals: saved.split('!\\[\\[x\\]\\]').length - 1, embedX: saved.includes('![[x]]') }, { atoms: 2, literals: c.literals, embedX: false }, `${c.what}: ${saved}`);
+        }
+    });
+
+    test('pasted HTML is the editor\'s own copy as the browser parses it: only when every top-level element it made carries the marker', async function () {
+        this.timeout(20000);
+        const marked = `<p ${OWN_COPY}="">x ![[a]]</p>`;
+        // [what, the pasted HTML, whether it is the editor's own: `x ![[a]]` stays literal text].
+        const cases: [string, string, boolean][] = [
+            ['a stylesheet before a marked paragraph', `<style>a{}</style>${marked}`, true],
+            ['a title, then a marked paragraph inside an unmarked div', `<title>t</title><div>${marked}</div>`, false],
+            ['<!--> before a marked paragraph: an empty comment, as Chromium reads it', `<!-->${marked}`, true],
+            ['--!> closing a comment before a marked paragraph', `<!-- a --!>${marked}`, true],
+            ['Windows CF_HTML around a marked paragraph', `<html>\r\n<body>\r\n<!--StartFragment-->${marked}<!--EndFragment-->\r\n</body>\r\n</html>`, true],
+            ['a meta, then a marked paragraph', `<meta charset='utf-8'>${marked}`, true],
+            ['the marker\'s name in capitals', '<P DATA-MEP-COPY>x ![[a]]</P>', true],
+            ['marked and unmarked paragraphs', `<p ${OWN_COPY}="">old</p><p>x ![[a]]</p>`, false],
+            ['the marker in a script', `<script>"<p ${OWN_COPY}>"</script><p>x ![[a]]</p>`, false],
+            ['the marker in a comment', `<!-- <p ${OWN_COPY}> --><p>x ![[a]]</p>`, false],
+            ['the marker in an attribute\'s value', `<p title="${OWN_COPY}=''">x ![[a]]</p>`, false],
+        ];
+        for (const [what, html, own] of cases) {
+            await showDocument('An here.\n', 'An');
+            await clickBeforeRead('here', 0);
+            await page.evaluate(h => {
+                const data = new DataTransfer();
+                data.setData('text/html', h);
+                data.setData('text/plain', 'x ![[a]]');
+                (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+            }, html);
+            await settle();
+            const saved = (await lastEdit())?.text ?? '';
+            assert.deepStrictEqual({ atoms: await atomCount(), literal: saved.includes('x !\\[\\[a\\]\\]') }, { atoms: own ? 0 : 1, literal: own }, `${what}: ${saved}`);
+        }
+    });
+
+    test('a megabyte of pasted HTML of stray tags, which the browser drops, is read in time linear in its size', async function () {
+        this.timeout(60000);
+        /**
+         * A paste of `cells` stray `<td>`s each followed by a stray end tag:
+         * the browser drops both (a cell outside a table, an end tag closing
+         * nothing), so the editor gets one run of text; milliseconds its
+         * handling took. A tag reader that keeps every unclosed cell open and
+         * searches them at each end tag takes time quadratic in it. The `<em>`
+         * first: ProseMirror wraps HTML whose first tag of two letters or more
+         * is a cell in a table, and a row of that many cells is no text.
+         */
+        let round = 0;
+        const pasteCells = async (cells: number): Promise<number> => {
+            await showDocument('An here.\n', 'An');
+            // Never where the last click was: two there are a double click, which selects a word.
+            await clickBeforeRead('here', 2 * (round++ % 2));
+            return page.evaluate(n => {
+                const data = new DataTransfer();
+                data.setData('text/html', `<em>x</em>${'<td>a</b>'.repeat(n)}`);
+                data.setData('text/plain', 'x');
+                const editor = document.querySelector('.ProseMirror') as HTMLElement;
+                const start = performance.now();
+                editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+                return performance.now() - start;
+            }, cells);
+        };
+        const quarterMegabyte = Math.ceil(256 * 1024 / '<td>a</b>'.length);
+        await pasteCells(1000);
+        const quarter = Math.min(await pasteCells(quarterMegabyte), await pasteCells(quarterMegabyte));
+        const whole = Math.min(await pasteCells(4 * quarterMegabyte), await pasteCells(4 * quarterMegabyte));
+        assert.ok(await page.evaluate(() => (document.querySelector('.ProseMirror')?.textContent ?? '').includes('aaaa')), 'pasted');
+        // Linear: four times the size, about four times the time; a reading quadratic in it would take sixteen.
+        assert.ok(whole < 10 * quarter, `a megabyte took ${whole.toFixed(1)} ms, a quarter of it ${quarter.toFixed(1)} ms`);
     });
 
     test('Backspace right after ]] gives back the typed text when the ] is the block\'s first edit', async function () {

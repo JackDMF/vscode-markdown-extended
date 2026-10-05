@@ -1,5 +1,5 @@
 import { InputRule, inputRules } from 'prosemirror-inputrules';
-import { DOMSerializer, Fragment, Mark, Node, Slice } from 'prosemirror-model';
+import { DOMParser, DOMSerializer, Fragment, Mark, Node, ParseOptions, Slice } from 'prosemirror-model';
 import { EditorState, Plugin } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { WIKI_EMBED_MARKERS } from '../../syntax/markers';
@@ -167,107 +167,74 @@ export function runWikiEmbedInput(plugin: Plugin, view: EditorView, from: number
 /** The attribute every top-level element of this editor's copied HTML carries. */
 export const OWN_COPY = 'data-mep-copy';
 
-const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
-/** Elements whose content is text, up to their own end tag: a `<` in it opens nothing. */
-const RAW_TEXT_ELEMENTS = new Set(['script', 'style', 'textarea', 'title']);
-/** Elements of the page around a fragment, which are no part of it. */
-const OUTSIDE_FRAGMENT = new Set(['meta', 'link', 'base', 'script', 'style', 'title']);
 /**
- * Elements a clipboard puts around a fragment, and so looks through while
- * they carry no marker: a document's (Windows' CF_HTML) and the table
- * ProseMirror wraps a copied cell or row in, so it parses outside a table.
+ * Elements of the page around a fragment, which are no part of it: a
+ * document's head (the browser puts what of it a fragment carries into the
+ * body) and what ProseMirror's parser reads nothing from.
  */
-const WRAPPERS = new Set(['html', 'head', 'body', 'table', 'tbody', 'tr']);
+const OUTSIDE_FRAGMENT = new Set(['head', 'meta', 'link', 'base', 'title', 'style', 'script', 'noscript', 'template']);
+/** The table ProseMirror wraps a copied cell or row in, so it parses outside a table: looked through while it carries no marker. */
+const WRAPPERS = new Set(['table', 'tbody', 'tr']);
 
-/** The top-level elements of a fragment of HTML, whether each carries `OWN_COPY`, or `null` where its tags do not close. */
-function topLevelMarks(html: string): boolean[] | null {
-    const marks: boolean[] = [];
-    const open: { name: string; wrapper: boolean }[] = [];
-    const topLevel = () => open.every(e => e.wrapper);
-    /** Where `pattern` ends in the HTML from `from`, or its end. */
-    const endOf = (pattern: RegExp, from: number): number => {
-        pattern.lastIndex = from;
-        const found = pattern.exec(html);
-        return found === null ? html.length : found.index + found[0].length;
-    };
-    const endTag = /<\/([^\s/>]+)[^>]*(?:>|$)/y;
-    const startTag = /<([^\s/>]+)/y;
-    // An attribute: its name, and a value that is quoted or runs to a space or the tag's end.
-    const attribute = /[\s/]*(?:([^\s/>=]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))?)?/y;
-    let i = 0;
-    while (i < html.length) {
-        const next = html.indexOf('<', i);
-        // Text outside every element is no copy of ours.
-        if (/\S/.test(html.slice(i, next < 0 ? html.length : next)) && topLevel()) {
-            marks.push(false);
-        }
-        if (next < 0) {
-            break;
-        }
-        i = next;
-        const after = html[i + 1] ?? '';
-        if (html.startsWith('<!--', i)) {
-            i = endOf(/-->/g, i + 4);
-        } else if (after === '!' || after === '?') {
-            i = endOf(/>/g, i + 2);
-        } else if (after === '/' && /[a-z]/i.test(html[i + 2] ?? '')) {
-            endTag.lastIndex = i;
-            const end = endTag.exec(html) as RegExpExecArray;
-            const index = open.map(e => e.name).lastIndexOf(end[1].toLowerCase());
-            if (index >= 0) {
-                open.length = index;
-            }
-            i += end[0].length;
-        } else if (/[a-z]/i.test(after)) {
-            startTag.lastIndex = i;
-            const tag = startTag.exec(html) as RegExpExecArray;
-            const name = tag[1].toLowerCase();
-            const attributes = new Set<string>();
-            i += tag[0].length;
-            while (i < html.length && html[i] !== '>') {
-                attribute.lastIndex = i;
-                const found = attribute.exec(html) as RegExpExecArray;
-                if (found[1] !== undefined) {
-                    attributes.add(found[1].toLowerCase());
-                }
-                i += found[0].length;
-                // A character no attribute starts with.
-                if (found[0] === '' && html[i] !== '>') {
-                    i++;
-                }
-            }
-            i++;
-            const marked = attributes.has(OWN_COPY);
-            if (topLevel() && (marked || !(WRAPPERS.has(name) || OUTSIDE_FRAGMENT.has(name)))) {
-                marks.push(marked);
-            }
-            if (RAW_TEXT_ELEMENTS.has(name)) {
-                i = endOf(new RegExp(`</${name}[\\s/>][^>]*>`, 'gi'), i);
-            } else if (!VOID_ELEMENTS.has(name)) {
-                open.push({ name, wrapper: WRAPPERS.has(name) && !marked });
-            }
-        } else {
-            // A `<` that opens nothing is text.
-            if (topLevel()) {
+/** As much of a DOM node as the decision reads: the browser's, or a test's stub. */
+export interface PastedNode {
+    readonly nodeType: number;
+    readonly nodeName: string;
+    readonly nodeValue: string | null;
+    readonly childNodes: ArrayLike<PastedNode>;
+    getAttribute?(name: string): string | null;
+}
+
+/** Whether each top-level element of `parent` carries `OWN_COPY`, into `marks`; text there is no copy of ours. */
+function topLevelMarks(parent: PastedNode, marks: boolean[]): void {
+    for (let i = 0; i < parent.childNodes.length; i++) {
+        const child = parent.childNodes[i];
+        if (child.nodeType === 3) {
+            if (/\S/.test(child.nodeValue ?? '')) {
                 marks.push(false);
             }
-            i++;
+        } else if (child.nodeType === 1) {
+            const name = child.nodeName.toLowerCase();
+            const marked = child.getAttribute?.(OWN_COPY) != null;
+            if (marked) {
+                marks.push(true);
+            } else if (WRAPPERS.has(name)) {
+                topLevelMarks(child, marks);
+            } else if (!OUTSIDE_FRAGMENT.has(name)) {
+                marks.push(false);
+            }
         }
+        // A comment, a processing instruction: nothing of the fragment.
     }
-    return open.some(e => !e.wrapper) ? null : marks;
 }
 
 /**
- * Whether HTML from the clipboard is a copy of this editor's: it has an
- * element, and every top-level element of it carries `OWN_COPY`. The HTML is
- * read as HTML is — the marker's name in a comment, in an attribute's value or
- * in text is no marker, and an attribute's name is the same in any case. A
- * fragment mixing marked and unmarked elements is not our own copy, so what
- * came from outside in it is not left as literal text.
+ * Whether pasted HTML, as the browser parsed it for ProseMirror (`dom`, the
+ * clipboard parser's input: Windows' CF_HTML document and a leading meta
+ * already gone, ProseMirror's own wrappers unwrapped), is a copy of this
+ * editor's: it has an element, and every top-level element of it carries
+ * `OWN_COPY`. The browser has read comments, attribute values, raw text and
+ * case as HTML is read, so the marker's name anywhere but an element's
+ * attribute is no marker. A fragment mixing marked and unmarked elements is
+ * not our own copy, so what came from outside in it is not left as literal
+ * text.
  */
-export function isOwnCopyHtml(html: string): boolean {
-    const marks = topLevelMarks(html);
-    return marks !== null && marks.length > 0 && marks.every(m => m);
+export function isOwnCopyDom(dom: PastedNode): boolean {
+    const marks: boolean[] = [];
+    topLevelMarks(dom, marks);
+    return marks.length > 0 && marks.every(m => m);
+}
+
+/** The schema's parser, telling `seen` what each parse of a paste is given before it parses it. */
+class PasteParser extends DOMParser {
+    constructor(private readonly seen: (dom: PastedNode) => void) {
+        super(editorSchema, DOMParser.fromSchema(editorSchema).rules);
+    }
+
+    parseSlice(dom: globalThis.Node, options?: ParseOptions): Slice {
+        this.seen(dom as unknown as PastedNode);
+        return super.parseSlice(dom, options);
+    }
 }
 
 /** The schema's serializer, with `OWN_COPY` set on each top-level element of what it serializes. */
@@ -293,7 +260,8 @@ class OwnCopySerializer extends DOMSerializer {
  * marks, as ProseMirror's own reading gives them. A paste of this editor's own
  * copy keeps what it carried: its atoms are atoms and its literal text stays
  * literal. As HTML a copy is the editor's own when every top-level element of
- * it carries `OWN_COPY` (`clipboardSerializer`, `isOwnCopyHtml`); as plain text (Ctrl+Shift+V, which brings only
+ * it, as the browser parsed it, carries `OWN_COPY` (`clipboardSerializer`,
+ * `clipboardParser`, `isOwnCopyDom`); as plain text (Ctrl+Shift+V, which brings only
  * `text/plain`), when its text is the text of the last copy or cut made here
  * (`clipboardTextSerializer` during a `copy` or `cut` event — a drag
  * serializes too, and is no copy). A drop is no paste: the decision belongs to
@@ -341,10 +309,12 @@ export function wikiEmbedPastePlugin(enabled: () => boolean): Plugin {
                     return false;
                 },
             },
-            transformPastedHTML(html) {
-                ownHtml = pasting && isOwnCopyHtml(html);
-                return html;
-            },
+            // ProseMirror parses a paste's HTML in a document of its own before
+            // it calls this, so the elements the browser made of it are read
+            // here; text pasted as text is parsed here too, and is no HTML.
+            clipboardParser: new PasteParser(dom => {
+                ownHtml = pasting && isOwnCopyDom(dom);
+            }),
             transformPasted(slice, view, asText) {
                 const isPaste = pasting;
                 const isOwnHtml = ownHtml;
