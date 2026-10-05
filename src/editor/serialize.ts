@@ -475,7 +475,8 @@ function noteUnwritable(note: Node): string | null {
  * write again — with the edit's `origin` every one of each top-level block the
  * save then writes by rule and no other (`rewritten`: a list, a quote or a
  * table is written whole, the items and cells the edit did not touch included,
- * and a block it keeps, a copy of one included, is written as it was read);
+ * and a block it keeps, a copy of one whose literal and ids it keeps included,
+ * is written as it was read; `doc` is then the document as the save writes it);
  * without it every one in the range — that holds a sidebar, or a `$` or `@` that could be
  * read as one, is written as the save writes it (`writtenTextblock`) and
  * parsed by the page's own engine, built from the host's definition
@@ -514,21 +515,22 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
     });
     // With the edit's origin, what is checked is exactly what the save writes again: every textblock of
     // each block it rewrites, the edit's neighbours too, and none of a block it keeps — a copy of a whole
-    // block is the same node, written from its `src` as it was read.
+    // block is the same node, written from its `src` as it was read unless its literal or id is stripped.
     const rewritten = origin?.rewritten;
     let textblocks = inRange;
     if (rewritten !== undefined) {
         const ranged = new Set(inRange.map(t => t.pos));
         textblocks = [];
         for (const block of rewritten) {
+            const copyOf = block.copyOf ?? null;
             if (block.node.isTextblock) {
-                textblocks.push({ node: block.node, pos: block.offset, beside: false });
+                textblocks.push({ node: block.node, pos: block.offset, beside: false, old: copyOf ?? undefined });
                 continue;
             }
             block.node.descendants((node, rel) => {
                 const pos = block.offset + 1 + rel;
                 if (node.isTextblock) {
-                    textblocks.push({ node, pos, beside: !ranged.has(pos) });
+                    textblocks.push({ node, pos, beside: !ranged.has(pos), old: copyOf === null ? undefined : copyOf + 1 + rel });
                 }
                 return !node.isTextblock;
             });
@@ -649,11 +651,13 @@ export interface EditOrigin {
     mapping: Mapping;
     /**
      * The top-level blocks of the edited document the save writes by rule,
-     * with their offsets (`rewrittenBlocks` in `fidelity.ts`, the rule that
-     * clears their `src`): exactly their textblocks are checked, the ones
+     * with their offsets (`FidelityPlan.rewritten` in `fidelity.ts`, the plan
+     * that clears their `src`): exactly their textblocks are checked, the ones
      * outside the edit's range included and none of a block the save keeps.
+     * For a copy of a whole block, `copyOf` is that block's offset in `doc`,
+     * whose textblocks the copy's were read as.
      */
-    rewritten?: readonly { node: Node; offset: number }[];
+    rewritten?: readonly { node: Node; offset: number; copyOf?: number | null }[];
     /**
      * The text the textblock at a position of `doc` was read from
      * (`textblockSource` in `positions.ts`), or `null` where it is no longer
@@ -663,11 +667,17 @@ export interface EditOrigin {
     sourceOf?: (pos: number) => string | null;
 }
 
-/** A textblock `unwritableInNote` checks: where it stands, and whether it is only written again beside the edit, outside its range. */
+/**
+ * A textblock `unwritableInNote` checks: where it stands, whether it is only
+ * written again beside the edit, outside its range, and, in a copy of a whole
+ * block, where the textblock it was copied from stands in the edit's starting
+ * document (`old`).
+ */
 interface CheckedTextblock {
     node: Node;
     pos: number;
     beside: boolean;
+    old?: number;
 }
 
 /** Where each sidebar's markers stand while `writtenTextblock` writes a textblock. */
@@ -975,7 +985,7 @@ function sidebarRefusal(doc: Node, checked: CheckedTextblock, origin?: EditOrigi
         return null;
     }
     if (origin !== undefined) {
-        const old = Math.min(origin.mapping.invert().map(checked.pos + 1, -1), origin.doc.content.size);
+        const old = checked.old !== undefined ? checked.old + 1 : Math.min(origin.mapping.invert().map(checked.pos + 1, -1), origin.doc.content.size);
         const $old = origin.doc.resolve(old);
         if ($old.depth > 0 && $old.parent.isTextblock && sidebarMismatch($old.parent) !== null) {
             const source = origin.sourceOf?.($old.before()) ?? null;

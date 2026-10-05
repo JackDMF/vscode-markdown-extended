@@ -4,7 +4,7 @@ import { closeHistory, undo } from 'prosemirror-history';
 import { splitBlock } from 'prosemirror-commands';
 import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
-import { PRESERVE_SOURCE_META, asRepair, fidelityPlugin, isRepair } from '../../../src/editor/fidelity';
+import { PRESERVE_SOURCE_META, asRepair, fidelityPlan, fidelityPlugin, isRepair, writtenEdit } from '../../../src/editor/fidelity';
 import { resyncTransaction } from '../../../src/editor/webview/resync';
 import { editorSchema } from '../../../src/editor/schema';
 import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
@@ -837,6 +837,75 @@ suite('Editor notes: what the save writes again is what is read back', () => {
         const copied = state.apply(tr);
         assert.strictEqual(text(copied), `${source}\n- one\n- See h&#116;tp://e.com/$x$ here.\n`);
         assert.deepStrictEqual(sidebarsIn(text(copied)), ['left_sidebar', 'left_sidebar']);
+    });
+});
+
+suite('Editor notes: the check reads the plan the fidelity plugin applies', () => {
+    const SPELLED = 'See h&#116;tp://e.com/$x$ here';
+    const read = (source: string) => EditorState.create({ doc: parseDocument(hostEngine(), source, {}).doc, plugins: editorPlugins() });
+    /** A drag-copy of the whole top-level block at `from`, dropped at `at`: its slice carries the same node object. */
+    const copyBlock = (state: EditorState, from: number, at: number) => {
+        const slice = NodeSelection.create(state.doc, from).content();
+        assert.ok(slice.content.firstChild === state.doc.nodeAt(from));
+        return state.tr.replaceRange(at, at, slice);
+    };
+    /** What the page shows of a top-level block's attributes, and what the saved text reads back as. */
+    const literals = (doc: Node) => topChildren(doc).map(n => (n.attrs.attrsSuffix ?? null) as string | null);
+
+    test('a copy of a heading carrying an id is written without it, by rule, and refused where it would then lose its sidebar', () => {
+        const source = `## ${SPELLED} {#t}\n\nEnd.\n`;
+        const state = read(source);
+        const tr = copyBlock(state, 0, state.doc.content.size);
+        assert.strictEqual(noteRefusal(tr), SIDEBAR_REWRITTEN_REFERENCE);
+        assert.strictEqual(state.applyTransaction(tr).transactions.length, 0, 'the filter drops it');
+    });
+
+    test('a copy dropped before its original is the copy: refused for the copy, and the original is not rewritten', () => {
+        const source = `Intro.\n\n## ${SPELLED} {#t}\n\nBody.\n`;
+        const state = read(source);
+        const tr = copyBlock(state, state.doc.child(0).nodeSize, 0);
+        assert.strictEqual(noteRefusal(tr), SIDEBAR_REWRITTEN_REFERENCE);
+        // The plan rewrites the copy at the start, and not the original.
+        assert.deepStrictEqual(writtenEdit(tr).rewritten.map(b => [b.offset, b.copyOf]), [[0, state.doc.child(0).nodeSize]]);
+        // Where nothing reads otherwise, the copy applies, and the original keeps its id where it stands.
+        const plain = read('Intro.\n\n## Plain {#t}\n\nBody.\n');
+        const copied = plain.apply(copyBlock(plain, plain.doc.child(0).nodeSize, 0));
+        assert.strictEqual(text(copied), '## Plain\n\nIntro.\n\n## Plain {#t}\n\nBody.\n');
+        assert.deepStrictEqual(topChildren(copied.doc).filter(n => n.type.name === 'heading').map(n => n.attrs.anchor as unknown), [null, 't']);
+    });
+
+    test('a copied block whose literal the page drops is saved without it: page and save agree', () => {
+        for (const [source, copy] of [['A wide one. {.wide #w}\n\nEnd.\n', 'A wide one.\n'], ['- one\n- two\n{.wide}\n\nEnd.\n', '- one\n- two\n']]) {
+            const state = read(source);
+            const tr = copyBlock(state, 0, state.doc.content.size);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const copied = state.apply(tr);
+            assert.strictEqual(text(copied), `${source}\n${copy}`, source);
+            assert.deepStrictEqual(literals(copied.doc), literals(parseDocument(hostEngine(), text(copied), {}).doc), `${source}: what the page shows is what is read back`);
+        }
+    });
+
+    test('the repair the plugin appends is exactly the plan the check read', () => {
+        const cases: [string, (state: EditorState) => Transaction][] = [
+            ['typing in a heading', s => s.tr.insertText('Z', posOf(s.doc, 'Plain'))],
+            ['a copied paragraph with a literal', s => copyBlock(s, s.doc.child(0).nodeSize + s.doc.child(1).nodeSize, s.doc.content.size)],
+            ['a copied heading carrying an id', s => copyBlock(s, s.doc.child(0).nodeSize, s.doc.content.size)],
+            ['Enter in a paragraph carrying a literal', s => s.tr.split(posOf(s.doc, 'one.'))],
+        ];
+        for (const [label, make] of cases) {
+            const state = read(`- edit me\n- ${SPELLED}.\n\n## Plain {#t}\n\nA wide one. {.wide #w}\n`);
+            const tr = make(state);
+            const plan = fidelityPlan([tr], tr.before, tr.doc);
+            assert.ok(plan.updates.size > 0, `${label}: the plan changes something`);
+            const checked = writtenEdit(tr).doc;
+            const result = state.applyTransaction(tr);
+            assert.strictEqual(result.transactions[0], tr, `${label}: applies`);
+            assert.strictEqual(result.transactions.length, 2, `${label}: one repair`);
+            assert.ok(result.state.doc.eq(checked), `${label}: the document checked is the one the repair makes`);
+            plan.updates.forEach((attrs, pos) => {
+                assert.deepStrictEqual({ ...result.state.doc.nodeAt(pos)?.attrs }, { ...attrs }, `${label}: the repair sets the planned attributes at ${pos}`);
+            });
+        }
     });
 });
 

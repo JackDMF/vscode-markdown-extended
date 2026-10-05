@@ -30,7 +30,7 @@ import { Fragment, Mark, Node, ResolvedPos } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { keymap } from 'prosemirror-keymap';
 import { EditorView } from 'prosemirror-view';
-import { PRESERVE_SOURCE_META, asRepair, isRepair, rewrittenBlocks } from '../fidelity';
+import { PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, unwritableInNote } from '../serialize';
@@ -327,12 +327,15 @@ const HISTORY_META = 'history$';
  * changed that the serializer cannot write back (`unwritableInNote`), judged
  * against the document the transaction started from: a sidebar seam the file
  * already held is never refused, only one the transaction created. Checked
- * is exactly what the save will write again: every textblock of each
- * top-level block the fidelity plugin will clear `src` on (`rewrittenBlocks`)
- * — the other items of the list typed in, the other cells of its table — and
- * none of a block it keeps. A re-sync from the host and an undo are never
- * refused; each puts back a document that was written or allowed. Nor is a
- * repair a plugin appends (`isRepair`): it follows a transaction checked here.
+ * is exactly what the save will write again, in the document the fidelity
+ * plugin's repair makes of the edit (`writtenEdit`, from the plan the plugin
+ * applies): every textblock of each top-level block whose `src` that plan
+ * clears, wherever it stands — the other items of the list typed in, the other
+ * cells of its table, a copied heading whose id it strips — and none of a
+ * block it keeps. A re-sync from the host and an undo are never refused; each
+ * puts back a document that was written or allowed. Nor is a repair a plugin
+ * appends (`isRepair`): it follows a transaction checked here, and the
+ * fidelity plugin's applies the very plan checked.
  */
 export function noteRefusal(tr: Transaction): string | null {
     const range = refusableRange(tr);
@@ -340,10 +343,11 @@ export function noteRefusal(tr: Transaction): string | null {
         return null;
     }
     const before = tr.before;
-    return unwritableInNote(tr.doc, range.from, range.to, {
+    const written = writtenEdit(tr);
+    return unwritableInNote(written.doc, range.from, range.to, {
         doc: before,
         mapping: tr.mapping,
-        rewritten: rewrittenBlocks(before, tr.doc, range.from, range.to, tr.mapping),
+        rewritten: written.rewritten,
         sourceOf: pos => textblockSource(before, pos),
     });
 }
