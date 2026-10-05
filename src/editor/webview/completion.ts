@@ -20,6 +20,7 @@
  */
 import { EditorState, Plugin, PluginKey, PluginView, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { WORD_CHARACTER } from '../../syntax/markers';
 import { PositionMap, caretOf } from '../positions';
 import type { CompletionEntry, HostMessage, WebviewMessage } from '../protocol';
 import { CompletionListView } from './completionList';
@@ -36,7 +37,7 @@ export const CARET_COMPLETION_KEYS = '↹ ↵ accept · Esc close';
 
 /** Whether `ch` is part of a word — a letter, a digit, `_` — and so filters an open list rather than asking. */
 export function isWordCharacter(ch: string): boolean {
-    return /^[\p{L}\p{N}_]$/u.test(ch);
+    return Array.from(ch).length === 1 && WORD_CHARACTER.test(ch);
 }
 
 /** An item the list shows, with its index in the host's answer (what `applyCompletion` names). */

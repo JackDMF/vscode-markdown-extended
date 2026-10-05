@@ -32,6 +32,26 @@ export const INLINE_MARKERS = {
 export type InlineMarkerName = keyof typeof INLINE_MARKERS;
 
 /**
+ * A character of a word: a letter or a digit of any script, or `_`. What the
+ * text editor's Underline toggle widens a selection over, so `snake_case` is
+ * taken whole, and what the Visual Editor's completion counts as a word.
+ */
+export const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
+
+/**
+ * A letter or a digit of any script: CommonMark flanking's word character, and
+ * what `_` and `__` cannot open or close next to (`*` and `**` can). A `_`
+ * beside the marker is punctuation to that rule, so `\__word_` is a `_` and an
+ * emphasised word.
+ */
+export const ALPHANUMERIC = /[\p{L}\p{N}]/u;
+
+/** Whether a marker may stand next to a letter or digit (`ALPHANUMERIC`): `*` and `**` may, `_` and `__` may not. */
+export function opensInsideWords(marker: string): boolean {
+    return !marker.startsWith('_');
+}
+
+/**
  * `markdown-it-kbd`'s delimiters, `[[Ctrl+S]]`. The package states them, not
  * this extension; they are written down here so the toolbar and the Visual
  * Editor's serializer take them from one place.

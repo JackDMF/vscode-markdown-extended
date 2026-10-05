@@ -1,4 +1,5 @@
 import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
+import { VOID_ELEMENTS } from '../syntax/voidElements';
 
 // Our own rule in place of markdown-it-checkbox's, rendering the same markup
 // (`<input type="checkbox" id="checkboxN"><label for="checkboxN">…</label>`)
@@ -9,8 +10,13 @@ import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
 // `\[x\]` was a box too. This one runs before the join, where an escaped
 // bracket is still a `text_special` token of its own: a box is written in one
 // text token, at the start of the text or after whitespace, and followed by
-// whitespace. Its label is the rest of the text, up to the next token that is
-// not text, as the plugin's was.
+// whitespace. Its label is the task's whole text after it, formatting
+// included — up to the next box outside any element the label takes in, or
+// the end of the element the box stands in, an HTML one included — where the
+// plugin's stopped at the first token that was not text (`[ ] task **one**`
+// labelled only `task `, and a bold task nothing). A box inside an element the
+// label takes in (`[ ] a *b [x] c*`, a line's start included) stays text, as
+// no label holds another.
 const BOX = /(^|\s)\[(x|\s|_|-)\]\s/i;
 
 type TokenConstructor = new (type: string, tag: string, nesting: number) => Token;
@@ -35,34 +41,106 @@ function isText(token: Token | undefined): boolean {
 
 // The children with each run of text's first box made, or undefined when
 // there is none.
-function withBoxes(children: Token[], make: (checked: boolean, label: Token[]) => Token[]): Token[] | undefined {
+function withBoxes(tokens: Token[], make: (checked: boolean, label: Token[]) => Token[]): Token[] | undefined {
+    // A copy: the text a label takes in before the next box is cut from that box's token.
+    const children = tokens.slice();
     let result: Token[] | undefined;
     let i = 0;
     while (i < children.length) {
-        if (!isText(children[i])) { i++; continue; }
+        if (!isText(children[i])) {
+            result?.push(children[i]);
+            i++;
+            continue;
+        }
         let end = i;
         while (isText(children[end + 1])) { end++; }
         const found = findBox(children, i, end);
-        if (found) {
-            result ??= children.slice(0, i);
-            const [at, match] = found;
-            const token = children[at];
-            const start = match.index + match[1].length;
-            result.push(...children.slice(i, at));
-            if (start > 0) { result.push(text(token, token.content.slice(0, start))); }
-            const label = [text(token, token.content.slice(match.index + match[0].length)), ...children.slice(at + 1, end + 1)];
-            result.push(...make(match[2].toLowerCase() === 'x', label));
-        } else if (result) {
-            result.push(...children.slice(i, end + 1));
+        if (!found) {
+            result?.push(...children.slice(i, end + 1));
+            i = end + 1;
+            continue;
         }
-        i = end + 1;
-        // Non-text tokens up to the next run, kept as they are.
-        while (i < children.length && !isText(children[i])) {
-            if (result) { result.push(children[i]); }
-            i++;
+        result ??= children.slice(0, i);
+        const [at, match] = found;
+        const token = children[at];
+        const start = match.index + match[1].length;
+        result.push(...children.slice(i, at));
+        if (start > 0) { result.push(text(token, token.content.slice(0, start))); }
+        const label = [text(token, token.content.slice(match.index + match[0].length)), ...children.slice(at + 1, end + 1)];
+        const [stop, next] = labelEnd(children, end + 1);
+        label.push(...children.slice(end + 1, stop));
+        i = stop;
+        if (next) {
+            // The text before the next box is this label's; the box starts its token.
+            const [nextAt, nextMatch] = next;
+            const nextToken = children[nextAt];
+            const before = nextMatch.index + nextMatch[1].length;
+            label.push(...children.slice(stop, nextAt));
+            if (before > 0) { label.push(text(nextToken, nextToken.content.slice(0, before))); }
+            children[nextAt] = text(nextToken, nextToken.content.slice(before));
+            i = nextAt;
         }
+        // A line break before the next box stays outside the label.
+        let close = label.length;
+        while (close > 0 && isBreak(label[close - 1])) { close--; }
+        result.push(...make(match[2].toLowerCase() === 'x', label.slice(0, close)), ...label.slice(close));
     }
     return result;
+}
+
+function isBreak(token: Token): boolean {
+    return token.type === 'softbreak' || token.type === 'hardbreak';
+}
+
+// Where a label that takes in children from `from` on ends: before the close
+// of the element its box stands in, an HTML element's closing tag included, at
+// the next box outside the elements it takes in (returned with its run's
+// start), or at the end. A box inside an element the label takes in stays
+// text, as no label holds another. Inline HTML is a token of its own per tag,
+// so its elements are followed by tag name.
+function labelEnd(children: Token[], from: number): [number, [number, RegExpExecArray]?] {
+    let depth = 0;
+    // The HTML elements the label opens, innermost last.
+    const opened: string[] = [];
+    let j = from;
+    while (j < children.length) {
+        const token = children[j];
+        if (depth === 0 && token.nesting < 0) { return [j]; }
+        const tag = token.type === 'html_inline' ? htmlTag(token.content) : undefined;
+        if (tag?.closing) {
+            const at = opened.lastIndexOf(tag.name);
+            if (at >= 0) {
+                opened.length = at;
+            } else if (depth === 0) {
+                // An element opened before the label.
+                return [j];
+            }
+        } else if (tag) {
+            opened.push(tag.name);
+        }
+        if (depth === 0 && opened.length === 0 && isText(token)) {
+            let end = j;
+            while (isText(children[end + 1])) { end++; }
+            const found = findBox(children, j, end);
+            if (found) { return [j, found]; }
+            j = end + 1;
+            continue;
+        }
+        depth += token.nesting;
+        j++;
+    }
+    return [j];
+}
+
+// An inline HTML tag that opens or closes an element, by its lower-cased
+// name; undefined for a void tag, a comment or the like. A slash closes
+// nothing but a void element's tag: `<span/>` opens a span, as in HTML.
+function htmlTag(content: string): { name: string, closing: boolean } | undefined {
+    const match = /^<(\/?)([A-Za-z][A-Za-z0-9-]*)/.exec(content);
+    if (!match) { return undefined; }
+    const name = match[2].toLowerCase();
+    if (VOID_ELEMENTS.has(name)) { return undefined; }
+    return { name, closing: !!match[1] };
 }
 
 // The first box in children[from..to], one run of text: in a text token,

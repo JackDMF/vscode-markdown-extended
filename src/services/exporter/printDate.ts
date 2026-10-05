@@ -10,6 +10,8 @@
  * every element that still carries `date` when it prints. Nothing here touches a browser.
  */
 
+import { VOID_ELEMENTS } from '../../syntax/voidElements';
+
 /**
  * The locale the print date is formatted in. The `markdownExtended.pdf.locale` setting wins; else
  * VS Code's display language. Empty and the pseudo-locale `qps-ploc` (VS Code's localisation test
@@ -154,9 +156,6 @@ function decodeEntities(value: string): string {
 function encodeAttribute(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
-
-/** Elements that have no content and no end tag; `<br/>` is empty, `<div/>` is an open tag. */
-const VOID_ELEMENTS = new Set(['img', 'br', 'hr', 'input', 'meta', 'link', 'wbr', 'source', 'col', 'area', 'base', 'embed', 'param', 'track']);
 
 /**
  * The start tag of a `date` element, opened again for the printed time: class `date` becomes

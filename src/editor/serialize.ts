@@ -2,7 +2,7 @@
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
 import type { Mapping } from 'prosemirror-transform';
-import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, plainWikiEmbed, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
+import { ALPHANUMERIC, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, opensInsideWords, plainWikiEmbed, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { AttrPair, NOTE_SYNTAX_CHARS, fenceHolder, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
 import { Token } from '../@types/markdown-it';
 import { AttrsCut, attrsCutsIn, attrsGivenTo } from '../plugin/markdownItAttrs';
@@ -216,7 +216,7 @@ function gluedAt(mark: Mark, parent: Node, index: number, side: 'before' | 'afte
         return false;
     }
     const ch = side === 'before' ? (node.text ?? '').slice(-1) : (node.text ?? '').slice(0, 1);
-    return /[\p{L}\p{N}]/u.test(ch);
+    return ALPHANUMERIC.test(ch);
 }
 
 /**
@@ -227,7 +227,7 @@ function gluedAt(mark: Mark, parent: Node, index: number, side: 'before' | 'afte
  */
 function emphasisDelimiter(mark: Mark, parent: Node, index: number, opening: boolean, star: string): string {
     const markup = String(mark.attrs.markup || star);
-    if (!markup.startsWith('_')) {
+    if (opensInsideWords(markup)) {
         return star;
     }
     const at = opening ? index : Math.max(0, index - 1);

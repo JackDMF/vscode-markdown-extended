@@ -30,6 +30,8 @@ export interface EditorEngineOptions {
     plugins: MarkdownItPlugin[];
     /** Other extensions' `extendMarkdownIt`, applied after this extension's plugins, in the order given. */
     extend?: MarkdownItExtender[];
+    /** Where a registry plugin that fails to load is reported; it is skipped either way. */
+    log?: (line: string) => void;
 }
 
 /**
@@ -71,9 +73,18 @@ export function createEditorEngine(options: EditorEngineOptions): MarkdownIt {
     const frontMatterPlugin = frontMatter as unknown as MarkdownItPlugin['plugin'];
     // The callback receives the YAML; the editor reads the block from its token.
     md.use(frontMatterPlugin, () => undefined);
-    const used = options.plugins.filter(p => typeof p.plugin === 'function');
-    for (const { plugin, args } of used) {
-        md.use(plugin, ...args);
+    // The plugins that loaded, which the page's engine runs too (`recordInlineDefinition`).
+    const used: MarkdownItPlugin[] = [];
+    for (const entry of options.plugins) {
+        if (typeof entry.plugin === 'function') {
+            // One plugin that throws must not take the engine down with it, as in `extendMarkdownIt`.
+            try {
+                md.use(entry.plugin, ...entry.args);
+                used.push(entry);
+            } catch (error) {
+                options.log?.(`[ERROR] Failed to load markdown plugin: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
     }
     for (const extend of options.extend ?? []) {
         md = extend(md) || md;

@@ -165,6 +165,12 @@ suite('Editor serializer for changed blocks', () => {
         assert.strictEqual(serialize({ doc, eol: '\n', tail: '' }), 'glued*emph* end\n');
     });
 
+    test('emphasis keeps _ next to a _: only a letter or digit glues it to a word', () => {
+        assert.strictEqual(serialize(allTouched(parseDocument(md, '\\__word_\n'))), '\\__word_\n');
+        // The text's `_` is escaped, as it always was; the emphasis beside it keeps its `_`.
+        assert.strictEqual(serialize(allTouched(parseDocument(md, 'a_ _b_\n'))), 'a\\_ _b_\n');
+    });
+
     test('bare and angle autolinks keep their form; links keep their href, non-ASCII as written', () => {
         const source = 'See https://example.com/a_b and <https://example.org> and [Übersicht](Übersicht.md#teil).\n';
         assert.strictEqual(assertStable(source), source);

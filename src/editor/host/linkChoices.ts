@@ -1,8 +1,9 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { Environment, MarkdownIt } from '../../@types/markdown-it';
+import { MarkdownIt } from '../../@types/markdown-it';
 import { decode, schemeOf } from '../paths';
 import type { LinkChoice } from '../protocol';
+import { engineEnvironment } from './engineHost';
 import { message } from './errors';
 import { encodeDestination, isImagePath, relativeDestination } from './images';
 import { SessionPort } from './lenses';
@@ -193,7 +194,7 @@ export class LinkChoiceController {
             return [];
         }
         const md = await this.engine();
-        const anchors: HeadingAnchor[] = headingAnchors(md, document.getText(), { currentDocument: document.uri } as unknown as Environment);
+        const anchors: HeadingAnchor[] = headingAnchors(md, document.getText(), engineEnvironment(document.uri));
         const wanted = decode(fragment).toLowerCase();
         const choices: LinkChoice[] = [];
         // An id an earlier heading carries names that heading, as in the browser: offered once.

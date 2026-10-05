@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { MarkdownIt } from '../../@types/markdown-it';
+import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { MarkdownItExtender, createEditorEngine } from '../engine';
 import { plugins } from '../../plugin/plugins';
 import { message } from './errors';
@@ -16,6 +16,16 @@ export const BUILTIN_MARKDOWN_EXTENSION = 'vscode.markdown-language-features';
 const PREVIEW_SETTINGS = ['markdown.preview.linkify', 'markdown.preview.typographer', 'markdown.preview.breaks', 'markdown.math.enabled'];
 
 type Log = (line: string) => void;
+
+/**
+ * The environment a document is parsed and rendered in. `currentDocument` is
+ * the file's uri, as VS Code puts it in the preview's render env, so a plugin
+ * that asks which document it renders — Req Explorer's, which treats only its
+ * own reading scheme as a reading document — sees an ordinary file.
+ */
+export function engineEnvironment(uri: vscode.Uri): Environment {
+    return { currentDocument: uri } as unknown as Environment;
+}
 
 /** One extension that contributes a markdown-it plugin, activated: its id, the name it shows, and what it exports. */
 export interface MarkdownItExtension {
@@ -120,6 +130,7 @@ export async function buildEditorEngine(selfId: string, log: Log): Promise<Markd
         typographer: preview.get<boolean>('typographer', false),
         plugins,
         extend,
+        log,
     });
     md.set({ breaks: preview.get<boolean>('breaks', false) });
     return md;
