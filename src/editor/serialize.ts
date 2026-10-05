@@ -1618,11 +1618,9 @@ function literalEscapes(written: string, [before, after]: readonly [string, stri
         at.push(...next.places);
         cuts = next.cuts;
     }
-    // `headingText` and `cellText` shift a marker by the escapes at or before it, which silently drops one that is not a number: a place off the text is a bug here, not a save to write.
-    for (const place of at) {
-        if (!Number.isInteger(place) || place < 0 || place >= written.length) {
-            throw new Error(`literalEscapes: the escape place ${place} is not one of the ${written.length} units of ${JSON.stringify(written)}`);
-        }
+    // Every place is a unit of `written` (`origin` maps only kept units); were one not, no escapes: the edit filter refuses what is left (`unitVerdict`), as when none would take a cut back.
+    if (at.some(place => !Number.isInteger(place) || place < 0 || place >= written.length)) {
+        return [];
     }
     return at.sort((a, b) => a - b);
 }
