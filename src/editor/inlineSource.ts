@@ -132,6 +132,12 @@ export interface InlineContent {
     first: number;
     end: number;
     tokens: readonly string[];
+    /**
+     * Each element's (a link's, a task's label, in the order they open) text
+     * it holds itself, code spans' included and whitespace left out, so no
+     * text goes from one element to another unseen.
+     */
+    texts: readonly string[];
 }
 
 /** The document `text` read with `md`, the engine the Visual Editor parses with, in `env` (`engineEnvironment`). */
@@ -359,16 +365,28 @@ function contentsOf(tokens: Token[], env: Environment): InlineContent[] {
             continue;
         }
         const held: string[] = [];
+        const texts: string[] = [];
+        // The elements open around a child, by their place in `texts`.
+        const open: number[] = [];
         for (const child of token.children ?? []) {
+            if (open.length > 0 && (child.type === 'text' || child.type === 'code_inline')) {
+                // A code span's text counts with the text: a code span written or taken out keeps it in its element.
+                texts[open[open.length - 1]] += child.content.replace(/\s+/g, '');
+            }
             if (child.type === 'text' || (child.nesting !== 0 && PAIR_MARKERS.has(child.markup))) {
                 continue;
+            }
+            if (child.nesting > 0) {
+                open.push(texts.push('') - 1);
+            } else if (child.nesting < 0) {
+                open.pop();
             }
             // An inline note's text is not among the children: it is the footnote's.
             const id = (child.meta as { id?: number } | null)?.id;
             const note = child.type.startsWith('footnote_ref') && id !== undefined ? notes[id]?.content ?? '' : '';
             held.push(JSON.stringify([child.type, child.markup, child.info, child.content, attrsOf(child), note]));
         }
-        contents.push({ first: token.map[0], end: Math.max(token.map[1], token.map[0] + 1), tokens: held });
+        contents.push({ first: token.map[0], end: Math.max(token.map[1], token.map[0] + 1), tokens: held, texts });
     }
     return contents;
 }

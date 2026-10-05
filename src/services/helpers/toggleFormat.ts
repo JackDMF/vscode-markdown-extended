@@ -786,7 +786,8 @@ class Verifier {
      * - every inline token holds the same tokens besides text and spans'
      *   markers — links' and images' destinations, inline HTML, math, emoji,
      *   footnote references and their notes, line breaks, and code spans
-     *   unless the toggles write or remove one (`InlineSource.inlines`);
+     *   unless the toggles write or remove one — and every element there,
+     *   a link, a task's label, holds the same text (`InlineSource.inlines`);
      * - every span written reads as that span, every span removed is gone,
      *   every other span reads as before, moved, with its attributes, and
      *   every inline token holds as many spans of each marker and attributes,
@@ -1032,13 +1033,17 @@ class Verifier {
         };
         // The inline tokens' other tokens.
         const code = toggles.some(t => t.writes.some(w => w.markup.startsWith('`')) || t.removes.some(s => s.markup.startsWith('`')));
+        // An element's text is read without the characters of the markers written or taken out, text while a pair is empty.
+        const markup = new Set(changes.flatMap(c => [...c.change.text, ...text.slice(c.start, c.end)]));
+        const unmarked = (held: string) => [...held].filter(ch => !markup.has(ch)).join('');
         const contents = (source: InlineSource, keys: { key: string; first: number; end: number }[]) => {
-            const byKey = new Map<string, { first: number; end: number; tokens: string[] }>();
+            const byKey = new Map<string, { first: number; end: number; tokens: string[]; texts: string[] }>();
             source.inlines.forEach((inline, k) => {
                 const { key, first, end } = keys[k];
-                const entry = byKey.get(key) ?? { first, end, tokens: [] };
+                const entry = byKey.get(key) ?? { first, end, tokens: [], texts: [] };
                 const tokens = code ? inline.tokens.filter(t => !t.startsWith('["code_inline"')) : inline.tokens;
                 entry.tokens.push(...(key.startsWith(':') ? tokens.filter(t => !t.startsWith('["softbreak"')) : tokens));
+                entry.texts.push(...inline.texts.map(unmarked));
                 byKey.set(key, entry);
             });
             return byKey;
@@ -1050,7 +1055,7 @@ class Verifier {
             // A paragraph of pairs alone, which may come or go, holds at most their line breaks.
             let alone = x === undefined || y === undefined;
             for (let line = inline.first; alone && line < inline.end; line++) {alone = free.has(line);}
-            if (!alone && JSON.stringify(x?.tokens ?? []) !== JSON.stringify(y?.tokens ?? [])) {
+            if (!alone && (JSON.stringify(x?.tokens ?? []) !== JSON.stringify(y?.tokens ?? []) || JSON.stringify(x?.texts ?? []) !== JSON.stringify(y?.texts ?? []))) {
                 blame(inline.first, inline.end);
             }
         }

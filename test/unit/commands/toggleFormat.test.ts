@@ -194,6 +194,7 @@ suite('Inline toggles: what a selection toggles', () => {
     test('over several lines, block prefixes, blank lines and trailing whitespace stay outside', async () => {
         assert.strictEqual(await toggle('bold', '«- item one\n- item two»'), '«- **item one**\n- **item two»**');
         assert.strictEqual(await toggle('bold', '«- [ ] task one\n- [x] task two»'), '«- [ ] **task one**\n- [x] **task two»**');
+        assert.strictEqual(await toggle('bold', '«- [ ] **task one**\n- [x] **task two»**'), '«- [ ] task one\n- [x] task two»');
         assert.strictEqual(await toggle('bold', '«# Title\n> quoted»'), '«# **Title**\n> **quoted»**');
         assert.strictEqual(await toggle('bold', 'o«ne\n   \ntw»o'), 'o**«ne**\n   \n**tw»**o');
         assert.strictEqual(await toggle('bold', '«one two \nthree»'), '**«one two** \n**three»**');
@@ -269,6 +270,13 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('bold', 'Term\n: ‸'), 'Term\n: **‸**');
         assert.strictEqual(await toggle('mark', '- ‸'), '- ==‸==');
         assert.strictEqual(await toggle('codeInline', '- ‸'), '- `‸`');
+    });
+
+    test('a task\'s text is toggled inside its label, which takes the whole text', async () => {
+        assert.strictEqual(await toggle('bold', '- [ ] ta‸sk one'), '- [ ] **ta‸sk** one');
+        assert.strictEqual(await toggle('bold', '- [ ] «task one»'), '- [ ] **«task one»**');
+        assert.strictEqual(await toggle('bold', '- [ ] **«task one»**'), '- [ ] «task one»');
+        assert.strictEqual(await toggle('codeInline', '- [x] see ‸this'), '- [x] see `‸this`');
     });
 
     test('a span of the marker the selection touches becomes part of it; one it crosses is not broken', async () => {
@@ -517,6 +525,48 @@ suite('Inline toggles: with VS Code\'s math', () => {
         assert.strictEqual(await toggle('codeInline', 'x $a$ «b» $c$'), 'x $a$ `«b»` $c$');
         // A `$` that opens no math is text.
         assert.strictEqual(await toggle('italics', 'cost $5 and «word» $6 here'), 'cost $5 and *«word»* $6 here');
+    });
+});
+
+/**
+ * Text stays in the element it stands in. The engine's elements keep their
+ * text when toggled (a task's label takes the task's whole text), so the
+ * check is read with a plugin whose element ends where the first text does,
+ * as the label once did: a pair written inside would take text out of it.
+ */
+suite('Inline toggles: text stays in its element', () => {
+    let tagMd: typeof md;
+
+    suiteSetup(() => {
+        tagMd = hostEngine([engine => {
+            engine.core.ruler.push('first_text_tag', state => {
+                for (const token of state.tokens) {
+                    const first = token.type === 'inline' ? token.children?.[0] : undefined;
+                    if (first?.type === 'text' && first.content.startsWith('tag ')) {
+                        token.children.splice(0, 1, new state.Token('tag_open', 'span', 1), first, new state.Token('tag_close', 'span', -1));
+                    }
+                }
+            });
+            return engine;
+        }]);
+    });
+
+    teardown(async () => {
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    });
+
+    async function toggle(name: InlineMarkerName, marked: string): Promise<string> {
+        const { content, selections } = parse(marked);
+        const editor = await open(content, selections);
+        await toggleInlineFormat(editor, INLINE_MARKERS[name], tagMd);
+        return read(editor);
+    }
+
+    test('a pair that would take text out of its element is not written', async () => {
+        assert.strictEqual(await toggle('bold', 'tag ta‸sk one'), 'tag ta‸sk one');
+        assert.strictEqual(await toggle('codeInline', 'tag ta‸sk one'), 'tag ta‸sk one');
+        // Text the element does not hold is toggled.
+        assert.strictEqual(await toggle('bold', 'plain ta‸sk one'), 'plain **ta‸sk** one');
     });
 });
 
