@@ -9,7 +9,7 @@ import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
-import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, readSidebars, setCurrentInlineDefinition } from './inlineEngine';
+import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -468,8 +468,8 @@ function noteUnwritable(note: Node): string | null {
  * so the editor refuses the edit that would make it (`webview/notes.ts`)
  * rather than save a document the next parse restructures: a raw mark over a
  * note, text under a raw mark that holds a reference's `|` or the note's
- * marker pair, or a textblock that would not read back as the sidebars it
- * holds (`sidebarRefusal`).
+ * marker pair, or a textblock that would not read back as the attribute
+ * literals and the sidebars it holds (`textblockRefusal`).
  *
  * The sidebars are not modelled, they are read: each textblock the save will
  * write again — with the edit's `origin` every one of each top-level block the
@@ -489,7 +489,11 @@ function noteUnwritable(note: Node): string | null {
  * wherever the editor writes it as it was read: its sidebars are the ones the
  * parser read. Where the editor writes it otherwise — a character reference
  * written as its character — the parse sees the outcome, and the edit is
- * refused with that cause (`origin`, the edit's starting document). Every
+ * refused with that cause (`origin`, the edit's starting document). The
+ * attribute literals are read the same way, in the same parse: every literal
+ * a checked textblock holds or carries (its spans', its block's, its item's,
+ * a quote's or a list's it ends) must come back as written (`readBack`) — a
+ * `$` typed beside one can pair with a `$` in it as math. Every
  * refusal the editor asks — the notes filter, the toolbar's disabled buttons,
  * the object bar's verbs — goes through here with the transaction's origin
  * (`noteRefusal`).
@@ -540,7 +544,7 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
         if (reason !== null) {
             break;
         }
-        reason = sidebarRefusal(doc, textblock, origin);
+        reason = textblockRefusal(doc, textblock, origin);
     }
     return reason;
 }
@@ -747,7 +751,9 @@ export function setInlineEngine(definition: InlineEngineDefinition): void {
         return;
     }
     readCache.clear();
+    runCache.clear();
     mismatchCache = new WeakMap();
+    writtenCache = new WeakMap();
 }
 
 function engine(): MarkdownIt {
@@ -935,70 +941,157 @@ function sidebarMismatch(textblock: Node): SidebarMismatch | null {
     }
     let mismatch: SidebarMismatch | null = null;
     if (mayHoldSidebar(textblock)) {
-        const written = writtenTextblock(textblock);
-        const read = sidebarsRead(written.text);
-        const lost = written.sidebars.find(s => !read.some(r => sameSidebar(r, s)));
-        const made = read.find(r => !written.sidebars.some(s => sameSidebar(r, s)));
-        mismatch = lost === undefined && made === undefined ? null : { written, lost, made };
+        const written = writtenOf(textblock);
+        mismatch = sidebarsCompared(written, sidebarsRead(written.text));
     }
     mismatchCache.set(textblock, mismatch);
     return mismatch;
 }
 
+/** How `written` reads back as the sidebars `read` in its text: the first it holds that is not read where it stands, the first read that it does not hold; `null` when they are the same. */
+function sidebarsCompared(written: { text: string; sidebars: ReadSidebar[] }, read: ReadSidebar[]): SidebarMismatch | null {
+    const lost = written.sidebars.find(s => !read.some(r => sameSidebar(r, s)));
+    const made = read.find(r => !written.sidebars.some(s => sameSidebar(r, s)));
+    return lost === undefined && made === undefined ? null : { written, lost, made };
+}
+
+/** Each textblock as the save writes it (`writtenTextblock`), by the node; made anew with the engine. */
+let writtenCache = new WeakMap<Node, { text: string; sidebars: ReadSidebar[] }>();
+
+/** `writtenTextblock`, remembered by the node. */
+function writtenOf(textblock: Node): { text: string; sidebars: ReadSidebar[] } {
+    let written = writtenCache.get(textblock);
+    if (written === undefined) {
+        written = writtenTextblock(textblock);
+        writtenCache.set(textblock, written);
+    }
+    return written;
+}
+
 /**
  * Why a sidebar the parser does not read back where it stands is lost, said
- * as what to do: a letter or digit before its marker, a digit after a left
- * one's closer (`sidebarCanOpen`, `sidebarCanClose`), a web address that
- * reads it in — the sidebar comes back with linkify off — or, for a left one,
- * VS Code's math reading its `$…$` as math — it comes back without the math
- * rules.
+ * as what to do: for a left one, VS Code's math reading its `$…$` as math —
+ * with a space beside each glued marker it comes back only without the math
+ * rules, so no space helps —
+ * else a letter or digit before its marker, a digit after a left one's closer
+ * (`sidebarCanOpen`, `sidebarCanClose`), or a web address that reads it in —
+ * the sidebar comes back with linkify off.
  */
 function lostReason(text: string, lost: ReadSidebar): string {
     const marker = text.charAt(lost.open);
-    if (lost.open > 0 && !sidebarCanOpen(text.charAt(lost.open - 1), marker)) {
+    const gluedBefore = lost.open > 0 && !sidebarCanOpen(text.charAt(lost.open - 1), marker);
+    const gluedAfter = lost.close + 1 < text.length && !sidebarCanClose(marker, text.charAt(lost.close + 1));
+    if (lost.kind === 'left_sidebar' && currentInlineDefinition().math) {
+        // First, as the spaces the glued hints ask for would not help: with them, math is what takes it.
+        const shift = gluedBefore ? 1 : 0;
+        const spaced = `${text.slice(0, lost.open)}${gluedBefore ? ' ' : ''}${text.slice(lost.open, lost.close + 1)}${gluedAfter ? ' ' : ''}${text.slice(lost.close + 1)}`;
+        const moved: ReadSidebar = { kind: lost.kind, open: lost.open + shift, close: lost.close + shift };
+        if (!sidebarsRead(spaced).some(r => sameSidebar(r, moved)) && sidebarsReadWithoutMath(spaced).some(r => sameSidebar(r, moved))) {
+            return SIDEBAR_LEFT_MATH;
+        }
+    }
+    if (gluedBefore) {
         return SIDEBAR_GLUED_BEFORE;
     }
-    if (lost.close + 1 < text.length && !sidebarCanClose(marker, text.charAt(lost.close + 1))) {
+    if (gluedAfter) {
         return SIDEBAR_GLUED_AFTER;
     }
     if (currentInlineDefinition().linkify && sidebarsReadWithoutLinkify(text).some(r => sameSidebar(r, lost))) {
         return SIDEBAR_GLUED_URL;
-    }
-    if (lost.kind === 'left_sidebar' && currentInlineDefinition().math && sidebarsReadWithoutMath(text).some(r => sameSidebar(r, lost))) {
-        return SIDEBAR_LEFT_MATH;
     }
     return SIDEBAR_NOT_READ;
 }
 
 /**
  * Why the textblock `checked` in `doc` cannot be written so that it reads back
- * as the sidebars it holds, or `null`. When the textblock the edit started
+ * as it is shown, or `null`: an attribute literal it holds or carries that
+ * does not read back (`readBack`, named in the reason), then a sidebar. One
+ * parse of the textblock answers both. When the textblock the edit started
  * from already read back otherwise (`origin`), the cause is how the file
  * spells it, which the editor rewrites — a character reference it writes as
  * the character (`h&#116;tp://e.com/$x$`, an address once written out, takes
  * the sidebar in), when the text that textblock was read from holds one
- * (`EditOrigin.sourceOf`), else unnamed — and the reason says so: it is
- * edited in the text editor once. For a textblock only written again beside
- * the edit (`beside`), the reason names the block the edit rewrites whole.
+ * (`EditOrigin.sourceOf`), else unnamed; for a literal, that literal — and
+ * the reason says so: it is edited in the text editor once. An edit that only
+ * takes literals off such a textblock is not refused for them: it cannot make
+ * the read-back worse. For a textblock only written again beside the edit
+ * (`beside`), the reason names the block the edit rewrites whole.
  */
-function sidebarRefusal(doc: Node, checked: CheckedTextblock, origin?: EditOrigin): string | null {
-    const mismatch = sidebarMismatch(checked.node);
-    if (mismatch === null) {
+function textblockRefusal(doc: Node, checked: CheckedTextblock, origin?: EditOrigin): string | null {
+    const now = readBack(textblockAt(doc, checked.pos), true);
+    if (now.lost === null && now.mismatch === null) {
         return null;
     }
+    let before: { pos: number; node: Node; read: ReadBack } | null = null;
     if (origin !== undefined) {
         const old = checked.old !== undefined ? checked.old + 1 : Math.min(origin.mapping.invert().map(checked.pos + 1, -1), origin.doc.content.size);
         const $old = origin.doc.resolve(old);
-        if ($old.depth > 0 && $old.parent.isTextblock && sidebarMismatch($old.parent) !== null) {
-            const source = origin.sourceOf?.($old.before()) ?? null;
-            const reference = source !== null && CHARACTER_REFERENCE.test(source);
-            if (checked.beside) {
-                return sidebarRewrittenBeside(doc.resolve(checked.pos).node(1), checked.node, reference);
-            }
-            return reference ? SIDEBAR_REWRITTEN_REFERENCE : SIDEBAR_REWRITTEN;
+        if ($old.depth > 0 && $old.parent.isTextblock) {
+            before = { pos: $old.before(), node: $old.parent, read: readBack(textblockAt(origin.doc, $old.before()), true) };
         }
     }
+    if (now.lost !== null) {
+        if (before === null || before.read.lost === null) {
+            return literalLostReason(now.lost);
+        }
+        if (!onlyTakesLiteralsOff(before.node, before.read.literals, checked.node, now.literals)) {
+            return checked.beside ? literalRewrittenBeside(doc.resolve(checked.pos).node(1), checked.node, before.read.lost) : literalRewritten(before.read.lost);
+        }
+    }
+    const mismatch = now.mismatch;
+    if (mismatch === null) {
+        return null;
+    }
+    if (origin !== undefined && before !== null && before.read.mismatch !== null) {
+        const source = origin.sourceOf?.(before.pos) ?? null;
+        const reference = source !== null && CHARACTER_REFERENCE.test(source);
+        if (checked.beside) {
+            return sidebarRewrittenBeside(doc.resolve(checked.pos).node(1), checked.node, reference);
+        }
+        return reference ? SIDEBAR_REWRITTEN_REFERENCE : SIDEBAR_REWRITTEN;
+    }
     return mismatch.lost !== undefined ? lostReason(mismatch.written.text, mismatch.lost) : SIDEBAR_MADE;
+}
+
+/** Whether a textblock, `after` an edit, holds the text it held `before` and some of its literals, fewer than before and no other. */
+function onlyTakesLiteralsOff(before: Node, had: readonly string[], after: Node, has: readonly string[]): boolean {
+    if (has.length >= had.length || before.textContent !== after.textContent) {
+        return false;
+    }
+    const left = [...had];
+    return has.every(literal => {
+        const i = left.indexOf(literal);
+        return i >= 0 && left.splice(i, 1).length === 1;
+    });
+}
+
+/** Why an edit is refused after which text would be read as attributes no literal gives. */
+export const LITERAL_MADE = 'After this edit text here would be read as attributes, which the editor does not show.';
+
+/**
+ * Why an edit is refused after which the literal `lost` names would not read
+ * back with its line — a `$` in it pairing with another as math or a left
+ * sidebar, inline code or a link reaching into it.
+ */
+export function literalLostReason(lost: LiteralLoss): string {
+    if (lost.literal === null) {
+        return LITERAL_MADE;
+    }
+    return `After this edit the preview would not read ${lost.literal} back as written: read with the rest of its line — a $ pairing with another $ as math or a left sidebar, say, or code reaching into it — it would be shown as text.`;
+}
+
+/** Why an edit is refused in a line whose literal `lost` names already does not read back as it is shown, edited or not. */
+export function literalRewritten(lost: LiteralLoss): string {
+    const what = lost.literal === null ? 'text here as attributes the editor does not show' : `${lost.literal} back as written`;
+    return `Written by the editor, this line would not read ${what}, edited or not: remove that literal, or edit the line once in the text editor to unlock it.`;
+}
+
+/** `literalRewritten` for another textblock of a block the edit makes the save write whole (`sidebarRewrittenBeside`). */
+export function literalRewrittenBeside(block: Node, textblock: Node, lost: LiteralLoss): string {
+    const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
+    const part = textblock.type.name === 'table_cell' || textblock.type.name === 'table_header' ? 'cell' : textblock.type.name === 'heading' ? 'heading' : 'paragraph';
+    const what = lost.literal === null ? 'text as attributes the editor does not show' : `${lost.literal} back as written`;
+    return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then not read ${what}. Remove that literal, or edit that ${part} once in the text editor to unlock this ${whole}.`;
 }
 
 const SIDEBAR_NODES: ReadonlySet<string> = new Set(['left_sidebar', 'right_sidebar']);
@@ -1551,20 +1644,62 @@ function attrsKey(lists: readonly (readonly AttrPair[])[]): string {
     return JSON.stringify(lists.map(list => JSON.stringify([...list].map(([n, v]) => [n, v]).sort())).sort());
 }
 
+/** A textblock, the top-level `block` it is written in, and `parent`, which holds it at `index` (`null` for a top-level one). */
+interface TextblockAt {
+    block: Node;
+    textblock: Node;
+    parent: Node | null;
+    index: number;
+}
+
+/** The textblock that starts at `pos` in `doc`, with what holds it. */
+function textblockAt(doc: Node, pos: number): TextblockAt {
+    const $in = doc.resolve(pos + 1);
+    const textblock = $in.parent;
+    return $in.depth <= 1
+        ? { block: textblock, textblock, parent: null, index: 0 }
+        : { block: $in.node(1), textblock, parent: $in.node($in.depth - 1), index: $in.index($in.depth - 1) };
+}
+
 /**
- * Whether the textblock `textblock` of the top-level `block` (`parent` holds
- * it at `index`) reads back, written as the save writes it, as the literals it
- * holds and carries: its spans', and those the save writes on its line or the
- * line after it — a top-level paragraph's or heading's own, its list item's,
- * the quote's `> {…}` and the list's `{…}` line it ends. Those are read through
- * one inline run with its text, so a `$` in one can pair with a `$` in
- * another — the text's own are escaped — as a left sidebar, or as VS Code's
- * math (`useMathStandIn`); a list's literal after a blank line, a table's and
- * a fence's are read apart.
+ * A textblock as the parser will read its literals: its text as the save
+ * writes it, with the literals the save writes on its line or the line after
+ * it, in the smallest source that reads them where they stand (`text`); those
+ * literals, each with the token the plugin gives it to (`carried`); and its
+ * spans' (`spans`).
  */
-function textblockReadsBack(block: Node, textblock: Node, parent: Node | null, index: number): boolean {
+interface LiteralRun {
+    text: string;
+    carried: { literal: string | null; token: string }[];
+    spans: string[];
+}
+
+/**
+ * The run of the textblock `at` (`LiteralRun`): its spans' literals, and
+ * those the save writes on its line or the line after it — a top-level
+ * paragraph's or heading's own, its list item's, the quote's `> {…}` and the
+ * list's `{…}` line it ends. Those are read through one inline run with its
+ * text, so a `$` in one can pair with a `$` in another — the text's own are
+ * escaped — as a left sidebar, or as VS Code's math (`useMathStandIn`); a
+ * list's literal after a blank line, a table's and a fence's are read apart.
+ *
+ * The placements are the save's, restated: they must match what
+ * `blockSerializer` writes — its `heading` writer (`headingText`, the literal
+ * after a space), `paragraph` with `withBlockSuffix` (`end` after a space,
+ * `line` under it), `list_item` (after a space at the end of the first
+ * paragraph), `renderList`'s item markers with the continuation indent, the
+ * list's `line` literal under the last item (`withBlockSuffix`,
+ * `listTakesLineLiteral`), `blockquote`'s `> ` with the quote's `> {…}` under
+ * the paragraph that ends it (`quoteLiteralHost`, `quoteTakesLiteral`), and a
+ * cell's text as `tableLines` writes it (`cellText`). A change to one of
+ * those is a change here. Neither the wrap nor a marker's width moves a
+ * literal's reading: the run is unwrapped and every list marker is `- ` or
+ * `1. `.
+ */
+function literalRun(at: TextblockAt, written: string): LiteralRun {
+    const { block, textblock, parent, index } = at;
     const name = textblock.type.name;
-    let text = writtenTextblock(textblock).text;
+    let text = written;
     const carried: { literal: string | null; token: string }[] = [];
     if (name === 'heading') {
         const suffix = textblock.attrs.attrsSuffix as string | null;
@@ -1594,43 +1729,158 @@ function textblockReadsBack(block: Node, textblock: Node, parent: Node | null, i
         text = `> ${text.split('\n').join('\n> ')}${suffix === null ? '' : `\n> ${suffix}`}`;
         carried.push({ literal: suffix, token: 'blockquote_open' });
     }
-    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {}).flatMap(t => [t, ...(t.children ?? [])]);
-    for (const { literal, token } of carried) {
-        const found = tokens.find(t => t.type === token);
-        if (found === undefined || !sameAttrs((found.attrs ?? []).map(([n, v]) => [n, v] as AttrPair), literalPairs(literal))) {
-            return false;
+    return { text, carried, spans: spanLiteralsIn(textblock) };
+}
+
+/** What the page's engine with markdown-it-attrs reads in a run's text (`readRun`). */
+interface RunRead {
+    /** The first inline token's content — the textblock's text as the parser hands it to the inline rules — or `null`. */
+    content: string | null;
+    /** The sidebars read in `content`, where they stand in it. */
+    sidebars: ReadSidebar[];
+    /** The attributes of the first token of each type. */
+    first: Map<string, AttrPair[]>;
+    /** The attributes of each span read, in order. */
+    spans: AttrPair[][];
+}
+
+/** What each run's text reads as, by the text: a textblock is parsed once however often it is asked about. */
+const runCache = new Map<string, RunRead>();
+
+/** `text` parsed by the page's engine with markdown-it-attrs (`attrsEngineFor`), remembered by the text. */
+function readRun(text: string): RunRead {
+    let read = runCache.get(text);
+    if (read === undefined) {
+        const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+        const inline = tokens.find(t => t.type === 'inline');
+        const all = tokens.flatMap(t => [t, ...(t.children ?? [])]);
+        const pairs = (t: { attrs: string[][] | null }) => (t.attrs ?? []).map(([n, v]) => [n, v] as AttrPair);
+        const first = new Map<string, AttrPair[]>();
+        for (const t of all) {
+            if (!first.has(t.type)) {
+                first.set(t.type, pairs(t));
+            }
+        }
+        read = {
+            content: inline?.content ?? null,
+            sidebars: inline === undefined ? [] : sidebarsIn([inline]),
+            first,
+            spans: all.filter(t => t.type === 'span_open').map(pairs),
+        };
+        if (runCache.size >= READ_CACHE_SIZE) {
+            runCache.delete(runCache.keys().next().value as string);
+        }
+    } else {
+        runCache.delete(text);
+    }
+    runCache.set(text, read);
+    return read;
+}
+
+/** A literal that does not read back as written, or — `literal` `null` — text the parser reads as attributes no literal gives. */
+export interface LiteralLoss {
+    literal: string | null;
+}
+
+/** The first of a run's literals its text does not read back, its spans' first, or `null` when every one reads back and no other. */
+function literalLoss(run: LiteralRun, read: RunRead): LiteralLoss | null {
+    const left = read.spans.map(pairs => attrsKey([pairs]));
+    for (const literal of run.spans) {
+        const i = left.indexOf(attrsKey([literalPairs(literal)]));
+        if (i < 0) {
+            return { literal };
+        }
+        left.splice(i, 1);
+    }
+    if (left.length > 0) {
+        return { literal: null };
+    }
+    for (const { literal, token } of run.carried) {
+        const found = read.first.get(token);
+        if (found === undefined || !sameAttrs(found, literalPairs(literal))) {
+            return { literal };
         }
     }
-    const spans = tokens.filter(t => t.type === 'span_open').map(t => (t.attrs ?? []).map(([n, v]) => [n, v] as AttrPair));
-    return attrsKey(spans) === attrsKey(spanLiteralsIn(textblock).map(literalPairs));
+    return null;
+}
+
+/** How a textblock reads back once written (`readBack`). */
+interface ReadBack {
+    /** The first literal it does not read back (`literalLoss`), or `null`. */
+    lost: LiteralLoss | null;
+    /** Where it does not read back as the sidebars it holds (`sidebarMismatch`), or `null`. */
+    mismatch: SidebarMismatch | null;
+    /** The literals it holds and carries, its spans' first. */
+    literals: string[];
 }
 
 /**
- * Whether every literal the top-level `block` holds reads back as it is, its
- * textblocks written as the save writes them and read whole by the page's
- * engine with markdown-it-attrs (`textblockReadsBack`): the one question
- * `attrsReadAt` cannot answer, the literal alone. A literal is judged where it
- * is written with everything the preview reads with it — `A [x]{title="a $b"}
- * c. {title="d$ e"}` is math under VS Code's math and a left sidebar without
- * it, either literal alone is neither. Asked by the Attributes field and a span's (`literalsReadBackRefusal`)
- * and of a copy's literal (`fidelity.ts`).
+ * How the textblock `at` reads back, written as the save writes it: its
+ * literals in their run (`literalRun`) and, with `sidebars`, the sidebars it
+ * holds. A run holding a `{` is parsed once, by the page's engine with
+ * markdown-it-attrs, and that one parse answers both: the sidebars are read
+ * off its inline token, whose content starts with the text the save writes —
+ * the literals after it read with them, as the preview reads them. Only a
+ * textblock whose content the parser hands on otherwise (a cell it trims, say)
+ * has its sidebars read apart, as one with no `{` always is
+ * (`sidebarMismatch`).
  */
-export function literalsReadBack(block: Node): boolean {
-    if (block.isTextblock) {
-        return !INLINE_TEXTBLOCKS.has(block.type.name) || textblockReadsBack(block, block, null, 0);
+function readBack(at: TextblockAt, sidebars: boolean): ReadBack {
+    const textblock = at.textblock;
+    if (!INLINE_TEXTBLOCKS.has(textblock.type.name)) {
+        return { lost: null, mismatch: null, literals: [] };
     }
-    let reads = true;
+    const written = writtenOf(textblock);
+    const run = literalRun(at, written.text);
+    const literals = [...run.spans, ...run.carried.flatMap(c => (c.literal === null ? [] : [c.literal]))];
+    if (!run.text.includes('{')) {
+        return { lost: null, mismatch: sidebars ? sidebarMismatch(textblock) : null, literals };
+    }
+    const read = readRun(run.text);
+    let mismatch: SidebarMismatch | null = null;
+    if (sidebars && mayHoldSidebar(textblock)) {
+        mismatch = read.content !== null && read.content.startsWith(written.text)
+            ? sidebarsCompared({ text: read.content, sidebars: written.sidebars }, read.sidebars)
+            : sidebarMismatch(textblock);
+    }
+    return { lost: literalLoss(run, read), mismatch, literals };
+}
+
+/**
+ * The first literal the top-level `block` holds that does not read back as it
+ * is, its textblocks written as the save writes them and read whole by the
+ * page's engine with markdown-it-attrs (`readBack`), or `null`: the one
+ * question `attrsReadAt` cannot answer, the literal alone. A literal is judged
+ * where it is written with everything the preview reads with it — `A
+ * [x]{title="a $b"} c. {title="d$ e"}` is math under VS Code's math and a left
+ * sidebar without it, either literal alone is neither. The edit filter asks
+ * the same of each textblock it checks (`unwritableInNote`).
+ */
+export function literalNotReadBack(block: Node): LiteralLoss | null {
+    if (block.isTextblock) {
+        return readBack({ block, textblock: block, parent: null, index: 0 }, false).lost;
+    }
+    let lost: LiteralLoss | null = null;
     block.descendants((node, _pos, parent, index) => {
-        if (!reads) {
+        if (lost !== null) {
             return false;
         }
         if (node.isTextblock) {
-            reads = !INLINE_TEXTBLOCKS.has(node.type.name) || textblockReadsBack(block, node, parent, index);
+            lost = readBack({ block, textblock: node, parent, index }, false).lost;
             return false;
         }
         return true;
     });
-    return reads;
+    return lost;
+}
+
+/**
+ * Whether every literal the top-level `block` holds reads back as it is
+ * (`literalNotReadBack`). Asked by the Attributes field and a span's
+ * (`literalsReadBackRefusal`) and of a copy's literal (`fidelity.ts`).
+ */
+export function literalsReadBack(block: Node): boolean {
+    return literalNotReadBack(block) === null;
 }
 
 /**

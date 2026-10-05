@@ -39,7 +39,7 @@ import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endsWithAttrsLiteral, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { currentInlineDefinition } from '../inlineEngine';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
-import { itemTakesLiteral, literalHolder, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
+import { LiteralLoss, itemTakesLiteral, literalHolder, literalNotReadBack, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 
 const nodes = editorSchema.nodes;
@@ -517,14 +517,36 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph
 export const LITERAL_READ_WITH_BLOCK_REFUSAL = 'Read together with the rest of its block — a $ pairing with a $ in another {…} as a left sidebar or as math, say — the preview would not read these attributes back as written.';
 
 /**
+ * Why a literal is refused in a block that, before it was set, already held a
+ * literal the preview would not read back (`existing`): that one is the cause,
+ * whatever is typed.
+ */
+export function literalAlreadyLostRefusal(existing: LiteralLoss): string {
+    const what = existing.literal === null ? 'text in it as attributes the editor does not show' : `${existing.literal} back as written`;
+    return `Read with the rest of this block, the preview already would not read ${what}: that is the cause, not the literal typed. Remove or change it first.`;
+}
+
+/** The top-level block holding `pos` in `doc`, or `null`. */
+function topBlockAt(doc: Node, pos: number): Node | null {
+    const $pos = doc.resolve(Math.min(pos, doc.content.size));
+    return $pos.depth === 0 ? doc.nodeAt(pos) : $pos.node(1);
+}
+
+/**
  * Why the top-level block holding `pos` in `doc` — a document a literal was
  * just set in — is refused: a literal it holds would not read back once the
- * block is written (`literalsReadBack`), or `null`.
+ * block is written (`literalsReadBack`), or `null`. When the block already
+ * failed so in `before`, the document the literal was set in, the reason
+ * names the literal it failed on (`literalAlreadyLostRefusal`).
  */
-export function literalsReadBackRefusal(doc: Node, pos: number): string | null {
-    const $pos = doc.resolve(Math.min(pos, doc.content.size));
-    const block = $pos.depth === 0 ? doc.nodeAt(pos) : $pos.node(1);
-    return block === null || literalsReadBack(block) ? null : LITERAL_READ_WITH_BLOCK_REFUSAL;
+export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node): string | null {
+    const block = topBlockAt(doc, pos);
+    if (block === null || literalsReadBack(block)) {
+        return null;
+    }
+    const old = before === undefined ? null : topBlockAt(before, pos);
+    const existing = old === null ? null : literalNotReadBack(old);
+    return existing === null ? LITERAL_READ_WITH_BLOCK_REFUSAL : literalAlreadyLostRefusal(existing);
 }
 
 /** Why `literal` cannot be given to the selection as an attribute span, or `null`: the span's literal alone (`literalRefusal`), then read with its block (`literalsReadBackRefusal`). */
@@ -536,7 +558,7 @@ export function spanLiteralRefusal(state: EditorState, literal: string): string 
     }
     const { from, to } = state.selection;
     const tr = state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: value }));
-    return literalsReadBackRefusal(tr.doc, from);
+    return literalsReadBackRefusal(tr.doc, from, state.doc);
 }
 
 /** Why the span's literal cannot be changed to `literal`, or `null`: as `spanLiteralRefusal` asks it. */
@@ -547,7 +569,7 @@ export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject
         return alone;
     }
     const tr = state.tr.removeMark(span.from, span.to, span.mark).addMark(span.from, span.to, editorSchema.marks.attr_span.create({ literal: value }));
-    return literalsReadBackRefusal(tr.doc, span.from);
+    return literalsReadBackRefusal(tr.doc, span.from, state.doc);
 }
 
 /** Why an attribute span cannot be made of the selection, or `null`: it needs selected text in one textblock that is not code. */
@@ -570,7 +592,7 @@ export function applySpanTransaction(state: EditorState, literal: string): Trans
     }
     const { from, to } = state.selection;
     const tr = state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: value }));
-    return noteRefusal(tr) === null && literalsReadBackRefusal(tr.doc, from) === null ? tr.scrollIntoView() : null;
+    return noteRefusal(tr) === null && literalsReadBackRefusal(tr.doc, from, state.doc) === null ? tr.scrollIntoView() : null;
 }
 
 /** The span's run given `literal` instead. `null` for an unchanged or unreadable literal, or one a note around it could not hold. */
@@ -581,7 +603,7 @@ export function changeSpanTransaction(state: EditorState, span: Extract<EditorOb
     }
     const type = editorSchema.marks.attr_span;
     const tr = state.tr.removeMark(span.from, span.to, span.mark).addMark(span.from, span.to, type.create({ literal: value }));
-    return noteRefusal(tr) === null && literalsReadBackRefusal(tr.doc, span.from) === null ? tr.scrollIntoView() : null;
+    return noteRefusal(tr) === null && literalsReadBackRefusal(tr.doc, span.from, state.doc) === null ? tr.scrollIntoView() : null;
 }
 
 /**
@@ -746,7 +768,8 @@ export function changeBlockAttrsTransaction(state: EditorState, pos: number, lit
         attrs.attrsPlacement = value === '' ? null : (node.attrs.attrsPlacement as string | null) ?? newPlacement(node);
     }
     const tr = state.tr.setNodeMarkup(pos, undefined, attrs);
-    return literalsReadBackRefusal(tr.doc, pos) === null ? tr.scrollIntoView() : null;
+    // Removing a literal cannot make the block read back worse: it is never refused for that.
+    return value === '' || literalsReadBackRefusal(tr.doc, pos, state.doc) === null ? tr.scrollIntoView() : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -876,7 +899,7 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
         const set = node.type === nodes.list_item
             ? state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, literal: next })
             : state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, attrsSuffix: next, attrsPlacement: (node.attrs.attrsPlacement as string | null) ?? newPlacement(node) });
-        const lost = literalsReadBackRefusal(set.doc, current.pos);
+        const lost = literalsReadBackRefusal(set.doc, current.pos, state.doc);
         if (lost !== null) {
             return { refusal: lost };
         }

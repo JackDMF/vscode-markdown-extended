@@ -377,4 +377,16 @@ suite('Editor Attributes…: a fence\'s literal is read on its own fence, a head
         assert.strictEqual(out, '# HX {title="a{b"}\n');
         assert.deepStrictEqual(hostEngine().parse(out, {}).find(t => t.type === 'heading_open')?.attrs, [['title', 'a{b']]);
     });
+
+    test('a heading with a closing # run after its literal keeps the literal, which markdown-it reads before the run', () => {
+        const source = '# Title {#id} ##\n';
+        assert.deepStrictEqual(hostEngine().parse(source, {}).find(t => t.type === 'heading_open')?.attrs, [['id', 'id']]);
+        const state = stateOf(source);
+        assert.strictEqual(state.doc.child(0).type.name, 'heading', 'an editable heading, not a source block');
+        assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, '{#id}');
+        assert.strictEqual(state.doc.child(0).attrs.anchor, 'id');
+        const out = text(state.apply(state.tr.insertText('X', posOf(state.doc, 'Title') + 5)));
+        assert.strictEqual(out, '# TitleX {#id}\n');
+        assert.deepStrictEqual(hostEngine().parse(out, {}).find(t => t.type === 'heading_open')?.attrs, [['id', 'id']]);
+    });
 });

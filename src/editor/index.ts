@@ -14,7 +14,6 @@ export {
     INJECTION_META_KEY,
     MAX_WRAPPER_DEPTH,
     detectEol,
-    findAttrsSuffix,
     findEndLiteral,
     groupSourceBlocks,
     injectionMarkOf,

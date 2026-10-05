@@ -209,9 +209,14 @@ export interface ReadSidebar {
  * stood (`SIDEBAR_SPAN_META`), wherever it is in the token stream.
  */
 export function readSidebars(md: MarkdownIt, text: string): ReadSidebar[] {
+    return sidebarsIn(md.parseInline(text, {}));
+}
+
+/** The sidebars read in `tokens` and their children, as `readSidebars` finds them, where an inline token's content is the text read. */
+export function sidebarsIn(tokens: readonly Token[]): ReadSidebar[] {
     const found: ReadSidebar[] = [];
-    const walk = (tokens: readonly Token[] | null) => {
-        for (const token of tokens ?? []) {
+    const walk = (list: readonly Token[] | null) => {
+        for (const token of list ?? []) {
             const span = (token.meta as Record<string, unknown> | null | undefined)?.[SIDEBAR_SPAN_META] as [number, number] | undefined;
             if (span !== undefined && token.nesting === 1) {
                 found.push({ kind: token.type.replace(/_open$/, ''), open: span[0], close: span[1] });
@@ -219,6 +224,6 @@ export function readSidebars(md: MarkdownIt, text: string): ReadSidebar[] {
             walk(token.children);
         }
     };
-    walk(md.parseInline(text, {}));
+    walk(tokens);
     return found;
 }

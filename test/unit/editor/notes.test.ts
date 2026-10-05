@@ -1173,6 +1173,20 @@ suite('Editor notes: with VS Code\'s math reading $, no left sidebar is made', (
         setInlineEngine(DEFAULT_INLINE_ENGINE);
         assert.strictEqual(noteRefusal(tr), null);
     });
+
+    test('a left sidebar glued to a letter is refused with the math reason, as the space the glued hint asks for would not help', () => {
+        const state = read('See here.\n');
+        // `See here$note$.`: with a space before it, `$note$` is math.
+        const at = posOf(state.doc, 'here') + 4;
+        const tr = state.tr.insert(at, editorSchema.nodes.left_sidebar.create(null, editorSchema.text('note')));
+        assert.strictEqual(noteRefusal(tr), SIDEBAR_LEFT_MATH, 'glued to `here`');
+        const spaced = state.tr.insert(at, [editorSchema.text(' '), editorSchema.nodes.left_sidebar.create(null, editorSchema.text('note')), editorSchema.text(' ')]);
+        assert.strictEqual(noteRefusal(spaced), SIDEBAR_LEFT_MATH, 'with the spaces, the same reason');
+        // Without math the glued one is refused for the letter, and the spaced one is made.
+        setInlineEngine(DEFAULT_INLINE_ENGINE);
+        assert.strictEqual(noteRefusal(tr), SIDEBAR_GLUED_BEFORE);
+        assert.strictEqual(noteRefusal(spaced), null);
+    });
 });
 
 suite('Editor notes: a note action removes its note again, keeping the text', () => {

@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import MarkdownItStatic = require('markdown-it');
-import { EditorState, TextSelection } from 'prosemirror-state';
+import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { Node } from 'prosemirror-model';
 import { MarkdownIt, Token } from '../../../src/@types/markdown-it';
 import { attrsReadAt, joinAttrs, parseAttrsLiteral, sameAttrs } from '../../../src/editor/attrs';
@@ -9,9 +9,11 @@ import { groupSourceBlocks, splitLines } from '../../../src/editor/blocks';
 import { DEFAULT_INLINE_ENGINE, createInlineEngine, definitionOf, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import { useMathStandIn } from '../../../src/editor/mathStandIn';
 import { parseDocument } from '../../../src/editor/parse';
-import { serializeDocument, setInlineEngine } from '../../../src/editor/serialize';
+import { literalLostReason, literalRewritten, serializeDocument, setInlineEngine } from '../../../src/editor/serialize';
+import { editorSchema } from '../../../src/editor/schema';
+import { noteRefusal } from '../../../src/editor/webview/notes';
 import {
-    LITERAL_READ_WITH_BLOCK_REFUSAL, attributesTargetAt, commitAttributes, literalRefusal, spanLiteralRefusal,
+    LITERAL_READ_WITH_BLOCK_REFUSAL, attributesTargetAt, commitAttributes, literalAlreadyLostRefusal, literalRefusal, spanLiteralRefusal,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, topChildren } from './helpers';
@@ -178,13 +180,91 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         assert.deepStrictEqual(commitAttributes(plain, plainTarget, '{title="d$ e"}'), { refusal: LITERAL_READ_WITH_BLOCK_REFUSAL });
         assert.ok(commitAttributes(plain, plainTarget, '{title="d e"}') !== null);
     });
+
+    test('the edit filter reads every literal of a textblock it checks with the textblock: an edit that loses one is refused, naming it', () => {
+        const host = hostEngine([extend]);
+        setInlineEngine(inlineEngineDefinition(host));
+        const stateOf = (source: string) => EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+        const span = '{title="a $b"}';
+
+        // Inline code typed after a span: math reads `$b"} and \`$` and the span is lost.
+        const coded = stateOf('[x]{title="a $b"} and Q\n');
+        const q = posIn(coded.doc, 'Q', '');
+        const code = coded.tr.replaceWith(q, q + 1, editorSchema.text('$(pwd)', [editorSchema.marks.code.create()]));
+        assert.strictEqual(noteRefusal(code), literalLostReason({ literal: span }));
+        assert.ok(noteRefusal(code)?.includes(span));
+        assert.ok(coded.apply(code).doc === coded.doc, 'the filter drops it');
+
+        // A span pasted before a paragraph's own literal: their two `$` pair as math, and both are lost.
+        const para = stateOf('Para {title="d$ e"}\n');
+        const pasted = para.tr.insert(1, [editorSchema.text('x', [editorSchema.marks.attr_span.create({ literal: span })]), editorSchema.text(' ')]);
+        assert.strictEqual(noteRefusal(pasted), literalLostReason({ literal: span }));
+        assert.ok(para.apply(pasted).doc === para.doc, 'the filter drops it');
+
+        // Prose `$` beside a literal is written escaped and reads as text: typed, applied, and every literal kept.
+        for (const [source, typed, expected] of [
+            ['[x]{title="a $b"} costs Q\n', '5$ now.', [['span_open', [['title', 'a $b']]]]],
+            ['Para Q {title="d$ e"}\n', 'costs 5$', [['paragraph_open', [['title', 'd$ e']]]]],
+            ['Pay Q [x]{title="d$ e"}\n', '$5 now', [['span_open', [['title', 'd$ e']]]]],
+            ['- one [s]{title="a $b"} Q\n', 'and $5', [['span_open', [['title', 'a $b']]]]],
+        ] as [string, string, unknown][]) {
+            const state = stateOf(source);
+            const at = posIn(state.doc, 'Q', '');
+            const tr = state.tr.insertText(typed, at, at + 1);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const saved = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+            assert.ok(saved.includes(typed.replace('$', '\\$')), `${source}: the $ is written escaped (${saved})`);
+            const tokens = host.parse(saved, {}).flatMap(t => [t, ...(t.children ?? [])]);
+            assert.strictEqual(mathOf(host.parse(saved, {})), '', `${source}: no math`);
+            assert.deepStrictEqual(tokens.filter(t => (t.attrs ?? []).length > 0).map(t => [t.type, t.attrs]), expected, `${source}: the literal reads back`);
+        }
+    });
+
+    test('a copied list item keeps its literal without the id only where the list reads it back', () => {
+        const host = hostEngine([extend]);
+        setInlineEngine(inlineEngineDefinition(host));
+        const block = '- one [s]{title="a $b"} {#x$y title="c$ d"}';
+        const source = `${block}\n\nEnd.\n`;
+        const original = host.parse(block, {}).flatMap(t => [t, ...(t.children ?? [])]).filter(t => (t.attrs ?? []).length > 0).map(t => [t.type, t.attrs]);
+        assert.deepStrictEqual(original, [['list_item_open', [['id', 'x$y'], ['title', 'c$ d']]], ['span_open', [['title', 'a $b']]]], 'the host reads both');
+        const state = EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+        assert.strictEqual(state.doc.child(0).type.name, 'bullet_list');
+        // A drag-copy of the whole list, dropped at the end: its slice carries the same node object.
+        const tr = state.tr.replaceRange(state.doc.content.size, state.doc.content.size, NodeSelection.create(state.doc, 0).content());
+        assert.strictEqual(noteRefusal(tr), null);
+        const saved = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+        // Without its id the item's literal, `{title="c$ d"}`, would pair with the span's `$` as math: the copy drops it.
+        assert.strictEqual(saved, `${source}\n- one [s]{title="a $b"}\n`);
+        const copy = host.parse(saved.slice(source.length + 1), {}).flatMap(t => [t, ...(t.children ?? [])]);
+        assert.deepStrictEqual(copy.filter(t => (t.attrs ?? []).length > 0).map(t => [t.type, t.attrs]), [['span_open', [['title', 'a $b']]]], 'the copy\'s span reads back');
+    });
+
+    test('in a block whose literal already does not read back, removing a literal applies and changing one names the existing one', () => {
+        // Read without math the span reads back; with math the page reads `$b"} and \`$` as math.
+        const source = '[x]{title="a $b"} and `$(pwd)` {.k}\n';
+        assert.deepStrictEqual(hostEngine().parse(source, {}).flatMap(t => [t, ...(t.children ?? [])]).filter(t => (t.attrs ?? []).length > 0).map(t => t.type), ['paragraph_open', 'span_open']);
+        let state = EditorState.create({ doc: parseDocument(hostEngine(), source, {}).doc, plugins: editorPlugins() });
+        assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, '{.k}');
+        setInlineEngine(inlineEngineDefinition(hostEngine([extend])));
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 2)));
+        const target = attributesTargetAt(state);
+        assert.ok(!('refusal' in target));
+        const existing = { literal: '{title="a $b"}' };
+        assert.deepStrictEqual(commitAttributes(state, target, '{.c}'), { refusal: literalAlreadyLostRefusal(existing) }, 'the cause named is the span, not the literal typed');
+        assert.strictEqual(noteRefusal(state.tr.insertText('Z', 2)), literalRewritten(existing), 'typing in it is refused, naming the span');
+        const removed = commitAttributes(state, target, '');
+        assert.ok(removed !== null && 'tr' in removed && removed.removed, 'removing the block\'s literal is a change');
+        const after = state.apply(removed.tr);
+        assert.strictEqual(after.doc.child(0).attrs.attrsSuffix, null, 'the filter lets it through');
+    });
 });
 
-function posIn(doc: Node, needle: string): number {
+/** Where `needle`, standing between two `pad`s (spaces unless said), starts in the first text node holding it. */
+function posIn(doc: Node, needle: string, pad = ' '): number {
     let found = -1;
     doc.descendants((node, pos) => {
-        if (found < 0 && node.isText && (node.text ?? '').includes(` ${needle} `)) {
-            found = pos + (node.text ?? '').indexOf(` ${needle} `) + 1;
+        if (found < 0 && node.isText && (node.text ?? '').includes(`${pad}${needle}${pad}`)) {
+            found = pos + (node.text ?? '').indexOf(`${pad}${needle}${pad}`) + pad.length;
         }
         return found < 0;
     });

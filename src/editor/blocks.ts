@@ -66,22 +66,11 @@ export function detectEol(text: string): '\n' | '\r\n' {
 }
 
 /**
- * The literal `{…}` attribute suffix at the end of a heading's source line, or
- * `null`. `markdown-it-attrs` moves it into `heading_open.attrs` and strips it
- * from the inline text, so the serializer has to get it from the line to write
- * it back as it was — the anchor is a locator Req Explorer owns, never prose.
- */
-export function findAttrsSuffix(line: string): string | null {
-    const m = /(\{[^{}\r\n]*\})[ \t]*$/.exec(line);
-    return m ? m[1] : null;
-}
-
-/**
  * The `{…}` a line ends with as markdown-it-attrs finds it — the last `{`
  * outside a quoted value, through the line's end — when it parses as
- * attributes (`parseAttrsLiteral`); `null` otherwise. Unlike `findAttrsSuffix`
- * it reads a quoted `}` (`{title="a}"}`) as the plugin does. Whether the
- * preview reads it where it stands is the caller's question (`attrsReadAt`).
+ * attributes (`parseAttrsLiteral`); `null` otherwise. It reads a quoted `}`
+ * (`{title="a}"}`) as the plugin does. Whether the preview reads it where it
+ * stands is the caller's question (`attrsReadAt`).
  */
 export function findEndLiteral(line: string): string | null {
     const trimmed = line.replace(/[ \t]+$/, '');
@@ -701,7 +690,8 @@ function literalHolderOf(open: Token): string {
  * parse keeps a heading's literal by, at the top level and inside a container.
  */
 export function headingLiteral(line: string, open: Token, definition: InlineEngineDefinition): string | null {
-    const literal = findEndLiteral(line);
+    // An ATX heading's closing `#` run, after a space, is no text to markdown-it: the literal before it ends the line (`# T {#id} ##`).
+    const literal = findEndLiteral(/^#+$/.test(open.markup) ? line.replace(/[ \t]+$/, '').replace(/([ \t])#+$/, '$1') : line);
     const read = literal === null ? null : attrsReadAt(literal, 'heading', definition);
     return read !== null && sameAttrs(read, literalAttrs(open)) ? literal : null;
 }

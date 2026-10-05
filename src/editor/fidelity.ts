@@ -564,6 +564,24 @@ function copiedLiteral(node: Node, kept: string | null): string | null {
 }
 
 /**
+ * `copiedLiteral` for the list item at `pos` in the top-level `block` (a
+ * position inside its content): the literal `kept`, as long as the block still
+ * reads back with the item carrying it.
+ */
+function copiedItemLiteral(block: Node, pos: number, item: Node, kept: string | null): string | null {
+    if (kept === null || kept === item.attrs.literal) {
+        return kept;
+    }
+    const $pos = block.resolve(pos);
+    let rebuilt = item.type.create({ ...item.attrs, literal: kept }, item.content, item.marks);
+    for (let d = $pos.depth; d >= 0; d--) {
+        const parent = $pos.node(d);
+        rebuilt = parent.copy(parent.content.replaceChild($pos.index(d), rebuilt));
+    }
+    return literalsReadBack(rebuilt) ? kept : null;
+}
+
+/**
  * The attribute-literal rule of `fidelityPlugin`, for every block but a heading
  * (whose literal holds its anchor, `stripDuplicatedIds`): a top-level block
  * that descends from none loses the id its literal gives (`withoutId`), and
@@ -581,8 +599,11 @@ function stripCopiedSuffixes(after: TopLevelChild[], first: number, end: number,
     for (let j = first; j < end; j++) {
         const node = after[j].node;
         const literal = (node.attrs.attrsSuffix ?? null) as string | null;
-        const kept = literal === null ? null : copiedLiteral(node, withoutId(literal, literalHolder(node)));
-        if (from[j] < 0 && node.type.name !== 'heading' && kept !== literal) {
+        if (from[j] >= 0 || node.type.name === 'heading' || literal === null) {
+            continue;
+        }
+        const kept = copiedLiteral(node, withoutId(literal, literalHolder(node)));
+        if (kept !== literal) {
             set(j, 'attrsSuffix', kept);
             if (kept === null) {
                 set(j, 'attrsPlacement', null);
@@ -660,7 +681,9 @@ function itemLiterals(transactions: readonly Transaction[], before: Node): (c: T
             const literal = node.type.name === 'list_item' ? (node.attrs.literal as string | null) : null;
             const at = c.offset + 1 + pos;
             if (literal !== null) {
-                const kept = !copy && !itemTakesLiteral(node) ? null : copy || !itemStarts().has(at) ? withoutId(literal, 'list_item') : literal;
+                const rest = !copy && !itemTakesLiteral(node) ? null : copy || !itemStarts().has(at) ? withoutId(literal, 'list_item') : literal;
+                // Written without the id it is read with the list's text, as a top-level block's is.
+                const kept = copiedItemLiteral(c.node, pos, node, rest);
                 if (kept !== literal) {
                     out.set(at, kept);
                     found = true;
@@ -725,7 +748,9 @@ function stripDuplicatedIds(
         }
         // The literal writes the anchor; what else it gives (`{.unnumbered}`) a copy keeps.
         const literal = (node.attrs.attrsSuffix ?? null) as string | null;
-        set(j, 'attrsSuffix', literal === null ? null : copiedLiteral(node, withoutId(literal, 'heading')));
+        // Judged on the heading as it is written: without the requirement id just cleared, whose prefix leads its line.
+        const cleared = node.type.create({ ...node.attrs, ...Object.fromEntries(IDENTITY_ATTRS.map(key => [key, null])) }, node.content, node.marks);
+        set(j, 'attrsSuffix', literal === null ? null : copiedLiteral(cleared, withoutId(literal, 'heading')));
         // The slice held the id; whatever carried it along is not this node's text.
         set(j, 'src', null);
     }
