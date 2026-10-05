@@ -200,6 +200,30 @@ export function sameAttrs(a: readonly AttrPair[], b: readonly AttrPair[]): boole
 }
 
 /**
+ * A value written after `name=`, as `readAttrs` and `findRightDelimiter` read it
+ * back: bare when nothing in it ends the value or the list — whitespace, `{`,
+ * `}`, `"` — and in quotes otherwise, and when empty. A `=`, `'`, `.` or `#`
+ * in a value ends nothing, so it stays bare. The plugin does not unescape: `\"`
+ * inside quotes is read as the two characters `\"`, so a value that holds one
+ * is written as it is. A `"` with no backslash before it (an even run of them
+ * does not count) is escaped, and so is a trailing odd backslash, which would
+ * escape the closing quote: no literal reads back as exactly those values, and
+ * this one at least stays an attribute list.
+ */
+function attrValue(value: string): string {
+    if (value !== '' && !/[\s{}"]/.test(value)) {
+        return value;
+    }
+    let out = '';
+    let slashes = 0;
+    for (const ch of value) {
+        out += ch === '"' && slashes % 2 === 0 ? '\\"' : ch;
+        slashes = ch === '\\' ? slashes + 1 : 0;
+    }
+    return `"${out}${slashes % 2 === 1 ? '\\' : ''}"`;
+}
+
+/**
  * A literal that the plugin reads as exactly `attrs` (a token's joined
  * attributes): `{#id .a .b key="v"}`. The form written when the literal an
  * author wrote could not be recovered from the source (`blocks.ts`).
@@ -214,12 +238,12 @@ export function normalizedLiteral(attrs: readonly AttrPair[]): string {
         if (name === 'id' && parts[0] === `#${value}`) {
             continue;
         }
-        if ((name === 'class' || name === 'css-module') && value.split(' ').every(v => v !== '' && !/[{}"]/.test(v))) {
+        if ((name === 'class' || name === 'css-module') && value.split(' ').every(v => v !== '' && !/[{}"]/.test(v) && !(name === 'class' && v.startsWith('.')))) {
             const dot = name === 'class' ? '.' : '..';
             parts.push(...value.split(' ').map(v => dot + v));
             continue;
         }
-        parts.push(/[\s}]/.test(value) || value === '' ? `${name}="${value}"` : `${name}=${value}`);
+        parts.push(`${name}=${attrValue(value)}`);
     }
     return `{${parts.join(' ')}}`;
 }

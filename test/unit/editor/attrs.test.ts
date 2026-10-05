@@ -80,6 +80,30 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
         }
         assert.strictEqual(normalizedLiteral(joinAttrs(parseAttrsLiteral('{#x .a .b key="v"}') ?? [])), '{#x .a .b key=v}');
     });
+
+    test('a value the plugin would not read back bare is quoted, and the form reads as the attributes it was made from', () => {
+        const literals = [
+            '{title="a{b" #w}', '{title="a}b" #w}', '{title="a{b}"}', "{title='x'}", "{k='a b'}", '{data-x="a\\"b"}', '{k="\\"q\\""}',
+            '{k="a=b"}', '{k=a=b}', '{k="a b=c"}', '{title="a b" .c #w}', '{k=""}', '{k=a\\}', '{k="x\\\\"}', '{class=".m"}', '{.a=b}',
+            '{id="a b" .c}', '{#w title="x{y" key="z}" .c .d}',
+        ];
+        for (const literal of literals) {
+            const pairs = parseAttrsLiteral(literal);
+            assert.ok(pairs, `the port accepts ${literal}`);
+            const normalized = normalizedLiteral(joinAttrs(pairs));
+            assert.ok(sameAttrs(joinAttrs(parseAttrsLiteral(normalized) ?? []), joinAttrs(pairs)), `${literal} → ${normalized}: read back as the port reads it`);
+            assert.ok(sameAttrs(attrsOfFirst(md.renderInline(`[x]${normalized}`), 'span'), attrsOfFirst(md.renderInline(`[x]${literal}`), 'span')), `${literal} → ${normalized}: and as the plugin does`);
+            const kept = withoutId(literal);
+            const rest = joinAttrs(pairs).filter(([n]) => n !== 'id');
+            assert.deepStrictEqual(joinAttrs(kept === null ? [] : parseAttrsLiteral(kept) ?? []), rest, `${literal} → ${kept}: without its id`);
+        }
+    });
+
+    test('a value no literal can hold is written so that it stays an attribute list', () => {
+        // A trailing backslash would escape the closing quote: it is doubled, and a bare `"` is escaped.
+        assert.ok(parseAttrsLiteral(normalizedLiteral([['k', 'a{b\\']])), 'a trailing backslash');
+        assert.ok(parseAttrsLiteral(normalizedLiteral([['k', 'a"b']])), 'a bare quote');
+    });
 });
 
 suite('Editor attribute spans: the literal is recovered from the source', () => {

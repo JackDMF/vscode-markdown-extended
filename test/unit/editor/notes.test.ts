@@ -895,6 +895,9 @@ suite('Editor notes: the check reads the plan the fidelity plugin applies', () =
             ['- one {#i1}\n- two', '- one\n- two', false],
             ['- one {#i1}\n- two\n{.wide}', '- one\n- two\n{.wide}', false],
             ['- one {#i1 .x}\n- two {.b}\n{.wide #l}', '- one {.x}\n- two {.b}\n{.wide}', false],
+            ['Text. {title="a{b" #w}', 'Text. {title="a{b"}', false],
+            ['- one {title="a{b" #i}\n- two', '- one {title="a{b"}\n- two', false],
+            ['Text. {title="a}b c" #w .c}', 'Text. {title="a}b c" .c}', false],
             ['> q\n> {.note #n}', '> q\n> {.note}', false],
             ['| a |\n| - |\n| b |\n{.grid}', '| a |\n| - |\n| b |\n{.grid}', true],
         ];
@@ -908,6 +911,24 @@ suite('Editor notes: the check reads the plan the fidelity plugin applies', () =
             assert.deepStrictEqual(held(copied.doc), held(parseDocument(hostEngine(), text(copied), {}).doc), `${block}: what the page shows is what is read back`);
             assert.strictEqual(copied.doc.child(0).attrs.src, state.doc.child(0).attrs.src, `${block}: the original keeps its src`);
             assert.strictEqual(copied.doc.lastChild?.attrs.src === state.doc.child(0).attrs.src, keepsSrc, `${block}: the copy's src`);
+        }
+    });
+
+    test('the literal a copy is saved with reads in the preview as the original\'s attributes minus its id', () => {
+        const md = hostEngine();
+        const attrsOf = (source: string) => md.parse(source, {}).filter(t => t.attrs !== null && (t.type === 'paragraph_open' || t.type === 'list_item_open'))
+            .map(t => (t.attrs ?? []).map(([n, v]) => [n, v]));
+        for (const block of [
+            'Text. {title="a{b" #w}', '- one {title="a{b" #i}\n- two', 'Text. {title="a}b c" #w .c}',
+            'Text. {data-x="a=b" title=\'q\' #w}',
+        ]) {
+            const source = `${block}\n\nEnd.\n`;
+            const state = read(source);
+            const saved = text(state.apply(copyBlock(state, 0, state.doc.content.size)));
+            assert.ok(saved.startsWith(`${source}\n`), block);
+            const original = attrsOf(block)[0];
+            assert.ok(original.some(([n]) => n === 'title'), `${block}: the preview reads the title`);
+            assert.deepStrictEqual(attrsOf(saved.slice(source.length + 1))[0], original.filter(([n]) => n !== 'id'), `${block}: the copy reads as the original, minus its id`);
         }
     });
 
