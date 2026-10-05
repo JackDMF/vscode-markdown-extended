@@ -915,13 +915,17 @@ class Verifier {
             if (kinds[0] !== kinds[1] && (kinds.includes('literal') || !free.has(line))) {return 'all';}
         }
         // A definition after its list's first maps from its term's line
-        // (markdown-it-deflist): it is read from the line after, as the first
-        // is, so a list the pair's definition joins reads as it did.
-        const normalized = (structure: readonly BlockToken[]) => {
+        // (markdown-it-deflist): it is read from its `:` line, as the first
+        // is — the line after, or after a blank line — so a list the pair's
+        // definition joins reads as it did.
+        const normalized = (source: InlineSource) => {
             let term = -1;
-            return structure.map(t => {
+            return source.structure.map(t => {
                 if (t.type === 'dt_open') {term = t.first;}
-                return t.type === 'dd_open' && t.first === term ? { ...t, first: term + 1 } : t;
+                if (t.type !== 'dd_open' || t.first !== term) {return t;}
+                let first = term + 1;
+                while (first < t.end - 1 && source.kindOf(first) === 'blank') {first++;}
+                return { ...t, first };
             });
         };
         const exempt = ({ type, first, end }: BlockToken) => {
@@ -1002,7 +1006,7 @@ class Verifier {
             }
             return true;
         };
-        const blocksBefore = normalized(before.structure), blocksAfter = normalized(after.structure);
+        const blocksBefore = normalized(before), blocksAfter = normalized(after);
         const a = [...listsOf(blocksBefore), ...kept(blocksBefore)], b = [...listsOf(blocksAfter), ...kept(blocksAfter)];
         if (a.length !== b.length || a.some((entry, k) => !same(entry, b[k]))) {return 'all';}
         if (JSON.stringify(attributed(before, text, takenOf(changes), blocksBefore)) !== JSON.stringify(attributed(after, out, written, blocksAfter))) {return 'all';}
