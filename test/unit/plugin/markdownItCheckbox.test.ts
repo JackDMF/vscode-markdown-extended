@@ -103,9 +103,20 @@ suite('MarkdownItCheckbox', () => {
         // A box inside an element the label opens is text, as in emphasis.
         assert.strictEqual(render(html, '[ ] a <i>b\n[x] c</i>\n'), `<p>${box('a <i>b\n[x] c</i>')}</p>\n`);
         assert.strictEqual(render(html, '[ ] a <i>b</i> [x] c\n'), `<p>${box('a <i>b</i> ')}${box('c', true)}</p>\n`);
-        // A void or self-closing tag opens nothing.
+        // A void tag opens nothing, written with a slash or without.
         assert.strictEqual(render(html, '[ ] a <br> b [x] c\n'), `<p>${box('a <br> b ')}${box('c', true)}</p>\n`);
-        assert.strictEqual(render(html, '[ ] a <x/> b [x] c\n'), `<p>${box('a <x/> b ')}${box('c', true)}</p>\n`);
+        assert.strictEqual(render(html, '[ ] a <br/> b [x] c\n'), `<p>${box('a <br/> b ')}${box('c', true)}</p>\n`);
+    });
+
+    test('an element opened and not closed inside a label keeps the later boxes text, its slash ignored', () => {
+        const html = preview({ html: true });
+        // As the owner decided: no label holds another, and the span is still open at the next box.
+        assert.strictEqual(render(html, '[ ] a <span>b [x] c\n'), `<p>${box('a <span>b [x] c')}</p>\n`);
+        // In HTML the slash of a non-void tag is ignored: `<span/>` opens a span, as `<span>` does.
+        assert.strictEqual(render(html, '[ ] a <span/> b [x] c\n'), `<p>${box('a <span/> b [x] c')}</p>\n`);
+        assert.strictEqual(render(html, '[ ] a <x/> b [x] c\n'), `<p>${box('a <x/> b [x] c')}</p>\n`);
+        // Closed again, the element is whole and the next box is a box.
+        assert.strictEqual(render(html, '[ ] a <span/> b </span> [x] c\n'), `<p>${box('a <span/> b </span> ')}${box('c', true)}</p>\n`);
     });
 
     test('a formatted label is still the label of its box', () => {

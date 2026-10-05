@@ -409,6 +409,9 @@ suite('Inline toggles: what a selection toggles', () => {
         // The definition after it stands a blank line below its term.
         assert.strictEqual(await toggle('bold', 'Term1\n: ‸\n\nTerm2\n\n: def2'), 'Term1\n: **‸**\n\nTerm2\n\n: def2');
         assert.strictEqual(await toggle('bold', 'Term1\n: **‸**\n\nTerm2\n\n: def2'), 'Term1\n: ‸\n\nTerm2\n\n: def2');
+        // In a quote the line between is `>`, which holds no text and is as blank.
+        assert.strictEqual(await toggle('bold', '> Term1\n> : ‸\n>\n> Term2\n>\n> : def2'), '> Term1\n> : **‸**\n>\n> Term2\n>\n> : def2');
+        assert.strictEqual(await toggle('bold', '> Term1\n> : **‸**\n>\n> Term2\n>\n> : def2'), '> Term1\n> : ‸\n>\n> Term2\n>\n> : def2');
         // `Term2` continues `def1`: the pair would take it out of that paragraph.
         assert.strictEqual(await toggle('bold', 'Term1\n: def1\nTerm2\n: ‸'), 'Term1\n: def1\nTerm2\n: ‸');
     });

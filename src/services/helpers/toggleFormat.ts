@@ -924,15 +924,16 @@ class Verifier {
         }
         // A definition after its list's first maps from its term's line
         // (markdown-it-deflist): it is read from its `:` line, as the first
-        // is — the line after, or after a blank line — so a list the pair's
-        // definition joins reads as it did.
-        const normalized = (source: InlineSource) => {
+        // is — the line after, or after a blank line, a quote's `>` alone
+        // included — so a list the pair's definition joins reads as it did.
+        const normalized = (source: InlineSource, markdown: string) => {
+            const lines = markdown.split(/\r?\n/);
             let term = -1;
             return source.structure.map(t => {
                 if (t.type === 'dt_open') {term = t.first;}
                 if (t.type !== 'dd_open' || t.first !== term) {return t;}
                 let first = term + 1;
-                while (first < t.end - 1 && source.kindOf(first) === 'blank') {first++;}
+                while (first < t.end - 1 && (source.kindOf(first) === 'blank' || (lines[first] !== undefined && NOTHING_BUT_QUOTES.test(lines[first])))) {first++;}
                 return { ...t, first };
             });
         };
@@ -1014,7 +1015,7 @@ class Verifier {
             }
             return true;
         };
-        const blocksBefore = normalized(before), blocksAfter = normalized(after);
+        const blocksBefore = normalized(before, text), blocksAfter = normalized(after, out);
         const a = [...listsOf(blocksBefore), ...kept(blocksBefore)], b = [...listsOf(blocksAfter), ...kept(blocksAfter)];
         if (a.length !== b.length || a.some((entry, k) => !same(entry, b[k]))) {return 'all';}
         if (JSON.stringify(attributed(before, text, takenOf(changes), blocksBefore)) !== JSON.stringify(attributed(after, out, written, blocksAfter))) {return 'all';}
@@ -1219,6 +1220,9 @@ function passed(verdict: Verdict): boolean {
 
 /** A definition's `:` (or `~`) line with nothing after it, inside a quote's `>`s too: a pair written at its end makes it a definition. */
 const BARE_DEFINITION = /^(?:[ \t]*>)*[ \t]*[:~][ \t]+$/;
+
+/** A line with nothing on it but a quote's `>`s and whitespace: blank, as far as a definition list is concerned. */
+const NOTHING_BUT_QUOTES = /^(?:[ \t]*>)*[ \t]*$/;
 
 /** The block tokens of one definition, which a pair written on its `:` line makes, or takes back out: the term, the definition, a paragraph (its list is compared by its lines). */
 const DEFINITION_TOKENS: ReadonlySet<string> = new Set(['dt_open', 'dd_open', 'paragraph_open']);
