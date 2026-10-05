@@ -112,6 +112,15 @@ export const DEFAULT_INLINE_ENGINE: InlineEngineDefinition = {
     math: false,
 };
 
+/**
+ * The definition of the engine that read a file, for a parse that judges the
+ * literals it finds (`groupSourceBlocks`): what `md` was built from, or
+ * `DEFAULT_INLINE_ENGINE` for an engine `createEditorEngine` did not build.
+ */
+export function definitionOf(md: MarkdownIt): InlineEngineDefinition {
+    return definitions.get(md) ?? DEFAULT_INLINE_ENGINE;
+}
+
 /** The page's engine, built from `definition`; a plugin the page does not bundle is skipped. */
 export function createInlineEngine(definition: InlineEngineDefinition): MarkdownIt {
     const md = baseEngine(definition);
@@ -154,15 +163,29 @@ export function currentInlineEngine(): MarkdownIt {
     return currentEngines.inline;
 }
 
+/** The engines `attrsEngineFor` built, by definition; few, as a session reads with one at a time. */
+const attrsEngines = new Map<string, MarkdownIt>();
+
 /**
- * The page's engine with the registry's markdown-it-attrs on top, registered
- * as the host registers it (`MarkdownItAttrs`, no options): what reads a
- * literal the editor writes back as the preview reads it (`readsBackAs` in
- * `attrs.ts`). It runs no block plugin of the registry.
+ * The page's engine for `definition` with the registry's markdown-it-attrs on
+ * top, registered as the host registers it (`MarkdownItAttrs`, no options):
+ * what reads a literal where the editor finds or writes it, as the preview
+ * reads it there (`attrsReadAt` in `attrs.ts`). The host's parse asks it with
+ * the definition of the engine that read the file, the page with the one it
+ * was posted. It runs no block plugin of the registry.
  */
-export function currentAttrsEngine(): MarkdownIt {
-    currentEngines.attrs ??= createInlineEngine(currentDefinition).use(MarkdownItAttrs);
-    return currentEngines.attrs;
+export function attrsEngineFor(definition: InlineEngineDefinition): MarkdownIt {
+    if (definition === currentDefinition) {
+        currentEngines.attrs ??= createInlineEngine(currentDefinition).use(MarkdownItAttrs);
+        return currentEngines.attrs;
+    }
+    const key = JSON.stringify(definition);
+    let md = attrsEngines.get(key);
+    if (md === undefined) {
+        md = createInlineEngine(definition).use(MarkdownItAttrs);
+        attrsEngines.set(key, md);
+    }
+    return md;
 }
 
 /** A sidebar the parser read: its kind, and where its opening and its closing marker stand in the text read. */

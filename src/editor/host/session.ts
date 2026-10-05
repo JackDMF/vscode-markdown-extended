@@ -546,7 +546,8 @@ export class VisualEditorSession implements vscode.Disposable {
             // Read off the engine that parsed it: a changed setting builds a new engine and posts the document again.
             // Read before any state is set, so an engine that cannot say fails the document as a parse error does.
             inline = inlineEngineDefinition(md);
-            const parsed = parseDocument(md, text, this.env());
+            // Its literals are judged with that definition, as the page judges them with the one posted.
+            const parsed = parseDocument(md, text, this.env(), inline);
             json = parsedDocumentToJSON(parsed);
             this.snippetPaths = collectSnippetPaths(json.doc);
         } catch (error) {

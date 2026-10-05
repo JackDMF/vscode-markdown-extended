@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, fidelityPlugin, groupSourceBlocks, parseDocument, serializeDocument, splitLines } from '../../../src/editor';
+import { definitionOf } from '../../../src/editor/inlineEngine';
 import { editorSchema } from '../../../src/editor/schema';
 import { drawBlock, editorOnly, engineHtml } from './fakeDom';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -227,7 +228,7 @@ suite('Editor stage 3: review findings', () => {
 
     test('1. an admonition title is held to the inline rules: inline HTML in it keeps the block a source block', () => {
         const source = '!!! note "A <b>bold</b> title"\n    Body.\n';
-        const reason = groupSourceBlocks(md.parse(source, {}), splitLines(source)).blocks[0].reason;
+        const reason = groupSourceBlocks(md.parse(source, {}), splitLines(source), definitionOf(md)).blocks[0].reason;
         assert.strictEqual(blocks(source)[0].type.name, 'raw_block');
         assert.strictEqual(reason, 'inline html_inline in an admonition title');
     });
@@ -281,7 +282,7 @@ suite('Editor stage 3: review findings', () => {
         const source = 'A [t]{title="a}b"} c.\n';
         assert.ok(md.renderInline(source.trim()).includes('</span>b&quot;} c.'), 'what the plugin does with it');
         assert.strictEqual(blocks(source)[0].type.name, 'raw_block');
-        assert.strictEqual(groupSourceBlocks(md.parse(source, {}), splitLines(source)).blocks[0].reason, 'attribute span whose literal holds a quoted }');
+        assert.strictEqual(groupSourceBlocks(md.parse(source, {}), splitLines(source), definitionOf(md)).blocks[0].reason, 'attribute span whose literal holds a quoted }');
     });
 
     test('6. what the plugin reads of a rule\'s literal: from its last {, a quoted } read correctly', () => {

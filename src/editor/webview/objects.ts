@@ -36,7 +36,8 @@ import { liftTarget } from 'prosemirror-transform';
 import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
-import { endsWithAttrsLiteral, hasInnerBrace, parseAttrsLiteral, readsAsOneText, readsAsRuleLiteral } from '../attrs';
+import { attrsReadAt, endsWithAttrsLiteral, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
+import { currentInlineDefinition } from '../inlineEngine';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { itemTakesLiteral, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
@@ -468,32 +469,40 @@ export function deleteObjectTransaction(state: EditorState, object: EditorObject
 // ---------------------------------------------------------------------------
 
 /**
- * Where a literal goes, which decides what the plugin reads of it: after a span
- * markdown-it-attrs cuts at the first `}`, quoted or not (`hasInnerBrace`);
- * after a rule's `---` it starts at the last `{` (`readsAsRuleLiteral`); after
- * any other block it reads the whole literal, quotes respected.
+ * Where a literal goes, which decides what the plugin reads of it: `span`
+ * after an attribute span, or the name of the node it is written for
+ * (`literalPlaceOf`). After a span markdown-it-attrs cuts at the first `}`,
+ * quoted or not (`hasInnerBrace`); after a rule's `---` it starts at the last
+ * `{` (`readsAsRuleLiteral`); a fence's and a table's it reads off raw text,
+ * every other one off what the inline rules made of it (`attrsReadAt`).
  */
-export type LiteralPlace = 'span' | 'rule' | 'block';
+export type LiteralPlace = string;
 
-/** The place a block's literal goes: a rule's is read from its last `{`. */
+/** The place a block's literal goes: its node's name, as `attrsReadAt` knows it. */
 export function literalPlaceOf(node: Node): LiteralPlace {
-    return node.type === nodes.horizontal_rule ? 'rule' : 'block';
+    return node.type.name;
 }
 
-/** Why `literal` cannot be an attribute span's or a block's literal at `place`, or `null`: the plugin must read it as attributes, all of it. */
-export function literalRefusal(literal: string, place: LiteralPlace = 'block'): string | null {
+/**
+ * Why `literal` cannot be an attribute span's or a block's literal at `place`
+ * (a paragraph's by default), or `null`: the preview must read it there as
+ * attributes, all of it (`attrsReadAt`, the rule the host's parse recognises
+ * a literal by).
+ */
+export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph'): string | null {
     const value = literal.trim();
-    if (parseAttrsLiteral(value) === null && value.startsWith('{') && !/[\r\n]/.test(value) && !readsAsOneText(value)) {
-        return `${value} holds what markdown-it reads before markdown-it-attrs — a \\, an entity, code, emphasis, HTML, a link or a plugin's markup — and the preview would show it as text.`;
-    }
     if (parseAttrsLiteral(value) === null) {
         return `${value || 'An empty value'} is no attribute list: write it as {.class}, {#id} or {key="value"}, as markdown-it-attrs reads it.`;
     }
     if (place === 'span' && hasInnerBrace(value)) {
         return `${value} holds a } inside a value: after a span markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
     }
-    if (place === 'rule' && !readsAsRuleLiteral(value)) {
+    if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(value)) {
         return `${value} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
+    }
+    if (attrsReadAt(value, place) === null) {
+        const math = currentInlineDefinition().math ? ', math' : '';
+        return `${value} holds what markdown-it reads before markdown-it-attrs here — a \\, an entity, code, emphasis, HTML, a link${math} or a plugin's markup — and the preview would show it as text.`;
     }
     return null;
 }

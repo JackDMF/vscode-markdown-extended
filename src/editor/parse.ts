@@ -16,6 +16,7 @@ import {
     injectionMarkOf,
     splitLines,
 } from './blocks';
+import { InlineEngineDefinition, definitionOf } from './inlineEngine';
 import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 
@@ -52,9 +53,10 @@ export function parsedDocumentFromJSON(json: ParsedDocumentJSON): ParsedDocument
  * content): entry `i` is the document's child `i`, because `parseDocument`
  * builds its children from the same grouping and refuses a document whose
  * counts disagree. What the lens rows are placed by (`host/lenses.ts`).
+ * `definition` as `parseDocument` takes it, so the two group alike.
  */
-export function blockLineRanges(md: MarkdownIt, text: string, env: Environment = {}): ([number, number] | null)[] {
-    return groupSourceBlocks(md.parse(text, env), splitLines(text)).blocks.map(b => b.lineRange);
+export function blockLineRanges(md: MarkdownIt, text: string, env: Environment = {}, definition: InlineEngineDefinition = definitionOf(md)): ([number, number] | null)[] {
+    return groupSourceBlocks(md.parse(text, env), splitLines(text), definition).blocks.map(b => b.lineRange);
 }
 
 /**
@@ -203,14 +205,19 @@ function liftRequirementPrefix(
  * raw or injected block, so rules that keep per-document state there (footnotes,
  * Req Explorer's index lookups) see one document.
  *
+ * `definition` is what the page's engine is built from for `md`
+ * (`inlineEngineDefinition`), by default read off `md` (`definitionOf`): the
+ * literals the parse finds are judged with it (`groupSourceBlocks`), as the
+ * page judges the literals it writes, so both answer alike under any setting.
+ *
  * Throws when the document cannot be represented without losing a byte; the
  * caller then keeps the text editor.
  */
-export function parseDocument(md: MarkdownIt, text: string, env: Environment = {}): ParsedDocument {
+export function parseDocument(md: MarkdownIt, text: string, env: Environment = {}, definition: InlineEngineDefinition = definitionOf(md)): ParsedDocument {
     const engine = md as EngineWithOptions;
     const tokens = md.parse(text, env);
     const lines = splitLines(text);
-    const { blocks, tail } = groupSourceBlocks(tokens, lines);
+    const { blocks, tail } = groupSourceBlocks(tokens, lines, definition);
 
     const rebuilt = blocks.map(b => (b.src === null ? '' : b.gap + b.src)).join('') + tail;
     if (rebuilt !== text) {

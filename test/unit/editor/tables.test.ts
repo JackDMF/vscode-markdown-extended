@@ -4,6 +4,7 @@ import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { MarkdownIt, StateBase, Token } from '../../../src/@types/markdown-it';
 import { EDITABLE_TOP_NODES, InjectionMark, ParsedDocument, blockLineRanges, editorSchema, groupSourceBlocks, parseDocument, serializeDocument, splitLines } from '../../../src/editor';
 import { blockIndexForLine } from '../../../src/editor/host/lenses';
+import { definitionOf } from '../../../src/editor/inlineEngine';
 import { tableLines, unwritableInTable } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { addRowTransaction, deleteColumnRefusal, deleteRowRefusal, deleteRowTransaction, enterInCell, tableRefusal } from '../../../src/editor/webview/tables';
@@ -46,7 +47,7 @@ function cellsOf(table: Node): { type: string; text: string; align: unknown }[][
 
 /** Why each top-level block of `text` is what it is. */
 function kinds(md: MarkdownIt, text: string): { kind: string; reason: string }[] {
-    return groupSourceBlocks(md.parse(text, {}), splitLines(text)).blocks.map(b => ({ kind: b.kind, reason: b.reason }));
+    return groupSourceBlocks(md.parse(text, {}), splitLines(text), definitionOf(md)).blocks.map(b => ({ kind: b.kind, reason: b.reason }));
 }
 
 const TIDY = [
