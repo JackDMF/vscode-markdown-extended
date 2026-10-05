@@ -928,20 +928,22 @@ priority `option`) over the file's own `TextDocument`, so Req Explorer's
 keeps dirty state, save and undo. Each open editor is a `VisualEditorSession`
 (`host/session.ts`); the page is `webview/main.ts`, bundled on its own because it
 must not import the parser (it imports `schema.ts`, `fidelity.ts` and `serialize.ts`
-directly, never the barrel). That keeps this extension's plugins out of the page but not
-markdown-it itself: `prosemirror-markdown`, which the serializer comes from, constructs a
-default parser when it loads. The page's esbuild context therefore aliases `markdown-it`
-to `webview/stubs/markdown-it.ts`, a callable that returns an empty object —
-`MarkdownParser`'s constructor only stores it, and the page never parses. Should
-`prosemirror-markdown` start using the tokenizer at load, the bundle throws as it loads
-and the headless page test, which loads the real bundle, fails.
+directly, never the barrel). That keeps the document parser and the block plugins out of
+the page. markdown-it itself is in it, with the registry's plugins that add an inline rule
+(`plugin/inlinePlugins.ts`): after an edit the page writes each textblock it touched as the
+save will and parses it (`inlineEngine.ts`), and refuses the edit when a sidebar would not
+read back where it stands, or text would read as one it does not show (`unwritableInNote`
+in `serialize.ts`). The engine is built from the host's definition — its linkify and
+typographer settings and which of those plugins its registry runs, in its order
+(`inlineEngineDefinition`) — posted with each document; other extensions' plugins are not
+in the page and not asked.
 
 The protocol (`protocol.ts`) carries the parsed document one way and the finished
 text the other — never a diff:
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| host → page | `document { json, version, defaultWrap, includes }` | Show this parse of document `version`; `includes`: whether any extension offers include choices (below) |
+| host → page | `document { json, version, defaultWrap, includes, inline }` | Show this parse of document `version`; `includes`: whether any extension offers include choices (below); `inline`: the engine the page checks an edit's textblocks with |
 | host → page | `rendered { requestId, html }` | A raw block's new source, rendered by the host engine |
 | host → page | `error { message }` | The document cannot be shown without loss; offer the text editor |
 | host → page | `lenses { version, blocks, rows }` | Other extensions' code lenses, one row of `{ id?, title, tooltip?, surface?, artifact?, relation? }` per top-level block index (below) |
@@ -1861,7 +1863,7 @@ answers `quickFixes`; the fixes follow one *Quick fix(es)* label line, each a li
 with `runAction`, behind the pending edit) and `hover { requestId, baseVersion, position }`. The host calls
 `vscode.executeHoverProvider(uri, position)` and answers `hoverResult { requestId, html,
 range? }`: **the host renders**, because the trust a command link needs is known only there
-and the page has no parser. It renders with a plain markdown-it, not the preview's engine —
+and the page parses only to check an edit. It renders with a plain markdown-it, not the preview's engine —
 a hover is VS Code's Markdown, which the workbench renders, and the preview's plugins would
 read `++…++` in it as a sidenote — with raw HTML only for a part that allows it
 (`supportHtml`), `file:` links kept as links. Such a part's whole rendering is then sanitized

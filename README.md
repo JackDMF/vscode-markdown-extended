@@ -910,18 +910,28 @@ stay text, and so does a price as long as no later `$` can close it (`$5 and $10
 `Pay $5 and see $the note$.` holds a sidebar from `5` to `see `). A marker inside inline
 code, a link, an autolink, inline HTML or after a backslash (`\@`) closes nothing. A
 character reference beside a marker counts as the character it stands for, so
-`REQ-&#49;$x$` is text as `REQ-1$x$` is. The Visual Editor does not let a sidebar touch a
-letter or digit before it (or a left one a digit after it): put a space there. Nor does it
-let a bare web address before a sidebar read the sidebar's marker into the address
-(`http://e.com/$x$` is one address): it asks the same linkify the preview uses, set as the
-preview sets it, on the paragraph as it would be written, so `See (http://e.com)$x$` and
+`REQ-&#49;$x$` is text as `REQ-1$x$` is.
+
+The Visual Editor reads what it writes: after an edit it writes the paragraph as the save
+will and parses it with the same markdown-it, the same linkify settings and the same inline
+plugins as the preview's engine, and an edit after which a sidebar would not read back where
+it stands — or text would read as a sidebar it does not show — is refused with the reason.
+So a sidebar may not touch a letter or digit before it (or a left one a digit after it): put
+a space there. Nor may a bare web address before a sidebar read its marker into the address
+(`http://e.com/$x$` is one address): `See (http://e.com)$x$` and
 `**See (http://e.com)**$x$` are sidebars and editable, while deleting that `)`, or typing
 one into `See http://e.com/($x$` that closes the address's bracket, is refused. With
 `markdown.preview.linkify` off nothing reads an address, and nothing is refused for one. A
-formatting button, **Remove link**, **Remove attributes**, **Remove image**, **Remove note,
-keep text** or **Remove sidebar, keep text** whose result would do that is disabled, with
-the reason in its tooltip. Only an edit that makes such a seam is refused: a sidebar the
-file already holds is never in the way of editing its paragraph.
+formatting button, **Remove link**, **Remove attributes, keep text**, **Remove image**,
+**Remove note, keep text** or **Remove sidebar, keep text** whose result would do that is
+disabled, with the reason in its tooltip. A sidebar the file already holds is never in the
+way of editing its paragraph, with one exception: where the line spells a character as a
+character reference the editor would write out as the character, and the sidebar would then
+read differently (`See h&#116;tp://e.com/$x$`: written out, the address takes the sidebar
+in), every edit of that paragraph is refused, and the hint says so — edit the line once in
+the text editor. The check cannot see other extensions' markdown-it plugins, which run in
+the preview but not in the Visual Editor's page: one that reads `$` or `@` itself, or
+teaches linkify a scheme of its own, is not asked.
 
 **Using left sidebars: turn VS Code's math off in that workspace.** VS Code's built-in
 math extension claims `$…$` before this extension's sidebar rule runs — in the preview,
