@@ -83,8 +83,7 @@ const KIND_ORDER = { close: 0, pair: 1, open: 2, delete: 3 };
  * Whether a span of the marker a selection touches becomes part of the new
  * one: `**foo**«bar»` gives `**foobar**`, `` `foo`«bar» `` gives
  * `` `foobar` `` (where the code would not read as one span, nothing is
- * made). Not yet settled with the owner; `false` wraps the selection beside
- * the span as selected.
+ * made). `false` would wrap the selection beside the span as selected.
  */
 const JOINS_TOUCHING_SPANS = true;
 
