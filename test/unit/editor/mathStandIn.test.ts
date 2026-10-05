@@ -18,7 +18,7 @@ import {
     removeSpanRefusal, removeSpanTransaction, spanLiteralRefusal,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
-import { hostEngine, topChildren } from './helpers';
+import { hostEngine, replaceChild, topChildren } from './helpers';
 
 type MathApi = { extendMarkdownIt(md: MarkdownIt): MarkdownIt };
 
@@ -419,6 +419,143 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
             engine.parse = parse;
         }
         assert.ok(parses <= 20, `${parses} parses for 20 keystrokes`);
+    });
+
+    /** Every token the host gives attributes, children included, as `[type, attrs]`: a link's or an image's own aside. */
+    const attributed = (host: MarkdownIt, text: string) => host.parse(text, {}).flatMap(t => [t, ...(t.children ?? [])])
+        .map(t => [t.type, (t.attrs ?? []).filter(([name]) => !['href', 'src', 'alt'].includes(name))] as const).filter(([, attrs]) => attrs.length > 0);
+    /** Each textblock's text, in order. */
+    const texts = (doc: Node) => {
+        const out: string[] = [];
+        doc.descendants(node => {
+            if (node.isTextblock) {
+                out.push(node.textContent);
+            }
+            return !node.isTextblock;
+        });
+        return out;
+    };
+
+    test('a {…} the plugin would take anywhere in the line is written as text: after emphasis, code, a link, a mark, in an item, a heading, a cell', () => {
+        for (const math of [false, true]) {
+            const host = hostEngine(math ? [extend] : []);
+            setInlineEngine(math ? inlineEngineDefinition(host) : DEFAULT_INLINE_ENGINE);
+            for (const [source, typed, expected] of [
+                ['see *a*x more\n', '{.c}', 'see *a*\\{.c\\} more\n'],
+                ['see [a](u)x more\n', '{.c}', 'see [a](u)\\{.c\\} more\n'],
+                ['see `a`x more\n', '{.c}', 'see `a`\\{.c\\} more\n'],
+                ['see ==a==x more\n', '{.c}', 'see ==a==\\{.c\\} more\n'],
+                ['see *a*x\n', '{.c}', 'see *a*\\{.c\\}\n'],
+                ['Set **S**x\n', '{1, 2}', 'Set **S**\\{1, 2\\}\n'],
+                ['see `f`x\n', '{x}', 'see `f`\\{x\\}\n'],
+                ['- see *a*x\n', '{.c}', '- see *a*\\{.c\\}\n'],
+                ['# see *a*x\n', '{.c}', '# see *a*\\{.c\\}\n'],
+                ['| h |\n| - |\n| see *a*x |\n', '{.c}', '| h             |\n| ------------- |\n| see *a*\\{.c\\} |\n'],
+                ['> see *a*x\n>\n> two\n', '{.c}', '> see *a*\\{.c\\}\n>\n> two\n'],
+                ['::: warning\nsee *a*x\n:::\n', '{.c}', '::: warning\nsee *a*\\{.c\\}\n:::\n'],
+            ] as [string, string, string][]) {
+                const state = EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+                const x = posIn(state.doc, 'x', '');
+                const tr = state.tr.insertText(typed, x, x + 1);
+                assert.strictEqual(noteRefusal(tr), null, `math ${math}: ${source}`);
+                const saved = serializeDocument({ doc: writtenEdit(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+                assert.strictEqual(saved, expected, `math ${math}: ${source}`);
+                assert.deepStrictEqual(attributed(host, saved), [], `math ${math}: ${saved} reads no attributes`);
+                assert.deepStrictEqual(texts(parseDocument(host, saved, {}).doc), texts(state.apply(tr).doc), `math ${math}: ${saved} reads back as the page shows it`);
+            }
+        }
+    });
+
+    test('a file the editor wrote with an escaped {…} opens editable, every block of it, and keeps the escape', () => {
+        for (const math of [false, true]) {
+            const host = hostEngine(math ? [extend] : []);
+            setInlineEngine(math ? inlineEngineDefinition(host) : DEFAULT_INLINE_ENGINE);
+            for (const [source, at, expected] of [
+                ['see *a*\\{.c\\}\n', 'see', 'seeZ *a*\\{.c\\}\n'],
+                ['- see *a*\\{.c\\}\n- two\n', 'two', '- see *a*\\{.c\\}\n- twoZ\n'],
+                ['# see *a*\\{.c\\}\n', 'see', '# seeZ *a*\\{.c\\}\n'],
+                ['> see *a*\\{.c\\} and {x} b}\n', 'see', '> seeZ *a*\\{.c\\} and {x} b}\n'],
+                ['| GET /users/\\{id\\} | b |\n| - | - |\n| c | w |\n', 'w', '| GET /users/\\{id\\} | b  |\n| ----------------- | -- |\n| c                 | wZ |\n'],
+                ['| h | i |\n| - | - |\n| GET /users/\\{id\\} | b |\n', 'b', '| h                 | i  |\n| ----------------- | -- |\n| GET /users/\\{id\\} | bZ |\n'],
+                ['a \\{x\\}[t]{.s}\n', 'a', 'aZ \\{x\\}[t]{.s}\n'],
+                ['see ![i](u.png)\\{.c\\} more\n', 'see', 'seeZ ![i](u.png)\\{.c\\} more\n'],
+            ] as [string, string, string][]) {
+                const state = EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+                assert.strictEqual(shown(state.doc).raw, 0, `math ${math}: ${source} is editable`);
+                const after = posIn(state.doc, at, '') + at.length;
+                const tr = state.tr.insertText('Z', after);
+                assert.strictEqual(noteRefusal(tr), null, `math ${math}: ${source}`);
+                const saved = serializeDocument({ doc: writtenEdit(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+                assert.strictEqual(saved, expected, `math ${math}: ${source}`);
+                assert.deepStrictEqual(shown(parseDocument(host, saved, {}).doc), shown(state.apply(tr).doc), `math ${math}: ${saved}`);
+            }
+        }
+    });
+
+    test('the {…} escaped is the one the plugin took: not a span\'s literal, not a copy of it elsewhere in the line', () => {
+        const host = hostEngine([extend]);
+        setInlineEngine(inlineEngineDefinition(host));
+        for (const [source, after, typed, expected, read] of [
+            // Typed before a span: `a {x}` is the block's `{x}`, the span's `{.s}` is its own.
+            ['a [t]{.s}\n', 'a ', '{x}', 'a \\{x\\}[t]{.s}\n', [['span_open', [['class', 's']]]]],
+            ['a {x[t]{.s}\n', '{x', '}', 'a \\{x\\}[t]{.s}\n', [['span_open', [['class', 's']]]]],
+            // The same `{x}` in the link's text after it is not the one taken.
+            ['a {x[{x}](u)\n', '{x', '}', 'a \\{x\\}[{x}](u)\n', []],
+            ['a [t]{.s} b\n', ' b', ' {y}', 'a [t]{.s} b \\{y\\}\n', [['span_open', [['class', 's']]]]],
+            ['| a | b |\n| - | - |\n| Size {mm | c |\n', '{mm', '}', '| a           | b |\n| ----------- | - |\n| Size \\{mm\\} | c |\n', []],
+        ] as [string, string, string, string, unknown][]) {
+            const state = EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+            const at = posIn(state.doc, after, '') + after.length;
+            const tr = state.tr.insertText(typed, at);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const saved = serializeDocument({ doc: writtenEdit(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+            assert.strictEqual(saved, expected, source);
+            assert.deepStrictEqual(attributed(host, saved), read, saved);
+        }
+    });
+
+    test('a list\'s own literal that does not read back is named as the list\'s, beside an edit of another item', () => {
+        const host = hostEngine([extend]);
+        setInlineEngine(inlineEngineDefinition(host));
+        const parsed = parseDocument(host, '- one\n- two\n\n{.l}\n', {}).doc;
+        const list = parsed.child(0);
+        assert.strictEqual(list.attrs.attrsSuffix, '{.l}');
+        // A literal math reads into a formula: the list writes it under a blank line, where it is text.
+        const doc = replaceChild(parsed, 0, list.type.create({ ...list.attrs, attrsSuffix: '{title="$x$"}' }, list.content));
+        const state = EditorState.create({ doc, plugins: editorPlugins() });
+        const reason = noteRefusal(state.tr.insertText('Z', posIn(state.doc, 'one', '') + 3));
+        assert.strictEqual(reason, literalRewrittenBeside(state.doc.child(0), state.doc.child(0), { literal: '{title="$x$"}' }));
+        assert.match(reason ?? '', /the list's own literal \{title="\$x\$"\} would then not read back/);
+    });
+
+    test('typing in a long quote, container or admonition parses the one block typed in, not the wrapper', () => {
+        const host = hostEngine([extend]);
+        setInlineEngine(inlineEngineDefinition(host));
+        const paragraphs = (prefix: string) => Array.from({ length: 300 }, (_, i) => `${prefix}para ${i} [s]{.c} text ${i === 5 ? 'QQ' : 'more'} and {x} braces}\n${prefix.trimEnd()}\n`).join('');
+        for (const source of [paragraphs('> '), `::: warning\n${paragraphs('')}:::\n`, `!!! note\n${paragraphs('    ')}`]) {
+            let state = EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+            assert.strictEqual(shown(state.doc).raw, 0, source.slice(0, 20));
+            const at = posIn(state.doc, 'QQ', '');
+            state = state.apply(state.tr.insertText('a', at));
+            const engine = attrsEngineFor(currentInlineDefinition());
+            const parse = engine.parse;
+            const parsed: number[] = [];
+            engine.parse = function (this: MarkdownIt, ...args: Parameters<MarkdownIt['parse']>) {
+                parsed.push(args[0].length);
+                return parse.apply(this, args);
+            };
+            try {
+                for (let k = 1; k <= 20; k++) {
+                    const tr = state.tr.insertText('a', at + k);
+                    assert.strictEqual(noteRefusal(tr), null);
+                    state = state.apply(tr);
+                }
+            } finally {
+                engine.parse = parse;
+            }
+            assert.ok(parsed.length <= 60, `${source.slice(0, 12)}: ${parsed.length} parses for 20 keystrokes`);
+            assert.ok(Math.max(...parsed) < 200, `${source.slice(0, 12)}: one block parsed at a time (${Math.max(...parsed)} characters)`);
+        }
     });
 
     test('property: an edit applies exactly when its save, read by the host with VS Code\'s math, shows the page\'s attributes and sidebars', function () {

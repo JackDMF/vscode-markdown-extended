@@ -3,9 +3,9 @@ import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdow
 import { Mark, Node } from 'prosemirror-model';
 import type { Mapping } from 'prosemirror-transform';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
-import { AttrPair, NOTE_SYNTAX_CHARS, fenceHolder, findLeftDelimiter, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
+import { AttrPair, NOTE_SYNTAX_CHARS, fenceHolder, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
 import { Token } from '../@types/markdown-it';
-import { attrsGivenTo, textBeforeAttrs } from '../plugin/markdownItAttrs';
+import { AttrsCut, attrsCutsIn, attrsGivenTo } from '../plugin/markdownItAttrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
@@ -483,7 +483,8 @@ function noteUnwritable(note: Node): string | null {
  * included, is written as it was read; `doc` is then the document as the save
  * writes it); without it every one the range touches — is written by the
  * save's own writer, wrap included, in the parts the parser reads apart
- * (`unitsOf`: a list's items, a table's rows), and each part is parsed by the
+ * (`unitsOf`: a list's items, a table's rows, a quote's, a container's and an
+ * admonition's blocks), and each part is parsed by the
  * page's engine, built from the host's definition (`setInlineEngine`), whole
  * — block rules, inline rules, markdown-it-attrs, VS Code's math as its
  * stand-in. What comes back must be what the page shows (`unitVerdict`):
@@ -732,6 +733,8 @@ export function setInlineEngine(definition: InlineEngineDefinition): void {
         return;
     }
     readCache.clear();
+    escapeCache.clear();
+    cellCache = new WeakMap();
     writtenCache = new WeakMap();
     forgetReadBack();
 }
@@ -811,7 +814,7 @@ function writtenTextblock(textblock: Node): { text: string; sidebars: ReadSideba
     } else if (name === 'paragraph') {
         written = respelled(spelled, HOLD_RE, () => '');
     } else {
-        written = cellText(spelled);
+        written = cellText(textblock, spelled);
     }
     return { text: written.text, sidebars: seams.map((seam, i) => ({ kind: seam.node.type.name, open: written.at[2 * i], close: written.at[2 * i + 1] })) };
 }
@@ -866,7 +869,7 @@ const CLOSING_HASHES = /#+$/g;
  * requirement id's prefix, then its inline content on one line — a hard break
  * a note inside it holds is a space — with a trailing `#` run escaped where no
  * suffix follows it, and a `{…}` the plugin would take off its text escaped
- * (`escapedTrailingLiteral`). The one spelling
+ * (`escapedLiterals`). The one spelling
  * the save (`blockSerializer`) and the check of an edit (`writtenTextblock`)
  * both write.
  */
@@ -876,7 +879,7 @@ function headingText(node: Node, inline: Spelled): Spelled {
         text = respelled(text, CLOSING_HASHES, run => '\\' + run);
     }
     const prefix = (node.attrs.reqPrefix as string | null) ?? '';
-    const escaped = escapedTrailingLiteral(node, prefix + text.text, `# ${prefix}${text.text}`);
+    const escaped = escapedLiterals(node, prefix + text.text, 'heading');
     // A marker after an escaped brace moves by its backslash.
     return { text: escaped.text, at: text.at.map(place => place + prefix.length + escaped.at.filter(at => at <= place + prefix.length).length) };
 }
@@ -968,7 +971,8 @@ function unitRefusal(block: { node: Node; offset: number; copyOf?: number | null
         if (before?.verdict.lost == null) {
             return literalLostReason(verdict.lost);
         }
-        return beside ? literalRewrittenBeside(block.node, verdict.lost.at ?? block.node, before.verdict.lost) : literalRewritten(before.verdict.lost);
+        // The part named is the one the named literal stands on or in, in the document the edit started from.
+        return beside ? literalRewrittenBeside(block.node, before.verdict.lost.at ?? verdict.lost.at ?? block.node, before.verdict.lost) : literalRewritten(before.verdict.lost);
     }
     const mismatch = verdict.mismatch as SidebarMismatch;
     const old = before?.verdict.mismatch ?? null;
@@ -1041,10 +1045,19 @@ export function literalRewritten(lost: LiteralLoss): string {
     return `Written by the editor, this line would not read ${lost.literal} back as written, edited or not: remove that literal, or edit the line once in the text editor to unlock it.`;
 }
 
-/** `literalRewritten` for another textblock of a block the edit makes the save write whole (`sidebarRewrittenBeside`). */
+/**
+ * `literalRewritten` for another part of a block the edit makes the save write
+ * whole (`sidebarRewrittenBeside`): `textblock` the node the literal is written
+ * on or in — a cell, a heading, a paragraph, an item — or the block itself
+ * for its own literal (a list's, a table's, a quote's).
+ */
 export function literalRewrittenBeside(block: Node, textblock: Node, lost: LiteralLoss): string {
     const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
-    const part = textblock.type.name === 'table_cell' || textblock.type.name === 'table_header' ? 'cell' : textblock.type.name === 'heading' ? 'heading' : 'paragraph';
+    const name = textblock.type.name;
+    if (lost.literal !== null && !textblock.isTextblock && name !== 'list_item') {
+        return `This edit makes the editor write the whole ${whole} again, and the ${whole}'s own literal ${lost.literal} would then not read back as written. Remove that literal, or edit the ${whole} once in the text editor to unlock it.`;
+    }
+    const part = name === 'table_cell' || name === 'table_header' ? 'cell' : name === 'heading' ? 'heading' : name === 'list_item' ? 'item' : 'paragraph';
     if (lost.literal === null) {
         return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then read text as attributes the editor does not show. Edit that ${part} once in the text editor to unlock this ${whole}.`;
     }
@@ -1131,14 +1144,14 @@ function cellMarkdown(cell: Node): string {
     return inlineInCell.serialize(editorSchema.topNodeType.create(null, [paragraph]));
 }
 
-/** Each cell as `tableCellMarkdown` writes it, by the node: a table is written whole for every keystroke in it (`unitsOf`). */
-const cellCache = new WeakMap<Node, string>();
+/** Each cell as `tableCellMarkdown` writes it, by the node: a table is written whole for every keystroke in it (`unitsOf`). Made anew with the engine, which decides its escapes. */
+let cellCache = new WeakMap<Node, string>();
 
 /** One cell's inline content as the tidy form writes it (see above), unpadded. Remembered by the node. */
 export function tableCellMarkdown(cell: Node): string {
     let written = cellCache.get(cell);
     if (written === undefined) {
-        written = cellText({ text: cellMarkdown(cell), at: [] }).text;
+        written = cellText(cell, { text: cellMarkdown(cell), at: [] }).text;
         cellCache.set(cell, written);
     }
     return written;
@@ -1146,15 +1159,22 @@ export function tableCellMarkdown(cell: Node): string {
 
 /**
  * A cell's inline content, as its row wrote it (`cellMarkdown`), given the
- * tidy form's last touches: the one spelling the save (`tableCellMarkdown`)
- * and the check of an edit (`writtenTextblock`) both write.
+ * tidy form's last touches, and a `{…}` in its text the plugin would take as
+ * the cell's attributes, or anything's in it, escaped (`escapedLiterals`):
+ * the one spelling the save (`tableCellMarkdown`) and the check of an edit
+ * (`writtenTextblock`) both write. `cell` is the node it is written from.
  */
-function cellText(inline: Spelled): Spelled {
+function cellText(cell: Node, inline: Spelled): Spelled {
     let written = respelled(inline, BACKSLASH_BEFORE_CODE, () => '&#92;');
     written = respelled(written, HOLD_RE, () => '');
     written = respelled(written, /\r?\n/g, () => ' ');
     written = respelled(written, /^\s+|\s+$/g, () => '');
-    return READS_AS_DELIMITER.test(written.text) ? { text: `\\${written.text}`, at: written.at.map(place => place + 1) } : written;
+    if (READS_AS_DELIMITER.test(written.text)) {
+        written = { text: `\\${written.text}`, at: written.at.map(place => place + 1) };
+    }
+    const escaped = escapedLiterals(cell, written.text, 'cell');
+    // A marker after an escaped brace moves by its backslash.
+    return { text: escaped.text, at: written.at.map(place => place + escaped.at.filter(at => at <= place).length) };
 }
 
 /** The formatter's alignment for a column's. */
@@ -1287,7 +1307,7 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
             const wrapped = wrapInline(paragraphMarkdown(node), limit - column, limit - width(st.delim)).join('\n');
-            state.text(escapedTrailingLiteral(node, wrapped, wrapped).text, false);
+            state.text(escapedLiterals(node, wrapped, 'paragraph').text, false);
             state.closeBlock(node);
         },
         heading(state, node) {
@@ -1476,49 +1496,148 @@ function listTakesLineLiteral(list: Node): boolean {
 }
 
 /**
- * `written`, a paragraph's or a heading's text as the save writes it, with a
- * `{…}` in its text that the parser would read as attributes written as text,
- * `\{x\}`: markdown-it-attrs, reading `block` — that text as the block the
- * save writes, wrap included — takes a `{…}` off the end of its last text, or
- * the line the wrap left it alone on, and gives it to the block
- * (`textBeforeAttrs`, `attrsGivenTo`): at once (`text \{x\}` in the file,
- * `text {x}` in the node), or once a literal after it is removed. Asked of the
- * parser, not of the line: the plugin reads the last text token the inline
- * rules make and passes over what is not text — an escape (`b {x}\$` takes
- * `{x}`), emphasis — so `5" and \* b {x}` takes `{x}`, the `"` standing in
- * another token. The `{…}` escaped is the one the plugin took, its last
- * occurrence; where the text spells it otherwise (an escape inside), its `{`
- * alone, which is enough for the plugin to read none.
+ * Where a textblock's text is written, as the parser meets it: a paragraph
+ * alone, a heading after its `#`, a cell in a one-column table's header row.
+ * The text stands between the two strings.
  */
-function escapedTrailingLiteral(node: Node, written: string, block: string): Spelled {
-    const at = trailingLiteralEscapes(node, written, block);
+const LITERAL_CONTEXTS: Readonly<Record<'paragraph' | 'heading' | 'cell', readonly [string, string]>> = {
+    paragraph: ['', ''],
+    heading: ['# ', ''],
+    cell: ['| ', ' |\n| - |'],
+};
+
+/** Each text's escapes (`literalEscapes`), by where it is written and the text; the oldest is dropped first. */
+const escapeCache = new Map<string, number[]>();
+/** How many texts `escapeCache` keeps. */
+const ESCAPE_CACHE_SIZE = 512;
+
+/**
+ * `written`, a paragraph's, a heading's or a cell's text as the save writes it
+ * (`where`), with every `{…}` the page shows as text that markdown-it-attrs
+ * would take as attributes written as text, `\{x\}`. Asked of the plugin, not
+ * of the line: the text is parsed as the save writes it, wrap included, and
+ * every `{…}` the plugin cut off a text token (`attrsCutsIn`) is one the page
+ * shows as text — but a span's own literal, the first cut right after its
+ * `]`. That covers each place the plugin takes one: off the end of the last
+ * text, which it reaches past an escape (`b {x}\$` takes `{x}`) or emphasis —
+ * the block's — the line the wrap left it alone on, and right after emphasis,
+ * a link, inline code, an image or a span (`see *a*{.c}`, anywhere in the
+ * line). A literal of the block, an item's or a heading's is written after
+ * this text and is not in it, so a `{…}` it would take once that literal is
+ * removed is escaped too. One the plugin takes in a note's text, which it
+ * reads in a parse of its own, is not: the edit filter refuses it
+ * (`unitVerdict`).
+ *
+ * The `{…}` escaped is where the cut text token stands in the written text —
+ * the inline rules make every text token a verbatim run of it — and the parse
+ * is asked again: an escape is kept when the plugin then takes one `{…}` less
+ * and every span's literal still, so a copy of the same text elsewhere in the
+ * line (`a {x}[{x}](u)`) is never the one escaped. Until it takes none.
+ * Remembered by the text.
+ */
+function escapedLiterals(node: Node, written: string, where: keyof typeof LITERAL_CONTEXTS): Spelled {
+    if (!node.textContent.includes('}') || !written.includes('{')) {
+        return { text: written, at: [] };
+    }
+    const key = `${where}\u0000${written}`;
+    let at = escapeCache.get(key);
+    if (at === undefined) {
+        at = literalEscapes(written, LITERAL_CONTEXTS[where]);
+        if (escapeCache.size >= ESCAPE_CACHE_SIZE) {
+            escapeCache.delete(escapeCache.keys().next().value as string);
+        }
+    } else {
+        escapeCache.delete(key);
+    }
+    escapeCache.set(key, at);
     return { text: at.reduceRight((text, place) => `${text.slice(0, place)}\\${text.slice(place)}`, written), at };
 }
 
-/** Where `escapedTrailingLiteral` puts a backslash in `written`, in order: before the `{` and the `}` it escapes. */
-function trailingLiteralEscapes(node: Node, written: string, block: string): number[] {
-    if (!node.textContent.includes('}')) {
-        return [];
-    }
-    const tokens = attrsEngineFor(currentInlineDefinition()).parse(block, {});
-    if (tokens[0] === undefined || attrsGivenTo(tokens[0]).length === 0) {
-        return [];
-    }
-    const trimmed = written.replace(/[ \t]+$/, '');
-    // Cut off the end of the last text — or, the wrap having put it on a line of its own, that whole line.
-    const cut = tokens[1]?.type === 'inline' ? textBeforeAttrs(tokens[1]) : null;
-    const literal = cut === null ? trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim() : cut.slice(Math.max(0, findLeftDelimiter(cut)));
-    const at = trimmed.lastIndexOf(literal);
-    if (at >= 0 && literal.endsWith('}')) {
-        return [at, at + literal.length - 1];
-    }
-    let start = trimmed.length;
-    for (let braces = (literal.match(/\{/g) ?? []).length; braces > 0 && start > 0; braces--) {
-        start = trimmed.lastIndexOf('{', start - 1);
-    }
-    return start < 0 ? [] : [start];
+/** The `{…}`s markdown-it-attrs cut off text in a parse: those the page shows as text (`made`), and how many span literals it read. */
+interface LiteralCuts {
+    made: AttrsCut[];
+    spans: number;
 }
 
+/** What the page's engine with markdown-it-attrs cuts off text in `text` (`LiteralCuts`). */
+function literalCutsIn(text: string): LiteralCuts {
+    const found: LiteralCuts = { made: [], spans: 0 };
+    for (const token of attrsEngineFor(currentInlineDefinition()).parse(text, {})) {
+        if (token.type !== 'inline') {
+            continue;
+        }
+        for (const cut of attrsCutsIn(token)) {
+            if (!cut.end && cut.first && cut.after === 'span_close') {
+                found.spans++;
+            } else {
+                found.made.push(cut);
+            }
+        }
+    }
+    return found;
+}
+
+/**
+ * Where `escapedLiterals` puts a backslash in `written`, in order: before the
+ * `{` and the `}` of each `{…}` it escapes. `context` is what stands before
+ * and after the text as the parser meets it (`LITERAL_CONTEXTS`).
+ */
+function literalEscapes(written: string, [before, after]: readonly [string, string]): number[] {
+    const at: number[] = [];
+    let text = written;
+    // Each character's place in `written`; -1 for a backslash put in.
+    let origin = Array.from(written, (_, i) => i);
+    let cuts = literalCutsIn(before + text + after);
+    while (cuts.made.length > 0) {
+        let next: { text: string; origin: number[]; places: number[]; cuts: LiteralCuts } | null = null;
+        for (const cut of cuts.made) {
+            const literal = cut.text.slice(cut.from, cut.to);
+            for (const place of placesOf(before + text + after, cut)) {
+                const start = place - before.length;
+                const end = start + literal.length - 1;
+                if (start < 0 || end >= text.length || origin[start] < 0 || origin[end] < 0) {
+                    continue;
+                }
+                const escaped = `${text.slice(0, start)}\\${text.slice(start, end)}\\${text.slice(end)}`;
+                const again = literalCutsIn(before + escaped + after);
+                if (again.made.length < cuts.made.length && again.spans === cuts.spans) {
+                    next = { text: escaped, origin: [...origin.slice(0, start), -1, ...origin.slice(start, end), -1, ...origin.slice(end)], places: [origin[start], origin[end]], cuts: again };
+                    break;
+                }
+            }
+            if (next !== null) {
+                break;
+            }
+        }
+        if (next === null) {
+            // None the escape would take back: the edit filter refuses what is left (`unitVerdict`).
+            break;
+        }
+        text = next.text;
+        origin = next.origin;
+        at.push(...next.places);
+        cuts = next.cuts;
+    }
+    return at.sort((a, b) => a - b);
+}
+
+/**
+ * Where the `{…}` of `cut` may stand in `text`, first where its whole text
+ * token stands, then wherever the `{…}` alone does; in order.
+ */
+function placesOf(text: string, cut: AttrsCut): number[] {
+    const literal = cut.text.slice(cut.from, cut.to);
+    const places: number[] = [];
+    for (let at = text.indexOf(cut.text); at >= 0; at = text.indexOf(cut.text, at + 1)) {
+        places.push(at + cut.from);
+    }
+    for (let at = text.indexOf(literal); at >= 0; at = text.indexOf(literal, at + 1)) {
+        if (!places.includes(at)) {
+            places.push(at);
+        }
+    }
+    return places;
+}
 /** Whether a node is a paragraph holding nothing: what `Enter` leaves, or text deleted to be typed again. */
 function isEmptyParagraph(node: Node): boolean {
     return node.type.name === 'paragraph' && node.content.size === 0;
@@ -1793,10 +1912,11 @@ function itemMarkdown(list: Node, item: Node, index: number, indent: string, mar
  * by its own lines, which the writer indents — and the list's literal with
  * the last (`withBlockSuffix`); a table's rows, each under the table's header
  * and delimiter rows as `tableLines` writes them, the table's literal with
- * the last; any other block whole (`serializeNode`), and none of a block that
- * is written as it was read (`SOURCE_NODES`). A keystroke in a long
- * list or table so writes and parses one part again, not all. Remembered by
- * the node.
+ * the last; a quote's, a container's and an admonition's blocks, each inside
+ * the wrapper as it writes them (`wrapperUnits`); any other block whole
+ * (`serializeNode`), and none of a block that is written as it was read
+ * (`SOURCE_NODES`). A keystroke in a long list, table or wrapper so writes and
+ * parses one part again, not all. Remembered by the node.
  */
 function unitsOf(block: Node): WrittenUnit[] {
     const known = unitsCache.get(block);
@@ -1804,12 +1924,17 @@ function unitsOf(block: Node): WrittenUnit[] {
         return known;
     }
     const name = block.type.name;
-    const units: WrittenUnit[] = [];
+    // The block's own literal, given to the block itself (not the stand-in it is read from), so a refusal names it as the block's.
+    const ownLiteral = () => writtenLiterals(block.type.create({ ...block.attrs }), true).map(literal => ({ ...literal, node: block }));
+    let units: WrittenUnit[] = [];
+    const wrapped = WRAPPERS.has(name) ? wrapperUnits(block) : null;
     if (SOURCE_NODES.has(name)) {
         // Written as it was read, always.
+    } else if (wrapped !== null) {
+        units = wrapped;
     } else if (name === 'bullet_list' || name === 'ordered_list') {
         const { indent, marker } = listMarkers(block);
-        const listLiteral = writtenLiterals(block.type.create({ ...block.attrs }), true);
+        const listLiteral = ownLiteral();
         block.forEach((item, offset, i) => {
             const last = i === block.childCount - 1;
             const text = itemMarkdown(block, item, i, indent, marker(i));
@@ -1844,7 +1969,7 @@ function unitsOf(block: Node): WrittenUnit[] {
                 text: last ? withBlockSuffix(block, text) : text,
                 key: `${headKey}\n${i === 0 ? '' : cells(row)}\n${suffix}`,
                 anchor: row,
-                literals: last ? writtenLiterals(block.type.create({ ...block.attrs }), true) : [],
+                literals: last ? ownLiteral() : [],
                 textblocks: i === 0 ? headCells : [...headCells, ...inlineTextblocks(row, 1 + offset)],
                 from: 1 + offset,
                 to: 1 + offset + row.nodeSize,
@@ -1866,6 +1991,84 @@ function unitsOf(block: Node): WrittenUnit[] {
     return units;
 }
 
+/** The blocks that write their blocks inside them by a prefix or a fence (`wrapperUnits`). */
+const WRAPPERS: ReadonlySet<string> = new Set(['blockquote', 'container', 'admonition']);
+
+/** A wrapper's block as its wrapper writes it (`wrappedMarkdown`), by the block and the wrapper's prefix. */
+let wrappedCache = new WeakMap<Node, { key: string; text: string }>();
+
+/**
+ * A block of a quote or an admonition as its wrapper writes it, with the
+ * wrapper's `prefix` on each line (`wrapBlock`, as `blockSerializer` writes
+ * them), or of a container at its own indentation: the very calls the
+ * wrapper's writer makes for it, on a state of its own, without the separator
+ * before it.
+ */
+function wrappedMarkdown(wrapper: Node, child: Node, index: number, prefix: string | null): string {
+    const key = prefix ?? '\u0000';
+    const known = wrappedCache.get(child);
+    if (known !== undefined && known.key === key) {
+        return known.text;
+    }
+    const serializer = currentWriter();
+    const State = MarkdownSerializerState as unknown as new (nodes: unknown, marks: unknown, options: unknown) => MarkdownSerializerState;
+    const state = new State(serializer.nodes, serializer.marks, serializer.options);
+    if (prefix === null) {
+        state.render(child, wrapper, index);
+    } else {
+        state.wrapBlock(prefix, null, wrapper, () => state.render(child, wrapper, index));
+    }
+    const text = internals(state).out;
+    wrappedCache.set(child, { key, text });
+    return text;
+}
+
+/**
+ * A quote's, a container's or an admonition's parts, as lists are read by
+ * item: each block in it, written as the wrapper writes it
+ * (`wrappedMarkdown`), inside the wrapper — after the `> ` it writes on each
+ * line, between a container's fences (lengthened as its writer lengthens them
+ * past a line of colons, `containerFence`), under an admonition's opening
+ * line. markdown-it reads each of them inside the wrapper as it reads it among
+ * the others: the wrapper writes a blank line between two. A quote's literal
+ * is written as its `> {…}` line after the paragraph that takes it
+ * (`quoteLiteralHost`, `withBlockSuffix`) and read with it. `null` — the
+ * wrapper read whole — for a container's or an admonition's literal, which
+ * the editor never writes but keeps.
+ */
+function wrapperUnits(block: Node): WrittenUnit[] | null {
+    const name = block.type.name;
+    const suffix = (block.attrs.attrsSuffix as string | null | undefined) ?? null;
+    if (suffix !== null && name !== 'blockquote') {
+        return null;
+    }
+    const host = suffix !== null && quoteTakesLiteral(block) ? quoteLiteralHost(block) : null;
+    const units: WrittenUnit[] = [];
+    block.forEach((child, offset, i) => {
+        let text: string;
+        if (name === 'blockquote') {
+            text = wrappedMarkdown(block, child, i, '> ') + (child === host ? `\n> ${suffix}` : '');
+        } else if (name === 'admonition') {
+            text = `${admonitionHeader(block)}\n${wrappedMarkdown(block, child, i, ADMONITION_INDENT)}`;
+        } else {
+            const markup = String(block.attrs.markup || ':::');
+            const container = block.attrs.name as string;
+            const body = wrappedMarkdown(block, child, i, null);
+            const fence = containerFence(markup, body);
+            text = `${fence}${container === '' ? '' : ` ${container}`}${block.attrs.info as string}\n${body}\n${fence}`;
+        }
+        units.push({
+            text,
+            key: text,
+            anchor: child,
+            literals: [...(child === host ? [{ literal: suffix as string, token: 'blockquote_open', node: block }] : []), ...writtenLiterals(child, false)],
+            textblocks: inlineTextblocks(child, 1 + offset),
+            from: 1 + offset,
+            to: 1 + offset + child.nodeSize,
+        });
+    });
+    return units;
+}
 /** What the page's engine reads in a part's text (`readUnit`). */
 interface UnitRead {
     /** Each token of the stream markdown-it-attrs gave attributes, in order, with what it gave. */
@@ -2075,6 +2278,7 @@ function sidebarVerdict(unit: WrittenUnit, read: UnitRead): SidebarMismatch | nu
 function forgetReadBack(): void {
     unitsCache = new WeakMap();
     itemCache = new WeakMap();
+    wrappedCache = new WeakMap();
     verdictCache = new WeakMap();
     unitReadCache.clear();
 }
