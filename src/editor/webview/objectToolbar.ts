@@ -40,7 +40,8 @@ import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
-import { NoteNodeName, unwrapNote } from './notes';
+import { NoteNodeName, notesFilterRefusal, unwrapNote } from './notes';
+import { embedAsTextTransaction } from './wikiEmbeds';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
@@ -55,7 +56,7 @@ import { followPointer, selectionBubbleShown } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
-    deleteRowTransaction, tableSourceTransaction,
+    deleteRowTransaction, tableRefusal, tableSourceTransaction,
 } from './tables';
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
@@ -120,7 +121,7 @@ const HOVER_GRACE_MS = 300;
 const GAP = 4;
 
 /** One verb as the bar draws it. */
-interface Verb {
+export interface Verb {
     /** `data-verb`: what tests and stylesheets name it by. */
     id: string;
     /** As its owner titled it: `$(icon)` references are drawn as icons, and `lensLabel` gives the plain text. */
@@ -284,6 +285,76 @@ function rawBlockLabel(construct: string | null): { label: string; title: string
 
 function isSidebar(name: NoteNodeName): boolean {
     return name === 'left_sidebar' || name === 'right_sidebar';
+}
+
+/**
+ * Why the plugins' filters (the notes' and the tables') would refuse `tr` — asked
+ * of the transaction before it is dispatched, so a verb shows the reason as a
+ * disabled button instead of making the filter say it after the click — or `null`.
+ * No transaction is no embed to act on.
+ */
+function embedRefusal(tr: Transaction | null): string | null {
+    return tr === null ? 'There is no embed here.' : notesFilterRefusal(tr) ?? tableRefusal(tr);
+}
+
+/** The refusals of an embed's two verbs: `null` where the verb can be chosen. */
+interface EmbedRefusals {
+    asText: string | null;
+    remove: string | null;
+}
+
+/**
+ * Each verb's refusal builds a whole transaction and reads the range it changed, and a bar is presented on
+ * every refresh and hover: an embed's are read once per state (and place), not once per presentation.
+ */
+const embedRefusals = new WeakMap<EditorState, Map<string, EmbedRefusals>>();
+
+function refusalsOfEmbed(state: EditorState, object: EditorObject): EmbedRefusals {
+    let byPlace = embedRefusals.get(state);
+    if (byPlace === undefined) {
+        byPlace = new Map();
+        embedRefusals.set(state, byPlace);
+    }
+    const key = `${object.from}:${object.to}`;
+    let found = byPlace.get(key);
+    if (found === undefined) {
+        found = {
+            // Refused as the notes' and the tables' filters would refuse it: the text takes the atom's
+            // marks, and an attribute span over it that holds a note marker (or `|` in a cell) is
+            // allowed over an atom and not over text.
+            asText: embedRefusal(embedAsTextTransaction(state, object.from, object.to)),
+            remove: embedRefusal(deleteObjectTransaction(state, object)),
+        };
+        byPlace.set(key, found);
+    }
+    return found;
+}
+
+/** What the verbs of a wiki embed do: the bar gives them, the verbs only say which. */
+export interface EmbedActions {
+    asText(): void;
+    remove(): void;
+}
+
+/** The verbs of the wiki embed `object`, each with the reason it cannot be chosen in `state`, if there is one. */
+export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
+    const refusals = refusalsOfEmbed(state, object);
+    return [
+        {
+            id: 'edit-wiki-embed-as-text',
+            label: 'Edit as text',
+            title: 'Make it plain text, ![[name]], to edit its name; delete the last ] and type it again to make it an embed.',
+            refusal: refusals.asText,
+            run: () => actions.asText(),
+        },
+        {
+            id: 'remove-wiki-embed',
+            label: 'Remove embed',
+            title: 'The embed goes from the text.',
+            refusal: refusals.remove,
+            run: () => actions.remove(),
+        },
+    ];
 }
 
 /** What a bar tells the view about its field. */
@@ -1111,7 +1182,10 @@ class ObjectToolbarView implements PluginView {
     private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string): void {
         this.view.focus();
         const current = currentObject(this.view.state, object);
-        if (current !== null && make(current) && hint !== undefined) {
+        const before = this.view.state;
+        // A transaction a plugin's filter refused leaves the state the same object, and the filter has said
+        // why beside the caret: the success hint would cover that, and be untrue.
+        if (current !== null && make(current) && this.view.state !== before && hint !== undefined) {
             this.say(`${hint} — ${undoKey()}`, 'neutral');
         }
     }
@@ -1432,9 +1506,16 @@ class ObjectToolbarView implements PluginView {
                 return {
                     label: 'Wiki embed',
                     title: `${object.node.attrs.source as string}: kept as written, for the extension that renders embeds (Foam).`,
-                    verbs: [
-                        { id: 'remove-wiki-embed', label: 'Remove embed', title: 'The embed goes from the text.', run: () => this.remove(object, 'Embed removed') },
-                    ],
+                    verbs: wikiEmbedVerbs(view.state, object, {
+                        asText: () => this.act(object, current => {
+                            const tr = embedAsTextTransaction(this.view.state, current.from, current.to);
+                            if (tr !== null) {
+                                this.view.dispatch(tr);
+                            }
+                            return tr !== null;
+                        }, 'Embed is text'),
+                        remove: () => this.remove(object, 'Embed removed'),
+                    }),
                 };
             case 'badge': {
                 const mark = object.node.attrs.mark as { rule?: unknown } | null;

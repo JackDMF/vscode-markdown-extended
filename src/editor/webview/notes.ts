@@ -335,8 +335,11 @@ export function noteRefusal(tr: Transaction): string | null {
     return range === null ? null : unwritableInNote(tr.doc, range.from, range.to);
 }
 
-/** `noteRefusal`, then a wiki embed under a raw mark (`unwritableEmbed`), over the range the transaction changed, read once. */
-function refusal(tr: Transaction): string | null {
+/**
+ * `noteRefusal`, then a wiki embed under a raw mark (`unwritableEmbed`), over the range the transaction changed, read once:
+ * what the notes plugin's filter refuses, asked of a transaction before it is dispatched.
+ */
+export function notesFilterRefusal(tr: Transaction): string | null {
     const range = refusableRange(tr);
     return range === null ? null : unwritableInNote(tr.doc, range.from, range.to) ?? unwritableEmbed(tr.doc, range.from, range.to);
 }
@@ -381,7 +384,7 @@ export function notesPlugin(embedInput: Plugin): Plugin {
         // span — with the reason shown beside the caret (`noteRefusal`); and
         // so is a wiki embed made code, superscript or subscript (`unwritableEmbed`).
         filterTransaction(tr) {
-            const reason = refusal(tr);
+            const reason = notesFilterRefusal(tr);
             if (reason !== null) {
                 if (editorView) {
                     showHint(editorView, reason, 'refusal');

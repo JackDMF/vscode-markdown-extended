@@ -25,13 +25,13 @@ const FALLBACK = /^(?:#[0-9a-f]{3,8}|(?:rgba?|hsla?)\([^()]*\)|transparent|inher
 
 /**
  * Variables the colour registry leaves unset in some theme — High Contrast's
- * toolbar and option surfaces, its menu selection — so a webview in that theme
+ * toolbar and option surfaces, its menu selection, inline code's surface — so a webview in that theme
  * has no such variable and the fallback is what shows. The fallback must be
  * `transparent` (directly or at the end of a chain), or a grey or blue surface
  * is painted where VS Code draws only an outline.
  */
 const UNSET_IN_SOME_THEME = [
-    '--vscode-toolbar-hoverBackground', '--vscode-toolbar-activeBackground', '--vscode-inputOption-activeBackground', '--vscode-menu-selectionBackground',
+    '--vscode-toolbar-hoverBackground', '--vscode-toolbar-activeBackground', '--vscode-inputOption-activeBackground', '--vscode-menu-selectionBackground', '--vscode-textPreformat-background',
 ];
 
 /** Every declaration of `css` as `[property, value, line]`, comments left out. */
