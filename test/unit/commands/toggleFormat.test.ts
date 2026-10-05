@@ -340,6 +340,27 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('mark', 'foo\n‸\n\nTerm\n: ‸'), 'foo\n‸\n\nTerm\n: ==‸==');
     });
 
+    test('an empty pair is taken out only where the rest reads as before', async () => {
+        for (const [name, marked] of [
+            // Its markers are another span's.
+            ['italics', 'see *‸*[link](u)** now'],
+            ['codeInline', 'run `‸` `x` `` now'],
+            // Its line is a thematic break, a setext underline, a fence, code.
+            ['italics', 'x\n\n*‸**\n\ny'],
+            ['mark', 'Title\n==‸=='],
+            ['strikethrough', '~~‸~~\ncode\n~~~~\n\nafter'],
+            ['mark', '```\n==‸==\n```'],
+            // Without it, the line would be indented code.
+            ['bold', 'x\n\n  **‸**  text here'],
+        ] as [InlineMarkerName, string][]) {
+            assert.strictEqual(await toggle(name, marked), marked);
+        }
+        // Refused, the cursor toggles the span it stands next to.
+        assert.strictEqual(await toggle('italics', '*‸**bold***'), '‸**bold**');
+        // Beside another cursor's wrap, each is read again with the other.
+        assert.strictEqual(await toggle('mark', 'x\n\n ==‸==   «w y»'), 'x\n\n ==‸==   ==«w y»==');
+    });
+
     test('a reversed selection stays reversed', async () => {
         const editor = await inline('bold', 'one two', [[7, 4]]);
         assert.strictEqual(editor.document.getText(), 'one **two**');
