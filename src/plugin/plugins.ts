@@ -6,7 +6,7 @@ import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { MarkdownItAttrs } from './markdownItAttrs';
 import { Config } from '../services/common/config';
 import { MarkdownIt } from '../@types/markdown-it';
-import { INLINE_PLUGINS } from './inlinePlugins';
+import { INLINE_PLUGINS, MULTIMD_TABLE_OPTIONS } from './inlinePlugins';
 
 // Import all external markdown-it plugins statically for bundling
 import markdownItAbbr from 'markdown-it-abbr';
@@ -71,7 +71,7 @@ export const plugins: MarkdownItPlugin[] = [
     $('markdown-it-mark'),
     $('markdown-it-deflist'),
     $('markdown-it-emoji'),
-    $('markdown-it-multimd-table', { multiline: true, rowspan: true, headerless: true }),
+    $('markdown-it-multimd-table', MULTIMD_TABLE_OPTIONS),
     // Registered once per syntax: markdown-it-html5-embed 0.3.3 keeps the
     // default image rule and the default link rule in one hoisted `var`, so
     // with both options in one call every image is rendered by the link's

@@ -62,8 +62,9 @@ export const ATTRIBUTES_REMOVED_HINT = 'Attributes removed';
  * The field step for `target`: its literal prefilled (selected, so typing
  * replaces it), or `{.}` with the caret after the dot when it has none. `Enter`
  * commits: refused with the reason beside the caret when markdown-it-attrs
- * would not read the literal back, else one transaction — one undo step — and
- * the hint that says so.
+ * would not read the literal back, or the save the block it stands in — a
+ * removal as much as a new literal (`commitAttributes`) — else one
+ * transaction — one undo step — and the hint that says so.
  */
 export function attributesStep(view: EditorView, target: AttributesTarget): FieldStep {
     const literal = literalOf(target.node);
@@ -82,8 +83,12 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
                 showHint(view, made.refusal, 'refusal');
                 return;
             }
+            // Said only when the state moved, as the object bar's verbs say it: a filter refusing it leaves the state as it was.
+            const before = view.state;
             view.dispatch(made.tr);
-            showHint(view, `${made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT} — ${undoKey()}`, 'neutral');
+            if (view.state !== before) {
+                showHint(view, `${made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT} — ${undoKey()}`, 'neutral');
+            }
         },
     };
 }

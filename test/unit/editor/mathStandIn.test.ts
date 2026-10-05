@@ -1,19 +1,21 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import MarkdownItStatic = require('markdown-it');
-import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
-import { Node } from 'prosemirror-model';
+import { EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
+import { Mark, Node } from 'prosemirror-model';
 import { MarkdownIt, Token } from '../../../src/@types/markdown-it';
 import { attrsReadAt, joinAttrs, parseAttrsLiteral, sameAttrs } from '../../../src/editor/attrs';
 import { groupSourceBlocks, splitLines } from '../../../src/editor/blocks';
-import { DEFAULT_INLINE_ENGINE, createInlineEngine, definitionOf, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
+import { writtenEdit } from '../../../src/editor/fidelity';
+import { DEFAULT_INLINE_ENGINE, attrsEngineFor, createInlineEngine, currentInlineDefinition, definitionOf, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import { useMathStandIn } from '../../../src/editor/mathStandIn';
 import { parseDocument } from '../../../src/editor/parse';
-import { literalLostReason, literalRewritten, serializeDocument, setInlineEngine } from '../../../src/editor/serialize';
+import { literalLostReason, literalRewritten, literalRewrittenBeside, serializeDocument, setInlineEngine } from '../../../src/editor/serialize';
 import { editorSchema } from '../../../src/editor/schema';
 import { noteRefusal } from '../../../src/editor/webview/notes';
 import {
-    LITERAL_READ_WITH_BLOCK_REFUSAL, attributesTargetAt, commitAttributes, literalAlreadyLostRefusal, literalRefusal, spanLiteralRefusal,
+    EditorObject, LITERAL_READ_WITH_BLOCK_REFUSAL, attributesTargetAt, changeSpanRefusal, commitAttributes, literalAlreadyLostRefusal, literalOf, literalRefusal,
+    removeSpanRefusal, removeSpanTransaction, spanLiteralRefusal,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, topChildren } from './helpers';
@@ -239,7 +241,7 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         assert.deepStrictEqual(copy.filter(t => (t.attrs ?? []).length > 0).map(t => [t.type, t.attrs]), [['span_open', [['title', 'a $b']]]], 'the copy\'s span reads back');
     });
 
-    test('in a block whose literal already does not read back, removing a literal applies and changing one names the existing one', () => {
+    test('in a block whose literal already does not read back, an edit applies only once the save reads back what the page shows', () => {
         // Read without math the span reads back; with math the page reads `$b"} and \`$` as math.
         const source = '[x]{title="a $b"} and `$(pwd)` {.k}\n';
         assert.deepStrictEqual(hostEngine().parse(source, {}).flatMap(t => [t, ...(t.children ?? [])]).filter(t => (t.attrs ?? []).length > 0).map(t => t.type), ['paragraph_open', 'span_open']);
@@ -252,10 +254,183 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         const existing = { literal: '{title="a $b"}' };
         assert.deepStrictEqual(commitAttributes(state, target, '{.c}'), { refusal: literalAlreadyLostRefusal(existing) }, 'the cause named is the span, not the literal typed');
         assert.strictEqual(noteRefusal(state.tr.insertText('Z', 2)), literalRewritten(existing), 'typing in it is refused, naming the span');
-        const removed = commitAttributes(state, target, '');
-        assert.ok(removed !== null && 'tr' in removed && removed.removed, 'removing the block\'s literal is a change');
-        const after = state.apply(removed.tr);
-        assert.strictEqual(after.doc.child(0).attrs.attrsSuffix, null, 'the filter lets it through');
+        // Removing the block's literal leaves the span lost: the same rule refuses it, and the field says so.
+        assert.deepStrictEqual(commitAttributes(state, target, ''), { refusal: literalRewritten(existing) }, 'removing another literal does not make the block read back');
+        // The span itself: given a value the block reads back, or none, the edit applies.
+        let span: Extract<EditorObject, { kind: 'span' }> | null = null;
+        state.doc.descendants((node, pos) => {
+            const mark = node.marks.find(m => m.type.name === 'attr_span');
+            if (span === null && mark !== undefined) {
+                span = { kind: 'span', from: pos, to: pos + node.nodeSize, mark };
+            }
+            return span === null;
+        });
+        assert.ok(span !== null);
+        // Changing the very literal that does not read back judges the new value, not the old one.
+        assert.strictEqual(changeSpanRefusal(state, span, '{title="c $d"}'), LITERAL_READ_WITH_BLOCK_REFUSAL);
+        assert.strictEqual(changeSpanRefusal(state, span, '{title="c d"}'), null);
+        assert.strictEqual(removeSpanRefusal(state, span), null, 'the span removed, the block reads back');
+    });
+
+    test('the save\'s own text is read back: a literal the wrap puts on a line of its own is refused, text the wrap would make a literal is written as text', () => {
+        for (const math of [false, true]) {
+            const host = hostEngine(math ? [extend] : []);
+            setInlineEngine(math ? inlineEngineDefinition(host) : DEFAULT_INLINE_ENGINE);
+            const reads = (text: string) => host.parse(text, {}).filter(t => (t.attrs ?? []).length > 0).map(t => [t.type, t.attrs]);
+            // Read as a class in the file: `5"` and `7"` pair as quotes. Typing at the start moves the
+            // wrap, and where it puts `7" models {.spec}` on a line of its own that line's `"` opens a
+            // quote the `{` stands in: the class is lost, and the edit is refused.
+            const read = 'Both screens ship this year, in the sizes the survey asked for most: the 5" and 7" models {.spec}\n';
+            let state = EditorState.create({ doc: parseDocument(host, read, {}).doc, plugins: editorPlugins() });
+            assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, '{.spec}');
+            let refused = 0;
+            for (let k = 1; k <= 30; k++) {
+                const tr = state.tr.insertText(`${'x'.repeat(k)} `, 1);
+                const reason = noteRefusal(tr);
+                const saved = serializeDocument({ doc: writtenEdit(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+                if (reason === null) {
+                    assert.deepStrictEqual(reads(saved), [['paragraph_open', [['class', 'spec']]]], `math ${math}, +${k}: allowed, so the class reads back (${saved})`);
+                } else {
+                    refused++;
+                    assert.strictEqual(reason, literalLostReason({ literal: '{.spec}' }), `math ${math}, +${k}`);
+                    assert.deepStrictEqual(reads(saved), [], `math ${math}, +${k}: refused, as the save would lose the class (${saved})`);
+                }
+            }
+            assert.ok(refused > 0, `math ${math}: some wrap puts the literal on a line of its own`);
+            // Text in the file — an odd `"` before it — which the wrap would make a class on a line of
+            // its own: the save writes it as text, and every edit applies.
+            const text = 'Both screens ship this year, in the sizes the survey asked for most: the 5" and "seven" {.spec}\n';
+            state = EditorState.create({ doc: parseDocument(host, text, {}).doc, plugins: editorPlugins() });
+            assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, null);
+            assert.ok(state.doc.textContent.endsWith('{.spec}'));
+            let wrapped = 0;
+            for (let k = 1; k <= 30; k++) {
+                const tr = state.tr.insertText(`${'x'.repeat(k)} `, 1);
+                assert.strictEqual(noteRefusal(tr), null, `math ${math}, +${k}`);
+                const saved = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+                wrapped += saved.includes('\n"seven"') || saved.includes('\nand "seven"') ? 1 : 0;
+                assert.deepStrictEqual(reads(saved), [], `math ${math}, +${k}: still text (${saved})`);
+                assert.ok(parseDocument(host, saved, {}).doc.textContent.endsWith('{.spec}'), `math ${math}, +${k}: the {…} is text the page shows`);
+            }
+            assert.ok(wrapped > 0, `math ${math}: some wrap puts the quotes on the last line`);
+        }
+    });
+
+    test('a {…} after an unmatched delimiter: text where the preview shows text, the block\'s literal where it reads one', () => {
+        for (const math of [false, true]) {
+            const host = hostEngine(math ? [extend] : []);
+            setInlineEngine(math ? inlineEngineDefinition(host) : DEFAULT_INLINE_ENGINE);
+            const reads = (text: string) => host.parse(text, {}).filter(t => (t.attrs ?? []).length > 0).map(t => [t.type, t.attrs]);
+            for (const [plain, escaped] of [['* b', '\\* b'], ['_b', '\\_b'], ['~ b', '\\~ b'], ['== b', '\\== b'], ['^ b', '\\^ b'], [', 3* b', ', 3\\* b']]) {
+                // The delimiter is text joined to the rest: one text token, whose `5"` opens a quote the `{` stands in.
+                const text = `A 5" display ${plain} {.spec}\n`;
+                assert.deepStrictEqual(reads(text), [], `${text}: the preview shows it as text`);
+                let state = EditorState.create({ doc: parseDocument(host, text, {}).doc, plugins: editorPlugins() });
+                assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, null, text);
+                const typed = state.tr.insertText('Z', posIn(state.doc, 'display') + 'display'.length);
+                assert.strictEqual(noteRefusal(typed), null, `${text}: an edit applies`);
+                const saved = serializeDocument({ doc: state.apply(typed).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+                // The save escapes the delimiter, which splits the text: its `{…}` is escaped too.
+                assert.deepStrictEqual(reads(saved), [], `${saved}: still text`);
+                assert.ok(parseDocument(host, saved, {}).doc.textContent.endsWith(`${plain.replace(/^, /, ', ')} {.spec}`), saved);
+                // In a list, an edit of another item, which the save writes with it, applies.
+                const list = `- A 5" display ${plain} {.spec}\n- two\n`;
+                state = EditorState.create({ doc: parseDocument(host, list, {}).doc, plugins: editorPlugins() });
+                assert.strictEqual(noteRefusal(state.tr.insertText('Z', posIn(state.doc, 'two', ''))), null, `${list}: the other item is editable`);
+                // Escaped in the file, the delimiter is a token of its own and the `{…}` is the paragraph's.
+                const file = `A 5" display ${escaped} {.spec}\n`;
+                assert.deepStrictEqual(reads(file), [['paragraph_open', [['class', 'spec']]]], `${file}: the preview reads the class`);
+                state = EditorState.create({ doc: parseDocument(host, file, {}).doc, plugins: editorPlugins() });
+                assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, '{.spec}', `${file}: the page keeps it`);
+                const edited = state.tr.insertText('Z', posIn(state.doc, 'display') + 'display'.length);
+                assert.strictEqual(noteRefusal(edited), null, file);
+                assert.deepStrictEqual(reads(serializeDocument({ doc: state.apply(edited).doc, eol: '\n', tail: '' }, { defaultWrap: 90 })), [['paragraph_open', [['class', 'spec']]]], `${file}: the class reads back`);
+            }
+        }
+    });
+
+    test('removing a span is judged by the same rule: a removal after which the heading\'s id would not read back is refused', () => {
+        for (const math of [false, true]) {
+            const host = hostEngine(math ? [extend] : []);
+            setInlineEngine(math ? inlineEngineDefinition(host) : DEFAULT_INLINE_ENGINE);
+            const source = '# Size [w]{.wide} of 5"$x$5" {#size}\n';
+            const state = EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+            assert.strictEqual(state.doc.child(0).attrs.attrsSuffix, '{#size}', `math ${math}`);
+            let span: Extract<EditorObject, { kind: 'span' }> | null = null;
+            state.doc.descendants((node, pos) => {
+                const mark = node.marks.find(m => m.type.name === 'attr_span');
+                if (span === null && mark !== undefined) {
+                    span = { kind: 'span', from: pos, to: pos + node.nodeSize, mark };
+                }
+                return span === null;
+            });
+            assert.ok(span !== null);
+            const removal = removeSpanTransaction(state, span);
+            const saved = serializeDocument({ doc: writtenEdit(removal).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+            assert.ok(!host.parse(saved, {}).some(t => t.type === 'heading_open' && (t.attrs ?? []).length > 0), `math ${math}: ${saved} loses the id`);
+            assert.ok(removeSpanRefusal(state, span)?.includes('{#size}'), `math ${math}: refused, naming the id`);
+        }
+    });
+
+    test('a removal the filter refuses is refused by the Attributes field, with the reason, and says nothing was removed', () => {
+        const host = hostEngine([extend]);
+        setInlineEngine(inlineEngineDefinition(host));
+        // The second item already does not read back once written: `$$&#36;` is written `\$\$\$`, which math reads into the span.
+        const source = '- one {.a}\n- 1[t]{title="a $b"}$$&#36; {title="m $ n"}\n';
+        let state = EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+        assert.strictEqual(state.doc.child(0).child(0).attrs.literal, '{.a}');
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, posIn(state.doc, 'one', ''))));
+        const target = attributesTargetAt(state);
+        assert.ok(!('refusal' in target) && target.node.type.name === 'list_item');
+        const lost = { literal: '{title="a $b"}' };
+        assert.deepStrictEqual(commitAttributes(state, target, ''), { refusal: literalRewrittenBeside(state.doc.child(0), state.doc.child(0).child(1).child(0), lost) });
+    });
+
+    test('a refusal names what it is: text read as attributes is not a literal to remove', () => {
+        const none = { literal: null };
+        for (const reason of [literalRewritten(none), literalRewrittenBeside(editorSchema.nodes.bullet_list.create(null, []), editorSchema.nodes.paragraph.create(), none), literalAlreadyLostRefusal(none)]) {
+            assert.match(reason, /would (then )?read text/, reason);
+            assert.doesNotMatch(reason, /not read text|remove that literal|Remove that literal|Remove or change it/, reason);
+        }
+        assert.match(literalRewritten({ literal: '{.a}' }), /would not read \{\.a\} back as written, edited or not: remove that literal/);
+    });
+
+    test('typing in a long list parses the one item typed in: the other items\' read-back is remembered', () => {
+        const host = hostEngine([extend]);
+        setInlineEngine(inlineEngineDefinition(host));
+        const source = Array.from({ length: 700 }, (_, i) => `- item ${i} [s]{.c} text ${i === 5 ? 'QQ' : 'more'} {.it}\n`).join('');
+        let state = EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+        const at = posIn(state.doc, 'QQ', '');
+        state = state.apply(state.tr.insertText('a', at));
+        const engine = attrsEngineFor(currentInlineDefinition());
+        const parse = engine.parse;
+        let parses = 0;
+        engine.parse = function (this: MarkdownIt, ...args: Parameters<MarkdownIt['parse']>) {
+            parses++;
+            return parse.apply(this, args);
+        };
+        try {
+            for (let k = 1; k <= 20; k++) {
+                const tr = state.tr.insertText('a', at + k);
+                assert.strictEqual(noteRefusal(tr), null);
+                state = state.apply(tr);
+            }
+        } finally {
+            engine.parse = parse;
+        }
+        assert.ok(parses <= 20, `${parses} parses for 20 keystrokes`);
+    });
+
+    test('property: an edit applies exactly when its save, read by the host with VS Code\'s math, shows the page\'s attributes and sidebars', function () {
+        this.timeout(120000);
+        for (const math of [true, false]) {
+            const host = hostEngine(math ? [extend] : []);
+            setInlineEngine(math ? inlineEngineDefinition(host) : DEFAULT_INLINE_ENGINE);
+            const counts = property(host, 1500);
+            assert.deepStrictEqual(counts.wrong, [], `math ${math}: ${JSON.stringify(counts)}`);
+            assert.ok(counts.allowed > 1000 && counts.refused > 10, `math ${math}: ${JSON.stringify(counts)}`);
+            console.log(`      math ${math}: ${JSON.stringify({ ...counts, wrong: counts.wrong.length })}`);
+        }
     });
 });
 
@@ -270,4 +445,145 @@ function posIn(doc: Node, needle: string, pad = ' '): number {
     });
     assert.ok(found >= 0, `no "${needle}"`);
     return found;
+}
+
+/** What the page shows of `doc` that a save must give back: each block's, item's and span's attributes, each sidebar and its text; and how many source blocks it holds. */
+function shown(doc: Node): { facts: string; raw: number } {
+    const pairs = (literal: string) => JSON.stringify(joinAttrs(parseAttrsLiteral(literal) ?? []).map(([n, v]) => [n, v]).sort());
+    const out: string[] = [];
+    let raw = 0;
+    doc.descendants(node => {
+        if (node.attrs.attrsSuffix) {
+            out.push(`${node.type.name} ${pairs(node.attrs.attrsSuffix as string)}`);
+        }
+        if (node.type.name === 'list_item' && node.attrs.literal) {
+            out.push(`item ${pairs(node.attrs.literal as string)}`);
+        }
+        if (node.type.name === 'left_sidebar' || node.type.name === 'right_sidebar') {
+            out.push(`${node.type.name} ${node.textContent.replace(/\s+/g, ' ').trim()}`);
+        }
+        raw += node.type.name === 'raw_block' ? 1 : 0;
+        let open: Mark | null = null;
+        if (node.isTextblock) {
+            node.forEach(child => {
+                const mark = child.marks.find(m => m.type.name === 'attr_span') ?? null;
+                if (mark !== null && (open === null || !mark.eq(open))) {
+                    out.push(`span ${pairs(mark.attrs.literal as string)}`);
+                }
+                open = mark;
+            });
+        }
+        return true;
+    });
+    return { facts: out.sort().join(' | '), raw };
+}
+
+/**
+ * Review 15's fuzz (`h15.ts`), the same on every run: `count` documents of
+ * literal-bearing blocks with `$`, code, spans and sidebars in their text,
+ * each edited — a `z` typed at the end of each textblock, words typed at its
+ * start (the wrap moves), each span removed, the first block's literal
+ * removed in the field — and each edit's save, written as the fidelity plan
+ * writes it, read by `host`. A document holding a source block is passed
+ * over: its neighbours are written as they were read. `wrong` lists every
+ * edit allowed whose save does not show what the page shows, or refused whose
+ * save does; `outside` counts those whose save the host makes a source block
+ * for another reason than a literal (an emoji shortcut).
+ */
+function property(host: MarkdownIt, count: number): { docs: number; allowed: number; refused: number; outside: number; wrong: string[] } {
+    let seed = 11;
+    const next = (n: number) => {
+        seed ^= seed << 13;
+        seed >>>= 0;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5;
+        seed >>>= 0;
+        return seed % n;
+    };
+    const bits = ['$', '$', '$', ' ', ' ', 'a', '1', '`', 'x', '.', '(', ')', '*', '_', '@', '[s]{.c}', '[t]{title="a $b"}', '[u]{title="c$ d"}',
+        '[v]{title="$ e"}', '$y$', '@z@', '`$(pwd)`', '&#36;', '&#96;', 'http://e.com/', '\\$', '==', '^', '~', ':', '"', '5"', 'b {.k}'];
+    const literals = ['{.c}', '{title="a $b"}', '{title="d$ e"}', '{data-p="$5 - $10"}', '{#i}', '{title="m $ n"}', '{title="x$"}', '{.w title="$a"}'];
+    const shapes: ((t: string, u: string, l: string, k: string) => string)[] = [
+        (t, u, l) => `${t} ${l}\n`,
+        (t, u, l) => `${t}\n${l}\n`,
+        (t, u, l) => `# ${t} ${l}\n`,
+        (t, u, l, k) => `- ${t} ${l}\n- ${u} ${k}\n`,
+        (t, u, l, k) => `- ${t} ${k}\n- ${u}\n${l}\n`,
+        (t, u, l) => `1. ${t}\n2. ${u} ${l}\n`,
+        (t, u, l) => `> ${t}\n> ${l}\n`,
+        (t, u, l) => `> ${t}\n>\n> ${u}\n> ${l}\n`,
+        (t, u, l) => `| ${t} | b |\n| - | - |\n| ${u} | c |\n\n${l}\n`,
+        (t, u, l, k) => `- ${t} ${k}\n\n  ${u}\n- two\n`,
+        (t, u) => `::: warning\n${t} ${u}\n:::\n`,
+        (t, u) => `!!! note\n    ${t}\n\n    ${u}\n`,
+        (t, u, l) => `${t} ${u} ${t} ${u} ${t} and some more words to make the line long enough to wrap ${l}\n`,
+    ];
+    const word = () => {
+        let s = '';
+        for (let k = 1 + next(7); k > 0; k--) {
+            s += bits[next(bits.length)];
+        }
+        return s.trim() === '' ? 'w' : s;
+    };
+    const result = { docs: 0, allowed: 0, refused: 0, outside: 0, wrong: [] as string[] };
+    for (let i = 0; i < count; i++) {
+        const source = shapes[next(shapes.length)](word(), word(), literals[next(literals.length)], literals[next(literals.length)]);
+        const doc = parseDocument(host, source, {}).doc;
+        if (shown(doc).raw > 0) {
+            continue;
+        }
+        result.docs++;
+        const state = EditorState.create({ doc, plugins: editorPlugins() });
+        const judge = (label: string, tr: Transaction | null) => {
+            if (tr === null) {
+                return;
+            }
+            const reason = noteRefusal(tr);
+            const written = writtenEdit(tr).doc;
+            const saved = serializeDocument({ doc: written, eol: '\n', tail: '' }, { defaultWrap: 90 });
+            const want = shown(written);
+            const got = shown(parseDocument(host, saved, {}).doc);
+            const readsBack = got.facts === want.facts && got.raw === want.raw;
+            // A block the host leaves as source for what the page does not judge — an emoji shortcut
+            // the text now spells (`:)`, typed or met by an escape) — is outside the rule.
+            const why = got.raw > want.raw ? groupSourceBlocks(host.parse(saved, {}), splitLines(saved), definitionOf(host)).blocks.filter(b => b.kind === 'raw').map(b => b.reason).join('; ') : '';
+            if (!readsBack && why !== '' && !/attribute|literal|span/.test(why)) {
+                result.outside++;
+                return;
+            }
+            result[reason === null ? 'allowed' : 'refused']++;
+            if ((reason === null) !== readsBack) {
+                result.wrong.push(`${label} in ${JSON.stringify(source)}: ${reason ?? 'allowed'}; saved ${JSON.stringify(saved)}`);
+            }
+        };
+        doc.descendants((node, pos) => {
+            if (node.isTextblock) {
+                judge('z typed at the end', state.tr.insertText('z', pos + node.nodeSize - 1));
+                judge('words typed at the start', state.tr.insertText('xxxxxxx ', pos + 1));
+            }
+            const mark = node.isText ? node.marks.find(m => m.type.name === 'attr_span') : undefined;
+            if (mark !== undefined) {
+                judge('span removed', removeSpanTransaction(state, { kind: 'span', from: pos, to: pos + node.nodeSize, mark }));
+            }
+            return true;
+        });
+        let first = -1;
+        doc.descendants((node, pos) => {
+            first = first < 0 && node.isTextblock ? pos + 1 : first;
+            return first < 0;
+        });
+        const target = attributesTargetAt(state.apply(state.tr.setSelection(TextSelection.create(state.doc, first))));
+        if (!('refusal' in target) && literalOf(target.node) !== null) {
+            const removed = commitAttributes(state, target, '');
+            if (removed !== null && 'tr' in removed) {
+                judge('literal removed in the field', removed.tr);
+            } else if (removed !== null) {
+                // Refused by the field with the filter's reason: the save would not read back.
+                judge('literal removed in the field', state.tr.setNodeMarkup(target.pos, undefined, target.node.type.name === 'list_item'
+                    ? { ...target.node.attrs, literal: null }
+                    : { ...target.node.attrs, attrsSuffix: null, attrsPlacement: null }));
+            }
+        }
+    }
+    return result;
 }

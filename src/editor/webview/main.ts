@@ -6,10 +6,11 @@
  * bring the host's markdown-it composition — this extension's plugins and
  * everything they import — into the browser for nothing.
  *
- * markdown-it itself is in the page, with the registry's inline plugins only
- * (`../inlineEngine.ts`): the check of an edit reads each textblock it touched
- * as the host's engine would, to refuse one after which a sidebar would not
- * read back as it is shown.
+ * markdown-it itself is in the page, with the registry's inline plugins and
+ * the block plugins whose blocks the editor writes (`../inlineEngine.ts`):
+ * the check of an edit reads what the save writes as the host's engine
+ * would, to refuse one after which a sidebar or an attribute literal would
+ * not read back as it is shown.
  */
 import { Node } from 'prosemirror-model';
 import { closeHistory, redo, undo } from 'prosemirror-history';
@@ -20,7 +21,7 @@ import { PositionMap, SourcePosition, caretOf, createPositionMap } from '../posi
 import type { CodeActionItem, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
-import { serializeDocument, setInlineEngine } from '../serialize';
+import { serializeDocument, setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
@@ -805,8 +806,9 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     actionEpoch++;
     // Read by the toolbars as they redraw for the state below.
     includesOffered = includes;
-    // Before the state below: the refusals read a textblock as the engine that parsed it does.
+    // Before the state below: the refusals read a block as the engine that parsed it does, written as the save writes it.
     setInlineEngine(inline);
+    setWriteOptions({ defaultWrap });
     hideError();
     const doc = Node.fromJSON(editorSchema, json.doc);
     current = { eol: json.eol, tail: json.tail, version, defaultWrap };

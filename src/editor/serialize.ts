@@ -3,7 +3,9 @@ import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdow
 import { Mark, Node } from 'prosemirror-model';
 import type { Mapping } from 'prosemirror-transform';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
-import { AttrPair, NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, fenceHolder, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
+import { AttrPair, NOTE_SYNTAX_CHARS, fenceHolder, findLeftDelimiter, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
+import { Token } from '../@types/markdown-it';
+import { attrsGivenTo, textBeforeAttrs } from '../plugin/markdownItAttrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
@@ -36,6 +38,8 @@ interface StateInternals {
     out: string;
     delim: string;
     inAutolink: boolean | undefined;
+    /** Whether the list being written is tight (`renderList`). */
+    inTightList: boolean | undefined;
     /** Which form the link being written takes; this module's own field. */
     linkForm?: LinkForm;
     /** Which part of a note is being written, when one is; this module's own field (see `writeNote`). */
@@ -468,47 +472,39 @@ function noteUnwritable(note: Node): string | null {
  * so the editor refuses the edit that would make it (`webview/notes.ts`)
  * rather than save a document the next parse restructures: a raw mark over a
  * note, text under a raw mark that holds a reference's `|` or the note's
- * marker pair, or a textblock that would not read back as the attribute
- * literals and the sidebars it holds (`textblockRefusal`).
+ * marker pair, or a block the save would write so that it does not read back
+ * as it is shown (`unitRefusal`).
  *
- * The sidebars are not modelled, they are read: each textblock the save will
- * write again — with the edit's `origin` every one of each top-level block the
- * save then writes by rule and no other (`rewritten`: a list, a quote or a
- * table is written whole, the items and cells the edit did not touch included,
- * and a block it keeps, a copy of one whose literal and ids it keeps included,
- * is written as it was read; `doc` is then the document as the save writes it);
- * without it every one in the range — that holds a sidebar, or a `$` or `@` that could be
- * read as one, is written as the save writes it (`writtenTextblock`) and
- * parsed by the page's own engine, built from the host's definition
- * (`setInlineEngine`), and every sidebar it holds must come back where it
- * stands, and no other. Whatever stands beside a marker — a letter, a digit,
- * a web address linkify reads on into it, an escape the line start takes, VS
- * Code's math reading a `$…$` as math (`InlineEngineDefinition.math`, its
- * stand-in in the page's engine; `SIDEBAR_LEFT_MATH`) — is judged by the
- * parser that will read the file. So **a document the parser produced is always writable**
- * wherever the editor writes it as it was read: its sidebars are the ones the
- * parser read. Where the editor writes it otherwise — a character reference
- * written as its character — the parse sees the outcome, and the edit is
- * refused with that cause (`origin`, the edit's starting document). The
- * attribute literals are read the same way, in the same parse: every literal
- * a checked textblock holds or carries (its spans', its block's, its item's,
- * a quote's or a list's it ends) must come back as written (`readBack`) — a
- * `$` typed beside one can pair with a `$` in it as math. Every
- * refusal the editor asks — the notes filter, the toolbar's disabled buttons,
- * the object bar's verbs — goes through here with the transaction's origin
- * (`noteRefusal`).
+ * Nothing about what the parser reads is modelled; the save's own text is
+ * read. Each top-level block the save will write again — with the edit's
+ * `origin` exactly those it then writes by rule (`rewritten`: a list, a quote
+ * or a table is written whole, the items and cells the edit did not touch
+ * included, and a block it keeps, a copy of one whose literal and ids it keeps
+ * included, is written as it was read; `doc` is then the document as the save
+ * writes it); without it every one the range touches — is written by the
+ * save's own writer, wrap included, in the parts the parser reads apart
+ * (`unitsOf`: a list's items, a table's rows), and each part is parsed by the
+ * page's engine, built from the host's definition (`setInlineEngine`), whole
+ * — block rules, inline rules, markdown-it-attrs, VS Code's math as its
+ * stand-in. What comes back must be what the page shows (`unitVerdict`):
+ * every sidebar it holds, and every attribute literal — the block's, an
+ * item's, a heading's, a span's — as the attributes it gives, and nothing
+ * else read as either. So **a document the parser produced is always
+ * writable** wherever the editor writes it as it was read; where the editor
+ * writes it otherwise — a character reference written as its character, a
+ * line the wrap breaks before a `{…}` — the parse sees the outcome, and the
+ * edit is refused with its cause (`origin`, the edit's starting document).
+ * Every refusal the editor asks — the notes filter, the toolbar's disabled
+ * buttons, the object bar's verbs — goes through here with the transaction's
+ * origin (`noteRefusal`).
  */
 export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin): string | null {
     let reason: string | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
-    const inRange: CheckedTextblock[] = [];
-    doc.nodesBetween(start, end, (node, pos) => {
+    doc.nodesBetween(start, end, node => {
         if (reason !== null) {
             return false;
-        }
-        if (node.isTextblock) {
-            inRange.push({ node, pos, beside: false });
         }
         if (NOTE_NODES.has(node.type.name)) {
             reason = noteUnwritable(node);
@@ -516,37 +512,41 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
         }
         return true;
     });
-    // With the edit's origin, what is checked is exactly what the save writes again: every textblock of
-    // each block it rewrites, the edit's neighbours too, and none of a block it keeps — a copy of a whole
-    // block is the same node, written from its `src` as it was read unless its literal or id is stripped.
-    const rewritten = origin?.rewritten;
-    let textblocks = inRange;
-    if (rewritten !== undefined) {
-        const ranged = new Set(inRange.map(t => t.pos));
-        textblocks = [];
-        for (const block of rewritten) {
-            const copyOf = block.copyOf ?? null;
-            if (block.node.isTextblock) {
-                textblocks.push({ node: block.node, pos: block.offset, beside: false, old: copyOf ?? undefined });
+    if (reason !== null) {
+        return reason;
+    }
+    // With the edit's origin, what is checked is exactly what the save writes again: every part of each
+    // block it rewrites, the edit's neighbours too, and none of a block it keeps — a copy of a whole block
+    // is the same node, written from its `src` as it was read unless its literal or id is stripped.
+    const blocks: { node: Node; offset: number; copyOf?: number | null }[] = [];
+    if (origin?.rewritten !== undefined) {
+        blocks.push(...origin.rewritten);
+    } else {
+        doc.forEach((node, offset) => {
+            if (offset + node.nodeSize > start && offset <= end) {
+                blocks.push({ node, offset });
+            }
+        });
+    }
+    // Whether `[from, to)` lies outside the edit's range: only written again beside it.
+    const outside = (from: number, to: number) => to <= start || from >= Math.max(end, start + 1);
+    for (const block of blocks) {
+        for (const [index, unit] of unitsOf(block.node).entries()) {
+            if (origin?.rewritten === undefined && outside(block.offset + unit.from, block.offset + unit.to)) {
                 continue;
             }
-            block.node.descendants((node, rel) => {
-                const pos = block.offset + 1 + rel;
-                if (node.isTextblock) {
-                    textblocks.push({ node, pos, beside: !ranged.has(pos), old: copyOf === null ? undefined : copyOf + 1 + rel });
-                }
-                return !node.isTextblock;
-            });
+            const verdict = unitVerdict(unit);
+            if (verdict !== null) {
+                const failed = verdict.lost?.at ?? verdict.mismatch?.at;
+                const textblock = unit.textblocks.find(t => t.node === failed);
+                const beside = textblock === undefined
+                    ? outside(block.offset + unit.from, block.offset + unit.to)
+                    : outside(block.offset + textblock.pos, block.offset + textblock.pos + textblock.node.nodeSize);
+                return unitRefusal(block, unit, index, verdict, beside, origin);
+            }
         }
     }
-    // What reads as a sidebar depends on the whole textblock as written, which an edit anywhere in it changes.
-    for (const textblock of textblocks) {
-        if (reason !== null) {
-            break;
-        }
-        reason = textblockRefusal(doc, textblock, origin);
-    }
-    return reason;
+    return null;
 }
 
 /** A part's inline content, written by the same rules as a paragraph's, with the part's own terminator (`PART_TERMINATORS`). */
@@ -668,19 +668,6 @@ export interface EditOrigin {
     sourceOf?: (pos: number) => string | null;
 }
 
-/**
- * A textblock `unwritableInNote` checks: where it stands, whether it is only
- * written again beside the edit, outside its range, and, in a copy of a whole
- * block, where the textblock it was copied from stands in the edit's starting
- * document (`old`).
- */
-interface CheckedTextblock {
-    node: Node;
-    pos: number;
-    beside: boolean;
-    old?: number;
-}
-
 /** Where each sidebar's markers stand while `writtenTextblock` writes a textblock. */
 let seamCollector: SidebarSeam[] | null = null;
 
@@ -698,6 +685,8 @@ export const SIDEBAR_REWRITTEN = 'Written by the editor, this line would not rea
 export const SIDEBAR_NOT_READ = 'After this edit a sidebar here would not be read back as a sidebar.';
 /** Why an edit is refused after which text would read as a sidebar the editor does not show. */
 export const SIDEBAR_MADE = 'After this edit text here would be read as a sidebar, which the editor does not show (a $…$ or @…@ in a web address, say).';
+/** Why an edit is refused after which VS Code's math would read text here as a formula, which the editor does not show. */
+export const MATH_MADE = 'After this edit VS Code\'s math would read text here as a formula ($…$), which the editor does not show (a $…$ a web address no longer holds, say).';
 /** Why a left sidebar is not made, nor an edit applied that leaves one, that VS Code's math would read as math (`InlineEngineDefinition.math`). */
 export const SIDEBAR_LEFT_MATH = 'Left sidebars need markdown.math.enabled off: math reads $…$.';
 
@@ -731,29 +720,20 @@ const readCache = new Map<string, ReadSidebar[]>();
 /** How many texts `readCache` keeps; the oldest is dropped first. */
 const READ_CACHE_SIZE = 512;
 /**
- * How each textblock reads back once written (`sidebarMismatch`), by the node:
- * a node never changes, and one an edit did not touch is the same object in
- * the next state, so the textblocks beside an edit — a list's other items, a
- * toolbar's queries on every redraw — are written and read once, not per ask.
- * Made anew with the engine.
- */
-let mismatchCache = new WeakMap<Node, SidebarMismatch | null>();
-
-/**
  * Read textblocks with the engine `definition` describes — the host's, posted
  * with each document (`inlineEngineDefinition`): its linkify and typographer
- * settings, the registry's inline plugins it runs, and whether VS Code's math
+ * settings, the registry's plugins the page runs, and whether VS Code's math
  * claims `$`. The literals the page writes are read back with it too
- * (`attrs.ts`): the engine is one, `currentInlineEngine`.
+ * (`attrs.ts`, `readUnit`): the engine is one, `currentInlineEngine`, and
+ * `attrsEngineFor` is it with markdown-it-attrs.
  */
 export function setInlineEngine(definition: InlineEngineDefinition): void {
     if (!setCurrentInlineDefinition(definition)) {
         return;
     }
     readCache.clear();
-    runCache.clear();
-    mismatchCache = new WeakMap();
     writtenCache = new WeakMap();
+    forgetReadBack();
 }
 
 function engine(): MarkdownIt {
@@ -808,9 +788,11 @@ const INLINE_TEXTBLOCKS: ReadonlySet<string> = new Set(['paragraph', 'heading', 
  * wrapper's hold markers taken out, and where each sidebar it holds stands in
  * that text: its kind, its opening marker and its closing marker. A paragraph
  * is written in the line-start form, as `blockSerializer` writes it
- * (`paragraphMarkdown`), with a trailing `{…}` as text escaped; a heading and
- * a table cell by the save's own writers, `headingText` and `cellText`, which
- * carry each marker's place through their last touches (`Spelled`).
+ * (`paragraphMarkdown`); a heading and a table cell by the save's own writers,
+ * `headingText` and `cellText`, which carry each marker's place through their
+ * last touches (`Spelled`). What the read-back compares a sidebar's text by
+ * (`sidebarVerdict`) and a refusal says what stands beside a marker by
+ * (`lostReason`); what is parsed is the save's own text (`unitsOf`).
  */
 function writtenTextblock(textblock: Node): { text: string; sidebars: ReadSidebar[] } {
     const seams: SidebarSeam[] = [];
@@ -828,10 +810,6 @@ function writtenTextblock(textblock: Node): { text: string; sidebars: ReadSideba
         written = headingText(textblock, spelled);
     } else if (name === 'paragraph') {
         written = respelled(spelled, HOLD_RE, () => '');
-        if (endsInLiteralText(textblock)) {
-            // At the text's end, after every sidebar, so no marker moves.
-            written = { text: escapeTrailingLiteral(written.text), at: written.at };
-        }
     } else {
         written = cellText(spelled);
     }
@@ -887,7 +865,8 @@ const CLOSING_HASHES = /#+$/g;
  * A heading's text as its line writes it after the `#`s and the space: its
  * requirement id's prefix, then its inline content on one line — a hard break
  * a note inside it holds is a space — with a trailing `#` run escaped where no
- * suffix follows it, and a trailing `{…}` as text escaped. The one spelling
+ * suffix follows it, and a `{…}` the plugin would take off its text escaped
+ * (`escapedTrailingLiteral`). The one spelling
  * the save (`blockSerializer`) and the check of an edit (`writtenTextblock`)
  * both write.
  */
@@ -896,63 +875,28 @@ function headingText(node: Node, inline: Spelled): Spelled {
     if ((node.attrs.attrsSuffix as string | null) === null && /(^| )#+$/.test(text.text)) {
         text = respelled(text, CLOSING_HASHES, run => '\\' + run);
     }
-    if (endsInLiteralText(node)) {
-        // At the text's end, after every sidebar, so no marker moves.
-        text = { text: escapeTrailingLiteral(text.text), at: text.at };
-    }
     const prefix = (node.attrs.reqPrefix as string | null) ?? '';
-    return { text: prefix + text.text, at: text.at.map(place => place + prefix.length) };
-}
-
-/** Whether a textblock holds a sidebar, or text that could be read as one once written. */
-function mayHoldSidebar(textblock: Node): boolean {
-    if (!INLINE_TEXTBLOCKS.has(textblock.type.name)) {
-        return false;
-    }
-    let holds = false;
-    textblock.forEach(child => {
-        holds = holds || SIDEBAR_NODES.has(child.type.name);
-    });
-    return holds || /[$@]/.test(textblock.textContent);
+    const escaped = escapedTrailingLiteral(node, prefix + text.text, `# ${prefix}${text.text}`);
+    // A marker after an escaped brace moves by its backslash.
+    return { text: escaped.text, at: text.at.map(place => place + prefix.length + escaped.at.filter(at => at <= place + prefix.length).length) };
 }
 
 function sameSidebar(a: ReadSidebar, b: ReadSidebar): boolean {
     return a.kind === b.kind && a.open === b.open && a.close === b.close;
 }
 
-/** How a textblock reads back once written, where not as the sidebars it holds (`sidebarMismatch`). */
+/**
+ * Where a part does not read back as the sidebars it holds (`sidebarVerdict`):
+ * the textblock `at`, as the save writes it unwrapped (`written`, which the
+ * reason reads what stands beside a marker in), and the sidebar of it not read
+ * back (`lost`) — none when a sidebar is read that the page does not show.
+ */
 interface SidebarMismatch {
     written: { text: string; sidebars: ReadSidebar[] };
     lost?: ReadSidebar;
-    made?: ReadSidebar;
-}
-
-/**
- * How `textblock`, written as the save writes it, reads back, if not as the
- * sidebars it holds: the first of them the parser does not read where it
- * stands (`lost`), or the first sidebar it reads that the textblock does not
- * hold (`made`). `null` as well for one that holds no sidebar and nothing that
- * could be read as one (`mayHoldSidebar`). Remembered by the node.
- */
-function sidebarMismatch(textblock: Node): SidebarMismatch | null {
-    const known = mismatchCache.get(textblock);
-    if (known !== undefined) {
-        return known;
-    }
-    let mismatch: SidebarMismatch | null = null;
-    if (mayHoldSidebar(textblock)) {
-        const written = writtenOf(textblock);
-        mismatch = sidebarsCompared(written, sidebarsRead(written.text));
-    }
-    mismatchCache.set(textblock, mismatch);
-    return mismatch;
-}
-
-/** How `written` reads back as the sidebars `read` in its text: the first it holds that is not read where it stands, the first read that it does not hold; `null` when they are the same. */
-function sidebarsCompared(written: { text: string; sidebars: ReadSidebar[] }, read: ReadSidebar[]): SidebarMismatch | null {
-    const lost = written.sidebars.find(s => !read.some(r => sameSidebar(r, s)));
-    const made = read.find(r => !written.sidebars.some(s => sameSidebar(r, s)));
-    return lost === undefined && made === undefined ? null : { written, lost, made };
+    at: Node;
+    /** Not a sidebar but a formula is read that the page does not show. */
+    math?: boolean;
 }
 
 /** Each textblock as the save writes it (`writtenTextblock`), by the node; made anew with the engine. */
@@ -1003,66 +947,73 @@ function lostReason(text: string, lost: ReadSidebar): string {
 }
 
 /**
- * Why the textblock `checked` in `doc` cannot be written so that it reads back
- * as it is shown, or `null`: an attribute literal it holds or carries that
- * does not read back (`readBack`, named in the reason), then a sidebar. One
- * parse of the textblock answers both. When the textblock the edit started
- * from already read back otherwise (`origin`), the cause is how the file
- * spells it, which the editor rewrites — a character reference it writes as
- * the character (`h&#116;tp://e.com/$x$`, an address once written out, takes
- * the sidebar in), when the text that textblock was read from holds one
- * (`EditOrigin.sourceOf`), else unnamed; for a literal, that literal — and
- * the reason says so: it is edited in the text editor once. An edit that only
- * takes literals off such a textblock is not refused for them: it cannot make
- * the read-back worse. For a textblock only written again beside the edit
- * (`beside`), the reason names the block the edit rewrites whole.
+ * Why the save cannot write `unit`, the part `index` of the top-level `block`,
+ * so that it reads back as it is shown, its `verdict` given: an
+ * attribute literal it does not read back, or text it reads as one, named in
+ * the reason; then a sidebar. When the same part of the document the edit
+ * started from already read back otherwise (`origin`), the cause is how the
+ * file spells it, which the editor rewrites — a character reference it writes
+ * as the character (`h&#116;tp://e.com/$x$`, an address once written out,
+ * takes the sidebar in), when the text that textblock was read from holds one
+ * (`EditOrigin.sourceOf`), else unnamed; for a literal, that literal — and the
+ * reason says so: it is edited in the text editor once. Nothing is let through
+ * on that account, a literal's removal included: an edit applies exactly when
+ * the save then reads back what the page shows. Where what fails is only
+ * written again beside the edit (`beside`: a textblock outside its range), the
+ * reason names the block the edit rewrites whole.
  */
-function textblockRefusal(doc: Node, checked: CheckedTextblock, origin?: EditOrigin): string | null {
-    const now = readBack(textblockAt(doc, checked.pos), true);
-    if (now.lost === null && now.mismatch === null) {
-        return null;
-    }
-    let before: { pos: number; node: Node; read: ReadBack } | null = null;
-    if (origin !== undefined) {
-        const old = checked.old !== undefined ? checked.old + 1 : Math.min(origin.mapping.invert().map(checked.pos + 1, -1), origin.doc.content.size);
-        const $old = origin.doc.resolve(old);
-        if ($old.depth > 0 && $old.parent.isTextblock) {
-            before = { pos: $old.before(), node: $old.parent, read: readBack(textblockAt(origin.doc, $old.before()), true) };
+function unitRefusal(block: { node: Node; offset: number; copyOf?: number | null }, unit: WrittenUnit, index: number, verdict: UnitVerdict, beside: boolean, origin?: EditOrigin): string {
+    const before = origin === undefined ? null : unitBefore(origin, block, unit, index);
+    if (verdict.lost !== null) {
+        if (before?.verdict.lost == null) {
+            return literalLostReason(verdict.lost);
         }
+        return beside ? literalRewrittenBeside(block.node, verdict.lost.at ?? block.node, before.verdict.lost) : literalRewritten(before.verdict.lost);
     }
-    if (now.lost !== null) {
-        if (before === null || before.read.lost === null) {
-            return literalLostReason(now.lost);
-        }
-        if (!onlyTakesLiteralsOff(before.node, before.read.literals, checked.node, now.literals)) {
-            return checked.beside ? literalRewrittenBeside(doc.resolve(checked.pos).node(1), checked.node, before.read.lost) : literalRewritten(before.read.lost);
-        }
-    }
-    const mismatch = now.mismatch;
-    if (mismatch === null) {
-        return null;
-    }
-    if (origin !== undefined && before !== null && before.read.mismatch !== null) {
-        const source = origin.sourceOf?.(before.pos) ?? null;
+    const mismatch = verdict.mismatch as SidebarMismatch;
+    const old = before?.verdict.mismatch ?? null;
+    if (origin !== undefined && before !== null && old !== null) {
+        const source = origin.sourceOf?.(before.positionOf(old.at)) ?? null;
         const reference = source !== null && CHARACTER_REFERENCE.test(source);
-        if (checked.beside) {
-            return sidebarRewrittenBeside(doc.resolve(checked.pos).node(1), checked.node, reference);
+        if (beside) {
+            return sidebarRewrittenBeside(block.node, mismatch.at, reference);
         }
         return reference ? SIDEBAR_REWRITTEN_REFERENCE : SIDEBAR_REWRITTEN;
     }
-    return mismatch.lost !== undefined ? lostReason(mismatch.written.text, mismatch.lost) : SIDEBAR_MADE;
+    return mismatch.lost !== undefined ? lostReason(mismatch.written.text, mismatch.lost) : mismatch.math ? MATH_MADE : SIDEBAR_MADE;
 }
 
-/** Whether a textblock, `after` an edit, holds the text it held `before` and some of its literals, fewer than before and no other. */
-function onlyTakesLiteralsOff(before: Node, had: readonly string[], after: Node, has: readonly string[]): boolean {
-    if (has.length >= had.length || before.textContent !== after.textContent) {
-        return false;
+/**
+ * The part of the document an edit started from that `unit` (part `index` of
+ * `block` in the edited one) was made of, with its verdict and where a
+ * textblock of it stands there: a copy's own part `index` of the block it
+ * copies (`copyOf`), else the part holding the position the unit's start maps
+ * back to. `null` where there is none.
+ */
+function unitBefore(origin: EditOrigin, block: { node: Node; offset: number; copyOf?: number | null }, unit: WrittenUnit, index: number): { verdict: UnitVerdict; positionOf: (node: Node) => number } | null {
+    let oldBlock: Node | null;
+    let oldOffset: number;
+    let oldUnit: WrittenUnit | undefined;
+    if (block.copyOf !== undefined && block.copyOf !== null) {
+        oldOffset = block.copyOf;
+        oldBlock = origin.doc.nodeAt(oldOffset);
+        oldUnit = oldBlock === null ? undefined : unitsOf(oldBlock)[index];
+    } else {
+        const pos = Math.min(origin.mapping.invert().map(block.offset + unit.from + 1, -1), origin.doc.content.size);
+        const $old = origin.doc.resolve(pos);
+        if ($old.depth === 0 && pos >= origin.doc.content.size) {
+            return null;
+        }
+        oldOffset = $old.depth === 0 ? pos : $old.before(1);
+        oldBlock = origin.doc.nodeAt(oldOffset);
+        oldUnit = oldBlock === null ? undefined : unitsOf(oldBlock).find(u => u.from <= pos - oldOffset && pos - oldOffset < u.to);
     }
-    const left = [...had];
-    return has.every(literal => {
-        const i = left.indexOf(literal);
-        return i >= 0 && left.splice(i, 1).length === 1;
-    });
+    const verdict = oldUnit === undefined ? null : unitVerdict(oldUnit);
+    if (oldUnit === undefined || verdict === null) {
+        return null;
+    }
+    const textblocks = oldUnit.textblocks;
+    return { verdict, positionOf: node => oldOffset + (textblocks.find(t => t.node === node)?.pos ?? 0) };
 }
 
 /** Why an edit is refused after which text would be read as attributes no literal gives. */
@@ -1070,31 +1021,35 @@ export const LITERAL_MADE = 'After this edit text here would be read as attribut
 
 /**
  * Why an edit is refused after which the literal `lost` names would not read
- * back with its line — a `$` in it pairing with another as math or a left
- * sidebar, inline code or a link reaching into it.
+ * back where the save writes it — a `$` in it pairing with another as math or
+ * a left sidebar, inline code or a link reaching into it, a line break the
+ * wrap puts before it — or, `literal` `null`, text would be read as
+ * attributes.
  */
 export function literalLostReason(lost: LiteralLoss): string {
     if (lost.literal === null) {
         return LITERAL_MADE;
     }
-    return `After this edit the preview would not read ${lost.literal} back as written: read with the rest of its line — a $ pairing with another $ as math or a left sidebar, say, or code reaching into it — it would be shown as text.`;
+    return `After this edit the preview would not read ${lost.literal} back as written: read with the rest of its block — a $ pairing with another $ as math or a left sidebar, say, code reaching into it, or a line break before it — it would be shown as text.`;
 }
 
-/** Why an edit is refused in a line whose literal `lost` names already does not read back as it is shown, edited or not. */
+/** Why an edit is refused in a line whose literal `lost` names already does not read back as it is shown, edited or not — or, `literal` `null`, which already reads text as attributes. */
 export function literalRewritten(lost: LiteralLoss): string {
-    const what = lost.literal === null ? 'text here as attributes the editor does not show' : `${lost.literal} back as written`;
-    return `Written by the editor, this line would not read ${what}, edited or not: remove that literal, or edit the line once in the text editor to unlock it.`;
+    if (lost.literal === null) {
+        return 'Written by the editor, this line would read text here as attributes the editor does not show, edited or not: edit the line once in the text editor to unlock it.';
+    }
+    return `Written by the editor, this line would not read ${lost.literal} back as written, edited or not: remove that literal, or edit the line once in the text editor to unlock it.`;
 }
 
 /** `literalRewritten` for another textblock of a block the edit makes the save write whole (`sidebarRewrittenBeside`). */
 export function literalRewrittenBeside(block: Node, textblock: Node, lost: LiteralLoss): string {
     const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
     const part = textblock.type.name === 'table_cell' || textblock.type.name === 'table_header' ? 'cell' : textblock.type.name === 'heading' ? 'heading' : 'paragraph';
-    const what = lost.literal === null ? 'text as attributes the editor does not show' : `${lost.literal} back as written`;
-    return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then not read ${what}. Remove that literal, or edit that ${part} once in the text editor to unlock this ${whole}.`;
+    if (lost.literal === null) {
+        return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then read text as attributes the editor does not show. Edit that ${part} once in the text editor to unlock this ${whole}.`;
+    }
+    return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then not read ${lost.literal} back as written. Remove that literal, or edit that ${part} once in the text editor to unlock this ${whole}.`;
 }
-
-const SIDEBAR_NODES: ReadonlySet<string> = new Set(['left_sidebar', 'right_sidebar']);
 
 /**
  * In a table cell a `|` in text is a cell boundary to the table plugin, so it
@@ -1176,9 +1131,17 @@ function cellMarkdown(cell: Node): string {
     return inlineInCell.serialize(editorSchema.topNodeType.create(null, [paragraph]));
 }
 
-/** One cell's inline content as the tidy form writes it (see above), unpadded. */
+/** Each cell as `tableCellMarkdown` writes it, by the node: a table is written whole for every keystroke in it (`unitsOf`). */
+const cellCache = new WeakMap<Node, string>();
+
+/** One cell's inline content as the tidy form writes it (see above), unpadded. Remembered by the node. */
 export function tableCellMarkdown(cell: Node): string {
-    return cellText({ text: cellMarkdown(cell), at: [] }).text;
+    let written = cellCache.get(cell);
+    if (written === undefined) {
+        written = cellText({ text: cellMarkdown(cell), at: [] }).text;
+        cellCache.set(cell, written);
+    }
+    return written;
 }
 
 /**
@@ -1323,11 +1286,8 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             const column = width(st.out.slice(st.out.lastIndexOf('\n') + 1));
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
-            const lines = wrapInline(paragraphMarkdown(node), limit - column, limit - width(st.delim));
-            if (endsInLiteralText(node)) {
-                lines[lines.length - 1] = escapeTrailingLiteral(lines[lines.length - 1]);
-            }
-            state.text(lines.join('\n'), false);
+            const wrapped = wrapInline(paragraphMarkdown(node), limit - column, limit - width(st.delim)).join('\n');
+            state.text(escapedTrailingLiteral(node, wrapped, wrapped).text, false);
             state.closeBlock(node);
         },
         heading(state, node) {
@@ -1341,18 +1301,12 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             state.wrapBlock('> ', null, node, () => state.renderContent(node));
         },
         bullet_list(state, node) {
-            const bullet = String(node.attrs.bullet || '-');
-            state.renderList(node, '  ', () => bullet + ' ');
+            const { indent, marker } = listMarkers(node);
+            state.renderList(node, indent, marker);
         },
         ordered_list(state, node) {
-            const start = Number(node.attrs.order ?? 1);
-            const delimiter = String(node.attrs.delimiter || '.');
-            const maxWidth = String(start + node.childCount - 1).length;
-            const space = state.repeat(' ', maxWidth + 2);
-            state.renderList(node, space, i => {
-                const n = String(start + i);
-                return state.repeat(' ', maxWidth - n.length) + n + delimiter + ' ';
-            });
+            const { indent, marker } = listMarkers(node);
+            state.renderList(node, indent, marker);
         },
         list_item(state, node) {
             const literal = node.attrs.literal as string | null;
@@ -1440,6 +1394,30 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
     }, marks, { escapeExtraCharacters: ESCAPE_EXTRA });
 }
 
+/**
+ * How a list writes its items (`renderList`): the indent of an item's
+ * continuation lines and the marker of item `i` — `- ` (the list's bullet),
+ * or the number right-aligned to the widest one, its delimiter and a space.
+ * The one spelling the list writers and the read-back of an item
+ * (`itemMarkdown`) use.
+ */
+function listMarkers(node: Node): { indent: string; marker: (i: number) => string } {
+    if (node.type.name === 'bullet_list') {
+        const bullet = String(node.attrs.bullet || '-');
+        return { indent: '  ', marker: () => `${bullet} ` };
+    }
+    const start = Number(node.attrs.order ?? 1);
+    const delimiter = String(node.attrs.delimiter || '.');
+    const maxWidth = String(start + node.childCount - 1).length;
+    return {
+        indent: ' '.repeat(maxWidth + 2),
+        marker: i => {
+            const n = String(start + i);
+            return ' '.repeat(maxWidth - n.length) + n + delimiter + ' ';
+        },
+    };
+}
+
 /** How far an admonition's body is indented: `markdownItAdmonition.ts` reads it at `blkIndent + 4`. */
 export const ADMONITION_INDENT = '    ';
 
@@ -1498,21 +1476,47 @@ function listTakesLineLiteral(list: Node): boolean {
 }
 
 /**
- * Whether a textblock ends in plain text that reads as a `{…}` literal itself
- * (`text \{x\}` in the file, `text {x}` in the node): written as it is, the
- * plugin would take it for attributes — at once, or once a literal after it is
- * removed — so its braces are escaped (`escapeTrailingLiteral`).
+ * `written`, a paragraph's or a heading's text as the save writes it, with a
+ * `{…}` in its text that the parser would read as attributes written as text,
+ * `\{x\}`: markdown-it-attrs, reading `block` — that text as the block the
+ * save writes, wrap included — takes a `{…}` off the end of its last text, or
+ * the line the wrap left it alone on, and gives it to the block
+ * (`textBeforeAttrs`, `attrsGivenTo`): at once (`text \{x\}` in the file,
+ * `text {x}` in the node), or once a literal after it is removed. Asked of the
+ * parser, not of the line: the plugin reads the last text token the inline
+ * rules make and passes over what is not text — an escape (`b {x}\$` takes
+ * `{x}`), emphasis — so `5" and \* b {x}` takes `{x}`, the `"` standing in
+ * another token. The `{…}` escaped is the one the plugin took, its last
+ * occurrence; where the text spells it otherwise (an escape inside), its `{`
+ * alone, which is enough for the plugin to read none.
  */
-function endsInLiteralText(node: Node): boolean {
-    const last = node.lastChild;
-    return last !== null && last.isText && last.marks.length === 0 && endsWithAttrsLiteral(last.text ?? '');
+function escapedTrailingLiteral(node: Node, written: string, block: string): Spelled {
+    const at = trailingLiteralEscapes(node, written, block);
+    return { text: at.reduceRight((text, place) => `${text.slice(0, place)}\\${text.slice(place)}`, written), at };
 }
 
-/** The line's trailing `{…}` as text, `\{x\}`, which the plugin reads as no literal. */
-function escapeTrailingLiteral(line: string): string {
-    const trimmed = line.replace(/[ \t]+$/, '');
-    const start = trimmed.lastIndexOf('{');
-    return start < 0 || !trimmed.endsWith('}') ? line : `${trimmed.slice(0, start)}\\{${trimmed.slice(start + 1, -1)}\\}`;
+/** Where `escapedTrailingLiteral` puts a backslash in `written`, in order: before the `{` and the `}` it escapes. */
+function trailingLiteralEscapes(node: Node, written: string, block: string): number[] {
+    if (!node.textContent.includes('}')) {
+        return [];
+    }
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(block, {});
+    if (tokens[0] === undefined || attrsGivenTo(tokens[0]).length === 0) {
+        return [];
+    }
+    const trimmed = written.replace(/[ \t]+$/, '');
+    // Cut off the end of the last text — or, the wrap having put it on a line of its own, that whole line.
+    const cut = tokens[1]?.type === 'inline' ? textBeforeAttrs(tokens[1]) : null;
+    const literal = cut === null ? trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim() : cut.slice(Math.max(0, findLeftDelimiter(cut)));
+    const at = trimmed.lastIndexOf(literal);
+    if (at >= 0 && literal.endsWith('}')) {
+        return [at, at + literal.length - 1];
+    }
+    let start = trimmed.length;
+    for (let braces = (literal.match(/\{/g) ?? []).length; braces > 0 && start > 0; braces--) {
+        start = trimmed.lastIndexOf('{', start - 1);
+    }
+    return start < 0 ? [] : [start];
 }
 
 /** Whether a node is a paragraph holding nothing: what `Enter` leaves, or text deleted to be typed again. */
@@ -1639,239 +1643,459 @@ function literalPairs(literal: string | null | undefined): AttrPair[] {
     return joinAttrs((literal ? parseAttrsLiteral(literal) : null) ?? []);
 }
 
-/** A list of attribute lists as a key that ignores their order and each one's. */
-function attrsKey(lists: readonly (readonly AttrPair[])[]): string {
-    return JSON.stringify(lists.map(list => JSON.stringify([...list].map(([n, v]) => [n, v]).sort())).sort());
+/** An attribute list as a key that ignores its order. */
+function attrsKey(list: readonly AttrPair[]): string {
+    return JSON.stringify([...list].map(([n, v]) => [n, v]).sort());
 }
 
-/** A textblock, the top-level `block` it is written in, and `parent`, which holds it at `index` (`null` for a top-level one). */
-interface TextblockAt {
-    block: Node;
-    textblock: Node;
-    parent: Node | null;
-    index: number;
+// ---------------------------------------------------------------------------
+// Reading back what the save writes
+// ---------------------------------------------------------------------------
+
+/**
+ * The options the save writes with on this page (`setWriteOptions`): the
+ * read-back writes each block as the save does, wrap included.
+ */
+let writeOptions: SerializeOptions = { defaultWrap: 90 };
+/** `blockSerializer(writeOptions)`, made when first asked. */
+let writer: MarkdownSerializer | null = null;
+
+/**
+ * Write with `options` from now on, as the page's save does (the host's
+ * `defaultWrap`, posted with each document): what the edit filter reads back
+ * is the text the save will write.
+ */
+export function setWriteOptions(options: SerializeOptions): void {
+    if (options.defaultWrap === writeOptions.defaultWrap) {
+        return;
+    }
+    writeOptions = { ...options };
+    writer = null;
+    forgetReadBack();
 }
 
-/** The textblock that starts at `pos` in `doc`, with what holds it. */
-function textblockAt(doc: Node, pos: number): TextblockAt {
-    const $in = doc.resolve(pos + 1);
-    const textblock = $in.parent;
-    return $in.depth <= 1
-        ? { block: textblock, textblock, parent: null, index: 0 }
-        : { block: $in.node(1), textblock, parent: $in.node($in.depth - 1), index: $in.index($in.depth - 1) };
+function currentWriter(): MarkdownSerializer {
+    writer ??= blockSerializer(writeOptions);
+    return writer;
 }
 
 /**
- * A textblock as the parser will read its literals: its text as the save
- * writes it, with the literals the save writes on its line or the line after
- * it, in the smallest source that reads them where they stand (`text`); those
- * literals, each with the token the plugin gives it to (`carried`); and its
- * spans' (`spans`).
+ * A part of a top-level block's save that the parser reads on its own as it
+ * reads it in the whole (`unitsOf`): its text as the save writes it, the
+ * literals the save writes in it, its textblocks, and where it stands.
  */
-interface LiteralRun {
+interface WrittenUnit {
     text: string;
-    carried: { literal: string | null; token: string }[];
-    spans: string[];
+    /**
+     * What its reading depends on, by which it is remembered: its text, or for
+     * a table's row the cells' texts — the padding the tidy form gives each
+     * cell to its column's width, which the table rule trims off every cell,
+     * changes all rows when one cell widens its column.
+     */
+    key: string;
+    /** The node the unit is written from, by which its verdict is remembered with its text (`unitVerdict`). */
+    anchor: Node;
+    /** The literals written in it, in the order the parser meets the tokens markdown-it-attrs gives them to. */
+    literals: { literal: string; token: string; node: Node }[];
+    /** Its textblocks whose inline content the parser reads, in order, at their position from the top-level block's (`0` for the block itself). */
+    textblocks: { node: Node; pos: number }[];
+    /** Where it stands from the top-level block's position: `[from, to)`. */
+    from: number;
+    to: number;
+}
+
+/** The token markdown-it-attrs gives a node's literal to. */
+const LITERAL_TOKENS: Readonly<Record<string, string>> = {
+    paragraph: 'paragraph_open',
+    heading: 'heading_open',
+    bullet_list: 'bullet_list_open',
+    ordered_list: 'ordered_list_open',
+    list_item: 'list_item_open',
+    blockquote: 'blockquote_open',
+    table: 'table_open',
+    code_block: 'fence',
+    horizontal_rule: 'hr',
+};
+
+/**
+ * The literals the save writes for `node` and what it holds, in document
+ * order, as `blockSerializer` writes them: a top-level block's (`top`)
+ * `attrsSuffix` (`withBlockSuffix`; a quote's only while it takes one,
+ * `quoteTakesLiteral`; an indented code block's never), a heading's at any
+ * depth, a list item's while it takes one (`itemTakesLiteral`).
+ */
+function writtenLiterals(node: Node, top: boolean, out: WrittenUnit['literals'] = []): WrittenUnit['literals'] {
+    const name = node.type.name;
+    const suffix = node.attrs.attrsSuffix as string | null | undefined;
+    const indented = name === 'code_block' && String(node.attrs.markup ?? '```') === '' && node.textContent.trim() !== '';
+    if (suffix && (top || name === 'heading') && !(name === 'blockquote' && !quoteTakesLiteral(node)) && !indented) {
+        out.push({ literal: suffix, token: LITERAL_TOKENS[name] ?? `${name}_open`, node });
+    }
+    const literal = name === 'list_item' ? node.attrs.literal as string | null : null;
+    if (literal && itemTakesLiteral(node)) {
+        out.push({ literal, token: 'list_item_open', node });
+    }
+    if (!node.isTextblock) {
+        node.forEach(child => {
+            writtenLiterals(child, false, out);
+        });
+    }
+    return out;
+}
+
+/** The textblocks in `node` (itself included) whose inline content the parser reads, at their position from `base`, as `node` stands at `base`. */
+function inlineTextblocks(node: Node, base: number): WrittenUnit['textblocks'] {
+    if (node.isTextblock) {
+        return INLINE_TEXTBLOCKS.has(node.type.name) ? [{ node, pos: base }] : [];
+    }
+    const out: WrittenUnit['textblocks'] = [];
+    node.descendants((child, rel) => {
+        if (child.isTextblock && INLINE_TEXTBLOCKS.has(child.type.name)) {
+            out.push({ node: child, pos: base + 1 + rel });
+        }
+        return !child.isTextblock;
+    });
+    return out;
+}
+
+/** The parts of each top-level block, by the node (`unitsOf`); made anew with the engine and the options. */
+let unitsCache = new WeakMap<Node, WrittenUnit[]>();
+/** An item's text as its list writes it (`itemMarkdown`), by the item and how its list writes it. */
+let itemCache = new WeakMap<Node, { key: string; text: string }>();
+
+/**
+ * A list item as `renderList` writes it in its list — its marker, its
+ * continuation lines' indent, the list's tightness — without the separator
+ * before it: the very calls the list writer makes for it, on a state of its
+ * own.
+ */
+function itemMarkdown(list: Node, item: Node, index: number, indent: string, marker: string): string {
+    const tight = list.attrs.tight as boolean | undefined;
+    const key = `${indent}\u0000${marker}\u0000${String(tight)}`;
+    const known = itemCache.get(item);
+    if (known !== undefined && known.key === key) {
+        return known.text;
+    }
+    const serializer = currentWriter();
+    const State = MarkdownSerializerState as unknown as new (nodes: unknown, marks: unknown, options: unknown) => MarkdownSerializerState;
+    const state = new State(serializer.nodes, serializer.marks, serializer.options);
+    const st = internals(state);
+    st.inTightList = tight;
+    state.wrapBlock(indent, marker, list, () => state.render(item, list, index));
+    itemCache.set(item, { key, text: st.out });
+    return st.out;
 }
 
 /**
- * The run of the textblock `at` (`LiteralRun`): its spans' literals, and
- * those the save writes on its line or the line after it — a top-level
- * paragraph's or heading's own, its list item's, the quote's `> {…}` and the
- * list's `{…}` line it ends. Those are read through one inline run with its
- * text, so a `$` in one can pair with a `$` in another — the text's own are
- * escaped — as a left sidebar, or as VS Code's math (`useMathStandIn`); a
- * list's literal after a blank line, a table's and a fence's are read apart.
- *
- * The placements are the save's, restated: they must match what
- * `blockSerializer` writes — its `heading` writer (`headingText`, the literal
- * after a space), `paragraph` with `withBlockSuffix` (`end` after a space,
- * `line` under it), `list_item` (after a space at the end of the first
- * paragraph), `renderList`'s item markers with the continuation indent, the
- * list's `line` literal under the last item (`withBlockSuffix`,
- * `listTakesLineLiteral`), `blockquote`'s `> ` with the quote's `> {…}` under
- * the paragraph that ends it (`quoteLiteralHost`, `quoteTakesLiteral`), and a
- * cell's text as `tableLines` writes it (`cellText`). A change to one of
- * those is a change here. Neither the wrap nor a marker's width moves a
- * literal's reading: the run is unwrapped and every list marker is `- ` or
- * `1. `.
+ * The parts of the top-level `block` the save writes, each as the parser
+ * reads it on its own exactly as it reads it in the block: a list's items,
+ * each as `renderList` writes it (`itemMarkdown`) — markdown-it reads an item
+ * by its own lines, which the writer indents — and the list's literal with
+ * the last (`withBlockSuffix`); a table's rows, each under the table's header
+ * and delimiter rows as `tableLines` writes them, the table's literal with
+ * the last; any other block whole (`serializeNode`), and none of a block that
+ * is written as it was read (`SOURCE_NODES`). A keystroke in a long
+ * list or table so writes and parses one part again, not all. Remembered by
+ * the node.
  */
-function literalRun(at: TextblockAt, written: string): LiteralRun {
-    const { block, textblock, parent, index } = at;
-    const name = textblock.type.name;
-    let text = written;
-    const carried: { literal: string | null; token: string }[] = [];
-    if (name === 'heading') {
-        const suffix = textblock.attrs.attrsSuffix as string | null;
-        text = `# ${text}${suffix === null ? '' : ` ${suffix}`}`;
-        carried.push({ literal: suffix, token: 'heading_open' });
-    } else if (name !== 'paragraph') {
-        text = `| ${text} |\n| - |`;
-    } else if (textblock === block) {
-        const suffix = block.attrs.attrsSuffix as string | null;
-        text = suffix === null ? text : text === '' ? suffix : (block.attrs.attrsPlacement ?? 'end') === 'end' ? `${text.replace(/[ \t]+$/, '')} ${suffix}` : `${text}\n${suffix}`;
-        carried.push({ literal: suffix, token: 'paragraph_open' });
-    } else if (parent !== null && parent.type.name === 'list_item' && index === 0) {
-        const literal = parent.attrs.literal as string | null;
-        if (literal !== null && itemTakesLiteral(parent)) {
-            text = `${text.replace(/[ \t]+$/, '')} ${literal}`;
-        }
-        carried.push({ literal: itemTakesLiteral(parent) ? literal : null, token: 'list_item_open' });
-        const ordered = block.type.name === 'ordered_list';
-        text = (ordered ? '1. ' : '- ') + text.split('\n').join(ordered ? '\n   ' : '\n  ');
-        const suffix = block.attrs.attrsSuffix as string | null;
-        if (suffix !== null && block.lastChild === parent && block.attrs.attrsPlacement === 'line' && listTakesLineLiteral(block)) {
-            text = `${text}\n${suffix}`;
-            carried.push({ literal: suffix, token: `${block.type.name}_open` });
-        }
-    } else if (parent === block && block.type.name === 'blockquote' && quoteLiteralHost(block) === textblock && quoteTakesLiteral(block)) {
-        const suffix = block.attrs.attrsSuffix as string | null;
-        text = `> ${text.split('\n').join('\n> ')}${suffix === null ? '' : `\n> ${suffix}`}`;
-        carried.push({ literal: suffix, token: 'blockquote_open' });
+function unitsOf(block: Node): WrittenUnit[] {
+    const known = unitsCache.get(block);
+    if (known !== undefined) {
+        return known;
     }
-    return { text, carried, spans: spanLiteralsIn(textblock) };
-}
-
-/** What the page's engine with markdown-it-attrs reads in a run's text (`readRun`). */
-interface RunRead {
-    /** The first inline token's content — the textblock's text as the parser hands it to the inline rules — or `null`. */
-    content: string | null;
-    /** The sidebars read in `content`, where they stand in it. */
-    sidebars: ReadSidebar[];
-    /** The attributes of the first token of each type. */
-    first: Map<string, AttrPair[]>;
-    /** The attributes of each span read, in order. */
-    spans: AttrPair[][];
-}
-
-/** What each run's text reads as, by the text: a textblock is parsed once however often it is asked about. */
-const runCache = new Map<string, RunRead>();
-
-/** `text` parsed by the page's engine with markdown-it-attrs (`attrsEngineFor`), remembered by the text. */
-function readRun(text: string): RunRead {
-    let read = runCache.get(text);
-    if (read === undefined) {
-        const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
-        const inline = tokens.find(t => t.type === 'inline');
-        const all = tokens.flatMap(t => [t, ...(t.children ?? [])]);
-        const pairs = (t: { attrs: string[][] | null }) => (t.attrs ?? []).map(([n, v]) => [n, v] as AttrPair);
-        const first = new Map<string, AttrPair[]>();
-        for (const t of all) {
-            if (!first.has(t.type)) {
-                first.set(t.type, pairs(t));
-            }
-        }
-        read = {
-            content: inline?.content ?? null,
-            sidebars: inline === undefined ? [] : sidebarsIn([inline]),
-            first,
-            spans: all.filter(t => t.type === 'span_open').map(pairs),
+    const name = block.type.name;
+    const units: WrittenUnit[] = [];
+    if (SOURCE_NODES.has(name)) {
+        // Written as it was read, always.
+    } else if (name === 'bullet_list' || name === 'ordered_list') {
+        const { indent, marker } = listMarkers(block);
+        const listLiteral = writtenLiterals(block.type.create({ ...block.attrs }), true);
+        block.forEach((item, offset, i) => {
+            const last = i === block.childCount - 1;
+            const text = itemMarkdown(block, item, i, indent, marker(i));
+            const written = last ? withBlockSuffix(block, text) : text;
+            units.push({
+                text: written,
+                key: written,
+                anchor: item,
+                literals: [...(last ? listLiteral : []), ...writtenLiterals(item, false)],
+                textblocks: inlineTextblocks(item, 1 + offset),
+                from: 1 + offset,
+                to: 1 + offset + item.nodeSize,
+            });
+        });
+    } else if (name === 'table') {
+        const lines = tableLines(block);
+        const head = block.firstChild;
+        const headCells = head === null ? [] : inlineTextblocks(head, 1);
+        const cells = (row: Node | null) => {
+            const out: string[] = [];
+            row?.forEach(cell => {
+                out.push(tableCellMarkdown(cell));
+            });
+            return JSON.stringify(out);
         };
-        if (runCache.size >= READ_CACHE_SIZE) {
-            runCache.delete(runCache.keys().next().value as string);
-        }
+        const headKey = cells(head);
+        block.forEach((row, offset, i) => {
+            const last = i === block.childCount - 1;
+            const text = i === 0 ? `${lines[0]}\n${lines[1]}` : `${lines[0]}\n${lines[1]}\n${lines[i + 1]}`;
+            const suffix = last ? withBlockSuffix(block, '\u0000') : '';
+            units.push({
+                text: last ? withBlockSuffix(block, text) : text,
+                key: `${headKey}\n${i === 0 ? '' : cells(row)}\n${suffix}`,
+                anchor: row,
+                literals: last ? writtenLiterals(block.type.create({ ...block.attrs }), true) : [],
+                textblocks: i === 0 ? headCells : [...headCells, ...inlineTextblocks(row, 1 + offset)],
+                from: 1 + offset,
+                to: 1 + offset + row.nodeSize,
+            });
+        });
     } else {
-        runCache.delete(text);
+        const text = serializeNode(block, writeOptions);
+        units.push({
+            text,
+            key: text,
+            anchor: block,
+            literals: writtenLiterals(block, true),
+            textblocks: inlineTextblocks(block, 0),
+            from: 0,
+            to: block.nodeSize,
+        });
     }
-    runCache.set(text, read);
+    unitsCache.set(block, units);
+    return units;
+}
+
+/** What the page's engine reads in a part's text (`readUnit`). */
+interface UnitRead {
+    /** Each token of the stream markdown-it-attrs gave attributes, in order, with what it gave. */
+    blocks: { type: string; given: AttrPair[] }[];
+    /** Each attribute span read, in order, with what markdown-it-attrs gave it, and the inline token it stands in (`inlines`). */
+    spans: { given: AttrPair[]; inline: number }[];
+    /** Each sidebar read, in order, its kind, its text between the markers (`sidebarBody`) and the inline token it stands in. */
+    sidebars: { kind: string; body: string; inline: number }[];
+    /** How many inline tokens it holds, an admonition's title's aside: one per paragraph with text, heading and cell. */
+    inlines: number;
+    /** Whether markdown-it-attrs gave attributes to an inline token other than a span. */
+    madeInline: boolean;
+    /** Whether VS Code's math (its stand-in) read a formula: the page holds none in a block it edits. */
+    math: boolean;
+}
+
+/** What each part's text reads as, by the text; the oldest is dropped first. */
+const unitReadCache = new Map<string, UnitRead>();
+/** How many texts `unitReadCache` keeps: more than a long list's items, so typing in one never parses the others again. */
+const UNIT_READ_CACHE_SIZE = 4096;
+
+/**
+ * A sidebar's text between its markers as the read-back compares it: every run
+ * of white space one space — the wrap breaks a line at a space — and no
+ * backslash escape, which the wrap adds to a word it puts at a line start.
+ */
+function sidebarBody(text: string): string {
+    return text.replace(/\\(?=[^\s\w])/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * `text`, a part as the save writes it, parsed whole by the page's engine with
+ * markdown-it-attrs (`attrsEngineFor`), as the preview reads it: what the
+ * plugin gave each token (`attrsGivenTo`), every span and every sidebar.
+ * Remembered by the text.
+ */
+function readUnit(text: string, key = text): UnitRead {
+    let read = unitReadCache.get(key);
+    if (read !== undefined) {
+        unitReadCache.delete(key);
+        unitReadCache.set(key, read);
+        return read;
+    }
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+    read = { blocks: [], spans: [], sidebars: [], inlines: 0, madeInline: false, math: false };
+    const found = read;
+    const walk = (children: readonly Token[]) => {
+        for (const child of children) {
+            const given = attrsGivenTo(child).map(([n, v]) => [n, v] as AttrPair);
+            if (child.type === 'span_open') {
+                found.spans.push({ given, inline: found.inlines });
+            } else if (given.length > 0) {
+                found.madeInline = true;
+            }
+            found.math ||= child.type.startsWith('math_');
+            walk(child.children ?? []);
+        }
+    };
+    tokens.forEach((token, i) => {
+        found.math ||= token.type.startsWith('math_');
+        if (token.type !== 'inline') {
+            const given = attrsGivenTo(token).map(([n, v]) => [n, v] as AttrPair);
+            if (given.length > 0) {
+                found.blocks.push({ type: token.type, given });
+            }
+            return;
+        }
+        // An admonition's title is its node's string, not a textblock: nothing in it is read back.
+        if (tokens[i - 1]?.type === 'admonition_title_open') {
+            return;
+        }
+        walk(token.children ?? []);
+        for (const sidebar of sidebarsIn([token])) {
+            found.sidebars.push({ kind: sidebar.kind, body: sidebarBody(token.content.slice(sidebar.open + 1, sidebar.close)), inline: found.inlines });
+        }
+        found.inlines++;
+    });
+    if (unitReadCache.size >= UNIT_READ_CACHE_SIZE) {
+        unitReadCache.delete(unitReadCache.keys().next().value as string);
+    }
+    unitReadCache.set(key, read);
     return read;
 }
 
-/** A literal that does not read back as written, or — `literal` `null` — text the parser reads as attributes no literal gives. */
+/**
+ * A literal that does not read back as written, or — `literal` `null` — text
+ * the parser reads as attributes no literal gives; `at`, the node it is
+ * written on or in, where it is known.
+ */
 export interface LiteralLoss {
     literal: string | null;
+    at?: Node;
 }
 
-/** The first of a run's literals its text does not read back, its spans' first, or `null` when every one reads back and no other. */
-function literalLoss(run: LiteralRun, read: RunRead): LiteralLoss | null {
-    const left = read.spans.map(pairs => attrsKey([pairs]));
-    for (const literal of run.spans) {
-        const i = left.indexOf(attrsKey([literalPairs(literal)]));
-        if (i < 0) {
-            return { literal };
+/** Where a part does not read back as it is shown (`unitVerdict`): the first literal, else the first sidebar. */
+interface UnitVerdict {
+    lost: LiteralLoss | null;
+    mismatch: SidebarMismatch | null;
+}
+
+/**
+ * Each item of `wanted` matched, in order, to the next item of `found` that is
+ * the same (`same`): the first wanted one that is not there, and the first
+ * found one no wanted one took.
+ */
+function matchInOrder<W, F>(wanted: readonly W[], found: readonly F[], same: (w: W, f: F) => boolean): { missing?: W; extra?: F } {
+    const taken = new Set<number>();
+    let from = 0;
+    let missing: W | undefined;
+    for (const w of wanted) {
+        let i = from;
+        while (i < found.length && !same(w, found[i])) {
+            i++;
         }
-        left.splice(i, 1);
-    }
-    if (left.length > 0) {
-        return { literal: null };
-    }
-    for (const { literal, token } of run.carried) {
-        const found = read.first.get(token);
-        if (found === undefined || !sameAttrs(found, literalPairs(literal))) {
-            return { literal };
+        if (i < found.length) {
+            taken.add(i);
+            from = i + 1;
+        } else {
+            missing ??= w;
         }
+    }
+    const extra = found.find((_, i) => !taken.has(i));
+    return { missing, extra };
+}
+
+/** The verdict of each part, by the node it is written from, with the text it was given for. */
+let verdictCache = new WeakMap<Node, { key: string; verdict: UnitVerdict | null }>();
+
+/**
+ * How `unit`, as the save writes it, reads back, if not as the page shows it
+ * (`readUnit`): the first literal the page shows that does not come back on
+ * the token markdown-it-attrs gives it to — a block's, an item's, a heading's,
+ * a span's — or the first attributes read that no literal gives (`lost`);
+ * then the first sidebar not read back, or read that the page does not show
+ * (`mismatch`). `null` when it reads back as shown — at once, without a parse,
+ * when its text holds neither a `{` nor a sidebar's marker. Remembered by the
+ * node with the text.
+ */
+function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
+    const known = verdictCache.get(unit.anchor);
+    if (known !== undefined && known.key === unit.key) {
+        return known.verdict;
+    }
+    let verdict: UnitVerdict | null = null;
+    if (/[{$@]/.test(unit.text)) {
+        const read = readUnit(unit.text, unit.key);
+        verdict = { lost: literalVerdict(unit, read), mismatch: sidebarVerdict(unit, read) };
+        if (verdict.lost === null && verdict.mismatch === null) {
+            verdict = null;
+        }
+    }
+    verdictCache.set(unit.anchor, { key: unit.key, verdict });
+    return verdict;
+}
+
+/**
+ * The textblock of `unit` that the inline token `index` of its parse
+ * (`UnitRead.inlines`) stands for: the parser makes one of each paragraph
+ * with text, heading and cell, in order — when the counts agree; else, as
+ * for a block-level token (`index` undefined), the unit's first.
+ */
+function textblockOfInline(unit: WrittenUnit, read: UnitRead, index?: number): Node {
+    const shown = unit.textblocks.filter(({ node }) => node.type.name !== 'paragraph' || writtenOf(node).text.trim() !== '');
+    return (index !== undefined && shown.length === read.inlines ? shown[index]?.node : undefined) ?? unit.textblocks[0]?.node ?? unit.anchor;
+}
+
+/** The first literal of `unit` that `read` does not give back, its spans' first, or attributes it reads that none gives. */
+function literalVerdict(unit: WrittenUnit, read: UnitRead): LiteralLoss | null {
+    const spans = unit.textblocks.flatMap(({ node }) => spanLiteralsIn(node).map(literal => ({ literal, key: attrsKey(literalPairs(literal)), at: node })));
+    const spanMatch = matchInOrder(spans, read.spans, (w, f) => w.key === attrsKey(f.given));
+    if (spanMatch.missing !== undefined) {
+        return { literal: spanMatch.missing.literal, at: spanMatch.missing.at };
+    }
+    const blockMatch = matchInOrder(unit.literals, read.blocks, (w, f) => w.token === f.type && sameAttrs(f.given, literalPairs(w.literal)));
+    if (blockMatch.missing !== undefined) {
+        return { literal: blockMatch.missing.literal, at: blockMatch.missing.node };
+    }
+    if (spanMatch.extra !== undefined || blockMatch.extra !== undefined || read.madeInline) {
+        return { literal: null, at: textblockOfInline(unit, read, spanMatch.extra?.inline) };
     }
     return null;
 }
 
-/** How a textblock reads back once written (`readBack`). */
-interface ReadBack {
-    /** The first literal it does not read back (`literalLoss`), or `null`. */
-    lost: LiteralLoss | null;
-    /** Where it does not read back as the sidebars it holds (`sidebarMismatch`), or `null`. */
-    mismatch: SidebarMismatch | null;
-    /** The literals it holds and carries, its spans' first. */
-    literals: string[];
+/**
+ * The first sidebar of `unit` that `read` does not read back, else the first
+ * it reads that `unit` does not hold, else a formula VS Code's math reads in
+ * it (a `$…$` the page holds as text, which a web address held until the
+ * edit, say); `null` when they are the same.
+ */
+function sidebarVerdict(unit: WrittenUnit, read: UnitRead): SidebarMismatch | null {
+    const held = unit.textblocks.flatMap(({ node }) => {
+        const written = writtenOf(node);
+        return written.sidebars.map(sidebar => ({ sidebar, written, at: node, body: sidebarBody(written.text.slice(sidebar.open + 1, sidebar.close)) }));
+    });
+    const match = matchInOrder(held, read.sidebars, (w, f) => w.sidebar.kind === f.kind && w.body === f.body);
+    if (match.missing !== undefined) {
+        return { written: match.missing.written, lost: match.missing.sidebar, at: match.missing.at };
+    }
+    if (match.extra !== undefined || read.math) {
+        const at = textblockOfInline(unit, read, match.extra?.inline);
+        return { written: writtenOf(at), at, math: match.extra === undefined };
+    }
+    return null;
 }
 
-/**
- * How the textblock `at` reads back, written as the save writes it: its
- * literals in their run (`literalRun`) and, with `sidebars`, the sidebars it
- * holds. A run holding a `{` is parsed once, by the page's engine with
- * markdown-it-attrs, and that one parse answers both: the sidebars are read
- * off its inline token, whose content starts with the text the save writes —
- * the literals after it read with them, as the preview reads them. Only a
- * textblock whose content the parser hands on otherwise (a cell it trims, say)
- * has its sidebars read apart, as one with no `{` always is
- * (`sidebarMismatch`).
- */
-function readBack(at: TextblockAt, sidebars: boolean): ReadBack {
-    const textblock = at.textblock;
-    if (!INLINE_TEXTBLOCKS.has(textblock.type.name)) {
-        return { lost: null, mismatch: null, literals: [] };
-    }
-    const written = writtenOf(textblock);
-    const run = literalRun(at, written.text);
-    const literals = [...run.spans, ...run.carried.flatMap(c => (c.literal === null ? [] : [c.literal]))];
-    if (!run.text.includes('{')) {
-        return { lost: null, mismatch: sidebars ? sidebarMismatch(textblock) : null, literals };
-    }
-    const read = readRun(run.text);
-    let mismatch: SidebarMismatch | null = null;
-    if (sidebars && mayHoldSidebar(textblock)) {
-        mismatch = read.content !== null && read.content.startsWith(written.text)
-            ? sidebarsCompared({ text: read.content, sidebars: written.sidebars }, read.sidebars)
-            : sidebarMismatch(textblock);
-    }
-    return { lost: literalLoss(run, read), mismatch, literals };
+/** Forget every part, read and verdict: the engine or the options they were made with changed. */
+function forgetReadBack(): void {
+    unitsCache = new WeakMap();
+    itemCache = new WeakMap();
+    verdictCache = new WeakMap();
+    unitReadCache.clear();
 }
 
 /**
  * The first literal the top-level `block` holds that does not read back as it
- * is, its textblocks written as the save writes them and read whole by the
- * page's engine with markdown-it-attrs (`readBack`), or `null`: the one
- * question `attrsReadAt` cannot answer, the literal alone. A literal is judged
- * where it is written with everything the preview reads with it — `A
- * [x]{title="a $b"} c. {title="d$ e"}` is math under VS Code's math and a left
- * sidebar without it, either literal alone is neither. The edit filter asks
- * the same of each textblock it checks (`unwritableInNote`).
+ * is, or text it would read as attributes, once the save writes it — read as
+ * the edit filter reads it (`unitVerdict`) — or `null`: the one question
+ * `attrsReadAt` cannot answer, the literal alone. A literal is judged where it
+ * is written with everything the preview reads with it — `A [x]{title="a $b"}
+ * c. {title="d$ e"}` is math under VS Code's math and a left sidebar without
+ * it, either literal alone is neither.
  */
 export function literalNotReadBack(block: Node): LiteralLoss | null {
-    if (block.isTextblock) {
-        return readBack({ block, textblock: block, parent: null, index: 0 }, false).lost;
-    }
-    let lost: LiteralLoss | null = null;
-    block.descendants((node, _pos, parent, index) => {
+    for (const unit of unitsOf(block)) {
+        const lost = unitVerdict(unit)?.lost ?? null;
         if (lost !== null) {
-            return false;
+            return lost;
         }
-        if (node.isTextblock) {
-            lost = readBack({ block, textblock: node, parent, index }, false).lost;
-            return false;
-        }
-        return true;
-    });
-    return lost;
+    }
+    return null;
 }
 
 /**

@@ -6,6 +6,9 @@ import markdownItSubAlt from 'markdown-it-sub-alt';
 import markdownItKbd from 'markdown-it-kbd';
 import markdownItMark from 'markdown-it-mark';
 import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
+import { MarkdownItContainer } from './markdownItContainer';
+import { MarkdownItAdmonition } from './markdownItAdmonition';
+import markdownItMultimdTable from 'markdown-it-multimd-table';
 
 /**
  * The plugins of the registry (`plugins.ts`) that add an inline rule, by their
@@ -17,9 +20,9 @@ import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
  *
  * Left out, each for a reason the page's check can rely on:
  *
- * - The block plugins (container, admonition, deflist, the tables, the table
- *   of contents) and markdown-it-html5-embed, which only renders: they read no
- *   inline text.
+ * - The block plugins but those of `PAGE_BLOCK_PLUGINS` (deflist, the table
+ *   of contents) and markdown-it-html5-embed, which only renders: they read
+ *   no inline text, and the editor writes none of their blocks.
  * - The core rules that run after the inline parse — markdown-it-emoji,
  *   markdown-it-abbr, markdown-it-checkbox, markdown-it-attrs (and its wrapper)
  *   — and markdown-it-ib, which only renders: they rewrite text tokens or move
@@ -40,9 +43,46 @@ export const INLINE_PLUGINS = {
     'markdown-it-bracketed-spans': markdownItBracketedSpans,
 } as const;
 
-/** The registry name of a plugin the page runs. */
-export type InlinePluginName = keyof typeof INLINE_PLUGINS;
+/** The options the registry runs markdown-it-multimd-table with (`plugins.ts`), and so the page. */
+export const MULTIMD_TABLE_OPTIONS = { multiline: true, rowspan: true, headerless: true };
 
-export function isInlinePlugin(name: string): name is InlinePluginName {
-    return Object.prototype.hasOwnProperty.call(INLINE_PLUGINS, name);
+/**
+ * The registry's block plugins the page runs too, by their registry name: the
+ * page reads back a whole block as the save writes it (`unitsOf` in
+ * `serialize.ts`) — a container's or an admonition's body inside its fence,
+ * a table's rows and the `{…}` line under them as the host's table plugin
+ * reads them.
+ */
+export const PAGE_BLOCK_PLUGINS = {
+    'markdown-it-container': MarkdownItContainer,
+    'markdown-it-admonition': MarkdownItAdmonition,
+    'markdown-it-multimd-table': markdownItMultimdTable,
+} as const;
+
+/** Every plugin of the registry the page runs. */
+export const PAGE_PLUGINS = { ...PAGE_BLOCK_PLUGINS, ...INLINE_PLUGINS } as const;
+
+/**
+ * The page's plugins in the registry's order, with the arguments the registry
+ * gives them: what the page reads with until the host has posted its own
+ * (`DEFAULT_INLINE_ENGINE`).
+ */
+export const PAGE_PLUGINS_IN_ORDER: readonly { name: string; args: unknown[] }[] = [
+    { name: 'markdown-it-container', args: [] },
+    { name: 'markdown-it-admonition', args: [] },
+    { name: 'markdown-it-footnote', args: [] },
+    { name: 'markdown-it-sup-alt', args: [] },
+    { name: 'markdown-it-sub-alt', args: [] },
+    { name: 'markdown-it-kbd', args: [] },
+    { name: 'markdown-it-mark', args: [] },
+    { name: 'markdown-it-multimd-table', args: [MULTIMD_TABLE_OPTIONS] },
+    { name: 'markdown-it-sidenote', args: [] },
+    { name: 'markdown-it-bracketed-spans', args: [] },
+];
+
+/** The registry name of a plugin the page runs. */
+export type PagePluginName = keyof typeof PAGE_PLUGINS;
+
+export function isPagePlugin(name: string): name is PagePluginName {
+    return Object.prototype.hasOwnProperty.call(PAGE_PLUGINS, name);
 }

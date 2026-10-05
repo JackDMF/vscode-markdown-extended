@@ -134,7 +134,7 @@ export type HostMessage =
      * expansion's **Change snippet…** only then. `inline` is the engine that
      * parsed it, as far as the page runs it (`inlineEngineDefinition`): its
      * `markdown.preview.linkify` and `markdown.preview.typographer`, the
-     * inline plugins of the registry it runs, and whether VS Code's math read
+     * plugins of the registry the page runs too, and whether VS Code's math read
      * `$` in it (`math`, `markdown.math.enabled` as the engine applied it). The
      * page reads each textblock an edit makes the save write again with an
      * engine built from it, so that it refuses an edit after which a sidebar

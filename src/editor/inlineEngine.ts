@@ -1,21 +1,23 @@
 import markdownIt from 'markdown-it';
 import { MarkdownIt, Token } from '../@types/markdown-it';
-import { INLINE_PLUGINS, isInlinePlugin } from '../plugin/inlinePlugins';
+import { PAGE_PLUGINS, PAGE_PLUGINS_IN_ORDER, isPagePlugin } from '../plugin/inlinePlugins';
 import { MarkdownItAttrs } from '../plugin/markdownItAttrs';
 import { useMathStandIn } from './mathStandIn';
 import { SIDEBAR_SPAN_META } from '../plugin/markdownItSidenote';
 import { configureLinkify } from '../syntax/linkify';
 
 /**
- * The engine the Visual Editor's page reads a textblock with, defined once for
- * the host and the page.
+ * The engine the Visual Editor's page reads what it writes with, defined once
+ * for the host and the page.
  *
  * The host's engine (`engine.ts`) parses the file; the page edits the document
- * it made and, after each edit, asks whether the textblocks it touched still
- * read back as the sidebars it shows (`unwritableInNote` in `serialize.ts`).
- * It asks by parsing them, with an engine built from the same definition as the
- * host's: markdown-it with the same options (`baseEngine`), and the registry's
- * plugins that have an inline rule (`INLINE_PLUGINS`), as many of them as the
+ * it made and, after each edit, asks whether the blocks the save writes again
+ * still read back as it shows them — their sidebars and attribute literals
+ * (`unwritableInNote` in `serialize.ts`). It asks by parsing them, with an
+ * engine built from the same definition as the host's: markdown-it with the
+ * same options (`baseEngine`), and the registry's plugins the page runs
+ * (`PAGE_PLUGINS`: those with an inline rule, and the container, admonition
+ * and table plugins whose blocks the editor writes), as many of them as the
  * host's registry runs, in its order. The host reads the definition off the
  * engine it built (`inlineEngineDefinition`) and posts it with each document;
  * the page builds its engine from it (`createInlineEngine`).
@@ -40,7 +42,7 @@ export interface EngineOptions {
     typographer: boolean;
 }
 
-/** What the page's engine is built from: the host's options and the inline plugins its registry runs, by name, with their arguments. */
+/** What the page's engine is built from: the host's options and the plugins of its registry the page runs (`PAGE_PLUGINS`), by name, with their arguments. */
 export interface InlineEngineDefinition extends EngineOptions {
     plugins: { name: string; args: unknown[] }[];
     /**
@@ -89,7 +91,7 @@ export function recordInlineDefinition(md: MarkdownIt, options: EngineOptions, p
     definitions.set(md, {
         linkify: options.linkify,
         typographer: options.typographer,
-        plugins: plugins.filter(p => isInlinePlugin(p.name)).map(p => ({ name: p.name, args: p.args })),
+        plugins: plugins.filter(p => isPagePlugin(p.name)).map(p => ({ name: p.name, args: p.args })),
         math: hasInlineRule(md, MATH_INLINE_RULE),
     });
 }
@@ -111,7 +113,7 @@ export function inlineEngineDefinition(md: MarkdownIt): InlineEngineDefinition {
 export const DEFAULT_INLINE_ENGINE: InlineEngineDefinition = {
     linkify: true,
     typographer: false,
-    plugins: Object.keys(INLINE_PLUGINS).map(name => ({ name, args: [] })),
+    plugins: PAGE_PLUGINS_IN_ORDER.map(({ name, args }) => ({ name, args: [...args] })),
     // VS Code's math is another extension's extender, which the registry does not hold.
     math: false,
 };
@@ -133,8 +135,8 @@ export function definitionOf(md: MarkdownIt): InlineEngineDefinition {
 export function createInlineEngine(definition: InlineEngineDefinition): MarkdownIt {
     const md = baseEngine(definition);
     for (const { name, args } of definition.plugins) {
-        if (isInlinePlugin(name)) {
-            md.use(INLINE_PLUGINS[name] as unknown as (md: MarkdownIt, ...args: unknown[]) => void, ...args);
+        if (isPagePlugin(name)) {
+            md.use(PAGE_PLUGINS[name] as unknown as (md: MarkdownIt, ...args: unknown[]) => void, ...args);
         }
     }
     return definition.math ? useMathStandIn(md) : md;
@@ -180,7 +182,8 @@ const attrsEngines = new Map<string, MarkdownIt>();
  * what reads a literal where the editor finds or writes it, as the preview
  * reads it there (`attrsReadAt` in `attrs.ts`). The host's parse asks it with
  * the definition of the engine that read the file, the page with the one it
- * was posted. It runs no block plugin of the registry.
+ * was posted, and the page reads back with it the blocks its save writes
+ * (`readUnit` in `serialize.ts`).
  */
 export function attrsEngineFor(definition: InlineEngineDefinition): MarkdownIt {
     if (definition === currentDefinition) {

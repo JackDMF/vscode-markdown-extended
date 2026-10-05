@@ -914,13 +914,14 @@ code, a link, an autolink, inline HTML or after a backslash (`\@`) closes nothin
 character reference beside a marker counts as the character it stands for, so
 `REQ-&#49;$x$` is text as `REQ-1$x$` is.
 
-The Visual Editor reads what it writes: after an edit it writes every paragraph the save
-will write again — the edited one, and in a list, a quote or a table every other item,
-paragraph and cell of it, since the save writes that block whole — and parses each with the
-same markdown-it, the same linkify settings and the same inline plugins as the preview's
-engine (VS Code's math aside, which the page does not run: see below), and an edit after
-which a sidebar would not read back where it stands — or text would read as a sidebar it
-does not show — is refused with the reason.
+The Visual Editor reads what it writes: after an edit it writes every block the save will
+write again — the edited one, and in a list, a quote or a table every other item, paragraph
+and cell of it, since the save writes that block whole — exactly as the save writes it,
+wrap included, and parses it with the same markdown-it, the same linkify settings and the
+same plugins as the preview's engine (VS Code's math as a stand-in for its tokenizer: see
+below), and an edit after which a sidebar or a `{…}` would not read back where it stands —
+or text would read as a sidebar, a `{…}` or a formula it does not show — is refused with the
+reason.
 So a sidebar may not touch a letter or digit before it (or a left one a digit after it): put
 a space there. Nor may a bare web address before a sidebar read its marker into the address
 (`http://e.com/$x$` is one address): `See (http://e.com)$x$` and
