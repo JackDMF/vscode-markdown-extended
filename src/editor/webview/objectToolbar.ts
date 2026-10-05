@@ -44,7 +44,7 @@ import { NoteNodeName, unwrapNote, unwrapNoteRefusal } from './notes';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
-    changeLinkTransaction, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
+    changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
@@ -1643,7 +1643,9 @@ class ObjectToolbarView implements PluginView {
      */
     private commitLiteral(object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): void {
         const place = 'node' in object ? literalPlaceOf(object.node) : 'span';
-        const refusal = hint !== undefined && value.trim() === '' ? null : literalRefusal(value, place);
+        const current = currentObject(this.view.state, object);
+        const refusal = hint !== undefined && value.trim() === '' ? null
+            : current?.kind === 'span' ? changeSpanRefusal(this.view.state, current, value) : literalRefusal(value, place);
         if (refusal !== null) {
             this.view.focus();
             this.say(refusal, 'refusal');

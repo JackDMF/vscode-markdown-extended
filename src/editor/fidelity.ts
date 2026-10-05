@@ -3,7 +3,7 @@ import { Plugin, PluginKey, Transaction } from 'prosemirror-state';
 import { Transform } from 'prosemirror-transform';
 import { withoutId } from './attrs';
 import { EDITABLE_TOP_NODES } from './schema';
-import { itemTakesLiteral, quoteLostLiteral } from './serialize';
+import { itemTakesLiteral, literalHolder, literalsReadBack, quoteLostLiteral } from './serialize';
 
 export const fidelityPluginKey = new PluginKey('mepFidelity');
 
@@ -551,6 +551,19 @@ export function fidelityPlugin(): Plugin {
 }
 
 /**
+ * The literal `kept` of a copy of `node` (`withoutId`), as long as the copy
+ * still reads back with it once written whole (`literalsReadBack`): the form
+ * written without the id is read with the block's text, which the literal
+ * alone does not say. `null` otherwise, the copy losing it.
+ */
+function copiedLiteral(node: Node, kept: string | null): string | null {
+    if (kept === null || kept === node.attrs.attrsSuffix) {
+        return kept;
+    }
+    return literalsReadBack(node.type.create({ ...node.attrs, attrsSuffix: kept }, node.content, node.marks)) ? kept : null;
+}
+
+/**
  * The attribute-literal rule of `fidelityPlugin`, for every block but a heading
  * (whose literal holds its anchor, `stripDuplicatedIds`): a top-level block
  * that descends from none loses the id its literal gives (`withoutId`), and
@@ -568,7 +581,7 @@ function stripCopiedSuffixes(after: TopLevelChild[], first: number, end: number,
     for (let j = first; j < end; j++) {
         const node = after[j].node;
         const literal = (node.attrs.attrsSuffix ?? null) as string | null;
-        const kept = literal === null ? null : withoutId(literal, node.type.name);
+        const kept = literal === null ? null : copiedLiteral(node, withoutId(literal, literalHolder(node)));
         if (from[j] < 0 && node.type.name !== 'heading' && kept !== literal) {
             set(j, 'attrsSuffix', kept);
             if (kept === null) {
@@ -712,7 +725,7 @@ function stripDuplicatedIds(
         }
         // The literal writes the anchor; what else it gives (`{.unnumbered}`) a copy keeps.
         const literal = (node.attrs.attrsSuffix ?? null) as string | null;
-        set(j, 'attrsSuffix', literal === null ? null : withoutId(literal, 'heading'));
+        set(j, 'attrsSuffix', literal === null ? null : copiedLiteral(node, withoutId(literal, 'heading')));
         // The slice held the id; whatever carried it along is not this node's text.
         set(j, 'src', null);
     }

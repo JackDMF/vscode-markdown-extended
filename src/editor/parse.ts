@@ -10,9 +10,9 @@ import {
     NOTE_OPEN_TOKENS,
     SourceBlock,
     detectEol,
-    findAttrsSuffix,
     findEndLiteral,
     groupSourceBlocks,
+    headingLiteral,
     injectionMarkOf,
     splitLines,
 } from './blocks';
@@ -377,7 +377,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                     level: Number(t.tag.slice(1)),
                     reqPrefix: headingPrefix.get(tok) ?? null,
                     anchor: attr(t, 'id'),
-                    attrsSuffix: t.attrs && t.attrs.length > 0 ? findAttrsSuffix(line) : null,
+                    attrsSuffix: t.attrs && t.attrs.length > 0 ? headingLiteral(line, t, definition) : null,
                 };
             },
         },

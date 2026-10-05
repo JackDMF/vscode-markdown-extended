@@ -36,10 +36,10 @@ import { liftTarget } from 'prosemirror-transform';
 import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
-import { attrsReadAt, endsWithAttrsLiteral, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
+import { attrsReadAt, endsWithAttrsLiteral, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { currentInlineDefinition } from '../inlineEngine';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
-import { itemTakesLiteral, quoteTakesLiteral, serializeInline } from '../serialize';
+import { itemTakesLiteral, literalHolder, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 
 const nodes = editorSchema.nodes;
@@ -478,9 +478,9 @@ export function deleteObjectTransaction(state: EditorState, object: EditorObject
  */
 export type LiteralPlace = string;
 
-/** The place a block's literal goes: its node's name, as `attrsReadAt` knows it. */
+/** The place a block's literal goes: its node's name, a fence's by its fence (`literalHolder`), as `attrsReadAt` knows it. */
 export function literalPlaceOf(node: Node): LiteralPlace {
-    return node.type.name;
+    return literalHolder(node);
 }
 
 /**
@@ -500,11 +500,54 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph
     if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(value)) {
         return `${value} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
     }
+    if (place === fenceHolder('```') && value.includes('`')) {
+        return `${value} holds a backtick: the line opening a \`\`\` fence holds none, and the block would no longer be code. A ~~~ fence takes it.`;
+    }
     if (attrsReadAt(value, place) === null) {
         const math = currentInlineDefinition().math ? ', math' : '';
         return `${value} holds what markdown-it reads before markdown-it-attrs here — a \\, an entity, code, emphasis, HTML, a link${math} or a plugin's markup — and the preview would show it as text.`;
     }
     return null;
+}
+
+/**
+ * Why a literal is refused that reads as attributes alone (`literalRefusal`)
+ * but not together with the block it is written in (`literalsReadBack`).
+ */
+export const LITERAL_READ_WITH_BLOCK_REFUSAL = 'Read together with the rest of its block — a $ pairing with a $ in another {…} as a left sidebar or as math, say — the preview would not read these attributes back as written.';
+
+/**
+ * Why the top-level block holding `pos` in `doc` — a document a literal was
+ * just set in — is refused: a literal it holds would not read back once the
+ * block is written (`literalsReadBack`), or `null`.
+ */
+export function literalsReadBackRefusal(doc: Node, pos: number): string | null {
+    const $pos = doc.resolve(Math.min(pos, doc.content.size));
+    const block = $pos.depth === 0 ? doc.nodeAt(pos) : $pos.node(1);
+    return block === null || literalsReadBack(block) ? null : LITERAL_READ_WITH_BLOCK_REFUSAL;
+}
+
+/** Why `literal` cannot be given to the selection as an attribute span, or `null`: the span's literal alone (`literalRefusal`), then read with its block (`literalsReadBackRefusal`). */
+export function spanLiteralRefusal(state: EditorState, literal: string): string | null {
+    const value = literal.trim();
+    const alone = literalRefusal(value, 'span');
+    if (alone !== null || spanLockReason(state) !== null) {
+        return alone;
+    }
+    const { from, to } = state.selection;
+    const tr = state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: value }));
+    return literalsReadBackRefusal(tr.doc, from);
+}
+
+/** Why the span's literal cannot be changed to `literal`, or `null`: as `spanLiteralRefusal` asks it. */
+export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject, { kind: 'span' }>, literal: string): string | null {
+    const value = literal.trim();
+    const alone = literalRefusal(value, 'span');
+    if (alone !== null) {
+        return alone;
+    }
+    const tr = state.tr.removeMark(span.from, span.to, span.mark).addMark(span.from, span.to, editorSchema.marks.attr_span.create({ literal: value }));
+    return literalsReadBackRefusal(tr.doc, span.from);
 }
 
 /** Why an attribute span cannot be made of the selection, or `null`: it needs selected text in one textblock that is not code. */
@@ -527,7 +570,7 @@ export function applySpanTransaction(state: EditorState, literal: string): Trans
     }
     const { from, to } = state.selection;
     const tr = state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: value }));
-    return noteRefusal(tr) === null ? tr.scrollIntoView() : null;
+    return noteRefusal(tr) === null && literalsReadBackRefusal(tr.doc, from) === null ? tr.scrollIntoView() : null;
 }
 
 /** The span's run given `literal` instead. `null` for an unchanged or unreadable literal, or one a note around it could not hold. */
@@ -538,7 +581,7 @@ export function changeSpanTransaction(state: EditorState, span: Extract<EditorOb
     }
     const type = editorSchema.marks.attr_span;
     const tr = state.tr.removeMark(span.from, span.to, span.mark).addMark(span.from, span.to, type.create({ literal: value }));
-    return noteRefusal(tr) === null ? tr.scrollIntoView() : null;
+    return noteRefusal(tr) === null && literalsReadBackRefusal(tr.doc, span.from) === null ? tr.scrollIntoView() : null;
 }
 
 /**
@@ -702,7 +745,8 @@ export function changeBlockAttrsTransaction(state: EditorState, pos: number, lit
     } else {
         attrs.attrsPlacement = value === '' ? null : (node.attrs.attrsPlacement as string | null) ?? newPlacement(node);
     }
-    return state.tr.setNodeMarkup(pos, undefined, attrs).scrollIntoView();
+    const tr = state.tr.setNodeMarkup(pos, undefined, attrs);
+    return literalsReadBackRefusal(tr.doc, pos) === null ? tr.scrollIntoView() : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -826,6 +870,16 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
     const next = removed ? null : value;
     if (next === literalOf(node)) {
         return null;
+    }
+    if (!removed) {
+        // The literal reads alone; whether it reads with the rest of its block is asked of the block as it would be.
+        const set = node.type === nodes.list_item
+            ? state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, literal: next })
+            : state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, attrsSuffix: next, attrsPlacement: (node.attrs.attrsPlacement as string | null) ?? newPlacement(node) });
+        const lost = literalsReadBackRefusal(set.doc, current.pos);
+        if (lost !== null) {
+            return { refusal: lost };
+        }
     }
     const tr = node.type === nodes.list_item
         ? state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, literal: next }).scrollIntoView()

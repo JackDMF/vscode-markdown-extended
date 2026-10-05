@@ -38,7 +38,7 @@ import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
     applySpanTransaction, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
-    LINK_LOCK, literalRefusal, objectAtSelection, spanLockReason,
+    LINK_LOCK, objectAtSelection, spanLiteralRefusal, spanLockReason,
 } from '../objects';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
@@ -852,7 +852,7 @@ class ToolbarView implements PluginView {
             keys: ATTRIBUTES_FIELD_KEYS,
             commit: value => {
                 view.focus();
-                const refusal = literalRefusal(value, 'span');
+                const refusal = spanLiteralRefusal(view.state, value);
                 const tr = refusal === null ? applySpanTransaction(view.state, value) : null;
                 if (tr === null) {
                     showHint(view, refusal ?? 'These attributes cannot be given to this text here.', 'refusal');

@@ -199,6 +199,7 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
             '{title="Übersicht – Teil 2"}', '{title="a | b"}', '{title="__init__.py"}', '{title=_a_}', '{title="*.ts"}', '{title="a{b"}',
             '{title="a}b"}', '{k="a=b"}', '{title="H~2~O"}', '{title="x^2^"}', '{.c data-href=https://a.b/c?d=e&f=g}', '{k="a\\"b" #w}',
             '{k=a\\}', '{x\\}', '{k="x\\\\"}', '{k=a"b" #w}', '{title="a b" .c #w}',
+            '{title="a`b"}', '{k=a`b}', '{title="a```b"}', '{title="a{b" #h}', '{data-price="$5 - $10"}',
         ];
         const shapes: Record<string, [(l: string) => string, string]> = {
             para: [l => `Text. ${l}\n`, 'paragraph_open'],
@@ -206,6 +207,7 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
             head: [l => `# H ${l}\n`, 'heading_open'],
             item: [l => `- one ${l}\n- two\n`, 'list_item_open'],
             fence: [l => `\`\`\`js ${l}\ncode\n\`\`\`\n`, 'fence'],
+            tilde: [l => `~~~js ${l}\ncode\n~~~\n`, 'fence'],
             span: [l => `A [x]${l} b.\n`, 'span_open'],
             hr: [l => `Intro.\n\n--- ${l}\n`, 'hr'],
             table: [l => `| a |\n| - |\n| b |\n\n${l}\n`, 'table_open'],
@@ -231,10 +233,6 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
                     const kept = groupSourceBlocks(engine.parse(src, {}), splitLines(src), definitionOf(engine)).blocks
                         .some(b => b.attrs?.suffix === literal || b.spanLiterals.includes(literal) || b.itemLiterals.includes(literal));
                     const where = `${literal} in a ${shape}, ${settings}`;
-                    if (shape === 'head' && /[{}]/.test(literal.slice(1, -1))) {
-                        // A heading's literal is the trailing {…} without braces in it (`findAttrsSuffix`): unchanged here.
-                        continue;
-                    }
                     assert.strictEqual(kept, reads, `${where}: ${reads ? 'the host reads it, the editor must keep it' : 'the host shows it as text, the editor must not take it'}`);
                 }
             }

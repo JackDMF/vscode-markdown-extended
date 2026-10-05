@@ -138,7 +138,8 @@ export type HostMessage =
      * `$` in it (`math`, `markdown.math.enabled` as the engine applied it). The
      * page reads each textblock an edit makes the save write again with an
      * engine built from it, so that it refuses an edit after which a sidebar
-     * would not read back as it is shown, and makes no left sidebar under math.
+     * would not read back as it is shown — VS Code's math, when it runs, as
+     * a stand-in for its tokenizer, so a left sidebar the math reads is none.
      */
     | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; inline: InlineEngineDefinition }
     /** The answer to a `render` request: the raw block's source rendered by the host's engine. */

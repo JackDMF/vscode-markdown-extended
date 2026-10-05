@@ -1,5 +1,5 @@
 import { Token } from '../@types/markdown-it';
-import { AttrPair, NOTE_SYNTAX_CHARS, attrsReadAt, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, readsBackAs, sameAttrs } from './attrs';
+import { AttrPair, NOTE_SYNTAX_CHARS, attrsReadAt, fenceHolder, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, readsBackAs, sameAttrs } from './attrs';
 import { InlineEngineDefinition } from './inlineEngine';
 
 /**
@@ -555,7 +555,7 @@ function pipeTableNotEditableBecause(tokens: readonly Token[], group: TokenGroup
 }
 
 /** Why the group cannot be edited, or `null` when it can. */
-function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[]): string | null {
+function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: readonly SourceLine[], definition: InlineEngineDefinition): string | null {
     if (tokens[group.start].type === 'table_open') {
         return pipeTableNotEditableBecause(tokens, group, lines);
     }
@@ -570,7 +570,7 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
             if (!t.markup.startsWith('#') || !t.map || t.map[1] - t.map[0] !== 1) {
                 return 'setext heading: its underline has no place in the heading node';
             }
-            if (t.attrs && t.attrs.length > 0 && findAttrsSuffix(lines[t.map[0]]?.text ?? '') === null) {
+            if (literalAttrs(t).length > 0 && headingLiteral(lines[t.map[0]]?.text ?? '', t, definition) === null) {
                 return 'heading attributes that are not written as a trailing {…} on its line';
             }
         }
@@ -674,7 +674,10 @@ const SUFFIX_BLOCKS: ReadonlySet<string> = new Set([
     'paragraph_open', 'heading_open', 'bullet_list_open', 'ordered_list_open', 'fence', 'hr', 'blockquote_open', 'table_open',
 ]);
 
-/** The node each of those openers becomes, by which `attrsReadAt` knows where its literal stands. */
+/**
+ * The node each of those openers becomes, by which `attrsReadAt` knows where
+ * its literal stands; a fence's by the fence it stands on (`fenceHolder`).
+ */
 const LITERAL_HOLDER: Readonly<Record<string, string>> = {
     'paragraph_open': 'paragraph',
     'heading_open': 'heading',
@@ -685,6 +688,23 @@ const LITERAL_HOLDER: Readonly<Record<string, string>> = {
     'blockquote_open': 'blockquote',
     'table_open': 'table',
 };
+
+/** Where the literal of the block `open` opens stands, as `attrsReadAt` knows it (`LITERAL_HOLDER`). */
+function literalHolderOf(open: Token): string {
+    return open.type === 'fence' ? fenceHolder(open.markup) : LITERAL_HOLDER[open.type];
+}
+
+/**
+ * A heading's literal: the `{…}` its line ends with as markdown-it-attrs finds
+ * it (`findEndLiteral`), when the preview reads it there as the attributes the
+ * heading's token has (`attrsReadAt`); `null` otherwise. The one rule the
+ * parse keeps a heading's literal by, at the top level and inside a container.
+ */
+export function headingLiteral(line: string, open: Token, definition: InlineEngineDefinition): string | null {
+    const literal = findEndLiteral(line);
+    const read = literal === null ? null : attrsReadAt(literal, 'heading', definition);
+    return read !== null && sameAttrs(read, literalAttrs(open)) ? literal : null;
+}
 
 /**
  * The first line after `last` that is not blank, before `nextStart` (the first
@@ -738,7 +758,7 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
     if (!SUFFIX_BLOCKS.has(open.type) || !open.map) {
         return `attributes on ${open.type}`;
     }
-    const holder = LITERAL_HOLDER[open.type];
+    const holder = literalHolderOf(open);
     const reads = (literal: string | null): literal is string => {
         const read = literal === null ? null : attrsReadAt(literal, holder, definition);
         return read !== null && sameAttrs(read, wanted);
@@ -749,8 +769,8 @@ function recoverBlockAttrs(tokens: readonly Token[], group: TokenGroup, lines: r
     const where = `${open.type.replace(/_open$/, '')} attributes not written where the editor can keep them`;
     switch (open.type) {
         case 'heading_open': {
-            const suffix = findAttrsSuffix(lines[start]?.text ?? '');
-            return suffix === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix, placement: 'end' }, endLine: null };
+            const literal = headingLiteral(lines[start]?.text ?? '', open, definition);
+            return literal === null ? 'heading attributes that are not written as a trailing {…} on its line' : { attrs: { suffix: literal, placement: 'end' }, endLine: null };
         }
         case 'fence': {
             const literal = findEndLiteral(lines[start]?.text ?? '');
@@ -958,7 +978,7 @@ function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly S
     if (!EDITABLE_TOP_LEVEL_TOKENS.has(first.type)) {
         return raw(first.type);
     }
-    const because = notEditableBecause(tokens, group, lines);
+    const because = notEditableBecause(tokens, group, lines, definition);
     if (because !== null) {
         return raw(because);
     }

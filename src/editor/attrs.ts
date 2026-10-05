@@ -274,44 +274,49 @@ function writtenLiteral(attrs: readonly AttrPair[]): string | null {
 /**
  * What carries a literal, by the name of its node (`SUFFIX_NODES`, a list
  * item's `list_item`) or `span` for an attribute span: the smallest source in
- * which the preview reads a literal where that block's stands, the token
- * markdown-it-attrs gives it to, and whether the plugin reads it off the
- * tokens the inline rules made (`inline`) or off raw text — a fence's info
- * string, the paragraph under a table. A paragraph's literal on a line of its
- * own is one text after a soft break, as at its end; a list's under its last
- * line the same as after a blank line.
+ * which the preview reads a literal where that block's stands, and the token
+ * markdown-it-attrs gives it to. The plugin reads a fence's literal off its
+ * info string and a table's off the paragraph under it, raw; every other one
+ * off the tokens the inline rules made. A fence's is read on the fence it is
+ * written on, by its character (`fenceHolder`): an info string after backticks
+ * holds no backtick, after tildes it may. A paragraph's literal on a line of
+ * its own is one text after a soft break, as at its end; a list's under its
+ * last line the same as after a blank line.
  */
-const READ_BACK: Record<string, { source: (literal: string) => string; token: string; inline: boolean }> = {
-    paragraph: { source: l => `x ${l}`, token: 'paragraph_open', inline: true },
-    heading: { source: l => `# x ${l}`, token: 'heading_open', inline: true },
-    'list_item': { source: l => `- x ${l}`, token: 'list_item_open', inline: true },
-    'bullet_list': { source: l => `- x\n\n${l}`, token: 'bullet_list_open', inline: true },
-    'ordered_list': { source: l => `1. x\n\n${l}`, token: 'ordered_list_open', inline: true },
-    'code_block': { source: l => `\`\`\`x ${l}\n\`\`\``, token: 'fence', inline: false },
-    'horizontal_rule': { source: l => `--- ${l}`, token: 'hr', inline: true },
-    blockquote: { source: l => `> x\n> ${l}`, token: 'blockquote_open', inline: true },
-    table: { source: l => `| x |\n| - |\n\n${l}`, token: 'table_open', inline: false },
-    span: { source: l => `[x]${l}`, token: 'span_open', inline: true },
+const READ_BACK: Record<string, { source: (literal: string) => string; token: string }> = {
+    paragraph: { source: l => `x ${l}`, token: 'paragraph_open' },
+    heading: { source: l => `# x ${l}`, token: 'heading_open' },
+    'list_item': { source: l => `- x ${l}`, token: 'list_item_open' },
+    'bullet_list': { source: l => `- x\n\n${l}`, token: 'bullet_list_open' },
+    'ordered_list': { source: l => `1. x\n\n${l}`, token: 'ordered_list_open' },
+    'code_block': { source: l => `\`\`\`x ${l}\n\`\`\``, token: 'fence' },
+    'code_block~': { source: l => `~~~x ${l}\n~~~`, token: 'fence' },
+    'horizontal_rule': { source: l => `--- ${l}`, token: 'hr' },
+    blockquote: { source: l => `> x\n> ${l}`, token: 'blockquote_open' },
+    table: { source: l => `| x |\n| - |\n\n${l}`, token: 'table_open' },
+    span: { source: l => `[x]${l}`, token: 'span_open' },
 };
 
 /**
- * Two `$` in a literal: with VS Code's math on (`InlineEngineDefinition.math`)
- * its rule reads `$…$` as math before markdown-it-attrs sees the literal, and
- * the page's engine does not run it. Any two count, which also refuses a few
- * the math rule would pass over (`$5 or $6`): the literal stays text.
+ * The holder (`READ_BACK`) of a fence's literal, by the fence it is written on
+ * (`markup`, its opening run): `code_block~` after tildes, `code_block` after
+ * backticks.
  */
-const MATH_PAIR = /\$[^$]*\$/;
+export function fenceHolder(markup: string): string {
+    return markup.startsWith('~') ? 'code_block~' : 'code_block';
+}
 
 /**
  * The attributes markdown-it-attrs gives `holder` (`READ_BACK`) for `literal`,
  * read with the engine `definition` describes and the plugin itself
- * (`attrsEngineFor`); `null` when the literal, or part of it, is left as text
- * — VS Code's math taking a `$…$` (`MATH_PAIR`) included — or `holder` is none
- * the editor writes a literal for.
+ * (`attrsEngineFor`) — with VS Code's math, when it runs, as its stand-in
+ * (`mathStandIn.ts`), which takes a `$…$` it reads as math first; `null` when
+ * the literal, or part of it, is left as text, or `holder` is none the editor
+ * writes a literal for.
  */
 export function readBack(literal: string, holder: string, definition: InlineEngineDefinition = currentInlineDefinition()): AttrPair[] | null {
     const shape = Object.prototype.hasOwnProperty.call(READ_BACK, holder) ? READ_BACK[holder] : undefined;
-    if (shape === undefined || (shape.inline && definition.math && MATH_PAIR.test(literal))) {
+    if (shape === undefined) {
         return null;
     }
     const tokens = attrsEngineFor(definition).parse(shape.source(literal), {});

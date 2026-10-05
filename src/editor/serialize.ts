@@ -3,13 +3,13 @@ import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdow
 import { Mark, Node } from 'prosemirror-model';
 import type { Mapping } from 'prosemirror-transform';
 import { INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
-import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './attrs';
+import { AttrPair, NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, fenceHolder, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
-import { InlineEngineDefinition, ReadSidebar, currentInlineDefinition, currentInlineEngine, readSidebars, setCurrentInlineDefinition } from './inlineEngine';
+import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, readSidebars, setCurrentInlineDefinition } from './inlineEngine';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -481,12 +481,11 @@ function noteUnwritable(note: Node): string | null {
  * read as one, is written as the save writes it (`writtenTextblock`) and
  * parsed by the page's own engine, built from the host's definition
  * (`setInlineEngine`), and every sidebar it holds must come back where it
- * stands, and no other. Where another extension claims every `$` (VS Code's
- * math, `InlineEngineDefinition.math`), no left sidebar is written at all
- * (`SIDEBAR_LEFT_MATH`). Whatever
- * stands beside a marker — a letter, a digit, a web address linkify reads on
- * into it, an escape the line start takes — is judged by the parser that will
- * read the file. So **a document the parser produced is always writable**
+ * stands, and no other. Whatever stands beside a marker — a letter, a digit,
+ * a web address linkify reads on into it, an escape the line start takes, VS
+ * Code's math reading a `$…$` as math (`InlineEngineDefinition.math`, its
+ * stand-in in the page's engine; `SIDEBAR_LEFT_MATH`) — is judged by the
+ * parser that will read the file. So **a document the parser produced is always writable**
  * wherever the editor writes it as it was read: its sidebars are the ones the
  * parser read. Where the editor writes it otherwise — a character reference
  * written as its character — the parse sees the outcome, and the edit is
@@ -541,9 +540,7 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
         if (reason !== null) {
             break;
         }
-        reason = currentInlineDefinition().math && holdsLeftSidebar(textblock.node)
-            ? SIDEBAR_LEFT_MATH
-            : sidebarRefusal(doc, textblock, origin);
+        reason = sidebarRefusal(doc, textblock, origin);
     }
     return reason;
 }
@@ -697,7 +694,7 @@ export const SIDEBAR_REWRITTEN = 'Written by the editor, this line would not rea
 export const SIDEBAR_NOT_READ = 'After this edit a sidebar here would not be read back as a sidebar.';
 /** Why an edit is refused after which text would read as a sidebar the editor does not show. */
 export const SIDEBAR_MADE = 'After this edit text here would be read as a sidebar, which the editor does not show (a $…$ or @…@ in a web address, say).';
-/** Why no left sidebar is made, nor an edit applied that leaves one, while VS Code's math reads every `$` (`InlineEngineDefinition.math`). */
+/** Why a left sidebar is not made, nor an edit applied that leaves one, that VS Code's math would read as math (`InlineEngineDefinition.math`). */
 export const SIDEBAR_LEFT_MATH = 'Left sidebars need markdown.math.enabled off: math reads $…$.';
 
 /** What a block is called in a refusal that names it. */
@@ -780,6 +777,20 @@ function sidebarsReadWithoutLinkify(text: string): ReadSidebar[] {
         return readSidebars(md, text);
     } finally {
         md.set({ linkify: currentInlineDefinition().linkify });
+    }
+}
+
+/** The inline rules of VS Code's math, as the page's engine runs them (`useMathStandIn`). */
+const MATH_RULES = ['math_inline', 'math_inline_block'];
+
+/** The sidebars the page's engine reads in `text` without VS Code's math: whether math is what took one (`lostReason`). */
+function sidebarsReadWithoutMath(text: string): ReadSidebar[] {
+    const md = engine();
+    md.inline.ruler.disable(MATH_RULES);
+    try {
+        return readSidebars(md, text);
+    } finally {
+        md.inline.ruler.enable(MATH_RULES);
     }
 }
 
@@ -903,15 +914,6 @@ function sameSidebar(a: ReadSidebar, b: ReadSidebar): boolean {
     return a.kind === b.kind && a.open === b.open && a.close === b.close;
 }
 
-/** Whether a textblock holds a left sidebar, which no `$` can mark while VS Code's math reads it. */
-function holdsLeftSidebar(textblock: Node): boolean {
-    let holds = false;
-    textblock.forEach(child => {
-        holds = holds || child.type.name === 'left_sidebar';
-    });
-    return holds;
-}
-
 /** How a textblock reads back once written, where not as the sidebars it holds (`sidebarMismatch`). */
 interface SidebarMismatch {
     written: { text: string; sidebars: ReadSidebar[] };
@@ -946,8 +948,10 @@ function sidebarMismatch(textblock: Node): SidebarMismatch | null {
 /**
  * Why a sidebar the parser does not read back where it stands is lost, said
  * as what to do: a letter or digit before its marker, a digit after a left
- * one's closer (`sidebarCanOpen`, `sidebarCanClose`), or a web address that
- * reads it in — the sidebar comes back with linkify off.
+ * one's closer (`sidebarCanOpen`, `sidebarCanClose`), a web address that
+ * reads it in — the sidebar comes back with linkify off — or, for a left one,
+ * VS Code's math reading its `$…$` as math — it comes back without the math
+ * rules.
  */
 function lostReason(text: string, lost: ReadSidebar): string {
     const marker = text.charAt(lost.open);
@@ -959,6 +963,9 @@ function lostReason(text: string, lost: ReadSidebar): string {
     }
     if (currentInlineDefinition().linkify && sidebarsReadWithoutLinkify(text).some(r => sameSidebar(r, lost))) {
         return SIDEBAR_GLUED_URL;
+    }
+    if (lost.kind === 'left_sidebar' && currentInlineDefinition().math && sidebarsReadWithoutMath(text).some(r => sameSidebar(r, lost))) {
+        return SIDEBAR_LEFT_MATH;
     }
     return SIDEBAR_NOT_READ;
 }
@@ -1186,6 +1193,32 @@ function paragraphMarkdown(node: Node): string {
     return inlineMarkdown(node, true);
 }
 
+/**
+ * The fence a fenced code block is written with, before it is lengthened past
+ * a run in its content: its own, unless it has none (an emptied indented
+ * block) or holds an info string with a backtick, which no backtick fence
+ * takes — tildes then, backticks otherwise. Where its literal is read
+ * (`fenceHolder`) is decided by the same fence.
+ */
+export function fenceOf(node: Node): string {
+    const params = String(node.attrs.params ?? '');
+    const markup = String(node.attrs.markup ?? '```');
+    if (markup === '' || (markup.startsWith('`') && params.includes('`'))) {
+        return params.includes('`') ? '~~~' : '```';
+    }
+    return markup;
+}
+
+/**
+ * Where the save writes `node`'s literal, as `attrsReadAt` knows it: the
+ * node's name, a fenced code block's by the fence it is written with
+ * (`fenceHolder`, `fenceOf`). What the Attributes field and a copy judge a
+ * literal by (`literalPlaceOf`, `withoutId`).
+ */
+export function literalHolder(node: Node): string {
+    return node.type.name === 'code_block' ? fenceHolder(fenceOf(node)) : node.type.name;
+}
+
 function blockSerializer(options: SerializeOptions): MarkdownSerializer {
     return new MarkdownSerializer({
         ...inlineNodes,
@@ -1247,16 +1280,13 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
         code_block(state, node) {
             const content = node.textContent;
             const params = String(node.attrs.params ?? '');
-            let markup = String(node.attrs.markup ?? '```');
-            if (markup === '' && content.trim() !== '') {
+            if (String(node.attrs.markup ?? '```') === '' && content.trim() !== '') {
                 // Indented, as written.
                 state.text(content.split('\n').map(l => (l === '' ? '' : '    ' + l)).join('\n'), false);
                 state.closeBlock(node);
                 return;
             }
-            if (markup === '' || (markup.startsWith('`') && params.includes('`'))) {
-                markup = markup.startsWith('~') ? markup : (params.includes('`') ? '~~~' : '```');
-            }
+            const markup = fenceOf(node);
             const ch = markup[0];
             let longest = 0;
             for (const run of content.match(new RegExp(`^ {0,3}\\${ch}+`, 'gm')) ?? []) {
@@ -1489,6 +1519,118 @@ function withBlockSuffix(node: Node, text: string): string {
         return `${text}${placement === 'line' ? '\n' : '\n\n'}${suffix}`;
     }
     return placement === 'end' ? `${text.replace(/[ \t]+$/, '')} ${suffix}` : `${text}\n${suffix}`;
+}
+
+/** The literal of each attribute span in `node`'s inline content, notes' included, in order: one per run of one mark. */
+function spanLiteralsIn(node: Node): string[] {
+    const out: string[] = [];
+    const walk = (parent: Node) => {
+        let open: Mark | null = null;
+        parent.forEach(child => {
+            const mark = child.marks.find(m => m.type.name === 'attr_span') ?? null;
+            if (mark !== null && (open === null || !mark.eq(open))) {
+                out.push(mark.attrs.literal as string);
+            }
+            open = mark;
+            if (!child.isLeaf) {
+                walk(child);
+            }
+        });
+    };
+    walk(node);
+    return out;
+}
+
+/** The attributes a literal gives, joined as the plugin joins them (`joinAttrs`); none for no literal. */
+function literalPairs(literal: string | null | undefined): AttrPair[] {
+    return joinAttrs((literal ? parseAttrsLiteral(literal) : null) ?? []);
+}
+
+/** A list of attribute lists as a key that ignores their order and each one's. */
+function attrsKey(lists: readonly (readonly AttrPair[])[]): string {
+    return JSON.stringify(lists.map(list => JSON.stringify([...list].map(([n, v]) => [n, v]).sort())).sort());
+}
+
+/**
+ * Whether the textblock `textblock` of the top-level `block` (`parent` holds
+ * it at `index`) reads back, written as the save writes it, as the literals it
+ * holds and carries: its spans', and those the save writes on its line or the
+ * line after it — a top-level paragraph's or heading's own, its list item's,
+ * the quote's `> {…}` and the list's `{…}` line it ends. Those are read through
+ * one inline run with its text, so a `$` in one can pair with a `$` in
+ * another — the text's own are escaped — as a left sidebar, or as VS Code's
+ * math (`useMathStandIn`); a list's literal after a blank line, a table's and
+ * a fence's are read apart.
+ */
+function textblockReadsBack(block: Node, textblock: Node, parent: Node | null, index: number): boolean {
+    const name = textblock.type.name;
+    let text = writtenTextblock(textblock).text;
+    const carried: { literal: string | null; token: string }[] = [];
+    if (name === 'heading') {
+        const suffix = textblock.attrs.attrsSuffix as string | null;
+        text = `# ${text}${suffix === null ? '' : ` ${suffix}`}`;
+        carried.push({ literal: suffix, token: 'heading_open' });
+    } else if (name !== 'paragraph') {
+        text = `| ${text} |\n| - |`;
+    } else if (textblock === block) {
+        const suffix = block.attrs.attrsSuffix as string | null;
+        text = suffix === null ? text : text === '' ? suffix : (block.attrs.attrsPlacement ?? 'end') === 'end' ? `${text.replace(/[ \t]+$/, '')} ${suffix}` : `${text}\n${suffix}`;
+        carried.push({ literal: suffix, token: 'paragraph_open' });
+    } else if (parent !== null && parent.type.name === 'list_item' && index === 0) {
+        const literal = parent.attrs.literal as string | null;
+        if (literal !== null && itemTakesLiteral(parent)) {
+            text = `${text.replace(/[ \t]+$/, '')} ${literal}`;
+        }
+        carried.push({ literal: itemTakesLiteral(parent) ? literal : null, token: 'list_item_open' });
+        const ordered = block.type.name === 'ordered_list';
+        text = (ordered ? '1. ' : '- ') + text.split('\n').join(ordered ? '\n   ' : '\n  ');
+        const suffix = block.attrs.attrsSuffix as string | null;
+        if (suffix !== null && block.lastChild === parent && block.attrs.attrsPlacement === 'line' && listTakesLineLiteral(block)) {
+            text = `${text}\n${suffix}`;
+            carried.push({ literal: suffix, token: `${block.type.name}_open` });
+        }
+    } else if (parent === block && block.type.name === 'blockquote' && quoteLiteralHost(block) === textblock && quoteTakesLiteral(block)) {
+        const suffix = block.attrs.attrsSuffix as string | null;
+        text = `> ${text.split('\n').join('\n> ')}${suffix === null ? '' : `\n> ${suffix}`}`;
+        carried.push({ literal: suffix, token: 'blockquote_open' });
+    }
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {}).flatMap(t => [t, ...(t.children ?? [])]);
+    for (const { literal, token } of carried) {
+        const found = tokens.find(t => t.type === token);
+        if (found === undefined || !sameAttrs((found.attrs ?? []).map(([n, v]) => [n, v] as AttrPair), literalPairs(literal))) {
+            return false;
+        }
+    }
+    const spans = tokens.filter(t => t.type === 'span_open').map(t => (t.attrs ?? []).map(([n, v]) => [n, v] as AttrPair));
+    return attrsKey(spans) === attrsKey(spanLiteralsIn(textblock).map(literalPairs));
+}
+
+/**
+ * Whether every literal the top-level `block` holds reads back as it is, its
+ * textblocks written as the save writes them and read whole by the page's
+ * engine with markdown-it-attrs (`textblockReadsBack`): the one question
+ * `attrsReadAt` cannot answer, the literal alone. A literal is judged where it
+ * is written with everything the preview reads with it — `A [x]{title="a $b"}
+ * c. {title="d$ e"}` is math under VS Code's math and a left sidebar without
+ * it, either literal alone is neither. Asked by the Attributes field and a span's (`literalsReadBackRefusal`)
+ * and of a copy's literal (`fidelity.ts`).
+ */
+export function literalsReadBack(block: Node): boolean {
+    if (block.isTextblock) {
+        return !INLINE_TEXTBLOCKS.has(block.type.name) || textblockReadsBack(block, block, null, 0);
+    }
+    let reads = true;
+    block.descendants((node, _pos, parent, index) => {
+        if (!reads) {
+            return false;
+        }
+        if (node.isTextblock) {
+            reads = !INLINE_TEXTBLOCKS.has(node.type.name) || textblockReadsBack(block, node, parent, index);
+            return false;
+        }
+        return true;
+    });
+    return reads;
 }
 
 /**

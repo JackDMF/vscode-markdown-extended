@@ -2,6 +2,7 @@ import markdownIt from 'markdown-it';
 import { MarkdownIt, Token } from '../@types/markdown-it';
 import { INLINE_PLUGINS, isInlinePlugin } from '../plugin/inlinePlugins';
 import { MarkdownItAttrs } from '../plugin/markdownItAttrs';
+import { useMathStandIn } from './mathStandIn';
 import { SIDEBAR_SPAN_META } from '../plugin/markdownItSidenote';
 import { configureLinkify } from '../syntax/linkify';
 
@@ -22,9 +23,11 @@ import { configureLinkify } from '../syntax/linkify';
  * What the page's engine cannot see: other extensions' markdown-it plugins,
  * which run in the host's engine (`extend`) and are not in the page's bundle —
  * one that teaches linkify a new scheme, say. VS Code's math extension, which
- * reads every `$…$` as math ahead of the sidebar rule, is the one the
- * definition names (`math`): the page does not run it, and makes no left
- * sidebar while it is on. Nor does it see the document's own reference and
+ * reads a `$…$` as math ahead of the sidebar rule and of markdown-it-attrs, is
+ * the one the definition names (`math`): the page does not bundle it, and runs
+ * its tokenizer instead (`mathStandIn.ts`), so what the preview takes for
+ * math the page does too — a left sidebar and a literal holding a `$` alike.
+ * Nor does it see the document's own reference and
  * footnote definitions, as a textblock is read on its own, or the plugins that
  * add no inline rule, which make or unmake no sidebar (`inlinePlugins.ts`).
  */
@@ -41,18 +44,19 @@ export interface EngineOptions {
 export interface InlineEngineDefinition extends EngineOptions {
     plugins: { name: string; args: unknown[] }[];
     /**
-     * Whether the host's engine reads every `$` as math before the sidebar
-     * rule sees it: VS Code's math extension (`markdown.math.enabled`, on as
-     * VS Code ships it) added its `math_inline` rule (`MATH_INLINE_RULE`). The
-     * page does not run it; while it is on the host reads no left sidebar, so
-     * the page makes none (`SIDEBAR_LEFT_MATH` in `serialize.ts`).
+     * Whether the host's engine reads `$…$` as math before the sidebar rule
+     * and markdown-it-attrs see it: VS Code's math extension
+     * (`markdown.math.enabled`, on as VS Code ships it) added its
+     * `math_inline` rule (`MATH_INLINE_RULE`). The page runs a stand-in for
+     * its tokenizer then (`useMathStandIn`), so a `$…$` it reads as math is
+     * no left sidebar (`SIDEBAR_LEFT_MATH` in `serialize.ts`) and no literal.
      */
     math: boolean;
 }
 
 /**
  * The inline rule VS Code's math extension (`@vscode/markdown-it-katex`) adds
- * after `escape`, ahead of the sidebar rule, and which claims every `$`.
+ * after `escape`, ahead of the sidebar rule.
  */
 export const MATH_INLINE_RULE = 'math_inline';
 
@@ -121,7 +125,11 @@ export function definitionOf(md: MarkdownIt): InlineEngineDefinition {
     return definitions.get(md) ?? DEFAULT_INLINE_ENGINE;
 }
 
-/** The page's engine, built from `definition`; a plugin the page does not bundle is skipped. */
+/**
+ * The page's engine, built from `definition`; a plugin the page does not
+ * bundle is skipped. With `math`, the stand-in for VS Code's math is added
+ * after the plugins, as the host's extenders run after its registry.
+ */
 export function createInlineEngine(definition: InlineEngineDefinition): MarkdownIt {
     const md = baseEngine(definition);
     for (const { name, args } of definition.plugins) {
@@ -129,7 +137,7 @@ export function createInlineEngine(definition: InlineEngineDefinition): Markdown
             md.use(INLINE_PLUGINS[name] as unknown as (md: MarkdownIt, ...args: unknown[]) => void, ...args);
         }
     }
-    return md;
+    return definition.math ? useMathStandIn(md) : md;
 }
 
 /** The definition the page reads with now (`setCurrentInlineDefinition`), and the engines built from it, made when first asked. */
