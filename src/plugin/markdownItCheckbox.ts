@@ -10,9 +10,12 @@ import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
 // bracket is still a `text_special` token of its own: a box is written in one
 // text token, at the start of the text or after whitespace, and followed by
 // whitespace. Its label is the task's whole text after it, formatting
-// included — up to the next box beside it, or the end of the element the box
-// stands in — where the plugin's stopped at the first token that was not text
-// (`[ ] task **one**` labelled only `task `, and a bold task nothing).
+// included — up to the next box outside any element the label takes in, or
+// the end of the element the box stands in, an HTML one included — where the
+// plugin's stopped at the first token that was not text (`[ ] task **one**`
+// labelled only `task `, and a bold task nothing). A box inside an element the
+// label takes in (`[ ] a *b [x] c*`, a line's start included) stays text, as
+// no label holds another.
 const BOX = /(^|\s)\[(x|\s|_|-)\]\s/i;
 
 type TokenConstructor = new (type: string, tag: string, nesting: number) => Token;
@@ -89,16 +92,32 @@ function isBreak(token: Token): boolean {
 }
 
 // Where a label that takes in children from `from` on ends: before the close
-// of the element its box stands in, at the next box beside it (returned with
-// its run's start), or at the end. A box inside an element the label takes in
-// stays text, as no label holds another.
+// of the element its box stands in, an HTML element's closing tag included, at
+// the next box outside the elements it takes in (returned with its run's
+// start), or at the end. A box inside an element the label takes in stays
+// text, as no label holds another. Inline HTML is a token of its own per tag,
+// so its elements are followed by tag name.
 function labelEnd(children: Token[], from: number): [number, [number, RegExpExecArray]?] {
     let depth = 0;
+    // The HTML elements the label opens, innermost last.
+    const opened: string[] = [];
     let j = from;
     while (j < children.length) {
         const token = children[j];
         if (depth === 0 && token.nesting < 0) { return [j]; }
-        if (depth === 0 && isText(token)) {
+        const tag = token.type === 'html_inline' ? htmlTag(token.content) : undefined;
+        if (tag?.closing) {
+            const at = opened.lastIndexOf(tag.name);
+            if (at >= 0) {
+                opened.length = at;
+            } else if (depth === 0) {
+                // An element opened before the label.
+                return [j];
+            }
+        } else if (tag) {
+            opened.push(tag.name);
+        }
+        if (depth === 0 && opened.length === 0 && isText(token)) {
             let end = j;
             while (isText(children[end + 1])) { end++; }
             const found = findBox(children, j, end);
@@ -110,6 +129,19 @@ function labelEnd(children: Token[], from: number): [number, [number, RegExpExec
         j++;
     }
     return [j];
+}
+
+// Elements with no closing tag.
+const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+
+// An inline HTML tag that opens or closes an element, by its lower-cased
+// name; undefined for a void or self-closing tag, a comment or the like.
+function htmlTag(content: string): { name: string, closing: boolean } | undefined {
+    const match = /^<(\/?)([A-Za-z][A-Za-z0-9-]*)/.exec(content);
+    if (!match) { return undefined; }
+    const name = match[2].toLowerCase();
+    if (VOID.has(name) || (!match[1] && /\/\s*>$/.test(content))) { return undefined; }
+    return { name, closing: !!match[1] };
 }
 
 // The first box in children[from..to], one run of text: in a text token,

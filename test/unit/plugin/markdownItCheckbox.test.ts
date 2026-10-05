@@ -4,8 +4,8 @@ import MarkdownIt = require('markdown-it');
 import { plugins } from '../../../src/plugin/plugins';
 
 // The preview's own registry, in its order.
-function preview(): MarkdownIt.MarkdownIt {
-    const md = new MarkdownIt();
+function preview(options: MarkdownIt.Options = {}): MarkdownIt.MarkdownIt {
+    const md = new MarkdownIt(options);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     plugins.forEach(p => md.use(p.plugin as any, ...p.args));
     return md;
@@ -92,6 +92,20 @@ suite('MarkdownItCheckbox', () => {
         assert.strictEqual(render(md, '[ ] a\nb **c** [x] d\n'), `<p>${box('a\nb <b>c</b> ')}${box('d', true)}</p>\n`);
         // No label holds another: a box inside an element the label takes in is text.
         assert.strictEqual(render(md, '[ ] a **b [x] c**\n'), `<p>${box('a <b>b [x] c</b>')}</p>\n`);
+        // Starting a line of its own, as decided.
+        assert.strictEqual(render(md, '- [ ] a *b\n  [x] c*\n'), `<ul>\n<li>${box('a <i>b\n[x] c</i>')}</li>\n</ul>\n`);
+    });
+
+    test('a label nests with inline HTML: it ends before the close of an element opened before it, and takes in one it opens whole', () => {
+        const html = preview({ html: true });
+        assert.strictEqual(render(html, '<span>[ ] a</span> b\n'), `<p><span>${box('a')}</span> b</p>\n`);
+        assert.strictEqual(render(html, '- [ ] a </span> b\n'), `<ul>\n<li>${box('a ')}</span> b</li>\n</ul>\n`);
+        // A box inside an element the label opens is text, as in emphasis.
+        assert.strictEqual(render(html, '[ ] a <i>b\n[x] c</i>\n'), `<p>${box('a <i>b\n[x] c</i>')}</p>\n`);
+        assert.strictEqual(render(html, '[ ] a <i>b</i> [x] c\n'), `<p>${box('a <i>b</i> ')}${box('c', true)}</p>\n`);
+        // A void or self-closing tag opens nothing.
+        assert.strictEqual(render(html, '[ ] a <br> b [x] c\n'), `<p>${box('a <br> b ')}${box('c', true)}</p>\n`);
+        assert.strictEqual(render(html, '[ ] a <x/> b [x] c\n'), `<p>${box('a <x/> b ')}${box('c', true)}</p>\n`);
     });
 
     test('a formatted label is still the label of its box', () => {
