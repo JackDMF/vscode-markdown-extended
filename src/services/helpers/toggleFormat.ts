@@ -561,8 +561,10 @@ interface Part {
  * is well), and of those the ones blamed beside another toggle, for what went
  * wrong in an inline token both write in; or `'all'` where what went wrong is
  * no one toggle's — a block's structure, a line's kind, a definition.
+ * `unread` where the toggles failed before the text was read again, which
+ * then says nothing of the others.
  */
-type Verdict = { failed: Set<Toggle>; shared: Set<Toggle> } | 'all';
+type Verdict = { failed: Set<Toggle>; shared: Set<Toggle>; unread?: boolean } | 'all';
 
 /**
  * Whether toggles do what they mean, by reading the text again: the blocks
@@ -618,7 +620,13 @@ class Verifier {
         const find = (ks: number[]) => {
             const ranges = ks.map(k => this.rangeOf(toggles[k]));
             const start = Math.min(...ranges.map(r => r.start)), end = Math.max(...ranges.map(r => r.end));
-            if (this.check(this.part(start, end), ks.map(k => toggles[k])) !== 'all') {return;}
+            const verdict = this.check(this.part(start, end), ks.map(k => toggles[k]));
+            if (verdict !== 'all') {
+                // Toggles found wrong before the text was read hide what the others would find: the others are read without them.
+                const rest = verdict.unread ? ks.filter(k => !verdict.failed.has(toggles[k])) : [];
+                if (rest.length) {find(rest);}
+                return;
+            }
             if (ks.length === 1) {
                 wrong[ks[0]] = true;
                 return;
@@ -864,7 +872,7 @@ class Verifier {
                 if (!isEmptyPair(out, (placed.get(c.change) ?? 0) + marker.length, marker)) {blame(c.line, c.line + 1);}
             }
         }
-        if (failed.size > 0) {return { failed, shared };}
+        if (failed.size > 0) {return { failed, shared, unread: true };}
         /** Where offset `o` of the old text lands: before (`left`) or after (`right`) what is inserted there. */
         const mapped = (o: number, side: 'left' | 'right'): number => {
             let shift = 0;

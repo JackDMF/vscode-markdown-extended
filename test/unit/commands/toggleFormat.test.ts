@@ -487,6 +487,15 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.ok(parsed <= 40 * content.length, `${parsed} characters parsed for ${content.length}`);
     });
 
+    test('a cursor going wrong before any reading does not hide the one changing the block', async () => {
+        // Between `=` and `=` the pair would not read as one; it fails before the text is read again.
+        const items = Array.from({ length: 100 }, (_, i) => `- item zed number ${i}`);
+        const content = '- Title\n  \n- a == b\n' + items.join('\n');
+        const { parsed, text } = await parsedFor(INLINE_MARKERS.mark, content, [[1, 2], [2, 5], ...items.map((_, i) => [3 + i, 7] as [number, number])]);
+        assert.strictEqual(text, '- Title\n  \n- a == b\n' + items.map(item => item.replace('zed', '==zed==')).join('\n'));
+        assert.ok(parsed <= 40 * content.length, `${parsed} characters parsed for ${content.length}`);
+    });
+
     test('one cursor going wrong among many in one paragraph is found in a few readings, not one per cursor', async () => {
         // At the first line's cursor `~**zed**~` does not read as written, `**~zed~**` does.
         const lines = Array.from({ length: 100 }, (_, i) => (i === 0 ? 'line ~zed~ number ' : 'line zed number ') + i);
