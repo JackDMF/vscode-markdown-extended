@@ -220,12 +220,8 @@ async function main() {
         logLevel: 'silent',
         metafile: analyze,
         plugins: sharedPlugins,
-        // The page never parses, but prosemirror-markdown builds a default
-        // parser on load; the stub stands in for markdown-it there (see its
-        // header for why that is safe and what would break it).
-        alias: {
-            'markdown-it': './src/editor/webview/stubs/markdown-it.ts',
-        },
+        // markdown-it is bundled: the page reads the textblocks an edit
+        // touches with the registry's inline plugins (src/editor/inlineEngine.ts).
         define: {
             'process.env.NODE_ENV': production ? '"production"' : '"development"',
         },

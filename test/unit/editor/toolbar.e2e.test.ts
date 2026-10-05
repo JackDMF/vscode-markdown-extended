@@ -6,6 +6,7 @@ import { PREVIEW_CARD_CLASS, TOOLBAR_ACTIONS, inRow, menuOf } from '../../../src
 import { ALL_LOCK, REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const SOURCE = [
     '## FRS-TST-001: Page {#frs-tst-001-1a2b3c4d}',
@@ -48,7 +49,7 @@ suite('Editor toolbar (e2e)', () => {
             heading.content = [{ ...heading.content[0], text: heading.content[0].text.slice('FRS-TST-001: '.length) }];
         }
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, linkify: true });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Alpha'));
         await delay(50);
     };

@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import { MarkdownIt } from '../../@types/markdown-it';
 import { MarkdownItExtender, createEditorEngine } from '../engine';
 import { plugins } from '../../plugin/plugins';
-import { configureLinkify } from '../../syntax/linkify';
 import { message } from './errors';
 
 /** VS Code's own Markdown extension. Its engine is the preview's, not a plugin to it. */
@@ -100,11 +99,12 @@ export async function collectMarkdownItExtenders(selfId: string, log: Log): Prom
  * 15 removed — so the two engines tokenize alike. Checked against the build the
  * test suite downloads (`.vscode-test/…/extensions/markdown-language-features/dist/extension.js`).
  *
- * Two things the preview does to its engine that `createEditorEngine` does not
- * do, repeated here so the host is not a second opinion on what the file says:
- * linkify runs with `fuzzyLink: false` (a bare `example.com` is not a link in
- * the preview, so it must not be one here; `LINKIFY_OPTIONS`, which the
- * editor's page sets its own linkify-it with), and `breaks` follows
+ * Linkify runs with `fuzzyLink: false`, as the preview's does (a bare
+ * `example.com` is not a link in the preview, so it must not be one here):
+ * `createEditorEngine` sets it (`baseEngine`), for this engine and the
+ * editor's page alike. One thing the preview does to its engine that
+ * `createEditorEngine` does not do is repeated here, so the host is not a
+ * second opinion on what the file says: `breaks` follows
  * `markdown.preview.breaks` (it changes only how a raw block renders).
  *
  * One difference is kept deliberately: the preview's front-matter rule is VS
@@ -121,8 +121,6 @@ export async function buildEditorEngine(selfId: string, log: Log): Promise<Markd
         plugins,
         extend,
     });
-    // The options the page's own linkify-it is set with too, so both read the same URLs.
-    configureLinkify(md.linkify);
     md.set({ breaks: preview.get<boolean>('breaks', false) });
     return md;
 }

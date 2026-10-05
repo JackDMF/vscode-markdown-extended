@@ -5,7 +5,10 @@ import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 
 import { parseDocument } from '../../../src/editor/parse';
 import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
 import { editorSchema } from '../../../src/editor/schema';
-import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, serializeDocument, setLinkify, unwritableInNote } from '../../../src/editor/serialize';
+import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
+import {
+    SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, SIDEBAR_MADE, SIDEBAR_REWRITTEN_REFERENCE, serializeDocument, setInlineEngine, unwritableInNote,
+} from '../../../src/editor/serialize';
 import {
     NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, NoteNodeName, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal,
     previousNotePart, toggleNote, unwrapNote, unwrapNoteRefusal, wrapInNote, wrapNodeLockReason,
@@ -426,8 +429,8 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
     const sidebarsAfterSave = (state: EditorState, md = hostEngine()) => sidebarsIn(text(state), md);
     /** `doc` written by rule, every block as if edited, as the save after an edit the filter let through would write it. */
     const writtenByRule = (doc: Node) => serializeDocument({ doc: doc.type.create(null, topChildren(doc).map(n => touched(n))), eol: '\n', tail: '' }, { defaultWrap: 90 });
-    // The page reads URLs as the engine that parsed its document does (`setLinkify`); every test leaves it on, as it starts.
-    teardown(() => setLinkify(true));
+    // The page reads a textblock as the engine that parsed its document does (`setInlineEngine`); every test leaves it as it starts.
+    teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
     const files: [string, string, MarkdownIt][] = [
         ['a URL in parentheses', 'See (http://e.com)$note$ here.\n', hostEngine()],
         ['a URL in quotes', 'See "http://e.com"$note$ here.\n', hostEngine()],
@@ -438,7 +441,7 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
 
     test('a sidebar the parser read after a URL leaves its paragraph editable: a typo is fixed, bold applies', () => {
         for (const [label, source, md] of files) {
-            setLinkify(md === linkifyOff ? false : true);
+            setInlineEngine(inlineEngineDefinition(md));
             const state = read(source, md);
             assert.strictEqual(unwritableInNote(state.doc), null, `${label}: linkify reads no URL into the marker`);
             const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'See') + 1));
@@ -567,7 +570,7 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
     });
 
     test('with linkify off no URL refuses anything: a sidebar after an address is edited like any other', () => {
-        setLinkify(false);
+        setInlineEngine(inlineEngineDefinition(linkifyOff));
         const source = 'See http://e.com/($note$ here.\n';
         for (const [label, edit, saved] of [
             ['")" typed at the end of the sidebar', (s: EditorState) => s.tr.insertText(')', posOf(s.doc, 'note') + 4), 'See http://e.com/($note)$ here.\n'],
@@ -624,6 +627,115 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
                 assert.strictEqual(run(inside, unwrapNote(name)).doc, inside.doc, `${source}: the filter refuses it`);
             }
         }
+    });
+});
+
+suite('Editor notes: the page reads what it writes, with the host\'s engine', () => {
+    const noEmoji = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-emoji'), extend: [] });
+    const read = (source: string, md = hostEngine()) => {
+        setInlineEngine(inlineEngineDefinition(md));
+        return EditorState.create({ doc: parseDocument(md, source, {}).doc, plugins: editorPlugins() });
+    };
+    teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
+    const sidebarsIn = (markdown: string, md = hostEngine()) => {
+        const found: string[] = [];
+        parseDocument(md, markdown, {}).doc.descendants(node => {
+            if (node.type.name.endsWith('_sidebar')) {
+                found.push(node.type.name);
+            }
+        });
+        return found;
+    };
+    /** Delete the character right before the first sidebar. */
+    const deleteBeforeSidebar = (state: EditorState) => {
+        let at = -1;
+        state.doc.descendants((node, pos) => {
+            at = at < 0 && node.type.name.endsWith('_sidebar') ? pos : at;
+        });
+        return state.tr.delete(at - 1, at);
+    };
+    const typeAtEnd = (state: EditorState) => state.tr.insertText('Z', state.doc.child(0).nodeSize - 1);
+
+    test('the page\'s engine is the host\'s: every inline plugin its registry runs, in its order, with its settings', () => {
+        assert.deepStrictEqual(inlineEngineDefinition(hostEngine()), DEFAULT_INLINE_ENGINE);
+        const without = createEditorEngine({ linkify: false, typographer: true, plugins: plugins.filter(p => p.name !== 'markdown-it-kbd'), extend: [] });
+        assert.deepStrictEqual(inlineEngineDefinition(without), {
+            linkify: false,
+            typographer: true,
+            plugins: DEFAULT_INLINE_ENGINE.plugins.filter(p => p.name !== 'markdown-it-kbd'),
+        });
+    });
+
+    test('a space deleted before a sidebar after an address is refused where the line as written lets linkify read on', () => {
+        // `C\+\+http…` and the line start's `\-http…`: the escape ends the text before the scheme, and linkify reads the URL.
+        for (const source of ['C++http://e.com/ $x$ here.\n', '-http://e.com/ $x$ here.\n']) {
+            const state = read(source);
+            assert.deepStrictEqual(sidebarsIn(source), ['left_sidebar'], source);
+            const tr = deleteBeforeSidebar(state);
+            assert.strictEqual(noteRefusal(tr), SIDEBAR_GLUED_URL, source);
+            assert.ok(state.apply(tr).doc === state.doc, `${source}: the filter refuses it`);
+        }
+        // In the middle of a line `-http` is no scheme to linkify, and the sidebar reads back.
+        const mid = read('a -http://e.com/ $x$ here.\n');
+        const glued = mid.apply(deleteBeforeSidebar(mid));
+        assert.strictEqual(text(glued), 'a -http://e.com/$x$ here.\n');
+        assert.deepStrictEqual(sidebarsIn(text(glued)), ['left_sidebar']);
+    });
+
+    test('a sidebar the parser read after an address that is no URL to linkify stays editable', () => {
+        for (const source of ['See http://e~http://f.com/$x$ here.\n', 'See http://ühttp://f.com/$x$ here.\n']) {
+            const state = read(source, noEmoji);
+            assert.deepStrictEqual(sidebarsIn(source, noEmoji), ['left_sidebar'], source);
+            const tr = typeAtEnd(state);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const typed = state.apply(tr);
+            assert.strictEqual(text(typed), source.replace('here.', 'here.Z'), source);
+            assert.deepStrictEqual(sidebarsIn(text(typed), noEmoji), ['left_sidebar'], `${source}: read back`);
+            assert.strictEqual(markRefusal(select(state, 'See'), editorSchema.marks.strong, '**'), null, `${source}: bold is not disabled`);
+        }
+    });
+
+    test('a line whose character reference the editor would write out is refused with that cause, in either direction', () => {
+        // The address once written out reads the sidebar in; the `.` once written out takes the address apart, which gives one up.
+        for (const [source, before, after] of [
+            ['See h&#116;tp://e.com/$x$ here.\n', ['left_sidebar'], []],
+            ['x&#46;http://e.com/$x$\n', [], ['left_sidebar']],
+        ] as [string, string[], string[]][]) {
+            const state = read(source);
+            assert.deepStrictEqual(sidebarsIn(source), before, source);
+            const tr = typeAtEnd(state);
+            assert.strictEqual(noteRefusal(tr), SIDEBAR_REWRITTEN_REFERENCE, source);
+            assert.ok(state.apply(tr).doc === state.doc, `${source}: the filter refuses it`);
+            // What it prevents: written anyway, the sidebar is gone or one is made.
+            assert.deepStrictEqual(sidebarsIn(serializeDocument({ doc: tr.doc.type.create(null, topChildren(tr.doc).map(n => touched(n))), eol: '\n', tail: '' }, { defaultWrap: 90 })), after, `${source}: the change`);
+            assert.strictEqual(markRefusal(select(state, 'x'), editorSchema.marks.strong, '**'), SIDEBAR_REWRITTEN_REFERENCE, `${source}: bold is disabled with it`);
+        }
+    });
+
+    test('an edit after which text reads as a sidebar the editor does not show is refused', () => {
+        // The address holds `$x$`; with its scheme broken it is no URL, and `$x$` would be a sidebar.
+        const state = read('See http://e.com/$x$ here.\n');
+        assert.deepStrictEqual(sidebarsIn('See http://e.com/$x$ here.\n'), []);
+        const p = posOf(state.doc, 'http') + 3;
+        const tr = state.tr.delete(p, p + 1);
+        assert.strictEqual(noteRefusal(tr), SIDEBAR_MADE);
+        assert.ok(state.apply(tr).doc === state.doc, 'the filter refuses it');
+        // Text elsewhere in it is typed: the address and what it holds are read as they were.
+        const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'See') + 1));
+        assert.strictEqual(text(typed), 'SXee http://e.com/$x$ here.\n');
+    });
+
+    test('a paragraph holding several sidebars is judged sidebar by sidebar, where each stands', () => {
+        const source = 'One $a$ two @b@ three $c$ four.\n';
+        const state = read(source);
+        // A digit after the last left one would make it read on to no closer.
+        assert.strictEqual(noteRefusal(state.tr.insertText('5', posOf(state.doc, ' four'))), SIDEBAR_GLUED_AFTER);
+        // A letter right before the right one.
+        const beforeRight = posOf(state.doc, 'two') + 3;
+        assert.strictEqual(noteRefusal(state.tr.delete(beforeRight, beforeRight + 1)), SIDEBAR_GLUED_BEFORE);
+        // Typing between them is fine.
+        const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'three')));
+        assert.deepStrictEqual(sidebarsIn(text(typed)), ['left_sidebar', 'right_sidebar', 'left_sidebar']);
     });
 });
 

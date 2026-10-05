@@ -5,28 +5,23 @@ import { MarkdownItExportHelper } from './markdownItExportHelper';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import { MarkdownItAttrs } from './markdownItAttrs';
 import { Config } from '../services/common/config';
-// eslint-disable-next-line @typescript-eslint/naming-convention
-import * as MarkdownItSidenote from './markdownItSidenote';
 import { MarkdownIt } from '../@types/markdown-it';
+import { INLINE_PLUGINS } from './inlinePlugins';
 
 // Import all external markdown-it plugins statically for bundling
-import markdownItFootnote from 'markdown-it-footnote';
 import markdownItAbbr from 'markdown-it-abbr';
-import markdownItSupAlt from 'markdown-it-sup-alt';
-import markdownItSubAlt from 'markdown-it-sub-alt';
 import markdownItCheckbox from 'markdown-it-checkbox';
-import markdownItKbd from 'markdown-it-kbd';
 import markdownItIb from 'markdown-it-ib';
-import markdownItMark from 'markdown-it-mark';
 import markdownItDeflist from 'markdown-it-deflist';
 import { full as markdownItEmoji } from 'markdown-it-emoji';
 import markdownItMultimdTable from 'markdown-it-multimd-table';
 import markdownItHtml5Embed from 'markdown-it-html5-embed';
-import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
 import markdownItTableOfContents from 'markdown-it-table-of-contents';
 import markdownItCjkFriendly from 'markdown-it-cjk-friendly';
 
 interface MarkdownItPlugin {
+    /** Its name in the registry below (`markdown-it-sidenote`). */
+    name: string;
     plugin: (md: MarkdownIt, ...args: any[]) => void;
     args: any[];
 }
@@ -37,23 +32,20 @@ const myPlugins: Record<string, any> = {
     'markdown-it-admonition': MarkdownItAdmonition,
     'markdown-it-anchor': MarkdownItAnchorLink,
     'markdown-it-helper': MarkdownItExportHelper,
-    'markdown-it-sidenote': MarkdownItSidenote.default,
+    // The plugins with an inline rule, which the Visual Editor's page runs too
+    // (`inlinePlugins.ts`): footnote, sup-alt, sub-alt, kbd, mark, sidenote,
+    // bracketed-spans.
+    ...INLINE_PLUGINS,
     // External plugins - now statically imported for bundling
-    'markdown-it-footnote': markdownItFootnote,
     'markdown-it-abbr': markdownItAbbr,
-    'markdown-it-sup-alt': markdownItSupAlt,
-    'markdown-it-sub-alt': markdownItSubAlt,
     'markdown-it-checkbox': markdownItCheckbox,
     // Wrapped: leaves the spans markdown-it-multimd-table laid out alone.
     'markdown-it-attrs': MarkdownItAttrs,
-    'markdown-it-kbd': markdownItKbd,
     'markdown-it-ib': markdownItIb,
-    'markdown-it-mark': markdownItMark,
     'markdown-it-deflist': markdownItDeflist,
     'markdown-it-emoji': markdownItEmoji,
     'markdown-it-multimd-table': markdownItMultimdTable,
     'markdown-it-html5-embed': markdownItHtml5Embed,
-    'markdown-it-bracketed-spans': markdownItBracketedSpans,
     'markdown-it-table-of-contents': markdownItTableOfContents,
     'markdown-it-cjk-friendly': markdownItCjkFriendly,
 }
@@ -99,5 +91,5 @@ function $(name: string, ...args: any[]): MarkdownItPlugin | undefined {
     
     const plugin = myPlugins[name];
     
-    return plugin ? { plugin, args } : undefined;
+    return plugin ? { name, plugin, args } : undefined;
 }

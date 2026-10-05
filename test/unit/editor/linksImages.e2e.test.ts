@@ -7,6 +7,7 @@ import { SYSTEM_FILE_LOCK } from '../../../src/editor/webview/images';
 import { COMPLETION_KEYS } from '../../../src/editor/webview/inlineField';
 import { DROP_LOCK } from '../../../src/editor/webview/objects';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 type Posted<T extends WebviewMessage['type']> = Extract<WebviewMessage, { type: T }>;
 
@@ -41,7 +42,7 @@ suite('Editor links and images (e2e)', () => {
     const showDocument = async (text: string, marker: string) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, linkify: true });
+        await send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         await page.mouse.move(2, 2);
         await delay(150);

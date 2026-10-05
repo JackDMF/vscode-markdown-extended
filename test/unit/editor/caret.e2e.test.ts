@@ -4,6 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { closeEditorPage, EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const SOURCE = 'Intro paragraph.\n\nSecond *paragraph* here.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n';
 
@@ -34,7 +35,7 @@ suite('Editor caret (e2e)', () => {
         }
         page = editor.page;
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-        await editor.send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version: 1, defaultWrap: 90, includes: false, linkify: true });
+        await editor.send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version: 1, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForSelector('.ProseMirror');
     });
 

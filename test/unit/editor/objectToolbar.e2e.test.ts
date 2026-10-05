@@ -6,6 +6,7 @@ import { WebviewMessage } from '../../../src/editor/protocol';
 import { SIDEBAR_GLUED_BEFORE } from '../../../src/editor/serialize';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 /** The selection's object toolbar, shown. */
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
@@ -28,7 +29,7 @@ suite('Editor object toolbar (e2e)', () => {
     const showDocument = async (text: string, marker: string) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, linkify: true });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         // Out of any object the last test left the caret or the pointer in.
         await page.mouse.move(2, 2);

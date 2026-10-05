@@ -423,6 +423,7 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
     try {
         const tokenOpen = state.push(`${config.type}_open`, 'span', 1);
         tokenOpen.markup = config.openMarker;
+        markSpan(tokenOpen, start, endPos);
         // An empty text first, at the content's level: markdown-it-bracketed-
         // spans tells a look-ahead from a real parse by the last token's
         // level, and an opening token right before would make it push its
@@ -443,7 +444,9 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
         restoreInline(state, saved);
         state.src = src;
         state.posMax = max;
-        state.push(`${config.type}_open`, 'span', 1).markup = config.openMarker;
+        const tokenOpen = state.push(`${config.type}_open`, 'span', 1);
+        tokenOpen.markup = config.openMarker;
+        markSpan(tokenOpen, start, endPos);
         state.push('text', '', 0).content = src.slice(start + 1, endPos);
         state.push(`${config.type}_close`, 'span', -1);
     } finally {
@@ -458,6 +461,19 @@ function sidebarTokenizer(state: MarkdownItState, silent: boolean): boolean {
     return true;
 }
 
+/**
+ * The key under a sidebar's opening token's `meta` that says where its
+ * opening and its closing marker stand in the source the rule read
+ * (`[open, close]`). The Visual Editor's page reads it to match each sidebar
+ * it wrote to the one the parser reads back (`readSidebars` in
+ * `src/editor/inlineEngine.ts`); nothing renders it.
+ */
+export const SIDEBAR_SPAN_META = 'sidebarSpan';
+
+function markSpan(token: { meta: unknown }, open: number, close: number): void {
+    token.meta = { ...((token.meta as Record<string, unknown> | null) ?? {}), [SIDEBAR_SPAN_META]: [open, close] };
+}
+
 /** The two parts of markdown-it's inline parser the sidebar rule drives, which its declarations leave out. */
 interface InlineParser {
     tokenize(state: MarkdownItState): void;
@@ -468,10 +484,12 @@ function inlineParser(state: MarkdownItState): InlineParser {
     return state.md.inline as unknown as InlineParser;
 }
 
-/** A character reference as markdown-it's entity rule reads one (`&#120;`, `&#x78;`, `&amp;`), at the end of the text before a marker. */
-const REFERENCE_BEFORE = /&(?:#(?:[xX][0-9a-fA-F]{1,6}|[0-9]{1,7})|[A-Za-z][A-Za-z0-9]{1,31});$/;
-/** The same, at the start of the text after a marker. */
-const REFERENCE_AFTER = /^&(?:#(?:[xX][0-9a-fA-F]{1,6}|[0-9]{1,7})|[A-Za-z][A-Za-z0-9]{1,31});/;
+/** A character reference as markdown-it's entity rule reads one (`&#120;`, `&#x78;`, `&amp;`). */
+export const CHARACTER_REFERENCE = /&(?:#(?:[xX][0-9a-fA-F]{1,6}|[0-9]{1,7})|[A-Za-z][A-Za-z0-9]{1,31});/;
+/** One at the end of the text before a marker. */
+const REFERENCE_BEFORE = new RegExp(`${CHARACTER_REFERENCE.source}$`);
+/** One at the start of the text after a marker. */
+const REFERENCE_AFTER = new RegExp(`^${CHARACTER_REFERENCE.source}`);
 /** The longest text `REFERENCE_BEFORE` can match: `&`, 32 characters of a name, `;`. */
 const REFERENCE_MAX = 34;
 
@@ -637,8 +655,8 @@ function scanCache(state: MarkdownItState): Record<number, number> {
 
 /**
  * Where the bare URL that markdown-it's linkify rule would read at `pos` (its
- * `://`) ends, or -1 — asked as the editor's serializer asks it
- * (`bareUrlAt`), of the engine's own linkify-it, the text starting at
+ * `://`) ends, or -1 — asked (`bareUrlAt`) of the engine's own linkify-it,
+ * the text starting at
  * `textStart` and ending at `max`, a link markdown-it would not follow
  * refused.
  */

@@ -16,6 +16,7 @@ import { SessionHost, SessionWebview, VisualEditorSession, revealInVisualEditor 
 import { fillDestination } from '../../../src/editor/host/images';
 import { fragmentLine, githubSlug, headingAnchors } from '../../../src/editor/host/links';
 import { GITHUB_SLUG_REPLACE } from '../../../src/editor/host/githubSlugRegex';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { blockLineRanges } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
 import { ActiveVisualEditor, ActiveVisualEditorTracker, TrackedEditor, TrackedPanel, VisualEditorApi } from '../../../src/editor/host/activeEditor';
@@ -327,8 +328,8 @@ suite('Editor host: session protocol', () => {
     });
 });
 
-suite('Editor host: the page reads URLs as the engine that parsed its document', () => {
-    test('the document says whether its engine reads bare URLs, and markdown.preview.linkify turned off posts it again, saying so', async function () {
+suite('Editor host: the page reads a textblock as the engine that parsed its document', () => {
+    test('the document carries its engine\'s inline definition, and markdown.preview.linkify turned off posts it again, saying so', async function () {
         this.timeout(30000);
         const uri = tempMarkdown('See http://e.com/ $note$ here.\n');
         const document = await vscode.workspace.openTextDocument(uri);
@@ -339,11 +340,11 @@ suite('Editor host: the page reads URLs as the engine that parsed its document',
         try {
             webview.send({ type: 'ready' });
             await session.settled();
-            assert.deepStrictEqual(webview.documents().map(d => d.linkify), [true], 'on, as VS Code ships it');
+            assert.deepStrictEqual(webview.documents().map(d => d.inline), [DEFAULT_INLINE_ENGINE], 'linkify on, as VS Code ships it, and every inline plugin of the registry');
             await preview().update('linkify', false, vscode.ConfigurationTarget.Global);
             assert.ok(await until(() => (webview.documents().length > 1 ? true : undefined), 10000), 'the document is posted again');
             await session.settled();
-            assert.deepStrictEqual(webview.documents().map(d => d.linkify), [true, false]);
+            assert.deepStrictEqual(webview.documents().map(d => d.inline.linkify), [true, false]);
         } finally {
             await preview().update('linkify', undefined, vscode.ConfigurationTarget.Global);
             session.dispose();

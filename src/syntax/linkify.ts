@@ -1,16 +1,10 @@
-import linkifyIt from 'linkify-it';
-
 /**
  * Where a bare URL is, asked of linkify-it itself, stated once.
  *
- * Two places need it: the sidebar plugin, which reads a URL in a sidebar's
- * text as markdown-it's linkify rule will (`src/plugin/markdownItSidenote.ts`),
- * and the Visual Editor's serializer, which refuses an edit after which that
- * rule would read a sidebar's opening marker into a URL
- * (`src/editor/serialize.ts`). The parser asks the engine's own linkify-it; the
- * editor's page, which has no engine, asks one configured here the way the
- * host configures the engine's (`configureLinkify`), so both read the same
- * URLs.
+ * The sidebar plugin reads a URL in a sidebar's text as markdown-it's linkify
+ * rule will (`src/plugin/markdownItSidenote.ts`), asking the engine's own
+ * linkify-it, set as VS Code's preview sets it (`configureLinkify`, which
+ * every engine the editor builds runs: `src/editor/inlineEngine.ts`).
  */
 
 /** The part of linkify-it this module asks: the URL a text starts with, if any. */
@@ -21,8 +15,8 @@ export interface UrlMatcher {
 /**
  * The options VS Code's preview runs linkify-it with: no fuzzy links, so a bare
  * `example.com` is no link and only a URL with its scheme (`http:`, `https:`,
- * `ftp:`, `mailto:`, `//`) is one. The editor's engine (`host/engineHost.ts`)
- * and the page's linkify-it (`createLinkify`) are both set with these.
+ * `ftp:`, `mailto:`, `//`) is one. The editor's engine and the page's are both
+ * set with these (`baseEngine`).
  */
 export const LINKIFY_OPTIONS = { fuzzyLink: false } as const;
 
@@ -31,11 +25,6 @@ export function configureLinkify<T>(linkify: T): T {
     // linkify-it's `set` is missing from the project's markdown-it declaration.
     (linkify as unknown as { set(options: typeof LINKIFY_OPTIONS): void }).set(LINKIFY_OPTIONS);
     return linkify;
-}
-
-/** A linkify-it of its own, set as the engine's is: the page's (`webview/main.ts`), which bundles linkify-it for it. */
-export function createLinkify(): UrlMatcher {
-    return configureLinkify(new linkifyIt() as UrlMatcher);
 }
 
 /** A character of a URL's scheme (RFC 3986), as markdown-it's linkify rule reads one. */
@@ -51,14 +40,11 @@ function isSchemeChar(code: number): boolean {
  * characters before `colon`, none before `textStart` (the rule's pending
  * text), starting with an ASCII letter; the URL by linkify-it's
  * `matchAtStart` over the text from there to `end`; a trailing `*` left out
- * (it is emphasis). `validate` is markdown-it's `validateLink` on the URL,
- * where there is an engine to ask; the page has none, and the schemes
- * linkify-it knows at a `://` (`http`, `https`, `ftp`) are ones markdown-it's
- * own `validateLink` never refuses.
+ * (it is emphasis); one `validate` (markdown-it's `validateLink`) refuses is none.
  */
 export function bareUrlAt(
-    linkify: UrlMatcher, text: string, colon: number, textStart = 0, end = text.length,
-    validate?: (url: string) => boolean,
+    linkify: UrlMatcher, text: string, colon: number, textStart: number, end: number,
+    validate: (url: string) => boolean,
 ): [number, number] | null {
     if (colon + 3 > end || text.charCodeAt(colon) !== 0x3a || text.charCodeAt(colon + 1) !== 0x2f || text.charCodeAt(colon + 2) !== 0x2f) {
         return null;
@@ -80,7 +66,7 @@ export function bareUrlAt(
     while (length > 0 && link.url.charCodeAt(length - 1) === 0x2a) {
         length--;
     }
-    if (validate !== undefined && !validate(link.url.slice(0, length))) {
+    if (!validate(link.url.slice(0, length))) {
         return null;
     }
     return [start, start + length];

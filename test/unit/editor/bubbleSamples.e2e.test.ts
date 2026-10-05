@@ -4,6 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { closeEditorPage, EXTENSION_ID, EditorPage, delay, openEditorPage, shot, vscodeMarkdownCss } from './pageHarness';
 import { DARK_MODERN, applyTheme } from './themes';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 /**
  * A person's `markdown.styles`, as Req Explorer's corpus has one: a note
@@ -53,7 +54,7 @@ suite('Bubble samples (e2e)', () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         const json = parsedDocumentToJSON(parseDocument(md, text, {}));
         version++;
-        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, linkify: true });
+        await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('gamma'));
         await delay(50);
     };

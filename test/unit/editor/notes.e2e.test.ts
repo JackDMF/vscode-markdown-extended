@@ -8,6 +8,7 @@ import { SIDEBAR_GLUED_BEFORE } from '../../../src/editor/serialize';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine } from './helpers';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 
 /** Narrower than the notes' 1280px breakpoint: the notes render stacked, in the text flow, where a click reaches them. */
 const NARROW = 1000;
@@ -34,7 +35,7 @@ suite('Editor notes and links (e2e)', () => {
     const showDocument = async (text: string, marker: string, extensionOnly = false) => {
         const md = extensionOnly ? hostEngine() : await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, linkify: true });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         await delay(80);
     };
@@ -185,14 +186,14 @@ suite('Editor notes and links (e2e)', () => {
         assert.notStrictEqual(button.disabled, 'true', button.title);
     });
 
-    test('the page reads URLs as the engine that parsed the document: a ")" that lets linkify read a sidebar into the address is refused with linkify on, typed with it off', async function () {
+    test('the page reads a textblock as the engine that parsed the document: a ")" that lets linkify read a sidebar into the address is refused with linkify on, typed with it off', async function () {
         this.timeout(20000);
         const source = 'See http://e.com/($note$ here.\n';
         // This extension's plugins alone: VS Code's math would claim `$…$`.
         for (const md of [hostEngine(), createEditorEngine({ linkify: false, typographer: false, plugins, extend: [] })]) {
             const linkify = Boolean(md.options.linkify);
             version++;
-            await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, source, {})), version, defaultWrap: 90, includes: false, linkify });
+            await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, source, {})), version, defaultWrap: 90, includes: false, inline: inlineEngineDefinition(md) });
             await page.waitForFunction(() => document.querySelector('.ProseMirror .left-sidebar') !== null);
             await delay(80);
             const before = (await (editor as EditorPage).edits()).length;

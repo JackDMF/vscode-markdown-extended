@@ -7,7 +7,9 @@ import { NOTE_SYNTAX_CHARS, endsWithAttrsLiteral, parseAttrsLiteral } from './at
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, width, wrapInline } from './wrap';
-import { UrlMatcher, bareUrlAt, createLinkify } from '../syntax/linkify';
+import { MarkdownIt } from '../@types/markdown-it';
+import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
+import { DEFAULT_INLINE_ENGINE, InlineEngineDefinition, ReadSidebar, createInlineEngine, readSidebars } from './inlineEngine';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -349,13 +351,7 @@ const inlineNodes: NodeSerializers = {
         const text = (node.text ?? '').replace(HOLD_RE, '');
         const st = internals(state);
         if (st.notePart === undefined || st.inAutolink) {
-            const from = st.out.length;
             state.text(text, !st.inAutolink);
-            // Text linkify reads a URL in: outside a note, a code span, a link's label, `<…>` (`bareUrlsIn`).
-            if (seamCollector !== null && st.notePart === undefined && st.linkForm !== 'inline' && st.linkForm !== 'angle'
-                && !node.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
-                seamCollector.plain.push([from, st.out.length]);
-            }
             return;
         }
         // Superscript and subscript in a sidebar keep the backslash escape:
@@ -472,23 +468,24 @@ function noteUnwritable(note: Node): string | null {
  * so the editor refuses the edit that would make it (`webview/notes.ts`)
  * rather than save a document the next parse restructures: a raw mark over a
  * note, text under a raw mark that holds a reference's `|` or the note's
- * marker pair, or a sidebar touching a letter, a digit or a URL that would
- * keep its marker from being read (`failingSidebarSeams`).
+ * marker pair, or a textblock that would not read back as the sidebars it
+ * holds (`sidebarRefusal`).
  *
- * With `origin`, the edit that made `doc` is judged by what it changed: **a
- * document the parser produced is always writable**, so a sidebar seam that
- * fails is refused only if the edit created it — a seam that failed the
- * same way at the same side of the same sidebar before (`seamFailedBefore`)
- * is one the file already held, which the parser read as a sidebar and will
- * again, and refusing it would make every edit in that paragraph impossible.
- * A seam failing the URL check never failed before: the check asks linkify
- * itself whether it reads the marker into a URL (`bareUrlsIn`), and a
- * sidebar the parser read is one linkify did not read into a URL, so a URL
- * seam failing after the edit is one the edit made — the closing bracket
- * of the URL deleted, or one typed into the sidebar that lets linkify read
- * on through it. Every refusal the editor asks — the notes filter, the
- * toolbar's disabled buttons, the object bar's verbs — goes through here
- * with the transaction's origin (`noteRefusal`).
+ * The sidebars are not modelled, they are read: each textblock in the range
+ * that holds a sidebar, or a `$` or `@` that could be read as one, is written
+ * as the save writes it (`writtenTextblock`) and parsed by the page's own
+ * engine, built from the host's definition (`setInlineEngine`), and every
+ * sidebar it holds must come back where it stands, and no other. Whatever
+ * stands beside a marker — a letter, a digit, a web address linkify reads on
+ * into it, an escape the line start takes — is judged by the parser that will
+ * read the file. So **a document the parser produced is always writable**
+ * wherever the editor writes it as it was read: its sidebars are the ones the
+ * parser read. Where the editor writes it otherwise — a character reference
+ * written as its character — the parse sees the outcome, and the edit is
+ * refused with that cause (`origin`, the edit's starting document). Every
+ * refusal the editor asks — the notes filter, the toolbar's disabled buttons,
+ * the object bar's verbs — goes through here with the transaction's origin
+ * (`noteRefusal`).
  */
 export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin): string | null {
     let reason: string | null = null;
@@ -508,18 +505,14 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
         }
         return true;
     });
-    // A sidebar's markers depend on what touches them, which an edit beside the sidebar changes.
+    // What reads as a sidebar depends on the whole textblock as written, which an edit anywhere in it changes.
     for (const textblock of textblocks) {
         if (reason !== null) {
             break;
         }
-        let holdsSidebar = false;
-        textblock.node.forEach(child => {
-            holdsSidebar = holdsSidebar || SIDEBAR_NODES.has(child.type.name);
-        });
-        const created = (holdsSidebar ? failingSidebarSeams(textblock.node) : []).find(seam =>
-            origin === undefined || seam.reason === SIDEBAR_GLUED_URL || !seamFailedBefore(origin, doc, textblock.pos + 1 + seam.offset, seam));
-        reason = created?.reason ?? null;
+        if (mayHoldSidebar(textblock.node)) {
+            reason = sidebarRefusal(doc, textblock.pos, textblock.node, origin);
+        }
     }
     return reason;
 }
@@ -606,7 +599,7 @@ function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string
     state.text(marker, false);
     renderPart(state, node, part);
     state.text(marker, false);
-    seamCollector?.seams.push({ node, open, close: st.out.length, marker });
+    seamCollector?.push({ node, open, close: st.out.length });
 }
 
 /** Where a sidebar's markers stand in the output being written: before the opening one, after the closing one. */
@@ -614,35 +607,21 @@ interface SidebarSeam {
     node: Node;
     open: number;
     close: number;
-    marker: string;
-}
-
-/**
- * A sidebar marker the parser would not read: the sidebar at `offset` in its
- * textblock, at its opener or its closer.
- */
-interface FailingSeam {
-    offset: number;
-    side: 'open' | 'close';
-    reason: string;
 }
 
 /**
  * Where an edit started: the document a transaction was applied to and how it
- * moved positions (`Transaction.before`, `Transaction.mapping`), so that only
- * a seam the edit made is refused (`unwritableInNote`).
+ * moved positions (`Transaction.before`, `Transaction.mapping`), so that a
+ * refusal can say whether the edit or the file's own spelling is the cause
+ * (`unwritableInNote`).
  */
 export interface EditOrigin {
     doc: Node;
     mapping: Mapping;
 }
 
-/**
- * What `failingSidebarSeams` collects while it writes a textblock: where each
- * sidebar's markers stand, and the stretches of the output written as text
- * markdown-it's linkify rule reads a URL in (`bareUrlsIn`).
- */
-let seamCollector: { seams: SidebarSeam[]; plain: [number, number][] } | null = null;
+/** Where each sidebar's markers stand while `writtenTextblock` writes a textblock. */
+let seamCollector: SidebarSeam[] | null = null;
 
 /** Why a sidebar right after a letter or digit is not made. */
 export const SIDEBAR_GLUED_BEFORE = 'A sidebar right after a letter or digit would not be read as a sidebar: put a space before it.';
@@ -650,171 +629,192 @@ export const SIDEBAR_GLUED_BEFORE = 'A sidebar right after a letter or digit wou
 export const SIDEBAR_GLUED_AFTER = 'A left sidebar right before a digit would not be read as a sidebar: put a space after it.';
 /** Why a sidebar right after a URL is not made. */
 export const SIDEBAR_GLUED_URL = 'A sidebar right after a web address would be read as part of the address: put a space before it.';
+/** Why an edit is refused in a line whose character reference, written as its character, changes what is a sidebar. */
+export const SIDEBAR_REWRITTEN_REFERENCE = 'This line spells a character as a character reference (&#…;), which the editor writes as the character itself, and saved that way a sidebar here would not read back as it is shown: edit the line once in the text editor to unlock it.';
+/** Why an edit is refused in a line the editor would write so that a sidebar does not read back, for another reason than a character reference. */
+export const SIDEBAR_REWRITTEN = 'Written by the editor, this line would not read a sidebar back as it is shown, edited or not: edit the line once in the text editor to unlock it.';
+/** Why a sidebar is not made that would not read back, for none of the reasons above. */
+export const SIDEBAR_NOT_READ = 'After this edit a sidebar here would not be read back as a sidebar.';
+/** Why an edit is refused after which text would read as a sidebar the editor does not show. */
+export const SIDEBAR_MADE = 'After this edit text here would be read as a sidebar, which the editor does not show (a $…$ or @…@ in a web address, say).';
+
+/** The definition the page's engine was built from, and the engine, made when first asked. */
+let inlineDefinition: InlineEngineDefinition = DEFAULT_INLINE_ENGINE;
+let inlineEngine: MarkdownIt | null = null;
+/** The sidebars the engine read in a text, by the text: a textblock is parsed once however often it is asked about. */
+const readCache = new Map<string, ReadSidebar[]>();
+/** How many texts `readCache` keeps; the oldest is dropped first. */
+const READ_CACHE_SIZE = 512;
 
 /**
- * Whether linkify reads bare URLs, as `markdown.preview.linkify` says for the
- * document the page shows; the page sets it from each document the host
- * posts (`setLinkify`), which the host parsed with that same setting.
+ * Read textblocks with the engine `definition` describes — the host's, posted
+ * with each document (`inlineEngineDefinition`): its linkify and typographer
+ * settings and the registry's inline plugins it runs.
  */
-let linkifyOn = true;
-/** The page's linkify-it, made when first asked (`createLinkify`): the engine's is on the host. */
-let pageLinkify: UrlMatcher | null = null;
-
-/** Read bare URLs as linkify does (`enabled`), or read none, as the document the page shows was parsed. */
-export function setLinkify(enabled: boolean): void {
-    linkifyOn = enabled;
+export function setInlineEngine(definition: InlineEngineDefinition): void {
+    if (JSON.stringify(definition) === JSON.stringify(inlineDefinition)) {
+        return;
+    }
+    inlineDefinition = definition;
+    inlineEngine = null;
+    readCache.clear();
 }
 
-/**
- * The bare URLs markdown-it's linkify rule reads in `text` — a textblock as
- * written, the wrapper's hold markers taken out — as `[start, end)`, none
- * while linkify is off. Walked as the inline parser walks it: at each `://`
- * in plain text (`plain`: written as text, not in code, a link's label, `<…>`
- * or a note) linkify-it is asked where the URL there ends (`bareUrlAt`, the
- * scheme read only from the plain text it stands in, as the rule reads it
- * from its pending text), and the walk goes on after that URL. linkify-it
- * reads the rest of the text as it is written, delimiters, markers and all,
- * so whatever it reads into a URL is decided by its own grammar, never by a
- * guess at where a URL stops.
- */
-function bareUrlsIn(text: string, plain: readonly [number, number][]): [number, number][] {
-    if (!linkifyOn) {
-        return [];
-    }
-    pageLinkify ??= createLinkify();
-    const urls: [number, number][] = [];
-    let at = text.indexOf('://');
-    while (at !== -1) {
-        const run = plain.find(([from, to]) => at >= from && at < to);
-        const url = run === undefined ? null : bareUrlAt(pageLinkify, text, at, run[0]);
-        if (url !== null) {
-            urls.push(url);
+function engine(): MarkdownIt {
+    inlineEngine ??= createInlineEngine(inlineDefinition);
+    return inlineEngine;
+}
+
+/** The sidebars the page's engine reads in `text` (`readSidebars`), remembered by the text. */
+function sidebarsRead(text: string): ReadSidebar[] {
+    let read = readCache.get(text);
+    if (read === undefined) {
+        read = readSidebars(engine(), text);
+        if (readCache.size >= READ_CACHE_SIZE) {
+            readCache.delete(readCache.keys().next().value as string);
         }
-        at = text.indexOf('://', url === null ? at + 1 : url[1]);
+    } else {
+        readCache.delete(text);
     }
-    return urls;
+    readCache.set(text, read);
+    return read;
 }
 
+/** The sidebars the page's engine reads in `text` with linkify off: whether a URL is what took one (`lostReason`). */
+function sidebarsReadWithoutLinkify(text: string): ReadSidebar[] {
+    const md = engine() as MarkdownIt & { set(options: { linkify: boolean }): void };
+    md.set({ linkify: false });
+    try {
+        return readSidebars(md, text);
+    } finally {
+        md.set({ linkify: inlineDefinition.linkify });
+    }
+}
+
+/** The textblocks whose inline content the parser reads, where a sidebar can stand or be read. */
+const INLINE_TEXTBLOCKS: ReadonlySet<string> = new Set(['paragraph', 'heading', 'table_cell', 'table_header']);
+
 /**
- * `ranges` of `written`, as positions in it with the hold markers taken out;
- * ranges that meet once they are out are one (a bare URL's held text and the
- * text before it are one run of pending text to the parser).
+ * A textblock's inline content as the save writes it, unwrapped and with the
+ * wrapper's hold markers taken out, and where each sidebar it holds stands in
+ * that text: its kind, its opening marker and its closing marker. A paragraph
+ * is written in the line-start form, as `blockSerializer` writes it
+ * (`paragraphMarkdown`), with a trailing `{…}` as text escaped; a heading as
+ * it is written after its `#`, its requirement id's prefix first; a table
+ * cell as its row writes it. (A hard break in a heading, which its line
+ * writes as a space, is read as the break: either way no marker touches it.)
  */
-function withoutHolds(written: string, ranges: readonly [number, number][]): { text: string; at: (pos: number) => number; ranges: [number, number][] } {
+function writtenTextblock(textblock: Node): { text: string; sidebars: ReadSidebar[] } {
+    const seams: SidebarSeam[] = [];
+    let written: string;
+    seamCollector = seams;
+    try {
+        const name = textblock.type.name;
+        if (name === 'heading') {
+            const prefix = (textblock.attrs.reqPrefix as string | null) ?? '';
+            written = prefix + inlineMarkdown(textblock, false);
+            seams.forEach(seam => {
+                seam.open += prefix.length;
+                seam.close += prefix.length;
+            });
+        } else if (name === 'paragraph') {
+            written = paragraphMarkdown(textblock);
+        } else {
+            written = cellMarkdown(textblock);
+        }
+    } finally {
+        seamCollector = null;
+    }
     const before: number[] = [0];
     for (let i = 0; i < written.length; i++) {
         const ch = written.charAt(i);
         before.push(before[i] + (ch === HOLD_OPEN || ch === HOLD_CLOSE ? 1 : 0));
     }
     const at = (pos: number) => pos - before[pos];
-    const merged: [number, number][] = [];
-    for (const [from, to] of ranges.map(([from, to]): [number, number] => [at(from), at(to)]).sort((a, b) => a[0] - b[0])) {
-        const last = merged[merged.length - 1];
-        if (last !== undefined && from <= last[1]) {
-            last[1] = Math.max(last[1], to);
-        } else if (from < to) {
-            merged.push([from, to]);
-        }
+    let text = written.replace(HOLD_RE, '');
+    if (textblock.type.name === 'paragraph' && endsInLiteralText(textblock)) {
+        // At the text's end, after every sidebar, so no marker moves.
+        text = escapeTrailingLiteral(text);
     }
-    return { text: written.replace(HOLD_RE, ''), at, ranges: merged };
+    return { text, sidebars: seams.map(seam => ({ kind: seam.node.type.name, open: at(seam.open), close: at(seam.close - 1) })) };
+}
+
+/** Whether a textblock holds a sidebar, or text that could be read as one once written. */
+function mayHoldSidebar(textblock: Node): boolean {
+    if (!INLINE_TEXTBLOCKS.has(textblock.type.name)) {
+        return false;
+    }
+    let holds = false;
+    textblock.forEach(child => {
+        holds = holds || SIDEBAR_NODES.has(child.type.name);
+    });
+    return holds || /[$@]/.test(textblock.textContent);
+}
+
+function sameSidebar(a: ReadSidebar, b: ReadSidebar): boolean {
+    return a.kind === b.kind && a.open === b.open && a.close === b.close;
 }
 
 /**
- * The sidebar markers in `textblock` that would not read back as one: the
- * plugin opens one only where no ASCII letter or digit stands right before
- * its marker, and a `$` closes only where no digit follows
- * (`sidebarCanOpen`, `sidebarCanClose`); and markdown-it's linkify rule
- * reads an opening marker into a bare URL before it when linkify-it's URL
- * there reaches it (`bareUrlsIn`). The characters are read off the
- * textblock as it is written — a mark without a delimiter or a badge writes
- * nothing between, a bare URL or an email address writes its own text, a
- * mark's delimiters are written where linkify reads them — with the
- * wrapper's hold markers skipped. Nothing is written to escape them: a
- * character reference in a word changes what the word is (a link, an
- * abbreviation, an id someone searches for), so the edit is refused instead.
+ * How `textblock`, written as the save writes it, reads back, if not as the
+ * sidebars it holds: the first of them the parser does not read where it
+ * stands (`lost`), or the first sidebar it reads that the textblock does not
+ * hold (`made`).
  */
-function failingSidebarSeams(textblock: Node): FailingSeam[] {
-    const collected: { seams: SidebarSeam[]; plain: [number, number][] } = { seams: [], plain: [] };
-    let written: string;
-    seamCollector = collected;
-    try {
-        written = inlineMarkdown(textblock, false);
-    } finally {
-        seamCollector = null;
+function sidebarMismatch(textblock: Node): { written: { text: string; sidebars: ReadSidebar[] }; lost?: ReadSidebar; made?: ReadSidebar } | null {
+    const written = writtenTextblock(textblock);
+    const read = sidebarsRead(written.text);
+    const lost = written.sidebars.find(s => !read.some(r => sameSidebar(r, s)));
+    const made = read.find(r => !written.sidebars.some(s => sameSidebar(r, s)));
+    return lost === undefined && made === undefined ? null : { written, lost, made };
+}
+
+/**
+ * Why a sidebar the parser does not read back where it stands is lost, said
+ * as what to do: a letter or digit before its marker, a digit after a left
+ * one's closer (`sidebarCanOpen`, `sidebarCanClose`), or a web address that
+ * reads it in — the sidebar comes back with linkify off.
+ */
+function lostReason(text: string, lost: ReadSidebar): string {
+    const marker = text.charAt(lost.open);
+    if (lost.open > 0 && !sidebarCanOpen(text.charAt(lost.open - 1), marker)) {
+        return SIDEBAR_GLUED_BEFORE;
     }
-    // Sidebars are a textblock's own children (none is held in a note), written in their order.
-    const offsets: number[] = [];
-    textblock.forEach((child, offset) => {
-        if (SIDEBAR_NODES.has(child.type.name)) {
-            offsets.push(offset);
+    if (lost.close + 1 < text.length && !sidebarCanClose(marker, text.charAt(lost.close + 1))) {
+        return SIDEBAR_GLUED_AFTER;
+    }
+    if (inlineDefinition.linkify && sidebarsReadWithoutLinkify(text).some(r => sameSidebar(r, lost))) {
+        return SIDEBAR_GLUED_URL;
+    }
+    return SIDEBAR_NOT_READ;
+}
+
+/**
+ * Why the textblock at `pos` in `doc` cannot be written so that it reads back
+ * as the sidebars it holds, or `null`. When the textblock the edit started
+ * from already read back otherwise (`origin`), the cause is how the file
+ * spells the line, which the editor rewrites — a character reference it
+ * writes as the character (`h&#116;tp://e.com/$x$`, an address once written
+ * out, takes the sidebar in) — and the reason says so: the line is edited in
+ * the text editor once.
+ */
+function sidebarRefusal(doc: Node, pos: number, textblock: Node, origin?: EditOrigin): string | null {
+    const mismatch = sidebarMismatch(textblock);
+    if (mismatch === null) {
+        return null;
+    }
+    if (origin !== undefined) {
+        const old = Math.min(origin.mapping.invert().map(pos + 1, -1), origin.doc.content.size);
+        const $old = origin.doc.resolve(old);
+        if ($old.depth > 0 && mayHoldSidebar($old.parent) && sidebarMismatch($old.parent) !== null) {
+            const src = $old.node(1).attrs.src as string | null | undefined;
+            return typeof src === 'string' && CHARACTER_REFERENCE.test(src) ? SIDEBAR_REWRITTEN_REFERENCE : SIDEBAR_REWRITTEN;
         }
-    });
-    const read = withoutHolds(written, collected.plain);
-    const urls = bareUrlsIn(read.text, read.ranges);
-    const failing: FailingSeam[] = [];
-    const isHold = (ch: string) => ch === HOLD_OPEN || ch === HOLD_CLOSE;
-    collected.seams.forEach((seam, i) => {
-        const offset = offsets[i];
-        let before = seam.open - 1;
-        while (before >= 0 && isHold(written.charAt(before))) {
-            before--;
-        }
-        let after = seam.close;
-        while (after < written.length && isHold(written.charAt(after))) {
-            after++;
-        }
-        const open = read.at(seam.open);
-        if (before >= 0 && !sidebarCanOpen(written.charAt(before), seam.marker)) {
-            failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_BEFORE });
-        } else if (urls.some(([from, to]) => from < open && to > open)) {
-            failing.push({ offset, side: 'open', reason: SIDEBAR_GLUED_URL });
-        }
-        if (after < written.length && !sidebarCanClose(seam.marker, written.charAt(after))) {
-            failing.push({ offset, side: 'close', reason: SIDEBAR_GLUED_AFTER });
-        }
-    });
-    return failing;
+    }
+    return mismatch.lost !== undefined ? lostReason(mismatch.written.text, mismatch.lost) : SIDEBAR_MADE;
 }
 
 const SIDEBAR_NODES: ReadonlySet<string> = new Set(['left_sidebar', 'right_sidebar']);
-
-/**
- * Where the sidebar at `pos` in the edit's starting document stands in the
- * document it made, or `null` when the edit took it out or made it something
- * else: a step that deleted across its opening or closing token, or changed
- * its kind or its size, made a new sidebar there.
- */
-function sidebarAfterEdit(origin: EditOrigin, doc: Node, pos: number, sidebar: Node): number | null {
-    const end = pos + sidebar.nodeSize;
-    if (origin.mapping.mapResult(pos + 1, -1).deletedAcross || origin.mapping.mapResult(end - 1, 1).deletedAcross) {
-        return null;
-    }
-    const at = origin.mapping.map(pos, 1);
-    const now = at < doc.content.size ? doc.nodeAt(at) : null;
-    return now !== null && now.type === sidebar.type && at + now.nodeSize === origin.mapping.map(end, -1) ? at : null;
-}
-
-/**
- * Whether `seam`, failing in `doc` at the sidebar at `pos`, failed the same
- * way at that side of the same sidebar before the edit (`sidebarAfterEdit`):
- * the sidebar is found in the starting document by mapping `pos` back
- * through the edit, and its textblock there checked. A seam failing the URL
- * check is never asked (`unwritableInNote`).
- */
-function seamFailedBefore(origin: EditOrigin, doc: Node, pos: number, seam: FailingSeam): boolean {
-    const back = origin.mapping.invert();
-    for (const bias of [-1, 1]) {
-        const old = back.map(pos, bias);
-        const sidebar = old < origin.doc.content.size ? origin.doc.nodeAt(old) : null;
-        if (sidebar === null || !SIDEBAR_NODES.has(sidebar.type.name) || sidebarAfterEdit(origin, doc, old, sidebar) !== pos) {
-            continue;
-        }
-        const $old = origin.doc.resolve(old);
-        const offset = old - $old.start();
-        return failingSidebarSeams($old.parent).some(failed => failed.offset === offset && failed.side === seam.side && failed.reason === seam.reason);
-    }
-    return false;
-}
 
 /**
  * In a table cell a `|` in text is a cell boundary to the table plugin, so it
@@ -890,10 +890,15 @@ const BACKSLASH_BEFORE_CODE = new RegExp(`\\\\\\\\(?=[${HOLD_CLOSE}]*${HOLD_OPEN
 /** A cell's text that the plugin would read as a delimiter cell (GFM's, or multimd's `=` and `+`). */
 const READS_AS_DELIMITER = /^:?(?:-+|=+):?\+?$/;
 
+/** One cell's inline content as its row writes it, hold markers included, before the tidy form's last touches (`tableCellMarkdown`). */
+function cellMarkdown(cell: Node): string {
+    const paragraph = editorSchema.nodes.paragraph.create(null, cell.content);
+    return inlineInCell.serialize(editorSchema.topNodeType.create(null, [paragraph]));
+}
+
 /** One cell's inline content as the tidy form writes it (see above), unpadded. */
 export function tableCellMarkdown(cell: Node): string {
-    const paragraph = editorSchema.nodes.paragraph.create(null, cell.content);
-    const written = inlineInCell.serialize(editorSchema.topNodeType.create(null, [paragraph]))
+    const written = cellMarkdown(cell)
         .replace(BACKSLASH_BEFORE_CODE, '&#92;')
         .replace(HOLD_RE, '')
         .replace(/\r?\n/g, ' ')
@@ -984,6 +989,15 @@ function inlineMarkdown(node: Node, fromBlockStart: boolean): string {
     return (fromBlockStart ? inlineAtStart : inlineMidLine).serialize(doc);
 }
 
+/**
+ * A paragraph's inline content as the save writes it before wrapping it: in
+ * the line-start form, as a paragraph starts a line. The one call both the
+ * save (`blockSerializer`) and the check of an edit (`writtenTextblock`) make.
+ */
+function paragraphMarkdown(node: Node): string {
+    return inlineMarkdown(node, true);
+}
+
 function blockSerializer(options: SerializeOptions): MarkdownSerializer {
     return new MarkdownSerializer({
         ...inlineNodes,
@@ -995,7 +1009,7 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             const column = width(st.out.slice(st.out.lastIndexOf('\n') + 1));
             const limit = (node.attrs.wrapWidth as number | null)
                 ?? Math.max(options.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
-            const lines = wrapInline(inlineMarkdown(node, true), limit - column, limit - width(st.delim));
+            const lines = wrapInline(paragraphMarkdown(node), limit - column, limit - width(st.delim));
             if (endsInLiteralText(node)) {
                 lines[lines.length - 1] = escapeTrailingLiteral(lines[lines.length - 1]);
             }

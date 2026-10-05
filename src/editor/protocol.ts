@@ -1,3 +1,4 @@
+import type { InlineEngineDefinition } from './inlineEngine';
 import type { ParsedDocumentJSON } from './parse';
 import type { MappedPagePosition, MappedSourcePosition, SourcePosition, SourceRange } from './positions';
 
@@ -130,12 +131,14 @@ export type HostMessage =
      * `markdownExtended.editor.wrapColumn` as it applies to this file.
      * `includes` says whether any installed extension offers include choices
      * (`host/includes.ts`): the page enables **Insert → Include…** and an
-     * expansion's **Change snippet…** only then. `linkify` is whether the
-     * engine that parsed it reads bare URLs (`markdown.preview.linkify`): the
-     * page asks linkify-it, set as the engine's is, where an edit would let a
-     * URL read a sidebar's marker, and asks nothing while it is off.
+     * expansion's **Change snippet…** only then. `inline` is the engine that
+     * parsed it, as far as the page runs it (`inlineEngineDefinition`): its
+     * `markdown.preview.linkify` and `markdown.preview.typographer`, and the
+     * inline plugins of the registry it runs. The page reads each textblock an
+     * edit touches with an engine built from it, so that it refuses an edit
+     * after which a sidebar would not read back as it is shown.
      */
-    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; linkify: boolean }
+    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; inline: InlineEngineDefinition }
     /** The answer to a `render` request: the raw block's source rendered by the host's engine. */
     | { type: 'rendered'; requestId: number; html: string }
     /** The document cannot be shown without losing a byte; the webview offers the text editor instead. */

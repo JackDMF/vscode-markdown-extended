@@ -1,13 +1,15 @@
-import markdownIt from 'markdown-it';
 import frontMatter from 'markdown-it-front-matter';
 import { MarkdownIt } from '../@types/markdown-it';
+import { baseEngine, recordInlineDefinition } from './inlineEngine';
 
 /**
  * One entry of a plugin registry, in the shape `src/plugin/plugins.ts` exports
- * it: the plugin function and the arguments `md.use` passes after the instance.
- * Declared structurally here because that registry's own interface is private.
+ * it: its name there, the plugin function and the arguments `md.use` passes
+ * after the instance. Declared structurally here because that registry's own
+ * interface is private.
  */
 export interface MarkdownItPlugin {
+    name: string;
     // The registry types its plugins' parameters as `any`; `unknown` accepts them.
     plugin: (md: MarkdownIt, ...args: unknown[]) => void;
     args: unknown[];
@@ -36,9 +38,11 @@ export interface EditorEngineOptions {
  * It is composed the way VS Code composes its preview engine, because the
  * editor's contract is "one parser, two renderers": the editor must see the same
  * tokens the preview renders, including what other extensions inject. So: raw
- * HTML allowed, linkify and typographer from the host's settings, a front-matter
- * rule first, then this extension's registry, then every other extension's
- * extender.
+ * HTML allowed, linkify and typographer from the host's settings, linkify-it
+ * with no fuzzy links (`baseEngine`, which the editor's page starts from too), a
+ * front-matter rule first, then this extension's registry, then every other
+ * extension's extender. The page's engine is recorded with it
+ * (`inlineEngineDefinition`), for the host to post with each document.
  *
  * The front-matter rule is registered here and nowhere else. The preview engine
  * must not get one from this extension — VS Code's own preview already
@@ -54,24 +58,20 @@ export interface EditorEngineOptions {
  * `md.utils.assign`, which markdown-it 15 removed.
  */
 export function createEditorEngine(options: EditorEngineOptions): MarkdownIt {
-    let md: MarkdownIt = markdownIt({
-        html: true,
-        linkify: options.linkify,
-        typographer: options.typographer,
-    });
+    let md = baseEngine(options);
     // The plugin's declarations are written against @types/markdown-it, which is
     // not the declaration this project compiles against; the runtime contract
     // (a plugin taking the instance and a callback) is the same.
     const frontMatterPlugin = frontMatter as unknown as MarkdownItPlugin['plugin'];
     // The callback receives the YAML; the editor reads the block from its token.
     md.use(frontMatterPlugin, () => undefined);
-    for (const { plugin, args } of options.plugins) {
-        if (typeof plugin === 'function') {
-            md.use(plugin, ...args);
-        }
+    const used = options.plugins.filter(p => typeof p.plugin === 'function');
+    for (const { plugin, args } of used) {
+        md.use(plugin, ...args);
     }
     for (const extend of options.extend ?? []) {
         md = extend(md) || md;
     }
+    recordInlineDefinition(md, options, used);
     return md;
 }

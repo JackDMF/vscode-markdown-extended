@@ -1,7 +1,8 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
-import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, setLinkify, unwritableInNote } from '../../../src/editor/serialize';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, setInlineEngine, unwritableInNote } from '../../../src/editor/serialize';
 import { drawInline } from './fakeDom';
 import { hostEngine, topChildren, touched } from './helpers';
 
@@ -281,13 +282,13 @@ suite('Editor inline constructs: written back by rule', () => {
             assert.strictEqual(refusal(content), null, label);
             assertRoundTrip(content);
         }
-        // With linkify off nothing reads a URL, so no URL refuses a sidebar (`setLinkify`, as the page is told).
-        setLinkify(false);
+        // With linkify off nothing reads a URL, so no URL refuses a sidebar (`setInlineEngine`, as the page is told).
+        setInlineEngine({ ...DEFAULT_INLINE_ENGINE, linkify: false });
         try {
             assert.strictEqual(refusal([t('a '), bare('http://e.com/'), left(t('y')), t('x z')]), null);
             assert.strictEqual(refusal([t('a http://e.com/('), left(t('y)')), t(' z')]), null);
         } finally {
-            setLinkify(true);
+            setInlineEngine(DEFAULT_INLINE_ENGINE);
         }
     });
 

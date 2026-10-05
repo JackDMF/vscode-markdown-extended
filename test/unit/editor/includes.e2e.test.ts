@@ -5,6 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { NO_INCLUDES_REFUSAL } from '../../../src/editor/webview/toolbar/actions';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 type PickIncludeMessage = Extract<WebviewMessage, { type: 'pickInclude' }>;
 
@@ -34,7 +35,7 @@ suite('Editor includes (e2e)', () => {
     const showText = async (text: string, includes: boolean) => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes, linkify: true });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Alpha'));
         await delay(100);
     };
@@ -59,7 +60,7 @@ suite('Editor includes (e2e)', () => {
                 { type: 'paragraph', attrs: { src: 'After.\n', gap: '\n' }, content: [{ type: 'text', text: 'After.' }] },
             ],
         };
-        await (editor as EditorPage).send({ type: 'document', json: { doc, eol: '\n', tail: '' }, version, defaultWrap: 90, includes, linkify: true });
+        await (editor as EditorPage).send({ type: 'document', json: { doc, eol: '\n', tail: '' }, version, defaultWrap: 90, includes, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror .mep-injected-block')?.textContent?.includes('Snippet body.'));
         await delay(100);
     };
