@@ -361,6 +361,25 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('mark', 'x\n\n ==‸==   «w y»'), 'x\n\n ==‸==   ==«w y»==');
     });
 
+    test('cursors that each need their alternative are read again in a few parses, not one per cursor', async () => {
+        let parsed = 0;
+        const counting = Object.create(md) as typeof md;
+        counting.parse = (src, env) => {
+            parsed += src.length;
+            return md.parse(src, env);
+        };
+        // One list; at every cursor `~**zed**~` does not read as written, `**~zed~**` does.
+        const items = Array.from({ length: 100 }, (_, i) => `- item ~zed~ number ${i}`);
+        const content = items.join('\n');
+        const editor = await open(content, items.map((_, i) => {
+            const at = content.indexOf('zed', i === 0 ? 0 : content.indexOf(items[i])) + 1;
+            return [at, at] as [number, number];
+        }));
+        await toggleInlineFormat(editor, INLINE_MARKERS.bold, counting);
+        assert.strictEqual(editor.document.getText(), items.map(item => item.replace('~zed~', '**~zed~**')).join('\n'));
+        assert.ok(parsed <= 10 * content.length, `${parsed} characters parsed for ${content.length}`);
+    });
+
     test('a reversed selection stays reversed', async () => {
         const editor = await inline('bold', 'one two', [[7, 4]]);
         assert.strictEqual(editor.document.getText(), 'one **two**');

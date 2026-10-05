@@ -548,11 +548,12 @@ interface Part {
 }
 
 /**
- * What reading toggles again found: nothing wrong (an empty set), the toggles
- * that went wrong, or `'all'` where what went wrong is no one toggle's — a
- * block's structure, a line's kind, a definition.
+ * What reading toggles again found: the toggles that went wrong (none when all
+ * is well), and of those the ones blamed beside another toggle, for what went
+ * wrong in an inline token both write in; or `'all'` where what went wrong is
+ * no one toggle's — a block's structure, a line's kind, a definition.
  */
-type Verdict = Set<Toggle> | 'all';
+type Verdict = { failed: Set<Toggle>; shared: Set<Toggle> } | 'all';
 
 /**
  * Whether toggles do what they mean, by reading the text again: the blocks
@@ -563,6 +564,7 @@ type Verdict = Set<Toggle> | 'all';
 class Verifier {
     private readonly text: string;
     private readonly lines: number;
+    private readonly parts = new Map<string, Part>();
 
     constructor(private readonly document: vscode.TextDocument, private readonly source: InlineSource) {
         this.text = document.getText();
@@ -571,38 +573,102 @@ class Verifier {
 
     /**
      * Each toggle, or one of its alternatives, that passes; a `none` toggle for
-     * one that does not. All are tried together first; when that fails, one
-     * after another, each with the ones passed before it in its block.
+     * one that does not. The toggles whose lines meet are read again together
+     * (`together`); where what goes wrong is no one toggle's, one after
+     * another (`oneByOne`).
      */
     choose(toggles: Toggle[]): Toggle[] {
         const chosen = toggles.map(t => (t.kind === 'none' ? t : none(t)));
-        const units = this.units(toggles);
-        for (const unit of units) {
+        for (const unit of this.units(toggles)) {
             const members = unit.members.filter(i => toggles[i].kind !== 'none');
             if (!members.length) {continue;}
-            const part = this.part(unit.start, unit.end);
-            if (passed(this.check(part, members.map(i => toggles[i])))) {
-                for (const i of members) {chosen[i] = toggles[i];}
-                continue;
-            }
-            const accepted: Toggle[] = [];
-            for (const i of members) {
-                for (const option of [toggles[i], ...toggles[i].alternatives]) {
-                    if (passed(this.check(part, [...accepted, option]))) {
-                        accepted.push(option);
-                        chosen[i] = option;
-                        break;
-                    }
-                }
-            }
+            const own = members.map(i => toggles[i]);
+            const picked = this.together(this.part(unit.start, unit.end), own) ?? this.oneByOne(own);
+            members.forEach((i, k) => {
+                chosen[i] = picked[k];
+            });
         }
         return chosen;
     }
 
+    /**
+     * The toggles read again together, each as its first option; each one a
+     * reading blames on its own goes on to its next option, or is left out
+     * after its last, until a reading finds nothing wrong — a few parses of
+     * the lines however many toggles there are. Toggles blamed beside each
+     * other, for what went wrong where both write, are set aside and tried
+     * after that, one after another in document order, each with the ones
+     * taken before it. `undefined` where a reading finds what is no one
+     * toggle's.
+     */
+    private together(part: Part, toggles: Toggle[]): Toggle[] | undefined {
+        const options = toggles.map(t => [t, ...t.alternatives]);
+        const at = toggles.map(() => 0);
+        const aside = new Set<number>();
+        for (;;) {
+            const live = toggles.map((_, k) => k).filter(k => at[k] < options[k].length && !aside.has(k));
+            const verdict = this.check(part, live.map(k => options[k][at[k]]));
+            if (verdict === 'all') {return undefined;}
+            if (verdict.failed.size === 0) {break;}
+            for (const k of live) {
+                const option = options[k][at[k]];
+                if (verdict.shared.has(option)) {
+                    aside.add(k);
+                } else if (verdict.failed.has(option)) {
+                    at[k]++;
+                }
+            }
+        }
+        const picked = toggles.map((_, k) => (at[k] < options[k].length && !aside.has(k) ? options[k][at[k]] : undefined));
+        for (const k of [...aside].sort((x, y) => x - y)) {
+            const taken = picked.filter((p): p is Toggle => p !== undefined);
+            picked[k] = options[k].slice(at[k]).find(option => passed(this.check(part, [...taken, option])));
+        }
+        return picked.map((p, k) => p ?? none(toggles[k]));
+    }
+
+    /**
+     * Each toggle, one after another, with the ones taken before it: read with
+     * its own lines (`rangeOf`), and those of every toggle taken that they
+     * meet.
+     */
+    private oneByOne(toggles: Toggle[]): Toggle[] {
+        const taken: { toggle: Toggle; start: number; end: number }[] = [];
+        return toggles.map(toggle => {
+            let range = this.rangeOf(toggle);
+            let near: Toggle[] = [];
+            for (let grown = true; grown;) {
+                grown = false;
+                near = [];
+                for (const t of taken) {
+                    if (t.start < range.end && range.start < t.end) {
+                        near.push(t.toggle);
+                        if (t.start < range.start || t.end > range.end) {
+                            range = { start: Math.min(range.start, t.start), end: Math.max(range.end, t.end) };
+                            grown = true;
+                        }
+                    }
+                }
+            }
+            const part = this.part(range.start, range.end);
+            const option = [toggle, ...toggle.alternatives].find(o => passed(this.check(part, [...near, o])));
+            if (option === undefined) {return none(toggle);}
+            taken.push({ toggle: option, ...range });
+            return option;
+        });
+    }
+
+    /** Lines `[start, end)` of the document and their reading, read once per verification. */
     private part(start: number, end: number): Part {
-        const base = this.offsetOfLine(start);
-        const text = this.text.slice(base, this.offsetOfLine(end));
-        return { start, end, base, text, before: this.source.readPart(text) };
+        const key = `${start}:${end}`;
+        let part = this.parts.get(key);
+        if (part === undefined) {
+            const base = this.offsetOfLine(start);
+            const text = this.text.slice(base, this.offsetOfLine(end));
+            part = { start, end, base, text, before: this.source.readPart(text) };
+            this.parts.set(key, part);
+        }
+        return part;
     }
 
     private offsetOfLine(line: number): number {
@@ -666,10 +732,10 @@ class Verifier {
      * - an empty pair written is one the next press finds, to take it out
      *   again: not a run of its character (`****‸****`);
      * - the part has as many lines, each of the same kind and the same block
-     *   tokens, except a line with no text before or after, which may become a
-     *   paragraph of the pair or a thematic break, and a definition's `:`
-     *   line a pair is written on (with its term's line), which it makes the
-     *   definition it was meant to be;
+     *   tokens, except a line blank before or after, or with no text but the
+     *   markers either time, which may become a paragraph of pairs or a
+     *   thematic break and back, and a bare `: ` line a pair is written on or
+     *   taken from (with its term's line), which it makes a definition;
      * - the part defines the same references (destinations and titles),
      *   footnotes and abbreviations (`InlineSource.defines`);
      * - every inline token holds the same tokens besides text and spans'
@@ -677,7 +743,10 @@ class Verifier {
      *   footnote references and their notes, line breaks, and code spans
      *   unless the toggles write or remove one (`InlineSource.inlines`);
      * - every span written reads as that span, every span removed is gone,
-     *   and every other span reads as before, moved.
+     *   every other span reads as before, moved, and every inline token holds
+     *   as many spans of each marker, those not placed exactly included;
+     * - every character read as text is text after, where it moved to, and
+     *   none comes in but the markers written, whitespace aside.
      *
      * A failure in an inline token blames the toggles that change its lines.
      */
@@ -688,9 +757,32 @@ class Verifier {
             for (const change of t.changes) {owner.set(change, t);}
         }
         const failed = new Set<Toggle>();
+        const shared = new Set<Toggle>();
         const changes = toggles.flatMap(t => t.changes)
             .map(change => ({ change, start: change.start - base, end: change.end - base, line: this.document.positionAt(change.start).line - part.start }))
             .sort((a, b) => a.start - b.start || KIND_ORDER[a.change.kind] - KIND_ORDER[b.change.kind]);
+        // What went wrong on some lines blames the toggles that change them, beside each other when more than one does.
+        const onLine = new Map<number, typeof changes>();
+        for (const c of changes) {
+            const here = onLine.get(c.line);
+            if (here === undefined) {
+                onLine.set(c.line, [c]);
+            } else {
+                here.push(c);
+            }
+        }
+        let unplaced = false;
+        const blame = (first: number, end: number) => {
+            const blamed = new Set<Toggle>();
+            for (let line = first; line < end; line++) {
+                for (const c of onLine.get(line) ?? []) {blamed.add(owner.get(c.change));}
+            }
+            for (const t of blamed) {
+                failed.add(t);
+                if (blamed.size > 1) {shared.add(t);}
+            }
+            unplaced = unplaced || blamed.size === 0;
+        };
         for (const c of changes) {
             if (this.source.kindOf(c.line + part.start) === 'literal') {failed.add(owner.get(c.change));}
         }
@@ -709,10 +801,10 @@ class Verifier {
         for (const c of changes) {
             if (c.change.kind === 'pair') {
                 const marker = c.change.text.slice(0, c.change.text.length / 2);
-                if (!isEmptyPair(out, (placed.get(c.change) ?? 0) + marker.length, marker)) {failed.add(owner.get(c.change));}
+                if (!isEmptyPair(out, (placed.get(c.change) ?? 0) + marker.length, marker)) {blame(c.line, c.line + 1);}
             }
         }
-        if (failed.size > 0) {return failed;}
+        if (failed.size > 0) {return { failed, shared };}
         /** Where offset `o` of the old text lands: before (`left`) or after (`right`) what is inserted there. */
         const mapped = (o: number, side: 'left' | 'right'): number => {
             let shift = 0;
@@ -749,10 +841,6 @@ class Verifier {
         // gets the pair, and the way back; and a definition's `:` line.
         const markers = (stretches: { start: number; end: number }[], ranges: number[][]) =>
             stretches.every(s => ranges.some(([from, to]) => from <= s.start && s.end <= to));
-        const onLine = new Map<number, typeof changes>();
-        for (const c of changes) {
-            onLine.set(c.line, [...(onLine.get(c.line) ?? []), c]);
-        }
         const takenOf = (cs: typeof changes) => cs.filter(c => c.end > c.start).map(c => [c.start, c.end]);
         const writtenOf = (cs: typeof changes) => cs.filter(c => c.change.text !== '').map(c => [placed.get(c.change), placed.get(c.change) + c.change.text.length]);
         const written = writtenOf(changes);
@@ -791,18 +879,6 @@ class Verifier {
         if (a.length !== b.length || a.some((entry, k) => !same(entry, b[k]))) {return 'all';}
         // The definitions.
         if (before.defines !== after.defines) {return 'all';}
-        // What a failure in an inline token's lines blames: the toggles that change them.
-        let unplaced = false;
-        const blame = (first: number, end: number) => {
-            let any = false;
-            for (let line = first; line < end; line++) {
-                for (const c of onLine.get(line) ?? []) {
-                    failed.add(owner.get(c.change));
-                    any = true;
-                }
-            }
-            unplaced = unplaced || !any;
-        };
         /** Per line, the first inline token that maps it, or -1. */
         const inlineIndex = (source: InlineSource) => {
             const at = new Int32Array(count).fill(-1);
@@ -907,7 +983,9 @@ class Verifier {
                     writtenSpans.push([start, end]);
                     count1(inlineAt(after, afterKeys, start), w.markup, 1);
                 } else {
-                    failed.add(t);
+                    // Its inline token's other toggles may be why: they are blamed beside it.
+                    const at = inlineAt(after, afterKeys, Math.max(0, Math.min(start, out.length)));
+                    blame(at.first, at.end);
                 }
             }
         }
@@ -978,13 +1056,13 @@ class Verifier {
         for (let o = 0; o < out.length; o++) {
             if (textAfter[o] === 1 && incoming[o] === 0) {blameAt(after, o);}
         }
-        return unplaced ? 'all' : failed;
+        return unplaced ? 'all' : { failed, shared };
     }
 }
 
 /** Whether a check found nothing wrong. */
 function passed(verdict: Verdict): boolean {
-    return verdict !== 'all' && verdict.size === 0;
+    return verdict !== 'all' && verdict.failed.size === 0;
 }
 
 /** Block tokens that hold blocks, which may take in or give up a line with no text at their end. */
