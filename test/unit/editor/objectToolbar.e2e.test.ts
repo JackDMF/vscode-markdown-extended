@@ -384,6 +384,31 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'An ![[note]] here.\n');
     });
 
+    test('Edit as text on an embed that ends a link keeps it in the link when the last ] is retyped', async function () {
+        this.timeout(30000);
+        const atoms = () => page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length);
+        await showDocument('See [the ![[note]]](https://e.org) now.\n', 'See');
+        assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.closest('a') !== null), true, 'the embed is in the link');
+        const box = await (await page.$('.ProseMirror .mep-wiki-embed'))?.boundingBox();
+        assert.ok(box);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForSelector(`${BAR}[data-object="wiki_embed"]`, { timeout: 2000 });
+        await clickVerb('edit-wiki-embed-as-text');
+        await settle();
+        assert.strictEqual(await atoms(), 0);
+        assert.strictEqual((await lastEdit())?.text, 'See [the !\\[\\[note\\]\\]](https://e.org) now.\n');
+
+        // A character typed after the link's end is outside it; deleting it and the last ], then typing ] again, makes the atom in the link.
+        await page.keyboard.type('X');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(']');
+        await settle();
+        assert.strictEqual(await atoms(), 1, 'the last ] retyped');
+assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.closest('a') !== null), true, 'the embed is in the link again');
+        assert.strictEqual((await lastEdit())?.text, 'See [the ![[note]]](https://e.org) now.\n');
+    });
+
     test('![[name]] typed becomes an embed atom at its closing ]], and is saved as written', async function () {
         this.timeout(15000);
         await showDocument('An here.\n', 'An');

@@ -40,7 +40,7 @@ import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
-import { NoteNodeName, unwrapNote } from './notes';
+import { NoteNodeName, notesFilterRefusal, unwrapNote } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
@@ -56,7 +56,7 @@ import { followPointer, selectionBubbleShown } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
-    deleteRowTransaction, tableSourceTransaction,
+    deleteRowTransaction, tableRefusal, tableSourceTransaction,
 } from './tables';
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
@@ -285,6 +285,16 @@ function rawBlockLabel(construct: string | null): { label: string; title: string
 
 function isSidebar(name: NoteNodeName): boolean {
     return name === 'left_sidebar' || name === 'right_sidebar';
+}
+
+/**
+ * Why the plugins' filters (the notes' and the tables') would refuse `tr` — asked
+ * of the transaction before it is dispatched, so a verb shows the reason as a
+ * disabled button instead of making the filter say it after the click — or `null`.
+ * No transaction is no embed to act on.
+ */
+function embedRefusal(tr: Transaction | null): string | null {
+    return tr === null ? 'There is no embed here.' : notesFilterRefusal(tr) ?? tableRefusal(tr);
 }
 
 /** What a bar tells the view about its field. */
@@ -1112,7 +1122,10 @@ class ObjectToolbarView implements PluginView {
     private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string): void {
         this.view.focus();
         const current = currentObject(this.view.state, object);
-        if (current !== null && make(current) && hint !== undefined) {
+        const before = this.view.state;
+        // A transaction a plugin's filter refused leaves the state the same object, and the filter has said
+        // why beside the caret: the success hint would cover that, and be untrue.
+        if (current !== null && make(current) && this.view.state !== before && hint !== undefined) {
             this.say(`${hint} — ${undoKey()}`, 'neutral');
         }
     }
@@ -1438,7 +1451,10 @@ class ObjectToolbarView implements PluginView {
                             id: 'edit-wiki-embed-as-text',
                             label: 'Edit as text',
                             title: 'Make it plain text, ![[name]], to edit its name; delete the last ] and type it again to make it an embed.',
-                            // No refusal: the text takes the atom's marks, and an atom is never under a raw mark, the only text the notes' and the tables' filters refuse.
+                            // Refused as the notes' and the tables' filters would refuse it: the text takes the atom's
+                            // marks, and an attribute span over it that holds a note marker (or `|` in a cell) is
+                            // allowed over an atom and not over text.
+                            refusal: embedRefusal(embedAsTextTransaction(this.view.state, object.from, object.to)),
                             run: () => this.act(object, current => {
                                 const tr = embedAsTextTransaction(this.view.state, current.from, current.to);
                                 if (tr !== null) {
@@ -1447,7 +1463,13 @@ class ObjectToolbarView implements PluginView {
                                 return tr !== null;
                             }, 'Embed is text'),
                         },
-                        { id: 'remove-wiki-embed', label: 'Remove embed', title: 'The embed goes from the text.', run: () => this.remove(object, 'Embed removed') },
+                        {
+                            id: 'remove-wiki-embed',
+                            label: 'Remove embed',
+                            title: 'The embed goes from the text.',
+                            refusal: embedRefusal(deleteObjectTransaction(this.view.state, object)),
+                            run: () => this.remove(object, 'Embed removed'),
+                        },
                     ],
                 };
             case 'badge': {

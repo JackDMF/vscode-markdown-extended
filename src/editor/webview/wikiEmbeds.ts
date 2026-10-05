@@ -1,5 +1,5 @@
 import { InputRule, inputRules } from 'prosemirror-inputrules';
-import { DOMParser, DOMSerializer, Fragment, Mark, Node, ParseOptions, Slice } from 'prosemirror-model';
+import { DOMOutputSpec, DOMParser, DOMSerializer, Fragment, Mark, Node, ParseOptions, Slice } from 'prosemirror-model';
 import { EditorState, Plugin, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { WIKI_EMBED_MARKERS, plainWikiEmbed } from '../../syntax/markers';
@@ -130,7 +130,7 @@ function oneTextRun(state: EditorState, from: number, to: number): boolean {
 /**
  * The input rule: the `]` that closes `![[name]]`, typed — one character, the
  * rest of the embed already one run of plain text before the caret — makes
- * it an atom carrying the marks typed text takes there.
+ * it an atom carrying the marks of the text it replaces.
  */
 export function wikiEmbedInputRule(enabled: () => boolean): InputRule {
     return new InputRule(EMBED_TYPED, (state, match, start, end) => {
@@ -140,7 +140,10 @@ export function wikiEmbedInputRule(enabled: () => boolean): InputRule {
         if (!enabled() || end - start !== match[0].length - 1 || !oneTextRun(state, start, end)) {
             return null;
         }
-        const marks = state.storedMarks ?? state.doc.resolve(end).marks();
+        // The marks of the text the atom replaces (`oneTextRun`: one set across all of it), not those at
+        // the caret: at the end of a link, an attribute span or a note reference, which typing does not
+        // extend, the caret's marks leave them off and the atom would step out of what it was typed in.
+        const marks = state.doc.nodeAt(start)?.marks ?? [];
         if (rawMarked(marks)) {
             return null;
         }
@@ -254,6 +257,21 @@ class PasteParser extends DOMParser {
     }
 }
 
+/**
+ * The schema's node serializers for the clipboard: an embed's tooltip in the
+ * editor is a how-to for the editor's own verbs, and in other apps' clipboard
+ * HTML it would be noise, so a copy carries the plain title the embed always had.
+ */
+function clipboardNodes(): ReturnType<typeof DOMSerializer.nodesFromSchema> {
+    const nodes = DOMSerializer.nodesFromSchema(editorSchema);
+    const inEditor = nodes.wiki_embed;
+    nodes.wiki_embed = node => {
+        const [tag, attrs, ...content] = inEditor(node) as [string, Record<string, string>, ...unknown[]];
+        return [tag, { ...attrs, title: 'Wiki embed' }, ...content] as unknown as DOMOutputSpec;
+    };
+    return nodes;
+}
+
 /** The schema's serializer, with `OWN_COPY` set on each top-level element of what it serializes. */
 class OwnCopySerializer extends DOMSerializer {
     serializeFragment(fragment: Fragment, options: { document?: Document } = {}, target?: HTMLElement | DocumentFragment): HTMLElement | DocumentFragment {
@@ -301,7 +319,7 @@ export function wikiEmbedPastePlugin(enabled: () => boolean): Plugin {
     };
     return new Plugin({
         props: {
-            clipboardSerializer: new OwnCopySerializer(DOMSerializer.nodesFromSchema(editorSchema), DOMSerializer.marksFromSchema(editorSchema)),
+            clipboardSerializer: new OwnCopySerializer(clipboardNodes(),DOMSerializer.marksFromSchema(editorSchema)),
             clipboardTextSerializer(slice) {
                 if (copying) {
                     copying = false;

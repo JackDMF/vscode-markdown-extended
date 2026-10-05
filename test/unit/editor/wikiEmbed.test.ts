@@ -1,11 +1,13 @@
 import * as assert from 'assert';
 import { DOMSerializer, Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
-import { history, undo } from 'prosemirror-history';
+import { history, redo, undo } from 'prosemirror-history';
 import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { createPositionMap } from '../../../src/editor/positions';
 import { unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
 import { headingAnchors } from '../../../src/editor/host/links';
+import { notesFilterRefusal } from '../../../src/editor/webview/notes';
+import { tableRefusal } from '../../../src/editor/webview/tables';
 import { OWN_COPY, embedAsTextTransaction, inlineForNote, isOwnCopyDom, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
 import { tokenText } from '../../../src/syntax/tokenText';
 import { plugins } from '../../../src/plugin/plugins';
@@ -288,6 +290,28 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.strictEqual(md.render('![alt ![[y]]](z.png)\n'), previewEngine().render('![alt ![[y]]](z.png)\n'));
     });
 
+    type RuleLike = { match: RegExp; handler: (s: EditorState, m: RegExpMatchArray, a: number, b: number) => Transaction | null };
+    const embedRule = wikiEmbedInputRule(() => true) as unknown as RuleLike;
+    /**
+     * What the input rule makes of `typed` typed at `at` in `state`, as the rule
+     * runs: its pattern over the text before the caret and the typed character,
+     * then its handler over the part that is in the document. `null` for no match
+     * or a refusal.
+     */
+    const typeInto = (state: EditorState, at: number, typed: string): Transaction | null => {
+        const $at = state.doc.resolve(at);
+        const before = $at.parent.textBetween(0, $at.parentOffset, undefined, '￼') + typed;
+        const match = embedRule.match.exec(before);
+        return match === null ? null : embedRule.handler(state, match, at - (match[0].length - typed.length), at);
+    };
+    const embedPositions = (doc: Node): number[] => {
+        const found: number[] = [];
+        doc.descendants((node, pos) => {
+            if (node.type.name === 'wiki_embed') { found.push(pos); }
+        });
+        return found;
+    };
+
     test('text before the caret is made an embed only when its ]] was just typed, in one run of plain text', () => {
         const n = schema.nodes;
         const rule = wikiEmbedInputRule(() => true) as unknown as { match: RegExp; handler: (s: EditorState, m: RegExpMatchArray, a: number, b: number) => Transaction | null };
@@ -322,7 +346,6 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
 
     test('Edit as text: the atom becomes its plain text with its marks and the caret after it, is saved as the escaped literal, undone as one step, and made an embed again by retyping the last ]', () => {
         const em = schema.marks.em.create();
-        const rule = wikiEmbedInputRule(() => true) as unknown as { match: RegExp; handler: (s: EditorState, m: RegExpMatchArray, a: number, b: number) => Transaction | null };
         const parsed = parseDocument(md, 'An ![[ab]] here and *![[c&#124;d]]* too.\n');
         const start = EditorState.create({ doc: parsed.doc, plugins: [history()] });
         const found: number[] = [];
@@ -360,17 +383,124 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         undo(state, tr => { undone = state.apply(tr); });
         assert.deepStrictEqual(embedsOf((undone as EditorState).doc), ['![[ab]]', '![[c&#124;d]]']);
 
-        // Retyping the last ] makes the atom again, and typing `]` over the whole text does not.
+        // A redo puts the text back, as one step too, the other embed untouched.
+        let redone: EditorState | undefined;
+        redo(undone as EditorState, tr => { redone = (undone as EditorState).apply(tr); });
+        assert.ok(redone, 'there is a step to redo');
+        assert.deepStrictEqual(embedsOf(redone.doc), ['![[c&#124;d]]']);
+        assert.ok(redone.doc.textContent.startsWith('An ![[ab]] here'), redone.doc.textContent);
+        assert.strictEqual(serialize(allTouched({ ...parsed, doc: redone.doc })), 'An !\\[\\[ab\\]\\] here and *![[c|d]]* too.\n');
+
+        // Retyping the last ] makes the atom again, and a third ] makes nothing.
         const before = state.selection.from;
         const cut = state.apply(state.tr.delete(before - 1, before));
-        const $end = cut.doc.resolve(cut.selection.from);
-        const typed = $end.parent.textBetween(0, $end.parentOffset) + ']';
-        const match = rule.match.exec(typed);
-        assert.ok(match, typed);
-        const again = rule.handler(cut, match, before - 1 - (match[0].length - 1), before - 1);
+        const again = typeInto(cut, cut.selection.from, ']');
         assert.ok(again, 'the rule fires');
         assert.deepStrictEqual(embedsOf(again.doc), ['![[ab]]', '![[c&#124;d]]']);
-        assert.strictEqual(rule.match.exec('An ![[ab]]' + ']'), null, 'a third ] makes nothing');
+        assert.strictEqual(typeInto(state, state.selection.from, ']'), null, 'a third ] makes nothing');
+    });
+
+    /** `embedAsTextTransaction` on the first embed of `doc`, then the last ] deleted and typed again: the document the editor ends with. */
+    function textAndBack(doc: Node): Node {
+        const [at] = embedPositions(doc);
+        const asText = embedAsTextTransaction(EditorState.create({ doc }), at, at + 1);
+        assert.ok(asText, 'the embed becomes text');
+        const state = EditorState.create({ doc }).apply(asText);
+        const caret = state.selection.from;
+        const cut = state.apply(state.tr.delete(caret - 1, caret));
+        const made = typeInto(cut, cut.selection.from, ']');
+        assert.ok(made, 'retyping the ] fires the rule');
+        return made.doc;
+    }
+
+    test('Edit as text and a retyped ] keep the embed in the link, attribute span or marks it was in: at their end, start and middle', () => {
+        // Through the document: the saved text is the source the embed was parsed from.
+        for (const source of [
+            'See [the ![[x]]](https://e.org) now.\n',
+            'See [![[x]] the](https://e.org) now.\n',
+            'See [the ![[x]] end](https://e.org) now.\n',
+            'A [![[x]]]{.big} b.\n',
+            'A [![[x]] the]{.big} b.\n',
+            'A [the ![[x]] end]{.big} b.\n',
+            'An *emphasised ![[x]]* word.\n',
+            'An *emphasised ![[x]] word*.\n',
+            'A plain ![[x]] one.\n',
+        ]) {
+            const parsed = parseDocument(md, source);
+            assert.strictEqual(embedPositions(parsed.doc).length, 1, source);
+            const back = textAndBack(parsed.doc);
+            assert.strictEqual(serialize(allTouched({ ...parsed, doc: back })), source, source);
+            assert.ok(Mark.sameSet(back.nodeAt(embedPositions(back)[0])?.marks ?? [], parsed.doc.nodeAt(embedPositions(parsed.doc)[0])?.marks ?? []), `the same marks: ${source}`);
+        }
+
+        // A req_ref decoration is not Markdown: built by hand, at the end of its run.
+        const ref = schema.marks.req_ref.create();
+        const decorated = paragraph(text('see '), embed('![[x]]', ref));
+        const [pos] = embedPositions(decorated);
+        assert.deepStrictEqual(textAndBack(decorated).nodeAt(pos)?.marks.map(m => m.type.name), ['req_ref']);
+    });
+
+    test('a ]] typed closes an embed that carries the marks of the text it replaces — in a link, wherever the caret is in it — and not those of the caret', () => {
+        const link = schema.marks.link.create({ href: 'https://e.org' });
+        const span = schema.marks.attr_span.create({ literal: '{.big}' });
+        const ref = schema.marks.req_ref.create();
+        const code = schema.marks.code.create();
+        const marksOfEmbeds = (tr: Transaction | null) => {
+            assert.ok(tr, 'the rule fires');
+            return embedPositions(tr.doc).map(p => tr.doc.nodeAt(p)?.marks.map(m => m.type.name));
+        };
+        for (const mark of [link, span, ref]) {
+            const caretAtEnd = (...inline: Node[]) => {
+                const doc = paragraph(...inline);
+                return typeInto(EditorState.create({ doc, selection: TextSelection.create(doc, doc.content.size - 1) }), doc.content.size - 1, ']');
+            };
+            // At the end of the run (a typed character does not extend the mark, so the caret's marks have none of it).
+            assert.deepStrictEqual(marksOfEmbeds(caretAtEnd(text('the ![[x]', mark))), [[mark.type.name]], `${mark.type.name} at its end`);
+            // After other text of the run, and with text of another mark before it.
+            assert.deepStrictEqual(marksOfEmbeds(caretAtEnd(text('a '), text('the ![[x]', mark))), [[mark.type.name]], `${mark.type.name} after plain text`);
+        }
+        // In the middle of a link: more of the link follows the caret.
+        const middle = paragraph(text('the ![[x]rest', link));
+        const typedInMiddle = typeInto(EditorState.create({ doc: middle }), 1 + 'the ![[x]'.length, ']');
+        assert.deepStrictEqual(marksOfEmbeds(typedInMiddle), [['link']]);
+        // Emphasis still carries over, and a stored mark the text does not have is not taken.
+        const em = schema.marks.em.create();
+        const emphasised = paragraph(text('![[x]', em));
+        assert.deepStrictEqual(marksOfEmbeds(typeInto(EditorState.create({ doc: emphasised }), emphasised.content.size - 1, ']')), [['em']]);
+        const plain = paragraph(text('![[x]'));
+        const withStored = EditorState.create({ doc: plain }).apply(EditorState.create({ doc: plain }).tr.setStoredMarks([em]));
+        assert.deepStrictEqual(marksOfEmbeds(typeInto(withStored, plain.content.size - 1, ']')), [[]]);
+        // Under inline code the embed stays text.
+        assert.strictEqual(typeInto(EditorState.create({ doc: paragraph(text('![[x]', code)) }), 6, ']'), null);
+    });
+
+    test('Edit as text is refused where the notes\' and the tables\' filters would refuse its text: an attribute span over the atom whose literal holds a note marker or a cell\'s pipe', () => {
+        const spanned = (source: string, literal: string) => {
+            const parsed = parseDocument(md, source);
+            const [at] = embedPositions(parsed.doc);
+            const start = EditorState.create({ doc: parsed.doc });
+            return start.apply(start.tr.addMark(at, at + 1, schema.marks.attr_span.create({ literal })));
+        };
+        const asText = (state: EditorState) => {
+            const [at] = embedPositions(state.doc);
+            const tr = embedAsTextTransaction(state, at, at + 1);
+            assert.ok(tr);
+            return tr;
+        };
+        for (const [source, literal] of [['X $![[x]]$ y.\n', '{title="p$q"}'], ['X @![[x]]@ y.\n', '{title="p@q"}'], ['X ++ref|![[x]]++ y.\n', '{title="p|q"}']]) {
+            const state = spanned(source, literal);
+            assert.ok(notesFilterRefusal(asText(state))?.includes('attribute span'), source);
+            const [at] = embedPositions(state.doc);
+            assert.strictEqual(notesFilterRefusal(state.tr.delete(at, at + 1)), null, `the atom alone is removable: ${source}`);
+        }
+        const inCell = spanned('| a |\n| - |\n| ![[x]] |\n', '{title="p|q"}');
+        assert.ok(tableRefusal(asText(inCell))?.includes('attribute span'));
+        // No span, no refusal.
+        for (const source of ['X $![[x]]$ y.\n', '| a |\n| - |\n| ![[x]] |\n', 'Plain ![[x]].\n']) {
+            const state = EditorState.create({ doc: parseDocument(md, source).doc });
+            const tr = asText(state);
+            assert.strictEqual(notesFilterRefusal(tr) ?? tableRefusal(tr), null, source);
+        }
     });
 
     type PasteProps = {
@@ -463,6 +593,16 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             off.handleDOMEvents.paste();
             assert.deepStrictEqual(atoms(off.transformPasted(outside(), view, true)), []);
         })();
+    });
+
+    test('a copied embed carries the plain title "Wiki embed", not the editor\'s how-to tooltip', () => {
+        const html = copiedHtml(plugin(), inline(text('see '), embed('![[x]]')));
+        assert.ok(html.includes('title="Wiki embed"'), html);
+        assert.ok(html.includes('data-mep-wiki-embed="![[x]]"'), html);
+        assert.ok(!html.includes('Backspace') && !html.includes('Edit as text'), html);
+        // In the editor itself the tooltip is the long one.
+        const inEditor = (DOMSerializer.fromSchema(schema).serializeNode(embed('![[x]]'), { document: fakeDocument as unknown as Document }) as unknown as FakeNode).html();
+        assert.ok(inEditor.includes('Edit as text'), inEditor);
     });
 
     test('the editor\'s own HTML copy is known by its marker in any Visual Editor; its plain text by the last copy made here, which a drag does not replace', async () => {
