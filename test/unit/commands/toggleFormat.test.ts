@@ -455,6 +455,55 @@ suite('Inline toggles: what a selection toggles', () => {
 });
 
 /**
+ * The toggles with the engine of a host whose built-in Markdown Math is on:
+ * its own extender, the one the Visual Editor's engine collects, so `$…$`
+ * and `$$` are what that extension makes them.
+ */
+suite('Inline toggles: with VS Code\'s math', () => {
+    let mathMd: typeof md;
+
+    suiteSetup(async () => {
+        const math = vscode.extensions.getExtension<{ extendMarkdownIt(md: typeof mathMd): typeof mathMd }>('vscode.markdown-math');
+        assert.ok(math, 'VS Code\'s built-in markdown-math is installed');
+        const api = await math.activate();
+        mathMd = hostEngine([engine => api.extendMarkdownIt(engine) || engine]);
+    });
+
+    teardown(async () => {
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    });
+
+    async function toggle(name: InlineMarkerName, marked: string): Promise<string> {
+        const { content, selections } = parse(marked);
+        const editor = await open(content, selections);
+        await toggleInlineFormat(editor, INLINE_MARKERS[name], mathMd);
+        return read(editor);
+    }
+
+    test('the engine reads math as math', () => {
+        assert.ok(mathMd.parse('x $a$ y', {})[1].children.some(t => t.type === 'math_inline'));
+    });
+
+    test('nothing is written into math, inline or a block', async () => {
+        for (const [name, marked] of [
+            ['bold', 'x $a +‸ b$ y'],
+            ['italics', 'x $a ‸ b$ y'],
+            ['bold', 'x $$a +‸ b$$ y'],
+            ['bold', '$$\na +‸ b\n$$'],
+        ] as [InlineMarkerName, string][]) {
+            assert.strictEqual(await toggle(name, marked), marked);
+        }
+    });
+
+    test('the text between math is toggled, math left outside', async () => {
+        assert.strictEqual(await toggle('bold', 'x $a$ wo‸rd $b$ y'), 'x $a$ **wo‸rd** $b$ y');
+        assert.strictEqual(await toggle('codeInline', 'x $a$ «b» $c$'), 'x $a$ `«b»` $c$');
+        // A `$` that opens no math is text.
+        assert.strictEqual(await toggle('italics', 'cost $5 and «word» $6 here'), 'cost $5 and *«word»* $6 here');
+    });
+});
+
+/**
  * The block toggles keep their behaviour: one selection's lines, and a block
  * found when it meets the selection anywhere, touching included. Each case is
  * what the toggle did before the inline toggles changed.
