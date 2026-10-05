@@ -1057,7 +1057,7 @@ export function literalRewrittenBeside(block: Node, textblock: Node, lost: Liter
     if (lost.literal !== null && !textblock.isTextblock && name !== 'list_item') {
         return `This edit makes the editor write the whole ${whole} again, and the ${whole}'s own literal ${lost.literal} would then not read back as written. Remove that literal, or edit the ${whole} once in the text editor to unlock it.`;
     }
-    const part = name === 'table_cell' || name === 'table_header' ? 'cell' : name === 'heading' ? 'heading' : name === 'list_item' ? 'item' : 'paragraph';
+    const part = name === 'table_cell' || name === 'table_header' ? 'cell' : name === 'heading' ? 'heading' : name === 'list_item' ? 'item' : name === 'paragraph' ? 'paragraph' : 'part';
     if (lost.literal === null) {
         return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then read text as attributes the editor does not show. Edit that ${part} once in the text editor to unlock this ${whole}.`;
     }
@@ -1585,8 +1585,8 @@ function literalCutsIn(text: string): LiteralCuts {
 function literalEscapes(written: string, [before, after]: readonly [string, string]): number[] {
     const at: number[] = [];
     let text = written;
-    // Each character's place in `written`; -1 for a backslash put in.
-    let origin = Array.from(written, (_, i) => i);
+    // Each UTF-16 unit's place in `written` (the strings are sliced by unit, so not `Array.from(written)`, which walks code points and comes up short by one per astral character); -1 for a backslash put in.
+    let origin = Array.from({ length: written.length }, (_, i) => i);
     let cuts = literalCutsIn(before + text + after);
     while (cuts.made.length > 0) {
         let next: { text: string; origin: number[]; places: number[]; cuts: LiteralCuts } | null = null;
@@ -1617,6 +1617,12 @@ function literalEscapes(written: string, [before, after]: readonly [string, stri
         origin = next.origin;
         at.push(...next.places);
         cuts = next.cuts;
+    }
+    // `headingText` and `cellText` shift a marker by the escapes at or before it, which silently drops one that is not a number: a place off the text is a bug here, not a save to write.
+    for (const place of at) {
+        if (!Number.isInteger(place) || place < 0 || place >= written.length) {
+            throw new Error(`literalEscapes: the escape place ${place} is not one of the ${written.length} units of ${JSON.stringify(written)}`);
+        }
     }
     return at.sort((a, b) => a - b);
 }

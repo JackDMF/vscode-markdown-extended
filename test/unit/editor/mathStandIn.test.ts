@@ -514,6 +514,50 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         }
     });
 
+    test('a line holding an astral character (an emoji, a mathematical letter) is written like any other: the escapes stand where the {…} does, and the edit is allowed', () => {
+        // [source, text the edit finds, characters before its end that it replaces, text it types, the save]: review 17's probes (`c17g.json`).
+        const cases: [string, string, number, string, string][] = [
+            ['🎉 Release v2\n', 'v2', 0, ' {v2}', '🎉 Release v2 \\{v2\\}\n'],
+            ['🎉 Release v2 more\n', 'v2', 0, '{x}', '🎉 Release v2{x} more\n'],
+            ['# 🎉 Release v2\n', 'v2', 0, ' {v2}', '# 🎉 Release v2 \\{v2\\}\n'],
+            ['| a | b |\n|---|---|\n| 🎉 x | c |\n', 'x', 0, ' {v}', '| a        | b |\n| -------- | - |\n| 🎉 x \\{v\\} | c |\n'],
+            ['- 🎉 item x\n', 'x', 0, ' {v}', '- 🎉 item x \\{v\\}\n'],
+            ['> 🎉 quote x\n', 'x', 0, ' {v}', '> 🎉 quote x \\{v\\}\n'],
+            ['🎉 see *a*x more\n', 'x', 1, '{.c}', '🎉 see *a*\\{.c\\} more\n'],
+            ['🎉 Release \\{v2\\}\n\nother x\n', 'other', 0, 'z', '🎉 Release \\{v2\\}\n\notherz x\n'],
+            ['🎉 Release \\{v2\\}\n', 'Release', 0, 'z', '🎉 Releasez \\{v2\\}\n'],
+            ['🎉 Release \\{v2\\} tail\n', 'Release', 0, 'z', '🎉 Releasez {v2} tail\n'],
+            ['🎉🎉🎉🎉🎉🎉🎉 see *a*\\{.c\\} more\n', 'see', 0, 'z', '🎉🎉🎉🎉🎉🎉🎉 seez *a*\\{.c\\} more\n'],
+            ['| a | b |\n|---|---|\n| 🎉 \\{v\\} | c |\n\nother\n', 'other', 0, 'z', '| a | b |\n|---|---|\n| 🎉 \\{v\\} | c |\n\notherz\n'],
+            ['| a | b |\n|---|---|\n| 🎉 \\{v\\} | c |\n', 'c', 0, 'z', '| a      | b  |\n| ------ | -- |\n| 🎉 \\{v\\} | cz |\n'],
+            ['- 🎉 item \\{v\\}\n- two\n', 'two', 0, 'z', '- 🎉 item \\{v\\}\n- twoz\n'],
+            ['> 🎉 q \\{v\\}\n>\n> two\n', 'two', 0, 'z', '> 🎉 q \\{v\\}\n>\n> twoz\n'],
+            ['𝑥 Release v2\n', 'v2', 0, ' {v2}', '𝑥 Release v2 \\{v2\\}\n'],
+        ];
+        for (const math of [false, true]) {
+            const host = hostEngine(math ? [extend] : []);
+            setInlineEngine(math ? inlineEngineDefinition(host) : DEFAULT_INLINE_ENGINE);
+            for (const [source, find, del, typed, expected] of cases) {
+                const state = EditorState.create({ doc: parseDocument(host, source, {}).doc, plugins: editorPlugins() });
+                let end = -1;
+                state.doc.descendants((node, pos) => {
+                    const i = end < 0 && node.isText ? (node.text ?? '').indexOf(find) : -1;
+                    if (i >= 0) {
+                        end = pos + i + find.length;
+                    }
+                    return end < 0;
+                });
+                assert.ok(end >= 0, `math ${math}: no "${find}" in ${JSON.stringify(source)}`);
+                const tr = state.tr.insertText(typed, end - del, end);
+                assert.strictEqual(noteRefusal(tr), null, `math ${math}: ${JSON.stringify(source)} is allowed`);
+                const saved = serializeDocument({ doc: writtenEdit(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+                assert.strictEqual(saved, expected, `math ${math}: ${JSON.stringify(source)}`);
+                assert.deepStrictEqual(texts(parseDocument(host, saved, {}).doc), texts(state.apply(tr).doc), `math ${math}: ${JSON.stringify(source)} saved as ${JSON.stringify(saved)} reads back as the page shows it`);
+                assert.deepStrictEqual(shown(parseDocument(host, saved, {}).doc), shown(state.apply(tr).doc), `math ${math}: ${JSON.stringify(saved)} keeps every literal`);
+            }
+        }
+    });
+
     test('a list\'s own literal that does not read back is named as the list\'s, beside an edit of another item', () => {
         const host = hostEngine([extend]);
         setInlineEngine(inlineEngineDefinition(host));
