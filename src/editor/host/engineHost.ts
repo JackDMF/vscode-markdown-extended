@@ -128,6 +128,7 @@ export async function buildEditorEngine(selfId: string, log: Log): Promise<Markd
         typographer: preview.get<boolean>('typographer', false),
         plugins,
         extend,
+        log,
     });
     // linkify-it's `set` is missing from the project's markdown-it declaration.
     (md.linkify as unknown as { set(options: { fuzzyLink: boolean }): void }).set({ fuzzyLink: false });
