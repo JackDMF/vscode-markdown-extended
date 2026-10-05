@@ -145,9 +145,9 @@ suite('Inline toggles: what a selection toggles', () => {
     });
 
     test('subscript does not take strikethrough\'s markers for its own', async () => {
-        // The engine reads the result as a strikethrough between two `~`s, so
-        // a second toggle finds no subscript there: Markdown has no `~` inside `~~` here.
-        assert.strictEqual(await toggle('subscript', 'x ~~st‸rike~~ y'), 'x ~~~st‸rike~~~ y');
+        // `~~~strike~~~` reads as a strikethrough between two `~`s, no
+        // subscript: a toggle that would not read as written is not made.
+        assert.strictEqual(await toggle('subscript', 'x ~~st‸rike~~ y'), 'x ~~st‸rike~~ y');
     });
 
     test('superscript leaves footnote references alone', async () => {
@@ -254,9 +254,51 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('bold', '| a | b |\n|---|---|\n| on‸e | two |'), '| a | b |\n|---|---|\n| **on‸e** | two |');
     });
 
-    test('a longer run of the marker is no empty pair, and a pair that would change the line is not written', async () => {
-        assert.notStrictEqual(await toggle('italics', '***‸***'), '**‸**');
+    test('an empty pair inside another is removed again, and a pair that would change the line is not written', async () => {
+        assert.strictEqual(await toggle('italics', 'x **‸** y'), 'x ***‸*** y');
+        assert.strictEqual(await toggle('italics', 'x ***‸*** y'), 'x **‸** y');
+        assert.strictEqual(await toggle('bold', 'x ***‸*** y'), 'x *‸* y');
         assert.strictEqual(await toggle('mark', 'Some paragraph\n‸'), 'Some paragraph\n‸');
+    });
+
+    test('an empty list item, quote or definition gets the pair', async () => {
+        assert.strictEqual(await toggle('bold', '- ‸'), '- **‸**');
+        assert.strictEqual(await toggle('bold', '1. ‸'), '1. **‸**');
+        assert.strictEqual(await toggle('bold', '> ‸'), '> **‸**');
+        assert.strictEqual(await toggle('bold', '- a\n- ‸'), '- a\n- **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n: ‸'), 'Term\n: **‸**');
+        assert.strictEqual(await toggle('mark', '- ‸'), '- ==‸==');
+        assert.strictEqual(await toggle('codeInline', '- ‸'), '- `‸`');
+    });
+
+    test('a span of the marker the selection touches becomes part of it; one it crosses is not broken', async () => {
+        assert.strictEqual(await toggle('bold', '**foo**«bar»'), '**foo«bar»**');
+        assert.strictEqual(await toggle('bold', '«foo»**bar**'), '**«foo»bar**');
+        assert.strictEqual(await toggle('italics', '*foo*«bar»'), '*foo«bar»*');
+        assert.strictEqual(await toggle('superscript', '^a^«b»'), '^a«b»^');
+        // Neither `*a*b*c` nor `__foo_bar_` reads as written: nothing is.
+        assert.strictEqual(await toggle('italics', '«a*b»*c'), '«a*b»*c');
+        assert.strictEqual(await toggle('underline', '_foo_«bar»'), '_foo_«bar»');
+    });
+
+    test('Code over a code span takes its backticks out: code does not nest', async () => {
+        assert.strictEqual(await toggle('codeInline', '«run `npm i` now»'), '`«run npm i now»`');
+        assert.strictEqual(await toggle('codeInline', '«a `b` c»'), '`«a b c»`');
+    });
+
+    test('a span the selection holds over two lines stays one, inside the new markers', async () => {
+        assert.strictEqual(await toggle('italics', '«x **a\nb** y»'), '*«x **a\nb** y»*');
+        assert.strictEqual(await toggle('mark', '«x **a\nb** y»'), '==«x **a\nb** y»==');
+        assert.strictEqual(await toggle('italics', '*«x **a\nb** y»*'), '«x **a\nb** y»');
+        assert.strictEqual(await toggle('italics', '«**a\nb**»'), '«***a*\n*b***»');
+        assert.strictEqual(await toggle('bold', '**a «b\nc» d**'), 'a «b\nc» d');
+    });
+
+    test('no toggle leaves a run of tildes that opens a fence', async () => {
+        const after = '\n\nnext paragraph\n\n# Heading';
+        assert.strictEqual(await toggle('strikethrough', `«~/.bashrc» holds the settings${after}`), `«~/.bashrc» holds the settings${after}`);
+        assert.strictEqual(await toggle('subscript', `~~Dep‸recated~~ since 2.0${after}`), `~~Dep‸recated~~ since 2.0${after}`);
+        assert.strictEqual(await toggle('strikethrough', `~«x»~ y${after}`), `~«x»~ y${after}`);
     });
 
     test('a reversed selection stays reversed', async () => {
