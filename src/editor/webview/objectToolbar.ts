@@ -121,7 +121,7 @@ const HOVER_GRACE_MS = 300;
 const GAP = 4;
 
 /** One verb as the bar draws it. */
-interface Verb {
+export interface Verb {
     /** `data-verb`: what tests and stylesheets name it by. */
     id: string;
     /** As its owner titled it: `$(icon)` references are drawn as icons, and `lensLabel` gives the plain text. */
@@ -295,6 +295,66 @@ function isSidebar(name: NoteNodeName): boolean {
  */
 function embedRefusal(tr: Transaction | null): string | null {
     return tr === null ? 'There is no embed here.' : notesFilterRefusal(tr) ?? tableRefusal(tr);
+}
+
+/** The refusals of an embed's two verbs: `null` where the verb can be chosen. */
+interface EmbedRefusals {
+    asText: string | null;
+    remove: string | null;
+}
+
+/**
+ * Each verb's refusal builds a whole transaction and reads the range it changed, and a bar is presented on
+ * every refresh and hover: an embed's are read once per state (and place), not once per presentation.
+ */
+const embedRefusals = new WeakMap<EditorState, Map<string, EmbedRefusals>>();
+
+function refusalsOfEmbed(state: EditorState, object: EditorObject): EmbedRefusals {
+    let byPlace = embedRefusals.get(state);
+    if (byPlace === undefined) {
+        byPlace = new Map();
+        embedRefusals.set(state, byPlace);
+    }
+    const key = `${object.from}:${object.to}`;
+    let found = byPlace.get(key);
+    if (found === undefined) {
+        found = {
+            // Refused as the notes' and the tables' filters would refuse it: the text takes the atom's
+            // marks, and an attribute span over it that holds a note marker (or `|` in a cell) is
+            // allowed over an atom and not over text.
+            asText: embedRefusal(embedAsTextTransaction(state, object.from, object.to)),
+            remove: embedRefusal(deleteObjectTransaction(state, object)),
+        };
+        byPlace.set(key, found);
+    }
+    return found;
+}
+
+/** What the verbs of a wiki embed do: the bar gives them, the verbs only say which. */
+export interface EmbedActions {
+    asText(): void;
+    remove(): void;
+}
+
+/** The verbs of the wiki embed `object`, each with the reason it cannot be chosen in `state`, if there is one. */
+export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
+    const refusals = refusalsOfEmbed(state, object);
+    return [
+        {
+            id: 'edit-wiki-embed-as-text',
+            label: 'Edit as text',
+            title: 'Make it plain text, ![[name]], to edit its name; delete the last ] and type it again to make it an embed.',
+            refusal: refusals.asText,
+            run: () => actions.asText(),
+        },
+        {
+            id: 'remove-wiki-embed',
+            label: 'Remove embed',
+            title: 'The embed goes from the text.',
+            refusal: refusals.remove,
+            run: () => actions.remove(),
+        },
+    ];
 }
 
 /** What a bar tells the view about its field. */
@@ -1446,31 +1506,16 @@ class ObjectToolbarView implements PluginView {
                 return {
                     label: 'Wiki embed',
                     title: `${object.node.attrs.source as string}: kept as written, for the extension that renders embeds (Foam).`,
-                    verbs: [
-                        {
-                            id: 'edit-wiki-embed-as-text',
-                            label: 'Edit as text',
-                            title: 'Make it plain text, ![[name]], to edit its name; delete the last ] and type it again to make it an embed.',
-                            // Refused as the notes' and the tables' filters would refuse it: the text takes the atom's
-                            // marks, and an attribute span over it that holds a note marker (or `|` in a cell) is
-                            // allowed over an atom and not over text.
-                            refusal: embedRefusal(embedAsTextTransaction(this.view.state, object.from, object.to)),
-                            run: () => this.act(object, current => {
-                                const tr = embedAsTextTransaction(this.view.state, current.from, current.to);
-                                if (tr !== null) {
-                                    this.view.dispatch(tr);
-                                }
-                                return tr !== null;
-                            }, 'Embed is text'),
-                        },
-                        {
-                            id: 'remove-wiki-embed',
-                            label: 'Remove embed',
-                            title: 'The embed goes from the text.',
-                            refusal: embedRefusal(deleteObjectTransaction(this.view.state, object)),
-                            run: () => this.remove(object, 'Embed removed'),
-                        },
-                    ],
+                    verbs: wikiEmbedVerbs(view.state, object, {
+                        asText: () => this.act(object, current => {
+                            const tr = embedAsTextTransaction(this.view.state, current.from, current.to);
+                            if (tr !== null) {
+                                this.view.dispatch(tr);
+                            }
+                            return tr !== null;
+                        }, 'Embed is text'),
+                        remove: () => this.remove(object, 'Embed removed'),
+                    }),
                 };
             case 'badge': {
                 const mark = object.node.attrs.mark as { rule?: unknown } | null;

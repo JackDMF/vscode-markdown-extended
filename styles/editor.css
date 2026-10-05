@@ -153,7 +153,7 @@ img.mep-pending-range {
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 0.9em;
     color: var(--vscode-textPreformat-foreground, inherit);
-    background: var(--vscode-textPreformat-background, rgba(127, 127, 127, 0.12));
+    background: var(--vscode-textPreformat-background, transparent);
     border-radius: 3px;
     padding: 0 2px;
 }

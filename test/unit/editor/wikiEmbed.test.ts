@@ -8,6 +8,8 @@ import { unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../s
 import { headingAnchors } from '../../../src/editor/host/links';
 import { notesFilterRefusal } from '../../../src/editor/webview/notes';
 import { tableRefusal } from '../../../src/editor/webview/tables';
+import { objectOfNode } from '../../../src/editor/webview/objects';
+import { wikiEmbedVerbs } from '../../../src/editor/webview/objectToolbar';
 import { OWN_COPY, embedAsTextTransaction, inlineForNote, isOwnCopyDom, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
 import { tokenText } from '../../../src/syntax/tokenText';
 import { plugins } from '../../../src/plugin/plugins';
@@ -332,7 +334,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         // Across a sidenote: the text before the caret spans the note's parts.
         const crossing = paragraph(text('See ![['), n.sidenote.create(null, [n.note_ref.create(null, [text('r')]), n.sidenote_body.create(null, [text('body]')])]));
         assert.strictEqual(type(crossing, ']'), null);
-        // Marks: the stored marks typed text takes, not the code before the `!`.
+        // Marks: not the code before the `!`, which is no part of the text the atom replaces.
         const code = schema.marks.code.create();
         const afterCode = type(paragraph(text('k', code), text('![[a]')), ']', []);
         assert.ok(afterCode, 'made');
@@ -340,6 +342,24 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             if (node.type.name === 'wiki_embed') { assert.deepStrictEqual(node.marks, []); }
         });
         assert.strictEqual(type(paragraph(text('![[a]', code)), ']', [code]), null);
+        // The stored marks decide, as they do for any typed character (ProseMirror's `insertText`): the marks
+        // toggled on before the `]` are the atom's, those toggled off are not, and with none stored it takes
+        // those of the text it replaces — which keeps it in a link or an attribute span that ends there.
+        const em = schema.marks.em.create();
+        const link = schema.marks.link.create({ href: 'https://e.org' });
+        const atomMarks = (tr: Transaction | null) => {
+            assert.ok(tr, 'made');
+            const found: string[][] = [];
+            tr.doc.descendants(node => {
+                if (node.type.name === 'wiki_embed') { found.push(node.marks.map(m => m.type.name)); }
+            });
+            return found;
+        };
+        assert.deepStrictEqual(atomMarks(type(paragraph(text('See ![[x]')), ']', [em])), [['em']], 'em toggled on: an em atom');
+        assert.deepStrictEqual(atomMarks(type(paragraph(text('![[x]', em)), ']', [])), [[]], 'em toggled off: a plain atom');
+        assert.deepStrictEqual(atomMarks(type(paragraph(text('![[x]', em)), ']')), [['em']], 'none stored: the replaced text\'s marks');
+        assert.deepStrictEqual(atomMarks(type(paragraph(text('the ![[x]', link)), ']')), [['link']], 'none stored, at the end of a link: it stays in the link');
+        assert.strictEqual(type(paragraph(text('See ![[x]')), ']', [schema.marks.sup.create()]), null, 'superscript toggled on: it stays text');
         const off = wikiEmbedInputRule(() => false) as unknown as typeof rule;
         assert.strictEqual(off.handler(EditorState.create({ doc: paragraph(text('![[x]')) }), ['![[x]]'] as unknown as RegExpMatchArray, 1, 6), null);
     });
@@ -440,7 +460,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.deepStrictEqual(textAndBack(decorated).nodeAt(pos)?.marks.map(m => m.type.name), ['req_ref']);
     });
 
-    test('a ]] typed closes an embed that carries the marks of the text it replaces — in a link, wherever the caret is in it — and not those of the caret', () => {
+    test('a ]] typed closes an embed that carries the marks it is typed with (those stored), else those of the text it replaces — in a link, wherever the caret is in it — and not those of the caret', () => {
         const link = schema.marks.link.create({ href: 'https://e.org' });
         const span = schema.marks.attr_span.create({ literal: '{.big}' });
         const ref = schema.marks.req_ref.create();
@@ -463,13 +483,14 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         const middle = paragraph(text('the ![[x]rest', link));
         const typedInMiddle = typeInto(EditorState.create({ doc: middle }), 1 + 'the ![[x]'.length, ']');
         assert.deepStrictEqual(marksOfEmbeds(typedInMiddle), [['link']]);
-        // Emphasis still carries over, and a stored mark the text does not have is not taken.
+        // Emphasis still carries over; marks stored before the `]` (Ctrl+I) decide, on or off, as for any typed character.
         const em = schema.marks.em.create();
         const emphasised = paragraph(text('![[x]', em));
         assert.deepStrictEqual(marksOfEmbeds(typeInto(EditorState.create({ doc: emphasised }), emphasised.content.size - 1, ']')), [['em']]);
+        const stored = (doc: Node, marks: readonly Mark[]) => EditorState.create({ doc }).apply(EditorState.create({ doc }).tr.setStoredMarks(marks));
         const plain = paragraph(text('![[x]'));
-        const withStored = EditorState.create({ doc: plain }).apply(EditorState.create({ doc: plain }).tr.setStoredMarks([em]));
-        assert.deepStrictEqual(marksOfEmbeds(typeInto(withStored, plain.content.size - 1, ']')), [[]]);
+        assert.deepStrictEqual(marksOfEmbeds(typeInto(stored(plain, [em]), plain.content.size - 1, ']')), [['em']]);
+        assert.deepStrictEqual(marksOfEmbeds(typeInto(stored(emphasised, []), emphasised.content.size - 1, ']')), [[]]);
         // Under inline code the embed stays text.
         assert.strictEqual(typeInto(EditorState.create({ doc: paragraph(text('![[x]', code)) }), 6, ']'), null);
     });
@@ -500,6 +521,38 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             const state = EditorState.create({ doc: parseDocument(md, source).doc });
             const tr = asText(state);
             assert.strictEqual(notesFilterRefusal(tr) ?? tableRefusal(tr), null, source);
+        }
+    });
+
+    test('the embed\'s bar disables Edit as text and Remove embed with the reason where the notes\' filter would refuse them — an attribute span with a note marker in its literal, inside a note — and offers both elsewhere', () => {
+        const bar = (state: EditorState) => {
+            const [at] = embedPositions(state.doc);
+            const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
+            assert.ok(object && object.kind === 'wiki_embed', 'the embed is an object');
+            return wikiEmbedVerbs(state, object, { asText: () => undefined, remove: () => undefined });
+        };
+        const spanned = (source: string, literal: string, from: (at: number) => number) => {
+            const start = EditorState.create({ doc: parseDocument(md, source).doc });
+            const [at] = embedPositions(start.doc);
+            return start.apply(start.tr.addMark(from(at), from(at) + 1, schema.marks.attr_span.create({ literal })));
+        };
+        const marker = 'An attribute span in a note cannot hold {title="p$q"}';
+
+        // The span over the atom itself: its text would be unwritable, the atom's removal leaves no span.
+        const over = spanned('X $![[x]]$ y.\n', '{title="p$q"}', at => at);
+        const [asText, remove] = bar(over);
+        assert.deepStrictEqual([asText.id, remove.id], ['edit-wiki-embed-as-text', 'remove-wiki-embed']);
+        assert.ok(asText.refusal?.startsWith(marker), `Edit as text: ${asText.refusal}`);
+        const [at] = embedPositions(over.doc);
+        assert.strictEqual(notesFilterRefusal(over.tr.delete(at, at + 1)), null, 'the filters let the atom go');
+        assert.strictEqual(remove.refusal, null, 'Remove embed is offered');
+
+        // The span over the text beside it, in a note the filters would refuse a change to: both verbs carry the reason.
+        const beside = spanned('X $a![[x]]$ y.\n', '{title="p$q"}', at => at - 1);
+        assert.deepStrictEqual(bar(beside).map(v => v.refusal?.startsWith(marker)), [true, true], 'both disabled with the reason');
+
+        for (const source of ['X $![[x]]$ y.\n', 'Plain ![[x]].\n', '| a |\n| - |\n| ![[x]] |\n']) {
+            assert.deepStrictEqual(bar(EditorState.create({ doc: parseDocument(md, source).doc })).map(v => v.refusal), [null, null], source);
         }
     });
 

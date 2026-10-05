@@ -130,7 +130,8 @@ function oneTextRun(state: EditorState, from: number, to: number): boolean {
 /**
  * The input rule: the `]` that closes `![[name]]`, typed — one character, the
  * rest of the embed already one run of plain text before the caret — makes
- * it an atom carrying the marks of the text it replaces.
+ * it an atom carrying the marks it is typed with: the stored marks, else those
+ * of the text it replaces.
  */
 export function wikiEmbedInputRule(enabled: () => boolean): InputRule {
     return new InputRule(EMBED_TYPED, (state, match, start, end) => {
@@ -140,10 +141,12 @@ export function wikiEmbedInputRule(enabled: () => boolean): InputRule {
         if (!enabled() || end - start !== match[0].length - 1 || !oneTextRun(state, start, end)) {
             return null;
         }
-        // The marks of the text the atom replaces (`oneTextRun`: one set across all of it), not those at
-        // the caret: at the end of a link, an attribute span or a note reference, which typing does not
-        // extend, the caret's marks leave them off and the atom would step out of what it was typed in.
-        const marks = state.doc.nodeAt(start)?.marks ?? [];
+        // The marks typed text takes, as ProseMirror's own `insertText` decides them: the stored marks (Ctrl+I
+        // toggled on or off before the `]`), else the marks of the text the atom replaces (`oneTextRun`: one
+        // set across all of it), not those at the caret: at the end of a link, an attribute span or a note
+        // reference, which typing does not extend, the caret's marks leave them off and the atom would step
+        // out of what it was typed in.
+        const marks = state.storedMarks ?? state.doc.nodeAt(start)?.marks ?? [];
         if (rawMarked(marks)) {
             return null;
         }
@@ -162,10 +165,15 @@ export function wikiEmbedInputRules(enabled: () => boolean): Plugin {
 
 /**
  * The embed atom at `[from, to)` as the text it is shown as (`![[name]]`,
- * plain), with the atom's marks and the caret after it: what Backspace right
- * after a typed `]]` gives back (`undoInputRule`), for an embed that was not
- * just typed. It is text, and stays text: the input rule fires only on a typed
- * `]`. `null` when `[from, to)` is not one embed.
+ * plain), with the atom's marks and the caret after it: Backspace right after a
+ * typed `]]` gives back nearly this (`undoInputRule`), for an embed that was
+ * not just typed. It is text, and stays text: the input rule fires only on a
+ * typed `]`. `null` when `[from, to)` is not one embed.
+ *
+ * The two differ at the end of a link or another mark typing does not extend:
+ * `undoInputRule` restores the typed `]` with the caret's marks, so outside the
+ * mark, and the rest of `![[name]` inside it; here all of `![[name]]` keeps the
+ * atom's marks, inside the mark.
  */
 export function embedAsTextTransaction(state: EditorState, from: number, to: number): Transaction | null {
     const atom = state.doc.nodeAt(from);
