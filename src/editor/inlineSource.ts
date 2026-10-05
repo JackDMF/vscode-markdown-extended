@@ -74,14 +74,31 @@ export interface InlineSource {
     /** The line's text stretches, in order; none unless the line is `text`. */
     textOn(line: number): TextStretch[];
     /** The spans of `marker` that touch the line; for `` ` ``, every code span. */
-    spansOn(line: number, marker: string): SourceSpan[];
-    /** The lines `[start, end)` of the outermost block a token maps over the line; the line alone when none does. */
-    blockOf(line: number): { start: number; end: number };
+    spansOn(line: number, marker?: string): SourceSpan[];
+    /**
+     * The lines `[start, end)` of the top-level block that holds the line;
+     * the line alone for a blank line outside every block, and the whole
+     * document (`whole`) for a line no top-level block holds — a footnote's
+     * definition, whose body the tokens place after every block.
+     */
+    blockOf(line: number): { start: number; end: number; whole?: boolean };
+    /**
+     * Some lines of this document — a block, written over — read as they read
+     * in it: with its engine, its environment and its definitions. The part's
+     * `structure` lists its mapped block tokens.
+     */
+    readPart(text: string): InlineSource;
+    /** Each mapped block token's type, nesting and lines, of a part read with `readPart`; empty for a document. */
+    readonly structure: readonly string[];
+    /** How many lines the text has. */
+    readonly lineCount: number;
+    /** The same document, a later version of its text, read again where it changed (`update`). */
+    update(text: string): InlineSource;
 }
 
-/** The document `text` read with `md`, the engine the Visual Editor parses with. */
+/** The document `text` read with `md`, the engine the Visual Editor parses with, in `env` (`engineEnvironment`). */
 export function readInlineSource(md: MarkdownIt, text: string, env: Environment = {}): InlineSource {
-    return new DocumentInlineSource(text, md.parse(text, env));
+    return DocumentIndex.read(md, text, env, false);
 }
 
 const RANK: Record<LineKind, number> = { blank: 0, structure: 1, text: 2, literal: 3 };
@@ -106,16 +123,32 @@ const TEXT = 2;
 const ENCLOSED = 1;
 const BOUNDARY = 0;
 
-/** One inline block: the inline tokens of a paragraph, a heading, a cell's row, and the lines they map. */
+/** A top-level block: the lines `[start, end)` its first token maps. Shifted in place when an edit above it moves it. */
+interface Block {
+    start: number;
+    end: number;
+    type: string;
+}
+
+/**
+ * One inline block: the inline tokens of a paragraph, a heading, a table
+ * row's cells, and the lines `[first, end)` they map. `block` is the top-level
+ * block it stands in, `null` for one the tokens place after the document's
+ * blocks (a footnote's body). Its tokens are kept only while it is read; a
+ * group read again parses its block again.
+ */
 interface Group {
     first: number;
     end: number;
-    inlines: Token[];
     row: boolean;
+    block: Block | null;
+    inlines?: Token[];
     read?: Reading;
 }
 
+/** A group's stretches and spans, as offsets from the start of its first line, so a group moved by an edit above it keeps them. */
 interface Reading {
+    /** By line, counted from the group's first. */
     stretches: Map<number, TextStretch[]>;
     spans: SourceSpan[];
 }
@@ -147,56 +180,209 @@ interface CodeUnits {
     end: number;
 }
 
-class DocumentInlineSource implements InlineSource {
-    private readonly lines: Lines;
-    private readonly kinds: Uint8Array;
-    private readonly groupOf: Int32Array;
-    private readonly groups: Group[] = [];
-    private readonly blockStart: Int32Array;
-    private readonly blockEnd: Int32Array;
+/** What one parse of some lines gives: each line's rank, its groups and its top-level blocks, lines counted from `offset`. */
+interface Scan {
+    rank: Uint8Array;
+    groups: Group[];
+    groupOf: (Group | undefined)[];
+    blocks: Block[];
+    /** Whether a token maps lines outside every top-level block: a footnote's body, which the tokens place last. */
+    orphans: boolean;
+}
 
-    constructor(private readonly text: string, tokens: Token[]) {
-        this.lines = new Lines(text);
-        const count = this.lines.count;
-        const rank = new Uint8Array(count);
-        this.groupOf = new Int32Array(count).fill(-1);
-        this.blockStart = new Int32Array(count).fill(-1);
-        this.blockEnd = new Int32Array(count).fill(-1);
-        const claim = (from: number, to: number, kind: LineKind) => {
-            for (let line = Math.max(0, from); line < Math.min(to, count); line++) {
-                rank[line] = Math.max(rank[line], RANK[kind]);
-            }
-        };
-        let outerEnd = -1;
-        tokens.forEach((token, index) => {
-            if (!token.map) {
+/** Lines `update` read again: old lines `[startLine, endOld)`, now `[startLine, endNew)`, read as `scan`, in place of the old blocks `[first, after)`. */
+interface Region {
+    startLine: number;
+    endOld: number;
+    endNew: number;
+    scan: Scan;
+    first: number;
+    after: number;
+}
+
+function scan(tokens: Token[], count: number, offset: number, keepTokens: boolean): Scan {
+    const rank = new Uint8Array(count);
+    const groupOf: (Group | undefined)[] = new Array(count);
+    const groups: Group[] = [];
+    const blocks: Block[] = [];
+    let orphans = false;
+    const claim = (from: number, to: number, kind: LineKind) => {
+        for (let line = Math.max(offset, from); line < Math.min(to, offset + count); line++) {
+            rank[line - offset] = Math.max(rank[line - offset], RANK[kind]);
+        }
+    };
+    let current: Block | null = null;
+    // markdown-it-footnote moves every footnote's body after the document's blocks.
+    let tail = false;
+    tokens.forEach((token, index) => {
+        tail = tail || token.type === 'footnote_block_open';
+        if (!token.map) {
+            return;
+        }
+        const from = token.map[0] + offset;
+        const to = token.map[1] + offset;
+        // A token opening at level 0 starts a top-level block; every token up
+        // to its close is in it and widens it (an admonition's opening token
+        // maps its title line alone).
+        let block: Block | null = current;
+        if (tail) {
+            orphans = true;
+            block = null;
+        } else if (current === null || (token.level === 0 && token.nesting >= 0)) {
+            current = { start: from, end: Math.max(to, from + 1), type: token.type };
+            blocks.push(current);
+            block = current;
+        } else {
+            current.end = Math.max(current.end, to);
+        }
+        if (isLiteral(token)) {
+            claim(from, to, 'literal');
+        } else if (token.type === 'inline') {
+            // A definition's term maps no line of its own ([n, n]): it is its line.
+            const end = Math.max(to, from + 1);
+            claim(from, end, 'text');
+            const before = tokens[index - 1];
+            const cell = before !== undefined && (before.type === 'th_open' || before.type === 'td_open');
+            const last = groups[groups.length - 1];
+            if (cell && last?.row && last.first === from && last.end === end) {
+                last.inlines?.push(token);
                 return;
             }
-            const [from, to] = token.map;
-            // Tokens come in document order: one that starts past the last outer block is the next outer one.
-            if (from >= outerEnd) {
-                for (let line = Math.max(0, from); line < Math.min(to, count); line++) {
-                    this.blockStart[line] = from;
-                    this.blockEnd[line] = to;
-                }
-                outerEnd = Math.max(to, from + 1);
+            const group: Group = { first: from, end, row: cell, block, inlines: keepTokens || block === null ? [token] : undefined };
+            groups.push(group);
+            for (let line = Math.max(offset, from); line < Math.min(end, offset + count); line++) {
+                groupOf[line - offset] ??= group;
             }
-            if (isLiteral(token)) {
-                claim(from, to, 'literal');
-            } else if (token.type === 'inline') {
-                // A definition's term maps no line of its own ([n, n]): it is its line.
-                const end = Math.max(to, from + 1);
-                claim(from, end, 'text');
-                this.addInline(token, from, end, tokens[index - 1]);
-            } else {
-                claim(from, to, 'structure');
-            }
-        });
+        } else {
+            claim(from, to, 'structure');
+        }
+    });
+    return { rank, groups, groupOf, blocks, orphans };
+}
+
+/** The definitions a parse leaves in its environment, which the inline rules of every later block read. */
+interface Definitions {
+    references: Record<string, unknown>;
+    footnotes: string[];
+    abbreviations: Record<string, unknown>;
+}
+
+function definitionsOf(env: Environment): Definitions {
+    const e = env as { references?: Record<string, unknown>; footnotes?: { refs?: Record<string, unknown> }; abbreviations?: Record<string, unknown> };
+    return {
+        references: { ...(e.references ?? {}) },
+        footnotes: Object.keys(e.footnotes?.refs ?? {}),
+        abbreviations: { ...(e.abbreviations ?? {}) },
+    };
+}
+
+/**
+ * An environment for parsing part of a document: `base` (`engineEnvironment`)
+ * with the document's definitions, so a reference, a footnote reference and an
+ * abbreviation read in the part as they read in the whole.
+ */
+function seeded(base: Environment, definitions: Definitions): Environment {
+    const refs: Record<string, number> = {};
+    for (const label of definitions.footnotes) {
+        refs[label] = -1;
+    }
+    return {
+        ...base,
+        references: { ...definitions.references },
+        ...(definitions.footnotes.length ? { footnotes: { refs } } : {}),
+        ...(Object.keys(definitions.abbreviations).length ? { abbreviations: { ...definitions.abbreviations } } : {}),
+    };
+}
+
+/**
+ * Some lines of a document parsed as the lines they are there, not as a
+ * document of their own: after a blank line, so a part starting with `---` is
+ * no front matter, which only a document's first line opens. The maps count
+ * from the part's first line again.
+ */
+function parsePart(md: MarkdownIt, text: string, env: Environment): Token[] {
+    const tokens = md.parse('\n' + text, env);
+    for (const token of tokens) {
+        if (token.map) {
+            token.map = [token.map[0] - 1, token.map[1] - 1];
+        }
+    }
+    return tokens;
+}
+
+/** A document read below this size keeps its tokens; a larger one parses a block again to read it. */
+const KEEP_TOKENS = 200_000;
+/** How many top-level blocks' tokens a large document keeps for reading their groups. */
+const BLOCK_CACHE = 4;
+/** A line that may define a reference, a footnote or an abbreviation: `[label]:`, `[^label]:`, `*[label]:`, after a prefix. */
+const DEFINITION = /\[[^\]]*\]\s*:/;
+/** How many more top-level blocks an incremental read takes in before it reads the whole document instead. */
+const MAX_EXTENSIONS = 8;
+
+class DocumentIndex implements InlineSource {
+    readonly lines: Lines;
+    private kinds: Uint8Array;
+    private groupOf: (Group | undefined)[];
+    private blocks: Block[];
+    private blockAt: (Block | undefined)[];
+    private readonly blockTokens = new Map<Block, Token[]>();
+    readonly structure: readonly string[];
+
+    private constructor(
+        readonly text: string,
+        private readonly md: MarkdownIt,
+        private readonly base: Environment,
+        readonly definitions: Definitions,
+        parts: { scan: Scan; structure?: string[] },
+    ) {
+        this.lines = new Lines(text);
+        this.structure = parts.structure ?? [];
+        this.kinds = new Uint8Array(0);
+        this.groupOf = [];
+        this.blocks = [];
+        this.blockAt = [];
+        this.install(parts.scan);
+    }
+
+    /**
+     * The whole of `text`, read with one parse. A `part` of a document is
+     * parsed as one (`parsePart`) and keeps each mapped block token's type
+     * and lines, for comparing two readings of it.
+     */
+    static read(md: MarkdownIt, text: string, base: Environment, part: boolean): DocumentIndex {
+        const env: Environment = { ...base };
+        const tokens = part ? parsePart(md, text, env) : md.parse(text, env);
+        const count = new Lines(text).count;
+        const parts = {
+            scan: scan(tokens, count, 0, text.length < KEEP_TOKENS),
+            structure: part ? tokens.filter(t => t.map && t.type !== 'inline').map(t => `${t.type}:${t.nesting}:${t.map[0]}:${t.map[1]}`) : undefined,
+        };
+        return new DocumentIndex(text, md, base, definitionsOf(env), parts);
+    }
+
+    private install(s: Scan): void {
+        const count = this.lines.count;
         this.kinds = new Uint8Array(count);
         for (let line = 0; line < count; line++) {
-            const blank = rank[line] < RANK.text && /^\s*$/.test(text.slice(this.lines.startOf(line), this.lines.endOf(line)));
-            this.kinds[line] = blank ? RANK.blank : Math.max(rank[line], RANK.structure);
+            const blank = s.rank[line] < RANK.text && /^\s*$/.test(this.text.slice(this.lines.startOf(line), this.lines.endOf(line)));
+            this.kinds[line] = blank ? RANK.blank : Math.max(s.rank[line], RANK.structure);
         }
+        this.groupOf = s.groupOf;
+        this.blocks = s.blocks;
+        this.blockAt = new Array(count);
+        for (const block of this.blocks) {
+            for (let line = block.start; line < Math.min(block.end, count); line++) {
+                this.blockAt[line] = block;
+            }
+        }
+    }
+
+    get lineCount(): number {
+        return this.lines.count;
+    }
+
+    readPart(text: string): InlineSource {
+        return DocumentIndex.read(this.md, text, seeded(this.base, this.definitions), true);
     }
 
     kindOf(line: number): LineKind {
@@ -204,205 +390,489 @@ class DocumentInlineSource implements InlineSource {
     }
 
     textOn(line: number): TextStretch[] {
-        if (this.kindOf(line) !== 'text' || this.groupOf[line] < 0) {
+        const group = this.kindOf(line) === 'text' ? this.groupOf[line] : undefined;
+        if (group === undefined) {
             return [];
         }
-        return this.reading(this.groups[this.groupOf[line]]).stretches.get(line) ?? [];
+        const base = this.lines.startOf(group.first);
+        return (this.reading(group).stretches.get(line - group.first) ?? [])
+            .map(s => ({ start: s.start + base, end: s.end + base, continues: s.continues }));
     }
 
-    spansOn(line: number, marker: string): SourceSpan[] {
-        if (this.kindOf(line) !== 'text' || this.groupOf[line] < 0) {
+    spansOn(line: number, marker?: string): SourceSpan[] {
+        const group = this.kindOf(line) === 'text' ? this.groupOf[line] : undefined;
+        if (group === undefined) {
             return [];
         }
-        const from = this.lines.startOf(line);
-        const to = this.lines.endOf(line);
+        const base = this.lines.startOf(group.first);
+        const from = this.lines.startOf(line) - base;
+        const to = this.lines.endOf(line) - base;
         const code = marker === INLINE_MARKERS.codeInline;
-        return this.reading(this.groups[this.groupOf[line]]).spans
-            .filter(s => (code ? s.markup.startsWith(marker) : s.markup === marker) && s.start <= to && s.end >= from);
+        return this.reading(group).spans
+            .filter(s => (marker === undefined || (code ? s.markup.startsWith(marker) : s.markup === marker)) && s.start <= to && s.end >= from)
+            .map(s => ({ ...s, start: s.start + base, end: s.end + base }));
     }
 
-    blockOf(line: number): { start: number; end: number } {
-        const inside = line >= 0 && line < this.blockStart.length && this.blockStart[line] >= 0;
-        return inside ? { start: this.blockStart[line], end: this.blockEnd[line] } : { start: line, end: line + 1 };
-    }
-
-    /** An inline token joins the group before it when both are cells of one table row. */
-    private addInline(token: Token, first: number, end: number, before: Token | undefined): void {
-        const cell = before !== undefined && (before.type === 'th_open' || before.type === 'td_open');
-        const last = this.groups[this.groups.length - 1];
-        if (cell && last?.row && last.first === first && last.end === end) {
-            last.inlines.push(token);
-            return;
+    blockOf(line: number): { start: number; end: number; whole?: boolean } {
+        const block = this.blockAt[line];
+        if (block !== undefined) {
+            return { start: block.start, end: block.end };
         }
-        this.groups.push({ first, end, inlines: [token], row: cell });
-        for (let line = first; line < Math.min(end, this.groupOf.length); line++) {
-            if (this.groupOf[line] < 0) {
-                this.groupOf[line] = this.groups.length - 1;
+        // A line no top-level block holds — a footnote's definition — is read only with the whole document.
+        const loose = this.kindOf(line) !== 'blank';
+        return loose ? { start: 0, end: this.lines.count, whole: true } : { start: line, end: line + 1 };
+    }
+
+    /**
+     * `text`, a later version of this document, read again where it changed:
+     * each stretch of changed lines from one top-level block before it,
+     * through the block after it, further while the parse's last block is not
+     * the old one there, and the rest kept, moved by the lines the edit added.
+     * Stretches whose readings meet are read as one; with as many lines as
+     * before, every changed line is a stretch of its own, so a toggle at many
+     * cursors reads only the blocks it wrote in. The whole document is read
+     * again when an edit touches the front matter or a line no top-level block
+     * holds (a reference, footnote or abbreviation definition), or a part read
+     * defines something or places a footnote's body.
+     */
+    update(text: string): DocumentIndex {
+        if (text === this.text) {
+            return this;
+        }
+        const full = () => DocumentIndex.read(this.md, text, this.base, false);
+        if (this.blocks.length === 0) {
+            return full();
+        }
+        const lines = new Lines(text);
+        const delta = lines.count - this.lines.count;
+        let stretches = this.changedLines(text, lines);
+        for (;;) {
+            const regions: Region[] = [];
+            for (const stretch of stretches) {
+                const region = this.region(text, lines, stretch.first, stretch.last, delta);
+                if (region === undefined) {
+                    return full();
+                }
+                regions.push(region);
+            }
+            const meets = regions.findIndex((region, k) => k > 0 && region.startLine < regions[k - 1].endOld);
+            if (meets < 0) {
+                return this.spliced(text, lines, regions);
+            }
+            stretches = [
+                ...stretches.slice(0, meets - 1),
+                { first: stretches[meets - 1].first, last: stretches[meets].last },
+                ...stretches.slice(meets + 1),
+            ];
+        }
+    }
+
+    /**
+     * The old lines `text` changes, in stretches: one from the first changed
+     * line to the last when the line count changed, else each run of changed
+     * lines.
+     */
+    private changedLines(text: string, lines: Lines): { first: number; last: number }[] {
+        const oldText = this.text;
+        let prefix = 0;
+        const limit = Math.min(oldText.length, text.length);
+        while (prefix < limit && oldText.charCodeAt(prefix) === text.charCodeAt(prefix)) {
+            prefix++;
+        }
+        let suffix = 0;
+        while (suffix < limit - prefix && oldText.charCodeAt(oldText.length - 1 - suffix) === text.charCodeAt(text.length - 1 - suffix)) {
+            suffix++;
+        }
+        const first = this.lines.positionAt(prefix).line;
+        const last = this.lines.positionAt(oldText.length - suffix).line;
+        if (lines.count !== this.lines.count) {
+            return [{ first, last }];
+        }
+        // A line with its terminator, as it was and as it is.
+        const same = (line: number) => {
+            const a = this.lines.startOf(line), b = lines.startOf(line);
+            const aEnd = line + 1 < this.lines.count ? this.lines.startOf(line + 1) : oldText.length;
+            const bEnd = line + 1 < lines.count ? lines.startOf(line + 1) : text.length;
+            if (aEnd - a !== bEnd - b) {
+                return false;
+            }
+            for (let k = 0; k < aEnd - a; k++) {
+                if (oldText.charCodeAt(a + k) !== text.charCodeAt(b + k)) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        const stretches: { first: number; last: number }[] = [];
+        for (let line = first; line <= last; line++) {
+            if (same(line)) {
+                continue;
+            }
+            const previous = stretches[stretches.length - 1];
+            if (previous !== undefined && previous.last === line - 1) {
+                previous.last = line;
+            } else {
+                stretches.push({ first: line, last: line });
             }
         }
+        return stretches.length ? stretches : [{ first, last }];
+    }
+
+    /** The index of the first top-level block whose end (or start) is after `line`. */
+    private blockAfter(line: number, by: 'end' | 'start'): number {
+        let low = 0;
+        let high = this.blocks.length;
+        while (low < high) {
+            const mid = (low + high) >> 1;
+            if ((by === 'end' ? this.blocks[mid].end : this.blocks[mid].start) > line) {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+        return low;
+    }
+
+    /**
+     * Old lines `firstOld`..`lastOld` changed (the lines after moved by
+     * `delta`), read again: from one top-level block before them, and back
+     * over every block a line written there could join, as the parse starts
+     * after a blank line; through the block after them, and further until the
+     * parse's last block is the old one there. `undefined` where only the
+     * whole document can be read again.
+     */
+    private region(text: string, lines: Lines, firstOld: number, lastOld: number, delta: number): Region | undefined {
+        const oldText = this.text;
+        // A definition changed or made by the edit (a reference's, an abbreviation's) reads in every block.
+        const defines = (t: Lines, source: string, from: number, to: number) => {
+            for (let line = from; line <= to && line < t.count; line++) {
+                if (DEFINITION.test(source.slice(t.startOf(line), t.endOf(line)))) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (defines(this.lines, oldText, firstOld, lastOld) || defines(lines, text, firstOld, lastOld + delta)) {
+            return undefined;
+        }
+        // A footnote's body is placed after every block, and only while something refers to it.
+        if (this.definitions.footnotes.length > 0) {
+            const near = (t: Lines, source: string, from: number, to: number) => {
+                const start = t.startOf(Math.min(from, t.count - 1));
+                const end = t.endOf(Math.max(0, Math.min(to, t.count - 1)));
+                return /\[\^|\^\[/.test(source.slice(Math.max(0, start - 64), end + 64));
+            };
+            if (near(this.lines, oldText, firstOld, lastOld) || near(lines, text, firstOld, lastOld + delta)) {
+                return undefined;
+            }
+        }
+        const changed = this.blockAfter(firstOld, 'end');
+        let startLine = Math.min(this.blocks[Math.max(0, changed - 1)].start, firstOld);
+        while (startLine > 0 && (this.blockAt[startLine - 1] !== undefined || this.kindOf(startLine - 1) !== 'blank')) {
+            const block = this.blockAt[startLine - 1];
+            if (block === undefined) {
+                return undefined;
+            }
+            startLine = block.start;
+        }
+        const first = this.blockAfter(startLine - 1, 'start');
+        let last = this.blockAfter(lastOld, 'start');
+        for (let extension = 0; extension <= MAX_EXTENSIONS; extension++) {
+            const atEnd = last >= this.blocks.length;
+            const endOld = atEnd ? this.lines.count : this.blocks[last].end;
+            const endNew = endOld + delta;
+            if (endNew <= startLine) {
+                return undefined;
+            }
+            for (let line = startLine; line < endOld; line++) {
+                const block = this.blockAt[line];
+                // A definition, a footnote's body, the front matter: read with the whole document.
+                if ((block === undefined && this.kindOf(line) !== 'blank') || block?.type === 'front_matter') {
+                    return undefined;
+                }
+            }
+            const from = lines.startOf(startLine);
+            const to = endNew >= lines.count ? text.length : lines.startOf(endNew);
+            // A definition in the part may stop being one, or start, with the blocks around it.
+            if (DEFINITION.test(text.slice(from, to)) || DEFINITION.test(oldText.slice(this.lines.startOf(startLine), endOld >= this.lines.count ? oldText.length : this.lines.startOf(endOld)))) {
+                return undefined;
+            }
+            const env = seeded(this.base, this.definitions);
+            // From the document's first line the part is the document's start, where front matter opens.
+            const tokens = startLine === 0 ? this.md.parse(text.slice(from, to), env) : parsePart(this.md, text.slice(from, to), env);
+            const s = scan(tokens, endNew - startLine, startLine, false);
+            const defined = definitionsOf(env);
+            const definesMore = Object.keys(defined.references).length > Object.keys(this.definitions.references).length
+                || defined.footnotes.length > this.definitions.footnotes.length
+                || Object.keys(defined.abbreviations).length > Object.keys(this.definitions.abbreviations).length;
+            if (s.orphans || definesMore) {
+                return undefined;
+            }
+            const lastBlock = s.blocks[s.blocks.length - 1];
+            const old = atEnd ? undefined : this.blocks[last];
+            const lined = atEnd || (lastBlock !== undefined && old !== undefined
+                && lastBlock.start === old.start + delta && lastBlock.end === old.end + delta && lastBlock.type === old.type);
+            if (lined) {
+                return { startLine, endOld, endNew, scan: s, first, after: atEnd ? this.blocks.length : last + 1 };
+            }
+            last++;
+        }
+        return undefined;
+    }
+
+    /**
+     * This index with each region's old lines `[startLine, endOld)` replaced
+     * by its reading and its old blocks `[first, after)` by the reading's, the
+     * lines and blocks after a region moved by the lines it added.
+     */
+    private spliced(text: string, lines: Lines, regions: Region[]): DocumentIndex {
+        const next = Object.create(DocumentIndex.prototype) as DocumentIndex;
+        const self = next as unknown as Record<string, unknown>;
+        self.text = text;
+        self.md = this.md;
+        self.base = this.base;
+        self.definitions = this.definitions;
+        self.lines = lines;
+        self.structure = [];
+        self.blockTokens = new Map<Block, Token[]>();
+        const count = lines.count;
+        const rank = new Uint8Array(count);
+        const groupOf: (Group | undefined)[] = new Array(count);
+        const blocks: Block[] = [];
+        let shift = 0;
+        let oldLine = 0;
+        let oldBlock = 0;
+        const moved = new Set<Group>();
+        const keep = (to: number, toBlock: number) => {
+            for (let line = oldLine; line < to; line++) {
+                rank[line + shift] = this.kinds[line];
+                const group = this.groupOf[line];
+                if (group !== undefined && shift !== 0 && !moved.has(group)) {
+                    moved.add(group);
+                    group.first += shift;
+                    group.end += shift;
+                }
+                groupOf[line + shift] = group;
+            }
+            for (let k = oldBlock; k < toBlock; k++) {
+                const block = this.blocks[k];
+                if (shift !== 0) {
+                    block.start += shift;
+                    block.end += shift;
+                }
+                blocks.push(block);
+            }
+        };
+        for (const region of regions) {
+            keep(region.startLine, region.first);
+            for (let line = region.startLine; line < region.endNew; line++) {
+                rank[line] = region.scan.rank[line - region.startLine];
+                groupOf[line] = region.scan.groupOf[line - region.startLine];
+            }
+            blocks.push(...region.scan.blocks);
+            shift = region.endNew - region.endOld;
+            oldLine = region.endOld;
+            oldBlock = region.after;
+        }
+        keep(this.lines.count, this.blocks.length);
+        // Ranks outside the regions are the final kinds already; `install` keeps blank as blank.
+        next.install({ rank, groupOf, groups: [], blocks, orphans: false });
+        const kept = new Set(blocks);
+        for (const [block, tokens] of this.blockTokens) {
+            if (kept.has(block)) {
+                next.blockTokens.set(block, tokens);
+            }
+        }
+        return next;
     }
 
     private reading(group: Group): Reading {
         if (group.read === undefined) {
-            group.read = this.read(group);
+            group.read = readGroup(this.text, this.lines, group, this.inlinesOf(group));
+            if (group.block !== null) {
+                group.inlines = undefined;
+            }
         }
         return group.read;
     }
 
-    private read(group: Group): Reading {
-        const base = this.lines.startOf(group.first);
-        const body = this.text.slice(base, this.lines.endOf(Math.min(group.end, this.lines.count) - 1));
-        const norm = normalize(body);
-        const src = norm.src;
-        const { units, roles, barriers, spans, codes } = emit(group);
-        const { toSource, toUnit, exact } = align(src, units);
-        settleRuns(src, units, roles, toSource, toUnit, spans);
-        const at = (index: number) => base + norm.toBody[index];
-
-        // Where the spelling of the character at `i` ends: past an entity whose first character it is.
-        const spellingEnd = (i: number): number => {
-            if (src.charCodeAt(i) === 38) {
-                ENTITY.lastIndex = i;
-                const m = ENTITY.exec(src);
-                if (m !== null) {
-                    let tail = true;
-                    for (let k = i + 1; tail && k < i + m[0].length; k++) {
-                        tail = toUnit[k] < 0;
-                    }
-                    if (tail) {
-                        return i + m[0].length;
-                    }
-                }
-            }
-            return i + 1;
-        };
-
-        const stretches = new Map<number, TextStretch[]>();
-        let run: { first: number; last: number; continues: boolean } | null = null;
-        const close = () => {
-            if (run === null) {
-                return;
-            }
-            let start = toSource[run.first];
-            // An escaped first character starts at its backslash.
-            if (start > 0 && src.charCodeAt(start - 1) === 92 && toUnit[start - 1] < 0) {
-                start--;
-            }
-            const stretch = { start: at(start), end: at(spellingEnd(toSource[run.last])), continues: run.continues };
-            const line = this.lines.positionAt(stretch.start).line;
-            const onLine = stretches.get(line);
-            if (onLine === undefined) {
-                stretches.set(line, [{ ...stretch, continues: false }]);
-            } else {
-                onLine.push(stretch);
-            }
-            run = null;
-        };
-        let level = 0;
-        let seen = false;
-        for (let j = 0; j < units.length; j++) {
-            level = Math.max(level, barriers[j]);
-            if (roles[j] === TEXT && toSource[j] >= 0) {
-                if (run !== null && level === 0) {
-                    run.last = j;
-                } else {
-                    const continues = seen && level <= 1;
-                    close();
-                    run = { first: j, last: j, continues };
-                }
-                seen = true;
-                level = 0;
-            } else {
-                level = Math.max(level, roles[j] === ENCLOSED ? 1 : 2);
-            }
+    /** A group's inline tokens: kept, or from its block parsed again. */
+    private inlinesOf(group: Group): Token[] {
+        if (group.inlines !== undefined || group.block === null) {
+            return group.inlines ?? [];
         }
-        close();
-
-        // The gap before unit `u`: from past the last matched unit before it to the first matched one from it on.
-        const lo = new Int32Array(units.length + 1);
-        const hi = new Int32Array(units.length + 1);
-        let previous = 0;
-        for (let u = 0; u <= units.length; u++) {
-            lo[u] = previous;
-            if (u < units.length && toSource[u] >= 0) {
-                previous = spellingEnd(toSource[u]);
+        const block = group.block;
+        let tokens = this.blockTokens.get(block);
+        if (tokens === undefined) {
+            const from = this.lines.startOf(block.start);
+            const to = block.end >= this.lines.count ? this.text.length : this.lines.startOf(block.end);
+            tokens = parsePart(this.md, this.text.slice(from, to), seeded(this.base, this.definitions));
+            if (this.blockTokens.size >= BLOCK_CACHE) {
+                this.blockTokens.delete(this.blockTokens.keys().next().value as Block);
             }
+            this.blockTokens.set(block, tokens);
         }
-        let next = src.length;
-        for (let u = units.length; u >= 0; u--) {
-            if (u < units.length && toSource[u] >= 0) {
-                next = toSource[u];
-            }
-            hi[u] = next;
-        }
-        interface Claim { span: number; markup: string; order: number; found: number }
-        const gaps = new Map<number, { lo: number; hi: number; opens: Claim[]; closes: Claim[] }>();
-        const gapOf = (u: number) => {
-            let gap = gaps.get(lo[u]);
-            if (gap === undefined) {
-                gap = { lo: lo[u], hi: Math.max(lo[u], hi[u]), opens: [], closes: [] };
-                gaps.set(lo[u], gap);
-            }
-            return gap;
-        };
-        const opens: Claim[] = [];
-        const closes: Claim[] = [];
-        spans.forEach((span, index) => {
-            const open = { span: index, markup: span.markup, order: span.openOrder, found: -1 };
-            const shut = { span: index, markup: span.markup, order: span.closeOrder, found: -1 };
-            gapOf(span.open).opens.push(open);
-            gapOf(span.close).closes.push(shut);
-            opens.push(open);
-            closes.push(shut);
-        });
-        for (const gap of gaps.values()) {
-            // Closing markers in the order their tokens came, from the gap's start;
-            // opening ones from its end, innermost (last) first.
-            let from = gap.lo;
-            let to = gap.hi;
-            for (const claim of gap.closes.sort((a, b) => a.order - b.order)) {
-                const found = src.indexOf(claim.markup, from);
-                if (found >= 0 && found + claim.markup.length <= to) {
-                    claim.found = found;
-                    from = found + claim.markup.length;
-                }
-            }
-            for (const claim of gap.opens.sort((a, b) => b.order - a.order)) {
-                const found = src.lastIndexOf(claim.markup, to - claim.markup.length);
-                if (found >= from && to - claim.markup.length >= 0) {
-                    claim.found = found;
-                    to = found;
-                }
-            }
-        }
-        const sourceSpans = spans.map((span, index): SourceSpan => {
-            const open = opens[index];
-            const shut = closes[index];
-            const found = open.found >= 0 && shut.found >= 0 && open.found < shut.found;
-            const start = open.found >= 0 ? open.found : lo[span.open];
-            const end = shut.found >= 0 ? shut.found + span.markup.length : hi[span.close];
-            return { start: at(start), end: at(Math.max(start, end)), markup: span.markup, exact: exact && found };
-        });
-        for (const code of codes) {
-            // Exact when each backtick run is matched where it was written, one character after another.
-            const length = code.markup.length;
-            const runAt = (first: number) => {
-                for (let k = 1; k < length; k++) {
-                    if (toSource[first + k] !== toSource[first] + k) {
-                        return -1;
-                    }
-                }
-                return toSource[first];
-            };
-            const open = runAt(code.start);
-            const close = runAt(code.end - length);
-            const found = open >= 0 && close > open;
-            const start = open >= 0 ? open : lo[code.start];
-            const end = close >= 0 ? close + length : hi[code.end];
-            sourceSpans.push({ start: at(start), end: at(Math.max(start, end)), markup: code.markup, exact: exact && found });
-        }
-        return { stretches, spans: sourceSpans };
+        const found = scan(tokens, block.end - block.start, block.start, true).groups
+            .find(g => g.first === group.first && g.end === group.end);
+        return found?.inlines ?? [];
     }
+}
+
+/** A group's stretches and spans, aligned with its lines of `text`. */
+function readGroup(text: string, lines: Lines, group: Group, inlines: Token[]): Reading {
+    const base = lines.startOf(group.first);
+    const body = text.slice(base, lines.endOf(Math.min(group.end, lines.count) - 1));
+    const norm = normalize(body);
+    const src = norm.src;
+    const { units, roles, barriers, spans, codes } = emit(inlines, group.row);
+    const { toSource, toUnit, exact } = align(src, units);
+    settleRuns(src, units, roles, toSource, toUnit, spans);
+    const at = (index: number) => norm.toBody[index];
+    const lineOf = (offset: number) => lines.positionAt(base + offset).line - group.first;
+
+    // Where the spelling of the character at `i` ends: past an entity whose first character it is.
+    const spellingEnd = (i: number): number => {
+        if (src.charCodeAt(i) === 38) {
+            ENTITY.lastIndex = i;
+            const m = ENTITY.exec(src);
+            if (m !== null) {
+                let tail = true;
+                for (let k = i + 1; tail && k < i + m[0].length; k++) {
+                    tail = toUnit[k] < 0;
+                }
+                if (tail) {
+                    return i + m[0].length;
+                }
+            }
+        }
+        return i + 1;
+    };
+
+    const stretches = new Map<number, TextStretch[]>();
+    let run: { first: number; last: number; continues: boolean } | null = null;
+    const close = () => {
+        if (run === null) {
+            return;
+        }
+        let start = toSource[run.first];
+        // An escaped first character starts at its backslash.
+        if (start > 0 && src.charCodeAt(start - 1) === 92 && toUnit[start - 1] < 0) {
+            start--;
+        }
+        const stretch = { start: at(start), end: at(spellingEnd(toSource[run.last])), continues: run.continues };
+        const line = lineOf(stretch.start);
+        const onLine = stretches.get(line);
+        if (onLine === undefined) {
+            stretches.set(line, [{ ...stretch, continues: false }]);
+        } else {
+            onLine.push(stretch);
+        }
+        run = null;
+    };
+    let level = 0;
+    let seen = false;
+    for (let j = 0; j < units.length; j++) {
+        level = Math.max(level, barriers[j]);
+        if (roles[j] === TEXT && toSource[j] >= 0) {
+            if (run !== null && level === 0) {
+                run.last = j;
+            } else {
+                const continues = seen && level <= 1;
+                close();
+                run = { first: j, last: j, continues };
+            }
+            seen = true;
+            level = 0;
+        } else {
+            level = Math.max(level, roles[j] === ENCLOSED ? 1 : 2);
+        }
+    }
+    close();
+
+    // The gap before unit `u`: from past the last matched unit before it to the first matched one from it on.
+    const lo = new Int32Array(units.length + 1);
+    const hi = new Int32Array(units.length + 1);
+    let previous = 0;
+    for (let u = 0; u <= units.length; u++) {
+        lo[u] = previous;
+        if (u < units.length && toSource[u] >= 0) {
+            previous = spellingEnd(toSource[u]);
+        }
+    }
+    let next = src.length;
+    for (let u = units.length; u >= 0; u--) {
+        if (u < units.length && toSource[u] >= 0) {
+            next = toSource[u];
+        }
+        hi[u] = next;
+    }
+    interface Claim { span: number; markup: string; order: number; found: number }
+    const gaps = new Map<number, { lo: number; hi: number; opens: Claim[]; closes: Claim[] }>();
+    const gapOf = (u: number) => {
+        let gap = gaps.get(lo[u]);
+        if (gap === undefined) {
+            gap = { lo: lo[u], hi: Math.max(lo[u], hi[u]), opens: [], closes: [] };
+            gaps.set(lo[u], gap);
+        }
+        return gap;
+    };
+    const opens: Claim[] = [];
+    const closes: Claim[] = [];
+    spans.forEach((span, index) => {
+        const open = { span: index, markup: span.markup, order: span.openOrder, found: -1 };
+        const shut = { span: index, markup: span.markup, order: span.closeOrder, found: -1 };
+        gapOf(span.open).opens.push(open);
+        gapOf(span.close).closes.push(shut);
+        opens.push(open);
+        closes.push(shut);
+    });
+    for (const gap of gaps.values()) {
+        // Closing markers in the order their tokens came, from the gap's start;
+        // opening ones from its end, innermost (last) first.
+        let from = gap.lo;
+        let to = gap.hi;
+        for (const claim of gap.closes.sort((a, b) => a.order - b.order)) {
+            const found = src.indexOf(claim.markup, from);
+            if (found >= 0 && found + claim.markup.length <= to) {
+                claim.found = found;
+                from = found + claim.markup.length;
+            }
+        }
+        for (const claim of gap.opens.sort((a, b) => b.order - a.order)) {
+            const found = src.lastIndexOf(claim.markup, to - claim.markup.length);
+            if (found >= from && to - claim.markup.length >= 0) {
+                claim.found = found;
+                to = found;
+            }
+        }
+    }
+    const sourceSpans = spans.map((span, index): SourceSpan => {
+        const open = opens[index];
+        const shut = closes[index];
+        const found = open.found >= 0 && shut.found >= 0 && open.found < shut.found;
+        const start = open.found >= 0 ? open.found : lo[span.open];
+        const end = shut.found >= 0 ? shut.found + span.markup.length : hi[span.close];
+        return { start: at(start), end: at(Math.max(start, end)), markup: span.markup, exact: exact && found };
+    });
+    for (const code of codes) {
+        // Exact when each backtick run is matched where it was written, one character after another.
+        const length = code.markup.length;
+        const runAt = (first: number) => {
+            for (let k = 1; k < length; k++) {
+                if (toSource[first + k] !== toSource[first] + k) {
+                    return -1;
+                }
+            }
+            return toSource[first];
+        };
+        const open = runAt(code.start);
+        const close = runAt(code.end - length);
+        const found = open >= 0 && close > open;
+        const start = open >= 0 ? open : lo[code.start];
+        const end = close >= 0 ? close + length : hi[code.end];
+        sourceSpans.push({ start: at(start), end: at(Math.max(start, end)), markup: code.markup, exact: exact && found });
+    }
+    return { stretches, spans: sourceSpans };
 }
 
 /**
@@ -517,7 +987,7 @@ function noteAnchor(type: string): string | undefined {
 }
 
 /** A group's inline children as units, with what each unit is to a stretch and the spans the tokens open and close. */
-function emit(group: Group): Emitted {
+function emit(inlines: readonly Token[], row: boolean): Emitted {
     const units: Unit[] = [];
     const roles: number[] = [];
     const barriers: number[] = [];
@@ -538,8 +1008,8 @@ function emit(group: Group): Emitted {
     };
     const stack: { markup: string; at: number; order: number; pair: boolean; autolink: boolean }[] = [];
     let autolinks = 0;
-    for (const inline of group.inlines) {
-        if (group.row) {
+    for (const inline of inlines) {
+        if (row) {
             chars('|', BOUNDARY);
         }
         for (const child of inline.children ?? []) {
@@ -600,7 +1070,7 @@ function emit(group: Group): Emitted {
             }
         }
     }
-    if (group.row) {
+    if (row) {
         chars('|', BOUNDARY);
     }
     return { units, roles, barriers, spans, codes };

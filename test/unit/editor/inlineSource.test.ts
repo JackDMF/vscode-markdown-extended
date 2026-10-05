@@ -128,6 +128,28 @@ suite('Inline source: the document as the engine reads it', () => {
         assert.deepStrictEqual(stretches('a &amp; b'), [['a &amp; b']]);
     });
 
+    test('a later version read again where it changed answers as one read whole', () => {
+        const describe = (source: ReturnType<typeof readInlineSource>, text: string) => text.split(/\r\n|\r|\n/)
+            .map((_, line) => JSON.stringify([source.kindOf(line), source.textOn(line), source.spansOn(line), source.blockOf(line)]));
+        const before = 'a **b** c\n\n- one\n- two\n\n```\ncode\n```\n\n> quote\n\nlast *x*';
+        const edits = [
+            // Markers written at three places, as at three cursors: each block read again on its own.
+            'a **b** **c**\n\n- **one**\n- two\n\n```\ncode\n```\n\n> quote\n\nlast *x* **y**',
+            // A fence opened above the others: everything after it reads otherwise.
+            'a **b** c\n\n```\n- one\n- two\n\n```\ncode\n```\n\n> quote\n\nlast *x*',
+            // A line under a paragraph that makes it a heading, and a list joined.
+            'a **b** c\n===\n- one\n- two\n- three\n```\ncode\n```\n\n> quote\n\nlast *x*',
+        ];
+        for (const after of [...edits, ...edits.map(toCrlf)]) {
+            const start = after.includes('\r\n') ? toCrlf(before) : before;
+            const old = readInlineSource(md, start);
+            for (let line = 0; line < 13; line++) {
+                old.textOn(line);
+            }
+            assert.deepStrictEqual(describe(old.update(after), after), describe(readInlineSource(md, after), after), JSON.stringify(after));
+        }
+    });
+
     test('the block a line is in', () => {
         const source = readInlineSource(md, 'a\nb\n\n- x\n\n  y\n\nz');
         assert.deepStrictEqual([0, 1, 2, 3, 4, 5, 7].map(l => source.blockOf(l)),
