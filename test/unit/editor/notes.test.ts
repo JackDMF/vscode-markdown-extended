@@ -1,9 +1,11 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
-import { undo } from 'prosemirror-history';
+import { closeHistory, undo } from 'prosemirror-history';
+import { splitBlock } from 'prosemirror-commands';
 import { Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { parseDocument } from '../../../src/editor/parse';
-import { PRESERVE_SOURCE_META, fidelityPlugin } from '../../../src/editor/fidelity';
+import { PRESERVE_SOURCE_META, asRepair, fidelityPlugin, isRepair } from '../../../src/editor/fidelity';
+import { resyncTransaction } from '../../../src/editor/webview/resync';
 import { editorSchema } from '../../../src/editor/schema';
 import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import {
@@ -12,7 +14,7 @@ import {
 } from '../../../src/editor/serialize';
 import {
     NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, NoteNodeName, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal,
-    previousNotePart, toggleNote, unwrapNote, unwrapNoteRefusal, wrapInNote, wrapNodeLockReason,
+    previousNotePart, refusableRange, toggleNote, unwrapNote, unwrapNoteRefusal, wrapInNote, wrapNodeLockReason,
 } from '../../../src/editor/webview/notes';
 import { convertNoteRefusal, deleteObjectRefusal, objectAtSelection, removeLinkRefusal, removeSpanRefusal } from '../../../src/editor/webview/objects';
 import { TOOLBAR_ACTIONS } from '../../../src/editor/webview/toolbar/actions';
@@ -822,6 +824,100 @@ suite('Editor notes: what the save writes again is what is read back', () => {
         const typed = state.apply(tr);
         assert.strictEqual(text(typed), source.replace('edit', 'Zedit'));
         assert.deepStrictEqual(sidebarsIn(text(typed)), ['left_sidebar', 'right_sidebar']);
+    });
+
+    test('a copy of a whole block is not checked: the save writes it from its src, as the file spells it', () => {
+        const source = `- one\n- See h&#116;tp://e.com/$x$ here.\n\nEnd.\n`;
+        const state = read(source);
+        // A drag-copy's slice of a NodeSelection carries the same node object.
+        const slice = NodeSelection.create(state.doc, 0).content();
+        assert.ok(slice.content.firstChild === state.doc.child(0));
+        const tr = state.tr.replaceRange(state.doc.content.size, state.doc.content.size, slice);
+        assert.strictEqual(noteRefusal(tr), null);
+        const copied = state.apply(tr);
+        assert.strictEqual(text(copied), `${source}\n- one\n- See h&#116;tp://e.com/$x$ here.\n`);
+        assert.deepStrictEqual(sidebarsIn(text(copied)), ['left_sidebar', 'left_sidebar']);
+    });
+});
+
+suite('Editor notes: what the page\'s plugins append to an edit is a repair, which no filter refuses', () => {
+    const SPELLED = 'See h&#116;tp://e.com/$x$ here.';
+    const read = (source: string) => EditorState.create({ doc: parseDocument(hostEngine(), source, {}).doc, plugins: editorPlugins() });
+    /** `tr` through every filter and appender, as the view dispatches it: it applies, and all that follows it is a repair. */
+    const dispatch = (state: EditorState, tr: Transaction, label: string, appends = true) => {
+        const result = state.applyTransaction(tr);
+        assert.strictEqual(result.transactions[0], tr, `${label}: the edit applies`);
+        assert.strictEqual(result.transactions.length > 1, appends, `${label}: whether something is appended`);
+        assert.ok(result.transactions.slice(1).every(isRepair), `${label}: every appended transaction is a repair`);
+        return result.state;
+    };
+    /** What the fidelity plugin appends to `tr` alone — the transaction a filter once dropped, with a refusal hint. */
+    const fidelityRepair = (state: EditorState, tr: Transaction) => {
+        const plain = EditorState.create({ doc: state.doc, selection: state.selection });
+        return fidelityPlugin().spec.appendTransaction?.call(fidelityPlugin(), [tr], plain, plain.apply(tr)) as Transaction;
+    };
+    // Beside the edited paragraph, a block holding a textblock the file spells so that, written by rule, it reads otherwise.
+    const besides: [string, string][] = [
+        ['a paragraph', `${SPELLED}\n`],
+        ['a list', `- one\n- ${SPELLED}\n`],
+        ['a quote', `> one\n>\n> ${SPELLED}\n`],
+        ['a table', `| a | b |\n| - | - |\n| c | ${SPELLED} |\n`],
+    ];
+
+    test('Enter beside such a block applies with no refusal, and the save writes the edited paragraphs fresh and that block as the file spells it', () => {
+        for (const [label, block] of besides) {
+            const state = read(`Alpha beta\n\n${block}`);
+            const at = caretAt(state, posOf(state.doc, 'beta'));
+            let tr: Transaction | undefined;
+            assert.ok(splitBlock(at, t => {
+                tr = t;
+            }), label);
+            const repair = fidelityRepair(at, tr as Transaction);
+            assert.ok(isRepair(repair), label);
+            // Every plugin's filter takes it: none refuses it, so no hint is shown.
+            const applied = at.apply(tr as Transaction);
+            assert.ok(applied.plugins.every(p => p.spec.filterTransaction?.call(p, repair, applied) ?? true), `${label}: no filter refuses the repair`);
+            const next = dispatch(at, tr as Transaction, label);
+            assert.strictEqual(next.doc.child(0).attrs.src, null, `${label}: the edited paragraph is written fresh`);
+            assert.strictEqual(text(next), `Alpha\n\nbeta\n\n${block}`, label);
+        }
+    });
+
+    test('an undo past a re-sync has the src it no longer matches cleared, across a block it does not touch', () => {
+        const source = `First.\n\n- one\n- ${SPELLED}\n\nSecond.\n`;
+        let state = read(source);
+        const typeBoth = (s: EditorState, word: string) => {
+            // The later position first, so the earlier one holds.
+            const tr = s.tr.insertText(word, posOf(s.doc, 'Second'));
+            return tr.insertText(word, posOf(s.doc, 'First'));
+        };
+        state = dispatch(state, typeBoth(state, 'A '), 'one edit in two paragraphs');
+        // A second history event, which finds both `src` already cleared.
+        state = dispatch(state, closeHistory(typeBoth(state, 'B ')), 'a second one', false);
+        // The host's parse of what the page sent: both paragraphs get a `src` no history event recorded.
+        state = state.apply(resyncTransaction(state, parseDocument(hostEngine(), text(state), {}).doc));
+        assert.notStrictEqual(state.doc.child(0).attrs.src, null);
+        let undoTr: Transaction | undefined;
+        assert.ok(undo(state, t => {
+            undoTr = t;
+        }));
+        const undone = dispatch(state, undoTr as Transaction, 'the undo');
+        assert.strictEqual(undone.doc.child(0).attrs.src, null);
+        assert.strictEqual(undone.doc.child(2).attrs.src, null);
+        assert.strictEqual(text(undone), `A First.\n\n- one\n- ${SPELLED}\n\nA Second.\n`);
+    });
+
+    test('the tables\' fix-ups are repairs too: a body cell made a header, a row left with a hole', () => {
+        const state = read('| a | b |\n| - | - |\n| c | d |\n');
+        const $c = state.doc.resolve(posOf(state.doc, 'c'));
+        const cellPos = $c.before($c.depth);
+        const cell = $c.parent;
+        const header = dispatch(state, state.tr.setNodeMarkup(cellPos, editorSchema.nodes.table_header, cell.attrs), 'a header cell in the body');
+        assert.strictEqual(header.doc.resolve(posOf(header.doc, 'c')).parent.type, editorSchema.nodes.table_cell, 'normalised');
+        const hole = dispatch(state, state.tr.delete(cellPos, cellPos + cell.nodeSize), 'a row with a hole');
+        assert.strictEqual(hole.doc.child(0).child(1).childCount, 2, 'the row is filled again');
+        // Both filters, the notes' and the tables', decide over this range: a repair has none.
+        assert.strictEqual(refusableRange(asRepair(state.tr.insertText('x', posOf(state.doc, 'd')))), null);
     });
 });
 

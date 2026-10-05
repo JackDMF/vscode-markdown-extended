@@ -472,10 +472,11 @@ function noteUnwritable(note: Node): string | null {
  * holds (`sidebarRefusal`).
  *
  * The sidebars are not modelled, they are read: each textblock the save will
- * write again — every one in the range, and with the edit's `origin` every
- * one of each top-level block the save then writes by rule (`rewritten`: a
- * list, a quote or a table is written whole, the items and cells the edit did
- * not touch included) — that holds a sidebar, or a `$` or `@` that could be
+ * write again — with the edit's `origin` every one of each top-level block the
+ * save then writes by rule and no other (`rewritten`: a list, a quote or a
+ * table is written whole, the items and cells the edit did not touch included,
+ * and a block it keeps, a copy of one included, is written as it was read);
+ * without it every one in the range — that holds a sidebar, or a `$` or `@` that could be
  * read as one, is written as the save writes it (`writtenTextblock`) and
  * parsed by the page's own engine, built from the host's definition
  * (`setInlineEngine`), and every sidebar it holds must come back where it
@@ -497,13 +498,13 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
     let reason: string | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
-    const textblocks: CheckedTextblock[] = [];
+    const inRange: CheckedTextblock[] = [];
     doc.nodesBetween(start, end, (node, pos) => {
         if (reason !== null) {
             return false;
         }
         if (node.isTextblock) {
-            textblocks.push({ node, pos, beside: false });
+            inRange.push({ node, pos, beside: false });
         }
         if (NOTE_NODES.has(node.type.name)) {
             reason = noteUnwritable(node);
@@ -511,22 +512,27 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
         }
         return true;
     });
-    // The save writes every textblock of a block it rewrites, the edit's neighbours too.
-    const inRange = new Set(textblocks.map(t => t.pos));
-    for (const block of origin?.rewritten ?? []) {
-        if (block.node.isTextblock) {
-            if (!inRange.has(block.offset)) {
+    // With the edit's origin, what is checked is exactly what the save writes again: every textblock of
+    // each block it rewrites, the edit's neighbours too, and none of a block it keeps — a copy of a whole
+    // block is the same node, written from its `src` as it was read.
+    const rewritten = origin?.rewritten;
+    let textblocks = inRange;
+    if (rewritten !== undefined) {
+        const ranged = new Set(inRange.map(t => t.pos));
+        textblocks = [];
+        for (const block of rewritten) {
+            if (block.node.isTextblock) {
                 textblocks.push({ node: block.node, pos: block.offset, beside: false });
+                continue;
             }
-            continue;
+            block.node.descendants((node, rel) => {
+                const pos = block.offset + 1 + rel;
+                if (node.isTextblock) {
+                    textblocks.push({ node, pos, beside: !ranged.has(pos) });
+                }
+                return !node.isTextblock;
+            });
         }
-        block.node.descendants((node, rel) => {
-            const pos = block.offset + 1 + rel;
-            if (node.isTextblock && !inRange.has(pos)) {
-                textblocks.push({ node, pos, beside: true });
-            }
-            return !node.isTextblock;
-        });
     }
     // What reads as a sidebar depends on the whole textblock as written, which an edit anywhere in it changes.
     for (const textblock of textblocks) {
@@ -644,8 +650,8 @@ export interface EditOrigin {
     /**
      * The top-level blocks of the edited document the save writes by rule,
      * with their offsets (`rewrittenBlocks` in `fidelity.ts`, the rule that
-     * clears their `src`): each of their textblocks is checked, not only the
-     * ones in the edit's range.
+     * clears their `src`): exactly their textblocks are checked, the ones
+     * outside the edit's range included and none of a block the save keeps.
      */
     rewritten?: readonly { node: Node; offset: number }[];
     /**

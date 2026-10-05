@@ -33,4 +33,4 @@ export { hasBreakOpportunity, measureLineWidth, measureWrapWidth, wrapInline } f
 export type { BlockSpan, SerializeOptions, SerializedLayout } from './serialize';
 export { caretOf, createPositionMap, holdsText } from './positions';
 export type { MappedPagePosition, MappedPageRange, MappedSourcePosition, PositionMap, SourcePosition, SourceRange } from './positions';
-export { PRESERVE_SOURCE_META, fidelityPlugin, fidelityPluginKey } from './fidelity';
+export { PRESERVE_SOURCE_META, REPAIR_META, fidelityPlugin, fidelityPluginKey } from './fidelity';

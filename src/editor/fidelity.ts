@@ -14,6 +14,29 @@ export const fidelityPluginKey = new PluginKey('mepFidelity');
  */
 export const PRESERVE_SOURCE_META = 'mepPreserveSource';
 
+/**
+ * The meta on a repair the editor's own plugins append to a transaction — this
+ * plugin's `src`, `gap` and literal clears, the tables' normalisation,
+ * `prosemirror-tables`' fixing of a table — which no content filter refuses
+ * (`isRepair`; `refusableRange` in `webview/notes.ts`, read by the notes' and
+ * the tables' filters). Such a transaction rewrites no text: the transaction it
+ * follows was checked against every block the save then writes by rule
+ * (`rewrittenBlocks`), and refusing the repair would leave that edit applied
+ * with attributes that no longer describe it — a cleared `src` dropped writes
+ * the edited block's old text, beside its new one.
+ */
+export const REPAIR_META = 'mepRepair';
+
+/** Marks `tr` as a repair a plugin appends (`REPAIR_META`). */
+export function asRepair(tr: Transaction): Transaction {
+    return tr.setMeta(REPAIR_META, true);
+}
+
+/** Whether `tr` is a repair a plugin appended (`REPAIR_META`). */
+export function isRepair(tr: Transaction): boolean {
+    return tr.getMeta(REPAIR_META) === true;
+}
+
 /** prosemirror-history's plugin key, as it names its meta; undo and redo carry it. */
 const HISTORY_META = 'history$';
 
@@ -121,7 +144,7 @@ export function descent(transactions: readonly Transaction[], before: readonly T
  * is none of them, which `fidelityPlugin` clears `src` on. The one rule both
  * the plugin and the check of an edit (`rewrittenBlocks`) read.
  */
-export function rewritesSource(node: Node, present: ReadonlySet<Node>): boolean {
+export function rewritesSource(node: Node, present: { has(node: Node): boolean }): boolean {
     return EDITABLE_TOP_NODES.has(node.type.name) && !present.has(node);
 }
 
@@ -129,18 +152,35 @@ export function rewritesSource(node: Node, present: ReadonlySet<Node>): boolean 
  * The top-level children of `after` the save writes by rule once an edit of
  * `before` into `after` is applied (`rewritesSource`): every textblock in them
  * is written again, the ones the edit did not touch included — a list item
- * beside the one typed in, the other cells of a table.
+ * beside the one typed in, the other cells of a table. A block the edit keeps
+ * is not among them, wherever it now stands: a move, and a copy of a whole
+ * block (a drag-copy's slice carries the same node object), are written from
+ * their `src` as they were read.
  *
  * Asked of the range the edit changed (`from`, `to` in `after`; `mapping` takes
  * it back into `before`): a step rebuilds only the nodes around its range, so
- * every top-level child outside it is the same object it was, and a child
- * moved into it came from inside the range in `before`. So only the children
- * on either side of the range are compared, and a keystroke in a long document
- * costs what the blocks it touches cost.
+ * every top-level child outside it is the same object it was. Inside it, a
+ * child is first compared with the children on either side of the range in
+ * `before`, and one that is none of them with every top-level child of
+ * `before` — a copy comes from anywhere — by identity, which is a pointer
+ * comparison per child, not a reading of their text.
  */
 export function rewrittenBlocks(before: Node, after: Node, from: number, to: number, mapping: Mapping): TopLevelChild[] {
     const back = mapping.invert();
-    const present = new Set(topLevelBetween(before, back.map(from, -1), back.map(to, 1)).map(c => c.node));
+    const near = new Set(topLevelBetween(before, back.map(from, -1), back.map(to, 1)).map(c => c.node));
+    const present = {
+        has(node: Node): boolean {
+            if (near.has(node)) {
+                return true;
+            }
+            for (let i = 0; i < before.childCount; i++) {
+                if (before.child(i) === node) {
+                    return true;
+                }
+            }
+            return false;
+        },
+    };
     return topLevelBetween(after, from, to).filter(c => rewritesSource(c.node, present));
 }
 
@@ -313,7 +353,7 @@ export function fidelityPlugin(): Plugin {
                     tr.setNodeMarkup(pos, undefined, { ...node.attrs, literal: null });
                 }
             }
-            return tr;
+            return tr === null ? null : asRepair(tr);
         },
     });
 }

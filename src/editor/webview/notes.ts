@@ -30,7 +30,7 @@ import { Fragment, Mark, Node, ResolvedPos } from 'prosemirror-model';
 import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { keymap } from 'prosemirror-keymap';
 import { EditorView } from 'prosemirror-view';
-import { PRESERVE_SOURCE_META, rewrittenBlocks } from '../fidelity';
+import { PRESERVE_SOURCE_META, asRepair, isRepair, rewrittenBlocks } from '../fidelity';
 import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, unwritableInNote } from '../serialize';
@@ -327,11 +327,12 @@ const HISTORY_META = 'history$';
  * changed that the serializer cannot write back (`unwritableInNote`), judged
  * against the document the transaction started from: a sidebar seam the file
  * already held is never refused, only one the transaction created. Checked
- * is what the save will write again: the range, and every textblock of each
+ * is exactly what the save will write again: every textblock of each
  * top-level block the fidelity plugin will clear `src` on (`rewrittenBlocks`)
- * — the other items of the list typed in, the other cells of its table. A
- * re-sync from the host and an undo are never refused; each puts back a
- * document that was written or allowed.
+ * — the other items of the list typed in, the other cells of its table — and
+ * none of a block it keeps. A re-sync from the host and an undo are never
+ * refused; each puts back a document that was written or allowed. Nor is a
+ * repair a plugin appends (`isRepair`): it follows a transaction checked here.
  */
 export function noteRefusal(tr: Transaction): string | null {
     const range = refusableRange(tr);
@@ -350,10 +351,11 @@ export function noteRefusal(tr: Transaction): string | null {
 /**
  * The range of the new document a transaction changed, which a refusal is
  * decided over — the notes' here, the tables' (`tables.ts`) — or `null` for one
- * that is never refused: no change, a re-sync from the host, an undo.
+ * that is never refused: no change, a re-sync from the host, an undo, a repair
+ * a plugin appends to a transaction already checked (`isRepair`).
  */
 export function refusableRange(tr: Transaction): { from: number; to: number } | null {
-    if (!tr.docChanged || tr.getMeta(PRESERVE_SOURCE_META) === true || tr.getMeta(HISTORY_META) !== undefined) {
+    if (!tr.docChanged || tr.getMeta(PRESERVE_SOURCE_META) === true || tr.getMeta(HISTORY_META) !== undefined || isRepair(tr)) {
         return null;
     }
     let from = Infinity;
@@ -408,7 +410,7 @@ export function notesPlugin(): Plugin {
                 return null;
             }
             const fixed = normalizedSelection(newState, oldState.selection);
-            return fixed ? newState.tr.setSelection(fixed) : null;
+            return fixed ? asRepair(newState.tr.setSelection(fixed)) : null;
         },
         props: {
             handleDOMEvents: {
