@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { MarkdownIt } from '../../@types/markdown-it';
-import { InlineSource, SourceSpan } from '../../editor/inlineSource';
+import { BlockToken, InlineSource, SourceSpan } from '../../editor/inlineSource';
 import { INLINE_MARKERS, WORD_CHARACTER, opensInsideWords } from '../../syntax/markers';
 import { editTextDocument } from '../common/editTextDocument';
 import { inlineSourceOf } from './inlineSourceCache';
@@ -741,6 +741,10 @@ class Verifier {
      * - nothing is written into a literal line (code, HTML, front matter);
      * - an empty pair written is one the next press finds, to take it out
      *   again: not a run of its character (`****‸****`);
+     * - every element keeps its attributes (markdown-it-attrs' `{…}`): a block
+     *   token's are compared with the block, another inline token's with the
+     *   token, a span's with the span, and a span the toggles write or remove
+     *   holds none, so no attribute goes from one element to another;
      * - the part has as many lines, each of the same kind and the same block
      *   tokens, except a line blank before or after, or with no text but the
      *   markers either time, which may become a paragraph of pairs or a
@@ -753,8 +757,9 @@ class Verifier {
      *   footnote references and their notes, line breaks, and code spans
      *   unless the toggles write or remove one (`InlineSource.inlines`);
      * - every span written reads as that span, every span removed is gone,
-     *   every other span reads as before, moved, and every inline token holds
-     *   as many spans of each marker, those not placed exactly included;
+     *   every other span reads as before, moved, with its attributes, and
+     *   every inline token holds as many spans of each marker and attributes,
+     *   those not placed exactly included;
      * - every character read as text is text after, where it moved to, and
      *   none comes in but the markers written, whitespace aside.
      *
@@ -864,22 +869,21 @@ class Verifier {
             }
             if (kinds[0] !== kinds[1] && (kinds.includes('literal') || !free.has(line))) {return 'all';}
         }
-        const kept = (structure: readonly string[]) => structure.map(entry => entry.split(':')).filter(([type, , from, to]) => {
-            const first = Number(from), last = Number(to);
+        const kept = (structure: readonly BlockToken[]) => structure.filter(({ type, first, end }) => {
             // A term maps no line of its own ([n, n]): it is its line.
-            if (defining.some(line => first <= line && Math.max(last, first + 1) > line - 1)) {return false;}
+            if (defining.some(line => first <= line && Math.max(end, first + 1) > line - 1)) {return false;}
             // A paragraph of pairs alone, over one line or more, may come or go.
             if (!FREE_TOKENS.has(type)) {return true;}
-            for (let line = first; line < Math.max(last, first + 1); line++) {
+            for (let line = first; line < Math.max(end, first + 1); line++) {
                 if (!free.has(line)) {return true;}
             }
             return false;
         });
-        // A block may end later or sooner by lines with no text (an item taking in its thematic break).
-        const same = (x: string[], y: string[]) => {
-            if (x[0] !== y[0] || x[1] !== y[1] || x[2] !== y[2]) {return false;}
-            if (x[3] !== y[3] && !CONTAINERS.test(x[0])) {return false;}
-            const low = Math.min(Number(x[3]), Number(y[3])), high = Math.max(Number(x[3]), Number(y[3]));
+        // A block keeps its attributes; it may end later or sooner by lines with no text (an item taking in its thematic break).
+        const same = (x: BlockToken, y: BlockToken) => {
+            if (x.type !== y.type || x.nesting !== y.nesting || x.first !== y.first || x.attrs !== y.attrs) {return false;}
+            if (x.end !== y.end && !CONTAINERS.test(x.type)) {return false;}
+            const low = Math.min(x.end, y.end), high = Math.max(x.end, y.end);
             for (let line = low; line < high; line++) {
                 if (!free.has(line)) {return false;}
             }
@@ -962,17 +966,23 @@ class Verifier {
         const found = new Map([...spans].filter(([, s]) => s.exact));
         // Every span counted by inline token and marker, one placed exactly or not:
         // a span the alignment cannot place may not go or come either.
+        // Counted with its attributes, which no span gains or loses either.
         const tally = new Map<string, { first: number; end: number; count: number }>();
-        const count1 = (at: { key: string; first: number; end: number }, markup: string, by: number) => {
-            const entry = tally.get(`${at.key} ${markup}`) ?? { first: at.first, end: at.end, count: 0 };
+        const count1 = (at: { key: string; first: number; end: number }, markup: string, attrs: string, by: number) => {
+            const entry = tally.get(`${at.key} ${markup} ${attrs}`) ?? { first: at.first, end: at.end, count: 0 };
             entry.count += by;
-            tally.set(`${at.key} ${markup}`, entry);
+            tally.set(`${at.key} ${markup} ${attrs}`, entry);
         };
         for (const [key, s] of old) {
-            if (!removed.has(key)) {count1(inlineAt(before, beforeKeys, s.start), s.markup, 1);}
+            if (!removed.has(key)) {
+                count1(inlineAt(before, beforeKeys, s.start), s.markup, s.attrs, 1);
+            } else if (s.attrs !== '') {
+                // Its attributes would go to the element around it.
+                blameAt(before, s.start);
+            }
         }
         for (const s of spans.values()) {
-            count1(inlineAt(after, afterKeys, s.start), s.markup, -1);
+            count1(inlineAt(after, afterKeys, s.start), s.markup, s.attrs, -1);
         }
         const expected = new Set<string>();
         const writtenSpans: number[][] = [];
@@ -988,10 +998,11 @@ class Verifier {
                 const start = position(w.open, 'open');
                 const end = position(w.close, 'close');
                 const key = `${w.markup}@${start}:${end}`;
-                if (found.has(key)) {
+                // A span written takes no attributes from the element around it.
+                if (found.get(key)?.attrs === '') {
                     expected.add(key);
                     writtenSpans.push([start, end]);
-                    count1(inlineAt(after, afterKeys, start), w.markup, 1);
+                    count1(inlineAt(after, afterKeys, start), w.markup, '', 1);
                 } else {
                     // Its inline token's other toggles may be why: they are blamed beside it.
                     const at = inlineAt(after, afterKeys, Math.max(0, Math.min(start, out.length)));
@@ -1006,7 +1017,7 @@ class Verifier {
             if (removed.has(key)) {continue;}
             const starts = [mapped(s.start, 'left'), mapped(s.start, 'right')];
             const ends = [mapped(s.end, 'left'), mapped(s.end, 'right')];
-            const moved = starts.flatMap(x => ends.map(y => `${s.markup}@${x}:${y}`)).find(k => found.has(k));
+            const moved = starts.flatMap(x => ends.map(y => `${s.markup}@${x}:${y}`)).find(k => found.get(k)?.attrs === s.attrs);
             if (moved) {
                 expected.add(moved);
             } else if (s.exact) {

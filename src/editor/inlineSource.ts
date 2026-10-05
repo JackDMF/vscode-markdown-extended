@@ -67,6 +67,17 @@ export interface SourceSpan {
     markup: string;
     /** Whether both markers were found where the tokens say, in an exactly aligned block. */
     exact: boolean;
+    /** Its opening token's attributes (markdown-it-attrs' `{…}`), as `attrsOf` gives them. */
+    attrs: string;
+}
+
+/** A mapped block token of a part read with `readPart`: its type, nesting, lines `[first, end)` and attributes (`attrsOf`). */
+export interface BlockToken {
+    type: string;
+    nesting: number;
+    first: number;
+    end: number;
+    attrs: string;
 }
 
 export interface InlineSource {
@@ -88,8 +99,8 @@ export interface InlineSource {
      * `structure` lists its mapped block tokens.
      */
     readPart(text: string): InlineSource;
-    /** Each mapped block token's type, nesting and lines, of a part read with `readPart`; empty for a document. */
-    readonly structure: readonly string[];
+    /** Each mapped block token, of a part read with `readPart`; empty for a document. */
+    readonly structure: readonly BlockToken[];
     /**
      * Each inline token of a part read with `readPart`, with what it holds
      * besides text and the markers of the spans a toggle writes (`InlineContent`);
@@ -115,7 +126,7 @@ export interface InlineSource {
  * and each child that is neither text nor a span's marker a toggle writes —
  * a link's or an image's destination, inline HTML, math, a code span, an
  * emoji, a footnote reference with its note, an abbreviation, a line break —
- * as its type, markup, info, content and attributes.
+ * as its type, markup, info, content and attributes (`attrsOf`).
  */
 export interface InlineContent {
     first: number;
@@ -188,6 +199,7 @@ interface TokenSpan {
     close: number;
     openOrder: number;
     closeOrder: number;
+    attrs: string;
 }
 
 interface Emitted {
@@ -205,6 +217,7 @@ interface CodeUnits {
     markup: string;
     start: number;
     end: number;
+    attrs: string;
 }
 
 /** What one parse of some lines gives: each line's rank, its groups and its top-level blocks, lines counted from `offset`. */
@@ -353,13 +366,26 @@ function contentsOf(tokens: Token[], env: Environment): InlineContent[] {
             // An inline note's text is not among the children: it is the footnote's.
             const id = (child.meta as { id?: number } | null)?.id;
             const note = child.type.startsWith('footnote_ref') && id !== undefined ? notes[id]?.content ?? '' : '';
-            // An id a plugin numbers on every parse (a task box's `checkboxN`, its label's `for`) differs from one reading to the next.
-            const attrs = (child.attrs ?? []).filter(([name]) => name !== 'id' && name !== 'for');
-            held.push(JSON.stringify([child.type, child.markup, child.info, child.content, attrs, note]));
+            held.push(JSON.stringify([child.type, child.markup, child.info, child.content, attrsOf(child), note]));
         }
         contents.push({ first: token.map[0], end: Math.max(token.map[1], token.map[0] + 1), tokens: held });
     }
     return contents;
+}
+
+/** The attribute a plugin numbers anew on every parse, by the type of the token it gives it to: a task's box's `id` and its label's `for`. */
+const NUMBERED: Readonly<Record<string, string>> = { checkbox_input: 'id', label_open: 'for' };
+
+/**
+ * A token's attributes — what markdown-it-attrs' `{…}` gives the element it
+ * stands after, a block's or a span's — as one comparable string, `''` for
+ * none. An attribute numbered on every parse (`NUMBERED`) is left out, by its
+ * token's type, so no other token's `id` is.
+ */
+function attrsOf(token: Token): string {
+    const numbered = NUMBERED[token.type];
+    const attrs = (token.attrs ?? []).filter(([name]) => name !== numbered);
+    return attrs.length ? JSON.stringify(attrs) : '';
 }
 
 /**
@@ -399,7 +425,7 @@ class DocumentIndex implements InlineSource {
     private blocks: Block[];
     private blockAt: (Block | undefined)[];
     private readonly blockTokens = new Map<Block, Token[]>();
-    readonly structure: readonly string[];
+    readonly structure: readonly BlockToken[];
     readonly inlines: readonly InlineContent[];
     private defined: string | undefined;
 
@@ -408,7 +434,7 @@ class DocumentIndex implements InlineSource {
         private readonly md: MarkdownIt,
         private readonly base: Environment,
         readonly definitions: Definitions,
-        parts: { scan: Scan; structure?: string[]; inlines?: InlineContent[] },
+        parts: { scan: Scan; structure?: BlockToken[]; inlines?: InlineContent[] },
     ) {
         this.lines = new Lines(text);
         this.structure = parts.structure ?? [];
@@ -432,7 +458,9 @@ class DocumentIndex implements InlineSource {
         const count = new Lines(text).count;
         const parts = {
             scan: scan(tokens, count, 0, text.length < KEEP_TOKENS),
-            structure: part ? tokens.filter(t => t.map && t.type !== 'inline').map(t => `${t.type}:${t.nesting}:${t.map[0]}:${t.map[1]}`) : undefined,
+            structure: part
+                ? tokens.filter(t => t.map && t.type !== 'inline').map(t => ({ type: t.type, nesting: t.nesting, first: t.map[0], end: t.map[1], attrs: attrsOf(t) }))
+                : undefined,
             inlines: part ? contentsOf(tokens, env) : undefined,
         };
         return new DocumentIndex(text, md, base, definitionsOf(env), parts);
@@ -1011,7 +1039,7 @@ function readGroup(text: string, lines: Lines, group: Group, inlines: Token[]): 
         const found = open.found >= 0 && shut.found >= 0 && open.found < shut.found;
         const start = open.found >= 0 ? open.found : lo[span.open];
         const end = shut.found >= 0 ? shut.found + span.markup.length : hi[span.close];
-        return { start: at(start), end: at(Math.max(start, end)), markup: span.markup, exact: exact && found };
+        return { start: at(start), end: at(Math.max(start, end)), markup: span.markup, exact: exact && found, attrs: span.attrs };
     });
     for (const code of codes) {
         // Exact when each backtick run is matched where it was written, one character after another.
@@ -1029,7 +1057,7 @@ function readGroup(text: string, lines: Lines, group: Group, inlines: Token[]): 
         const found = open >= 0 && close > open;
         const start = open >= 0 ? open : lo[code.start];
         const end = close >= 0 ? close + length : hi[code.end];
-        sourceSpans.push({ start: at(start), end: at(Math.max(start, end)), markup: code.markup, exact: exact && found });
+        sourceSpans.push({ start: at(start), end: at(Math.max(start, end)), markup: code.markup, exact: exact && found, attrs: code.attrs });
     }
     return { stretches, spans: sourceSpans };
 }
@@ -1165,7 +1193,7 @@ function emit(inlines: readonly Token[], row: boolean): Emitted {
             push(text.charCodeAt(k), role);
         }
     };
-    const stack: { markup: string; at: number; order: number; pair: boolean; autolink: boolean }[] = [];
+    const stack: { markup: string; at: number; order: number; pair: boolean; autolink: boolean; attrs: string }[] = [];
     let autolinks = 0;
     for (const inline of inlines) {
         if (row) {
@@ -1181,7 +1209,7 @@ function emit(inlines: readonly Token[], row: boolean): Emitted {
                 if (anchor !== undefined) {
                     chars(anchor, BOUNDARY);
                 }
-                stack.push({ markup: child.markup, at: units.length, order: order++, pair, autolink });
+                stack.push({ markup: child.markup, at: units.length, order: order++, pair, autolink, attrs: attrsOf(child) });
                 autolinks += autolink ? 1 : 0;
                 continue;
             }
@@ -1190,7 +1218,7 @@ function emit(inlines: readonly Token[], row: boolean): Emitted {
                 autolinks -= top?.autolink ? 1 : 0;
                 barrier = Math.max(barrier, top?.pair ? 1 : 2);
                 if (top?.pair) {
-                    spans.push({ markup: top.markup, open: top.at, close: units.length, openOrder: top.order, closeOrder: order++ });
+                    spans.push({ markup: top.markup, open: top.at, close: units.length, openOrder: top.order, closeOrder: order++, attrs: top.attrs });
                 }
                 const anchor = noteAnchor(child.type);
                 if (anchor !== undefined) {
@@ -1211,7 +1239,7 @@ function emit(inlines: readonly Token[], row: boolean): Emitted {
                     // from its content could otherwise be taken for the text's.
                     const start = units.length;
                     chars(child.markup + child.content + child.markup, ENCLOSED);
-                    codes.push({ markup: child.markup, start, end: units.length });
+                    codes.push({ markup: child.markup, start, end: units.length, attrs: attrsOf(child) });
                     break;
                 }
                 case 'math_inline':

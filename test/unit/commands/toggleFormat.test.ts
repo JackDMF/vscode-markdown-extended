@@ -343,6 +343,25 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('bold', 'x <‸/span> y'), 'x <‸/span> y');
     });
 
+    test('no attribute goes from one element to another', async () => {
+        for (const [name, marked] of [
+            // A block's `{…}` would go to the span written before it.
+            ['bold', '# Title f‸oo{#x}'],
+            ['bold', 'Some f‸oo{.note}'],
+            ['codeInline', '## Head wo‸rd{#h}'],
+            // A span's would go to its block, or to the element inside it.
+            ['bold', 'para **x‸**{.c}'],
+            ['italics', '## Head *wo‸rd*{#h}'],
+            ['codeInline', 'para `x‸`{#y}'],
+            ['bold', '**x [a](u)‸**{#x} y'],
+        ] as [InlineMarkerName, string][]) {
+            assert.strictEqual(await toggle(name, marked), marked);
+        }
+        // Away from them, the attributes stay where they are.
+        assert.strictEqual(await toggle('bold', '# T‸itle foo{#x}'), '# **T‸itle** foo{#x}');
+        assert.strictEqual(await toggle('bold', '«x [a](u)»{#x} y'), '**«x** [**a**](u)»{#x} y');
+    });
+
     test('a definition made by the pair at one cursor does not let another cursor change a block', async () => {
         assert.strictEqual(await toggle('mark', 'foo\n‸\n\nTerm\n: ‸'), 'foo\n‸\n\nTerm\n: ==‸==');
     });
