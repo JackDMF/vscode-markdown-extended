@@ -78,6 +78,29 @@ suite('MarkdownItCheckbox', () => {
         assert.ok(render(md, '| a |\n| - |\n| [ ] |\n').includes('<td>[ ]</td>'));
     });
 
+    test('the label takes the task\'s whole text, formatting included', () => {
+        assert.strictEqual(render(md, '- [ ] task **one**\n'), `<ul>\n<li>${box('task <b>one</b>')}</li>\n</ul>\n`);
+        assert.strictEqual(render(md, '- [ ] **task one**\n'), `<ul>\n<li>${box('<b>task one</b>')}</li>\n</ul>\n`);
+        assert.strictEqual(render(md, '- [x] see [doc](u) and `x`\n'), `<ul>\n<li>${box('see <a href="u">doc</a> and <code>x</code>', true)}</li>\n</ul>\n`);
+        assert.strictEqual(render(md, '- [ ] task\n  more\n'), `<ul>\n<li>${box('task\nmore')}</li>\n</ul>\n`);
+    });
+
+    test('a label ends with the element its box stands in, or before the next box beside it', () => {
+        assert.strictEqual(render(md, '**[ ] a** b\n'), `<p><b>${box('a')}</b> b</p>\n`);
+        assert.strictEqual(render(md, '[ ] a\n[x] b\n'), `<p>${box('a')}\n${box('b', true)}</p>\n`);
+        assert.strictEqual(render(md, 'a [x] b **c** [ ] d\n'), `<p>a ${box('b <b>c</b> ', true)}${box('d')}</p>\n`);
+        assert.strictEqual(render(md, '[ ] a\nb **c** [x] d\n'), `<p>${box('a\nb <b>c</b> ')}${box('d', true)}</p>\n`);
+        // No label holds another: a box inside an element the label takes in is text.
+        assert.strictEqual(render(md, '[ ] a **b [x] c**\n'), `<p>${box('a <b>b [x] c</b>')}</p>\n`);
+    });
+
+    test('a formatted label is still the label of its box', () => {
+        const html = md.render('- [ ] task **one**\n');
+        const [, id] = /<input type="checkbox" id="(checkbox\d+)">/.exec(html) ?? [];
+        assert.ok(id);
+        assert.ok(html.includes(`<label for="${id}">task <b>one</b></label>`), html);
+    });
+
     test('only text becomes a box, never a code span', () => {
         assert.strictEqual(render(md, '`a [x] b` and [x] c\n'), `<p><code>a [x] b</code> and ${box('c', true)}</p>\n`);
     });
