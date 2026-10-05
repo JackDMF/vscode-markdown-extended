@@ -185,6 +185,9 @@ const NOTE_REF_ATTR = 'data-mep-note-ref';
 /** Where a link's own title is kept in the editor's DOM, its `title` showing the href instead. */
 const LINK_TITLE_ATTR = 'data-mep-title';
 
+/** A wiki embed's tooltip: what it is, and the two ways to its text and the one way back. */
+const WIKI_EMBED_TITLE = 'Wiki embed — kept as written. Backspace right after typing, or Edit as text, makes it text; delete the last ] and type it again to make it an embed.';
+
 /**
  * A pasted note (the preview's HTML, or the editor's own copy): its `.sidenote`
  * or `.mnote` child is the body, everything else the reference — unwrapped
@@ -661,7 +664,7 @@ export const editorSchema = new Schema({
             toDOM(node): DOMOutputSpec {
                 const source = node.attrs.source as string;
                 // Shown plain: a place's encoding of a character (`&#124;` in a note) is how it is written, not its name.
-                return ['span', { class: 'mep-wiki-embed', 'data-mep-wiki-embed': source, title: 'Wiki embed' }, plainWikiEmbed(source)];
+                return ['span', { class: 'mep-wiki-embed', 'data-mep-wiki-embed': source, title: WIKI_EMBED_TITLE }, plainWikiEmbed(source)];
             },
         },
         sidenote: noteNode(SN.refClass, 'sidenote_body', SN.noteClass),

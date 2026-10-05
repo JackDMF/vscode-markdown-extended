@@ -41,6 +41,7 @@ import { editRawSourceAt } from './nodeViews';
 import { HintTone, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
 import { NoteNodeName, unwrapNote } from './notes';
+import { embedAsTextTransaction } from './wikiEmbeds';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
@@ -1433,6 +1434,19 @@ class ObjectToolbarView implements PluginView {
                     label: 'Wiki embed',
                     title: `${object.node.attrs.source as string}: kept as written, for the extension that renders embeds (Foam).`,
                     verbs: [
+                        {
+                            id: 'edit-wiki-embed-as-text',
+                            label: 'Edit as text',
+                            title: 'Make it plain text, ![[name]], to edit its name; delete the last ] and type it again to make it an embed.',
+                            // No refusal: the text takes the atom's marks, and an atom is never under a raw mark, the only text the notes' and the tables' filters refuse.
+                            run: () => this.act(object, current => {
+                                const tr = embedAsTextTransaction(this.view.state, current.from, current.to);
+                                if (tr !== null) {
+                                    this.view.dispatch(tr);
+                                }
+                                return tr !== null;
+                            }, 'Embed is text'),
+                        },
                         { id: 'remove-wiki-embed', label: 'Remove embed', title: 'The embed goes from the text.', run: () => this.remove(object, 'Embed removed') },
                     ],
                 };

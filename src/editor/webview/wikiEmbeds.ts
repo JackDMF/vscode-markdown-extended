@@ -1,8 +1,8 @@
 import { InputRule, inputRules } from 'prosemirror-inputrules';
 import { DOMParser, DOMSerializer, Fragment, Mark, Node, ParseOptions, Slice } from 'prosemirror-model';
-import { EditorState, Plugin } from 'prosemirror-state';
+import { EditorState, Plugin, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { WIKI_EMBED_MARKERS } from '../../syntax/markers';
+import { WIKI_EMBED_MARKERS, plainWikiEmbed } from '../../syntax/markers';
 import { escapeRegExp } from '../../syntax/regExp';
 import { editorSchema } from '../schema';
 import { RAW_TEXT_MARKS } from '../serialize';
@@ -155,6 +155,23 @@ export function wikiEmbedInputRule(enabled: () => boolean): InputRule {
  */
 export function wikiEmbedInputRules(enabled: () => boolean): Plugin {
     return inputRules({ rules: [wikiEmbedInputRule(enabled)] });
+}
+
+/**
+ * The embed atom at `[from, to)` as the text it is shown as (`![[name]]`,
+ * plain), with the atom's marks and the caret after it: what Backspace right
+ * after a typed `]]` gives back (`undoInputRule`), for an embed that was not
+ * just typed. It is text, and stays text: the input rule fires only on a typed
+ * `]`. `null` when `[from, to)` is not one embed.
+ */
+export function embedAsTextTransaction(state: EditorState, from: number, to: number): Transaction | null {
+    const atom = state.doc.nodeAt(from);
+    if (atom === null || atom.type !== editorSchema.nodes.wiki_embed || from + atom.nodeSize !== to) {
+        return null;
+    }
+    const source = plainWikiEmbed(atom.attrs.source as string);
+    const tr = state.tr.replaceWith(from, to, editorSchema.text(source, atom.marks));
+    return tr.setSelection(TextSelection.create(tr.doc, from + source.length)).scrollIntoView();
 }
 
 /** Run the embed input rule of `plugin` (`wikiEmbedInputRules`) for `text` typed over `[from, to)`; whether it made an embed. */

@@ -1,11 +1,12 @@
 import * as assert from 'assert';
 import { DOMSerializer, Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
+import { history, undo } from 'prosemirror-history';
 import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { createPositionMap } from '../../../src/editor/positions';
 import { unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
 import { headingAnchors } from '../../../src/editor/host/links';
-import { OWN_COPY, inlineForNote, isOwnCopyDom, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
+import { OWN_COPY, embedAsTextTransaction, inlineForNote, isOwnCopyDom, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
 import { tokenText } from '../../../src/syntax/tokenText';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -317,6 +318,59 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.strictEqual(type(paragraph(text('![[a]', code)), ']', [code]), null);
         const off = wikiEmbedInputRule(() => false) as unknown as typeof rule;
         assert.strictEqual(off.handler(EditorState.create({ doc: paragraph(text('![[x]')) }), ['![[x]]'] as unknown as RegExpMatchArray, 1, 6), null);
+    });
+
+    test('Edit as text: the atom becomes its plain text with its marks and the caret after it, is saved as the escaped literal, undone as one step, and made an embed again by retyping the last ]', () => {
+        const em = schema.marks.em.create();
+        const rule = wikiEmbedInputRule(() => true) as unknown as { match: RegExp; handler: (s: EditorState, m: RegExpMatchArray, a: number, b: number) => Transaction | null };
+        const parsed = parseDocument(md, 'An ![[ab]] here and *![[c&#124;d]]* too.\n');
+        const start = EditorState.create({ doc: parsed.doc, plugins: [history()] });
+        const found: number[] = [];
+        start.doc.descendants((node, pos) => {
+            if (node.type.name === 'wiki_embed') { found.push(pos); }
+        });
+        assert.strictEqual(found.length, 2);
+
+        const first = embedAsTextTransaction(start, found[0], found[0] + 1);
+        assert.ok(first, 'the first embed becomes text');
+        const state = start.apply(first);
+        assert.deepStrictEqual(embedsOf(state.doc), ['![[c&#124;d]]'], 'only that embed went');
+        const $caret = state.doc.resolve(state.selection.from);
+        assert.ok(state.selection.empty && $caret.parent.textContent.startsWith('An ![[ab]]'), $caret.parent.textContent);
+        assert.strictEqual($caret.parent.textBetween(0, $caret.parentOffset), 'An ![[ab]]', 'the caret is right after the closing ]]');
+        assert.strictEqual(serialize(allTouched({ ...parsed, doc: state.doc })), 'An !\\[\\[ab\\]\\] here and *![[c|d]]* too.\n', 'saved as text, escaped; the other embed written plain where nothing needs encoding');
+
+        // Marks go with it, and the encoded character is shown plain, as the atom was.
+        let rest = -1;
+        state.doc.descendants((node, pos) => {
+            if (node.type.name === 'wiki_embed') { rest = pos; }
+        });
+        const second = embedAsTextTransaction(state, rest, rest + 1);
+        assert.ok(second, 'the second embed becomes text');
+        const marked = state.apply(second);
+        let texts = '';
+        marked.doc.descendants(node => {
+            if (node.isText && node.marks.some(m => m.type === em.type)) { texts += node.text; }
+        });
+        assert.strictEqual(texts, '![[c|d]]');
+        assert.strictEqual(embedAsTextTransaction(state, 1, 2), null, 'a text position is no embed');
+
+        // One undo step puts the atom back, with its source.
+        let undone: EditorState | undefined;
+        undo(state, tr => { undone = state.apply(tr); });
+        assert.deepStrictEqual(embedsOf((undone as EditorState).doc), ['![[ab]]', '![[c&#124;d]]']);
+
+        // Retyping the last ] makes the atom again, and typing `]` over the whole text does not.
+        const before = state.selection.from;
+        const cut = state.apply(state.tr.delete(before - 1, before));
+        const $end = cut.doc.resolve(cut.selection.from);
+        const typed = $end.parent.textBetween(0, $end.parentOffset) + ']';
+        const match = rule.match.exec(typed);
+        assert.ok(match, typed);
+        const again = rule.handler(cut, match, before - 1 - (match[0].length - 1), before - 1);
+        assert.ok(again, 'the rule fires');
+        assert.deepStrictEqual(embedsOf(again.doc), ['![[ab]]', '![[c&#124;d]]']);
+        assert.strictEqual(rule.match.exec('An ![[ab]]' + ']'), null, 'a third ] makes nothing');
     });
 
     type PasteProps = {

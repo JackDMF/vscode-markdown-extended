@@ -331,10 +331,57 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(box);
         await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
         await page.waitForSelector(`${BAR}[data-object="wiki_embed"]`, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'wiki_embed', label: 'Wiki embed', verbs: ['remove-wiki-embed'] });
+        assert.deepStrictEqual(await barState(), { object: 'wiki_embed', label: 'Wiki embed', verbs: ['edit-wiki-embed-as-text', 'remove-wiki-embed'] });
         await clickVerb('remove-wiki-embed');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An here.\n');
+    });
+
+    test('Edit as text makes the embed its text with the caret after it, saved escaped; Ctrl+Z gives the atom back, and retyping the last ] makes it again', async function () {
+        this.timeout(30000);
+        const pickEmbed = async () => {
+            const box = await (await page.$('.ProseMirror .mep-wiki-embed'))?.boundingBox();
+            assert.ok(box);
+            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+            await page.waitForSelector(`${BAR}[data-object="wiki_embed"]`, { timeout: 2000 });
+        };
+        const atoms = () => page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length);
+        const undo = async () => {
+            await page.keyboard.down('Control');
+            await page.keyboard.press('z');
+            await page.keyboard.up('Control');
+            await settle();
+        };
+        await showDocument('An ![[note]] here.\n', 'An');
+        assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => (el as HTMLElement).title.includes('Edit as text')), true, 'the chip\'s tooltip names the way to text');
+        await pickEmbed();
+        await clickVerb('edit-wiki-embed-as-text');
+        assert.deepStrictEqual(await hint(), { text: 'Embed is text — Ctrl+Z', tone: 'neutral', shown: true });
+        await settle();
+        assert.strictEqual(await atoms(), 0);
+        assert.strictEqual((await lastEdit())?.text, 'An !\\[\\[note\\]\\] here.\n');
+        assert.strictEqual(await page.$(BAR), null, 'the bar goes with the atom');
+
+        // The caret is right after the closing ]]: a typed character lands there, and stays text.
+        await page.keyboard.type('X');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An !\\[\\[note\\]\\]X here.\n');
+        assert.strictEqual(await atoms(), 0);
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(']');
+        await settle();
+        assert.strictEqual(await atoms(), 1, 'the last ] retyped');
+        assert.strictEqual((await lastEdit())?.text, 'An ![[note]] here.\n');
+
+        // One Ctrl+Z gives the atom back.
+        await pickEmbed();
+        await clickVerb('edit-wiki-embed-as-text');
+        await settle();
+        assert.strictEqual(await atoms(), 0);
+        await undo();
+        assert.strictEqual(await atoms(), 1);
+        assert.strictEqual((await lastEdit())?.text, 'An ![[note]] here.\n');
     });
 
     test('![[name]] typed becomes an embed atom at its closing ]], and is saved as written', async function () {
