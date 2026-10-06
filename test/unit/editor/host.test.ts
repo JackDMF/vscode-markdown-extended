@@ -1813,7 +1813,9 @@ suite('Editor host: links and images', () => {
             webview.send({ type: 'resolveImages', requestId: 13, srcs });
             const answer = await webview.answer('imagesResolved');
             assert.ok(answer);
-            const file = vscode.Uri.file(path.join(dir, 'pictures', 'my pic.png'));
+            // Resolved against the document's URI as VS Code opened it, which spells a
+            // Windows drive letter in lower case where `os.tmpdir()` spells it in upper case.
+            const file = vscode.Uri.joinPath(document.uri, '..', 'pictures', 'my pic.png');
             assert.deepStrictEqual(Object.keys(answer.sources), ['pictures/my%20pic.png']);
             assert.strictEqual(answer.sources['pictures/my%20pic.png'], vscode.Uri.parse(`https://webview.test${file.path}`).toString());
         } finally {
