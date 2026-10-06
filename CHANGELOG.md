@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.1.0 — Exports Embed by Rule, Toggles Rebuilt
 
 ### ✨ New Features
 
