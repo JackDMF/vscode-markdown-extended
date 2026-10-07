@@ -522,7 +522,8 @@ suite('Editor inline constructs: written back by rule', () => {
         const summary = `${read} of ${cases} read back (schema order ${stockRead}); ${oneRun} as one run of each`;
         assert.deepStrictEqual(lost, [], summary);
         assert.strictEqual(cases, 294);
-        assert.strictEqual(summary, '');
+        // The others neither order writes faithfully: an inner run's closing delimiter after another's, glued to a letter.
+        assert.deepStrictEqual({ read, oneRun, stockRead }, { read: 261, oneRun: 215, stockRead: 211 }, summary);
     });
 
     test('three marks opening together, the inner one\'s closing delimiter glued to the outer one\'s text, keep every mark', () => {
