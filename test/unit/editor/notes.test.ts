@@ -706,7 +706,12 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
             const tr = typeAtEnd(state);
             assert.strictEqual(noteRefusal(tr), null, source);
             const typed = state.apply(tr);
-            assert.strictEqual(text(typed), source.replace('here.', 'here.Z'), source);
+            // The `:/` after the link starts a text token: the full engine reads it as an emoji
+            // (`confused`), so the save escapes it; under `noEmoji` the escape is accepted noise.
+            const emojiIn = (markdown: string) => hostEngine().parse(markdown, {}).flatMap(t => t.children ?? []).filter(t => t.type === 'emoji').length;
+            assert.strictEqual(emojiIn(source), 1, `${source}: the full engine reads an emoji`);
+            assert.strictEqual(text(typed), source.replace('here.', 'here.Z').replace('http://f.com', 'http\\://f.com'), source);
+            assert.strictEqual(emojiIn(text(typed)), 0, `${source}: the save reads none`);
             assert.deepStrictEqual(sidebarsIn(text(typed), noEmoji), ['left_sidebar'], `${source}: read back`);
             assert.strictEqual(markRefusal(select(state, 'See'), editorSchema.marks.strong, '**'), null, `${source}: bold is not disabled`);
         }
