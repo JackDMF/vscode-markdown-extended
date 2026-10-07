@@ -475,6 +475,160 @@ function openingOrder(parent: Node, index: number, marks: readonly Mark[], keep:
     return [...marks.slice(0, keep), ...ordered.map(o => o.mark), ...opening.slice(mixable), ...marks.slice(len)];
 }
 
+/** The library's state class with the constructor its typings leave undeclared. */
+const LibraryState = MarkdownSerializerState as unknown as new (nodes: unknown, marks: unknown, options: unknown) => MarkdownSerializerState;
+
+/**
+ * prosemirror-markdown's state, with marks that open on one node opened in
+ * `openingOrder`. `renderInline` is the library's own from 1.13.8
+ * (`dist/index.js`, the ESM build, lines 687–794), translated to this
+ * repository's TypeScript (types, `===`, braces, the undeclared members read
+ * through `internals`) with one line inserted after the `keep` loop, marked
+ * below. On an upgrade, re-diff it against the library's and keep that line;
+ * the guard in `serialize.test.ts` fails where the two write differently.
+ */
+class OrderedInlineState extends LibraryState {
+    renderInline(parent: Node, fromBlockStart = true): void {
+        const st = internals(this);
+        st.atBlockStart = fromBlockStart;
+        const active: Mark[] = [];
+        let trailing = '';
+        const progress = (node: Node | null, _offset: number, index: number) => {
+            let marks: readonly Mark[] = node ? node.marks : [];
+            // Remove marks from `hard_break` that are the last node inside
+            // that mark to prevent parser edge cases with new lines just
+            // before closing marks.
+            if (node && node.type.name === this.options.hardBreakNodeName) {
+                marks = marks.filter(m => {
+                    if (index + 1 === parent.childCount) {
+                        return false;
+                    }
+                    const next = parent.child(index + 1);
+                    return m.isInSet(next.marks) && (!next.isText || /\S/.test(next.text));
+                });
+            }
+            const inner = marks.length ? marks[marks.length - 1] : null;
+            const noEsc = inner && st.getMark(inner.type.name).escape === false;
+            const len = marks.length - (noEsc ? 1 : 0);
+            // Try to reorder 'mixable' marks, such as em and strong, which
+            // in Markdown may be opened and closed in different order, so
+            // that order of the marks for the token matches the order in
+            // active.
+            outer: for (let i = 0; i < len; i++) {
+                const mark = marks[i];
+                if (!st.getMark(mark.type.name).mixable) {
+                    break;
+                }
+                for (let j = 0; j < active.length; j++) {
+                    const other = active[j];
+                    if (!st.getMark(other.type.name).mixable) {
+                        break;
+                    }
+                    if (mark.eq(other)) {
+                        if (i > j) {
+                            marks = marks.slice(0, j).concat(mark).concat(marks.slice(j, i)).concat(marks.slice(i + 1, len));
+                        } else if (j > i) {
+                            marks = marks.slice(0, i).concat(marks.slice(i + 1, j)).concat(mark).concat(marks.slice(j, len));
+                        }
+                        continue outer;
+                    }
+                }
+            }
+            // Find the prefix of the mark set that didn't change
+            let keep = 0;
+            while (keep < Math.min(active.length, len) && marks[keep].eq(active[keep])) {
+                ++keep;
+            }
+            // The one line this copy adds: the marks about to open, in the order their runs need.
+            marks = openingOrder(parent, index, marks, keep, len, name => st.getMark(name));
+            let leading = trailing;
+            trailing = '';
+            // If whitespace has to be expelled from the node, adjust
+            // leading and trailing accordingly.
+            if (node && node.isText && marks.some(mark => {
+                const info = st.getMark(mark.type.name);
+                return info && info.expelEnclosingWhitespace && !active.some((m, i) => i < keep && m.eq(mark));
+            })) {
+                const [, lead, rest] = /^(\s*)(.*)$/m.exec(node.text);
+                if (lead) {
+                    leading += lead;
+                    node = rest ? withText(node, rest) : null;
+                    if (!node) {
+                        marks = active;
+                    }
+                }
+            }
+            if (node && node.isText && marks.some((mark, i) => {
+                const info = st.getMark(mark.type.name);
+                return info && info.expelEnclosingWhitespace && !st.isMarkAhead(parent, index + 1, marks.slice(0, i + 1));
+            })) {
+                const [, rest, trail] = /^(.*?)(\s*)$/m.exec(node.text);
+                if (trail) {
+                    trailing = trail;
+                    node = rest ? withText(node, rest) : null;
+                    if (!node) {
+                        marks = active;
+                    }
+                }
+            }
+            // Close the marks that need to be closed
+            if (node || index === parent.childCount) {
+                while (keep < active.length) {
+                    this.text(this.markString(active.pop(), false, parent, index), false);
+                }
+            }
+            // Output any previously expelled trailing whitespace outside the marks
+            if (leading) {
+                this.text(leading);
+            }
+            // Open the marks that need to be opened
+            if (node) {
+                while (active.length < len) {
+                    const add = marks[active.length];
+                    active.push(add);
+                    this.text(this.markString(add, true, parent, index), false);
+                    st.atBlockStart = false;
+                }
+                // Render the node. Special case code marks, since their content
+                // may not be escaped.
+                if (noEsc && node.isText) {
+                    this.text(this.markString(inner, true, parent, index) + node.text
+                        + this.markString(inner, false, parent, index + 1), false);
+                } else {
+                    this.render(node, parent, index);
+                }
+                st.atBlockStart = false;
+                // After the first non-empty text node is rendered, the end of output
+                // is no longer at block start.
+                //
+                // FIXME: If a non-text node writes something to the output for this
+                // block, the end of output is also no longer at block start. But how
+                // can we detect that?
+                if (node.isText && node.nodeSize > 0) {
+                    st.atBlockStart = false;
+                }
+            }
+        };
+        parent.forEach(progress);
+        progress(null, 0, parent.childCount);
+        st.atBlockStart = false;
+    }
+}
+
+/** A text node with other text and the same marks (prosemirror-model's `TextNode.withText`, undeclared on `Node`). */
+function withText(node: Node, text: string): Node {
+    return (node as Node & { withText(text: string): Node }).withText(text);
+}
+
+/** prosemirror-markdown's serializer, writing through `OrderedInlineState` (the library's `serialize`, 1.13.8, with that state). */
+class EditorMarkdownSerializer extends MarkdownSerializer {
+    serialize(content: Node, options: { tightLists?: boolean } = {}): string {
+        const state = new OrderedInlineState(this.nodes, this.marks, { ...this.options, ...options });
+        state.renderContent(content);
+        return internals(state).out;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Nodes
 // ---------------------------------------------------------------------------
@@ -1242,7 +1396,7 @@ export function literalRewrittenBeside(block: Node, textblock: Node, lost: Liter
 const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, 'g');
 
 function inlineSerializer(fromBlockStart: boolean, inTableCell: boolean): MarkdownSerializer {
-    return new MarkdownSerializer({
+    return new EditorMarkdownSerializer({
         ...inlineNodes,
         paragraph(state, node) {
             internals(state).inTableCell = inTableCell;
@@ -1473,7 +1627,7 @@ export function literalHolder(node: Node): string {
 }
 
 function blockSerializer(options: SerializeOptions): MarkdownSerializer {
-    return new MarkdownSerializer({
+    return new EditorMarkdownSerializer({
         ...inlineNodes,
         paragraph(state, node) {
             // Flush the pending block separator and write the line prefix first,
