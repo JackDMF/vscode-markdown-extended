@@ -673,8 +673,11 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
         // markdown-it-attrs is no page plugin, so only `attrs` says the host ran it.
         const noAttrs = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-attrs'), extend: [] });
         assert.deepStrictEqual(inlineEngineDefinition(noAttrs), { ...DEFAULT_INLINE_ENGINE, attrs: false });
-        const offByExtender = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable('curly_attributes'); }] });
-        assert.strictEqual(inlineEngineDefinition(offByExtender).attrs, false, 'read off the engine as built');
+        // The plugin as the page runs it is the wrapper: its rules keeping a text brace from attrs are part of the fact.
+        for (const rule of ['curly_attributes', 'mep_text_braces_aside', 'mep_text_braces_back']) {
+            const offByExtender = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable(rule); }] });
+            assert.strictEqual(inlineEngineDefinition(offByExtender).attrs, false, `${rule}: read off the engine as built`);
+        }
     });
 
     test('a space deleted before a sidebar after an address is refused where the line as written lets linkify read on', () => {

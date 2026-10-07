@@ -39,7 +39,7 @@ import { EditorState, NodeSelection, Selection, TextSelection, Transaction } fro
 import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
-import { currentInlineDefinition } from '../inlineEngine';
+import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalNotReadBack, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
@@ -501,12 +501,22 @@ function tightenedSuggestion(value: string): string | null {
 }
 
 /**
+ * Why no literal is offered at all: the host's engine reads none
+ * (`InlineEngineDefinition.attrs`), so the preview shows any `{…}` as text.
+ */
+export const NO_ATTRS_REFUSAL = 'The preview reads no attributes here: markdown-it-attrs does not run (markdownExtended.plugins.disabled names attrs, or another extension turned it off), so a {…} shows as text.';
+
+/**
  * Why `literal` cannot be an attribute span's or a block's literal at `place`
  * (a paragraph's by default), or `null`: the preview must read it there as
  * attributes, all of it (`attrsReadAt`, the rule the host's parse recognises
- * a literal by).
+ * a literal by) — and reads none where the host's engine reads no
+ * attributes (`NO_ATTRS_REFUSAL`).
  */
 export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph'): string | null {
+    if (!currentReadsAttrs()) {
+        return NO_ATTRS_REFUSAL;
+    }
     const value = literal.trim();
     if (value.startsWith('{') && readBrace(value, 0).close < 0) {
         return `${value} is not closed: end the attribute list with }.`;
@@ -601,8 +611,11 @@ export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject
     return literalsReadBackRefusal(tr.doc, span.from, state.doc, span.mark.attrs.literal as string);
 }
 
-/** Why an attribute span cannot be made of the selection, or `null`: it needs selected text in one textblock that is not code. */
+/** Why an attribute span cannot be made of the selection, or `null`: it needs an engine that reads attributes, and selected text in one textblock that is not code. */
 export function spanLockReason(state: EditorState): string | null {
+    if (!currentReadsAttrs()) {
+        return NO_ATTRS_REFUSAL;
+    }
     const sel = state.selection;
     const ok = sel instanceof TextSelection && !sel.empty && sel.$from.sameParent(sel.$to)
         && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code;
@@ -870,12 +883,13 @@ export function literalOf(node: Node): string | null {
 
 /**
  * A block as a target — a top-level one, the block a bar is for, or a list
- * item — or why it is none: `literalHomeRefusal`, except that a block which
+ * item — or why it is none: none where the host's engine reads no attributes
+ * (`NO_ATTRS_REFUSAL`), else `literalHomeRefusal`, except that a block which
  * has a literal already can always have it edited or removed (a requirement
  * heading's apart).
  */
 export function attributesTargetOf(node: Node, pos: number): AttributesTarget | { refusal: string } {
-    const refusal = blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
+    const refusal = (currentReadsAttrs() ? null : NO_ATTRS_REFUSAL) ?? blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
     return refusal === null ? { pos, node, name: BLOCK_NAMES[node.type.name] ?? 'Block' } : { refusal };
 }
 

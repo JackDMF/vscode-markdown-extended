@@ -5,6 +5,7 @@ import { MarkdownItAttrs, readsAttrs } from '../plugin/markdownItAttrs';
 import { useMathStandIn } from './mathStandIn';
 import { SIDEBAR_SPAN_META } from '../plugin/markdownItSidenote';
 import { WIKI_EMBED_TOKEN, readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
+import { hasEnabledRule } from '../plugin/shared';
 import { configureLinkify } from '../syntax/linkify';
 import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
 
@@ -84,16 +85,19 @@ export interface InlineEngineDefinition extends EngineOptions {
      */
     wikiEmbeds: boolean;
     /**
-     * Whether the host's engine reads attribute literals: markdown-it-attrs'
-     * `curly_attributes` rule is in the core chain as the engine was finally
-     * built (`readsAttrs`) — the registry ran `markdown-it-attrs`,
-     * `plugins.disabled` does not name it, and no extender disabled the rule
-     * after it. The one answer to "is `{.x}` attributes here": the page reads
-     * a literal with markdown-it-attrs only where it holds (`attrsEngineFor`),
-     * so the save escapes a `{…}` the plugin would take (`escapedLiterals` in
-     * `serialize.ts`), the check of an edit reads its literals back
-     * (`readUnit`) and the host recognises a literal (`attrsReadAt` in
-     * `attrs.ts`) by the same fact.
+     * Whether the host's engine reads attribute literals as the page would:
+     * the registry's attrs plugin runs as the page runs it, its core rules all
+     * in the chain and enabled as the engine was finally built (`readsAttrs`)
+     * — the registry ran `markdown-it-attrs`, `plugins.disabled` does not
+     * name it, and no extender disabled one of its rules after it. The one
+     * answer to "is `{.x}` attributes here": the page reads a literal with
+     * markdown-it-attrs only where it holds (`attrsEngineFor`), so the save
+     * escapes a `{…}` the plugin would take (`escapedLiterals` in
+     * `serialize.ts`) and keeps a literal line apart from the next block
+     * (`endsInLiteralLine`), the check of an edit reads its literals back
+     * (`readUnit`), the host recognises a literal (`attrsReadAt` in
+     * `attrs.ts`), and the page offers Attributes… and a span of the
+     * selection (`currentReadsAttrs`), all by the same fact.
      */
     attrs: boolean;
 }
@@ -103,12 +107,6 @@ export interface InlineEngineDefinition extends EngineOptions {
  * after `escape`, ahead of the sidebar rule.
  */
 export const MATH_INLINE_RULE = 'math_inline';
-
-/** Whether `md` holds an enabled inline rule named `name`, as the engine was actually built. */
-function hasInlineRule(md: MarkdownIt, name: string): boolean {
-    const rules = (md.inline.ruler as unknown as { __rules__?: { name: string; enabled: boolean }[] }).__rules__ ?? [];
-    return rules.some(rule => rule.name === name && rule.enabled);
-}
 
 /**
  * markdown-it as both engines start: raw HTML allowed, linkify and typographer
@@ -142,7 +140,7 @@ export function recordInlineDefinition(md: MarkdownIt, options: EngineOptions, p
         linkify: options.linkify,
         typographer: options.typographer,
         plugins: plugins.filter(p => isPagePlugin(p.name)).map(p => (p.threw ? { name: p.name, args: p.args, threw: true } : { name: p.name, args: p.args })),
-        math: hasInlineRule(md, MATH_INLINE_RULE),
+        math: hasEnabledRule(md.inline.ruler, MATH_INLINE_RULE),
         wikiEmbeds: readsWikiEmbeds(md),
         attrs: readsAttrs(md),
     });
@@ -248,6 +246,15 @@ export function currentReadsWikiEmbeds(): boolean {
     return currentDefinition.wikiEmbeds;
 }
 
+/**
+ * Whether the current definition's engine reads attribute literals
+ * (`InlineEngineDefinition.attrs`): what the page's Attributes… commands, a
+ * span of the selection and a typed literal are offered by.
+ */
+export function currentReadsAttrs(): boolean {
+    return currentDefinition.attrs;
+}
+
 /** The page's engine (`createInlineEngine`) for the current definition. */
 export function currentInlineEngine(): MarkdownIt {
     currentEngines.inline ??= createInlineEngine(currentDefinition);
@@ -282,10 +289,16 @@ export function attrsEngineFor(definition: InlineEngineDefinition): MarkdownIt {
     return md;
 }
 
-/** `createInlineEngine(definition)`, with markdown-it-attrs where the definition says the host runs it. */
+/**
+ * `createInlineEngine(definition)` with markdown-it-attrs where the definition
+ * says the host runs it; where not, the page's engine itself — the current
+ * one for the current definition, rather than a second copy of it.
+ */
 function withAttrs(definition: InlineEngineDefinition): MarkdownIt {
-    const md = createInlineEngine(definition);
-    return definition.attrs ? md.use(MarkdownItAttrs) : md;
+    if (!definition.attrs) {
+        return definition === currentDefinition ? currentInlineEngine() : createInlineEngine(definition);
+    }
+    return createInlineEngine(definition).use(MarkdownItAttrs);
 }
 
 /** A sidebar the parser read: its kind, and where its opening and its closing marker stand in the text read. */

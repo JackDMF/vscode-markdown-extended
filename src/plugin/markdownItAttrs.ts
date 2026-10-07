@@ -2,6 +2,7 @@ import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
 import markdownItAttrs from 'markdown-it-attrs';
 import { findLeftDelimiter, isTextBrace, textBraceCloses, withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { EXPLICIT_ID, explicitHeadingId, headingIds } from '../syntax/headingSlug';
+import { hasEnabledRule } from './shared';
 
 // markdown-it-attrs recomputes a table's cells from every `rowspan` and
 // `colspan` it finds, to honour its own `{rowspan=2}`. It cannot tell those
@@ -48,12 +49,20 @@ interface TextBraces {
 const textBraces = new WeakMap<StateBase, TextBraces>();
 
 /**
- * Whether `md` reads attribute literals: markdown-it-attrs' core rule,
- * `curly_attributes`, is registered and not disabled.
+ * The core rules that make the registry's attrs plugin (`MarkdownItAttrs`):
+ * markdown-it-attrs' own, and this wrapper's that keep a text brace from it.
+ */
+const ATTRS_RULES = ['curly_attributes', 'mep_text_braces_aside', 'mep_text_braces_back'];
+
+/**
+ * Whether `md` reads attribute literals as the Visual Editor's page reads
+ * them: the registry's attrs plugin runs as the page runs it — markdown-it-
+ * attrs' `curly_attributes` and the wrapper's text-brace rules around it are
+ * all registered and none disabled. An engine with one of them off reads
+ * other literals than the page would, and is taken as reading none.
  */
 export function readsAttrs(md: MarkdownIt): boolean {
-    const rules = (md.core.ruler as unknown as { __rules__?: { name: string; enabled: boolean }[] }).__rules__ ?? [];
-    return rules.some(rule => rule.name === 'curly_attributes' && rule.enabled);
+    return ATTRS_RULES.every(name => hasEnabledRule(md.core.ruler, name));
 }
 
 // eslint-disable-next-line @typescript-eslint/naming-convention

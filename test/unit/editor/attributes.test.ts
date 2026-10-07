@@ -4,15 +4,18 @@ import { undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { splitListItem } from 'prosemirror-schema-list';
 import { splitBlock } from 'prosemirror-commands';
-import { parseDocument, serializeDocument } from '../../../src/editor';
+import { createEditorEngine, parseDocument, serializeDocument } from '../../../src/editor';
+import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
+import { setInlineEngine } from '../../../src/editor/serialize';
+import { plugins } from '../../../src/plugin/plugins';
 import { withoutId } from '../../../src/editor/attrs';
 import { editorSchema } from '../../../src/editor/schema';
 import {
-    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, INDENTED_CODE_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt,
-    commitAttributes, literalOf,
+    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, INDENTED_CODE_ATTRS_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt,
+    commitAttributes, literalOf, literalRefusal, spanLockReason,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
-import { hostEngine } from './helpers';
+import { hostEngine, topChildren, touched } from './helpers';
 
 const options = { defaultWrap: 90 };
 
@@ -388,5 +391,33 @@ suite('Editor Attributes…: a fence\'s literal is read on its own fence, a head
         const out = text(state.apply(state.tr.insertText('X', posOf(state.doc, 'Title') + 5)));
         assert.strictEqual(out, '# TitleX {#id}\n');
         assert.deepStrictEqual(hostEngine().parse(out, {}).find(t => t.type === 'heading_open')?.attrs, [['id', 'id']]);
+    });
+});
+
+suite('Editor Attributes…: where the engine reads no attributes, nothing offers them', () => {
+    const noAttrs = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-attrs') });
+    teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
+
+    test('Attributes… on a block and a heading, a span of the selection and a typed literal are refused with the reason', () => {
+        const source = '# Title\n\nAlpha beta.\n';
+        const select = (state: EditorState) => state.apply(state.tr.setSelection(TextSelection.create(state.doc, posOf(state.doc, 'beta'), posOf(state.doc, 'beta') + 4)));
+        const on = stateOf(source);
+        assert.ok(!('refusal' in attributesTargetAt(caretAt(on, 'beta'))), 'the paragraph takes one where the engine reads them');
+        assert.strictEqual(spanLockReason(select(on)), null);
+        assert.strictEqual(literalRefusal('{.x}'), null);
+        setInlineEngine(inlineEngineDefinition(noAttrs));
+        const off = EditorState.create({ doc: parseDocument(noAttrs, source, {}).doc, plugins: editorPlugins() });
+        assert.strictEqual(refusalAt(caretAt(off, 'beta')), NO_ATTRS_REFUSAL, 'Formatting → Attributes… and the block bar');
+        assert.strictEqual(refusalAt(caretAt(off, 'Title')), NO_ATTRS_REFUSAL, 'a heading\'s {#id}');
+        assert.strictEqual(spanLockReason(select(off)), NO_ATTRS_REFUSAL, 'Span with class');
+        assert.strictEqual(literalRefusal('{.x}'), NO_ATTRS_REFUSAL, 'a span\'s Edit attributes');
+    });
+
+    test('a block ending in a {…} line is text there, and the next block is not pushed off it by a blank line', () => {
+        setInlineEngine(inlineEngineDefinition(noAttrs));
+        const source = 'a\n{.x}\n# H\n';
+        const parsed = parseDocument(noAttrs, source, {});
+        const doc = parsed.doc.type.create(null, topChildren(parsed.doc).map(n => touched(n)));
+        assert.strictEqual(serializeDocument({ ...parsed, doc }, options), source);
     });
 });

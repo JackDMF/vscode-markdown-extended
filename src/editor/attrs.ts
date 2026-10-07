@@ -298,11 +298,12 @@ export function fenceHolder(markup: string): string {
 
 /**
  * The attributes markdown-it-attrs gives `holder` (`READ_BACK`) for `literal`,
- * read with the engine `definition` describes and the plugin itself
- * (`attrsEngineFor`) — with VS Code's math, when it runs, as its stand-in
- * (`mathStandIn.ts`), which takes a `$…$` it reads as math first; `null` when
- * the literal, or part of it, is left as text, or `holder` is none the editor
- * writes a literal for.
+ * read with the engine `definition` describes and the plugin itself where the
+ * definition says the host runs it (`attrsEngineFor`) — with VS Code's math,
+ * when it runs, as its stand-in (`mathStandIn.ts`), which takes a `$…$` it
+ * reads as math first; `null` when the literal, or part of it, is left as
+ * text — always, where the host reads no attributes — or `holder` is none the
+ * editor writes a literal for.
  */
 export function readBack(literal: string, holder: string, definition: InlineEngineDefinition = currentInlineDefinition()): AttrPair[] | null {
     const shape = Object.prototype.hasOwnProperty.call(READ_BACK, holder) ? READ_BACK[holder] : undefined;
