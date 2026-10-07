@@ -408,8 +408,42 @@ suite('Inline toggles: what a selection toggles', () => {
         // The id would go from the paragraph `Term` stands in to an empty one after the list.
         assert.strictEqual(await toggle('bold', 'Term\n: ‸\n{#anchor}'), 'Term\n: ‸\n{#anchor}');
         assert.strictEqual(await toggle('bold', 'Term\n: **‸**\n{#anchor}'), 'Term\n: **‸**\n{#anchor}');
+        // From the paragraph `:` stands in, a blank line below its term, likewise.
+        assert.strictEqual(await toggle('bold', 'Term\n\n: ‸\n{#anchor}'), 'Term\n\n: ‸\n{#anchor}');
         // A paragraph of the pair alone keeps its own.
         assert.strictEqual(await toggle('mark', '‸\n{.c}'), '==‸==\n{.c}');
+    });
+
+    test('a definition made by the pair may stand a blank line below its term, which stays as it was', async () => {
+        assert.strictEqual(await toggle('bold', 'Term\n\n: ‸'), 'Term\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n\n: **‸**'), 'Term\n\n: ‸');
+        // In a quote the line between is `>`, which holds no text and is as blank.
+        assert.strictEqual(await toggle('bold', '> Term\n>\n> : ‸'), '> Term\n>\n> : **‸**');
+        assert.strictEqual(await toggle('bold', '> Term\n>\n> : **‸**'), '> Term\n>\n> : ‸');
+        // A term after another list's, and a definition marked `~`.
+        assert.strictEqual(await toggle('bold', 'Term1\n: def1\n\nTerm2\n\n: ‸'), 'Term1\n: def1\n\nTerm2\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n\n~ ‸'), 'Term\n\n~ **‸**');
+        // A pair on the blank line between would join it to the term: that one is not written.
+        assert.strictEqual(await toggle('italics', 'Term\n‸\n: ‸'), 'Term\n‸\n: *‸*');
+    });
+
+    test('a definition made by the pair below another of its term leaves that one as it was', async () => {
+        assert.strictEqual(await toggle('bold', 'Term\n: def1\n\n: ‸'), 'Term\n: def1\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n\n: def1\n\n: ‸'), 'Term\n\n: def1\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n: def1\n\n: **‸**'), 'Term\n: def1\n\n: ‸');
+        // Directly below it, the `:` line is `def1`'s until the pair makes it a definition of its own.
+        assert.strictEqual(await toggle('bold', 'Term\n: def1\n: ‸'), 'Term\n: def1\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n: def1\n: **‸**'), 'Term\n: def1\n: ‸');
+        // A pair between would continue `def1`'s paragraph: that one is not written.
+        assert.strictEqual(await toggle('italics', 'Term\n: def1\n‸\n: ‸'), 'Term\n: def1\n‸\n: *‸*');
+    });
+
+    test('a `:` line the engine pairs with no term is a paragraph the pair is written into, and the block above stays as it was', async () => {
+        assert.strictEqual(await toggle('bold', '- item\n\n: ‸'), '- item\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n>\n: ‸'), 'Term\n>\n: **‸**');
+        assert.strictEqual(await toggle('bold', '> > Term\n>\n> > : ‸'), '> > Term\n>\n> > : **‸**');
+        // A pair between would continue the item's paragraph: that one is not written.
+        assert.strictEqual(await toggle('italics', '- item\n‸\n: ‸'), '- item\n‸\n: *‸*');
     });
 
     test('a definition made by the pair joins the list before or after it', async () => {
@@ -423,8 +457,8 @@ suite('Inline toggles: what a selection toggles', () => {
         // In a quote the line between is `>`, which holds no text and is as blank.
         assert.strictEqual(await toggle('bold', '> Term1\n> : ‸\n>\n> Term2\n>\n> : def2'), '> Term1\n> : **‸**\n>\n> Term2\n>\n> : def2');
         assert.strictEqual(await toggle('bold', '> Term1\n> : **‸**\n>\n> Term2\n>\n> : def2'), '> Term1\n> : ‸\n>\n> Term2\n>\n> : def2');
-        // `Term2` continues `def1`: the pair would take it out of that paragraph.
-        assert.strictEqual(await toggle('bold', 'Term1\n: def1\nTerm2\n: ‸'), 'Term1\n: def1\nTerm2\n: ‸');
+        // `Term2` continues `def1` before and after: the pair makes a second definition of `Term1`.
+        assert.strictEqual(await toggle('bold', 'Term1\n: def1\nTerm2\n: ‸'), 'Term1\n: def1\nTerm2\n: **‸**');
     });
 
     test('an empty pair is taken out only where the rest reads as before', async () => {

@@ -893,7 +893,7 @@ class Verifier {
         // there, the pair makes it the definition it was meant to be. Its
         // line and its term's may change their blocks; no other line may. So
         // may it when the pair is taken out again.
-        const defining = toggles.filter(t => t.writes.length === 0 && t.removes.length === 0 && t.changes.length === 1)
+        const definitions = toggles.filter(t => t.writes.length === 0 && t.removes.length === 0 && t.changes.length === 1)
             .filter(t => {
                 const line = this.document.lineAt(this.document.positionAt(t.start).line);
                 const from = this.document.offsetAt(line.range.start);
@@ -902,7 +902,8 @@ class Verifier {
                 const bare = line.text.slice(0, c.start - from) + line.text.slice(c.end - from);
                 return BARE_DEFINITION.test(bare);
             })
-            .map(t => this.document.positionAt(t.start).line - part.start);
+            .map(t => ({ line: this.document.positionAt(t.start).line - part.start, written: t.changes[0].text !== '' }));
+        const defining = new Set(definitions.map(d => d.line));
         // The structure. A free line is blank before or after, or holds no text
         // but the markers taken out or written either time: a blank line that
         // becomes the pair's paragraph or a thematic break, an empty item that
@@ -917,7 +918,7 @@ class Verifier {
             const kinds = [before.kindOf(line), after.kindOf(line)];
             const here = onLine.get(line) ?? [];
             const empty = markers(before.textOn(line), takenOf(here)) && markers(after.textOn(line), writtenOf(here));
-            if (empty || kinds.includes('blank') || defining.includes(line)) {
+            if (empty || kinds.includes('blank') || defining.has(line)) {
                 free.add(line);
             }
             if (kinds[0] !== kinds[1] && (kinds.includes('literal') || !free.has(line))) {return 'all';}
@@ -937,10 +938,46 @@ class Verifier {
                 return { ...t, first };
             });
         };
-        const exempt = ({ type, first, end }: BlockToken) => {
-            // The definition's own term, definition and paragraph start on its term's line or its `:` line.
-            if (DEFINITION_TOKENS.has(type) && defining.some(line => first === line || first === line - 1)) {return true;}
+        const blocksBefore = normalized(before, text), blocksAfter = normalized(after, out);
+        /** Each `dd`'s term in a reading: its `:` line to the line of the `dt` before it in its list. */
+        const termsOf = (structure: readonly BlockToken[]) => {
+            const terms = new Map<number, number>();
+            const lists: { end: number; term?: number }[] = [];
+            for (const t of structure) {
+                while (lists.length > 0 && lists[lists.length - 1].end <= t.first) {lists.pop();}
+                const list = lists[lists.length - 1];
+                if (t.type === 'dl_open') {
+                    lists.push({ end: t.end });
+                } else if (t.type === 'dt_open' && list !== undefined) {
+                    list.term = t.first;
+                } else if (t.type === 'dd_open' && list?.term !== undefined) {
+                    terms.set(t.first, list.term);
+                }
+            }
+            return terms;
+        };
+        // The blocks a definition made or taken out gives up or takes, in
+        // either reading: those that start on its `:` line, and its term
+        // where the reading with the definition pairs one that the other
+        // does not read as a term. A block that only runs over the `:` line
+        // stays compared, and may give it up or take it in.
+        const definitionBlocks = new Set<BlockToken>();
+        {
+            const termsBefore = termsOf(blocksBefore), termsAfter = termsOf(blocksAfter);
+            const starts = new Set(defining);
+            for (const { line, written } of definitions) {
+                const term = (written ? termsAfter : termsBefore).get(line);
+                const other = written ? blocksBefore : blocksAfter;
+                if (term !== undefined && !other.some(t => t.type === 'dt_open' && t.first === term)) {starts.add(term);}
+            }
+            for (const t of [...blocksBefore, ...blocksAfter]) {
+                if (DEFINITION_TOKENS.has(t.type) && starts.has(t.first)) {definitionBlocks.add(t);}
+            }
+        }
+        const exempt = (t: BlockToken) => {
+            if (definitionBlocks.has(t)) {return true;}
             // A paragraph of pairs alone, over one line or more, may come or go.
+            const { type, first, end } = t;
             if (!FREE_TOKENS.has(type)) {return false;}
             for (let line = first; line < Math.max(end, first + 1); line++) {
                 if (!free.has(line)) {return false;}
@@ -955,10 +992,10 @@ class Verifier {
         const listsOf = (structure: readonly BlockToken[]) => {
             const definition = new Set<number>();
             for (const t of structure) {
-                if (t.type !== 'dd_open' || !exempt(t)) {continue;}
-                for (let line = t.first - 1; line < t.end; line++) {definition.add(line);}
+                if (!definitionBlocks.has(t)) {continue;}
+                for (let line = t.first; line < Math.max(t.end, t.first + 1); line++) {definition.add(line);}
             }
-            const made = (line: number) => defining.includes(line) || defining.includes(line + 1) || definition.has(line);
+            const made = (line: number) => defining.has(line) || definition.has(line);
             const loose = (line: number) => free.has(line) || made(line);
             const lists: BlockToken[] = [];
             for (const t of structure) {
@@ -989,33 +1026,37 @@ class Verifier {
         const kept = (structure: readonly BlockToken[]) => structure.filter(t => t.type !== 'dl_open' && !exempt(t));
         // A block that may come or go takes no attributes from, nor leaves any
         // to, another: each one's stay with the text on its lines.
-        // Its text is read without the markers taken out or written.
+        // Its text is read without the markers taken out or written; it is
+        // held by a block of its type from its first line that holds more
+        // than markers, a definition's `:` line holding its `:`.
         const attributed = (source: InlineSource, of: string, markup: number[][], structure: readonly BlockToken[]) => structure
             .filter(t => t.type !== 'dl_open' && t.attrs !== '' && exempt(t))
-            .map(({ first, end, attrs }) => {
+            .map(({ type, first, end, attrs }) => {
+                let holder = first;
+                while (holder < end - 1 && free.has(holder) && !defining.has(holder)) {holder++;}
                 let held = '';
                 for (let line = first; line < Math.max(end, first + 1); line++) {
-                    if (defining.includes(line)) {continue;}
+                    if (defining.has(line)) {continue;}
                     for (const s of source.textOn(line)) {
                         for (let o = s.start; o < s.end; o++) {
                             if (!markup.some(([from, to]) => from <= o && o < to)) {held += of[o];}
                         }
                     }
                 }
-                return `${attrs} ${held.replace(/\s+/g, '')}`;
+                return `${type}@${holder} ${attrs} ${held.replace(/\s+/g, '')}`;
             })
             .sort();
-        // A block keeps its attributes; it may end later or sooner by lines with no text (an item taking in its thematic break).
+        // A block keeps its attributes; it may end later or sooner by lines
+        // with no text (an item taking in its thematic break), and any block
+        // by a definition's `:` line, which the definition takes or gives up.
         const same = (x: BlockToken, y: BlockToken) => {
             if (x.type !== y.type || x.nesting !== y.nesting || x.first !== y.first || x.attrs !== y.attrs) {return false;}
-            if (x.end !== y.end && !CONTAINERS.test(x.type)) {return false;}
             const low = Math.min(x.end, y.end), high = Math.max(x.end, y.end);
             for (let line = low; line < high; line++) {
-                if (!free.has(line)) {return false;}
+                if (!free.has(line) || (!CONTAINERS.test(x.type) && !defining.has(line))) {return false;}
             }
             return true;
         };
-        const blocksBefore = normalized(before, text), blocksAfter = normalized(after, out);
         const a = [...listsOf(blocksBefore), ...kept(blocksBefore)], b = [...listsOf(blocksAfter), ...kept(blocksAfter)];
         if (a.length !== b.length || a.some((entry, k) => !same(entry, b[k]))) {return 'all';}
         if (JSON.stringify(attributed(before, text, takenOf(changes), blocksBefore)) !== JSON.stringify(attributed(after, out, written, blocksAfter))) {return 'all';}
@@ -1043,7 +1084,7 @@ class Verifier {
         const keysOf = (source: InlineSource) => {
             const onLine = new Map<number, number>();
             return source.inlines.map(inline => {
-                const term = defining.find(line => inline.first <= line && inline.end > line - 1);
+                const term = [...defining].find(line =>inline.first <= line && inline.end > line - 1);
                 if (term !== undefined) {return { key: `:${term}`, first: term - 1, end: term + 1 };}
                 const k = onLine.get(inline.first) ?? 0;
                 onLine.set(inline.first, k + 1);
@@ -1168,7 +1209,7 @@ class Verifier {
         const textOf = (source: InlineSource, of: string) => {
             const at = new Uint8Array(of.length + 1);
             for (let line = 0; line < count; line++) {
-                if (defining.includes(line)) {continue;}
+                if (defining.has(line)) {continue;}
                 for (const s of source.textOn(line)) {
                     for (let o = s.start; o < s.end; o++) {
                         if (!/\s/.test(of[o])) {at[o] = 1;}

@@ -668,7 +668,19 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
             plugins: DEFAULT_INLINE_ENGINE.plugins.filter(p => p.name !== 'markdown-it-kbd'),
             math: false,
             wikiEmbeds: true,
+            attrs: true,
         });
+        // markdown-it-attrs is no page plugin, so only `attrs` says the host ran it.
+        const noAttrs = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-attrs'), extend: [] });
+        assert.deepStrictEqual(inlineEngineDefinition(noAttrs), { ...DEFAULT_INLINE_ENGINE, attrs: false });
+        // Only `curly_attributes` decides: off by an extender, the fact is off; the wrapper's text-brace
+        // rules off leave it on, since taken as off it would write a `{.x}` the preview still reads.
+        const offByExtender = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable('curly_attributes'); }] });
+        assert.strictEqual(inlineEngineDefinition(offByExtender).attrs, false, 'curly_attributes: read off the engine as built');
+        for (const rule of ['mep_text_braces_aside', 'mep_text_braces_back']) {
+            const wrapperOff = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable(rule); }] });
+            assert.strictEqual(inlineEngineDefinition(wrapperOff).attrs, true, `${rule}: attrs still run, so the fact stays on`);
+        }
     });
 
     test('a space deleted before a sidebar after an address is refused where the line as written lets linkify read on', () => {
