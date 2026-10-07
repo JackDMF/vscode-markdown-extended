@@ -233,7 +233,10 @@ suite('Editor stage 3: review findings', () => {
         assert.strictEqual(reason, 'inline html_inline in an admonition title');
     });
 
-    for (const source of ['A [see [term]{.x}](https://e.org/a) here.\n', 'A [[see](https://e.org/a) more]{.x} here.\n']) {
+    for (const source of [
+        'A [see [term]{.x}](https://e.org/a) here.\n', 'A [[see](https://e.org/a) more]{.x} here.\n',
+        'A [[a]{.x} b](https://e.org/a) here.\n', 'A [[a](https://e.org/a) b]{.x} here.\n',
+    ]) {
         test(`2. a span and a link nested either way round-trip as one of each: ${JSON.stringify(source)}`, () => {
             const parsed = parseDocument(md, source);
             const once = byRule(parsed);

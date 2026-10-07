@@ -121,11 +121,38 @@ suite('Editor inline constructs: written back by rule', () => {
         return text;
     }
 
+    /** How many runs of marks `content` holds: a mark counts once where it begins, and again only after a node without it. */
+    function runsIn(content: Node[]): number {
+        let runs = 0;
+        content.forEach((node, i) => node.marks.forEach(mark => {
+            if (i === 0 || !mark.isInSet(content[i - 1].marks)) {
+                runs++;
+            }
+        }));
+        return runs;
+    }
+
+    /**
+     * `assertRoundTrip`, and the engine renders one element per run of a mark.
+     * A run split in two reads back as the same model when the mark's two
+     * halves touch (`*[a](u)*[ b](u)` is one link to the model, two to the
+     * page), so the element count is what sees it; `assertStable` sees nothing,
+     * a split being written the same way twice.
+     */
+    function assertOneElementPerRun(content: Node[], runs = runsIn(content)): string {
+        const text = assertRoundTrip(content);
+        const elements = md.renderInline(text.trimEnd()).match(/<(mark|i|em|b|strong|s|a|kbd|span)[ >]/g) ?? [];
+        assert.strictEqual(elements.length, runs, `${text.trimEnd()} renders ${md.renderInline(text.trimEnd())}`);
+        return text;
+    }
+
     for (const source of [
         'A ==mark== here.', 'Two ^sup^ here.', 'H~2~O here.', 'The ~~old~~ new.', 'Press [[Ctrl+S]] now.',
         'Alpha ++beta|note++ gamma.', 'The !!ref|marginal note!! here.', '$ left body $ then text.', 'Text @ right body @.',
         'Rich ++*em* ref|a **strong** `code` [link](x.md) body++ end.',
         '~sub~ at the start, ~~strike~~ later.', '~~strike~~ at the start.', 'A key [[a *b*]] with emphasis inside.',
+        'A ==[a]{.x} b== here.', '**_a_ b** here.', '==*a* b== here.', '[*a* b](x.md) here.', '[[*a* b]] here.',
+        '*==[a]{.x} b== c* here.', '==*[a]{.x} b* c== here.',
     ]) {
         test(`stability: ${JSON.stringify(source)} is written as it was, and the same twice`, () => {
             assert.strictEqual(assertStable(`${source}\n`), `${source}\n`);
@@ -350,5 +377,91 @@ suite('Editor inline constructs: written back by rule', () => {
     test('a changed heading with a sidenote writes it inline, one line', () => {
         const parsed = parseDocument(md, '## Title ++ref|note++ {#anchor}\n');
         assert.strictEqual(serializeDocument(allTouched(parsed), options), '## Title ++ref|note++ {#anchor}\n');
+    });
+
+    const em = () => schema.marks.em.create();
+    const strong = () => schema.marks.strong.create();
+    const highlight = () => schema.marks.mark.create();
+    const span = () => schema.marks.attr_span.create({ literal: '{.x}' });
+    const link = () => schema.marks.link.create({ href: 'https://e.org/u' });
+    const key = () => schema.marks.kbd.create();
+
+    test('marks that open on one node are opened longest run first: the one that ends later is outside', () => {
+        assert.strictEqual(assertOneElementPerRun([t('a', highlight(), em()), t(' b', highlight())]), '==*a* b==\n');
+        assert.strictEqual(assertOneElementPerRun([t('a', em(), strong()), t(' b', strong())]), '***a* b**\n');
+    });
+
+    test('a span at the start of a highlighted run is inside it, and the run is one', () => {
+        assert.strictEqual(assertOneElementPerRun([t('a', span(), highlight()), t(' b', highlight())]), '==[a]{.x} b==\n');
+        assert.strictEqual(assertOneElementPerRun([t('x '), t('a', span(), highlight()), t(' b', highlight()), t(' y')]), 'x ==[a]{.x} b== y\n');
+    });
+
+    test('a highlighted word at the start of a span is inside the span', () => {
+        assert.strictEqual(assertOneElementPerRun([t('a', span(), highlight()), t(' b', span())]), '[==a== b]{.x}\n');
+    });
+
+    test('a run under both marks keeps the schema order: the span outside', () => {
+        assert.strictEqual(assertOneElementPerRun([t('a', span(), highlight())]), '[==a==]{.x}\n');
+    });
+
+    test('three marks opening together nest by where each ends', () => {
+        assert.strictEqual(assertOneElementPerRun([t('a', span(), em(), highlight()), t(' b', em(), highlight()), t(' c', em())]), '*==[a]{.x} b== c*\n');
+        assert.strictEqual(assertOneElementPerRun([t('a', span(), em(), highlight()), t(' b', em(), highlight()), t(' c', highlight())]), '==*[a]{.x} b* c==\n');
+    });
+
+    test('a link beginning with a span or an emphasis is one link', () => {
+        assert.strictEqual(assertOneElementPerRun([t('a', span(), link()), t(' b', link())]), '[[a]{.x} b](https://e.org/u)\n');
+        assert.strictEqual(assertOneElementPerRun([t('a', em(), link()), t(' b', link())]), '[*a* b](https://e.org/u)\n');
+    });
+
+    test('a key cannot begin with a span or a link: the plugin counts the [[ of [[[ as a nested key, so such a run is two keys, as the page draws it', () => {
+        const [fact] = topChildren(parseDocument(md, '[[[a]{.x} b]]\n').doc);
+        assert.strictEqual(shape(fact), 'paragraph("[" [kbd]"a]{.x} b")', 'a key whose text begins with [ has no closing');
+        const content = [t('a', span(), key()), t(' b', key())];
+        assert.strictEqual(assertOneElementPerRun(content, runsIn(content) + 1), '[[[a]]]{.x}[[ b]]\n');
+    });
+
+    test('every ordered pair of mixable marks, in every position of the run, round-trips as one run of each', () => {
+        const kinds: Record<string, () => ReturnType<typeof schema.mark>> = { em, strong, strike: () => schema.marks.strike.create(), mark: highlight, link, kbd: key, attr_span: span };
+        const positions: Record<string, (outer: () => ReturnType<typeof schema.mark>, inner: () => ReturnType<typeof schema.mark>) => Node[]> = {
+            start: (o, i) => [t('a', o(), i()), t(' b', o())],
+            between: (o, i) => [t('x '), t('a', o(), i()), t(' b', o()), t(' y')],
+            end: (o, i) => [t('b ', o()), t('a', o(), i())],
+            middle: (o, i) => [t('b ', o()), t('a', o(), i()), t(' c', o())],
+            whole: (o, i) => [t('a', o(), i())],
+            startThenPlain: (o, i) => [t('a', o(), i()), t(' b', o()), t(' c')],
+        };
+        // A key cannot begin with a span or a link (the case above): there the run is two keys.
+        const twoKeys = (outer: string, inner: string, position: string) =>
+            outer === 'kbd' && (inner === 'attr_span' || inner === 'link') && position !== 'end' && position !== 'middle' && position !== 'whole';
+        let oneRun = 0;
+        let cases = 0;
+        const failures: string[] = [];
+        for (const outer of Object.keys(kinds)) {
+            for (const inner of Object.keys(kinds)) {
+                if (outer === inner) {
+                    continue;
+                }
+                for (const [position, build] of Object.entries(positions)) {
+                    cases++;
+                    const content = build(kinds[outer], kinds[inner]);
+                    const split = twoKeys(outer, inner, position);
+                    try {
+                        assertOneElementPerRun(content, runsIn(content) + (split ? 1 : 0));
+                        oneRun += split ? 0 : 1;
+                    } catch (e) {
+                        failures.push(`${outer}(${inner}) ${position}: ${(e as Error).message.split('\n')[0]}`);
+                    }
+                }
+            }
+        }
+        assert.deepStrictEqual(failures, [], `${oneRun} of ${cases} as one run of each`);
+        assert.strictEqual(cases, 252);
+        assert.strictEqual(oneRun, 246);
+    });
+
+    test('a co-opening inside a note\'s reference and body is written in order', () => {
+        assert.strictEqual(assertRoundTrip([t('x '), sidenote([t('a', span(), em()), t(' b', em())], [t('body')])]), 'x ++*[a]{.x} b*|body++\n');
+        assert.strictEqual(assertRoundTrip([t('x '), sidenote([t('r')], [t('a', em(), strong()), t(' b', strong())])]), 'x ++r|***a* b**++\n');
     });
 });
