@@ -634,6 +634,8 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
 });
 
 suite('Editor notes: the page reads what it writes, with the host\'s engine', () => {
+    // Without emoji: the full engine reads `:/` after a linkified address as an emoji in the file, which
+    // makes the paragraph a source block until emoji is editable (see 'today a source block' below).
     const noEmoji = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-emoji'), extend: [] });
     const read = (source: string, md = hostEngine()) => {
         setInlineEngine(inlineEngineDefinition(md));
@@ -714,6 +716,13 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
             assert.strictEqual(emojiIn(text(typed)), 0, `${source}: the save reads none`);
             assert.deepStrictEqual(sidebarsIn(text(typed), noEmoji), ['left_sidebar'], `${source}: read back`);
             assert.strictEqual(markRefusal(select(state, 'See'), editorSchema.marks.strong, '**'), null, `${source}: bold is not disabled`);
+        }
+    });
+
+    test('the same address, read by the full engine, is today a source block: the emoji is in the file, not made by a save', () => {
+        // When an emoji the file holds becomes editable, this flips; the test above may then drop `noEmoji`.
+        for (const source of ['See http://e~http://f.com/$x$ here.\n', 'See http://ühttp://f.com/$x$ here.\n']) {
+            assert.deepStrictEqual(topChildren(parseDocument(hostEngine(), source, {}).doc).map(n => n.type.name), ['raw_block'], source);
         }
     });
 
