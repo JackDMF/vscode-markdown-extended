@@ -2480,7 +2480,8 @@ export function serializeNode(node: Node, options: SerializeOptions): string {
  * Each top-level node contributes its `gap` and then its body: its `src` when it
  * has one, its serialization when it is an editable node whose `src` was
  * cleared, nothing when it is an injected atom (or an editable node left empty).
- * A `gap` of `null` — a node the UI inserted — is one blank line. Then the
+ * A `gap` of `null` — a node the UI inserted — is one blank line, or what the
+ * parser needs to read the pair as two (`serializeLayout`). Then the
  * `tail`. A changed block is written with the document's `eol` and ends with
  * one, so a changed last line of a file that had no final newline gains one.
  * What the engine reads as syntax is escaped by the engine the page reads
