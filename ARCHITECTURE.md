@@ -443,6 +443,27 @@ its widest line that could have been broken: the line of one long link, and the 
 line an author cut before it, are no evidence (Req Explorer's `REL-RXE-135` paragraph,
 whose 105-character link line had become its width, is the test).
 
+**Marks that open together.** The editor's model is a set of marks per text node; it does
+not remember which of two marks encloses the other, and the parser reads both nestings
+(`==[a]{.x} b==` and `[==a== b]{.x}`, `[*a* b](u)` and `*[a](u) b*`). prosemirror-markdown
+opens the marks of a node in schema order, a rank, so where two begin on one node and the
+one ranked first ends sooner, the other was closed with it and opened again:
+`==[a]{.x} b==` was written `[==a==]{.x} ==b==`, two highlights. The serializer now opens
+them in the order their runs end, the longer one outside, ties in schema order
+(`openingOrder` in `serialize.ts`, inserted into a copy of the library's `renderInline`
+on `OrderedInlineState`; `serialize.test.ts` guards the copy against the library). One
+nesting the parser cannot read stays split: a key beginning with a span or a link, since
+markdown-it-kbd reads the `[[` of `[[[` as a nested key; it is written as two keys
+(`[[[a]]]{.x}[[ b]]`), which is also what the page draws (`CANNOT_LEAD`). `assertStable`
+does not see a split run — it is written the same way twice — so `inline.test.ts` judges
+every ordered pair of mixable marks in six positions by an element count of the rendered
+text (`assertOneElementPerRun`). Two limits remain. The page's `DOMSerializer` draws by
+rank, so it shows `<i><mark>a</mark></i><mark> b</mark>` where the file holds
+`<mark><i>a</i> b</mark>`; the same to the eye unless a stylesheet styles a run's edges.
+And a mark already open that ends inside one opened later is still split
+(`em(x link(a)) link(b)` is written `*x [a](u)*[ b](u)`, two links, the model kept): only
+closing and reopening the outer mark could write it as one link, a different mechanism.
+
 **Editing inside a note** (`webview/notes.ts`). ProseMirror edits an inline node with
 content well inside and the browser handles its edges badly: a caret right after a
 note's span, or in an empty part, has no DOM position of its own, and a deletion that

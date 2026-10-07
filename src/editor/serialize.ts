@@ -405,7 +405,10 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // No line break inside any of these three (the plugins refuse one), so
     // each is a held run the wrapper keeps on one line, as a code span is.
     // Mixable, so emphasis inside a key is written inside it (`[[a *b*]]`),
-    // not as a second key inside the emphasis.
+    // not as a second key inside the emphasis. A key may begin with emphasis
+    // but not with a span or a link: the plugin reads the `[[` of `[[[` as a
+    // nested key, so such a run is written as two keys (`[[[a]]]{.x}[[ b]]`),
+    // as the page draws it (`CANNOT_LEAD`).
     // A key right after a `!` would be read as a wiki embed's `![[…]]`
     // where the engine reads embeds (`InlineEngineDefinition.wikiEmbeds`), so
     // there that `!` is escaped, as a link's is.

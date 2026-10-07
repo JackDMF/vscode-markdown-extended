@@ -697,9 +697,12 @@ export const editorSchema = new Schema({
         },
         // `[text]{…}` (markdown-it-bracketed-spans with markdown-it-attrs): a
         // `<span>` with exactly the attributes the engine renders from the
-        // literal, which is kept verbatim and written back as it was. Outside
-        // the other marks, as its brackets are around them; not inclusive, so
-        // typing after a span is prose.
+        // literal, which is kept verbatim and written back as it was. Its rank
+        // here is no nesting fact: the parser reads `==[a]{.x} b==` and
+        // `[==a== b]{.x}` alike. It breaks ties when marks open together and
+        // is the order the page draws in; which mark encloses which in the
+        // file is decided per run by the serializer (`openingOrder`). Not
+        // inclusive, so typing after a span is prose.
         attr_span: {
             inclusive: false,
             attrs: {
