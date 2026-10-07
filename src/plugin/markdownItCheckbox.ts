@@ -19,6 +19,9 @@ import { VOID_ELEMENTS } from '../syntax/voidElements';
 // no label holds another.
 const BOX = /(^|\s)\[(x|\s|_|-)\]\s/i;
 
+// The foreign-content elements whose `/>` closes them, as in HTML.
+const SELF_CLOSING_FOREIGN = new Set(['svg', 'math']);
+
 type TokenConstructor = new (type: string, tag: string, nesting: number) => Token;
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -135,11 +138,13 @@ function labelEnd(children: Token[], from: number): [number, [number, RegExpExec
 // An inline HTML tag that opens or closes an element, by its lower-cased
 // name; undefined for a void tag, a comment or the like. A slash closes
 // nothing but a void element's tag: `<span/>` opens a span, as in HTML.
+// Foreign content is the exception: `<svg/>` and `<math/>` close themselves.
 function htmlTag(content: string): { name: string, closing: boolean } | undefined {
     const match = /^<(\/?)([A-Za-z][A-Za-z0-9-]*)/.exec(content);
     if (!match) { return undefined; }
     const name = match[2].toLowerCase();
     if (VOID_ELEMENTS.has(name)) { return undefined; }
+    if (!match[1] && SELF_CLOSING_FOREIGN.has(name) && /\/>$/.test(content)) { return undefined; }
     return { name, closing: !!match[1] };
 }
 

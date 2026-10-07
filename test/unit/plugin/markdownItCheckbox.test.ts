@@ -119,6 +119,18 @@ suite('MarkdownItCheckbox', () => {
         assert.strictEqual(render(html, '[ ] a <span/> b </span> [x] c\n'), `<p>${box('a <span/> b </span> ')}${box('c', true)}</p>\n`);
     });
 
+    test('an svg or math tag with a slash closes itself, so later boxes stay boxes; without the slash it opens, and any other element keeps its slash ignored', () => {
+        const html = preview({ html: true });
+        // Foreign content self-closes in HTML, unlike an HTML element.
+        assert.strictEqual(render(html, '- [ ] a <svg/> b [ ] c\n'), `<ul>\n<li>${box('a <svg/> b ')}${box('c')}</li>\n</ul>\n`);
+        assert.strictEqual(render(html, '[ ] a <math/> b [x] c\n'), `<p>${box('a <math/> b ')}${box('c', true)}</p>\n`);
+        // Without the slash they open, and the later box stays text.
+        assert.strictEqual(render(html, '[ ] a <svg> b [x] c\n'), `<p>${box('a <svg> b [x] c')}</p>\n`);
+        assert.strictEqual(render(html, '[ ] a <math> b [x] c\n'), `<p>${box('a <math> b [x] c')}</p>\n`);
+        // Any other element keeps the HTML rule: the slash is ignored and the element stays open.
+        assert.strictEqual(render(html, '[ ] a <a id="x"/> b [x] c\n'), `<p>${box('a <a id="x"/> b [x] c')}</p>\n`);
+    });
+
     test('a formatted label is still the label of its box', () => {
         const html = md.render('- [ ] task **one**\n');
         const [, id] = /<input type="checkbox" id="(checkbox\d+)">/.exec(html) ?? [];
