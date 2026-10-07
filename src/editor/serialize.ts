@@ -517,17 +517,31 @@ export class OrderedInlineState extends LibraryState {
     }
 
     /**
-     * Whether `parent` is written in the library's order: only where a node
-     * holds two marks or more is there an order to choose, and only where
-     * the two orders write different text is the parser asked.
+     * Whether `parent` is written in the library's order: where `openingOrder`
+     * keeps the schema order at every node that holds two marks or more,
+     * there is no order to choose and it is written once; only where the two
+     * orders then write different text is the parser asked.
      */
     private libraryOrderFor(parent: Node, fromBlockStart: boolean): boolean {
+        const st = internals(this);
         let choice = false;
-        parent.forEach(child => {
-            choice ||= child.marks.length > 1;
+        parent.forEach((child, _offset, index) => {
+            if (choice || child.marks.length < 2) {
+                return;
+            }
+            // The marks the library keeps open from the node before, as it holds them: in schema order.
+            const before = index > 0 ? parent.child(index - 1).marks : [];
+            let keep = 0;
+            while (keep < before.length && keep < child.marks.length && child.marks[keep].eq(before[keep])) {
+                keep++;
+            }
+            const last = child.marks[child.marks.length - 1];
+            const len = child.marks.length - (st.getMark(last.type.name).escape === false ? 1 : 0);
+            const order = openingOrder(parent, index, child.marks, keep, len, name => st.getMark(name));
+            choice = order.some((mark, k) => mark !== child.marks[k]);
         });
         if (!choice) {
-            return false;
+            return true;
         }
         const ordered = this.trial(parent, fromBlockStart, true);
         const library = this.trial(parent, fromBlockStart, false);
