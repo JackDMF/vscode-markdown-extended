@@ -2278,8 +2278,29 @@ function readingOf(tokens: readonly Token[]): string {
     return JSON.stringify(tokens.map(one));
 }
 
-/** Whether a seam holds (`seamHolds`), by the leader, the separator and the follower; the oldest is dropped first. */
+/**
+ * Whether a seam holds (`seamHolds`), by a digest of the leader, the separator
+ * and the follower (`textKey`) — not the texts, which for a long list beside a
+ * paragraph being typed in would keep a copy of the list per keystroke; the
+ * oldest is dropped first.
+ */
 const seamCache = new Map<string, boolean>();
+/** How many seams `seamCache` keeps: a document's seams several times over. */
+const SEAM_CACHE_SIZE = 1024;
+
+/** A 53-bit digest of `text` (cyrb53) and its length, for a cache key that does not hold the text. */
+function textKey(text: string): string {
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+    for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 2654435761);
+        h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return `${text.length}:${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
+}
 
 /**
  * Whether the page's engine with markdown-it-attrs (`attrsEngineFor`, the one
@@ -2291,10 +2312,10 @@ const seamCache = new Map<string, boolean>();
  * follower the leader swallowed would hold: a `{.a}` paragraph under a table
  * yields no token because markdown-it-attrs gave its class to the table. A
  * top-level block starts with the parser's block state fresh, so the pair
- * reads as it reads in the document. Remembered by the three texts.
+ * reads as it reads in the document. Remembered by a digest of the three texts.
  */
 export function seamHolds(leader: string, separator: string, follower: string): boolean {
-    const key = `${leader}\u0000${separator}\u0000${follower}`;
+    const key = `${textKey(leader)}|${JSON.stringify(separator)}|${textKey(follower)}`;
     const known = seamCache.get(key);
     if (known !== undefined) {
         seamCache.delete(key);
@@ -2314,7 +2335,7 @@ export function seamHolds(leader: string, separator: string, follower: string): 
         const next = tokens.findIndex(token => token.level === 0 && (mapOf(token)?.[0] ?? -1) >= line);
         holds = readingOf(next < 0 ? tokens : tokens.slice(0, next)) === readingOf(md.parse(leader, {}));
     }
-    if (seamCache.size >= UNIT_READ_CACHE_SIZE) {
+    if (seamCache.size >= SEAM_CACHE_SIZE) {
         seamCache.delete(seamCache.keys().next().value as string);
     }
     seamCache.set(key, holds);
