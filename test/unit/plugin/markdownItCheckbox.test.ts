@@ -124,6 +124,10 @@ suite('MarkdownItCheckbox', () => {
         // Foreign content self-closes in HTML, unlike an HTML element.
         assert.strictEqual(render(html, '- [ ] a <svg/> b [ ] c\n'), `<ul>\n<li>${box('a <svg/> b ')}${box('c')}</li>\n</ul>\n`);
         assert.strictEqual(render(html, '[ ] a <math/> b [x] c\n'), `<p>${box('a <math/> b ')}${box('c', true)}</p>\n`);
+        // A space before the slash, capitals and attributes change nothing.
+        assert.strictEqual(render(html, '[ ] a <svg /> b [x] c\n'), `<p>${box('a <svg /> b ')}${box('c', true)}</p>\n`);
+        assert.strictEqual(render(html, '[ ] a <SVG/> b [x] c\n'), `<p>${box('a <SVG/> b ')}${box('c', true)}</p>\n`);
+        assert.strictEqual(render(html, '[ ] a <svg viewBox="0 0 1 1"/> b [x] c\n'), `<p>${box('a <svg viewBox="0 0 1 1"/> b ')}${box('c', true)}</p>\n`);
         // Without the slash they open, and the later box stays text.
         assert.strictEqual(render(html, '[ ] a <svg> b [x] c\n'), `<p>${box('a <svg> b [x] c')}</p>\n`);
         assert.strictEqual(render(html, '[ ] a <math> b [x] c\n'), `<p>${box('a <math> b [x] c')}</p>\n`);

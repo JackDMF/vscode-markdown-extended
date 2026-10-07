@@ -1,5 +1,5 @@
 import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
-import { VOID_ELEMENTS } from '../syntax/voidElements';
+import { SELF_CLOSING_FOREIGN, VOID_ELEMENTS } from '../syntax/voidElements';
 
 // Our own rule in place of markdown-it-checkbox's, rendering the same markup
 // (`<input type="checkbox" id="checkboxN"><label for="checkboxN">…</label>`)
@@ -18,9 +18,6 @@ import { VOID_ELEMENTS } from '../syntax/voidElements';
 // label takes in (`[ ] a *b [x] c*`, a line's start included) stays text, as
 // no label holds another.
 const BOX = /(^|\s)\[(x|\s|_|-)\]\s/i;
-
-// The foreign-content elements whose `/>` closes them, as in HTML.
-const SELF_CLOSING_FOREIGN = new Set(['svg', 'math']);
 
 type TokenConstructor = new (type: string, tag: string, nesting: number) => Token;
 
@@ -139,12 +136,15 @@ function labelEnd(children: Token[], from: number): [number, [number, RegExpExec
 // name; undefined for a void tag, a comment or the like. A slash closes
 // nothing but a void element's tag: `<span/>` opens a span, as in HTML.
 // Foreign content is the exception: `<svg/>` and `<math/>` close themselves.
+// An unquoted value ending in `/` (`<svg width=10/>`) reads as closing here
+// though a browser keeps the svg open: markdown-it's unquoted values allow `/`
+// and we do not parse attributes.
 function htmlTag(content: string): { name: string, closing: boolean } | undefined {
     const match = /^<(\/?)([A-Za-z][A-Za-z0-9-]*)/.exec(content);
     if (!match) { return undefined; }
     const name = match[2].toLowerCase();
     if (VOID_ELEMENTS.has(name)) { return undefined; }
-    if (!match[1] && SELF_CLOSING_FOREIGN.has(name) && /\/>$/.test(content)) { return undefined; }
+    if (!match[1] && SELF_CLOSING_FOREIGN.has(name) && content.endsWith('/>')) { return undefined; }
     return { name, closing: !!match[1] };
 }
 
