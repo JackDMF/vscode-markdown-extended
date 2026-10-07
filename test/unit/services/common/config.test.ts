@@ -172,6 +172,13 @@ suite('Config Tests', () => {
         }
     });
 
+    test('plugins.disabled written as neither a string nor an array of strings disables nothing it cannot read, and never throws', () => {
+        for (const [value, expected] of [[true, []], [1, []], [{}, []], [[1, null, 'kbd'], ['kbd']]] as const) {
+            getConfigurationStub.withArgs('markdownExtended').returns(mockConf({ 'plugins.disabled': value }));
+            assert.deepStrictEqual(config.disabledPlugins, expected, JSON.stringify(value));
+        }
+    });
+
     test('should return empty array for empty disabledPlugins', () => {
         const mockConfig = mockConf({ disabledPlugins: '' });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);

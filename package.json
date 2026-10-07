@@ -498,7 +498,13 @@
           "scope": "resource"
         },
         "markdownExtended.plugins.disabled": {
-          "type": "string",
+          "type": [
+            "string",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          },
           "default": "",
           "description": "%markdownExtended.configuration.disabledPlugins%",
           "order": 40
@@ -632,7 +638,13 @@
           "scope": "resource"
         },
         "markdownExtended.disabledPlugins": {
-          "type": "string",
+          "type": [
+            "string",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          },
           "default": "",
           "deprecationMessage": "%markdownExtended.configuration.deprecated%"
         },

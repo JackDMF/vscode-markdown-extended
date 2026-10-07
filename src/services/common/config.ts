@@ -93,14 +93,18 @@ export class Config extends ConfigReader {
     /**
      * Get list of disabled markdown-it plugins.
      * Plugin names should be provided without the 'markdown-it-' prefix.
-     * The setting is declared a comma-separated string, but users write an
-     * array too (`["wiki-embed"]`): an array is joined and read the same way.
+     * The setting is a comma-separated string or an array of names
+     * (`["wiki-embed"]`): an array's strings are joined and read the same way.
+     * Any other value disables nothing: the registry reads this while it is
+     * built, and one value it cannot read must not take it down.
      *
      * @returns Array of disabled plugin names (e.g., ['toc', 'container'])
      */
     get disabledPlugins(): string[] {
-        const raw = this.migrated<string | string[]>('plugins.disabled', 'disabledPlugins');
-        const conf = (Array.isArray(raw) ? raw.join(',') : (raw || '')).trim();
+        const raw = this.migrated<unknown>('plugins.disabled', 'disabledPlugins');
+        const names = Array.isArray(raw) ? raw.filter((p): p is string => typeof p === 'string').join(',')
+            : typeof raw === 'string' ? raw : '';
+        const conf = names.trim();
         if (!conf) {return [];}
         return conf.toLowerCase().split(',').map(p => p.trim());
     }
