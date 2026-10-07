@@ -50,7 +50,16 @@ interface StateInternals {
     inTableCell?: boolean;
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
     flushClose(size?: number): void;
+    /** prosemirror-markdown's own: whether the output is at the start of a block, where a line-start character is escaped. */
+    atBlockStart: boolean;
+    /** prosemirror-markdown's own: the serializer spec of the mark named `name`. */
+    getMark(name: string): MarkSpec;
+    /** prosemirror-markdown's own: whether the next node from `index` that is not a hard break carries `marks` as its first marks. */
+    isMarkAhead(parent: Node, index: number, marks: readonly Mark[]): boolean;
 }
+
+/** A mark's entry in the serializer's table (prosemirror-markdown's `MarkSerializerSpec`, which it does not export). */
+type MarkSpec = ConstructorParameters<typeof MarkdownSerializer>[1][string];
 
 /**
  * `text` with every marker character that stands in a run of two or more
