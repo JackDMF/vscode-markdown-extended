@@ -451,13 +451,19 @@ one ranked first ends sooner, the other was closed with it and opened again:
 `==[a]{.x} b==` was written `[==a==]{.x} ==b==`, two highlights. The serializer now opens
 them in the order their runs end, the longer one outside, ties in schema order
 (`openingOrder` in `serialize.ts`, inserted into a copy of the library's `renderInline`
-on `OrderedInlineState`; `serialize.test.ts` guards the copy against the library). One
+on `OrderedInlineState`; `serialize.test.ts` guards the copy against the library). The
+parser judges each textblock where the two orders write different text: the order of the
+runs where its text reads back as the textblock, else the library's where that does —
+in `~~*==a==*b~~` the `*` between `=` and `b` cannot close, while `*~~==a==~~*~~b~~` reads
+as written — else the order of the runs, which reads back no worse. A delimiter's flanking
+is asked of the parser, never modelled. One
 nesting the parser cannot read stays split: a key beginning with a span or a link, since
 markdown-it-kbd reads the `[[` of `[[[` as a nested key; it is written as two keys
 (`[[[a]]]{.x}[[ b]]`), which is also what the page draws (`CANNOT_LEAD`). `assertStable`
 does not see a split run — it is written the same way twice — so `inline.test.ts` judges
-every ordered pair of mixable marks in six positions by an element count of the rendered
-text (`assertOneElementPerRun`). Two limits remain. The page's `DOMSerializer` draws by
+every ordered pair of mixable marks in six positions, glued to what follows or not, by an
+element count of the rendered text (`assertOneElementPerRun`), and every triple by whether
+it reads back wherever the library's order does. Two limits remain. The page's `DOMSerializer` draws by
 rank, so it shows `<i><mark>a</mark></i><mark> b</mark>` where the file holds
 `<mark><i>a</i> b</mark>`; the same to the eye unless a stylesheet styles a run's edges.
 And a mark already open that ends inside one opened later is still split

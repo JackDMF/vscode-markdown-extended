@@ -681,8 +681,10 @@ export const editorSchema = new Schema({
         right_sidebar: notePart(RS.cssClass, { group: 'inline', parseDOM: [{ tag: `span.${RS.cssClass}` }] }),
     },
     marks: {
-        // Req Explorer's decoration: outermost, so it never splits the marks
-        // written inside it, and not inclusive, so typing after an id is prose.
+        // Req Explorer's decoration, written as nothing. It opens by its run as
+        // any mark does (`openingOrder` in `serialize.ts`), so one that ends
+        // inside another mark's run does not split it; its rank only breaks
+        // ties. Not inclusive, so typing after an id is prose.
         req_ref: {
             inclusive: false,
             attrs: {
