@@ -893,7 +893,7 @@ class Verifier {
         // there, the pair makes it the definition it was meant to be. Its
         // line and its term's may change their blocks; no other line may. So
         // may it when the pair is taken out again.
-        const defining = toggles.filter(t => t.writes.length === 0 && t.removes.length === 0 && t.changes.length === 1)
+        const definitions = toggles.filter(t => t.writes.length === 0 && t.removes.length === 0 && t.changes.length === 1)
             .filter(t => {
                 const line = this.document.lineAt(this.document.positionAt(t.start).line);
                 const from = this.document.offsetAt(line.range.start);
@@ -902,13 +902,8 @@ class Verifier {
                 const bare = line.text.slice(0, c.start - from) + line.text.slice(c.end - from);
                 return BARE_DEFINITION.test(bare);
             })
-            .map(t => this.document.positionAt(t.start).line - part.start);
-        // Its term stands on the line above, or one blank line higher
-        // (markdown-it-deflist skips one), a quote's `>` alone as blank.
-        const textLines = text.split(/\r?\n/);
-        const termOf = (line: number) => line - 1 > 0 && (before.kindOf(line - 1) === 'blank' || NOTHING_BUT_QUOTES.test(textLines[line - 1]))
-            ? line - 2 : line - 1;
-        const terms = defining.map(termOf);
+            .map(t => ({ line: this.document.positionAt(t.start).line - part.start, written: t.changes[0].text !== '' }));
+        const defining = definitions.map(d => d.line);
         // The structure. A free line is blank before or after, or holds no text
         // but the markers taken out or written either time: a blank line that
         // becomes the pair's paragraph or a thematic break, an empty item that
@@ -943,6 +938,25 @@ class Verifier {
                 return { ...t, first };
             });
         };
+        const blocksBefore = normalized(before, text), blocksAfter = normalized(after, out);
+        // Each definition's term, as the reading with the pair has it: the
+        // term of the list's `dd` read from the `:` line. Where the engine
+        // pairs none, there is no term.
+        const terms = definitions.flatMap(({ line, written }) => {
+            const lists: { end: number; term?: number }[] = [];
+            for (const t of written ? blocksAfter : blocksBefore) {
+                while (lists.length > 0 && lists[lists.length - 1].end <= t.first) {lists.pop();}
+                const list = lists[lists.length - 1];
+                if (t.type === 'dl_open') {
+                    lists.push({ end: t.end });
+                } else if (t.type === 'dt_open' && list !== undefined) {
+                    list.term = t.first;
+                } else if (t.type === 'dd_open' && t.first === line && list?.term !== undefined) {
+                    return [list.term];
+                }
+            }
+            return [];
+        });
         const exempt = ({ type, first, end }: BlockToken) => {
             // The definition's own term, definition and paragraph start on its term's line or its `:` line.
             if (DEFINITION_TOKENS.has(type) && (defining.includes(first) || terms.includes(first))) {return true;}
@@ -1021,7 +1035,6 @@ class Verifier {
             }
             return true;
         };
-        const blocksBefore = normalized(before, text), blocksAfter = normalized(after, out);
         const a = [...listsOf(blocksBefore), ...kept(blocksBefore)], b = [...listsOf(blocksAfter), ...kept(blocksAfter)];
         if (a.length !== b.length || a.some((entry, k) => !same(entry, b[k]))) {return 'all';}
         if (JSON.stringify(attributed(before, text, takenOf(changes), blocksBefore)) !== JSON.stringify(attributed(after, out, written, blocksAfter))) {return 'all';}

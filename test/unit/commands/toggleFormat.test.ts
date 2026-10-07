@@ -417,6 +417,26 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('bold', 'Term\n\n: **‸**'), 'Term\n\n: ‸');
         // In a quote the line between is `>`, which holds no text and is as blank.
         assert.strictEqual(await toggle('bold', '> Term\n>\n> : ‸'), '> Term\n>\n> : **‸**');
+        assert.strictEqual(await toggle('bold', '> Term\n>\n> : **‸**'), '> Term\n>\n> : ‸');
+        // A term after another list's, and a definition marked `~`.
+        assert.strictEqual(await toggle('bold', 'Term1\n: def1\n\nTerm2\n\n: ‸'), 'Term1\n: def1\n\nTerm2\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n\n~ ‸'), 'Term\n\n~ **‸**');
+    });
+
+    test('a definition made by the pair below another of its term leaves that one as it was', async () => {
+        assert.strictEqual(await toggle('bold', 'Term\n: def1\n\n: ‸'), 'Term\n: def1\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n\n: def1\n\n: ‸'), 'Term\n\n: def1\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n: def1\n\n: **‸**'), 'Term\n: def1\n\n: ‸');
+        // A pair between would continue `def1`'s paragraph: that one is not written.
+        assert.strictEqual(await toggle('italics', 'Term\n: def1\n‸\n: ‸'), 'Term\n: def1\n‸\n: *‸*');
+    });
+
+    test('a `:` line the engine pairs with no term is a paragraph the pair is written into, and the block above stays as it was', async () => {
+        assert.strictEqual(await toggle('bold', '- item\n\n: ‸'), '- item\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n>\n: ‸'), 'Term\n>\n: **‸**');
+        assert.strictEqual(await toggle('bold', '> > Term\n>\n> > : ‸'), '> > Term\n>\n> > : **‸**');
+        // A pair between would continue the item's paragraph: that one is not written.
+        assert.strictEqual(await toggle('italics', '- item\n‸\n: ‸'), '- item\n‸\n: *‸*');
     });
 
     test('a definition made by the pair joins the list before or after it', async () => {
