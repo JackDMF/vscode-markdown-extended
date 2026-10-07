@@ -21,7 +21,7 @@ import { PositionMap, SourcePosition, caretOf, createPositionMap } from '../posi
 import type { CodeActionItem, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
-import { serializeDocument, setInlineEngine, setWriteOptions } from '../serialize';
+import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
@@ -194,27 +194,16 @@ function scheduleFlush(): void {
 }
 
 /**
- * The 0-based line the top-level node holding `pos` starts on, counted in the
- * text the serializer would write for everything before it — exact while
- * those blocks are untouched, which is when a line number is worth anything.
+ * The 0-based line the top-level node holding `pos` starts on, in the text the
+ * page would write (`pageMap`): read from the layout that places it, so a seam
+ * the layout widened moves it as it moves the text.
  */
 function lineAt(pos: number): number {
     if (!view || !current) {
         return 0;
     }
     const doc = view.state.doc;
-    const index = doc.resolve(Math.min(pos, doc.content.size)).index(0);
-    const before: Node[] = [];
-    for (let i = 0; i < index; i++) {
-        before.push(doc.child(i));
-    }
-    const prefix = serializeDocument(
-        { doc: editorSchema.topNodeType.create(null, before), eol: current.eol, tail: '' },
-        { defaultWrap: current.defaultWrap },
-    );
-    const node = index < doc.childCount ? doc.child(index) : null;
-    const gap = (node?.attrs.gap as string | null | undefined) ?? (prefix === '' ? '' : '\n');
-    return (prefix.match(/\n/g) ?? []).length + (gap.match(/\n/g) ?? []).length;
+    return pageMap(doc).blockLine(doc.resolve(Math.min(pos, doc.content.size)).index(0));
 }
 
 /** Where each image's `src` is loaded from, as the host resolves it (`images.ts`). */
@@ -613,7 +602,7 @@ function elementWithId(id: string, within: Element = mount): HTMLElement | null 
  * browser finds may be one that carries a slug. Without a line (a fragment no
  * heading carries) the page's element with that id, such as a footnote's, is
  * scrolled to. Blocks' start lines only grow, so the block is found by
- * bisection over `lineAt`, which serializes what stands before a block.
+ * bisection over `lineAt`, which reads each block's start from the layout.
  *
  * A heading inside a block (a blockquote, an admonition, a `:::` container)
  * comes with its own line, but the page knows the lines of top-level blocks

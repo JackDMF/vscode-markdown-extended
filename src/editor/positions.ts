@@ -148,6 +148,12 @@ export interface PositionMap {
     pagePositionOf(position: SourcePosition): MappedPagePosition | null;
     /** `pagePositionOf` for both ends, in document order. */
     pageRangeOf(range: SourceRange): MappedPageRange | null;
+    /**
+     * The 0-based line of `text` top-level node `index`'s body starts on, as
+     * the layout placed it — after the separator its seam was written with,
+     * however that was widened; past the last node, the line the last body ends on.
+     */
+    blockLine(index: number): number;
 }
 
 /** The mapping for the document `parsed` holds, against the text it serializes to with `options`. */
@@ -575,6 +581,15 @@ class DocumentPositions implements PositionMap {
             return null;
         }
         return { from: Math.min(start.pos, end.pos), to: Math.max(start.pos, end.pos), approximate: start.approximate || end.approximate };
+    }
+
+    blockLine(index: number): number {
+        const blocks = this.layout.blocks;
+        if (index < blocks.length) {
+            return this.lines.positionAt(blocks[Math.max(0, index)].start).line;
+        }
+        const last = blocks[blocks.length - 1];
+        return this.lines.positionAt(last === undefined ? 0 : last.start + last.body.length).line;
     }
 
     private at(offset: number, approximate: boolean): MappedSourcePosition {
