@@ -11,7 +11,7 @@ import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
-import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsWikiEmbeds, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
+import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsAttrs, currentReadsWikiEmbeds, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -831,11 +831,14 @@ const READ_CACHE_SIZE = 512;
  * Read textblocks with the engine `definition` describes — the host's, posted
  * with each document (`inlineEngineDefinition`): its linkify and typographer
  * settings, the registry's plugins the page runs, whether VS Code's math
- * claims `$`, and whether it reads wiki embeds. The literals the page writes
- * are read back with it too (`attrs.ts`, `readUnit`): the engine is one,
- * `currentInlineEngine`, and `attrsEngineFor` is it with markdown-it-attrs.
- * The save and the check of an edit write by it alike: whether a `!` before
- * a key is escaped is its `wikiEmbeds`, read where the key is written.
+ * claims `$`, whether it reads wiki embeds and whether it reads attributes.
+ * The literals the page writes are read back with it too (`attrs.ts`,
+ * `readUnit`): the engine is one, `currentInlineEngine`, and `attrsEngineFor`
+ * is it with markdown-it-attrs where the definition's `attrs` says the host
+ * runs it, and it alone where not. The save and the check of an edit write by
+ * it alike: whether a `!` before a key is escaped is its `wikiEmbeds`, read
+ * where the key is written, and whether a `{…}` is escaped or a literal line
+ * kept apart from the next block is its `attrs`.
  */
 export function setInlineEngine(definition: InlineEngineDefinition): void {
     if (!setCurrentInlineDefinition(definition)) {
@@ -1816,9 +1819,13 @@ export function itemTakesLiteral(item: Node): boolean {
  * Whether a block's text, as written, ends in a `{…}` line of its own — a
  * list's, a table's, a quote's `> {…}`, a paragraph's `line` literal. The next
  * block's first line straight after it would continue it, so the writer puts a
- * blank line between them (`serializeLayout`).
+ * blank line between them (`serializeLayout`). Where the host reads no
+ * attributes (`currentReadsAttrs`) such a line is text, and none is.
  */
 function endsInLiteralLine(text: string): boolean {
+    if (!currentReadsAttrs()) {
+        return false;
+    }
     const last = text.replace(/\s+$/, '').split('\n').pop() ?? '';
     return parseAttrsLiteral(last.replace(/^[ \t]{0,3}>?[ \t]*/, '')) !== null;
 }
@@ -2223,9 +2230,9 @@ function sidebarBody(text: string): string {
 
 /**
  * `text`, a part as the save writes it, parsed whole by the page's engine with
- * markdown-it-attrs (`attrsEngineFor`), as the preview reads it: what the
- * plugin gave each token (`attrsGivenTo`), every span and every sidebar.
- * Remembered by the text.
+ * markdown-it-attrs where the host runs it (`attrsEngineFor`), as the preview
+ * reads it: what the plugin gave each token (`attrsGivenTo`) — nothing where
+ * it does not run — every span and every sidebar. Remembered by the text.
  */
 function readUnit(text: string, key = text): UnitRead {
     let read = unitReadCache.get(key);

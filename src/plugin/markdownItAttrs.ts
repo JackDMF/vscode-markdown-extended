@@ -2,6 +2,7 @@ import { MarkdownIt, StateBase, Token } from "../@types/markdown-it";
 import markdownItAttrs from 'markdown-it-attrs';
 import { findLeftDelimiter, isTextBrace, textBraceCloses, withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { EXPLICIT_ID, explicitHeadingId, headingIds } from '../syntax/headingSlug';
+import { hasEnabledRule } from './shared';
 
 // markdown-it-attrs recomputes a table's cells from every `rowspan` and
 // `colspan` it finds, to honour its own `{rowspan=2}`. It cannot tell those
@@ -46,6 +47,19 @@ interface TextBraces {
 }
 
 const textBraces = new WeakMap<StateBase, TextBraces>();
+
+/**
+ * Whether `md` reads `{…}` as attributes: markdown-it-attrs' `curly_attributes`
+ * core rule is registered and enabled. Only that rule decides, because the
+ * fact fails safe one way only: taken as on where it is off, the page escapes
+ * a brace the preview would have shown as text; taken as off where it is on,
+ * the page writes `{.x}` plain and the preview takes the user's text as
+ * attributes. So an engine with the wrapper's text-brace rules off, or with
+ * another extension's copy of the plugin, still reads as on.
+ */
+export function readsAttrs(md: MarkdownIt): boolean {
+    return hasEnabledRule(md.core.ruler, 'curly_attributes');
+}
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
