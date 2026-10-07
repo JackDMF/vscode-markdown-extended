@@ -428,6 +428,53 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     },
 };
 
+/**
+ * The marks a mark may not stand first inside, because the parser cannot read
+ * the text that would make. markdown-it-kbd (2.2.2) counts every `[[` inside a
+ * key as a nested key, so a key whose text begins with `[` has no closing:
+ * `[[[a]{.x} b]]` reads as the text `[` and the key `a]{.x} b`, and
+ * `[[[a](url) b]]` likewise. A key may begin with anything but a span or a
+ * link; where its run begins with one, the key opens inside it (`openingOrder`).
+ */
+const CANNOT_LEAD: Readonly<Record<string, readonly string[]>> = { kbd: ['attr_span', 'link'] };
+
+/**
+ * The order the marks of the node at `index` are opened in: `marks` as
+ * `renderInline` holds it, `marks.slice(0, keep)` already open, the ones up
+ * to `len` about to open (past `len` is the `escape: false` mark, written
+ * with the text). prosemirror-markdown opens them in schema order, a rank,
+ * so where two open together and the one ranked first ends sooner, the other
+ * is closed with it and opened again (`==[a]{.x} b==` written
+ * `[==a==]{.x} ==b==`). Here the mixable ones open in the order their runs
+ * end, the one that ends last outermost, ties in schema order, so each run is
+ * one; then a mark `CANNOT_LEAD` names moves inside the marks it may not
+ * stand first in. Marks that are not mixable keep their places after them.
+ */
+function openingOrder(parent: Node, index: number, marks: readonly Mark[], keep: number, len: number,
+    getMark: (name: string) => MarkSpec): readonly Mark[] {
+    if (len - keep < 2) {
+        return marks;
+    }
+    const opening = marks.slice(keep, len);
+    let mixable = 0;
+    while (mixable < opening.length && getMark(opening[mixable].type.name)?.mixable) {
+        mixable++;
+    }
+    const ordered = opening.slice(0, mixable).map((mark, rank) => ({ mark, rank, end: markSpan(mark, parent, index)[1] }));
+    ordered.sort((a, b) => b.end - a.end || a.rank - b.rank);
+    for (let moved = true; moved;) {
+        moved = false;
+        for (let k = 0; k + 1 < ordered.length; k++) {
+            const outside = CANNOT_LEAD[ordered[k].mark.type.name] ?? [];
+            if (ordered.slice(k + 1).some(o => outside.includes(o.mark.type.name))) {
+                ordered.splice(k + 1, 0, ...ordered.splice(k, 1));
+                moved = true;
+            }
+        }
+    }
+    return [...marks.slice(0, keep), ...ordered.map(o => o.mark), ...opening.slice(mixable), ...marks.slice(len)];
+}
+
 // ---------------------------------------------------------------------------
 // Nodes
 // ---------------------------------------------------------------------------
