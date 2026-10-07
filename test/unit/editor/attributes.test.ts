@@ -12,7 +12,7 @@ import { withoutId } from '../../../src/editor/attrs';
 import { editorSchema } from '../../../src/editor/schema';
 import {
     ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, INDENTED_CODE_ATTRS_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt,
-    commitAttributes, literalOf, literalRefusal, spanLockReason,
+    commitAttributes, containerNameOf, literalOf, literalRefusal, spanLockReason,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -411,6 +411,12 @@ suite('Editor Attributes…: where the engine reads no attributes, nothing offer
         assert.strictEqual(refusalAt(caretAt(off, 'Title')), NO_ATTRS_REFUSAL, 'a heading\'s {#id}');
         assert.strictEqual(spanLockReason(select(off)), NO_ATTRS_REFUSAL, 'Span with class');
         assert.strictEqual(literalRefusal('{.x}'), NO_ATTRS_REFUSAL, 'a span\'s Edit attributes');
+    });
+
+    test('a container\'s info ending in {…} is refused where the engine takes it as attributes, and kept as text where it reads none', () => {
+        assert.strictEqual(containerNameOf('warning big {.x}'), null);
+        setInlineEngine(inlineEngineDefinition(noAttrs));
+        assert.deepStrictEqual(containerNameOf('warning big {.x}'), { name: 'warning', info: ' big {.x}' });
     });
 
     test('a block ending in a {…} line is text there, and the next block is not pushed off it by a blank line', () => {

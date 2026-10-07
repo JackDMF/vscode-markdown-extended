@@ -690,10 +690,11 @@ export function unwrapTransaction(state: EditorState, pos: number): Transaction 
  * The name and info a container field's value gives: its first word and the
  * rest, verbatim (`warning big` → `warning`, ` big`); `null` when the plugin
  * would not read it back so — a line break, or a trailing `{…}`, which
- * markdown-it-attrs takes off the info as attributes.
+ * markdown-it-attrs takes off the info as attributes where the host's engine
+ * runs it (`currentReadsAttrs`); where not, the `{…}` is text the info keeps.
  */
 export function containerNameOf(value: string): { name: string; info: string } | null {
-    if (/[\r\n]/.test(value) || endLiteralOf(value) !== null) {
+    if (/[\r\n]/.test(value) || (currentReadsAttrs() && endLiteralOf(value) !== null)) {
         return null;
     }
     const [, name, info] = /^\s*(\S*)([\s\S]*)$/.exec(value) ?? ['', '', ''];
