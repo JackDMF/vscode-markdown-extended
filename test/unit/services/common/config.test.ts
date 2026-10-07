@@ -163,6 +163,15 @@ suite('Config Tests', () => {
         assert.ok(Array.isArray(result));
     });
 
+    test('plugins.disabled is read written as an array or as a string, under either key', () => {
+        for (const key of ['plugins.disabled', 'disabledPlugins']) {
+            getConfigurationStub.withArgs('markdownExtended').returns(mockConf({ [key]: [' Wiki-Embed', 'ATTRS '] }));
+            assert.deepStrictEqual(config.disabledPlugins, ['wiki-embed', 'attrs'], `${key} as an array`);
+            getConfigurationStub.withArgs('markdownExtended').returns(mockConf({ [key]: ' Wiki-Embed, ATTRS ' }));
+            assert.deepStrictEqual(config.disabledPlugins, ['wiki-embed', 'attrs'], `${key} as a string`);
+        }
+    });
+
     test('should return empty array for empty disabledPlugins', () => {
         const mockConfig = mockConf({ disabledPlugins: '' });
         getConfigurationStub.withArgs('markdownExtended').returns(mockConfig);
