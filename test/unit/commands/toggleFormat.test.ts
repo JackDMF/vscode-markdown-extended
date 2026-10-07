@@ -412,6 +412,13 @@ suite('Inline toggles: what a selection toggles', () => {
         assert.strictEqual(await toggle('mark', '‸\n{.c}'), '==‸==\n{.c}');
     });
 
+    test('a definition made by the pair may stand a blank line below its term, which stays as it was', async () => {
+        assert.strictEqual(await toggle('bold', 'Term\n\n: ‸'), 'Term\n\n: **‸**');
+        assert.strictEqual(await toggle('bold', 'Term\n\n: **‸**'), 'Term\n\n: ‸');
+        // In a quote the line between is `>`, which holds no text and is as blank.
+        assert.strictEqual(await toggle('bold', '> Term\n>\n> : ‸'), '> Term\n>\n> : **‸**');
+    });
+
     test('a definition made by the pair joins the list before or after it', async () => {
         assert.strictEqual(await toggle('bold', 'Term1\n: def1\n\nTerm2\n: ‸'), 'Term1\n: def1\n\nTerm2\n: **‸**');
         assert.strictEqual(await toggle('bold', 'Term1\n: def1\n\nTerm2\n: **‸**'), 'Term1\n: def1\n\nTerm2\n: ‸');

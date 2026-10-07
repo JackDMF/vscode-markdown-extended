@@ -903,6 +903,12 @@ class Verifier {
                 return BARE_DEFINITION.test(bare);
             })
             .map(t => this.document.positionAt(t.start).line - part.start);
+        // Its term stands on the line above, or one blank line higher
+        // (markdown-it-deflist skips one), a quote's `>` alone as blank.
+        const textLines = text.split(/\r?\n/);
+        const termOf = (line: number) => line - 1 > 0 && (before.kindOf(line - 1) === 'blank' || NOTHING_BUT_QUOTES.test(textLines[line - 1]))
+            ? line - 2 : line - 1;
+        const terms = defining.map(termOf);
         // The structure. A free line is blank before or after, or holds no text
         // but the markers taken out or written either time: a blank line that
         // becomes the pair's paragraph or a thematic break, an empty item that
@@ -939,7 +945,7 @@ class Verifier {
         };
         const exempt = ({ type, first, end }: BlockToken) => {
             // The definition's own term, definition and paragraph start on its term's line or its `:` line.
-            if (DEFINITION_TOKENS.has(type) && defining.some(line => first === line || first === line - 1)) {return true;}
+            if (DEFINITION_TOKENS.has(type) && (defining.includes(first) || terms.includes(first))) {return true;}
             // A paragraph of pairs alone, over one line or more, may come or go.
             if (!FREE_TOKENS.has(type)) {return false;}
             for (let line = first; line < Math.max(end, first + 1); line++) {
@@ -958,7 +964,7 @@ class Verifier {
                 if (t.type !== 'dd_open' || !exempt(t)) {continue;}
                 for (let line = t.first - 1; line < t.end; line++) {definition.add(line);}
             }
-            const made = (line: number) => defining.includes(line) || defining.includes(line + 1) || definition.has(line);
+            const made = (line: number) => defining.includes(line) || terms.includes(line) || definition.has(line);
             const loose = (line: number) => free.has(line) || made(line);
             const lists: BlockToken[] = [];
             for (const t of structure) {
