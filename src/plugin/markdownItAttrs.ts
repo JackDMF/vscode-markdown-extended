@@ -49,20 +49,16 @@ interface TextBraces {
 const textBraces = new WeakMap<StateBase, TextBraces>();
 
 /**
- * The core rules that make the registry's attrs plugin (`MarkdownItAttrs`):
- * markdown-it-attrs' own, and this wrapper's that keep a text brace from it.
- */
-const ATTRS_RULES = ['curly_attributes', 'mep_text_braces_aside', 'mep_text_braces_back'];
-
-/**
- * Whether `md` reads attribute literals as the Visual Editor's page reads
- * them: the registry's attrs plugin runs as the page runs it — markdown-it-
- * attrs' `curly_attributes` and the wrapper's text-brace rules around it are
- * all registered and none disabled. An engine with one of them off reads
- * other literals than the page would, and is taken as reading none.
+ * Whether `md` reads `{…}` as attributes: markdown-it-attrs' `curly_attributes`
+ * core rule is registered and enabled. Only that rule decides, because the
+ * fact fails safe one way only: taken as on where it is off, the page escapes
+ * a brace the preview would have shown as text; taken as off where it is on,
+ * the page writes `{.x}` plain and the preview takes the user's text as
+ * attributes. So an engine with the wrapper's text-brace rules off, or with
+ * another extension's copy of the plugin, still reads as on.
  */
 export function readsAttrs(md: MarkdownIt): boolean {
-    return ATTRS_RULES.every(name => hasEnabledRule(md.core.ruler, name));
+    return hasEnabledRule(md.core.ruler, 'curly_attributes');
 }
 
 // eslint-disable-next-line @typescript-eslint/naming-convention

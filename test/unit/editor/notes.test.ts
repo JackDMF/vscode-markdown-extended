@@ -673,10 +673,13 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
         // markdown-it-attrs is no page plugin, so only `attrs` says the host ran it.
         const noAttrs = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-attrs'), extend: [] });
         assert.deepStrictEqual(inlineEngineDefinition(noAttrs), { ...DEFAULT_INLINE_ENGINE, attrs: false });
-        // The plugin as the page runs it is the wrapper: its rules keeping a text brace from attrs are part of the fact.
-        for (const rule of ['curly_attributes', 'mep_text_braces_aside', 'mep_text_braces_back']) {
-            const offByExtender = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable(rule); }] });
-            assert.strictEqual(inlineEngineDefinition(offByExtender).attrs, false, `${rule}: read off the engine as built`);
+        // Only `curly_attributes` decides: off by an extender, the fact is off; the wrapper's text-brace
+        // rules off leave it on, since taken as off it would write a `{.x}` the preview still reads.
+        const offByExtender = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable('curly_attributes'); }] });
+        assert.strictEqual(inlineEngineDefinition(offByExtender).attrs, false, 'curly_attributes: read off the engine as built');
+        for (const rule of ['mep_text_braces_aside', 'mep_text_braces_back']) {
+            const wrapperOff = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable(rule); }] });
+            assert.strictEqual(inlineEngineDefinition(wrapperOff).attrs, true, `${rule}: attrs still run, so the fact stays on`);
         }
     });
 
