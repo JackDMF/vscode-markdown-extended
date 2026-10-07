@@ -668,10 +668,10 @@ function shown(doc: Node): { facts: string; raw: number } {
  * writes it, read by `host`. A document holding a source block is passed
  * over: its neighbours are written as they were read. `wrong` lists every
  * edit allowed whose save does not show what the page shows, or refused whose
- * save does; `outside` counts those whose save the host makes a source block
- * for another reason than a literal (an emoji shortcut).
+ * save does — a save the host makes a source block for any reason (an emoji
+ * shortcut an escape left beside it) included.
  */
-function property(host: MarkdownIt, count: number): { docs: number; allowed: number; refused: number; outside: number; wrong: string[] } {
+function property(host: MarkdownIt, count: number): { docs: number; allowed: number; refused: number; wrong: string[] } {
     let seed = 11;
     const next = (n: number) => {
         seed ^= seed << 13;
@@ -682,7 +682,8 @@ function property(host: MarkdownIt, count: number): { docs: number; allowed: num
         return seed % n;
     };
     const bits = ['$', '$', '$', ' ', ' ', 'a', '1', '`', 'x', '.', '(', ')', '*', '_', '@', '[s]{.c}', '[t]{title="a $b"}', '[u]{title="c$ d"}',
-        '[v]{title="$ e"}', '$y$', '@z@', '`$(pwd)`', '&#36;', '&#96;', 'http://e.com/', '\\$', '==', '^', '~', ':', '"', '5"', 'b {.k}'];
+        '[v]{title="$ e"}', '$y$', '@z@', '`$(pwd)`', '&#36;', '&#96;', 'http://e.com/', '\\$', '==', '^', '~', ':', '"', '5"', 'b {.k}',
+        ':)', ';)', '<3', '8-)'];
     const literals = ['{.c}', '{title="a $b"}', '{title="d$ e"}', '{data-p="$5 - $10"}', '{#i}', '{title="m $ n"}', '{title="x$"}', '{.w title="$a"}'];
     const shapes: ((t: string, u: string, l: string, k: string) => string)[] = [
         (t, u, l) => `${t} ${l}\n`,
@@ -706,7 +707,7 @@ function property(host: MarkdownIt, count: number): { docs: number; allowed: num
         }
         return s.trim() === '' ? 'w' : s;
     };
-    const result = { docs: 0, allowed: 0, refused: 0, outside: 0, wrong: [] as string[] };
+    const result = { docs: 0, allowed: 0, refused: 0, wrong: [] as string[] };
     for (let i = 0; i < count; i++) {
         const source = shapes[next(shapes.length)](word(), word(), literals[next(literals.length)], literals[next(literals.length)]);
         const doc = parseDocument(host, source, {}).doc;
@@ -725,13 +726,6 @@ function property(host: MarkdownIt, count: number): { docs: number; allowed: num
             const want = shown(written);
             const got = shown(parseDocument(host, saved, {}).doc);
             const readsBack = got.facts === want.facts && got.raw === want.raw;
-            // A block the host leaves as source for what the page does not judge — an emoji shortcut
-            // the text now spells (`:)`, typed or met by an escape) — is outside the rule.
-            const why = got.raw > want.raw ? groupSourceBlocks(host.parse(saved, {}), splitLines(saved), definitionOf(host)).blocks.filter(b => b.kind === 'raw').map(b => b.reason).join('; ') : '';
-            if (!readsBack && why !== '' && !/attribute|literal|span/.test(why)) {
-                result.outside++;
-                return;
-            }
             result[reason === null ? 'allowed' : 'refused']++;
             if ((reason === null) !== readsBack) {
                 result.wrong.push(`${label} in ${JSON.stringify(source)}: ${reason ?? 'allowed'}; saved ${JSON.stringify(saved)}`);

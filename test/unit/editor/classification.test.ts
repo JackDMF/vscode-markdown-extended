@@ -244,6 +244,25 @@ suite('Editor block classification: a container with attributes', () => {
     });
 });
 
+/**
+ * An emoji the host reads in a paragraph makes it a source block (no editable
+ * node holds one). The save escapes every shortcut of the plugin's table where
+ * the host would read it, so what the page wrote opens editable again.
+ */
+suite('Editor block classification: an emoji shortcut', () => {
+    test('a paragraph saved as 5\\$\\:) opens as a paragraph holding 5$:)', () => {
+        const [paragraph, ...rest] = topChildren(parseDocument(hostEngine(), '5\\$\\:)\n').doc);
+        assert.deepStrictEqual([paragraph.type.name, rest.length], ['paragraph', 0]);
+        assert.strictEqual(paragraph.textContent, '5$:)');
+    });
+
+    test('as 5\\$:), what the save wrote before the shortcut was escaped, it is a source block: inline emoji', () => {
+        const text = '5\\$:)\n';
+        const grouped = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text), definitionOf(hostEngine())).blocks;
+        assert.deepStrictEqual(grouped.map(b => [b.kind, b.reason]), [['raw', 'inline emoji']]);
+    });
+});
+
 /** constructs.md's raw blocks: each one's first line and the reason `blocks.ts` gives. */
 const CONSTRUCTS_RAW: [string, string][] = [
     ['[[toc]]', 'toc_open'],
