@@ -2,7 +2,8 @@ import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, setInlineEngine, unwritableInNote } from '../../../src/editor/serialize';
+import { OrderedInlineState, SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, setInlineEngine, unwritableInNote } from '../../../src/editor/serialize';
+import { MarkdownSerializerState } from 'prosemirror-markdown';
 import { drawInline } from './fakeDom';
 import { hostEngine, topChildren, touched } from './helpers';
 
@@ -421,43 +422,124 @@ suite('Editor inline constructs: written back by rule', () => {
         assert.strictEqual(assertOneElementPerRun(content, runsIn(content) + 1), '[[[a]]]{.x}[[ b]]\n');
     });
 
-    test('every ordered pair of mixable marks, in every position of the run, round-trips as one run of each', () => {
-        const kinds: Record<string, () => ReturnType<typeof schema.mark>> = { em, strong, strike: () => schema.marks.strike.create(), mark: highlight, link, kbd: key, attr_span: span };
-        const positions: Record<string, (outer: () => ReturnType<typeof schema.mark>, inner: () => ReturnType<typeof schema.mark>) => Node[]> = {
-            start: (o, i) => [t('a', o(), i()), t(' b', o())],
-            between: (o, i) => [t('x '), t('a', o(), i()), t(' b', o()), t(' y')],
+    type MarkOf = () => ReturnType<typeof schema.mark>;
+    const kinds: Record<string, MarkOf> = { em, strong, strike: () => schema.marks.strike.create(), mark: highlight, link, kbd: key, attr_span: span };
+
+    /** `content` judged by the oracle: whether its text reads back as the model, and whether it renders one element per run. */
+    function judged(content: Node[]): { text: string; model: boolean; oneRun: boolean } {
+        const text = written(content);
+        const reparsed = topChildren(parseDocument(md, text).doc);
+        const model = reparsed.length === 1 && shape(reparsed[0]) === shape(schema.nodes.paragraph.create(null, content))
+            && serializeDocument(allTouched(parseDocument(md, text)), options) === text;
+        const elements = md.renderInline(text.trimEnd()).match(/<(mark|i|em|b|strong|s|a|kbd|span)[ >]/g) ?? [];
+        return { text, model, oneRun: model && elements.length === runsIn(content) };
+    }
+
+    /** `judged`, with the marks opened as prosemirror-markdown opens them: in schema order. */
+    function judgedStock(content: Node[]): { text: string; model: boolean; oneRun: boolean } {
+        const ordered = OrderedInlineState.prototype.renderInline;
+        OrderedInlineState.prototype.renderInline = MarkdownSerializerState.prototype.renderInline;
+        try {
+            return judged(content);
+        } finally {
+            OrderedInlineState.prototype.renderInline = ordered;
+        }
+    }
+
+    test('every ordered pair of mixable marks, in every position of the run and glued to what follows or not, round-trips as one run of each', () => {
+        // The outer mark's text after the inner run: after a space, or glued to it (`*a*b`, which flanking reads otherwise).
+        const positions: Record<string, (o: MarkOf, i: MarkOf, after: string) => Node[]> = {
+            start: (o, i, after) => [t('a', o(), i()), t(after, o())],
+            between: (o, i, after) => [t('x '), t('a', o(), i()), t(after, o()), t(' y')],
             end: (o, i) => [t('b ', o()), t('a', o(), i())],
-            middle: (o, i) => [t('b ', o()), t('a', o(), i()), t(' c', o())],
+            middle: (o, i, after) => [t('b ', o()), t('a', o(), i()), t(after, o())],
             whole: (o, i) => [t('a', o(), i())],
-            startThenPlain: (o, i) => [t('a', o(), i()), t(' b', o()), t(' c')],
+            startThenPlain: (o, i, after) => [t('a', o(), i()), t(after, o()), t(' c')],
         };
         // A key cannot begin with a span or a link (the case above): there the run is two keys.
         const twoKeys = (outer: string, inner: string, position: string) =>
             outer === 'kbd' && (inner === 'attr_span' || inner === 'link') && position !== 'end' && position !== 'middle' && position !== 'whole';
         let oneRun = 0;
         let cases = 0;
-        const failures: string[] = [];
+        const lost: string[] = [];
+        const split: string[] = [];
         for (const outer of Object.keys(kinds)) {
             for (const inner of Object.keys(kinds)) {
                 if (outer === inner) {
                     continue;
                 }
                 for (const [position, build] of Object.entries(positions)) {
-                    cases++;
-                    const content = build(kinds[outer], kinds[inner]);
-                    const split = twoKeys(outer, inner, position);
-                    try {
-                        assertOneElementPerRun(content, runsIn(content) + (split ? 1 : 0));
-                        oneRun += split ? 0 : 1;
-                    } catch (e) {
-                        failures.push(`${outer}(${inner}) ${position}: ${(e as Error).message.split('\n')[0]}`);
+                    for (const after of position === 'end' || position === 'whole' ? [' b'] : [' b', 'b', 'bc']) {
+                        cases++;
+                        const verdict = judged(build(kinds[outer], kinds[inner], after));
+                        const name = `${outer}(${inner}) ${position} ${JSON.stringify(after)}: ${JSON.stringify(verdict.text.trimEnd())}`;
+                        if (!verdict.model) {
+                            lost.push(name);
+                        } else if (verdict.oneRun) {
+                            oneRun++;
+                        } else if (!twoKeys(outer, inner, position)) {
+                            split.push(name);
+                        }
                     }
                 }
             }
         }
-        assert.deepStrictEqual(failures, [], `${oneRun} of ${cases} as one run of each`);
-        assert.strictEqual(cases, 252);
-        assert.strictEqual(oneRun, 246);
+        assert.deepStrictEqual(lost, [], 'every model reads back');
+        assert.deepStrictEqual(split, [], `${oneRun} of ${cases} as one run of each; the others a key beginning with a span or a link`);
+        assert.strictEqual(cases, 588);
+        assert.strictEqual(oneRun, 588 - 18);
+    });
+
+    test('one or two marks opening inside another, which goes on glued or after a space: every model schema order writes faithfully reads back', () => {
+        const names = Object.keys(kinds);
+        let cases = 0;
+        let read = 0;
+        let oneRun = 0;
+        let stockRead = 0;
+        const lost: string[] = [];
+        for (const after of ['b', ' b']) {
+            for (const outer of names) {
+                for (const [n, first] of names.entries()) {
+                    for (const second of names.slice(n)) {
+                        if (first === outer || second === outer) {
+                            continue;
+                        }
+                        const inner = first === second ? [kinds[first]()] : [kinds[first](), kinds[second]()];
+                        const content = [t('a', kinds[outer](), ...inner), t(after, kinds[outer]())];
+                        cases++;
+                        const verdict = judged(content);
+                        const stock = judgedStock(content);
+                        read += verdict.model ? 1 : 0;
+                        oneRun += verdict.oneRun ? 1 : 0;
+                        stockRead += stock.model ? 1 : 0;
+                        if (stock.model && !verdict.model) {
+                            lost.push(`${outer}(${first},${second}) ${JSON.stringify(after)}: ${JSON.stringify(verdict.text.trimEnd())}, schema order ${JSON.stringify(stock.text.trimEnd())}`);
+                        }
+                    }
+                }
+            }
+        }
+        const summary = `${read} of ${cases} read back (schema order ${stockRead}); ${oneRun} as one run of each`;
+        assert.deepStrictEqual(lost, [], summary);
+        assert.strictEqual(cases, 294);
+        assert.strictEqual(summary, '');
+    });
+
+    test('three marks opening together, the inner one\'s closing delimiter glued to the outer one\'s text, keep every mark', () => {
+        // `~~*==a==*b~~` would lose the emphasis: a `*` between `=` and `b` cannot close.
+        const strike = kinds.strike;
+        const text = assertRoundTrip([t('a', strike(), em(), highlight()), t('b', strike())]);
+        assert.ok(!text.startsWith('~~*=='), text);
+    });
+
+    test('marks already open keep the order they were opened in, so a run that goes on is not closed and opened again', () => {
+        const strike = kinds.strike;
+        assert.strictEqual(assertOneElementPerRun([t('a', em(), strike(), highlight()), t('b', span(), em(), strike(), highlight()), t(' c', strike(), highlight()), t(' d', highlight())]),
+            '==~~*a[b]{.x}* c~~ d==\n');
+    });
+
+    test('a key may begin with emphasis that begins with a span: only the mark right inside the key is held to the rule', () => {
+        assert.strictEqual(assertOneElementPerRun([t('a', span(), em(), key()), t(' b', em(), key()), t(' c', key())]), '[[*[a]{.x} b* c]]\n');
     });
 
     test('a co-opening inside a note\'s reference and body is written in order', () => {
