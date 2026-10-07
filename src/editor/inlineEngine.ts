@@ -38,6 +38,10 @@ import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
  * Nor does it see the document's own reference and
  * footnote definitions, as a textblock is read on its own, or the plugins that
  * add no inline rule, which make or unmake no sidebar (`inlinePlugins.ts`).
+ * One of those, markdown-it-emoji, would turn text the page writes into an
+ * emoji the page never showed (`5\$:)`); the save escapes every shortcut of
+ * its table where the host could read one (`emojiShortcuts.ts`), so no text
+ * the page writes reads as one, and the page need not see it.
  */
 
 /** The settings the editor's engine and the page's are built with. */

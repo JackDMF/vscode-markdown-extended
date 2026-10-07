@@ -416,6 +416,11 @@ URL), which the part's own inline parse turns back; `ESCAPE_EXTRA` already break
 into `\+\+`, and a marker character that would touch a marker — last in a body, first
 in a reference, last before the note — is `&#43;` or `&#33;`, since a backslash does not
 stop a raw search. A reference with no text, which the plugin refuses, is `&nbsp;`.
+In any text, a note's included, `ESCAPE_EXTRA` also escapes an emoji shortcode (`\:smile:`)
+and every shortcut of markdown-it-emoji's own table (`emojiShortcuts.ts`) not beside a
+letter, digit or mark: the plugin reads one at a token's edge without looking further, and
+the escape of a neighbour makes such an edge (`5\$:)` is `5$` and a smiley), so `5$:)` is
+written `5\$\:)`. The page's engine runs no emoji rule; this escape is why it needs none.
 A link's destination and title take no backslash escape either: there a run of the
 marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
 angle link holding the marker character is written inline.
