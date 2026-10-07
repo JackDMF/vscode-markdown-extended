@@ -2495,36 +2495,45 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
     const serializer = blockSerializer(options);
     const blocks: BlockSpan[] = [];
     let out = '';
-    let literalLineBefore = false;
-    const atLineStart = () => out === '' || out.endsWith('\n') || out.endsWith('\r');
-    doc.forEach(node => {
+    // The last node that wrote a body: the leader of the next seam. A node that writes nothing makes no seam.
+    let prev: { node: Node; body: string } | null = null;
+    const endsLine = (text: string) => text.endsWith('\n') || text.endsWith('\r');
+    /** A node's text: its `src`, or its serialization with the document's `eol` and a final one. */
+    const bodyOf = (node: Node): string => {
         const name = node.type.name;
         const src = node.attrs.src as string | null | undefined;
-        let body: string;
         if (name === 'front_matter' || SOURCE_NODES.has(name) || (src !== null && src !== undefined)) {
-            body = src ?? '';
-        } else {
-            const text = withBlockSuffix(node, serializer.serialize(editorSchema.topNodeType.create(null, [node])));
-            body = text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
+            return src ?? '';
         }
+        const text = withBlockSuffix(node, serializer.serialize(editorSchema.topNodeType.create(null, [node])));
+        return text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
+    };
+    doc.forEach(node => {
+        const body = bodyOf(node);
         if (body === '') {
             blocks.push({ start: out.length, body: '' });
             return;
         }
-        if (!atLineStart()) {
-            out += eol;
+        let sep = '';
+        if (prev !== null) {
+            if (!endsLine(prev.body)) {
+                sep += eol;
+            }
+            const gap = node.attrs.gap as string | null | undefined;
+            sep += gap === null || gap === undefined ? eol : gap;
+            if (gap === '' && endsInLiteralLine(prev.body)) {
+                // `{.wide}` straight above `After.` is one paragraph of text: the literal would be lost.
+                sep += eol;
+            }
+        } else {
+            sep = (node.attrs.gap as string | null | undefined) ?? '';
         }
-        const gap = node.attrs.gap as string | null | undefined;
-        out += gap === null || gap === undefined ? (out === '' ? '' : eol) : gap;
-        if (literalLineBefore && gap === '') {
-            // `{.wide}` straight above `After.` is one paragraph of text: the literal would be lost.
-            out += eol;
-        }
+        out += sep;
         blocks.push({ start: out.length, body });
         out += body;
-        literalLineBefore = endsInLiteralLine(body);
+        prev = { node, body };
     });
-    if (tail !== '' && !atLineStart()) {
+    if (tail !== '' && out !== '' && !endsLine(out)) {
         out += eol;
     }
     return { text: out + tail, blocks };
