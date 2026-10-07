@@ -151,7 +151,9 @@ export interface PositionMap {
     /**
      * The 0-based line of `text` top-level node `index`'s body starts on, as
      * the layout placed it — after the separator its seam was written with,
-     * however that was widened; past the last node, the line the last body ends on.
+     * however that was widened. Past the last node, the line right after the
+     * last body — the line after its last line when it ends in a line break, as
+     * a written body does, else its last line; 0 when no node writes one.
      */
     blockLine(index: number): number;
 }

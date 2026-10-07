@@ -142,7 +142,7 @@ suite('Editor positions: page ↔ source', () => {
         const map = createPositionMap({ ...parsed, doc }, OPTIONS);
         assert.strictEqual(map.text, 'text\n\n- \n- b\n\nAfter.\n');
         assert.deepStrictEqual([0, 1, 2].map(i => map.blockLine(i)), [0, 2, 5]);
-        assert.strictEqual(map.blockLine(3), 6, 'past the last block: the line its body ends on');
+        assert.strictEqual(map.blockLine(3), 6, 'past the last block: the line after its final line break');
     });
 
     test('an unedited block: the slice\'s offset plus the offset inside it, delimiters stepped over', () => {
