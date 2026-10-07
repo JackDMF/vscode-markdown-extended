@@ -1813,17 +1813,6 @@ export function itemTakesLiteral(item: Node): boolean {
 }
 
 /**
- * Whether a block's text, as written, ends in a `{…}` line of its own — a
- * list's, a table's, a quote's `> {…}`, a paragraph's `line` literal. The next
- * block's first line straight after it would continue it, so the writer puts a
- * blank line between them (`serializeLayout`).
- */
-function endsInLiteralLine(text: string): boolean {
-    const last = text.replace(/\s+$/, '').split('\n').pop() ?? '';
-    return parseAttrsLiteral(last.replace(/^[ \t]{0,3}>?[ \t]*/, '')) !== null;
-}
-
-/**
  * A changed top-level block's text with its attribute literal where it stood
  * (`attrsPlacement`, see `AttrsPlacement` in `blocks.ts`): after a space at the
  * end of its last line, on a line of its own under it, or — for a list — under a
@@ -1831,8 +1820,9 @@ function endsInLiteralLine(text: string): boolean {
  * a lazy line (a second block in it, a nested list the plugin would hand the
  * literal to) takes the blank-line form, which the plugin always gives the
  * list. A quote's is `> {…}` under its last paragraph with text, inside it; a
- * table's is under it or under a blank line, as it stood. A `{…}` line of its
- * own is never followed straight by the next block's first line (`serializeLayout`).
+ * table's is under it or under a blank line, as it stood. Whether the next
+ * block's first line may follow a `{…}` line of its own straight is the
+ * parser's to say, on the pair as written (`seamHolds` in `serializeLayout`).
  * A heading and a fence write theirs themselves; an empty paragraph is the
  * literal alone, which the plugin reads as the same empty paragraph.
  */
@@ -2604,10 +2594,6 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
             const lead = endsLine(prev.body) ? '' : eol;
             const gap = node.attrs.gap as string | null | undefined;
             sep = lead + (gap === null || gap === undefined ? eol : gap);
-            if (gap === '' && endsInLiteralLine(prev.body)) {
-                // `{.wide}` straight above `After.` is one paragraph of text: the literal would be lost.
-                sep += eol;
-            }
             // A seam this write makes new is read back; one the file holds (both from their slices, the gap kept) is not.
             if ((gap === null || gap === undefined || byRule(prev.node) || byRule(node)) && !seamHolds(prev.body, sep, body)) {
                 ({ sep, node, body } = mended(prev, lead, sep, node, body));
