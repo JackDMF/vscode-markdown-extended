@@ -8,6 +8,7 @@ import {
     fidelityPlugin,
 } from '../../../src/editor';
 import { EditorState } from 'prosemirror-state';
+import { seamHolds } from '../../../src/editor/serialize';
 import { conformanceDocument, constructsFixture, hostEngine, readText, replaceChild, toCrlf, topChildren, touched } from './helpers';
 
 const schema = editorSchema;
@@ -232,6 +233,15 @@ suite('Editor serializer for changed blocks', () => {
             assert.strictEqual(out, expected);
             assert.strictEqual(topChildren(parseDocument(md, out).doc).length, 2, out);
         }
+    });
+
+    test('a seam holds only where the follower is read as its own: a token opens on its line, or it yields none and leaves the leader as it read alone', () => {
+        assert.strictEqual(seamHolds('- a\n', '\n', '* b\n'), true, 'another bullet starts another list');
+        assert.strictEqual(seamHolds('- a\n', '\n', '- b\n'), false, 'one list crosses the line');
+        assert.strictEqual(seamHolds('text\n', '\n', '[a]: http://x\n'), true, 'a reference definition yields no token and changes nothing');
+        // A literal paragraph under a table yields no token either: markdown-it-attrs gives its class to the table.
+        assert.strictEqual(seamHolds('| a |\n| - |\n| 1 |\n', '\n', '{.a}\n'), false, 'the table took the follower');
+        assert.strictEqual(seamHolds('- x\n', '\n', '{.a}\n'), false, 'the list took the follower');
     });
 
     test('stability: a seam the layout widened or re-marked is written the same once the file is read again', () => {

@@ -2268,6 +2268,16 @@ function readUnit(text: string, key = text): UnitRead {
     return read;
 }
 
+/**
+ * What a run of tokens reads as, for comparing the leader's reading in a pair
+ * with its reading alone: every token's kind, text and attributes, its inline
+ * children's too — not its `map`, which takes in the blank lines after it.
+ */
+function readingOf(tokens: readonly Token[]): string {
+    const one = (token: Token): unknown[] => [token.type, token.tag, token.nesting, token.content, token.markup, token.info, token.attrs, (token.children ?? []).map(one)];
+    return JSON.stringify(tokens.map(one));
+}
+
 /** Whether a seam holds (`seamHolds`), by the leader, the separator and the follower; the oldest is dropped first. */
 const seamCache = new Map<string, boolean>();
 
@@ -2275,12 +2285,15 @@ const seamCache = new Map<string, boolean>();
  * Whether the page's engine with markdown-it-attrs (`attrsEngineFor`, the one
  * `readUnit` reads with) reads `leader + separator + follower` as two blocks
  * meeting where they were written: no top-level token's `map` crosses the
- * follower's first line. Not "a token opens there" — a follower that yields no
- * token (a reference definition) holds. A top-level block starts with the
- * parser's block state fresh, so the pair reads as it reads in the document.
- * Remembered by the three texts.
+ * follower's first line, and either a top-level token opens on that line or
+ * — a follower that yields no token, a reference definition — the leader's
+ * tokens are what the leader alone reads as. Without the second half a
+ * follower the leader swallowed would hold: a `{.a}` paragraph under a table
+ * yields no token because markdown-it-attrs gave its class to the table. A
+ * top-level block starts with the parser's block state fresh, so the pair
+ * reads as it reads in the document. Remembered by the three texts.
  */
-function seamHolds(leader: string, separator: string, follower: string): boolean {
+export function seamHolds(leader: string, separator: string, follower: string): boolean {
     const key = `${leader}\u0000${separator}\u0000${follower}`;
     const known = seamCache.get(key);
     if (known !== undefined) {
@@ -2290,11 +2303,17 @@ function seamHolds(leader: string, separator: string, follower: string): boolean
     }
     // markdown-it reads `\r\n` as one line break, so counting `\n` counts its lines.
     const line = ((leader + separator).match(/\n/g) ?? []).length;
-    const tokens = attrsEngineFor(currentInlineDefinition()).parse(leader + separator + follower, {});
-    const holds = !tokens.some(token => {
-        const map = token.map as number[] | null;
+    const md = attrsEngineFor(currentInlineDefinition());
+    const tokens = md.parse(leader + separator + follower, {});
+    const mapOf = (token: Token) => token.map as number[] | null;
+    let holds = !tokens.some(token => {
+        const map = mapOf(token);
         return token.level === 0 && map !== null && map[0] < line && line < map[1];
     });
+    if (holds && !tokens.some(token => token.level === 0 && mapOf(token)?.[0] === line)) {
+        const next = tokens.findIndex(token => token.level === 0 && (mapOf(token)?.[0] ?? -1) >= line);
+        holds = readingOf(next < 0 ? tokens : tokens.slice(0, next)) === readingOf(md.parse(leader, {}));
+    }
     if (seamCache.size >= UNIT_READ_CACHE_SIZE) {
         seamCache.delete(seamCache.keys().next().value as string);
     }
