@@ -18,6 +18,7 @@ import { tokenText } from '../../../src/syntax/tokenText';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
 import { attrsReadAt } from '../../../src/editor/attrs';
+import { PAGE_PLUGINS } from '../../../src/plugin/inlinePlugins';
 import { FakeNode, fakeDocument } from './fakeDom';
 import markdownIt from 'markdown-it';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
@@ -212,6 +213,28 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.deepStrictEqual(definition.plugins, [{ name: 'markdown-it-wiki-embed', args: [], threw: true }], 'one that changed nothing is left out');
         assert.strictEqual(definition.wikiEmbeds, true, 'the host reads embeds with what it installed');
         assert.ok(createInlineEngine(definition).parseInline('a ![[x]] b', {})[0].children!.some(t => t.type === 'wiki_embed'), 'and so does the page');
+    });
+
+    test('the page runs a plugin that threw on the host as far as it got, and every other plugin after it', () => {
+        // The page's own copy of kbd throws after adding its rule, as the host's did.
+        const pagePlugins = PAGE_PLUGINS as unknown as Record<string, (m: MarkdownIt) => void>;
+        const kbd = pagePlugins['markdown-it-kbd'];
+        pagePlugins['markdown-it-kbd'] = (m: MarkdownIt) => { kbd(m); throw new Error('half'); };
+        try {
+            const definition: InlineEngineDefinition = {
+                ...DEFAULT_INLINE_ENGINE,
+                plugins: DEFAULT_INLINE_ENGINE.plugins.map(p => (p.name === 'markdown-it-kbd' ? { ...p, threw: true } : p)),
+            };
+            const page = createInlineEngine(definition);
+            const types = page.parseInline('a [[Ctrl]] ==m== ![[x]] ^s^ b', {})[0].children!.map(t => t.type);
+            assert.ok(types.includes('kbd_open'), 'the rule the plugin added before it threw is there');
+            assert.ok(types.includes('mark_open'), 'a plugin after it ran');
+            assert.ok(types.includes('wiki_embed') && types.includes('sup_open'), 'and those before it');
+            const without = { ...DEFAULT_INLINE_ENGINE, plugins: DEFAULT_INLINE_ENGINE.plugins.map(p => (p.name === 'markdown-it-kbd' ? { name: p.name, args: p.args } : p)) };
+            assert.throws(() => createInlineEngine(without), /half/, 'only one marked threw is caught');
+        } finally {
+            pagePlugins['markdown-it-kbd'] = kbd;
+        }
     });
 
     test('a link or an attribute span right after x\\! gets its ! escaped: an escaped backslash leaves the ! bare', () => {
