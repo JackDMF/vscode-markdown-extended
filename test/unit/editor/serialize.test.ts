@@ -219,6 +219,21 @@ suite('Editor serializer for changed blocks', () => {
         assert.strictEqual(serialize({ ...kept, doc: kept.doc.type.create(null, [first, last]) }), '- a\n\n- b\n');
     });
 
+    test('a block emptied to nothing leaves a new seam between its neighbours, and that seam is read: two lists stay two, two tables stay two', () => {
+        for (const [source, expected] of [
+            ['- a\n\nb\n- c\n', '- a\n\n* c\n'],
+            ['| a |\n| - |\n| 1 |\n\nb\n| c |\n| - |\n| 2 |\n', '| a |\n| - |\n| 1 |\n\n\n| c |\n| - |\n| 2 |\n'],
+        ] as const) {
+            const parsed = parseDocument(md, source);
+            const [first, middle, last] = topChildren(parsed.doc);
+            assert.deepStrictEqual([middle.type.name, last.attrs.gap], ['paragraph', ''], source);
+            const emptied = schema.nodes.paragraph.create({ ...middle.attrs, src: null });
+            const out = serialize({ ...parsed, doc: parsed.doc.type.create(null, [first, emptied, last]) });
+            assert.strictEqual(out, expected);
+            assert.strictEqual(topChildren(parseDocument(md, out).doc).length, 2, out);
+        }
+    });
+
     test('stability: a seam the layout widened or re-marked is written the same once the file is read again', () => {
         for (const out of [
             'text\n\n- \n- b\n', 'text\n\n* \n* b\n', 'text\n\n+ \n+ b\n', 'text\n\n1. \n2. b\n',

@@ -2524,7 +2524,7 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
     const serializer = blockSerializer(options);
     const blocks: BlockSpan[] = [];
     let out = '';
-    // The last node that wrote a body: the leader of the next seam. A node that writes nothing makes no seam.
+    // The last node that wrote a body: the leader of the next seam. A node that writes nothing makes no seam of its own.
     let prev: { node: Node; body: string } | null = null;
     const endsLine = (text: string) => text.endsWith('\n') || text.endsWith('\r');
     const lines = (text: string) => (text.match(/\n/g) ?? []).length;
@@ -2586,11 +2586,14 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
         // Nothing on the ladder holds (an indented code block under a list): written as it would have been. Reporting it is a follow-up.
         return { sep, node, body };
     };
+    // Whether a node between `prev` and the next body wrote nothing: the two meet where the file never had them meet.
+    let skipped = false;
     doc.forEach(original => {
         let node = original;
         let body = bodyOf(node);
         if (body === '') {
             blocks.push({ start: out.length, body: '' });
+            skipped = prev !== null;
             return;
         }
         let sep = '';
@@ -2598,8 +2601,8 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
             const lead = endsLine(prev.body) ? '' : eol;
             const gap = node.attrs.gap as string | null | undefined;
             sep = lead + (gap === null || gap === undefined ? eol : gap);
-            // A seam this write makes new is read back; one the file holds (both from their slices, the gap kept) is not.
-            if ((gap === null || gap === undefined || byRule(prev.node) || byRule(node)) && !seamHolds(prev.body, sep, body)) {
+            // A seam this write makes new is read back; one the file holds (both from their slices, the gap kept, nothing between) is not.
+            if ((gap === null || gap === undefined || skipped || byRule(prev.node) || byRule(node)) && !seamHolds(prev.body, sep, body)) {
                 ({ sep, node, body } = mended(prev, lead, sep, node, body));
             }
         } else {
@@ -2609,6 +2612,7 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
         blocks.push({ start: out.length, body });
         out += body;
         prev = { node, body };
+        skipped = false;
     });
     if (tail !== '' && out !== '' && !endsLine(out)) {
         out += eol;
