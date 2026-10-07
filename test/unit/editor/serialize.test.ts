@@ -220,6 +220,24 @@ suite('Editor serializer for changed blocks', () => {
         assert.strictEqual(serialize({ ...kept, doc: kept.doc.type.create(null, [first, last]) }), '- a\n\n- b\n');
     });
 
+    test('a re-marked list changes its item markers and nothing else: its own spelling stays, and the list after it is not touched', () => {
+        for (const [source, expected] of [
+            // `+`, not `*`: the list after it uses `*`, and re-marking must not join it to that one.
+            ['- a\n\nMid\n\n- b\n* c\n', '- a\n\n+ b\n* c\n'],
+            // An entity and a two-space hard break are the file's spelling, which a rule-written list would replace.
+            ['- a\n\nMid\n\n- x &#42;y&#42;  \n  z\n- w\n', '- a\n\n* x &#42;y&#42;  \n  z\n* w\n'],
+            // A nested list keeps its markers: only the list's own items are re-marked.
+            ['- a\n\nMid\n\n- b\n  - inner\n', '- a\n\n* b\n  - inner\n'],
+            // Lists the page holds as source blocks (task lists) are re-marked the same way.
+            ['- a\n\nMid\n\n- [ ] task\n', '- a\n\n* [ ] task\n'],
+            ['- [ ] a\n\nMid\n\n- [ ] b\n', '- [ ] a\n\n* [ ] b\n'],
+        ] as const) {
+            const out = serialize(withoutChild(parseDocument(md, source), 1));
+            assert.strictEqual(out, expected);
+            assert.strictEqual(serialize(parseDocument(md, out)), out);
+        }
+    });
+
     test('a block emptied to nothing leaves a new seam between its neighbours, and that seam is read: two lists stay two, two tables stay two', () => {
         for (const [source, expected] of [
             ['- a\n\nb\n- c\n', '- a\n\n* c\n'],

@@ -2321,6 +2321,56 @@ export function seamHolds(leader: string, separator: string, follower: string): 
     return holds;
 }
 
+/** The kind and marker (`-`, `*`, `+`, or the delimiter `.`, `)`) of the top-level list `text` opens with, or with `last` ends with; `null` where it does not. */
+function listMarkerOf(text: string, last: boolean): { kind: string; marker: string } | null {
+    const top = attrsEngineFor(currentInlineDefinition()).parse(text, {}).filter(token => token.level === 0);
+    const token = last ? top[top.length - 1] : top[0];
+    const kind = /^(bullet|ordered)_list_(?:open|close)$/.exec(token?.type ?? '');
+    return kind === null ? null : { kind: kind[1], marker: token.markup };
+}
+
+/**
+ * `follower`, which opens with a list of the kind `leader` ends with, written
+ * with each other marker for that list — CommonMark starts a new list at a
+ * changed bullet or delimiter, which no number of blank lines does — in order
+ * of preference: a marker the list after it (`next`) opens with comes last, so
+ * the new list does not join that one. Only the list's own items change, at the
+ * line and column their `list_item_open` token gives; every other character of
+ * the follower, its `src` included, is kept. None where the pair is no such pair
+ * or an item's marker is not where its token says.
+ */
+function remarkedList(leader: string, follower: string, next: () => string | null): string[] {
+    const ends = listMarkerOf(leader, true);
+    const opens = listMarkerOf(follower, false);
+    if (ends === null || opens === null || ends.kind !== opens.kind) {
+        return [];
+    }
+    const after = listMarkerOf(next() ?? '', false);
+    const markers = (opens.kind === 'bullet' ? ['-', '*', '+'] : ['.', ')']).filter(m => m !== ends.marker);
+    markers.sort((a, b) => Number(a === after?.marker) - Number(b === after?.marker));
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(follower, {});
+    const close = tokens.findIndex(token => token.level === 0 && token.nesting === -1);
+    const items = tokens.slice(0, close).filter(token => token.type === 'list_item_open' && token.level === 1);
+    const out: string[] = [];
+    for (const marker of markers) {
+        const lines = follower.split('\n');
+        for (const item of items) {
+            const line = (item.map as number[])[0];
+            if (lines[line] === undefined) {
+                return [];
+            }
+            // The marker after the item's indent and, for an ordered item, its number.
+            const at = (/^[ \t]*\d*/.exec(lines[line]) as RegExpExecArray)[0].length;
+            if (lines[line][at] !== item.markup) {
+                return [];
+            }
+            lines[line] = lines[line].slice(0, at) + marker + lines[line].slice(at + 1);
+        }
+        out.push(lines.join('\n'));
+    }
+    return out;
+}
+
 /**
  * A literal that does not read back as written, or — `literal` `null` — text
  * the parser reads as attributes no literal gives; `at`, the node it is
@@ -2544,7 +2594,8 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
     const blocks: BlockSpan[] = [];
     let out = '';
     // The last node that wrote a body: the leader of the next seam. A node that writes nothing makes no seam of its own.
-    let prev: { node: Node; body: string } | null = null;
+    // `remarked`: its text is not the one it was read or would be written as, so the seam after it is new too.
+    let prev: { node: Node; body: string; remarked: boolean } | null = null;
     const endsLine = (text: string) => text.endsWith('\n') || text.endsWith('\r');
     const lines = (text: string) => (text.match(/\n/g) ?? []).length;
     /** Whether a node is written by rule: an editable node an edit cleared the `src` of. */
@@ -2561,54 +2612,41 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
         return text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
     };
     /**
-     * A list after a list of its type, written by rule with the marker the
-     * leader does not use — the first of `-`, `*`, `+`, or the other of `.`
-     * and `)` — which is how CommonMark starts a new list; `null` for any other
-     * pair. No number of blank lines does it.
-     */
-    const remarked = (leader: Node, follower: Node): Node | null => {
-        if (leader.type !== follower.type) {
-            return null;
-        }
-        const name = follower.type.name;
-        if (name === 'bullet_list') {
-            const used = String(leader.attrs.bullet || '-');
-            const bullet = ['-', '*', '+'].find(b => b !== used) as string;
-            return follower.type.create({ ...follower.attrs, src: null, bullet }, follower.content, follower.marks);
-        }
-        if (name === 'ordered_list') {
-            const delimiter = String(leader.attrs.delimiter || '.') === '.' ? ')' : '.';
-            return follower.type.create({ ...follower.attrs, src: null, delimiter }, follower.content, follower.marks);
-        }
-        return null;
-    };
-    /**
      * A seam the parser does not read as two blocks, mended by the first rung
-     * it does: one blank line, two, then (a list after a list of its type) the
-     * follower with the other marker. A rung never narrows the separator.
+     * it does: one blank line, two, then (a list after a list of its kind) the
+     * follower's own text with its items' marker changed (`remarkedList`). A
+     * rung never narrows the separator. `next` is the text of the block after
+     * the follower, whose list a new marker should not join.
      */
-    const mended = (leader: { node: Node; body: string }, lead: string, sep: string, node: Node, body: string): { sep: string; node: Node; body: string } => {
+    const mended = (leader: string, lead: string, sep: string, body: string, next: () => string | null): { sep: string; body: string } => {
         const blank = lead + eol;
         for (const wider of [blank, blank + eol]) {
-            if (lines(wider) > lines(sep) && seamHolds(leader.body, wider, body)) {
-                return { sep: wider, node, body };
+            if (lines(wider) > lines(sep) && seamHolds(leader, wider, body)) {
+                return { sep: wider, body };
             }
         }
-        const other = remarked(leader.node, node);
-        if (other !== null) {
-            const otherSep = lines(sep) >= lines(blank) ? sep : blank;
-            const otherBody = bodyOf(other);
-            if (seamHolds(leader.body, otherSep, otherBody)) {
-                return { sep: otherSep, node: other, body: otherBody };
+        const otherSep = lines(sep) >= lines(blank) ? sep : blank;
+        for (const remarked of remarkedList(leader, body, next)) {
+            if (seamHolds(leader, otherSep, remarked)) {
+                return { sep: otherSep, body: remarked };
             }
         }
         // Nothing on the ladder holds (an indented code block under a list): written as it would have been. Reporting it is a follow-up.
-        return { sep, node, body };
+        return { sep, body };
+    };
+    /** The body of the first node after `index` that writes one, or `null`. */
+    const bodyAfter = (index: number): string | null => {
+        for (let j = index + 1; j < doc.childCount; j++) {
+            const body = bodyOf(doc.child(j));
+            if (body !== '') {
+                return body;
+            }
+        }
+        return null;
     };
     // Whether a node between `prev` and the next body wrote nothing: the two meet where the file never had them meet.
     let skipped = false;
-    doc.forEach(original => {
-        let node = original;
+    doc.forEach((node, _offset, index) => {
         let body = bodyOf(node);
         if (body === '') {
             blocks.push({ start: out.length, body: '' });
@@ -2616,13 +2654,17 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
             return;
         }
         let sep = '';
+        let remarked = false;
         if (prev !== null) {
             const lead = endsLine(prev.body) ? '' : eol;
             const gap = node.attrs.gap as string | null | undefined;
             sep = lead + (gap === null || gap === undefined ? eol : gap);
             // A seam this write makes new is read back; one the file holds (both from their slices, the gap kept, nothing between) is not.
-            if ((gap === null || gap === undefined || skipped || byRule(prev.node) || byRule(node)) && !seamHolds(prev.body, sep, body)) {
-                ({ sep, node, body } = mended(prev, lead, sep, node, body));
+            const isNew = gap === null || gap === undefined || skipped || prev.remarked || byRule(prev.node) || byRule(node);
+            if (isNew && !seamHolds(prev.body, sep, body)) {
+                const written = body;
+                ({ sep, body } = mended(prev.body, lead, sep, body, () => bodyAfter(index)));
+                remarked = body !== written;
             }
         } else {
             sep = (node.attrs.gap as string | null | undefined) ?? '';
@@ -2630,7 +2672,7 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
         out += sep;
         blocks.push({ start: out.length, body });
         out += body;
-        prev = { node, body };
+        prev = { node, body, remarked };
         skipped = false;
     });
     if (tail !== '' && out !== '' && !endsLine(out)) {
