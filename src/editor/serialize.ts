@@ -485,9 +485,10 @@ const LibraryState = MarkdownSerializerState as unknown as new (nodes: unknown, 
  * repository's TypeScript (types, `===`, braces, the undeclared members read
  * through `internals`) with one line inserted after the `keep` loop, marked
  * below. On an upgrade, re-diff it against the library's and keep that line;
- * the guard in `serialize.test.ts` fails where the two write differently.
+ * the guard in `serialize.test.ts` fails where the two write differently
+ * on content no node of which opens two marks. Exported for that guard only.
  */
-class OrderedInlineState extends LibraryState {
+export class OrderedInlineState extends LibraryState {
     renderInline(parent: Node, fromBlockStart = true): void {
         const st = internals(this);
         st.atBlockStart = fromBlockStart;
