@@ -17,6 +17,7 @@ import { OWN_COPY, embedAsTextTransaction, inlineForNote, isOwnCopyDom, textWith
 import { tokenText } from '../../../src/syntax/tokenText';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
+import { attrsReadAt } from '../../../src/editor/attrs';
 import { FakeNode, fakeDocument } from './fakeDom';
 import markdownIt from 'markdown-it';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
@@ -177,6 +178,25 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
                 const typed = state.apply(state.tr.insert(state.doc.child(0).nodeSize - 1, text(' now')));
                 assert.notStrictEqual(typed.doc, state.doc, 'the edit filter let it through');
                 assert.strictEqual(serialize({ doc: typed.doc, eol: '\n', tail: '' }), `Wow${bang}[[Ctrl]] now\n`);
+            });
+        }
+    });
+
+    test('the save, the check of an edit and the host\'s literals read one fact for whether {…} is attributes: the engine\'s, as built', () => {
+        const noAttrs = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-attrs') });
+        const definition = inlineEngineDefinition(noAttrs);
+        assert.strictEqual(definition.attrs, false);
+        assert.strictEqual(inlineEngineDefinition(md).attrs, true);
+        assert.strictEqual(attrsReadAt('{.x}', 'paragraph', definition), null, 'the host finds no literal where the engine reads none');
+        assert.deepStrictEqual(attrsReadAt('{.x}', 'paragraph', DEFAULT_INLINE_ENGINE), [['class', 'x']]);
+        for (const [def, written] of [[definition, 'Wow {.x}'], [DEFAULT_INLINE_ENGINE, 'Wow \\{.x\\}']] as const) {
+            withDefinition(def, () => {
+                const state = EditorState.create({ doc: schema.topNodeType.create(null, [touched(schema.nodes.paragraph.create(null, [text('Wow')]))]), plugins: editorPlugins() });
+                const tr = state.tr.insertText(' {.x}', state.doc.child(0).nodeSize - 1);
+                assert.strictEqual(noteRefusal(tr), null, `${written}: the read-back refuses nothing`);
+                const typed = state.apply(tr);
+                assert.notStrictEqual(typed.doc, state.doc, 'the edit filter let it through');
+                assert.strictEqual(serialize({ doc: typed.doc, eol: '\n', tail: '' }), `${written}\n`);
             });
         }
     });

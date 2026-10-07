@@ -47,6 +47,15 @@ interface TextBraces {
 
 const textBraces = new WeakMap<StateBase, TextBraces>();
 
+/**
+ * Whether `md` reads attribute literals: markdown-it-attrs' core rule,
+ * `curly_attributes`, is registered and not disabled.
+ */
+export function readsAttrs(md: MarkdownIt): boolean {
+    const rules = (md.core.ruler as unknown as { __rules__?: { name: string; enabled: boolean }[] }).__rules__ ?? [];
+    return rules.some(rule => rule.name === 'curly_attributes' && rule.enabled);
+}
+
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export function MarkdownItAttrs(md: MarkdownIt, ...args: any[]) {
     md.use(markdownItAttrs, ...args);

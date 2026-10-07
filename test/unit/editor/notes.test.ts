@@ -668,7 +668,13 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
             plugins: DEFAULT_INLINE_ENGINE.plugins.filter(p => p.name !== 'markdown-it-kbd'),
             math: false,
             wikiEmbeds: true,
+            attrs: true,
         });
+        // markdown-it-attrs is no page plugin, so only `attrs` says the host ran it.
+        const noAttrs = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-attrs'), extend: [] });
+        assert.deepStrictEqual(inlineEngineDefinition(noAttrs), { ...DEFAULT_INLINE_ENGINE, attrs: false });
+        const offByExtender = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable('curly_attributes'); }] });
+        assert.strictEqual(inlineEngineDefinition(offByExtender).attrs, false, 'read off the engine as built');
     });
 
     test('a space deleted before a sidebar after an address is refused where the line as written lets linkify read on', () => {
