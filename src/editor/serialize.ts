@@ -172,8 +172,18 @@ function escapeTrailingBang(st: StateInternals): void {
  * flanking allows as markers: `sidebarCanOpen`, `sidebarCanClose`) and an emoji
  * shortcode. Each gets a CommonMark backslash escape, which every rule
  * respects because the escape is consumed before they see the character.
+ * One alternative per syntax, joined under the `u` flag.
  */
-const ESCAPE_EXTRA = /<(?=[A-Za-z/!?])|&(?=#?[0-9A-Za-z]+;)|=(?==)|(?<==)=|\+(?=\+)|(?<=\+)\+|!(?=!)|(?<=!)!|[$@^]|:(?=[A-Za-z_+-][\w+-]*:)/g;
+const ESCAPE_EXTRA_PARTS: readonly string[] = [
+    /<(?=[A-Za-z/!?])/.source, // an HTML tag
+    /&(?=#?[0-9A-Za-z]+;)/.source, // an entity
+    /=(?==)|(?<==)=/.source, // ==mark==
+    /\+(?=\+)|(?<=\+)\+/.source, // ++sidenote++
+    /!(?=!)|(?<=!)!/.source, // !!marginal note!!
+    /[$@^]/.source, // the sidebars' markers, ^sup^
+    /:(?=[A-Za-z_+-][\w+-]*:)/.source, // an emoji shortcode
+];
+const ESCAPE_EXTRA = new RegExp(ESCAPE_EXTRA_PARTS.join('|'), 'gu');
 
 // ---------------------------------------------------------------------------
 // Marks
@@ -1183,7 +1193,7 @@ export function literalRewrittenBeside(block: Node, textblock: Node, lost: Liter
  * verbatim — code, an attribute span's literal — gets no escape; a `|` there
  * has no spelling and is not made (`unwritableInTable`).
  */
-const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, 'g');
+const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, ESCAPE_EXTRA.flags);
 
 function inlineSerializer(fromBlockStart: boolean, inTableCell: boolean): MarkdownSerializer {
     return new MarkdownSerializer({
