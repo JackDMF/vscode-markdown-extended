@@ -533,6 +533,19 @@ suite('Editor inline constructs: written back by rule', () => {
         assert.ok(!text.startsWith('~~*=='), text);
     });
 
+    test('where the order of the runs does not read back, the text is the library\'s, whether or not that reads back', () => {
+        // A space at a run's edge fails the exact read-back in both orders; the run order (`~~*==a==*b~~`) would then lose the emphasis.
+        const strike = kinds.strike;
+        for (const content of [
+            [t('a', strike(), em(), highlight()), t('b ', strike())],
+            [t('a', strike(), em(), highlight()), t('b', strike()), t(' ')],
+            [t(' '), t('a', strike(), em(), highlight()), t('b', strike())],
+        ]) {
+            const stock = judgedStock(content).text;
+            assert.strictEqual(written(content), stock, JSON.stringify(stock));
+        }
+    });
+
     test('marks already open keep the order they were opened in, so a run that goes on is not closed and opened again', () => {
         const strike = kinds.strike;
         assert.strictEqual(assertOneElementPerRun([t('a', em(), strike(), highlight()), t('b', span(), em(), strike(), highlight()), t(' c', strike(), highlight()), t(' d', highlight())]),

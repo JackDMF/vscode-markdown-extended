@@ -500,12 +500,13 @@ const LibraryState = MarkdownSerializerState as unknown as new (nodes: unknown, 
  * content whose order is not in question. Exported for that guard only.
  *
  * Which order a textblock is written in is judged by the parser, not by a
- * model of it (`readsBack`): the order of the runs where its text reads back
- * as the textblock, else the library's where that does, else the order of
- * the runs — no worse than the library's, which reads back no better. A
- * delimiter's flanking is what decides it: in `~~*==a==*b~~` the `*` between
- * `=` and `b` cannot close, while the library's `*~~==a==~~*~~b~~` reads as
- * written.
+ * model of it (`readsBack`): the order of the runs only where its text reads
+ * back as the textblock, else the library's — so the text is never worse than
+ * the library's, whether or not that reads back. `readsBack` compares runs
+ * exactly, so a space at a run's edge makes both orders fail it; the library's
+ * is then kept. A delimiter's flanking is what decides it: in `~~*==a==*b~~`
+ * the `*` between `=` and `b` cannot close, while the library's
+ * `*~~==a==~~*~~b~~` reads as written.
  */
 export class OrderedInlineState extends LibraryState {
     renderInline(parent: Node, fromBlockStart = true): void {
@@ -551,7 +552,7 @@ export class OrderedInlineState extends LibraryState {
         const key = `${inlineModel(parent)}\u0000${ordered}\u0000${library}`;
         let verdict = orderVerdictCache.get(key);
         if (verdict === undefined) {
-            verdict = !readsBack(ordered, parent) && readsBack(library, parent);
+            verdict = !readsBack(ordered, parent);
             if (orderVerdictCache.size >= UNIT_READ_CACHE_SIZE) {
                 orderVerdictCache.delete(orderVerdictCache.keys().next().value as string);
             }

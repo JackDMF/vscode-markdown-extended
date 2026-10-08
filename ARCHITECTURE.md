@@ -453,10 +453,10 @@ them in the order their runs end, the longer one outside, ties in schema order
 (`openingOrder` in `serialize.ts`, inserted into a copy of the library's `renderInline`
 on `OrderedInlineState`; `serialize.test.ts` guards the copy against the library). The
 parser judges each textblock where the two orders write different text: the order of the
-runs where its text reads back as the textblock, else the library's where that does —
-in `~~*==a==*b~~` the `*` between `=` and `b` cannot close, while `*~~==a==~~*~~b~~` reads
-as written — else the order of the runs, which reads back no worse. A delimiter's flanking
-is asked of the parser, never modelled. One
+runs only where its text reads back as the textblock, else the library's — in
+`~~*==a==*b~~` the `*` between `=` and `b` cannot close, while `*~~==a==~~*~~b~~` reads
+as written — so a textblock is never written worse than the library writes it. A
+delimiter's flanking is asked of the parser, never modelled. One
 nesting the parser cannot read stays split: a key beginning with a span or a link, since
 markdown-it-kbd reads the `[[` of `[[[` as a nested key; it is written as two keys
 (`[[[a]]]{.x}[[ b]]`), which is also what the page draws (`CANNOT_LEAD`). `assertStable`
