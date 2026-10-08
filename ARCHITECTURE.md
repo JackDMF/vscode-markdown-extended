@@ -541,11 +541,12 @@ fidelity plugin takes the literal off: a quote whose paragraphs are only empty f
 (`Enter` at the end of the last one, its text deleted to be typed again) keeps it, and it
 is written again as soon as there is text. A table's is under it, in no token's map like
 a list's `blank` one: `line` (right under the last row) or `blank`, read and written as
-it stood; a new one is `blank`, the form the plugin's README gives. A `{…}` line of its
-own — a table's, a list's, a quote's `> {…}`, a paragraph's `line` one — is never
-followed straight by the next block's first line: where the next block's gap is empty,
-`serializeLayout` puts a blank line between them, or `{.wide}` + `After.` would be one
-paragraph of text. A list item's is not a top-level block's `attrsSuffix` but the item's
+it stood; a new one is `blank`, the form the plugin's README gives. Whether the next
+block's first line may follow a `{…}` line of its own — a table's, a list's, a quote's
+`> {…}`, a paragraph's `line` one — straight is the parser's to say, as for every seam a
+changed block makes (*Where fidelity is enforced*): `{.wide}` + `After.` is one paragraph
+of text and gets a blank line between them, while `{.wide}` + `# After` under a table is
+the table's literal and a heading, and stays tight. A list item's is not a top-level block's `attrsSuffix` but the item's
 own `literal`, at any depth, at the end of its first paragraph (`- text {.a}`, the
 plugin's "list item end" rule; `recoverItemLiterals`), where the serializer writes it back
 after the paragraph is wrapped. The item must start with a paragraph (`itemTakesLiteral`),
@@ -1209,7 +1210,17 @@ superseded text and is dropped.
   history and the host's attributes both survive.
 - **`serialize.ts`** — emits `src` where it is set, and a stable rule-based form for
   a changed block; wrapping follows the paragraph's own width, else
-  `markdownExtended.editor.wrapColumn`.
+  `markdownExtended.editor.wrapColumn`. A seam a transaction made new — the follower's
+  `gap` is `null`, or either side is written by rule — is read back in `serializeLayout`
+  by the page's attrs engine (`seamHolds`, the engine `readUnit` reads with) on the pair it
+  wrote, and holds when no top-level token's `map` crosses the follower's first line;
+  where it does not, the separator is the first of one blank line, two blank lines, or —
+  for a list after a list of its type — the follower with the other bullet or delimiter
+  that the parser reads as two blocks. Two lists of one marker are one list at any number
+  of blank lines, and two pipe tables one blank line apart are one table. A seam the file
+  holds is never read, no attribute changes by the answer, and `positions.ts` and
+  `lineAt` read the same layout. Known limit: where no rung holds (an indented code block
+  under a list), the seam is written as before and the file reads the two as one.
 - **`host/session.ts`** — writes only the differing span, and never against a
   document the page did not see.
 

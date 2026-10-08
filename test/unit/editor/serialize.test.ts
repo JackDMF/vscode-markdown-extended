@@ -8,6 +8,7 @@ import {
     fidelityPlugin,
 } from '../../../src/editor';
 import { EditorState } from 'prosemirror-state';
+import { seamHolds } from '../../../src/editor/serialize';
 import { conformanceDocument, constructsFixture, hostEngine, readText, replaceChild, toCrlf, topChildren, touched } from './helpers';
 
 const schema = editorSchema;
@@ -148,6 +149,129 @@ suite('Editor serializer for changed blocks', () => {
         const [title, , kept] = topChildren(parsed.doc);
         const doc = parsed.doc.type.create(null, [title, kept]);
         assert.strictEqual(serialize({ ...parsed, doc }), '# Title\n\n\nKept.\n');
+    });
+
+    /** `parsed` with top-level child `index` dropped and the node after it given `gap: null`, as a deletion leaves it. */
+    function withoutChild(parsed: ParsedDocument, index: number): ParsedDocument {
+        const children = topChildren(parsed.doc);
+        const follower = children[index + 1];
+        children.splice(index, 2, follower.type.create({ ...follower.attrs, gap: null }, follower.content, follower.marks));
+        return { ...parsed, doc: parsed.doc.type.create(null, children) };
+    }
+
+    test('an emptied first item straight under a paragraph is written after a blank line: `text\\n-` is a setext heading and `*`, `+`, `1.` are swallowed, so the list vanished', () => {
+        for (const [marker, second, list] of [['-', '-', 'bullet_list'], ['*', '*', 'bullet_list'], ['+', '+', 'bullet_list'], ['1.', '2.', 'ordered_list']] as const) {
+            const parsed = parseDocument(md, `text\n${marker} a\n${second} b\n`);
+            const [paragraph, items] = topChildren(parsed.doc);
+            assert.strictEqual(items.attrs.gap, '', 'the file held them tight');
+            const first = items.child(0);
+            const emptied = first.type.create(first.attrs, first.content.replaceChild(0, first.child(0).type.create(first.child(0).attrs)));
+            const doc = parsed.doc.type.create(null, [paragraph, touched(items, items.content.replaceChild(0, emptied))]);
+            const out = serialize({ ...parsed, doc });
+            assert.strictEqual(out, `text\n\n${marker} \n${second} b\n`, 'the writer\'s empty item is its marker and a space');
+            const again = topChildren(parseDocument(md, out).doc);
+            assert.deepStrictEqual(again.map(n => n.type.name), ['paragraph', list], out);
+            assert.strictEqual(again[1].childCount, 2, out);
+        }
+    });
+
+    test('two lists of one marker a blank line apart are one list to the parser: the second is written with the other marker', () => {
+        for (const [source, expected] of [
+            ['- a\n\nMiddle.\n\n- b\n', '- a\n\n* b\n'],
+            ['* a\n\nMiddle.\n\n* b\n', '* a\n\n- b\n'],
+            ['1. a\n\nMiddle.\n\n1. b\n', '1. a\n\n1) b\n'],
+            ['3) a\n\nMiddle.\n\n7) b\n', '3) a\n\n7. b\n'],
+        ] as const) {
+            const out = serialize(withoutChild(parseDocument(md, source), 1));
+            assert.strictEqual(out, expected);
+            const again = topChildren(parseDocument(md, out).doc);
+            assert.strictEqual(again.length, 2, out);
+            assert.ok(again.every(n => n.type.name.endsWith('_list') && n.attrs.tight === true), out);
+        }
+    });
+
+    test('two tables a blank line apart are one table to multimd: a second blank line goes between them', () => {
+        const a = '| a |\n| - |\n| 1 |\n';
+        const b = '| b |\n| - |\n| 2 |\n';
+        const expected = `${a}\n\n${b}`;
+        // After a deletion between them.
+        assert.strictEqual(serialize(withoutChild(parseDocument(md, `${a}\nMiddle.\n\n${b}`), 1)), expected);
+        // After an insertion: a new table (gap `null`) under one the file holds.
+        const parsed = parseDocument(md, a);
+        const [inserted] = topChildren(parseDocument(md, b).doc);
+        const doc = parsed.doc.type.create(null, [...topChildren(parsed.doc), inserted.type.create({ ...inserted.attrs, src: null, gap: null }, inserted.content)]);
+        const out = serialize({ ...parsed, doc });
+        assert.strictEqual(out, expected);
+        assert.deepStrictEqual(topChildren(parseDocument(md, out).doc).map(n => n.type.name), ['table', 'table']);
+    });
+
+    test('a seam the file holds is not judged: `text\\n- a` with the item edited stays tight, and two lists it held as written stay as written', () => {
+        const parsed = parseDocument(md, 'text\n- a\n');
+        const [paragraph, items] = topChildren(parsed.doc);
+        const item = items.child(0);
+        const edited = item.type.create(item.attrs, item.content.replaceChild(0, item.child(0).type.create(item.child(0).attrs, text('edited'))));
+        const doc = parsed.doc.type.create(null, [paragraph, touched(items, items.content.replaceChild(0, edited))]);
+        assert.strictEqual(serialize({ ...parsed, doc }), 'text\n- edited\n');
+        assert.strictEqual(serialize(parseDocument(md, '- a\n* b\n')), '- a\n* b\n');
+        // Two blocks written from their slices with a gap the edit kept: the parser would read `- a` and `- b` as one
+        // list, but the seam is the file's own reading of a pair it never wrote, so it is not read and not changed.
+        const kept = parseDocument(md, '- a\n\nMiddle.\n\n- b\n');
+        const [first, , last] = topChildren(kept.doc);
+        assert.strictEqual(serialize({ ...kept, doc: kept.doc.type.create(null, [first, last]) }), '- a\n\n- b\n');
+    });
+
+    test('a re-marked list changes its item markers and nothing else: its own spelling stays, and the list after it is not touched', () => {
+        for (const [source, expected] of [
+            // `+`, not `*`: the list after it uses `*`, and re-marking must not join it to that one.
+            ['- a\n\nMid\n\n- b\n* c\n', '- a\n\n+ b\n* c\n'],
+            // An entity and a two-space hard break are the file's spelling, which a rule-written list would replace.
+            ['- a\n\nMid\n\n- x &#42;y&#42;  \n  z\n- w\n', '- a\n\n* x &#42;y&#42;  \n  z\n* w\n'],
+            // A nested list keeps its markers: only the list's own items are re-marked.
+            ['- a\n\nMid\n\n- b\n  - inner\n', '- a\n\n* b\n  - inner\n'],
+            // Lists the page holds as source blocks (task lists) are re-marked the same way.
+            ['- a\n\nMid\n\n- [ ] task\n', '- a\n\n* [ ] task\n'],
+            ['- [ ] a\n\nMid\n\n- [ ] b\n', '- [ ] a\n\n* [ ] b\n'],
+            // `* ***` would be a thematic break, not the list: the parser refuses that marker, `+` keeps the item.
+            ['- a\n\nMid\n\n- ***\n', '- a\n\n+ ***\n'],
+        ] as const) {
+            const out = serialize(withoutChild(parseDocument(md, source), 1));
+            assert.strictEqual(out, expected);
+            assert.strictEqual(serialize(parseDocument(md, out)), out);
+        }
+    });
+
+    test('a block emptied to nothing leaves a new seam between its neighbours, and that seam is read: two lists stay two, two tables stay two', () => {
+        for (const [source, expected] of [
+            ['- a\n\nb\n- c\n', '- a\n\n* c\n'],
+            ['| a |\n| - |\n| 1 |\n\nb\n| c |\n| - |\n| 2 |\n', '| a |\n| - |\n| 1 |\n\n\n| c |\n| - |\n| 2 |\n'],
+        ] as const) {
+            const parsed = parseDocument(md, source);
+            const [first, middle, last] = topChildren(parsed.doc);
+            assert.deepStrictEqual([middle.type.name, last.attrs.gap], ['paragraph', ''], source);
+            const emptied = schema.nodes.paragraph.create({ ...middle.attrs, src: null });
+            const out = serialize({ ...parsed, doc: parsed.doc.type.create(null, [first, emptied, last]) });
+            assert.strictEqual(out, expected);
+            assert.strictEqual(topChildren(parseDocument(md, out).doc).length, 2, out);
+        }
+    });
+
+    test('a seam holds only where the follower is read as its own: a token opens on its line, or it yields none and leaves the leader as it read alone', () => {
+        assert.strictEqual(seamHolds('- a\n', '\n', '* b\n'), true, 'another bullet starts another list');
+        assert.strictEqual(seamHolds('- a\n', '\n', '- b\n'), false, 'one list crosses the line');
+        assert.strictEqual(seamHolds('text\n', '\n', '[a]: http://x\n'), true, 'a reference definition yields no token and changes nothing');
+        // A literal paragraph under a table yields no token either: markdown-it-attrs gives its class to the table.
+        assert.strictEqual(seamHolds('| a |\n| - |\n| 1 |\n', '\n', '{.a}\n'), false, 'the table took the follower');
+        assert.strictEqual(seamHolds('- x\n', '\n', '{.a}\n'), false, 'the list took the follower');
+    });
+
+    test('stability: a seam the layout widened or re-marked is written the same once the file is read again', () => {
+        for (const out of [
+            'text\n\n- \n- b\n', 'text\n\n* \n* b\n', 'text\n\n+ \n+ b\n', 'text\n\n1. \n2. b\n',
+            '- a\n\n* b\n', '1. a\n\n1) b\n', '| a |\n| - |\n| 1 |\n\n\n| b |\n| - |\n| 2 |\n',
+        ]) {
+            assert.strictEqual(assertStable(out), out);
+            assert.strictEqual(serialize(parseDocument(md, out)), out);
+        }
     });
 
     test('fences keep their marker and info string, and grow when the content holds a fence', () => {

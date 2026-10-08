@@ -173,16 +173,18 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
         assert.strictEqual(text(set(caretAt(state, '1'), '{.y}')), '| a |\n| - |\n| 1 |\n{.y}\n\nAfter.\n');
     });
 
-    test('a literal line is never glued to the next block: a blank line goes between them when the gap is empty', () => {
-        // A table ends where a heading starts, with no blank line; its literal must not become the heading's paragraph.
+    test('a literal line before a block that may interrupt a paragraph stays tight; one before a paragraph gets its blank line', () => {
+        // A table ends where a heading starts, with no blank line. The parser reads `{.wide}` + `# After` as the table's
+        // literal and a heading — markdown-it-attrs takes the literal's paragraph, and a heading interrupts one anyway —
+        // so the seam holds as written.
         for (const [source, expected] of [
-            ['| a |\n| - |\n| 1 |\n# After\n', '| a |\n| - |\n| 1 |\n\n{.wide}\n\n# After\n'],
+            ['| a |\n| - |\n| 1 |\n# After\n', '| a |\n| - |\n| 1 |\n\n{.wide}\n# After\n'],
         ] as const) {
             const out = written(source, '1', '{.wide}').out;
             assert.strictEqual(out, expected);
-            assert.match(hostEngine().render(out), /<table class="wide">/);
+            assert.match(hostEngine().render(out), /<table class="wide">[\s\S]*<h1[^>]*>After<\/h1>/);
         }
-        // A gap the parse gave as empty, kept by the edit, still gets its blank line.
+        // `{.wider}` + `After.` is one paragraph of text to the parser: a gap the parse gave as empty, kept by the edit, gets its blank line.
         const state = stateOf('| a |\n| - |\n| 1 |\n\n{.wide}\n\nAfter.\n');
         const after = state.doc.child(1);
         const glued = state.apply(state.tr.setNodeMarkup(state.doc.child(0).nodeSize, undefined, { ...after.attrs, gap: '' }));

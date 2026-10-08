@@ -161,6 +161,27 @@ suite('Editor fidelity plugin: gap', () => {
         assert.deepStrictEqual(gaps(after.doc), gaps(parsed.doc));
         assert.strictEqual(after.doc.child(2).attrs.src, null);
     });
+
+    test('emptying the first item of a tight list under a paragraph keeps both gaps, and the write puts the blank line in: the file reads back a paragraph and a list', () => {
+        const listed = parseDocument(md, 'Text\n- a\n- b\n');
+        const before = EditorState.create({ doc: listed.doc, plugins: [fidelityPlugin()] });
+        const at = inside(before.doc, 1) + 2;
+        assert.strictEqual(before.doc.textBetween(at, at + 1), 'a');
+        const after = before.apply(before.tr.delete(at, at + 1));
+        assert.deepStrictEqual(gaps(after.doc), ['', '']);
+        const out = serializeDocument({ ...listed, doc: after.doc }, { defaultWrap: 90 });
+        assert.strictEqual(out, 'Text\n\n- \n- b\n');
+        assert.deepStrictEqual(topChildren(parseDocument(md, out).doc).map(n => n.type.name), ['paragraph', 'bullet_list']);
+    });
+
+    test('deleting the paragraph between two lists clears the second list\'s gap, and the write keeps them two', () => {
+        const listed = parseDocument(md, '- a\n\nMiddle.\n\n- b\n');
+        const before = EditorState.create({ doc: listed.doc, plugins: [fidelityPlugin()] });
+        const from = start(before.doc, 1);
+        const after = before.apply(before.tr.delete(from, from + before.doc.child(1).nodeSize));
+        assert.deepStrictEqual(gaps(after.doc), ['', null]);
+        assert.strictEqual(serializeDocument({ ...listed, doc: after.doc }, { defaultWrap: 90 }), '- a\n\n* b\n');
+    });
 });
 
 suite('Editor fidelity plugin: requirement ids', () => {

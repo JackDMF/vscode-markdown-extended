@@ -11,7 +11,7 @@ import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
-import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsAttrs, currentReadsWikiEmbeds, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
+import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsWikiEmbeds, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -1816,21 +1816,6 @@ export function itemTakesLiteral(item: Node): boolean {
 }
 
 /**
- * Whether a block's text, as written, ends in a `{…}` line of its own — a
- * list's, a table's, a quote's `> {…}`, a paragraph's `line` literal. The next
- * block's first line straight after it would continue it, so the writer puts a
- * blank line between them (`serializeLayout`). Where the host reads no
- * attributes (`currentReadsAttrs`) such a line is text, and none is.
- */
-function endsInLiteralLine(text: string): boolean {
-    if (!currentReadsAttrs()) {
-        return false;
-    }
-    const last = text.replace(/\s+$/, '').split('\n').pop() ?? '';
-    return parseAttrsLiteral(last.replace(/^[ \t]{0,3}>?[ \t]*/, '')) !== null;
-}
-
-/**
  * A changed top-level block's text with its attribute literal where it stood
  * (`attrsPlacement`, see `AttrsPlacement` in `blocks.ts`): after a space at the
  * end of its last line, on a line of its own under it, or — for a list — under a
@@ -1838,8 +1823,9 @@ function endsInLiteralLine(text: string): boolean {
  * a lazy line (a second block in it, a nested list the plugin would hand the
  * literal to) takes the blank-line form, which the plugin always gives the
  * list. A quote's is `> {…}` under its last paragraph with text, inside it; a
- * table's is under it or under a blank line, as it stood. A `{…}` line of its
- * own is never followed straight by the next block's first line (`serializeLayout`).
+ * table's is under it or under a blank line, as it stood. Whether the next
+ * block's first line may follow a `{…}` line of its own straight is the
+ * parser's to say, on the pair as written (`seamHolds` in `serializeLayout`).
  * A heading and a fence write theirs themselves; an empty paragraph is the
  * literal alone, which the plugin reads as the same empty paragraph.
  */
@@ -2283,6 +2269,137 @@ function readUnit(text: string, key = text): UnitRead {
 }
 
 /**
+ * What a run of tokens reads as, for comparing the leader's reading in a pair
+ * with its reading alone: every token's kind, text and attributes, its inline
+ * children's too — not its `map`, which takes in the blank lines after it.
+ */
+function readingOf(tokens: readonly Token[]): string {
+    const one = (token: Token): unknown[] => [token.type, token.tag, token.nesting, token.content, token.markup, token.info, token.attrs, (token.children ?? []).map(one)];
+    return JSON.stringify(tokens.map(one));
+}
+
+/**
+ * Whether a seam holds (`seamHolds`), by a digest of the leader, the separator
+ * and the follower (`textKey`) — not the texts, which for a long list beside a
+ * paragraph being typed in would keep a copy of the list per keystroke; the
+ * oldest is dropped first.
+ */
+const seamCache = new Map<string, boolean>();
+/** How many seams `seamCache` keeps: a document's seams several times over. */
+const SEAM_CACHE_SIZE = 1024;
+
+/** A 53-bit digest of `text` (cyrb53) and its length, for a cache key that does not hold the text. */
+function textKey(text: string): string {
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+    for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 2654435761);
+        h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return `${text.length}:${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
+}
+
+/**
+ * Whether the page's engine with markdown-it-attrs (`attrsEngineFor`, the one
+ * `readUnit` reads with) reads `leader + separator + follower` as two blocks
+ * meeting where they were written: no top-level token's `map` crosses the
+ * follower's first line, and either a top-level token opens on that line or
+ * — a follower that yields no token, a reference definition — the leader's
+ * tokens are what the leader alone reads as. Without the second half a
+ * follower the leader swallowed would hold: a `{.a}` paragraph under a table
+ * yields no token because markdown-it-attrs gave its class to the table. A
+ * top-level block starts with the parser's block state fresh, so the pair
+ * reads as it reads in the document. Remembered by a digest of the three texts.
+ */
+export function seamHolds(leader: string, separator: string, follower: string): boolean {
+    const key = `${textKey(leader)}|${JSON.stringify(separator)}|${textKey(follower)}`;
+    const known = seamCache.get(key);
+    if (known !== undefined) {
+        seamCache.delete(key);
+        seamCache.set(key, known);
+        return known;
+    }
+    // markdown-it reads `\r\n` as one line break, so counting `\n` counts its lines.
+    const line = ((leader + separator).match(/\n/g) ?? []).length;
+    const md = attrsEngineFor(currentInlineDefinition());
+    const tokens = md.parse(leader + separator + follower, {});
+    const mapOf = (token: Token) => token.map as number[] | null;
+    let holds = !tokens.some(token => {
+        const map = mapOf(token);
+        return token.level === 0 && map !== null && map[0] < line && line < map[1];
+    });
+    if (holds && !tokens.some(token => token.level === 0 && mapOf(token)?.[0] === line)) {
+        const next = tokens.findIndex(token => token.level === 0 && (mapOf(token)?.[0] ?? -1) >= line);
+        holds = readingOf(next < 0 ? tokens : tokens.slice(0, next)) === readingOf(md.parse(leader, {}));
+    }
+    if (seamCache.size >= SEAM_CACHE_SIZE) {
+        seamCache.delete(seamCache.keys().next().value as string);
+    }
+    seamCache.set(key, holds);
+    return holds;
+}
+
+/** The kind and marker (`-`, `*`, `+`, or the delimiter `.`, `)`) of the top-level list `text` opens with, or with `last` ends with; `null` where it does not. */
+function listMarkerOf(text: string, last: boolean): { kind: string; marker: string } | null {
+    const top = attrsEngineFor(currentInlineDefinition()).parse(text, {}).filter(token => token.level === 0);
+    const token = last ? top[top.length - 1] : top[0];
+    const kind = /^(bullet|ordered)_list_(?:open|close)$/.exec(token?.type ?? '');
+    return kind === null ? null : { kind: kind[1], marker: token.markup };
+}
+
+/**
+ * `follower`, which opens with a list of the kind `leader` ends with, written
+ * with each other marker for that list — CommonMark starts a new list at a
+ * changed bullet or delimiter, which no number of blank lines does — in order
+ * of preference: a marker the list after it (`next`) opens with comes last, so
+ * the new list does not join that one. Only the list's own items change, at the
+ * line and column their `list_item_open` token gives; every other character of
+ * the follower, its `src` included, is kept. None where the pair is no such pair
+ * or an item's marker is not where its token says.
+ */
+function remarkedList(leader: string, follower: string, next: () => string | null): string[] {
+    const ends = listMarkerOf(leader, true);
+    const opens = listMarkerOf(follower, false);
+    if (ends === null || opens === null || ends.kind !== opens.kind) {
+        return [];
+    }
+    const after = listMarkerOf(next() ?? '', false);
+    const markers = (opens.kind === 'bullet' ? ['-', '*', '+'] : ['.', ')']).filter(m => m !== ends.marker);
+    markers.sort((a, b) => Number(a === after?.marker) - Number(b === after?.marker));
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(follower, {});
+    const close = tokens.findIndex(token => token.level === 0 && token.nesting === -1);
+    const items = tokens.slice(0, close).filter(token => token.type === 'list_item_open' && token.level === 1);
+    const out: string[] = [];
+    for (const marker of markers) {
+        const lines = follower.split('\n');
+        for (const item of items) {
+            const line = (item.map as number[])[0];
+            if (lines[line] === undefined) {
+                return [];
+            }
+            // The marker after the item's indent and, for an ordered item, its number.
+            const at = (/^[ \t]*\d*/.exec(lines[line]) as RegExpExecArray)[0].length;
+            if (lines[line][at] !== item.markup) {
+                return [];
+            }
+            lines[line] = lines[line].slice(0, at) + marker + lines[line].slice(at + 1);
+        }
+        // Still the same list, read by the parser: `- ***` re-marked is `* ***`, a thematic break.
+        const text = lines.join('\n');
+        const again = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+        const end = again.findIndex(token => token.level === 0 && token.nesting === -1);
+        const count = again.slice(0, end).filter(token => token.type === 'list_item_open' && token.level === 1).length;
+        if (again[0]?.type === `${opens.kind}_list_open` && again[0].markup === marker && count === items.length) {
+            out.push(text);
+        }
+    }
+    return out;
+}
+
+/**
  * A literal that does not read back as written, or — `literal` `null` — text
  * the parser reads as attributes no literal gives; `at`, the node it is
  * written on or in, where it is known.
@@ -2410,6 +2527,7 @@ function forgetReadBack(): void {
     wrappedCache = new WeakMap();
     verdictCache = new WeakMap();
     unitReadCache.clear();
+    seamCache.clear();
 }
 
 /**
@@ -2462,7 +2580,8 @@ export function serializeNode(node: Node, options: SerializeOptions): string {
  * Each top-level node contributes its `gap` and then its body: its `src` when it
  * has one, its serialization when it is an editable node whose `src` was
  * cleared, nothing when it is an injected atom (or an editable node left empty).
- * A `gap` of `null` — a node the UI inserted — is one blank line. Then the
+ * A `gap` of `null` — a node the UI inserted — is one blank line, or what the
+ * parser needs to read the pair as two (`serializeLayout`). Then the
  * `tail`. A changed block is written with the document's `eol` and ends with
  * one, so a changed last line of a file that had no final newline gains one.
  * What the engine reads as syntax is escaped by the engine the page reads
@@ -2502,36 +2621,90 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
     const serializer = blockSerializer(options);
     const blocks: BlockSpan[] = [];
     let out = '';
-    let literalLineBefore = false;
-    const atLineStart = () => out === '' || out.endsWith('\n') || out.endsWith('\r');
-    doc.forEach(node => {
-        const name = node.type.name;
+    // The last node that wrote a body: the leader of the next seam. A node that writes nothing makes no seam of its own.
+    // `remarked`: its text is not the one it was read or would be written as, so the seam after it is new too.
+    let prev: { node: Node; body: string; remarked: boolean } | null = null;
+    const endsLine = (text: string) => text.endsWith('\n') || text.endsWith('\r');
+    const lines = (text: string) => (text.match(/\n/g) ?? []).length;
+    /** Whether a node is written by rule: an editable node an edit cleared the `src` of. */
+    const byRule = (node: Node): boolean => {
         const src = node.attrs.src as string | null | undefined;
-        let body: string;
-        if (name === 'front_matter' || SOURCE_NODES.has(name) || (src !== null && src !== undefined)) {
-            body = src ?? '';
-        } else {
-            const text = withBlockSuffix(node, serializer.serialize(editorSchema.topNodeType.create(null, [node])));
-            body = text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
+        return node.type.name !== 'front_matter' && !SOURCE_NODES.has(node.type.name) && (src === null || src === undefined);
+    };
+    /** A node's text: its `src`, or its serialization with the document's `eol` and a final one. */
+    const bodyOf = (node: Node): string => {
+        if (!byRule(node)) {
+            return (node.attrs.src as string | null | undefined) ?? '';
         }
+        const text = withBlockSuffix(node, serializer.serialize(editorSchema.topNodeType.create(null, [node])));
+        return text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
+    };
+    /**
+     * A seam the parser does not read as two blocks, mended by the first rung
+     * it does: one blank line, two, then (a list after a list of its kind) the
+     * follower's own text with its items' marker changed (`remarkedList`). A
+     * rung never narrows the separator. `next` is the text of the block after
+     * the follower, whose list a new marker should not join.
+     */
+    const mended = (leader: string, lead: string, sep: string, body: string, next: () => string | null): { sep: string; body: string } => {
+        const blank = lead + eol;
+        for (const wider of [blank, blank + eol]) {
+            if (lines(wider) > lines(sep) && seamHolds(leader, wider, body)) {
+                return { sep: wider, body };
+            }
+        }
+        const otherSep = lines(sep) >= lines(blank) ? sep : blank;
+        for (const remarked of remarkedList(leader, body, next)) {
+            if (seamHolds(leader, otherSep, remarked)) {
+                return { sep: otherSep, body: remarked };
+            }
+        }
+        // Nothing on the ladder holds (an indented code block under a list): written as it would have been. Reporting it is a follow-up.
+        return { sep, body };
+    };
+    /** The body of the first node after `index` that writes one, or `null`. */
+    const bodyAfter = (index: number): string | null => {
+        for (let j = index + 1; j < doc.childCount; j++) {
+            const body = bodyOf(doc.child(j));
+            if (body !== '') {
+                return body;
+            }
+        }
+        return null;
+    };
+    // Whether a node between `prev` and the next body wrote nothing: the two meet where the file never had them meet.
+    let skipped = false;
+    doc.forEach((node, _offset, index) => {
+        let body = bodyOf(node);
         if (body === '') {
             blocks.push({ start: out.length, body: '' });
+            // Only a block emptied by an edit: a source node that writes nothing (an injected block) never stood in the file.
+            skipped = skipped || (prev !== null && byRule(node));
             return;
         }
-        if (!atLineStart()) {
-            out += eol;
+        let sep = '';
+        let remarked = false;
+        if (prev !== null) {
+            const lead = endsLine(prev.body) ? '' : eol;
+            const gap = node.attrs.gap as string | null | undefined;
+            sep = lead + (gap === null || gap === undefined ? eol : gap);
+            // A seam this write makes new is read back; one the file holds (both from their slices, the gap kept, nothing between) is not.
+            const isNew = gap === null || gap === undefined || skipped || prev.remarked || byRule(prev.node) || byRule(node);
+            if (isNew && !seamHolds(prev.body, sep, body)) {
+                const written = body;
+                ({ sep, body } = mended(prev.body, lead, sep, body, () => bodyAfter(index)));
+                remarked = body !== written;
+            }
+        } else {
+            sep = (node.attrs.gap as string | null | undefined) ?? '';
         }
-        const gap = node.attrs.gap as string | null | undefined;
-        out += gap === null || gap === undefined ? (out === '' ? '' : eol) : gap;
-        if (literalLineBefore && gap === '') {
-            // `{.wide}` straight above `After.` is one paragraph of text: the literal would be lost.
-            out += eol;
-        }
+        out += sep;
         blocks.push({ start: out.length, body });
         out += body;
-        literalLineBefore = endsInLiteralLine(body);
+        prev = { node, body, remarked };
+        skipped = false;
     });
-    if (tail !== '' && !atLineStart()) {
+    if (tail !== '' && out !== '' && !endsLine(out)) {
         out += eol;
     }
     return { text: out + tail, blocks };

@@ -132,6 +132,19 @@ suite('Editor positions: page ↔ source', () => {
         }
     });
 
+    test('the line a block starts on is read from the layout, a seam it widened included', () => {
+        // `text` + an emptied first item: the layout puts a blank line between them, so the list starts on line 2, not 1.
+        const parsed = parseDocument(md, 'text\n- a\n- b\n\nAfter.\n');
+        const [paragraph, list, after] = topChildren(parsed.doc);
+        const first = list.child(0);
+        const emptied = first.type.create(first.attrs, first.content.replaceChild(0, first.child(0).type.create(first.child(0).attrs)));
+        const doc = parsed.doc.type.create(null, [paragraph, touched(list, list.content.replaceChild(0, emptied)), after]);
+        const map = createPositionMap({ ...parsed, doc }, OPTIONS);
+        assert.strictEqual(map.text, 'text\n\n- \n- b\n\nAfter.\n');
+        assert.deepStrictEqual([0, 1, 2].map(i => map.blockLine(i)), [0, 2, 5]);
+        assert.strictEqual(map.blockLine(3), 6, 'past the last block: the line after its final line break');
+    });
+
     test('an unedited block: the slice\'s offset plus the offset inside it, delimiters stepped over', () => {
         const source = 'First line.\n\nSome *emphasis* and `code` in [a link](https://x.org/y).\n';
         const parsed = parseDocument(md, source);
