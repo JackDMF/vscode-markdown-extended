@@ -1,5 +1,22 @@
 # Change Log
 
+## Unreleased
+
+### 🐛 Bug Fixes
+
+- **A self-closing `<svg/>` or `<math/>` in a task label closes itself.** In `- [ ] a <svg/> b [ ] c` the second box stayed text, because a slash after any element but a void one was ignored, as HTML does for `<span/>`. Foreign content is the exception in HTML, and now here too: `<svg/>` and `<math/>` close, `<svg>` without the slash still opens, and every other element keeps the HTML rule — `<a id="x"/>` opens, so later boxes in the same label stay text. Known limit: an unquoted attribute value ending in `/` (`<svg width=10/>`) reads as closing, though a browser keeps the svg open.
+- **A definition one blank line below its term can be formatted.** Bold or italics typed into `Term`, a blank line, `: ‸` were refused, although markdown-it-deflist reads that as a definition. What a toggle may change around a definition is now read from the parse — the term the plugin pairs with it, the blocks that start on its line — instead of from the line above, so a second definition directly under the first (`Term`, `: def1`, `: ‸`) works too, and an attribute that would move to another element (`Term`, blank, `: ‸`, `{#anchor}`) is refused. A line the plugin does not pair with a term (`- item`, blank, `: ‸`) is formatted as the paragraph it is.
+- **`markdownExtended.plugins.disabled` written as a list is read.** `["kbd", "mark"]` in `settings.json` took the plugin registry down with `.trim is not a function`; a list of names is now read like the comma-separated string, and any other value disables nothing.
+- **With `attrs` disabled, the Visual Editor no longer treats `{…}` as attributes.** It still escaped braces on save, refused text ending in `{…}`, offered **Attributes…** and **Span with class**, and added a blank line after a `{…}` line — all for a plugin that did not run. Whether the engine reads attributes is now one fact of its definition, read from the engine as built, and the save, the check of an edit and the page all follow it: `{.x}` is written as typed, and the attribute commands say why they are not offered.
+
+### ⚠️ Limits
+
+- An emptied quote keeps its `{.q}` on the page until text returns; saved while empty, the file cannot carry it, because markdown-it-attrs gives a lone `> {.q}` line's class to an empty paragraph inside the quote, not to the quote.
+- A `{…}` typed right after an inline close inside a sidenote or marginal note (`++r|*a*{.c}++`) is refused rather than escaped: the notes plugin parses a note's text on its own and copies the result into the paragraph, where markdown-it-attrs reads it a second time, after any escape is already resolved.
+- A paragraph ending in `{.x}` followed by an escaped character (`b {.spec}\$`) opens as a source block: markdown-it-attrs takes `{.spec}` past the escape, and the editor could not write that line back as it stands.
+- Only an extension's disabling of the wiki-embed rule is replayed in the Visual Editor; one that disables another rule (keys, highlights, notes) after the extension's plugins are loaded is not seen there. Plugins disabled through `markdownExtended.plugins.disabled` are honoured.
+- An edited list is written with one space after its marker. A neighbouring block indented to the old text column (`-  item`, then a paragraph indented by two) moves into the last item.
+
 ## v4.1.0 — Exports Embed by Rule, Toggles Rebuilt
 
 ### ✨ New Features
