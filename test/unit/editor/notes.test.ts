@@ -430,8 +430,6 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
     };
     /** The sidebars `state`'s document holds once saved and read again, by the engine it was read with. */
     const sidebarsAfterSave = (state: EditorState, md = hostEngine()) => sidebarsIn(text(state), md);
-    /** `doc` written by rule, every block as if edited, as the save after an edit the filter let through would write it. */
-    const writtenByRule = (doc: Node) => serializeDocument({ doc: doc.type.create(null, topChildren(doc).map(n => touched(n))), eol: '\n', tail: '' }, { defaultWrap: 90 });
     // The page reads a textblock as the engine that parsed its document does (`setInlineEngine`); every test leaves it as it starts.
     teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
     const files: [string, string, MarkdownIt][] = [
@@ -459,12 +457,13 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
     });
 
     test('a seam the edit makes is still refused, in a plain paragraph and beside one the file holds', () => {
-        // Deleting the space glues the sidebar to the URL.
+        // Deleting the space glues the sidebar to the link: written `[…](…)`, the link ends before the marker.
         const spaced = read('See http://e.com/ $note$ here.\n');
         const sidebar = posOf(spaced.doc, 'note') - 1;
         const glue = spaced.tr.delete(sidebar - 1, sidebar);
-        assert.strictEqual(noteRefusal(glue), SIDEBAR_GLUED_URL);
-        assert.ok(spaced.apply(glue).doc === spaced.doc, 'the filter refuses it');
+        assert.strictEqual(noteRefusal(glue), null);
+        assert.strictEqual(text(spaced.apply(glue)), 'See [http://e.com/](http://e.com/)$note$ here.\n');
+        assert.deepStrictEqual(sidebarsAfterSave(spaced.apply(glue)), ['left_sidebar']);
         // A second sidebar in a paragraph whose first one is held after a URL is judged on its own.
         const both = read('See (http://e.com)$note$ and $more$ here.\n');
         const second = both.tr.delete(posOf(both.doc, 'and ') + 3, posOf(both.doc, 'and ') + 4);
@@ -483,10 +482,11 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
     });
 
     test('Convert on a sidebar held after a URL is decided by linkify on the converted text', () => {
-        // linkify-it reads `@` and `$` apart: `http://e.com,@x@` is one address, `(http://e.com)@x@` stops at `)`.
+        // linkify-it reads `@` and `$` apart: `http://e.com,@x@` is one address, so that link is written
+        // `[…](…)`, which ends it; `(http://e.com)@x@` stops at `)`.
         for (const [source, reason] of [
             ['See (http://e.com)$x$ here.\n', null],
-            ['See http://e.com,$x$ here.\n', SIDEBAR_GLUED_URL],
+            ['See http://e.com,$x$ here.\n', null],
         ] as [string, string | null][]) {
             const held = read(source);
             const at = sidebarAt(held.doc);
@@ -499,29 +499,28 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
         }
     });
 
-    test('an edit after which linkify reads a marker the file holds into the URL is refused, wherever it is made', () => {
+    test('an edit after which linkify would read a marker the file holds into a bare link applies: the link is written [url](url), wherever the edit is made', () => {
         const at = (needle: string, offset = 0) => (s: EditorState) => posOf(s.doc, needle) + offset;
-        const edits: [string, string, (state: EditorState) => Transaction][] = [
+        const edits: [string, string, (state: EditorState) => Transaction, string][] = [
             // The URL's closing bracket or quote deleted, or replaced by a character a URL holds.
-            ['delete ")"', 'See (http://e.com/)$note$ here.\n', s => s.tr.delete(sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
-            ['delete the closing quote', 'See "http://e.com/"$note$ here.\n', s => s.tr.delete(sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
-            ['replace ")" by ","', 'See (http://e.com/)$note$ here.\n', s => s.tr.insertText(',', sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
-            // A bracket the URL opened, closed by the sidebar's text or the text after it: linkify reads on through the marker.
-            ['")" typed at the end of the sidebar', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at('note', 4)(s))],
-            ['")" typed at the start of the sidebar', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at('note')(s))],
-            ['")" typed right after the closer', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at(' here')(s))],
-            ['")x" typed right after the closer', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')x', at(' here')(s))],
-            ['" x" deleted after the closer', 'See http://e.com/($note$ x) here.\n', s => s.tr.delete(at(' x')(s), at(' x', 2)(s))],
-            ['"}" typed at the end of the sidebar', 'See http://e.com/{$note$ here.\n', s => s.tr.insertText('}', at('note', 4)(s))],
+            ['delete ")"', 'See (http://e.com/)$note$ here.\n', s => s.tr.delete(sidebarAt(s.doc) - 1, sidebarAt(s.doc)), 'See ([http://e.com/](http://e.com/)$note$ here.\n'],
+            ['delete the closing quote', 'See "http://e.com/"$note$ here.\n', s => s.tr.delete(sidebarAt(s.doc) - 1, sidebarAt(s.doc)), 'See "[http://e.com/](http://e.com/)$note$ here.\n'],
+            ['replace ")" by ","', 'See (http://e.com/)$note$ here.\n', s => s.tr.insertText(',', sidebarAt(s.doc) - 1, sidebarAt(s.doc)), 'See ([http://e.com/](http://e.com/),$note$ here.\n'],
+            // A bracket the URL opened, closed by the sidebar's text or the text after it: linkify would read on through the marker.
+            ['")" typed at the end of the sidebar', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at('note', 4)(s)), 'See [http://e.com/](http://e.com/)($note)$ here.\n'],
+            ['")" typed at the start of the sidebar', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at('note')(s)), 'See [http://e.com/](http://e.com/)($)note$ here.\n'],
+            ['")" typed right after the closer', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at(' here')(s)), 'See [http://e.com/](http://e.com/)($note$) here.\n'],
+            ['")x" typed right after the closer', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')x', at(' here')(s)), 'See [http://e.com/](http://e.com/)($note$)x here.\n'],
+            ['" x" deleted after the closer', 'See http://e.com/($note$ x) here.\n', s => s.tr.delete(at(' x')(s), at(' x', 2)(s)), 'See [http://e.com/](http://e.com/)($note$) here.\n'],
+            ['"}" typed at the end of the sidebar', 'See http://e.com/{$note$ here.\n', s => s.tr.insertText('}', at('note', 4)(s)), 'See [http://e.com/](http://e.com/){$note}$ here.\n'],
         ];
-        for (const [label, source, edit] of edits) {
+        for (const [label, source, edit, saved] of edits) {
             const state = read(source);
             assert.deepStrictEqual(sidebarsAfterSave(state), ['left_sidebar'], `${label}: the file holds a sidebar`);
             const tr = edit(state);
-            assert.strictEqual(noteRefusal(tr), SIDEBAR_GLUED_URL, label);
-            assert.ok(state.apply(tr).doc === state.doc, `${label}: the filter refuses it`);
-            // What it prevents: written anyway, the sidebar is part of the address.
-            assert.deepStrictEqual(sidebarsIn(writtenByRule(tr.doc)), [], `${label}: the loss`);
+            assert.strictEqual(noteRefusal(tr), null, label);
+            assert.strictEqual(text(state.apply(tr)), saved, `${label}: saved`);
+            assert.deepStrictEqual(sidebarsAfterSave(state.apply(tr)), ['left_sidebar'], `${label}: read back`);
             // Elsewhere in the paragraph, before the scheme and after the sidebar, edits still apply.
             const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'See') + 1));
             assert.strictEqual(text(typed), source.replace('See', 'SXee'), `${label}: before the scheme`);
@@ -696,14 +695,21 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
         }
     });
 
-    test('a space deleted before a sidebar after an address is refused where the line as written lets linkify read on', () => {
-        // `C\+\+http…` and the line start's `\-http…`: the escape ends the text before the scheme, and linkify reads the URL.
-        for (const source of ['C++http://e.com/ $x$ here.\n', '-http://e.com/ $x$ here.\n']) {
+    test('a space deleted before a sidebar after an address is refused where the line as written lets linkify read on, unless the address is a link', () => {
+        // `C\+\+http…`: the escape ends the text before the scheme, and linkify reads the URL the page holds as text.
+        const plain = read('C++http://e.com/ $x$ here.\n');
+        assert.deepStrictEqual(sidebarsIn('C++http://e.com/ $x$ here.\n'), ['left_sidebar']);
+        const plainTr = deleteBeforeSidebar(plain);
+        assert.strictEqual(noteRefusal(plainTr), SIDEBAR_GLUED_URL);
+        assert.ok(plain.apply(plainTr).doc === plain.doc, 'the filter refuses it');
+        // At the line start the page holds a link: written `[…](…)`, it ends before the marker.
+        for (const source of ['-http://e.com/ $x$ here.\n']) {
             const state = read(source);
             assert.deepStrictEqual(sidebarsIn(source), ['left_sidebar'], source);
             const tr = deleteBeforeSidebar(state);
-            assert.strictEqual(noteRefusal(tr), SIDEBAR_GLUED_URL, source);
-            assert.ok(state.apply(tr).doc === state.doc, `${source}: the filter refuses it`);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            assert.ok(text(state.apply(tr)).includes('[http://e.com/](http://e.com/)$x$ here.'), text(state.apply(tr)));
+            assert.deepStrictEqual(sidebarsIn(text(state.apply(tr))), ['left_sidebar'], `${source}: read back`);
         }
         // In the middle of a line `-http` is no scheme to linkify, and the sidebar reads back.
         const mid = read('a -http://e.com/ $x$ here.\n');

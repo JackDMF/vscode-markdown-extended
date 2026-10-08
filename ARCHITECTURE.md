@@ -423,12 +423,16 @@ further, and the escape of a neighbour makes such an edge (`5\$:)` is `5$` and a
 `5$:)` is written `5\$\:)`. The page's engine runs no emoji rule; this escape is why it
 needs none. A bare link is another such edge, and where it starts and ends is asked of the
 page's engine, never computed (`readAutoLinks`): a shortcut inside a link is left, one at
-its edge is escaped though a letter stands beside it, and a backslash is kept only where
-the engine still reads the same links with it (`http://x.com\:)`; after a path linkify
-would take it in, so `http://x.com/p<3` stays as typed). A bare link mark is written bare
-only where the engine reads the word it stands in — the line back to a space, the link,
-the next text escaped up to a space — as exactly that one link; otherwise `[url](url)`
-(`readsBare`), so a letter an edit glues to it or a shortcut after a path stays text.
+its edge is escaped though a letter stands beside it, and a backslash there is kept only
+where the engine still reads the same links, text and address, with it (`http://x.com\:)`;
+after a path linkify would take it in, so `http://x.com/p<3` stays as typed). The parser
+gives no offsets, so a link is placed only where its text stands as often as such links
+were read; otherwise every place its text or address stands is taken for it. A bare link
+mark is written bare only where the engine, reading the textblock as written, reads a
+link of the node's text and address where it was written; otherwise `[url](url)`, again
+until every bare one reads back (`linksWrittenInline`). So a letter an edit glues to it,
+a shortcut after a path, a sidebar's marker or the node after it stays outside the link,
+and the delimiters of emphasis around it are judged as written (`**http://x.com**s`).
 A link's destination and title take no backslash escape either: there a run of the
 marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
 angle link holding the marker character is written inline.

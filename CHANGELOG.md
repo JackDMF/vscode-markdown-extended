@@ -7,13 +7,15 @@
 - A smiley typed right against a URL no longer saves as an emoji.
 - A link an edit joined to a letter keeps its address and the letter when saved.
 - A smiley typed after a linked URL with a path no longer becomes part of the address.
-- Some edits beside a link that were refused, such as a `/` typed after it, now apply.
+- Edits that put a sidebar or a `/` right after a link now apply instead of being refused.
+- A link whose address holds a percent code such as `%41` keeps that address when saved.
 
 ### ⚠️ Limits
 
 - `<3` or `</3` typed right after a URL with a path still reads as an emoji.
+- `</3` typed right after a URL with a path also adds `%5C` to the address.
 - `]`, `*`, `$` or `@` typed right after a URL with a path can still join the address.
-- A smiley right after a URL inside `^sup^` or `~sub~` still reads as an emoji.
+- Any smiley inside `^sup^` or `~sub~` reads as an emoji, as before.
 
 ## v4.1.1 — Saves That Read Back
 

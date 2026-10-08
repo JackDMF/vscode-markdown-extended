@@ -35,6 +35,15 @@ export interface SerializeOptions {
     defaultWrap: number;
 }
 
+/** A bare link a trial wrote: the node, and where its text starts in the trial's text, with its text and address. */
+interface BareLink {
+    parent: Node;
+    index: number;
+    start: number;
+    text: string;
+    href: string;
+}
+
 /** The parts of prosemirror-markdown's state it keeps internal but a wrapping serializer has to read. Stable since 1.0. */
 interface StateInternals {
     out: string;
@@ -44,6 +53,10 @@ interface StateInternals {
     inTightList: boolean | undefined;
     /** Which form the link being written takes; this module's own field. */
     linkForm?: LinkForm;
+    /** The links read with linkify written `[…](…)`, by parent and child index, as a bare one would not read back (`OrderedInlineState.linksWrittenInline`); this module's own field. */
+    inlineLinks?: Map<Node, Set<number>>;
+    /** Where a trial wrote each bare link, its hold markers removed (`OrderedInlineState.trial`); this module's own field. */
+    bareLinks?: BareLink[];
     /** Which part of a note is being written, when one is; this module's own field (see `writeNote`). */
     notePart?: NotePart;
     /** The marker character of the note being written (`+`, `!`), when one is; this module's own field. */
@@ -200,13 +213,23 @@ const ESCAPE_EXTRA_PARTS: readonly string[] = [
 ];
 const ESCAPE_EXTRA = new RegExp(ESCAPE_EXTRA_PARTS.join('|'), 'gu');
 
-/** `text` with a backslash inserted before the character at each of `at`, the last first. */
-function withBackslashes(text: string, at: Iterable<number>): string {
-    let out = text;
-    for (const index of [...at].sort((a, b) => b - a)) {
-        out = out.slice(0, index) + '\\' + out.slice(index);
+/** `text` with a backslash before the character at each of `at`, places of `text` in ascending order. */
+function backslashedAt(text: string, at: readonly number[]): string {
+    return at.reduceRight((written, place) => `${written.slice(0, place)}\\${written.slice(place)}`, text);
+}
+
+/** Every place `part` stands in `text`, `[start, end)` each; none for an empty `part`. */
+function placesIn(text: string, part: string): (readonly [number, number])[] {
+    const found: (readonly [number, number])[] = [];
+    for (let at = part === '' ? -1 : text.indexOf(part); at >= 0; at = text.indexOf(part, at + 1)) {
+        found.push([at, at + part.length]);
     }
-    return out;
+    return found;
+}
+
+/** The links of `links` as the escape compares them: text and address, in order. */
+function linksKey(links: readonly ReadAutoLink[]): string {
+    return links.map(l => `${l.text}\u0000${l.href}`).join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -318,8 +341,9 @@ function titlePart(title: string | null): string {
 /**
  * How a link is written: a bare URL stays bare and an `<…>` autolink stays one,
  * as long as the link is still one unmarked text node that can be written that
- * way — a bare one only where the page's engine reads it back as that link
- * beside its neighbours (`readsBare`); otherwise `[text](destination)`.
+ * way — a bare one only where the page's engine reads the textblock as
+ * written with that link where it stands (`OrderedInlineState.linksWrittenInline`);
+ * otherwise `[text](destination)`.
  */
 function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, index: number): LinkForm {
     const node = parent.child(index);
@@ -342,7 +366,7 @@ function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, inde
     const text = node.text ?? '';
     const href = mark.attrs.href as string;
     if (markup === 'linkify' && text !== '' && !/\s/.test(text)) {
-        return readsBare(state, text, parent, index) ? 'bare' : 'inline';
+        return internals(state).inlineLinks?.get(parent)?.has(index) ? 'inline' : 'bare';
     }
     if (markup === 'autolink' && (text === href || `mailto:${text}` === href) && !/[\s<>]/.test(text)) {
         return 'angle';
@@ -350,23 +374,14 @@ function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, inde
     return 'inline';
 }
 
-/**
- * Whether a bare link of `text` (the node at `index`) reads back as one link
- * of that text where it is written: the page's engine parses the word it
- * stands in — what the line holds before it back to a space, the link, and
- * the next text node escaped as it will be, up to a space — and must read
- * there exactly one link by itself, of that text (`autoLinksRead`). Where the
- * host's linkify would take a neighbour in (`http://x.comb`, `/p\:)`) or not
- * link at all (`ahttp://x.com`), the link is written `[text](href)`.
- */
-function readsBare(state: MarkdownSerializerState, text: string, parent: Node, index: number): boolean {
-    const out = internals(state).out;
-    const line = out.slice(out.lastIndexOf('\n') + 1).replace(HOLD_RE, '');
-    const before = line.slice(line.search(/\s\S*$/) + 1);
-    const next = index + 1 < parent.childCount ? parent.child(index + 1) : null;
-    const after = next !== null && next.isText ? state.esc((next.text ?? '').split('\n')[0], false).split(/\s/)[0] : '';
-    const links = autoLinksRead(before + text + after);
-    return links.length === 1 && links[0].text === text;
+/** Whether `parent` holds a link read with linkify, which `linkForm` may write bare. */
+function holdsBareCandidate(parent: Node): boolean {
+    let found = false;
+    parent.descendants(node => {
+        found ||= node.isText && node.marks.some(m => m.type.name === 'link' && m.attrs.markup === 'linkify');
+        return !found;
+    });
+    return found;
 }
 
 function backtickFence(text: string): { open: string; close: string } {
@@ -427,6 +442,9 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
             }
             // Written unescaped: a backslash inside a URL is part of the URL.
             st.inAutolink = true;
+            if (form === 'bare') {
+                st.bareLinks?.push({ parent, index, start: st.out.replace(HOLD_RE, '').length, text: parent.child(index).text ?? '', href: mark.attrs.href as string });
+            }
             return form === 'angle' ? HOLD_OPEN + '<' : HOLD_OPEN;
         },
         close(state, mark) {
@@ -555,11 +573,15 @@ export class OrderedInlineState extends LibraryState {
      * emoji shortcut the host could read in the text that leaves
      * (`shortcutEscapes`), told where the page's engine reads a link by
      * itself in that text (`autoLinksRead`): a shortcut inside one is left,
-     * one at its edge escaped. A backslash is kept only where the engine
-     * still reads the same links with it; linkify takes one after a path
-     * into the URL (`http://x.com/p\<3`), and there the shortcut stays as
-     * typed. A text holding no shortcut is not parsed, nor one written as a
-     * link's text (`[…](…)`), where no link stands by itself.
+     * one at its edge escaped. A backslash at a link's edge is kept only
+     * where the engine still reads the same links, text and address, with
+     * it; linkify takes one after a path into the URL (`http://x.com/p\<3`),
+     * and there the shortcut stays as typed. Where the engine's links cannot
+     * be placed (`readAutoLinks`), every place a link's text or address
+     * stands is taken for one, and each backslash in or beside one is judged
+     * so. A text holding no shortcut is not
+     * parsed, nor one written as a link's text (`[…](…)`), where no link
+     * stands by itself.
      */
     esc(str: string, startOfLine = false): string {
         const escaped = super.esc(str, startOfLine);
@@ -567,20 +589,79 @@ export class OrderedInlineState extends LibraryState {
             return escaped;
         }
         if (internals(this).linkForm === 'inline') {
-            return withBackslashes(escaped, shortcutEscapes(escaped, []));
+            return backslashedAt(escaped, shortcutEscapes(escaped, []).map(e => e.at));
         }
         const links = autoLinksRead(escaped);
-        const texts = links.map(l => l.text).join('\n');
-        const at = [...shortcutEscapes(escaped, links.map(l => [l.start, l.end] as const))]
-            .filter(index => autoLinksRead(withBackslashes(escaped, [index])).map(l => l.text).join('\n') === texts);
-        return withBackslashes(escaped, at);
+        const placed = links.every(l => l.start !== null);
+        const read = linksKey(links);
+        // Unplaced, every place a link's text or address stands may be the link.
+        const ranges = placed ? links.map(l => [l.start, l.start + l.text.length] as const) : links.flatMap(l => [...placesIn(escaped, l.text), ...placesIn(escaped, l.href)]);
+        const at = shortcutEscapes(escaped, ranges, placed)
+            .filter(e => !e.edge || linksKey(autoLinksRead(backslashedAt(escaped, [e.at]))) === read)
+            .map(e => e.at);
+        return backslashedAt(escaped, at);
     }
 
+    /**
+     * `parent` written as `renderInline` writes it, with the links read with
+     * linkify that would not read back bare written `[…](…)`
+     * (`linksWrittenInline`).
+     */
     renderInline(parent: Node, fromBlockStart = true): void {
-        if (this.libraryOrderFor(parent, fromBlockStart)) {
-            super.renderInline(parent, fromBlockStart);
-        } else {
-            this.renderOrdered(parent, fromBlockStart);
+        const st = internals(this);
+        const outer = st.inlineLinks;
+        if (holdsBareCandidate(parent)) {
+            st.inlineLinks = this.linksWrittenInline(parent, fromBlockStart, outer);
+        }
+        try {
+            if (this.libraryOrderFor(parent, fromBlockStart)) {
+                super.renderInline(parent, fromBlockStart);
+            } else {
+                this.renderOrdered(parent, fromBlockStart);
+            }
+        } finally {
+            st.inlineLinks = outer;
+        }
+    }
+
+    /**
+     * Which links read with linkify `parent` writes `[…](…)`: it is written on
+     * a state of its own (`trial`), the page's engine reads that text whole
+     * (`autoLinksRead`), and a bare link it does not read where it was
+     * written, with the node's text and address, is written `[…](…)`; again
+     * until every bare one reads back. The parser judges the text as it is
+     * written — the delimiters of the marks around a link, the node after it,
+     * whatever it is — so nothing here predicts where linkify starts or ends
+     * a link (`**http://x.com**s`, `http://x.com/p.*b*`, `http://x.comb`).
+     * `outer`'s links, an enclosing textblock's, stay as they are.
+     */
+    private linksWrittenInline(parent: Node, fromBlockStart: boolean, outer: Map<Node, Set<number>> | undefined): Map<Node, Set<number>> {
+        const st = internals(this);
+        const inline = new Map(outer ?? []);
+        st.inlineLinks = inline;
+        for (;;) {
+            const bare: BareLink[] = [];
+            const text = this.trial(parent, fromBlockStart, !this.libraryOrderFor(parent, fromBlockStart), bare);
+            const read = autoLinksRead(text);
+            const misread = bare.filter(b => {
+                const same = (l: ReadAutoLink) => l.text === b.text && l.href === b.href;
+                if (read.some(l => l.start === b.start && same(l))) {
+                    return false;
+                }
+                if (!read.some(l => l.start === null && same(l))) {
+                    return true;
+                }
+                // Not placed (its text stands elsewhere too): read once more with this one blanked out, and it
+                // was read here if exactly one such link is gone.
+                const blanked = `${text.slice(0, b.start)}${' '.repeat(b.text.length)}${text.slice(b.start + b.text.length)}`;
+                return read.filter(same).length - autoLinksRead(blanked).filter(same).length !== 1;
+            });
+            if (misread.length === 0) {
+                return inline;
+            }
+            for (const { parent: holder, index } of misread) {
+                inline.set(holder, new Set([...(inline.get(holder) ?? []), index]));
+            }
         }
     }
 
@@ -628,14 +709,16 @@ export class OrderedInlineState extends LibraryState {
         return verdict;
     }
 
-    /** `parent` written on a state of its own, in the order of the runs or the library's, hold markers removed. */
-    private trial(parent: Node, fromBlockStart: boolean, ordered: boolean): string {
+    /** `parent` written on a state of its own, in the order of the runs or the library's, hold markers removed; where it wrote each bare link into `bare`, when given. */
+    private trial(parent: Node, fromBlockStart: boolean, ordered: boolean, bare?: BareLink[]): string {
         const st = internals(this);
         const state = new OrderedInlineState(st.nodes, st.marks, this.options);
         const into = internals(state);
         into.inAutolink = st.inAutolink;
         into.inTightList = st.inTightList;
         into.linkForm = st.linkForm;
+        into.inlineLinks = st.inlineLinks;
+        into.bareLinks = bare;
         into.notePart = st.notePart;
         into.noteMarker = st.noteMarker;
         into.inTableCell = st.inTableCell;
@@ -1275,19 +1358,24 @@ function engine(): MarkdownIt {
     return currentInlineEngine();
 }
 
-/** The sidebars the page's engine reads in `text` (`readSidebars`), remembered by the text. */
-function sidebarsRead(text: string): ReadSidebar[] {
-    let read = readCache.get(text);
-    if (read === undefined) {
-        read = readSidebars(engine(), text);
-        if (readCache.size >= READ_CACHE_SIZE) {
-            readCache.delete(readCache.keys().next().value as string);
+/** What `read` gives for `text`, remembered in `cache` by the text, the most recently asked kept and the oldest dropped first beyond `READ_CACHE_SIZE`. */
+function remembered<T>(cache: Map<string, T>, text: string, read: (text: string) => T): T {
+    let value = cache.get(text);
+    if (value === undefined) {
+        value = read(text);
+        if (cache.size >= READ_CACHE_SIZE) {
+            cache.delete(cache.keys().next().value as string);
         }
     } else {
-        readCache.delete(text);
+        cache.delete(text);
     }
-    readCache.set(text, read);
-    return read;
+    cache.set(text, value);
+    return value;
+}
+
+/** The sidebars the page's engine reads in `text` (`readSidebars`), remembered by the text. */
+function sidebarsRead(text: string): ReadSidebar[] {
+    return remembered(readCache, text, t => readSidebars(engine(), t));
 }
 
 /**
@@ -1296,17 +1384,7 @@ function sidebarsRead(text: string): ReadSidebar[] {
  * link, asked of it, never computed here.
  */
 function autoLinksRead(text: string): ReadAutoLink[] {
-    let read = autoLinkCache.get(text);
-    if (read === undefined) {
-        read = readAutoLinks(engine(), text);
-        if (autoLinkCache.size >= READ_CACHE_SIZE) {
-            autoLinkCache.delete(autoLinkCache.keys().next().value as string);
-        }
-    } else {
-        autoLinkCache.delete(text);
-    }
-    autoLinkCache.set(text, read);
-    return read;
+    return remembered(autoLinkCache, text, t => readAutoLinks(engine(), t));
 }
 
 /** The sidebars the page's engine reads in `text` with linkify off: whether a URL is what took one (`lostReason`). */
@@ -2110,7 +2188,7 @@ function escapedLiterals(node: Node, written: string, where: keyof typeof LITERA
         escapeCache.delete(key);
     }
     escapeCache.set(key, at);
-    return { text: at.reduceRight((text, place) => `${text.slice(0, place)}\\${text.slice(place)}`, written), at };
+    return { text: backslashedAt(written, at), at };
 }
 
 /** The `{…}`s markdown-it-attrs cut off text in a parse: those the page shows as text (`made`), and how many span literals it read. */

@@ -28,7 +28,7 @@ import shortcuts from 'markdown-it-emoji/lib/data/shortcuts.mjs';
  * `;`, else its first `<` or `-`. Throws at load if an alias has no character
  * to break it at.
  */
-export const SHORTCUT_SPLITS: readonly { alias: string; at: number }[] = Object.values(shortcuts as Record<string, string[]>).flat().map(alias => {
+const SHORTCUT_SPLITS: readonly { alias: string; at: number }[] = Object.values(shortcuts as Record<string, string[]>).flat().map(alias => {
     const colon = alias.search(/[:;]/);
     const at = colon >= 0 ? colon : alias.search(/[<-]/);
     if (at < 0) {
@@ -40,7 +40,7 @@ export const SHORTCUT_SPLITS: readonly { alias: string; at: number }[] = Object.
 /** Whether a text holds any alias of the table at all: what a text is tested by before its shortcuts are looked for. */
 export const SHORTCUT_PRETEST = new RegExp(SHORTCUT_SPLITS.map(({ alias }) => alias.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&')).join('|'));
 
-const LETTER_BEFORE =/[\p{L}\p{N}\p{M}]$/u;
+const LETTER_BEFORE = /[\p{L}\p{N}\p{M}]$/u;
 const LETTER_AFTER = /^[\p{L}\p{N}\p{M}]/u;
 
 /** Whether the character at `index` of `text` is escaped: an odd run of backslashes before it. */
@@ -52,30 +52,44 @@ function escapedAt(text: string, index: number): boolean {
     return run % 2 === 1;
 }
 
+/** A backslash `shortcutEscapes` puts before the character at `at`; `edge` where a link's edge or an unplaced link makes the caller ask the parser whether to keep it. */
+export interface ShortcutEscape {
+    at: number;
+    edge: boolean;
+}
+
 /**
  * Where in `escaped` — text as `esc` wrote it — a backslash goes: before the
- * split character of every shortcut the host could read in it. `links` are
- * the links the host reads in it, `[start, end)` each: a shortcut overlapping
- * one is not read (the plugin skips a link's text) and is left; one touching
- * an edge of one is escaped though a letter stands beside it. A shortcut
- * whose split character is escaped already is broken already.
+ * split character of every shortcut the host could read in it, in order.
+ * `links` are where the host reads a link in it, `[start, end)` each: a
+ * shortcut overlapping one is not read (the plugin skips a link's text) and
+ * is left; one touching an edge of one is escaped though a letter stands
+ * beside it, and marked `edge`. Where the places are not certain (`placed`
+ * false: every place a link's text or address stands), a shortcut
+ * overlapping one is escaped by the letter rule as anywhere, but marked
+ * `edge` too, for it may stand in a link. A shortcut whose split character
+ * is escaped already is broken already.
  */
-export function shortcutEscapes(escaped: string, links: readonly (readonly [number, number])[]): Set<number> {
-    const at = new Set<number>();
+export function shortcutEscapes(escaped: string, links: readonly (readonly [number, number])[], placed = true): ShortcutEscape[] {
+    const found = new Map<number, boolean>();
     for (const { alias, at: split } of SHORTCUT_SPLITS) {
         for (let start = escaped.indexOf(alias); start >= 0; start = escaped.indexOf(alias, start + 1)) {
             const end = start + alias.length;
             const index = start + split;
-            if (at.has(index) || escapedAt(escaped, index) || links.some(([from, to]) => start < to && end > from)) {
+            if (found.has(index) || escapedAt(escaped, index)) {
+                continue;
+            }
+            const inLink = links.some(([from, to]) => start < to && end > from);
+            if (inLink && placed) {
                 continue;
             }
             const atLinkEdge = links.some(([from, to]) => start === to || end === from);
             // Two code units either side, so a letter outside the BMP is seen whole.
             const glued = LETTER_BEFORE.test(escaped.slice(Math.max(0, start - 2), start)) || LETTER_AFTER.test(escaped.slice(end, end + 2));
             if (atLinkEdge || !glued) {
-                at.add(index);
+                found.set(index, atLinkEdge || inLink);
             }
         }
     }
-    return at;
+    return [...found].map(([at, edge]) => ({ at, edge })).sort((a, b) => a.at - b.at);
 }

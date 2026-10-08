@@ -44,7 +44,9 @@ import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
  * at the edge of a link this engine reads by itself (`readAutoLinks`), where
  * the host's text token ends and a letter is no guard; so text the page
  * writes reads as no emoji, but for `<3` and `</3` right after a URL with a
- * path, whose backslash linkify would take into the URL.
+ * path, whose backslash linkify would take into the URL (`</3`'s escaped `<`
+ * too, which puts `%5C` in the address), and any shortcut inside `^sup^` or
+ * `~sub~`, whose plugins read their text apart from the escape.
  */
 
 /** The settings the editor's engine and the page's are built with. */
@@ -340,35 +342,51 @@ export function sidebarsIn(tokens: readonly Token[]): ReadSidebar[] {
     return found;
 }
 
-/** A link the parser read by itself in a text, not from `[…](…)`: its text, and where that text stands. */
+/**
+ * A link the parser read by itself in a text, not from `[…](…)`: its text and
+ * address as the parser gives them, and where that text stands — `null` when
+ * that is not certain (`readAutoLinks`).
+ */
 export interface ReadAutoLink {
     text: string;
-    start: number;
-    end: number;
+    href: string;
+    start: number | null;
 }
 
 /**
  * The links `md` reads in `text`, a textblock's inline content, by
- * themselves (`info` `auto`: linkify's and `<…>` autolinks), in their order:
- * the link's text as the parser gives it, and where it stands in `text`,
- * looked for from the end of the one before. A link whose text does not
- * stand in `text` as given (linkify normalised it) has no place and is left
- * out. What reads where a bare link starts and ends, so nothing models it.
+ * themselves (`info` `auto`: linkify's and `<…>` autolinks), in their order.
+ * The parser gives no source offsets, so a link is placed only where its
+ * text stands in `text` exactly as many times as links of that text were
+ * read: then the k-th such link is the k-th place. Otherwise — the text
+ * stands elsewhere too (`thttp://x.com and http://x.com`), or the parser
+ * normalised it (`%41` read as `A`) — none of those links is placed, and
+ * the caller is told so rather than given a guess. What reads where a bare
+ * link starts and ends, so nothing models it.
  */
 export function readAutoLinks(md: MarkdownIt, text: string): ReadAutoLink[] {
-    const found: ReadAutoLink[] = [];
-    let cursor = 0;
+    const read: { text: string; href: string }[] = [];
     const children = md.parseInline(text, {}).flatMap(t => t.children ?? []);
     children.forEach((token, i) => {
-        const next = children[i + 1];
-        if (token.type !== 'link_open' || token.info !== 'auto' || next === undefined || next.type !== 'text') {
-            return;
-        }
-        const start = text.indexOf(next.content, cursor);
-        if (start >= 0) {
-            cursor = start + next.content.length;
-            found.push({ text: next.content, start, end: cursor });
+        if (token.type === 'link_open' && token.info === 'auto') {
+            const next = children[i + 1];
+            read.push({ text: next !== undefined && next.type === 'text' ? next.content : '', href: token.attrGet('href') ?? '' });
         }
     });
-    return found;
+    const places = new Map<string, number[]>();
+    const seen = new Map<string, number>();
+    return read.map(link => {
+        let at = places.get(link.text);
+        if (at === undefined) {
+            at = [];
+            for (let i = link.text === '' ? -1 : text.indexOf(link.text); i >= 0; i = text.indexOf(link.text, i + 1)) {
+                at.push(i);
+            }
+            places.set(link.text, at);
+        }
+        const k = seen.get(link.text) ?? 0;
+        seen.set(link.text, k + 1);
+        const placed = at.length === read.filter(r => r.text === link.text).length;
+        return { ...link, start: placed ? at[k] : null };
+    });
 }

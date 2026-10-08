@@ -389,13 +389,16 @@ suite('Editor serializer for changed blocks', () => {
 
     test('the page\'s engine says where a bare link starts and ends: linkify\'s own edges, read by parsing', () => {
         const page = createInlineEngine(DEFAULT_INLINE_ENGINE);
-        const read = (s: string) => readAutoLinks(page, s).map(l => [l.text, l.start, l.end]);
-        assert.deepStrictEqual(read('http://x.com:)'), [['http://x.com', 0, 12]]);
-        assert.deepStrictEqual(read('http://x.com/p:)'), [['http://x.com/p:', 0, 15]]);
+        const read = (s: string) => readAutoLinks(page, s).map(l => [l.text, l.href, l.start]);
+        assert.deepStrictEqual(read('http://x.com:)'), [['http://x.com', 'http://x.com', 0]]);
+        assert.deepStrictEqual(read('http://x.com/p:)'), [['http://x.com/p:', 'http://x.com/p:', 0]]);
         assert.deepStrictEqual(read('ahttp://x.com'), []);
         assert.deepStrictEqual(read('a@b.com:)').length, 1);
-        assert.deepStrictEqual(read('see <http://a.b> and http://a.b ok'), [['http://a.b', 5, 15], ['http://a.b', 21, 31]]);
+        assert.deepStrictEqual(read('see <http://a.b> and http://a.b ok'), [['http://a.b', 'http://a.b', 5], ['http://a.b', 'http://a.b', 21]]);
         assert.deepStrictEqual(read('[http://x.com](http://x.com)'), [], 'an inline link is not one by itself');
+        // Not placed where that is not certain: the text stands elsewhere too, or the parser normalised it.
+        assert.deepStrictEqual(read('thttp://x.com and http://x.com:)'), [['http://x.com', 'http://x.com', null]]);
+        assert.deepStrictEqual(read('see http://x.com/%41 ok'), [['http://x.com/A', 'http://x.com/%41', null]]);
     });
 
     /** A paragraph of `before`, a bare link to `href` and `after`: a link the page read with linkify, and text an edit put beside it. */
@@ -427,6 +430,54 @@ suite('Editor serializer for changed blocks', () => {
         // Beside a space or punctuation linkify ends the link where the page has it: it stays bare.
         for (const [before, after] of [['see ', ' ok'], ['see (', ') ok'], ['see ', ', ok'], ['see ', '. ok']] as const) {
             assert.strictEqual(serialize({ doc: besideLink('http://x.com', after, before), eol: '\n', tail: '' }), `${before}http://x.com${after}\n`);
+        }
+    });
+
+    test('a bare link inside emphasis glued to what follows the closer stays bare: the closer ends it, and the emphasis reads back', () => {
+        for (const source of ['see **https://example.com**s and more\n', 'see *http://x.com*b ok\n', 'see **http://x.com**2 ok\n', 'see **http://x.com**. ok\n']) {
+            assert.strictEqual(assertStable(source), source);
+            const kinds = inlineTokens(source).map(t => t.type);
+            assert.ok(kinds.includes('link_open') && (kinds.includes('strong_open') || kinds.includes('em_open')), source);
+        }
+    });
+
+    test('a bare link the node after it would run into is written [url](url), whatever that node is', () => {
+        const em = schema.marks.em.create();
+        const link = schema.marks.link.create({ href: 'http://x.com/p', markup: 'linkify' });
+        const emphasised = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [text('see '), text('http://x.com/p', link), text('.'), text('b', em), text(' ok')])]);
+        const out = serialize({ doc: emphasised, eol: '\n', tail: '' });
+        assert.strictEqual(out, 'see [http://x.com/p](http://x.com/p).*b* ok\n');
+        assert.deepStrictEqual(linksIn(out), ['http://x.com/p http://x.com/p']);
+        const image = schema.nodes.image.create({ src: 'b.png', alt: 'a' });
+        const pictured = serialize({ doc: schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [text('see '), text('http://x.com/p', link), image, text(' ok')])]), eol: '\n', tail: '' });
+        assert.deepStrictEqual(linksIn(pictured), ['http://x.com/p http://x.com/p'], pictured);
+        assert.ok(inlineTokens(pictured).some(t => t.type === 'image'), pictured);
+    });
+
+    test('a bare link is written bare only with its own address: a link whose text an edit changed keeps its href', () => {
+        const out = serialize({ doc: schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [
+            text('see '), text('http://e.com', schema.marks.link.create({ href: 'https://e.com', markup: 'linkify' })), text(' ok'),
+        ])]), eol: '\n', tail: '' });
+        assert.strictEqual(out, 'see [http://e.com](https://e.com) ok\n');
+        // The page reads `%41` as `A` in a link's text; written bare, that text would be the address.
+        assert.strictEqual(assertStable('see http://x.com/%41 ok\n'), 'see [http://x.com/A](http://x.com/%41) ok\n');
+    });
+
+    test('two bare links in one word are each read where they stand: neither is rewritten', () => {
+        const source = 'see http://x.com,http://y.com ok\n';
+        assert.strictEqual(assertStable(source), source);
+    });
+
+    test('a shortcut beside a link whose text the parser normalises, or whose text stands elsewhere too, reads back as text, the address kept', () => {
+        assert.strictEqual(misread(savePlain('thttp://x.com and http://x.com:)'), 'thttp://x.com and http://x.com:)'), null);
+        // The page reads `%41` as `A` in the link's text (on master too), so a second save writes that link
+        // `[…](…)` to keep its address: not compared here, the save of what was typed is.
+        for (const typed of ['see :)http://x.com/%41 ok', 'see http://x.com/%41/:)/x ok']) {
+            const saved = savePlain(typed);
+            const hrefs = (tokens: { type: string; attrGet(name: string): string | null }[]) => tokens.filter(t => t.type === 'link_open').map(t => t.attrGet('href'));
+            assert.ok(!inlineTokens(saved).some(t => t.type === 'emoji'), saved);
+            assert.deepStrictEqual(hrefs(inlineTokens(saved)), hrefs(noEmoji.parse(typed, {}).flatMap(t => t.children ?? [])), saved);
+            assert.deepStrictEqual(topChildren(parseDocument(md, saved).doc).map(n => n.type.name), ['paragraph'], saved);
         }
     });
 
