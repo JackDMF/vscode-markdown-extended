@@ -13,7 +13,7 @@ import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wr
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
 import { SHORTCUT_PRETEST, shortcutEscapes } from './emojiShortcuts';
-import { InlineEngineDefinition, ReadAutoLink, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsWikiEmbeds, readAutoLinks, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
+import { InlineEngineDefinition, ReadAutoLink, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsWikiEmbeds, placesOf as placesOfText, readAutoLinks, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -44,6 +44,23 @@ interface BareLink {
     href: string;
 }
 
+/** A text a trial's `esc` wrote holding a shortcut: as escaped but for its shortcuts, and where it starts in the trial's text. */
+interface EscapedText {
+    base: string;
+    start: number;
+}
+
+/**
+ * The shortcut escapes of the textblock being written (`OrderedInlineState.judged`):
+ * for each text `esc` writes holding a shortcut, by where it starts — counted
+ * from `origin` in the output, hold markers not counted — and the text, the
+ * places in it a backslash goes.
+ */
+interface ShortcutPlan {
+    origin: number;
+    at: Map<string, number[]>;
+}
+
 /** The parts of prosemirror-markdown's state it keeps internal but a wrapping serializer has to read. Stable since 1.0. */
 interface StateInternals {
     out: string;
@@ -53,10 +70,14 @@ interface StateInternals {
     inTightList: boolean | undefined;
     /** Which form the link being written takes; this module's own field. */
     linkForm?: LinkForm;
-    /** The links read with linkify written `[…](…)`, by parent and child index, as a bare one would not read back (`OrderedInlineState.linksWrittenInline`); this module's own field. */
+    /** The links read with linkify written `[…](…)`, by parent and child index, as a bare one would not read back (`OrderedInlineState.judged`); this module's own field. */
     inlineLinks?: Map<Node, Set<number>>;
-    /** Where a trial wrote each bare link, its hold markers removed (`OrderedInlineState.trial`); this module's own field. */
+    /** Where a trial wrote each bare link, in its output (`OrderedInlineState.trial`); this module's own field. */
     bareLinks?: BareLink[];
+    /** Where a trial's `esc` wrote each text holding a shortcut, in its output, which it writes with no shortcut escaped (`OrderedInlineState.trial`); this module's own field. */
+    escapedTexts?: EscapedText[];
+    /** The shortcut escapes of the textblock being written (`OrderedInlineState.judged`); this module's own field. */
+    shortcutPlan?: ShortcutPlan;
     /** Which part of a note is being written, when one is; this module's own field (see `writeNote`). */
     notePart?: NotePart;
     /** The marker character of the note being written (`+`, `!`), when one is; this module's own field. */
@@ -215,16 +236,41 @@ const ESCAPE_EXTRA = new RegExp(ESCAPE_EXTRA_PARTS.join('|'), 'gu');
 
 /** `text` with a backslash before the character at each of `at`, places of `text` in ascending order. */
 function backslashedAt(text: string, at: readonly number[]): string {
-    return at.reduceRight((written, place) => `${written.slice(0, place)}\\${written.slice(place)}`, text);
+    let written = '';
+    let last = 0;
+    for (const place of at) {
+        written += `${text.slice(last, place)}\\`;
+        last = place;
+    }
+    return written + text.slice(last);
 }
 
-/** Every place `part` stands in `text`, `[start, end)` each; none for an empty `part`. */
-function placesIn(text: string, part: string): (readonly [number, number])[] {
-    const found: (readonly [number, number])[] = [];
-    for (let at = part === '' ? -1 : text.indexOf(part); at >= 0; at = text.indexOf(part, at + 1)) {
-        found.push([at, at + part.length]);
+/** Whether the UTF-16 unit `code` is a hold marker (`HOLD_OPEN`, `HOLD_CLOSE`). */
+function isHold(code: number): boolean {
+    return code === HOLD_OPEN.charCodeAt(0) || code === HOLD_CLOSE.charCodeAt(0);
+}
+
+/** How many characters of `out` from `from` up to its end are no hold marker: where the next text stands in the output as read. */
+function readLength(out: string, from: number): number {
+    let holds = 0;
+    for (let i = from; i < out.length; i++) {
+        const code = out.charCodeAt(i);
+        holds += isHold(code) ? 1 : 0;
     }
-    return found;
+    return out.length - from - holds;
+}
+
+/** For each place of `out`, where it stands once the hold markers are removed. */
+function readPlaces(out: string): Int32Array {
+    const at = new Int32Array(out.length + 1);
+    let read = 0;
+    for (let i = 0; i < out.length; i++) {
+        at[i] = read;
+        const code = out.charCodeAt(i);
+        read += isHold(code) ? 0 : 1;
+    }
+    at[out.length] = read;
+    return at;
 }
 
 /** The links of `links` as the escape compares them: text and address, in order. */
@@ -342,7 +388,7 @@ function titlePart(title: string | null): string {
  * How a link is written: a bare URL stays bare and an `<…>` autolink stays one,
  * as long as the link is still one unmarked text node that can be written that
  * way — a bare one only where the page's engine reads the textblock as
- * written with that link where it stands (`OrderedInlineState.linksWrittenInline`);
+ * written with that link where it stands (`OrderedInlineState.judged`);
  * otherwise `[text](destination)`.
  */
 function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, index: number): LinkForm {
@@ -382,6 +428,91 @@ function holdsBareCandidate(parent: Node): boolean {
         return !found;
     });
     return found;
+}
+
+/** How many links of a text whose place is not certain a judgement reads again one by one (`misreadBareLinks`); past them, such a link is written `[…](…)`. */
+const BLANKED_READS = 8;
+
+/**
+ * The bare links of `bare` that `read`, the links the page's engine reads in
+ * `text`, does not hold where they were written, with their text and
+ * address. One whose text stands in `text` more often than such links were
+ * read has no certain place (`readAutoLinks`): the text is read once more
+ * with it blanked out, and it was read there if exactly one such link is
+ * gone — for the first `BLANKED_READS` of them; the others count as misread,
+ * so a textblock is read a bounded number of times.
+ */
+function misreadBareLinks(text: string, read: readonly ReadAutoLink[], bare: readonly BareLink[]): BareLink[] {
+    const key = (l: { text: string; href: string }) => `${l.text}\u0000${l.href}`;
+    const placed = new Set(read.filter(l => l.start !== null).map(l => `${l.start}\u0000${key(l)}`));
+    const unplaced = new Map<string, number>();
+    for (const l of read) {
+        unplaced.set(key(l), (unplaced.get(key(l)) ?? 0) + (l.start === null ? 1 : 0));
+    }
+    let budget = BLANKED_READS;
+    return bare.filter(b => {
+        if (placed.has(`${b.start}\u0000${key(b)}`)) {
+            return false;
+        }
+        if (!unplaced.get(key(b)) || budget === 0) {
+            return true;
+        }
+        budget--;
+        const blanked = `${text.slice(0, b.start)}${' '.repeat(b.text.length)}${text.slice(b.start + b.text.length)}`;
+        return read.filter(l => key(l) === key(b)).length - autoLinksRead(blanked).filter(l => key(l) === key(b)).length !== 1;
+    });
+}
+
+/**
+ * Where each text a trial wrote holding a shortcut (`texts`) takes a
+ * backslash, by the links `read` of `text`, the textblock as written with
+ * no shortcut escaped: by where each text starts and the text, the places in
+ * it (`ShortcutPlan`). A link's place comes from the whole textblock, so a
+ * node before a text that writes no delimiter is no edge (`FRS-1http://…`).
+ * Where a link's place is not certain, every place its text or address
+ * stands is taken for it (`shortcutEscapes`). A backslash at a link's edge
+ * is kept only where the engine still reads the same links, text and
+ * address, with it — all such backslashes read in one text, and only where
+ * that fails, halves of them, until each is kept or dropped: linkify takes
+ * one after a path into the URL (`http://x.com/p\<3`), and there the
+ * shortcut stays as typed.
+ */
+function plannedEscapes(text: string, read: readonly ReadAutoLink[], texts: readonly EscapedText[]): { plan: Map<string, number[]>; dropped: { start: number; end: number }[] } {
+    const ranges: [number, number, boolean][] = read.filter(l => l.start !== null).map(l => [l.start, l.start + l.text.length, true]);
+    const unplacedParts = new Set(read.filter(l => l.start === null).flatMap(l => [l.text, l.href]));
+    for (const part of unplacedParts) {
+        for (const at of placesOfText(text, part)) {
+            ranges.push([at, at + part.length, false]);
+        }
+    }
+    const local = texts.map(({ base, start }) => {
+        const near = ranges.filter(([from, to]) => from <= start + base.length && to >= start).map(([from, to, placed]) => [from - start, to - start, placed] as const);
+        return shortcutEscapes(base, near);
+    });
+    const edges = texts.flatMap(({ start }, i) => local[i].filter(e => e.edge).map(e => start + e.at)).sort((a, b) => a - b);
+    const want = linksKey(read);
+    const kept: number[] = [];
+    const keep = (candidates: number[]) => {
+        if (candidates.length === 0) {
+            return;
+        }
+        if (linksKey(autoLinksRead(backslashedAt(text, [...kept, ...candidates].sort((a, b) => a - b)))) === want) {
+            kept.push(...candidates);
+        } else if (candidates.length > 1) {
+            const half = Math.ceil(candidates.length / 2);
+            keep(candidates.slice(0, half));
+            keep(candidates.slice(half));
+        }
+    };
+    keep(edges);
+    const keptSet = new Set(kept);
+    const plan = new Map<string, number[]>();
+    const dropped: { start: number; end: number }[] = [];
+    texts.forEach(({ base, start }, i) => {
+        plan.set(`${start}\u0000${base}`, local[i].filter(e => !e.edge || keptSet.has(start + e.at)).map(e => e.at));
+        dropped.push(...local[i].filter(e => e.edge && !keptSet.has(start + e.at)).map(e => ({ start: start + e.start, end: start + e.end })));
+    });
+    return { plan, dropped };
 }
 
 function backtickFence(text: string): { open: string; close: string } {
@@ -443,7 +574,7 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
             // Written unescaped: a backslash inside a URL is part of the URL.
             st.inAutolink = true;
             if (form === 'bare') {
-                st.bareLinks?.push({ parent, index, start: st.out.replace(HOLD_RE, '').length, text: parent.child(index).text ?? '', href: mark.attrs.href as string });
+                st.bareLinks?.push({ parent, index, start: st.out.length, text: parent.child(index).text ?? '', href: mark.attrs.href as string });
             }
             return form === 'angle' ? HOLD_OPEN + '<' : HOLD_OPEN;
         },
@@ -570,48 +701,46 @@ const LibraryState = MarkdownSerializerState as unknown as new (nodes: unknown, 
 export class OrderedInlineState extends LibraryState {
     /**
      * The library's escape with `ESCAPE_EXTRA`, then a backslash before each
-     * emoji shortcut the host could read in the text that leaves
-     * (`shortcutEscapes`), told where the page's engine reads a link by
-     * itself in that text (`autoLinksRead`): a shortcut inside one is left,
-     * one at its edge escaped. A backslash at a link's edge is kept only
-     * where the engine still reads the same links, text and address, with
-     * it; linkify takes one after a path into the URL (`http://x.com/p\<3`),
-     * and there the shortcut stays as typed. Where the engine's links cannot
-     * be placed (`readAutoLinks`), every place a link's text or address
-     * stands is taken for one, and each backslash in or beside one is judged
-     * so. A text holding no shortcut is not
-     * parsed, nor one written as a link's text (`[…](…)`), where no link
-     * stands by itself.
+     * emoji shortcut the host could read in the text that leaves, as the
+     * textblock being written plans it (`shortcutPlan`, `judged`): told by
+     * the page's engine, reading the textblock as written, where a link
+     * stands. Elsewhere — a trial that is not judging, a text the plan does
+     * not hold — by the letter rule alone (`shortcutEscapes`). A trial that
+     * judges writes the text with no shortcut escaped, and says where
+     * (`escapedTexts`). A text holding no shortcut is written as escaped.
      */
     esc(str: string, startOfLine = false): string {
         const escaped = super.esc(str, startOfLine);
         if (!SHORTCUT_PRETEST.test(escaped)) {
             return escaped;
         }
-        if (internals(this).linkForm === 'inline') {
-            return backslashedAt(escaped, shortcutEscapes(escaped, []).map(e => e.at));
+        const st = internals(this);
+        if (st.escapedTexts !== undefined) {
+            st.escapedTexts.push({ base: escaped, start: st.out.length });
+            return escaped;
         }
-        const links = autoLinksRead(escaped);
-        const placed = links.every(l => l.start !== null);
-        const read = linksKey(links);
-        // Unplaced, every place a link's text or address stands may be the link.
-        const ranges = placed ? links.map(l => [l.start, l.start + l.text.length] as const) : links.flatMap(l => [...placesIn(escaped, l.text), ...placesIn(escaped, l.href)]);
-        const at = shortcutEscapes(escaped, ranges, placed)
-            .filter(e => !e.edge || linksKey(autoLinksRead(backslashedAt(escaped, [e.at]))) === read)
-            .map(e => e.at);
-        return backslashedAt(escaped, at);
+        const plan = st.shortcutPlan;
+        const planned = plan === undefined ? undefined : plan.at.get(`${readLength(st.out, plan.origin)}\u0000${escaped}`);
+        return backslashedAt(escaped, planned ?? shortcutEscapes(escaped, []).map(e => e.at));
     }
 
     /**
-     * `parent` written as `renderInline` writes it, with the links read with
-     * linkify that would not read back bare written `[…](…)`
-     * (`linksWrittenInline`).
+     * `parent` written as `renderInline` writes it, judged first where it
+     * holds a link read with linkify or a shortcut (`judged`): which links are
+     * written `[…](…)`, and where a shortcut takes a backslash. A textblock
+     * written inside another — a note's part — is judged with it, in the
+     * text of the textblock that holds it.
      */
     renderInline(parent: Node, fromBlockStart = true): void {
         const st = internals(this);
-        const outer = st.inlineLinks;
-        if (holdsBareCandidate(parent)) {
-            st.inlineLinks = this.linksWrittenInline(parent, fromBlockStart, outer);
+        const outerLinks = st.inlineLinks;
+        const outerPlan = st.shortcutPlan;
+        const outermost = st.escapedTexts === undefined && st.shortcutPlan === undefined;
+        if (outermost && (holdsBareCandidate(parent) || SHORTCUT_PRETEST.test(parent.textContent))) {
+            const origin = st.out.length;
+            const judged = this.judged(parent, fromBlockStart, outerLinks);
+            st.inlineLinks = judged.inline;
+            st.shortcutPlan = { origin, at: judged.escapes };
         }
         try {
             if (this.libraryOrderFor(parent, fromBlockStart)) {
@@ -620,44 +749,45 @@ export class OrderedInlineState extends LibraryState {
                 this.renderOrdered(parent, fromBlockStart);
             }
         } finally {
-            st.inlineLinks = outer;
+            st.inlineLinks = outerLinks;
+            st.shortcutPlan = outerPlan;
         }
     }
 
     /**
-     * Which links read with linkify `parent` writes `[…](…)`: it is written on
-     * a state of its own (`trial`), the page's engine reads that text whole
-     * (`autoLinksRead`), and a bare link it does not read where it was
-     * written, with the node's text and address, is written `[…](…)`; again
-     * until every bare one reads back. The parser judges the text as it is
-     * written — the delimiters of the marks around a link, the node after it,
-     * whatever it is — so nothing here predicts where linkify starts or ends
-     * a link (`**http://x.com**s`, `http://x.com/p.*b*`, `http://x.comb`).
-     * `outer`'s links, an enclosing textblock's, stay as they are.
+     * How `parent` is written where links read with linkify or shortcuts
+     * stand in it, read by the parser rather than predicted: it is written on
+     * a state of its own (`trial`), with no shortcut escaped, and the page's
+     * engine reads that text whole (`autoLinksRead`).
+     *
+     * A bare link the engine does not read where it was written, with the
+     * node's text and address, is written `[…](…)` (`inlineLinks`); again
+     * until every bare one reads back. So the delimiters of the marks around
+     * a link and the node after it, whatever it is, are judged as written
+     * (`**http://x.com**s`, `http://x.com/p.*b*`, `http://x.comb`). `outer`'s
+     * links stay as they are.
+     *
+     * Then the shortcuts (`plannedEscapes`), by the links of that same text.
      */
-    private linksWrittenInline(parent: Node, fromBlockStart: boolean, outer: Map<Node, Set<number>> | undefined): Map<Node, Set<number>> {
+    private judged(parent: Node, fromBlockStart: boolean, outer: Map<Node, Set<number>> | undefined): { inline: Map<Node, Set<number>>; escapes: Map<string, number[]> } {
         const st = internals(this);
         const inline = new Map(outer ?? []);
         st.inlineLinks = inline;
         for (;;) {
             const bare: BareLink[] = [];
-            const text = this.trial(parent, fromBlockStart, !this.libraryOrderFor(parent, fromBlockStart), bare);
+            const texts: EscapedText[] = [];
+            // The order depends on the links' forms, which change the text the orders write.
+            const text = this.trial(parent, fromBlockStart, !this.libraryOrderFor(parent, fromBlockStart), bare, texts);
             const read = autoLinksRead(text);
-            const misread = bare.filter(b => {
-                const same = (l: ReadAutoLink) => l.text === b.text && l.href === b.href;
-                if (read.some(l => l.start === b.start && same(l))) {
-                    return false;
-                }
-                if (!read.some(l => l.start === null && same(l))) {
-                    return true;
-                }
-                // Not placed (its text stands elsewhere too): read once more with this one blanked out, and it
-                // was read here if exactly one such link is gone.
-                const blanked = `${text.slice(0, b.start)}${' '.repeat(b.text.length)}${text.slice(b.start + b.text.length)}`;
-                return read.filter(same).length - autoLinksRead(blanked).filter(same).length !== 1;
-            });
+            let misread = misreadBareLinks(text, read, bare);
             if (misread.length === 0) {
-                return inline;
+                // A shortcut whose backslash linkify would take into a bare link beside it (`/p\<3`): that
+                // link is written `[…](…)`, which ends it, and the shortcut is escaped.
+                const { plan, dropped } = plannedEscapes(text, read, texts);
+                misread = bare.filter(b => dropped.some(d => d.start === b.start + b.text.length || d.end === b.start));
+                if (misread.length === 0) {
+                    return { inline, escapes: plan };
+                }
             }
             for (const { parent: holder, index } of misread) {
                 inline.set(holder, new Set([...(inline.get(holder) ?? []), index]));
@@ -709,8 +839,13 @@ export class OrderedInlineState extends LibraryState {
         return verdict;
     }
 
-    /** `parent` written on a state of its own, in the order of the runs or the library's, hold markers removed; where it wrote each bare link into `bare`, when given. */
-    private trial(parent: Node, fromBlockStart: boolean, ordered: boolean, bare?: BareLink[]): string {
+    /**
+     * `parent` written on a state of its own, in the order of the runs or the
+     * library's, hold markers removed. Given `bare` and `texts`, it is written
+     * with no shortcut escaped, and says where in that text it wrote each
+     * bare link and each text holding a shortcut.
+     */
+    private trial(parent: Node, fromBlockStart: boolean, ordered: boolean, bare?: BareLink[], texts?: EscapedText[]): string {
         const st = internals(this);
         const state = new OrderedInlineState(st.nodes, st.marks, this.options);
         const into = internals(state);
@@ -719,6 +854,7 @@ export class OrderedInlineState extends LibraryState {
         into.linkForm = st.linkForm;
         into.inlineLinks = st.inlineLinks;
         into.bareLinks = bare;
+        into.escapedTexts = texts;
         into.notePart = st.notePart;
         into.noteMarker = st.noteMarker;
         into.inTableCell = st.inTableCell;
@@ -733,6 +869,12 @@ export class OrderedInlineState extends LibraryState {
             }
         } finally {
             seamCollector = seams;
+        }
+        if (bare !== undefined || texts !== undefined) {
+            const places = readPlaces(into.out);
+            for (const written of [...(bare ?? []), ...(texts ?? [])]) {
+                written.start = places[written.start];
+            }
         }
         return into.out.replace(HOLD_RE, '');
     }

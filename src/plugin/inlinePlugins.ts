@@ -32,7 +32,7 @@ import markdownItMultimdTable from 'markdown-it-multimd-table';
  *   the page's text means; the serializer escapes its whole table where no
  *   letter, digit or mark stands beside it, or where it touches a link the
  *   page's engine reads (`emojiShortcuts.ts`), so text the page writes reads
- *   as no emoji, `<3` right after a URL with a path and any shortcut in
+ *   as no emoji, `<3` and `</3` right after a URL with a path and any shortcut in
  *   `^sup^` or `~sub~` excepted (`inlineEngine.ts`).
  * - markdown-it-cjk-friendly: it changes which emphasis delimiters open and
  *   close, and an emphasis delimiter never takes a sidebar's marker.

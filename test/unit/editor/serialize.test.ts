@@ -463,6 +463,19 @@ suite('Editor serializer for changed blocks', () => {
         assert.strictEqual(assertStable('see http://x.com/%41 ok\n'), 'see [http://x.com/A](http://x.com/%41) ok\n');
     });
 
+    test('a shortcut is escaped by the links of the textblock as written: a node before it that writes no delimiter makes no URL', () => {
+        const ref = schema.marks.req_ref.create({});
+        for (const [nodes, shown] of [
+            [[text('FRS-1', ref), text('http://x.com/:) ok')], 'FRS-1http://x.com/:) ok'],
+            [[text('a', ref), text('http://x.com/:o')], 'ahttp://x.com/:o'],
+        ] as const) {
+            const out = serialize({ doc: schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [...nodes])]), eol: '\n', tail: '' });
+            assert.ok(!inlineTokens(out).some(t => t.type === 'emoji'), out);
+            assert.deepStrictEqual(topChildren(parseDocument(md, out).doc).map(n => n.type.name), ['paragraph'], out);
+            assert.strictEqual(topChildren(parseDocument(md, out).doc)[0].textContent, shown, out);
+        }
+    });
+
     test('two bare links in one word are each read where they stand: neither is rewritten', () => {
         const source = 'see http://x.com,http://y.com ok\n';
         assert.strictEqual(assertStable(source), source);

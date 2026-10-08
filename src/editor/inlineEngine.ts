@@ -358,11 +358,14 @@ export interface ReadAutoLink {
  * themselves (`info` `auto`: linkify's and `<…>` autolinks), in their order.
  * The parser gives no source offsets, so a link is placed only where its
  * text stands in `text` exactly as many times as links of that text were
- * read: then the k-th such link is the k-th place. Otherwise — the text
- * stands elsewhere too (`thttp://x.com and http://x.com`), or the parser
- * normalised it (`%41` read as `A`) — none of those links is placed, and
- * the caller is told so rather than given a guess. What reads where a bare
- * link starts and ends, so nothing models it.
+ * read: then the k-th such link is the k-th place. Links never overlap, so
+ * a place inside a link already placed is none of another text's, and the
+ * count is taken again without it until no more are placed
+ * (`http://e.com/p1` inside a placed `http://e.com/p10`). Otherwise — the
+ * text stands elsewhere too (`thttp://x.com and http://x.com`), or the
+ * parser normalised it (`%41` read as `A`) — none of those links is placed,
+ * and the caller is told so rather than given a guess. What reads where a
+ * bare link starts and ends, so nothing models it.
  */
 export function readAutoLinks(md: MarkdownIt, text: string): ReadAutoLink[] {
     const read: { text: string; href: string }[] = [];
@@ -373,20 +376,39 @@ export function readAutoLinks(md: MarkdownIt, text: string): ReadAutoLink[] {
             read.push({ text: next !== undefined && next.type === 'text' ? next.content : '', href: token.attrGet('href') ?? '' });
         }
     });
-    const places = new Map<string, number[]>();
+    const counts = new Map<string, number>();
+    for (const link of read) {
+        counts.set(link.text, (counts.get(link.text) ?? 0) + 1);
+    }
+    // Each text's places, until it is placed; `covered` marks the characters of the links placed.
+    const open = new Map([...counts.keys()].filter(t => t !== '').map(t => [t, placesOf(text, t)]));
+    const placed = new Map<string, number[]>();
+    const covered = new Uint8Array(text.length);
+    for (let progress = true; progress;) {
+        progress = false;
+        for (const [part, at] of open) {
+            const free = at.filter(start => !covered.subarray(start, start + part.length).some(c => c === 1));
+            if (free.length === counts.get(part)) {
+                placed.set(part, free);
+                open.delete(part);
+                free.forEach(start => covered.fill(1, start, start + part.length));
+                progress = true;
+            }
+        }
+    }
     const seen = new Map<string, number>();
     return read.map(link => {
-        let at = places.get(link.text);
-        if (at === undefined) {
-            at = [];
-            for (let i = link.text === '' ? -1 : text.indexOf(link.text); i >= 0; i = text.indexOf(link.text, i + 1)) {
-                at.push(i);
-            }
-            places.set(link.text, at);
-        }
         const k = seen.get(link.text) ?? 0;
         seen.set(link.text, k + 1);
-        const placed = at.length === read.filter(r => r.text === link.text).length;
-        return { ...link, start: placed ? at[k] : null };
+        return { ...link, start: placed.get(link.text)?.[k] ?? null };
     });
+}
+
+/** Every place `part` stands in `text`, overlapping ones included, in order; none for an empty `part`. */
+export function placesOf(text: string, part: string): number[] {
+    const at: number[] = [];
+    for (let i = part === '' ? -1 : text.indexOf(part); i >= 0; i = text.indexOf(part, i + 1)) {
+        at.push(i);
+    }
+    return at;
 }
