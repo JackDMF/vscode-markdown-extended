@@ -610,6 +610,8 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
             const counts = property(host, 1500);
             assert.deepStrictEqual(counts.wrong, [], `math ${math}: ${JSON.stringify(counts)}`);
             assert.ok(counts.allowed > 1000 && counts.refused > 10, `math ${math}: ${JSON.stringify(counts)}`);
+            // The exemption passes a whole document over; bounded, so it cannot hide a new class.
+            assert.ok(counts.glued <= 1, `math ${math}: ${JSON.stringify(counts)}`);
             console.log(`      math ${math}: ${JSON.stringify({ ...counts, wrong: counts.wrong.length })}`);
         }
     });
@@ -660,6 +662,33 @@ function shown(doc: Node): { facts: string; raw: number } {
 }
 
 /**
+ * Whether `doc` holds a bare link (linkify) with a letter or digit right
+ * before it in its textblock — what an edit makes by joining text to a URL
+ * (a span removed, a word typed), since linkify never links after one. The
+ * host no longer links it, and the bare form is written unescaped, so its
+ * text reads as whatever it spells (`thttp://e.com/8-)` holds an emoji): a
+ * defect older than the emoji escape, passed over by the fuzz. Follow-up:
+ * choose `bare` only where the host still linkifies, else escape.
+ */
+function gluedBareLink(doc: Node): boolean {
+    let found = false;
+    doc.descendants(node => {
+        if (!found && node.isTextblock) {
+            let before: Node | null = null;
+            node.forEach(child => {
+                const link = child.marks.find(m => m.type.name === 'link' && m.attrs.markup === 'linkify');
+                if (link !== undefined && before !== null && before.isText && !link.isInSet(before.marks) && /[\p{L}\p{N}]$/u.test(before.text ?? '')) {
+                    found = true;
+                }
+                before = child;
+            });
+        }
+        return !found;
+    });
+    return found;
+}
+
+/**
  * Review 15's fuzz (`h15.ts`), the same on every run: `count` documents of
  * literal-bearing blocks with `$`, code, spans and sidebars in their text,
  * each edited — a `z` typed at the end of each textblock, words typed at its
@@ -668,10 +697,11 @@ function shown(doc: Node): { facts: string; raw: number } {
  * writes it, read by `host`. A document holding a source block is passed
  * over: its neighbours are written as they were read. `wrong` lists every
  * edit allowed whose save does not show what the page shows, or refused whose
- * save does; `outside` counts those whose save the host makes a source block
- * for another reason than a literal (an emoji shortcut).
+ * save does — a save the host makes a source block for any reason (an emoji
+ * shortcut an escape left beside it) included. `glued` counts the one class
+ * passed over: an edit that glues a bare link to a letter (`gluedBareLink`).
  */
-function property(host: MarkdownIt, count: number): { docs: number; allowed: number; refused: number; outside: number; wrong: string[] } {
+function property(host: MarkdownIt, count: number): { docs: number; allowed: number; refused: number; glued: number; wrong: string[] } {
     let seed = 11;
     const next = (n: number) => {
         seed ^= seed << 13;
@@ -682,7 +712,8 @@ function property(host: MarkdownIt, count: number): { docs: number; allowed: num
         return seed % n;
     };
     const bits = ['$', '$', '$', ' ', ' ', 'a', '1', '`', 'x', '.', '(', ')', '*', '_', '@', '[s]{.c}', '[t]{title="a $b"}', '[u]{title="c$ d"}',
-        '[v]{title="$ e"}', '$y$', '@z@', '`$(pwd)`', '&#36;', '&#96;', 'http://e.com/', '\\$', '==', '^', '~', ':', '"', '5"', 'b {.k}'];
+        '[v]{title="$ e"}', '$y$', '@z@', '`$(pwd)`', '&#36;', '&#96;', 'http://e.com/', '\\$', '==', '^', '~', ':', '"', '5"', 'b {.k}',
+        ':)', ';)', '<3', '8-)'];
     const literals = ['{.c}', '{title="a $b"}', '{title="d$ e"}', '{data-p="$5 - $10"}', '{#i}', '{title="m $ n"}', '{title="x$"}', '{.w title="$a"}'];
     const shapes: ((t: string, u: string, l: string, k: string) => string)[] = [
         (t, u, l) => `${t} ${l}\n`,
@@ -706,7 +737,7 @@ function property(host: MarkdownIt, count: number): { docs: number; allowed: num
         }
         return s.trim() === '' ? 'w' : s;
     };
-    const result = { docs: 0, allowed: 0, refused: 0, outside: 0, wrong: [] as string[] };
+    const result = { docs: 0, allowed: 0, refused: 0, glued: 0, wrong: [] as string[] };
     for (let i = 0; i < count; i++) {
         const source = shapes[next(shapes.length)](word(), word(), literals[next(literals.length)], literals[next(literals.length)]);
         const doc = parseDocument(host, source, {}).doc;
@@ -725,11 +756,8 @@ function property(host: MarkdownIt, count: number): { docs: number; allowed: num
             const want = shown(written);
             const got = shown(parseDocument(host, saved, {}).doc);
             const readsBack = got.facts === want.facts && got.raw === want.raw;
-            // A block the host leaves as source for what the page does not judge — an emoji shortcut
-            // the text now spells (`:)`, typed or met by an escape) — is outside the rule.
-            const why = got.raw > want.raw ? groupSourceBlocks(host.parse(saved, {}), splitLines(saved), definitionOf(host)).blocks.filter(b => b.kind === 'raw').map(b => b.reason).join('; ') : '';
-            if (!readsBack && why !== '' && !/attribute|literal|span/.test(why)) {
-                result.outside++;
+            if (!readsBack && gluedBareLink(written)) {
+                result.glued++;
                 return;
             }
             result[reason === null ? 'allowed' : 'refused']++;

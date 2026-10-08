@@ -12,6 +12,7 @@ import { MarkdownSerializerState } from 'prosemirror-markdown';
 import { Node } from 'prosemirror-model';
 import { EditorState } from 'prosemirror-state';
 import { seamHolds } from '../../../src/editor/serialize';
+import emojiShortcuts from 'markdown-it-emoji/lib/data/shortcuts.mjs';
 import { conformanceDocument, constructsFixture, hostEngine, readText, replaceChild, toCrlf, topChildren, touched } from './helpers';
 
 const schema = editorSchema;
@@ -304,7 +305,7 @@ suite('Editor serializer for changed blocks', () => {
     });
 
     test('stability: characters that are syntax in this engine are escaped once and stay escaped', () => {
-        const hostile = 'Price $5 @ noon, x^2, a == b, c ++ d, e !! f, <div> &amp; a*b_c [x] :smile: 1. - # > | ~ end';
+        const hostile = 'Price $5 @ noon, x^2, a == b, c ++ d, e !! f, <div> &amp; a*b_c [x] :smile: 1. - # > | ~ end :) ;-) <3 8-) o:) x-) :D';
         const doc = schema.topNodeType.create(null, [schema.nodes.paragraph.create({ wrapWidth: 8 }, text(hostile))]);
         const first = serialize({ doc, eol: '\n', tail: '' });
         const reparsed = parseDocument(md, first);
@@ -312,6 +313,59 @@ suite('Editor serializer for changed blocks', () => {
         assert.deepStrictEqual(nodes.map(n => n.type.name), ['paragraph'], first);
         assert.strictEqual(nodes[0].textContent, hostile);
         assert.strictEqual(serialize(allTouched(reparsed)), first);
+    });
+
+    /** A paragraph of one plain text node, as the page leaves a typed one, saved by rule. */
+    const savePlain = (typed: string) => serialize({ doc: schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, text(typed))]), eol: '\n', tail: '' });
+    /** Every inline token the host reads in `markdown`. */
+    const inlineTokens = (markdown: string) => md.parse(markdown, {}).flatMap(t => t.children ?? []);
+
+    test('every shortcut of markdown-it-emoji\'s table, written by the serializer, reads back on the host as the text shown', () => {
+        const aliases = Object.values(emojiShortcuts as Record<string, string[]>).flat();
+        assert.ok(aliases.includes(':)') && aliases.includes('<3'), 'the table is the plugin\'s');
+        // Beside punctuation, a symbol the serializer escapes or a node edge the
+        // host reads the shortcut; beside a letter, digit or mark it does not, and
+        // `_` is punctuation whose escape makes a token edge.
+        const contexts = ['A', '5$A', 'A$5', 'x*A', '(A', 'a A b', 'A.', 'a&A', 'aA', 'Aa', '1A1', 'üA', 'a_A', 'A_a'];
+        const failures: string[] = [];
+        for (const alias of aliases) {
+            for (const context of contexts) {
+                const shown = context.replace('A', () => alias);
+                const saved = savePlain(shown);
+                const emoji = inlineTokens(saved).filter(t => t.type === 'emoji').map(t => t.markup);
+                const reparsed = parseDocument(md, saved);
+                const nodes = topChildren(reparsed.doc);
+                const kinds = nodes.map(n => n.type.name).join(',');
+                if (emoji.length > 0 || kinds !== 'paragraph' || nodes[0].textContent !== shown || serialize(allTouched(reparsed)) !== saved) {
+                    failures.push(`${JSON.stringify(shown)} saved as ${JSON.stringify(saved)}: ${kinds}${emoji.length > 0 ? ` emoji ${emoji.join(' ')}` : ''}`);
+                }
+            }
+        }
+        assert.deepStrictEqual(failures, []);
+    });
+
+    test('a paragraph typed 5$:) on the page saves as 5\\$\\:) and that file opens editable with the same text', () => {
+        const saved = savePlain('5$:)');
+        assert.strictEqual(saved, '5\\$\\:)\n');
+        const nodes = topChildren(parseDocument(md, saved).doc);
+        assert.deepStrictEqual(nodes.map(n => n.type.name), ['paragraph']);
+        assert.strictEqual(nodes[0].textContent, '5$:)');
+    });
+
+    test('a shortcut at the start of the text is escaped: ://x saves as \\://x and reads back as text', () => {
+        const saved = savePlain('://x');
+        assert.strictEqual(saved, '\\://x\n');
+        assert.deepStrictEqual(inlineTokens(saved).map(t => `${t.type} ${t.content}`), ['text ://x']);
+    });
+
+    test('URLs typed in prose still linkify after a save: a letter before :/ leaves the shortcut unescaped', () => {
+        // Not a mailto: its `@` is escaped as a sidebar marker, which keeps it from linking already.
+        const typed = 'see http://x/y and https://e.com/a_b?q=1, ftp://f.org/p';
+        const linkified = (markdown: string) => inlineTokens(markdown).filter(t => t.type === 'link_open' && t.markup === 'linkify').length;
+        assert.strictEqual(savePlain(typed), `${typed}\n`);
+        assert.strictEqual(linkified(savePlain(typed)), 3);
+        assert.strictEqual(savePlain('$http://x'), '\\$http://x\n');
+        assert.strictEqual(linkified(savePlain('$http://x')), 1);
     });
 
     test('stability: a code span whose content starts or ends with a space or backtick', () => {

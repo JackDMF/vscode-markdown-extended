@@ -28,7 +28,11 @@ import markdownItMultimdTable from 'markdown-it-multimd-table';
  *   markdown-it-abbr, markdown-it-checkbox, markdown-it-attrs (and its wrapper)
  *   — and markdown-it-ib, which only renders: they rewrite text tokens or move
  *   attributes onto tokens the inline parse made, and never make or unmake a
- *   sidebar's tokens.
+ *   sidebar's tokens. markdown-it-emoji's shortcuts would still change what
+ *   the page's text means; the serializer escapes its whole table where no
+ *   letter, digit or mark stands beside it (`emojiShortcuts.ts`), so text the
+ *   page writes reads as no emoji, a shortcut at a linkified URL's edge
+ *   excepted (`inlineEngine.ts`).
  * - markdown-it-cjk-friendly: it changes which emphasis delimiters open and
  *   close, and an emphasis delimiter never takes a sidebar's marker.
  * - The export helper (`markdownItExportHelper.ts`), which reads the file

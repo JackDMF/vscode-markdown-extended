@@ -12,6 +12,7 @@ import { parseDocument } from './parse';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
+import { SHORTCUT_ESCAPE_SOURCE } from './emojiShortcuts';
 import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsWikiEmbeds, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
 
 /**
@@ -182,11 +183,25 @@ function escapeTrailingBang(st: StateInternals): void {
  * engine would otherwise read as syntax: an HTML tag or entity (`html: true`),
  * `==mark==`, `^sup^`, `++sidenote++`, `!!marginal note!!`, the sidebars'
  * `$`/`@` (every one, although the sidebar rule reads only those its
- * flanking allows as markers: `sidebarCanOpen`, `sidebarCanClose`) and an emoji
- * shortcode. Each gets a CommonMark backslash escape, which every rule
- * respects because the escape is consumed before they see the character.
+ * flanking allows as markers: `sidebarCanOpen`, `sidebarCanClose`), an emoji
+ * shortcode, and an emoji shortcut — every one of markdown-it-emoji's table
+ * not beside a letter or digit, although the plugin reads one only between
+ * punctuation or at a token's edge, which the escape of a neighbour (`\$`)
+ * makes (`emojiShortcuts.ts`). Each gets a CommonMark backslash escape, which
+ * every rule respects because the escape is consumed before they see the
+ * character. One alternative per syntax, joined under the `u` flag.
  */
-const ESCAPE_EXTRA = /<(?=[A-Za-z/!?])|&(?=#?[0-9A-Za-z]+;)|=(?==)|(?<==)=|\+(?=\+)|(?<=\+)\+|!(?=!)|(?<=!)!|[$@^]|:(?=[A-Za-z_+-][\w+-]*:)/g;
+const ESCAPE_EXTRA_PARTS: readonly string[] = [
+    /<(?=[A-Za-z/!?])/.source, // an HTML tag
+    /&(?=#?[0-9A-Za-z]+;)/.source, // an entity
+    /=(?==)|(?<==)=/.source, // ==mark==
+    /\+(?=\+)|(?<=\+)\+/.source, // ++sidenote++
+    /!(?=!)|(?<=!)!/.source, // !!marginal note!!
+    /[$@^]/.source, // the sidebars' markers, ^sup^
+    /:(?=[A-Za-z_+-][\w+-]*:)/.source, // an emoji shortcode
+    SHORTCUT_ESCAPE_SOURCE, // an emoji shortcut
+];
+const ESCAPE_EXTRA = new RegExp(ESCAPE_EXTRA_PARTS.join('|'), 'gu');
 
 // ---------------------------------------------------------------------------
 // Marks
@@ -1533,7 +1548,7 @@ export function literalRewrittenBeside(block: Node, textblock: Node, lost: Liter
  * verbatim — code, an attribute span's literal — gets no escape; a `|` there
  * has no spelling and is not made (`unwritableInTable`).
  */
-const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, 'g');
+const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, ESCAPE_EXTRA.flags);
 
 function inlineSerializer(fromBlockStart: boolean, inTableCell: boolean): MarkdownSerializer {
     return new EditorMarkdownSerializer({
