@@ -37,7 +37,10 @@ export const SHORTCUT_SPLITS: readonly { alias: string; at: number }[] = Object.
     return { alias, at };
 });
 
-const LETTER_BEFORE = /[\p{L}\p{N}\p{M}]$/u;
+/** Whether a text holds any alias of the table at all: what a text is tested by before its shortcuts are looked for. */
+export const SHORTCUT_PRETEST = new RegExp(SHORTCUT_SPLITS.map(({ alias }) => alias.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&')).join('|'));
+
+const LETTER_BEFORE =/[\p{L}\p{N}\p{M}]$/u;
 const LETTER_AFTER = /^[\p{L}\p{N}\p{M}]/u;
 
 /** Whether the character at `index` of `text` is escaped: an odd run of backslashes before it. */

@@ -416,13 +416,19 @@ URL), which the part's own inline parse turns back; `ESCAPE_EXTRA` already break
 into `\+\+`, and a marker character that would touch a marker — last in a body, first
 in a reference, last before the note — is `&#43;` or `&#33;`, since a backslash does not
 stop a raw search. A reference with no text, which the plugin refuses, is `&nbsp;`.
-In any text, a note's included, `ESCAPE_EXTRA` also escapes an emoji shortcode (`\:smile:`)
-and every shortcut of markdown-it-emoji's own table (`emojiShortcuts.ts`) not beside a
-letter, digit or mark: the plugin reads one at a token's edge without looking further, and
-the escape of a neighbour makes such an edge (`5\$:)` is `5$` and a smiley), so `5$:)` is
-written `5\$\:)`. The page's engine runs no emoji rule; this escape is why it needs none.
-A known limit: beside a URL the host linkifies (`http://x.com:)`), the host's text token
-ends at the URL, so a letter there is no guard and the shortcut still reads as an emoji.
+In any text, a note's included, `ESCAPE_EXTRA` also escapes an emoji shortcode (`\:smile:`),
+and the state's `esc` every shortcut of markdown-it-emoji's own table (`emojiShortcuts.ts`)
+not beside a letter, digit or mark: the plugin reads one at a token's edge without looking
+further, and the escape of a neighbour makes such an edge (`5\$:)` is `5$` and a smiley), so
+`5$:)` is written `5\$\:)`. The page's engine runs no emoji rule; this escape is why it
+needs none. A bare link is another such edge, and where it starts and ends is asked of the
+page's engine, never computed (`readAutoLinks`): a shortcut inside a link is left, one at
+its edge is escaped though a letter stands beside it, and a backslash is kept only where
+the engine still reads the same links with it (`http://x.com\:)`; after a path linkify
+would take it in, so `http://x.com/p<3` stays as typed). A bare link mark is written bare
+only where the engine reads the word it stands in — the line back to a space, the link,
+the next text escaped up to a space — as exactly that one link; otherwise `[url](url)`
+(`readsBare`), so a letter an edit glues to it or a shortcut after a path stays text.
 A link's destination and title take no backslash escape either: there a run of the
 marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
 angle link holding the marker character is written inline.

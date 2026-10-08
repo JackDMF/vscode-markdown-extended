@@ -30,9 +30,9 @@ import markdownItMultimdTable from 'markdown-it-multimd-table';
  *   attributes onto tokens the inline parse made, and never make or unmake a
  *   sidebar's tokens. markdown-it-emoji's shortcuts would still change what
  *   the page's text means; the serializer escapes its whole table where no
- *   letter, digit or mark stands beside it (`emojiShortcuts.ts`), so text the
- *   page writes reads as no emoji, a shortcut at a linkified URL's edge
- *   excepted (`inlineEngine.ts`).
+ *   letter, digit or mark stands beside it, or where it touches a link the
+ *   page's engine reads (`emojiShortcuts.ts`), so text the page writes reads
+ *   as no emoji, `<3` right after a URL with a path excepted (`inlineEngine.ts`).
  * - markdown-it-cjk-friendly: it changes which emphasis delimiters open and
  *   close, and an emphasis delimiter never takes a sidebar's marker.
  * - The export helper (`markdownItExportHelper.ts`), which reads the file

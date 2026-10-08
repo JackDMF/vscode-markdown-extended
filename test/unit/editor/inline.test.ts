@@ -249,10 +249,12 @@ suite('Editor inline constructs: written back by rule', () => {
         const badge = schema.nodes.inline_atom.create({ html: '<b>B</b>' });
         assert.strictEqual(refusal([t('see x'), badge, left(t('y')), t(' z')]), SIDEBAR_GLUED_BEFORE);
         assert.strictEqual(refusal([t('see '), left(t('y')), badge, t('5 z')]), SIDEBAR_GLUED_AFTER);
-        // A bare URL writes its own text: one ending in a letter, or starting with a digit after a left sidebar.
-        const bare = (s: string) => schema.text(s, [schema.marks.link.create({ href: `http://${s}`, markup: 'linkify' })]);
-        assert.strictEqual(refusal([t('visit '), bare('example.com'), left(t('y')), t(' z')]), SIDEBAR_GLUED_BEFORE);
-        assert.strictEqual(refusal([t('see '), left(t('y')), bare('1.example.com'), t(' z')]), SIDEBAR_GLUED_AFTER);
+        // A bare URL writes its own text, one ending in a letter; a link linkify would not read where it
+        // stands (no scheme, after a sidebar's `$`) is written `[…](…)`, whose bracket is no digit.
+        const bare = (s: string) => schema.text(s, [schema.marks.link.create({ href: s.includes(':') ? s : `http://${s}`, markup: 'linkify' })]);
+        assert.strictEqual(refusal([t('visit '), bare('http://example.com'), left(t('y')), t(' z')]), SIDEBAR_GLUED_BEFORE);
+        assert.strictEqual(refusal([t('see '), left(t('y')), bare('1.example.com'), t(' z')]), null);
+        assert.strictEqual(assertRoundTrip([t('see '), left(t('y')), bare('1.example.com'), t(' z')]), 'see $y$[1.example.com](http://1.example.com) z\n');
         // What the plugin reads as a sidebar is written as one.
         assert.strictEqual(refusal([t('a '), right(t('note')), t('x')]), null, 'a letter after a closer stops nothing');
         assert.strictEqual(assertRoundTrip([t('a '), right(t('note')), t('x')]), 'a @note@x\n');

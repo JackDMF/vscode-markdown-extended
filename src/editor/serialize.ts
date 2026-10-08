@@ -12,8 +12,8 @@ import { parseDocument } from './parse';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
-import { shortcutEscapes } from './emojiShortcuts';
-import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsWikiEmbeds, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
+import { SHORTCUT_PRETEST, shortcutEscapes } from './emojiShortcuts';
+import { InlineEngineDefinition, ReadAutoLink, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsWikiEmbeds, readAutoLinks, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -318,7 +318,8 @@ function titlePart(title: string | null): string {
 /**
  * How a link is written: a bare URL stays bare and an `<…>` autolink stays one,
  * as long as the link is still one unmarked text node that can be written that
- * way; otherwise `[text](destination)`.
+ * way — a bare one only where the page's engine reads it back as that link
+ * beside its neighbours (`readsBare`); otherwise `[text](destination)`.
  */
 function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, index: number): LinkForm {
     const node = parent.child(index);
@@ -341,12 +342,31 @@ function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, inde
     const text = node.text ?? '';
     const href = mark.attrs.href as string;
     if (markup === 'linkify' && text !== '' && !/\s/.test(text)) {
-        return 'bare';
+        return readsBare(state, text, parent, index) ? 'bare' : 'inline';
     }
     if (markup === 'autolink' && (text === href || `mailto:${text}` === href) && !/[\s<>]/.test(text)) {
         return 'angle';
     }
     return 'inline';
+}
+
+/**
+ * Whether a bare link of `text` (the node at `index`) reads back as one link
+ * of that text where it is written: the page's engine parses the word it
+ * stands in — what the line holds before it back to a space, the link, and
+ * the next text node escaped as it will be, up to a space — and must read
+ * there exactly one link by itself, of that text (`autoLinksRead`). Where the
+ * host's linkify would take a neighbour in (`http://x.comb`, `/p\:)`) or not
+ * link at all (`ahttp://x.com`), the link is written `[text](href)`.
+ */
+function readsBare(state: MarkdownSerializerState, text: string, parent: Node, index: number): boolean {
+    const out = internals(state).out;
+    const line = out.slice(out.lastIndexOf('\n') + 1).replace(HOLD_RE, '');
+    const before = line.slice(line.search(/\s\S*$/) + 1);
+    const next = index + 1 < parent.childCount ? parent.child(index + 1) : null;
+    const after = next !== null && next.isText ? state.esc((next.text ?? '').split('\n')[0], false).split(/\s/)[0] : '';
+    const links = autoLinksRead(before + text + after);
+    return links.length === 1 && links[0].text === text;
 }
 
 function backtickFence(text: string): { open: string; close: string } {
@@ -533,11 +553,27 @@ export class OrderedInlineState extends LibraryState {
     /**
      * The library's escape with `ESCAPE_EXTRA`, then a backslash before each
      * emoji shortcut the host could read in the text that leaves
-     * (`shortcutEscapes`).
+     * (`shortcutEscapes`), told where the page's engine reads a link by
+     * itself in that text (`autoLinksRead`): a shortcut inside one is left,
+     * one at its edge escaped. A backslash is kept only where the engine
+     * still reads the same links with it; linkify takes one after a path
+     * into the URL (`http://x.com/p\<3`), and there the shortcut stays as
+     * typed. A text holding no shortcut is not parsed, nor one written as a
+     * link's text (`[…](…)`), where no link stands by itself.
      */
     esc(str: string, startOfLine = false): string {
         const escaped = super.esc(str, startOfLine);
-        return withBackslashes(escaped, shortcutEscapes(escaped, []));
+        if (!SHORTCUT_PRETEST.test(escaped)) {
+            return escaped;
+        }
+        if (internals(this).linkForm === 'inline') {
+            return withBackslashes(escaped, shortcutEscapes(escaped, []));
+        }
+        const links = autoLinksRead(escaped);
+        const texts = links.map(l => l.text).join('\n');
+        const at = [...shortcutEscapes(escaped, links.map(l => [l.start, l.end] as const))]
+            .filter(index => autoLinksRead(withBackslashes(escaped, [index])).map(l => l.text).join('\n') === texts);
+        return withBackslashes(escaped, at);
     }
 
     renderInline(parent: Node, fromBlockStart = true): void {
@@ -1208,6 +1244,8 @@ export function sidebarRewrittenBeside(block: Node, textblock: Node, reference: 
 const readCache = new Map<string, ReadSidebar[]>();
 /** How many texts `readCache` keeps; the oldest is dropped first. */
 const READ_CACHE_SIZE = 512;
+/** The links the engine read by themselves in a text (`autoLinksRead`), by the text; as many as `readCache`. */
+const autoLinkCache = new Map<string, ReadAutoLink[]>();
 /**
  * Read textblocks with the engine `definition` describes — the host's, posted
  * with each document (`inlineEngineDefinition`): its linkify and typographer
@@ -1226,6 +1264,7 @@ export function setInlineEngine(definition: InlineEngineDefinition): void {
         return;
     }
     readCache.clear();
+    autoLinkCache.clear();
     escapeCache.clear();
     cellCache = new WeakMap();
     writtenCache = new WeakMap();
@@ -1248,6 +1287,25 @@ function sidebarsRead(text: string): ReadSidebar[] {
         readCache.delete(text);
     }
     readCache.set(text, read);
+    return read;
+}
+
+/**
+ * The links the page's engine reads by themselves in `text` (`readAutoLinks`),
+ * remembered by the text: where the host's linkify starts and ends a bare
+ * link, asked of it, never computed here.
+ */
+function autoLinksRead(text: string): ReadAutoLink[] {
+    let read = autoLinkCache.get(text);
+    if (read === undefined) {
+        read = readAutoLinks(engine(), text);
+        if (autoLinkCache.size >= READ_CACHE_SIZE) {
+            autoLinkCache.delete(autoLinkCache.keys().next().value as string);
+        }
+    } else {
+        autoLinkCache.delete(text);
+    }
+    autoLinkCache.set(text, read);
     return read;
 }
 

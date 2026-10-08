@@ -40,11 +40,11 @@ import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
  * add no inline rule, which make or unmake no sidebar (`inlinePlugins.ts`).
  * One of those, markdown-it-emoji, would turn text the page writes into an
  * emoji the page never showed (`5\$:)`); the save escapes every shortcut of
- * its table not beside a letter, digit or mark (`emojiShortcuts.ts`), so text
- * the page writes reads as no emoji — except a shortcut right at the edge of a
- * URL the host linkifies, where the host's text token ends at the URL and a
- * letter beside it is no guard (a known limit, with the bare link an edit
- * glues to a letter).
+ * its table not beside a letter, digit or mark (`emojiShortcuts.ts`), and one
+ * at the edge of a link this engine reads by itself (`readAutoLinks`), where
+ * the host's text token ends and a letter is no guard; so text the page
+ * writes reads as no emoji, but for `<3` and `</3` right after a URL with a
+ * path, whose backslash linkify would take into the URL.
  */
 
 /** The settings the editor's engine and the page's are built with. */
@@ -337,5 +337,38 @@ export function sidebarsIn(tokens: readonly Token[]): ReadSidebar[] {
         }
     };
     walk(tokens);
+    return found;
+}
+
+/** A link the parser read by itself in a text, not from `[…](…)`: its text, and where that text stands. */
+export interface ReadAutoLink {
+    text: string;
+    start: number;
+    end: number;
+}
+
+/**
+ * The links `md` reads in `text`, a textblock's inline content, by
+ * themselves (`info` `auto`: linkify's and `<…>` autolinks), in their order:
+ * the link's text as the parser gives it, and where it stands in `text`,
+ * looked for from the end of the one before. A link whose text does not
+ * stand in `text` as given (linkify normalised it) has no place and is left
+ * out. What reads where a bare link starts and ends, so nothing models it.
+ */
+export function readAutoLinks(md: MarkdownIt, text: string): ReadAutoLink[] {
+    const found: ReadAutoLink[] = [];
+    let cursor = 0;
+    const children = md.parseInline(text, {}).flatMap(t => t.children ?? []);
+    children.forEach((token, i) => {
+        const next = children[i + 1];
+        if (token.type !== 'link_open' || token.info !== 'auto' || next === undefined || next.type !== 'text') {
+            return;
+        }
+        const start = text.indexOf(next.content, cursor);
+        if (start >= 0) {
+            cursor = start + next.content.length;
+            found.push({ text: next.content, start, end: cursor });
+        }
+    });
     return found;
 }

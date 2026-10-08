@@ -9,7 +9,7 @@ import { resyncTransaction } from '../../../src/editor/webview/resync';
 import { editorSchema } from '../../../src/editor/schema';
 import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import {
-    SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, SIDEBAR_LEFT_MATH, SIDEBAR_MADE, SIDEBAR_REWRITTEN, SIDEBAR_REWRITTEN_REFERENCE,
+    SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, SIDEBAR_LEFT_MATH, SIDEBAR_REWRITTEN, SIDEBAR_REWRITTEN_REFERENCE,
     serializeDocument, setInlineEngine, sidebarRewrittenBeside, unwritableInNote,
 } from '../../../src/editor/serialize';
 import {
@@ -505,7 +505,6 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
             // The URL's closing bracket or quote deleted, or replaced by a character a URL holds.
             ['delete ")"', 'See (http://e.com/)$note$ here.\n', s => s.tr.delete(sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
             ['delete the closing quote', 'See "http://e.com/"$note$ here.\n', s => s.tr.delete(sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
-            ['replace ")" by "/"', 'See (http://e.com)$note$ here.\n', s => s.tr.insertText('/', sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
             ['replace ")" by ","', 'See (http://e.com/)$note$ here.\n', s => s.tr.insertText(',', sidebarAt(s.doc) - 1, sidebarAt(s.doc))],
             // A bracket the URL opened, closed by the sidebar's text or the text after it: linkify reads on through the marker.
             ['")" typed at the end of the sidebar', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at('note', 4)(s))],
@@ -513,7 +512,6 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
             ['")" typed right after the closer', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')', at(' here')(s))],
             ['")x" typed right after the closer', 'See http://e.com/($note$ here.\n', s => s.tr.insertText(')x', at(' here')(s))],
             ['" x" deleted after the closer', 'See http://e.com/($note$ x) here.\n', s => s.tr.delete(at(' x')(s), at(' x', 2)(s))],
-            ['"]" typed at the end of the sidebar', 'See http://e.com/[$note$ here.\n', s => s.tr.insertText(']', at('note', 4)(s))],
             ['"}" typed at the end of the sidebar', 'See http://e.com/{$note$ here.\n', s => s.tr.insertText('}', at('note', 4)(s))],
         ];
         for (const [label, source, edit] of edits) {
@@ -525,14 +523,27 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
             // What it prevents: written anyway, the sidebar is part of the address.
             assert.deepStrictEqual(sidebarsIn(writtenByRule(tr.doc)), [], `${label}: the loss`);
             // Elsewhere in the paragraph, before the scheme and after the sidebar, edits still apply.
-            // (A `[` in text is written escaped, which ends no URL earlier: the sidebar was never part of it.)
             const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'See') + 1));
-            assert.strictEqual(text(typed).replace('\\[', '['), source.replace('See', 'SXee'), `${label}: before the scheme`);
+            assert.strictEqual(text(typed), source.replace('See', 'SXee'), `${label}: before the scheme`);
             assert.deepStrictEqual(sidebarsAfterSave(typed), ['left_sidebar'], `${label}: before the scheme, read back`);
             const after = state.apply(state.tr.insertText('X', posOf(state.doc, 'here') + 1));
-            assert.strictEqual(text(after).replace('\\[', '['), source.replace('here', 'hXere'), `${label}: after the sidebar`);
+            assert.strictEqual(text(after), source.replace('here', 'hXere'), `${label}: after the sidebar`);
             assert.deepStrictEqual(sidebarsAfterSave(after), ['left_sidebar'], `${label}: after the sidebar, read back`);
         }
+        // A `[` after the URL is written escaped, and linkify would take that backslash into a bare
+        // link: the link is written `[…](…)`, which ends it there, so a `]` typed closes nothing.
+        const bracket = read('See http://e.com/[$note$ here.\n');
+        const closed = bracket.tr.insertText(']', posOf(bracket.doc, 'note') + 4);
+        assert.strictEqual(noteRefusal(closed), null, '"]" typed at the end of the sidebar');
+        assert.strictEqual(text(bracket.apply(closed)), 'See [http://e.com/](http://e.com/)\\[$note\\]$ here.\n');
+        assert.deepStrictEqual(sidebarsAfterSave(bracket.apply(closed)), ['left_sidebar'], '"]" typed: read back');
+        // A `/` typed in place of the `)` is text after the link, not part of it: linkify would read it in,
+        // so the link is written `[…](…)`, which ends it before the sidebar, and the edit applies.
+        const slashed = read('See (http://e.com)$note$ here.\n');
+        const slash = slashed.tr.insertText('/', sidebarAt(slashed.doc) - 1, sidebarAt(slashed.doc));
+        assert.strictEqual(noteRefusal(slash), null, 'replace ")" by "/"');
+        assert.strictEqual(text(slashed.apply(slash)), 'See ([http://e.com](http://e.com)/$note$ here.\n');
+        assert.deepStrictEqual(sidebarsAfterSave(slashed.apply(slash)), ['left_sidebar'], 'replace ")" by "/": read back');
         // Text before the scheme is not linkify's: deleting the `(` keeps the run, and the sidebar.
         const opened = read('See (http://e.com)$note$ here.\n');
         const unopened = opened.apply(opened.tr.delete(posOf(opened.doc, '('), posOf(opened.doc, '(') + 1));
@@ -726,11 +737,10 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
         }
     });
 
-    test('a line whose character reference the editor would write out is refused with that cause, in either direction', () => {
-        // The address once written out reads the sidebar in; the `.` once written out takes the address apart, which gives one up.
+    test('a line whose character reference the editor would write out is refused with that cause', () => {
+        // The address once written out reads the sidebar in.
         for (const [source, before, after] of [
             ['See h&#116;tp://e.com/$x$ here.\n', ['left_sidebar'], []],
-            ['x&#46;http://e.com/$x$\n', [], ['left_sidebar']],
         ] as [string, string[], string[]][]) {
             const state = read(source);
             assert.deepStrictEqual(sidebarsIn(source), before, source);
@@ -743,14 +753,27 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
         }
     });
 
-    test('an edit after which text reads as a sidebar the editor does not show is refused', () => {
-        // The address holds `$x$`; with its scheme broken it is no URL, and `$x$` would be a sidebar.
+    test('a link the save could only write bare so that it reads otherwise is written [text](url): the line stays editable', () => {
+        // The `.` once written out would take the address apart, and its `$x$` would read as a sidebar.
+        const source = 'x&#46;http://e.com/$x$\n';
+        assert.deepStrictEqual(sidebarsIn(source), []);
+        const state = read(source);
+        const tr = typeAtEnd(state);
+        assert.strictEqual(noteRefusal(tr), null);
+        assert.strictEqual(text(state.apply(tr)), 'x.[http://e.com/\\$x\\$](http://e.com/$x$)Z\n');
+        assert.deepStrictEqual(sidebarsIn(text(state.apply(tr))), []);
+        assert.strictEqual(markRefusal(select(state, 'x'), editorSchema.marks.strong, '**'), null, 'bold is not disabled');
+    });
+
+    test('a link whose scheme an edit breaks stays the link the page shows, and what it holds no sidebar', () => {
+        // The address holds `$x$`; with its scheme broken it is no URL to linkify, so it is written `[…](…)`.
         const state = read('See http://e.com/$x$ here.\n');
         assert.deepStrictEqual(sidebarsIn('See http://e.com/$x$ here.\n'), []);
         const p = posOf(state.doc, 'http') + 3;
         const tr = state.tr.delete(p, p + 1);
-        assert.strictEqual(noteRefusal(tr), SIDEBAR_MADE);
-        assert.ok(state.apply(tr).doc === state.doc, 'the filter refuses it');
+        assert.strictEqual(noteRefusal(tr), null);
+        assert.strictEqual(text(state.apply(tr)), 'See [htt://e.com/\\$x\\$](http://e.com/$x$) here.\n');
+        assert.deepStrictEqual(sidebarsIn(text(state.apply(tr))), []);
         // Text elsewhere in it is typed: the address and what it holds are read as they were.
         const typed = state.apply(state.tr.insertText('X', posOf(state.doc, 'See') + 1));
         assert.strictEqual(text(typed), 'SXee http://e.com/$x$ here.\n');
@@ -791,10 +814,25 @@ suite('Editor notes: what the save writes again is what is read back', () => {
         ['a list, a sidebar lost', '- edit me\n- See h&#116;tp://e.com/$x$ here.\n', ['left_sidebar'], []],
         ['a quote, a sidebar lost', '> edit me\n>\n> See h&#116;tp://e.com/$x$ here.\n', ['left_sidebar'], []],
         ['a table, a sidebar lost', '| a | b |\n| - | - |\n| edit me | See h&#116;tp://e.com/$x$ here. |\n', ['left_sidebar'], []],
-        ['a list, a sidebar made', '- edit me\n- x&#46;http://e.com/$x$ y\n', [], ['left_sidebar']],
-        ['a quote, a sidebar made', '> edit me\n>\n> x&#46;http://e.com/$x$ y\n', [], ['left_sidebar']],
-        ['a table, a sidebar made', '| a | b |\n| - | - |\n| edit me | x&#46;http://e.com/$x$ y |\n', [], ['left_sidebar']],
     ];
+    // A textblock whose link would read otherwise written bare is written with the link `[…](…)`: nothing to refuse.
+    const writtenInline: [string, string][] = [
+        ['a list', '- edit me\n- x&#46;http://e.com/$x$ y\n'],
+        ['a quote', '> edit me\n>\n> x&#46;http://e.com/$x$ y\n'],
+        ['a table', '| a | b |\n| - | - |\n| edit me | x&#46;http://e.com/$x$ y |\n'],
+    ];
+
+    test('an edit beside a textblock whose link the save writes [text](url) applies, and that textblock reads as shown', () => {
+        for (const [label, source] of writtenInline) {
+            const state = read(source);
+            assert.deepStrictEqual(sidebarsIn(source), [], label);
+            const tr = state.tr.insertText('Z', posOf(state.doc, 'edit'));
+            assert.strictEqual(noteRefusal(tr), null, label);
+            const saved = text(state.apply(tr));
+            assert.ok(saved.includes('x.[http://e.com/\\$x\\$](http://e.com/$x$) y'), `${label}: ${saved}`);
+            assert.deepStrictEqual(sidebarsIn(saved), [], `${label}: read back`);
+        }
+    });
 
     test('an edit is refused where the save would write another item, paragraph or cell of its block so that it reads otherwise', () => {
         for (const [label, source, before, after] of besides) {
