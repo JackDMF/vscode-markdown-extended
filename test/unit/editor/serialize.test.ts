@@ -231,6 +231,8 @@ suite('Editor serializer for changed blocks', () => {
             // Lists the page holds as source blocks (task lists) are re-marked the same way.
             ['- a\n\nMid\n\n- [ ] task\n', '- a\n\n* [ ] task\n'],
             ['- [ ] a\n\nMid\n\n- [ ] b\n', '- [ ] a\n\n* [ ] b\n'],
+            // `* ***` would be a thematic break, not the list: the parser refuses that marker, `+` keeps the item.
+            ['- a\n\nMid\n\n- ***\n', '- a\n\n+ ***\n'],
         ] as const) {
             const out = serialize(withoutChild(parseDocument(md, source), 1));
             assert.strictEqual(out, expected);

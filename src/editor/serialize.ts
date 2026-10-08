@@ -2387,7 +2387,14 @@ function remarkedList(leader: string, follower: string, next: () => string | nul
             }
             lines[line] = lines[line].slice(0, at) + marker + lines[line].slice(at + 1);
         }
-        out.push(lines.join('\n'));
+        // Still the same list, read by the parser: `- ***` re-marked is `* ***`, a thematic break.
+        const text = lines.join('\n');
+        const again = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+        const end = again.findIndex(token => token.level === 0 && token.nesting === -1);
+        const count = again.slice(0, end).filter(token => token.type === 'list_item_open' && token.level === 1).length;
+        if (again[0]?.type === `${opens.kind}_list_open` && again[0].markup === marker && count === items.length) {
+            out.push(text);
+        }
     }
     return out;
 }
@@ -2671,7 +2678,8 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
         let body = bodyOf(node);
         if (body === '') {
             blocks.push({ start: out.length, body: '' });
-            skipped = prev !== null;
+            // Only a block emptied by an edit: a source node that writes nothing (an injected block) never stood in the file.
+            skipped = skipped || (prev !== null && byRule(node));
             return;
         }
         let sep = '';
