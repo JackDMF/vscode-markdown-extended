@@ -458,8 +458,10 @@ function misreadBareLinks(text: string, read: readonly ReadAutoLink[], bare: rea
 /**
  * Where each text a trial wrote holding a shortcut (`texts`) takes a
  * backslash, by the links `read` of `text`, the textblock as written with
- * no shortcut escaped: by where each text starts and the text, the places in
- * it (`ShortcutPlan`). A link's place comes from the whole textblock, so a
+ * no shortcut escaped: one entry per text, in the order of the `esc` calls
+ * that wrote them, each with the text and the places in it (`ShortcutPlan`);
+ * `null` places where the text does not stand in `text` where it was
+ * written. A link's place comes from the whole textblock, so a
  * node before a text that writes no delimiter is no edge (`FRS-1http://…`).
  * Where a link's place is not certain, every place its text or address
  * stands is taken for it (`shortcutEscapes`). A backslash at a link's edge

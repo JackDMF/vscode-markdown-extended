@@ -49,8 +49,10 @@ import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
  * escaped `<` too, which puts `%5C` in the address); any shortcut inside
  * `^sup^` or `~sub~`, whose plugins read their text apart from the escape,
  * and inside a sidenote or marginal note, whose plugin reads it even
- * escaped; and one right against a URL in a sidebar whose markers the save
- * spells as references, which the letter rule alone escapes.
+ * escaped; and one right against a URL in a text the trial cannot place —
+ * a sidebar whose markers the save spells as references, a text whose last
+ * character a later writer rewrites (a `!` before a link or span, a `+` or
+ * `!` before a note) — which the letter rule alone escapes.
  */
 
 /** The settings the editor's engine and the page's are built with. */

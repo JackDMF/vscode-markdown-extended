@@ -439,9 +439,10 @@ of times: past a few links whose place is uncertain, such a link is written `[ur
 A sidebar's or a note part's text is judged within the textblock that holds it. The render
 takes each text's escapes from the trial by the order of the `esc` calls, checked by the
 text; a text the trial does not find where it wrote it — a part whose markers the writer
-spells (`&#36;`), an image's alt — is escaped by the letter rule alone, so a smiley right
-against a URL there still reads as an emoji. In a sidenote or marginal note the plugin
-reads a smiley even escaped.
+spells (`&#36;`), an image's alt, a text whose last character a later writer rewrites (a
+`!` before a link or span, a `+` or `!` before a note) — is escaped by the letter rule
+alone, so a smiley right against a URL there still reads as an emoji. In a sidenote or
+marginal note the plugin reads a smiley even escaped.
 A link's destination and title take no backslash escape either: there a run of the
 marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
 angle link holding the marker character is written inline.
