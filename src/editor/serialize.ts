@@ -12,7 +12,7 @@ import { parseDocument } from './parse';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
-import { SHORTCUT_ESCAPE_SOURCE } from './emojiShortcuts';
+import { shortcutEscapes } from './emojiShortcuts';
 import { InlineEngineDefinition, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsWikiEmbeds, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
 
 /**
@@ -183,13 +183,11 @@ function escapeTrailingBang(st: StateInternals): void {
  * engine would otherwise read as syntax: an HTML tag or entity (`html: true`),
  * `==mark==`, `^sup^`, `++sidenote++`, `!!marginal note!!`, the sidebars'
  * `$`/`@` (every one, although the sidebar rule reads only those its
- * flanking allows as markers: `sidebarCanOpen`, `sidebarCanClose`), an emoji
- * shortcode, and an emoji shortcut — every one of markdown-it-emoji's table
- * not beside a letter or digit, although the plugin reads one only between
- * punctuation or at a token's edge, which the escape of a neighbour (`\$`)
- * makes (`emojiShortcuts.ts`). Each gets a CommonMark backslash escape, which
- * every rule respects because the escape is consumed before they see the
- * character. One alternative per syntax, joined under the `u` flag.
+ * flanking allows as markers: `sidebarCanOpen`, `sidebarCanClose`), and an
+ * emoji shortcode. Each gets a CommonMark backslash escape, which every rule
+ * respects because the escape is consumed before they see the character. One
+ * alternative per syntax, joined under the `u` flag. An emoji shortcut is
+ * escaped after these, in the text they leave (`OrderedInlineState.esc`).
  */
 const ESCAPE_EXTRA_PARTS: readonly string[] = [
     /<(?=[A-Za-z/!?])/.source, // an HTML tag
@@ -199,9 +197,17 @@ const ESCAPE_EXTRA_PARTS: readonly string[] = [
     /!(?=!)|(?<=!)!/.source, // !!marginal note!!
     /[$@^]/.source, // the sidebars' markers, ^sup^
     /:(?=[A-Za-z_+-][\w+-]*:)/.source, // an emoji shortcode
-    SHORTCUT_ESCAPE_SOURCE, // an emoji shortcut
 ];
 const ESCAPE_EXTRA = new RegExp(ESCAPE_EXTRA_PARTS.join('|'), 'gu');
+
+/** `text` with a backslash inserted before the character at each of `at`, the last first. */
+function withBackslashes(text: string, at: Iterable<number>): string {
+    let out = text;
+    for (const index of [...at].sort((a, b) => b - a)) {
+        out = out.slice(0, index) + '\\' + out.slice(index);
+    }
+    return out;
+}
 
 // ---------------------------------------------------------------------------
 // Marks
@@ -524,6 +530,16 @@ const LibraryState = MarkdownSerializerState as unknown as new (nodes: unknown, 
  * `*~~==a==~~*~~b~~` reads as written.
  */
 export class OrderedInlineState extends LibraryState {
+    /**
+     * The library's escape with `ESCAPE_EXTRA`, then a backslash before each
+     * emoji shortcut the host could read in the text that leaves
+     * (`shortcutEscapes`).
+     */
+    esc(str: string, startOfLine = false): string {
+        const escaped = super.esc(str, startOfLine);
+        return withBackslashes(escaped, shortcutEscapes(escaped, []));
+    }
+
     renderInline(parent: Node, fromBlockStart = true): void {
         if (this.libraryOrderFor(parent, fromBlockStart)) {
             super.renderInline(parent, fromBlockStart);
