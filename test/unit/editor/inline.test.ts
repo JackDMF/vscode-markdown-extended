@@ -249,10 +249,13 @@ suite('Editor inline constructs: written back by rule', () => {
         const badge = schema.nodes.inline_atom.create({ html: '<b>B</b>' });
         assert.strictEqual(refusal([t('see x'), badge, left(t('y')), t(' z')]), SIDEBAR_GLUED_BEFORE);
         assert.strictEqual(refusal([t('see '), left(t('y')), badge, t('5 z')]), SIDEBAR_GLUED_AFTER);
-        // A bare URL writes its own text: one ending in a letter, or starting with a digit after a left sidebar.
-        const bare = (s: string) => schema.text(s, [schema.marks.link.create({ href: `http://${s}`, markup: 'linkify' })]);
-        assert.strictEqual(refusal([t('visit '), bare('example.com'), left(t('y')), t(' z')]), SIDEBAR_GLUED_BEFORE);
-        assert.strictEqual(refusal([t('see '), left(t('y')), bare('1.example.com'), t(' z')]), SIDEBAR_GLUED_AFTER);
+        // A link linkify would not read bare where it stands — its marker read into it, no scheme after a
+        // sidebar's `$` — is written `[…](…)`, whose brackets are no letter or digit beside the sidebar.
+        const bare = (s: string) => schema.text(s, [schema.marks.link.create({ href: s.includes(':') ? s : `http://${s}`, markup: 'linkify' })]);
+        assert.strictEqual(refusal([t('visit '), bare('http://example.com'), left(t('y')), t(' z')]), null);
+        assert.strictEqual(assertRoundTrip([t('visit '), bare('http://example.com'), left(t('y')), t(' z')]), 'visit [http://example.com](http://example.com)$y$ z\n');
+        assert.strictEqual(refusal([t('see '), left(t('y')), bare('1.example.com'), t(' z')]), null);
+        assert.strictEqual(assertRoundTrip([t('see '), left(t('y')), bare('1.example.com'), t(' z')]), 'see $y$[1.example.com](http://1.example.com) z\n');
         // What the plugin reads as a sidebar is written as one.
         assert.strictEqual(refusal([t('a '), right(t('note')), t('x')]), null, 'a letter after a closer stops nothing');
         assert.strictEqual(assertRoundTrip([t('a '), right(t('note')), t('x')]), 'a @note@x\n');
@@ -273,9 +276,6 @@ suite('Editor inline constructs: written back by rule', () => {
         const bare = (s: string) => schema.text(s, [schema.marks.link.create({ href: s, markup: 'linkify' })]);
         const strong = schema.marks.strong.create();
         for (const [label, content] of [
-            ['bare URL ending in /, left', [t('a '), bare('http://e.com/'), left(t('y')), t('x z')]],
-            ['bare URL ending in /, right', [t('a '), bare('http://e.com/'), right(t('y')), t(' z')]],
-            ['bare URL ending in )', [t('a '), bare('http://e.com/(a)'), left(t('y')), t(' z')]],
             ['URL in plain text', [t('a http://e.com/'), left(t('y')), t(' z')]],
             ['a query', [t('a https://e.com?q=1&'), right(t('y')), t(' z')]],
             ['emphasis between', [t('a http://e.com/'), t('b', schema.marks.strong.create()), left(t('y')), t(' z')]],
@@ -294,8 +294,12 @@ suite('Editor inline constructs: written back by rule', () => {
             const written = serializeDocument({ doc: schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, content)]), eol: '\n', tail: '' }, options);
             assert.notStrictEqual(shape(topChildren(parseDocument(md, written).doc)[0]), shape(schema.nodes.paragraph.create(null, content)), label);
         }
-        // Where linkify reads no URL into the marker, the sidebar is written and read back.
+        // Where linkify reads no URL into the marker, the sidebar is written and read back; a bare link it
+        // would read the marker into is written `[…](…)`, which ends it there.
         for (const [label, content] of [
+            ['bare URL ending in /, left', [t('a '), bare('http://e.com/'), left(t('y')), t('x z')]],
+            ['bare URL ending in /, right', [t('a '), bare('http://e.com/'), right(t('y')), t(' z')]],
+            ['bare URL ending in )', [t('a '), bare('http://e.com/(a)'), left(t('y')), t(' z')]],
             ['a space between', [t('a '), bare('http://e.com/'), t(' '), left(t('y')), t(' z')]],
             ['a separator between', [t('a '), bare('http://e.com/'), t('<'), left(t('y')), t(' z')]],
             ['a scheme linkify does not know', [t('a foo://e.com/'), left(t('y')), t(' z')]],

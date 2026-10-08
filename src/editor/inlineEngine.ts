@@ -40,11 +40,19 @@ import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
  * add no inline rule, which make or unmake no sidebar (`inlinePlugins.ts`).
  * One of those, markdown-it-emoji, would turn text the page writes into an
  * emoji the page never showed (`5\$:)`); the save escapes every shortcut of
- * its table not beside a letter, digit or mark (`emojiShortcuts.ts`), so text
- * the page writes reads as no emoji — except a shortcut right at the edge of a
- * URL the host linkifies, where the host's text token ends at the URL and a
- * letter beside it is no guard (a known limit, with the bare link an edit
- * glues to a letter).
+ * its table not beside a letter, digit or mark (`emojiShortcuts.ts`), and one
+ * at the edge of a link this engine reads by itself in the textblock as
+ * written (`readAutoLinks`, `judged` in `serialize.ts`), sidebars included,
+ * where the host's text token ends and a letter is no guard; so text the
+ * page writes reads as no emoji, but for `<3` and `</3` right after a URL
+ * with a path, whose backslash linkify would take into the URL (`</3`'s
+ * escaped `<` too, which puts `%5C` in the address); any shortcut inside
+ * `^sup^` or `~sub~`, whose plugins read their text apart from the escape,
+ * and inside a sidenote or marginal note, whose plugin reads it even
+ * escaped; and one right against a URL in a text the trial cannot place —
+ * a sidebar whose markers the save spells as references, a text whose last
+ * character a later writer rewrites (a `!` before a link or span, a `+` or
+ * `!` before a note) — which the letter rule alone escapes.
  */
 
 /** The settings the editor's engine and the page's are built with. */
@@ -338,4 +346,75 @@ export function sidebarsIn(tokens: readonly Token[]): ReadSidebar[] {
     };
     walk(tokens);
     return found;
+}
+
+/**
+ * A link the parser read by itself in a text, not from `[…](…)`: its text and
+ * address as the parser gives them, and where that text stands — `null` when
+ * that is not certain (`readAutoLinks`).
+ */
+export interface ReadAutoLink {
+    text: string;
+    href: string;
+    start: number | null;
+}
+
+/**
+ * The links `md` reads in `text`, a textblock's inline content, by
+ * themselves (`info` `auto`: linkify's and `<…>` autolinks), in their order.
+ * The parser gives no source offsets, so a link is placed only where its
+ * text stands in `text` exactly as many times as links of that text were
+ * read: then the k-th such link is the k-th place. Links never overlap, so
+ * a place inside a link already placed is none of another text's, and the
+ * count is taken again without it until no more are placed
+ * (`http://e.com/p1` inside a placed `http://e.com/p10`). Otherwise — the
+ * text stands elsewhere too (`thttp://x.com and http://x.com`), or the
+ * parser normalised it (`%41` read as `A`) — none of those links is placed,
+ * and the caller is told so rather than given a guess. What reads where a
+ * bare link starts and ends, so nothing models it.
+ */
+export function readAutoLinks(md: MarkdownIt, text: string): ReadAutoLink[] {
+    const read: { text: string; href: string }[] = [];
+    const children = md.parseInline(text, {}).flatMap(t => t.children ?? []);
+    children.forEach((token, i) => {
+        if (token.type === 'link_open' && token.info === 'auto') {
+            const next = children[i + 1];
+            read.push({ text: next !== undefined && next.type === 'text' ? next.content : '', href: token.attrGet('href') ?? '' });
+        }
+    });
+    const counts = new Map<string, number>();
+    for (const link of read) {
+        counts.set(link.text, (counts.get(link.text) ?? 0) + 1);
+    }
+    // Each text's places, until it is placed; `covered` marks the characters of the links placed.
+    const open = new Map([...counts.keys()].filter(t => t !== '').map(t => [t, placesOf(text, t)]));
+    const placed = new Map<string, number[]>();
+    const covered = new Uint8Array(text.length);
+    for (let progress = true; progress;) {
+        progress = false;
+        for (const [part, at] of open) {
+            const free = at.filter(start => !covered.subarray(start, start + part.length).some(c => c === 1));
+            if (free.length === counts.get(part)) {
+                placed.set(part, free);
+                open.delete(part);
+                free.forEach(start => covered.fill(1, start, start + part.length));
+                progress = true;
+            }
+        }
+    }
+    const seen = new Map<string, number>();
+    return read.map(link => {
+        const k = seen.get(link.text) ?? 0;
+        seen.set(link.text, k + 1);
+        return { ...link, start: placed.get(link.text)?.[k] ?? null };
+    });
+}
+
+/** Every place `part` stands in `text`, overlapping ones included, in order; none for an empty `part`. */
+export function placesOf(text: string, part: string): number[] {
+    const at: number[] = [];
+    for (let i = part === '' ? -1 : text.indexOf(part); i >= 0; i = text.indexOf(part, i + 1)) {
+        at.push(i);
+    }
+    return at;
 }

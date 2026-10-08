@@ -416,13 +416,33 @@ URL), which the part's own inline parse turns back; `ESCAPE_EXTRA` already break
 into `\+\+`, and a marker character that would touch a marker — last in a body, first
 in a reference, last before the note — is `&#43;` or `&#33;`, since a backslash does not
 stop a raw search. A reference with no text, which the plugin refuses, is `&nbsp;`.
-In any text, a note's included, `ESCAPE_EXTRA` also escapes an emoji shortcode (`\:smile:`)
-and every shortcut of markdown-it-emoji's own table (`emojiShortcuts.ts`) not beside a
-letter, digit or mark: the plugin reads one at a token's edge without looking further, and
-the escape of a neighbour makes such an edge (`5\$:)` is `5$` and a smiley), so `5$:)` is
-written `5\$\:)`. The page's engine runs no emoji rule; this escape is why it needs none.
-A known limit: beside a URL the host linkifies (`http://x.com:)`), the host's text token
-ends at the URL, so a letter there is no guard and the shortcut still reads as an emoji.
+In any text, a note's included, `ESCAPE_EXTRA` also escapes an emoji shortcode (`\:smile:`),
+and the state's `esc` every shortcut of markdown-it-emoji's own table (`emojiShortcuts.ts`)
+not beside a letter, digit or mark: the plugin reads one at a token's edge without looking
+further, and the escape of a neighbour makes such an edge (`5\$:)` is `5$` and a smiley), so
+`5$:)` is written `5\$\:)`. The page's engine runs no emoji rule; this escape is why it
+needs none. A bare link is another such edge, and where it starts and ends is asked of the
+page's engine, reading the textblock as written, never computed (`judged`,
+`readAutoLinks`): a shortcut inside a link is left, one at its edge is escaped though a
+letter stands beside it, and a backslash there is kept only where the engine still reads
+the same links, text and address, with it (`http://x.com\:)`; after a path linkify would
+take it in, so a typed `http://x.com/p<3` stays as typed). The parser gives no offsets,
+so a link is placed only where its text stands as often as such links were read, places
+inside a link already placed not counted; otherwise every place its text or address stands
+is taken for it. A bare link mark is written bare only where the engine reads a link of
+the node's text and address where it was written; otherwise `[url](url)`, again until
+every bare one reads back, and so is one beside a shortcut whose backslash linkify would
+take in. So a letter an edit glues to it, a shortcut after a path, a sidebar's marker or
+the node after it stays outside the link, and the delimiters of emphasis around it are
+judged as written (`**http://x.com**s`). Each judgement reads a textblock a bounded number
+of times: past a few links whose place is uncertain, such a link is written `[url](url)`.
+A sidebar's or a note part's text is judged within the textblock that holds it. The render
+takes each text's escapes from the trial by the order of the `esc` calls, checked by the
+text; a text the trial does not find where it wrote it — a part whose markers the writer
+spells (`&#36;`), an image's alt, a text whose last character a later writer rewrites (a
+`!` before a link or span, a `+` or `!` before a note) — is escaped by the letter rule
+alone, so a smiley right against a URL there still reads as an emoji. In a sidenote or
+marginal note the plugin reads a smiley even escaped.
 A link's destination and title take no backslash escape either: there a run of the
 marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
 angle link holding the marker character is written inline.

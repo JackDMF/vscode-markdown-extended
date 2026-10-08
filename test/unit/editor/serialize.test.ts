@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import {
+    createEditorEngine,
     EDITABLE_TOP_NODES,
     ParsedDocument,
     editorSchema,
@@ -12,7 +13,9 @@ import { MarkdownSerializerState } from 'prosemirror-markdown';
 import { Node } from 'prosemirror-model';
 import { EditorState } from 'prosemirror-state';
 import { seamHolds } from '../../../src/editor/serialize';
+import { DEFAULT_INLINE_ENGINE, createInlineEngine, readAutoLinks } from '../../../src/editor/inlineEngine';
 import emojiShortcuts from 'markdown-it-emoji/lib/data/shortcuts.mjs';
+import { plugins } from '../../../src/plugin/plugins';
 import { conformanceDocument, constructsFixture, hostEngine, readText, replaceChild, toCrlf, topChildren, touched } from './helpers';
 
 const schema = editorSchema;
@@ -327,20 +330,10 @@ suite('Editor serializer for changed blocks', () => {
         // host reads the shortcut; beside a letter, digit or mark it does not, and
         // `_` is punctuation whose escape makes a token edge.
         const contexts = ['A', '5$A', 'A$5', 'x*A', '(A', 'a A b', 'A.', 'a&A', 'aA', 'Aa', '1A1', 'üA', 'a_A', 'A_a'];
-        const failures: string[] = [];
-        for (const alias of aliases) {
-            for (const context of contexts) {
-                const shown = context.replace('A', () => alias);
-                const saved = savePlain(shown);
-                const emoji = inlineTokens(saved).filter(t => t.type === 'emoji').map(t => t.markup);
-                const reparsed = parseDocument(md, saved);
-                const nodes = topChildren(reparsed.doc);
-                const kinds = nodes.map(n => n.type.name).join(',');
-                if (emoji.length > 0 || kinds !== 'paragraph' || nodes[0].textContent !== shown || serialize(allTouched(reparsed)) !== saved) {
-                    failures.push(`${JSON.stringify(shown)} saved as ${JSON.stringify(saved)}: ${kinds}${emoji.length > 0 ? ` emoji ${emoji.join(' ')}` : ''}`);
-                }
-            }
-        }
+        const failures = aliases.flatMap(alias => contexts.map(context => {
+            const shown = context.replace('A', () => alias);
+            return misread(savePlain(shown), shown);
+        })).filter(f => f !== null);
         assert.deepStrictEqual(failures, []);
     });
 
@@ -366,6 +359,236 @@ suite('Editor serializer for changed blocks', () => {
         assert.strictEqual(linkified(savePlain(typed)), 3);
         assert.strictEqual(savePlain('$http://x'), '\\$http://x\n');
         assert.strictEqual(linkified(savePlain('$http://x')), 1);
+    });
+
+    /** The host's engine without markdown-it-emoji: the links it reads in the text shown, typed as it is. */
+    const noEmoji = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-emoji'), extend: [] });
+
+    /**
+     * What is wrong with `saved` as the save of a paragraph showing `shown`: an
+     * emoji the host reads, another block, other text, a second save that
+     * differs, or links other than those the host reads in the text shown
+     * typed as it is (`noEmoji`).
+     */
+    function misread(saved: string, shown: string): string | null {
+        const tokens = inlineTokens(saved);
+        const emoji = tokens.filter(t => t.type === 'emoji').map(t => t.markup);
+        const reparsed = parseDocument(md, saved);
+        const nodes = topChildren(reparsed.doc);
+        const kinds = nodes.map(n => n.type.name).join(',');
+        const links = tokens.filter(t => t.type === 'link_open').map(t => t.attrGet('href')).join(' ');
+        const linkified = noEmoji.parse(shown, {}).flatMap(t => t.children ?? []).filter(t => t.type === 'link_open').map(t => t.attrGet('href')).join(' ');
+        // Not claimed: a backslash the text holds is written `\\`, an escape whose token ends
+        // linkify's text before a digit (`<\3http://x` links nothing once saved), as it always was.
+        const linksClaimed = !shown.includes('\\');
+        if (emoji.length > 0 || kinds !== 'paragraph' || nodes[0].textContent !== shown || serialize(allTouched(reparsed)) !== saved || (linksClaimed && links !== linkified)) {
+            return `${JSON.stringify(shown)} saved as ${JSON.stringify(saved)}: ${kinds}${emoji.length > 0 ? ` emoji ${emoji.join(' ')}` : ''} links [${links}] for [${linkified}]`;
+        }
+        return null;
+    }
+
+    test('the page\'s engine says where a bare link starts and ends: linkify\'s own edges, read by parsing', () => {
+        const page = createInlineEngine(DEFAULT_INLINE_ENGINE);
+        const read = (s: string) => readAutoLinks(page, s).map(l => [l.text, l.href, l.start]);
+        assert.deepStrictEqual(read('http://x.com:)'), [['http://x.com', 'http://x.com', 0]]);
+        assert.deepStrictEqual(read('http://x.com/p:)'), [['http://x.com/p:', 'http://x.com/p:', 0]]);
+        assert.deepStrictEqual(read('ahttp://x.com'), []);
+        assert.deepStrictEqual(read('a@b.com:)').length, 1);
+        assert.deepStrictEqual(read('see <http://a.b> and http://a.b ok'), [['http://a.b', 'http://a.b', 5], ['http://a.b', 'http://a.b', 21]]);
+        assert.deepStrictEqual(read('[http://x.com](http://x.com)'), [], 'an inline link is not one by itself');
+        // Not placed where that is not certain: the text stands elsewhere too, or the parser normalised it.
+        assert.deepStrictEqual(read('thttp://x.com and http://x.com:)'), [['http://x.com', 'http://x.com', null]]);
+        assert.deepStrictEqual(read('see http://x.com/%41 ok'), [['http://x.com/A', 'http://x.com/%41', null]]);
+    });
+
+    /** A paragraph of `before`, a bare link to `href` and `after`: a link the page read with linkify, and text an edit put beside it. */
+    const besideLink = (href: string, after: string, before = 'see ') => {
+        const link = schema.marks.link.create({ href, markup: 'linkify' });
+        return schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [text(before), text(href, link), text(after)])]);
+    };
+    /** The links the host reads in `markdown`, as `href text`. */
+    const linksIn = (markdown: string) => {
+        const tokens = inlineTokens(markdown);
+        return tokens.flatMap((t, i) => (t.type === 'link_open' ? [`${t.attrGet('href')} ${tokens[i + 1].content}`] : []));
+    };
+
+    test('a bare link an edit glued to a letter is written [url](url): the host keeps its address, and the letter is text', () => {
+        for (const [before, after, saved] of [
+            ['see ', 'b ok', 'see [http://x.com](http://x.com)b ok\n'],
+            ['see a', ' ok', 'see a[http://x.com](http://x.com) ok\n'],
+        ] as const) {
+            const out = serialize({ doc: besideLink('http://x.com', after, before), eol: '\n', tail: '' });
+            assert.strictEqual(out, saved);
+            assert.deepStrictEqual(linksIn(out), ['http://x.com http://x.com'], out);
+            assert.strictEqual(topChildren(parseDocument(md, out).doc)[0].textContent, `${before}http://x.com${after}`, out);
+        }
+        // Written as a link's text, a shortcut in the address is no link's: it is escaped as in any text.
+        const smiley = serialize({ doc: besideLink('http://x.com/:)', 'b ok'), eol: '\n', tail: '' });
+        assert.strictEqual(smiley, 'see [http://x.com/\\:)](http://x.com/:\\))b ok\n');
+        assert.ok(!inlineTokens(smiley).some(t => t.type === 'emoji'), smiley);
+        assert.strictEqual(topChildren(parseDocument(md, smiley).doc)[0].textContent, 'see http://x.com/:)b ok', smiley);
+        // Beside a space or punctuation linkify ends the link where the page has it: it stays bare.
+        for (const [before, after] of [['see ', ' ok'], ['see (', ') ok'], ['see ', ', ok'], ['see ', '. ok']] as const) {
+            assert.strictEqual(serialize({ doc: besideLink('http://x.com', after, before), eol: '\n', tail: '' }), `${before}http://x.com${after}\n`);
+        }
+    });
+
+    test('a bare link inside emphasis glued to what follows the closer stays bare: the closer ends it, and the emphasis reads back', () => {
+        for (const source of ['see **https://example.com**s and more\n', 'see *http://x.com*b ok\n', 'see **http://x.com**2 ok\n', 'see **http://x.com**. ok\n']) {
+            assert.strictEqual(assertStable(source), source);
+            const kinds = inlineTokens(source).map(t => t.type);
+            assert.ok(kinds.includes('link_open') && (kinds.includes('strong_open') || kinds.includes('em_open')), source);
+        }
+    });
+
+    test('a bare link the node after it would run into is written [url](url), whatever that node is', () => {
+        const em = schema.marks.em.create();
+        const link = schema.marks.link.create({ href: 'http://x.com/p', markup: 'linkify' });
+        const emphasised = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [text('see '), text('http://x.com/p', link), text('.'), text('b', em), text(' ok')])]);
+        const out = serialize({ doc: emphasised, eol: '\n', tail: '' });
+        assert.strictEqual(out, 'see [http://x.com/p](http://x.com/p).*b* ok\n');
+        assert.deepStrictEqual(linksIn(out), ['http://x.com/p http://x.com/p']);
+        const image = schema.nodes.image.create({ src: 'b.png', alt: 'a' });
+        const pictured = serialize({ doc: schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [text('see '), text('http://x.com/p', link), image, text(' ok')])]), eol: '\n', tail: '' });
+        assert.deepStrictEqual(linksIn(pictured), ['http://x.com/p http://x.com/p'], pictured);
+        assert.ok(inlineTokens(pictured).some(t => t.type === 'image'), pictured);
+    });
+
+    test('a bare link is written bare only with its own address: a link whose text an edit changed keeps its href', () => {
+        const out = serialize({ doc: schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [
+            text('see '), text('http://e.com', schema.marks.link.create({ href: 'https://e.com', markup: 'linkify' })), text(' ok'),
+        ])]), eol: '\n', tail: '' });
+        assert.strictEqual(out, 'see [http://e.com](https://e.com) ok\n');
+        // The page reads `%41` as `A` in a link's text; written bare, that text would be the address.
+        assert.strictEqual(assertStable('see http://x.com/%41 ok\n'), 'see [http://x.com/A](http://x.com/%41) ok\n');
+    });
+
+    test('a shortcut is escaped by the links of the textblock as written: a node before it that writes no delimiter makes no URL', () => {
+        const ref = schema.marks.req_ref.create({});
+        for (const [nodes, shown] of [
+            [[text('FRS-1', ref), text('http://x.com/:) ok')], 'FRS-1http://x.com/:) ok'],
+            [[text('a', ref), text('http://x.com/:o')], 'ahttp://x.com/:o'],
+        ] as const) {
+            const out = serialize({ doc: schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [...nodes])]), eol: '\n', tail: '' });
+            assert.ok(!inlineTokens(out).some(t => t.type === 'emoji'), out);
+            assert.deepStrictEqual(topChildren(parseDocument(md, out).doc).map(n => n.type.name), ['paragraph'], out);
+            assert.strictEqual(topChildren(parseDocument(md, out).doc)[0].textContent, shown, out);
+        }
+    });
+
+    test('a shortcut\'s escape is the one judged for that very text: a sidebar\'s spelt markers, escapes and an image\'s alt before it move nothing', () => {
+        const em = schema.marks.em.create();
+        const bare = (url: string) => text(url, schema.marks.link.create({ href: url, markup: 'linkify' }));
+        const image = (alt: string) => schema.nodes.image.create({ src: 'b.png', alt });
+        const left = (s: string) => schema.nodes.left_sidebar.create(null, [text(s)]);
+        const right = (s: string) => schema.nodes.right_sidebar.create(null, [text(s)]);
+        const cases: [string, Node[]][] = [
+            ['left sidebar, a $ spelt before', [text('see '), left('costs 5$ http://x.com :) b'), text(' ok')]],
+            ['right sidebar, an @ spelt before', [text('see '), right('a@b http://x.com :) b'), text(' ok')]],
+            ['left sidebar, three $ spelt before', [text('see '), left('a 5$ 6$ 7$ http://x.com/abc ;) b'), text(' ok')]],
+            ['escapes before, emphasis between', [text('a :) x '), text('b', em), text(' see http://x.com:) ok')]],
+            ['escapes before, a path', [text('a :) x '), text('b', em), text(' see http://x.com/;) ok')]],
+            ['an alt before a bare link', [text('see '), image('a http://y.com:) b'), text(' '), bare('http://x.com'), text(' :) ok')]],
+            ['an alt after a bare link', [text('see '), bare('http://x.com'), text(' :) '), image('a http://y.com:) b'), text(' and http://z.com:) ok')]],
+        ];
+        for (const [label, nodes] of cases) {
+            const paragraph = schema.nodes.paragraph.create(null, nodes);
+            const out = serialize({ doc: schema.topNodeType.create(null, [paragraph]), eol: '\n', tail: '' });
+            const tokens = inlineTokens(out);
+            assert.ok(!tokens.some(t => t.type === 'emoji'), `${label}: ${out}`);
+            const back = topChildren(parseDocument(md, out).doc);
+            assert.deepStrictEqual(back.map(n => n.type.name), ['paragraph'], `${label}: ${out}`);
+            assert.strictEqual(back[0].textContent, paragraph.textContent, `${label}: ${out}`);
+            // No backslash put into an address: the host reads each where the page has it.
+            assert.ok(!linksIn(out).some(l => l.includes('%5C')), `${label}: ${out}`);
+        }
+    });
+
+    test('two bare links in one word are each read where they stand: neither is rewritten', () => {
+        const source = 'see http://x.com,http://y.com ok\n';
+        assert.strictEqual(assertStable(source), source);
+    });
+
+    test('a shortcut beside a link whose text the parser normalises, or whose text stands elsewhere too, reads back as text, the address kept', () => {
+        assert.strictEqual(misread(savePlain('thttp://x.com and http://x.com:)'), 'thttp://x.com and http://x.com:)'), null);
+        // The page reads `%41` as `A` in the link's text (on master too), so a second save writes that link
+        // `[…](…)` to keep its address: not compared here, the save of what was typed is.
+        for (const typed of ['see :)http://x.com/%41 ok', 'see http://x.com/%41/:)/x ok']) {
+            const saved = savePlain(typed);
+            const hrefs = (tokens: { type: string; attrGet(name: string): string | null }[]) => tokens.filter(t => t.type === 'link_open').map(t => t.attrGet('href'));
+            assert.ok(!inlineTokens(saved).some(t => t.type === 'emoji'), saved);
+            assert.deepStrictEqual(hrefs(inlineTokens(saved)), hrefs(noEmoji.parse(typed, {}).flatMap(t => t.children ?? [])), saved);
+            assert.deepStrictEqual(topChildren(parseDocument(md, saved).doc).map(n => n.type.name), ['paragraph'], saved);
+        }
+    });
+
+    test('a shortcut typed after a bare link with a path is no part of its address: the link is written [url](url), the shortcut escaped', () => {
+        const out = serialize({ doc: besideLink('http://x.com/p', ':) ok'), eol: '\n', tail: '' });
+        assert.strictEqual(out, 'see [http://x.com/p](http://x.com/p)\\:) ok\n');
+        assert.deepStrictEqual(linksIn(out), ['http://x.com/p http://x.com/p']);
+        assert.ok(!inlineTokens(out).some(t => t.type === 'emoji'), out);
+        assert.strictEqual(topChildren(parseDocument(md, out).doc)[0].textContent, 'see http://x.com/p:) ok');
+    });
+
+    test('a shortcut typed against a URL in prose is escaped at the URL\'s edge; one linkify reads into the URL is left there', () => {
+        for (const [typed, saved] of [
+            ['see http://x.com:) ok', 'see http://x.com\\:) ok\n'],
+            ['see :)http://x.com ok', 'see \\:)http://x.com ok\n'],
+            ['see http://x.com/:) ok', 'see http://x.com/:) ok\n'],
+        ] as const) {
+            assert.strictEqual(savePlain(typed), saved, typed);
+            assert.strictEqual(misread(savePlain(typed), typed), null, typed);
+        }
+    });
+
+    /**
+     * After a URL with a path linkify takes almost every character in; `<`,
+     * `>`, `]`, `)` and whitespace end it. Typed right after one, these two
+     * shortcuts are read as an emoji however the save writes them: the
+     * backslash that would break one is taken into the URL (a known limit; the
+     * paragraph reopens as a source block). `>:(` after one is escaped at its
+     * `:`, which linkify leaves out, and reads back.
+     */
+    const PATH_RESIDUE = ['</3', '<3'];
+    /**
+     * Read as no emoji after a URL with a path, but an escape the save writes
+     * in them for another syntax — `]`, `*`, the sidebars' `@` and `$` — is
+     * taken into the URL: other escapes after a path URL, a separate follow-up.
+     */
+    const OTHER_ESCAPE_RESIDUE = [']:(', ']:-(', ']:)', ']:-)', ':*', ':-*', ':@', ':-@', ':$', ':-$'];
+
+    test('every shortcut of the table beside a URL typed in prose reads back as the text shown, and the URL as the link linkify reads', () => {
+        // The host's linkify ends a text token at a URL's edges, where the plugin
+        // looks at no neighbour: a letter beside the shortcut does not keep it text there.
+        const aliases = Object.values(emojiShortcuts as Record<string, string[]>).flat();
+        const contexts = ['visit http://x.comA now', 'http://x.comA', 'see http://x.com/pA ok', 'see http://x.com/p-A ok', 'https://x.de/a?b=1A',
+            'http://x.com:80A', 'x Ahttp://x.com', 'Ahttp://x.com', 'Aftp://x.org', 'ftp://x.orgA', 'mailto:aA'];
+        const pathContexts = ['see http://x.com/pA ok', 'see http://x.com/p-A ok', 'https://x.de/a?b=1A'];
+        const failures = aliases.flatMap(alias => contexts.map(context => {
+            const shown = context.replace('A', () => alias);
+            const wrong = misread(savePlain(shown), shown);
+            return wrong === null ? [] : [{ shown, wrong }];
+        })).flat();
+        const residue = [...PATH_RESIDUE, ...OTHER_ESCAPE_RESIDUE].flatMap(alias => pathContexts.map(context => context.replace('A', () => alias)));
+        assert.deepStrictEqual(failures.filter(f => !residue.includes(f.shown)).map(f => f.wrong), [], 'outside the residue');
+        assert.deepStrictEqual(residue.filter(r => !failures.some(f => f.shown === r)), [], 'the residue, as stated, still misread');
+    });
+
+    test('every shortcut of the table typed right after a bare link reads back as the text shown, the link kept', () => {
+        const aliases = Object.values(emojiShortcuts as Record<string, string[]>).flat();
+        const failures: string[] = [];
+        for (const href of ['http://e.com/', 'http://e.com/p', 'http://e.com']) {
+            for (const alias of aliases) {
+                const saved = serialize({ doc: besideLink(href, `${alias} ok`), eol: '\n', tail: '' });
+                const tokens = inlineTokens(saved);
+                const links = tokens.filter(t => t.type === 'link_open').map(t => t.attrGet('href'));
+                const nodes = topChildren(parseDocument(md, saved).doc);
+                if (tokens.some(t => t.type === 'emoji') || nodes.length !== 1 || nodes[0].textContent !== `see ${href}${alias} ok` || links.join() !== href) {
+                    failures.push(`${JSON.stringify(href)} + ${JSON.stringify(alias)} saved as ${JSON.stringify(saved)}: links ${links.join()}`);
+                }
+            }
+        }
+        assert.deepStrictEqual(failures, []);
     });
 
     test('stability: a code span whose content starts or ends with a space or backtick', () => {
