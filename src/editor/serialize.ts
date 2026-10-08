@@ -51,14 +51,16 @@ interface EscapedText {
 }
 
 /**
- * The shortcut escapes of the textblock being written (`OrderedInlineState.judged`):
- * for each text `esc` writes holding a shortcut, by where it starts — counted
- * from `origin` in the output, hold markers not counted — and the text, the
- * places in it a backslash goes.
+ * The shortcut escapes of the textblock being written (`OrderedInlineState.judged`),
+ * by the order of the `esc` calls that write a text holding a shortcut: the
+ * k-th such call takes the k-th entry, when it is called with that entry's
+ * text; `at`, the places in it a backslash goes, is `null` where the trial
+ * could not tell where that text stands in what it wrote. `next` counts the
+ * calls made so far.
  */
 interface ShortcutPlan {
-    origin: number;
-    at: Map<string, number[]>;
+    next: number;
+    entries: { base: string; at: number[] | null }[];
 }
 
 /** The parts of prosemirror-markdown's state it keeps internal but a wrapping serializer has to read. Stable since 1.0. */
@@ -248,16 +250,6 @@ function backslashedAt(text: string, at: readonly number[]): string {
 /** Whether the UTF-16 unit `code` is a hold marker (`HOLD_OPEN`, `HOLD_CLOSE`). */
 function isHold(code: number): boolean {
     return code === HOLD_OPEN.charCodeAt(0) || code === HOLD_CLOSE.charCodeAt(0);
-}
-
-/** How many characters of `out` from `from` up to its end are no hold marker: where the next text stands in the output as read. */
-function readLength(out: string, from: number): number {
-    let holds = 0;
-    for (let i = from; i < out.length; i++) {
-        const code = out.charCodeAt(i);
-        holds += isHold(code) ? 1 : 0;
-    }
-    return out.length - from - holds;
 }
 
 /** For each place of `out`, where it stands once the hold markers are removed. */
@@ -477,7 +469,7 @@ function misreadBareLinks(text: string, read: readonly ReadAutoLink[], bare: rea
  * one after a path into the URL (`http://x.com/p\<3`), and there the
  * shortcut stays as typed.
  */
-function plannedEscapes(text: string, read: readonly ReadAutoLink[], texts: readonly EscapedText[]): { plan: Map<string, number[]>; dropped: { start: number; end: number }[] } {
+function plannedEscapes(text: string, read: readonly ReadAutoLink[], texts: readonly EscapedText[]): { plan: ShortcutPlan['entries']; dropped: { start: number; end: number }[] } {
     const ranges: [number, number, boolean][] = read.filter(l => l.start !== null).map(l => [l.start, l.start + l.text.length, true]);
     const unplacedParts = new Set(read.filter(l => l.start === null).flatMap(l => [l.text, l.href]));
     for (const part of unplacedParts) {
@@ -485,7 +477,13 @@ function plannedEscapes(text: string, read: readonly ReadAutoLink[], texts: read
             ranges.push([at, at + part.length, false]);
         }
     }
-    const local = texts.map(({ base, start }) => {
+    // A text that does not stand where it was written as given — a writer changed it after `esc`
+    // (`partText`) or wrote before it (an image's `![`) — has no plan: the letter rule writes it.
+    const known = texts.map(({ base, start }) => text.startsWith(base, start));
+    const local = texts.map(({ base, start }, i) => {
+        if (!known[i]) {
+            return [];
+        }
         const near = ranges.filter(([from, to]) => from <= start + base.length && to >= start).map(([from, to, placed]) => [from - start, to - start, placed] as const);
         return shortcutEscapes(base, near);
     });
@@ -506,10 +504,10 @@ function plannedEscapes(text: string, read: readonly ReadAutoLink[], texts: read
     };
     keep(edges);
     const keptSet = new Set(kept);
-    const plan = new Map<string, number[]>();
+    const plan: ShortcutPlan['entries'] = [];
     const dropped: { start: number; end: number }[] = [];
     texts.forEach(({ base, start }, i) => {
-        plan.set(`${start}\u0000${base}`, local[i].filter(e => !e.edge || keptSet.has(start + e.at)).map(e => e.at));
+        plan.push({ base, at: known[i] ? local[i].filter(e => !e.edge || keptSet.has(start + e.at)).map(e => e.at) : null });
         dropped.push(...local[i].filter(e => e.edge && !keptSet.has(start + e.at)).map(e => ({ start: start + e.start, end: start + e.end })));
     });
     return { plan, dropped };
@@ -720,7 +718,8 @@ export class OrderedInlineState extends LibraryState {
             return escaped;
         }
         const plan = st.shortcutPlan;
-        const planned = plan === undefined ? undefined : plan.at.get(`${readLength(st.out, plan.origin)}\u0000${escaped}`);
+        const entry = plan === undefined ? undefined : plan.entries[plan.next++];
+        const planned = entry !== undefined && entry.base === escaped ? entry.at : null;
         return backslashedAt(escaped, planned ?? shortcutEscapes(escaped, []).map(e => e.at));
     }
 
@@ -737,10 +736,9 @@ export class OrderedInlineState extends LibraryState {
         const outerPlan = st.shortcutPlan;
         const outermost = st.escapedTexts === undefined && st.shortcutPlan === undefined;
         if (outermost && (holdsBareCandidate(parent) || SHORTCUT_PRETEST.test(parent.textContent))) {
-            const origin = st.out.length;
             const judged = this.judged(parent, fromBlockStart, outerLinks);
             st.inlineLinks = judged.inline;
-            st.shortcutPlan = { origin, at: judged.escapes };
+            st.shortcutPlan = { next: 0, entries: judged.escapes };
         }
         try {
             if (this.libraryOrderFor(parent, fromBlockStart)) {
@@ -769,7 +767,7 @@ export class OrderedInlineState extends LibraryState {
      *
      * Then the shortcuts (`plannedEscapes`), by the links of that same text.
      */
-    private judged(parent: Node, fromBlockStart: boolean, outer: Map<Node, Set<number>> | undefined): { inline: Map<Node, Set<number>>; escapes: Map<string, number[]> } {
+    private judged(parent: Node, fromBlockStart: boolean, outer: Map<Node, Set<number>> | undefined): { inline: Map<Node, Set<number>>; escapes: ShortcutPlan['entries'] } {
         const st = internals(this);
         const inline = new Map(outer ?? []);
         st.inlineLinks = inline;

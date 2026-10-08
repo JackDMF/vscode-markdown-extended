@@ -476,6 +476,34 @@ suite('Editor serializer for changed blocks', () => {
         }
     });
 
+    test('a shortcut\'s escape is the one judged for that very text: a sidebar\'s spelt markers, escapes and an image\'s alt before it move nothing', () => {
+        const em = schema.marks.em.create();
+        const bare = (url: string) => text(url, schema.marks.link.create({ href: url, markup: 'linkify' }));
+        const image = (alt: string) => schema.nodes.image.create({ src: 'b.png', alt });
+        const left = (s: string) => schema.nodes.left_sidebar.create(null, [text(s)]);
+        const right = (s: string) => schema.nodes.right_sidebar.create(null, [text(s)]);
+        const cases: [string, Node[]][] = [
+            ['left sidebar, a $ spelt before', [text('see '), left('costs 5$ http://x.com :) b'), text(' ok')]],
+            ['right sidebar, an @ spelt before', [text('see '), right('a@b http://x.com :) b'), text(' ok')]],
+            ['left sidebar, three $ spelt before', [text('see '), left('a 5$ 6$ 7$ http://x.com/abc ;) b'), text(' ok')]],
+            ['escapes before, emphasis between', [text('a :) x '), text('b', em), text(' see http://x.com:) ok')]],
+            ['escapes before, a path', [text('a :) x '), text('b', em), text(' see http://x.com/;) ok')]],
+            ['an alt before a bare link', [text('see '), image('a http://y.com:) b'), text(' '), bare('http://x.com'), text(' :) ok')]],
+            ['an alt after a bare link', [text('see '), bare('http://x.com'), text(' :) '), image('a http://y.com:) b'), text(' and http://z.com:) ok')]],
+        ];
+        for (const [label, nodes] of cases) {
+            const paragraph = schema.nodes.paragraph.create(null, nodes);
+            const out = serialize({ doc: schema.topNodeType.create(null, [paragraph]), eol: '\n', tail: '' });
+            const tokens = inlineTokens(out);
+            assert.ok(!tokens.some(t => t.type === 'emoji'), `${label}: ${out}`);
+            const back = topChildren(parseDocument(md, out).doc);
+            assert.deepStrictEqual(back.map(n => n.type.name), ['paragraph'], `${label}: ${out}`);
+            assert.strictEqual(back[0].textContent, paragraph.textContent, `${label}: ${out}`);
+            // No backslash put into an address: the host reads each where the page has it.
+            assert.ok(!linksIn(out).some(l => l.includes('%5C')), `${label}: ${out}`);
+        }
+    });
+
     test('two bare links in one word are each read where they stand: neither is rewritten', () => {
         const source = 'see http://x.com,http://y.com ok\n';
         assert.strictEqual(assertStable(source), source);
