@@ -421,6 +421,8 @@ and every shortcut of markdown-it-emoji's own table (`emojiShortcuts.ts`) not be
 letter, digit or mark: the plugin reads one at a token's edge without looking further, and
 the escape of a neighbour makes such an edge (`5\$:)` is `5$` and a smiley), so `5$:)` is
 written `5\$\:)`. The page's engine runs no emoji rule; this escape is why it needs none.
+A known limit: beside a URL the host linkifies (`http://x.com:)`), the host's text token
+ends at the URL, so a letter there is no guard and the shortcut still reads as an emoji.
 A link's destination and title take no backslash escape either: there a run of the
 marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
 angle link holding the marker character is written inline.

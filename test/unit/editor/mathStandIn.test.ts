@@ -610,6 +610,8 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
             const counts = property(host, 1500);
             assert.deepStrictEqual(counts.wrong, [], `math ${math}: ${JSON.stringify(counts)}`);
             assert.ok(counts.allowed > 1000 && counts.refused > 10, `math ${math}: ${JSON.stringify(counts)}`);
+            // The exemption passes a whole document over; bounded, so it cannot hide a new class.
+            assert.ok(counts.glued <= 1, `math ${math}: ${JSON.stringify(counts)}`);
             console.log(`      math ${math}: ${JSON.stringify({ ...counts, wrong: counts.wrong.length })}`);
         }
     });
