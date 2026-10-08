@@ -4,702 +4,393 @@
 
 ### 🐛 Bug Fixes
 
-- **A self-closing `<svg/>` or `<math/>` in a task label closes itself.** In `- [ ] a <svg/> b [ ] c` the second box stayed text, because a slash after any element but a void one was ignored, as HTML does for `<span/>`. Foreign content is the exception in HTML, and now here too: `<svg/>` and `<math/>` close, `<svg>` without the slash still opens, and every other element keeps the HTML rule — `<a id="x"/>` opens, so later boxes in the same label stay text. Known limit: an unquoted attribute value ending in `/` (`<svg width=10/>`) reads as closing, though a browser keeps the svg open.
-- **A definition one blank line below its term can be formatted.** Bold or italics typed into `Term`, a blank line, `: ‸` were refused, although markdown-it-deflist reads that as a definition. What a toggle may change around a definition is now read from the parse — the term the plugin pairs with it, the blocks that start on its line — instead of from the line above, so a second definition directly under the first (`Term`, `: def1`, `: ‸`) works too, and an attribute that would move to another element (`Term`, blank, `: ‸`, `{#anchor}`) is refused. A line the plugin does not pair with a term (`- item`, blank, `: ‸`) is formatted as the paragraph it is.
-- **`markdownExtended.plugins.disabled` written as a list is read.** `["kbd", "mark"]` in `settings.json` took the plugin registry down with `.trim is not a function`; a list of names is now read like the comma-separated string, and any other value disables nothing.
-- **With `attrs` disabled, the Visual Editor no longer treats `{…}` as attributes.** It still escaped braces on save, refused text ending in `{…}`, offered **Attributes…** and **Span with class**, and added a blank line after a `{…}` line — all for a plugin that did not run. Whether the engine reads attributes is now one fact of its definition, read from the engine as built, and the save, the check of an edit and the page all follow it: `{.x}` is written as typed, and the attribute commands say why they are not offered.
-- **The Visual Editor no longer joins or turns blocks into others where they meet on save.** Each block was written on its own and set one blank line from the next, so a meeting no file had held could read as something else: an item emptied right under a paragraph wrote `text` and `-` — a setext heading — and `*`, `+` or `1.` vanished into the paragraph; two lists of one marker, or two tables, one blank line apart after the block between them was deleted, became one. Every place where an edit makes two blocks meet is now read back with the parser, and widened or the second list given another marker (`-` → `*`, `.` → `)`) until it reads as the two blocks the editor shows; only the item markers change, the list's own text stays as written, and a place the file already held is never touched. A paragraph after a `{…}` line gets its blank line the same way, which replaces the rule that put one before every block. Known limit: where no blank line and no marker separate them (an indented code block under a list), the two are written as before.
-- **Marks that begin together are written so the outer one stays one run.** `==[a]{.x} b==`, `**_a_ b**` or `[*a* b](url)` were written `[==a==]{.x} ==b==`, `_**a**_ **b**` and `*[a](url)*[ b](url)`: two highlights, two bolds, two links where the editor showed one. Where marks open on the same text, the one that runs longer now opens first, and the result is kept only where the parser reads it back as written — else the text is written as before.
-- **A smiley the text spells no longer turns a paragraph into a source block.** `5$:)` typed in the Visual Editor was saved as `5\$:)`; the escape of the `$` made `:)` start a new text token, where markdown-it-emoji reads it as 😃 — so the file said something the editor never showed, and the paragraph reopened as source. Every shortcut of the emoji plugin's own table is now escaped where no letter, digit or mark stands beside it (`5\$\:)`), as `$` and `:smile:` already were; `C:/path`, `10:30` and URLs typed in prose are left as they are.
+- `<svg/>` and `<math/>` in a task label no longer hide later checkboxes.
+- Formatting works in a definition one blank line below its term.
+- `plugins.disabled` written as a list no longer breaks the extension.
+- With `attrs` disabled, the Visual Editor treats `{…}` as text.
+- Saving no longer merges blocks that an edit brought together (an emptied list item under a paragraph, two lists or tables).
+- `==[a]{.x} b==` and similar nested marks are saved as one run.
+- `5$:)` no longer saves as an emoji.
 
 ### ⚠️ Limits
 
-- An emptied quote keeps its `{.q}` on the page until text returns; saved while empty, the file cannot carry it, because markdown-it-attrs gives a lone `> {.q}` line's class to an empty paragraph inside the quote, not to the quote.
-- A `{…}` typed right after an inline close inside a sidenote or marginal note (`++r|*a*{.c}++`) is refused rather than escaped: the notes plugin parses a note's text on its own and copies the result into the paragraph, where markdown-it-attrs reads it a second time, after any escape is already resolved.
-- A paragraph ending in `{.x}` followed by an escaped character (`b {.spec}\$`) opens as a source block: markdown-it-attrs takes `{.spec}` past the escape, and the editor could not write that line back as it stands.
-- Only an extension's disabling of the wiki-embed rule is replayed in the Visual Editor; one that disables another rule (keys, highlights, notes) after the extension's plugins are loaded is not seen there. Plugins disabled through `markdownExtended.plugins.disabled` are honoured.
-- A smiley shortcut right at the edge of a URL the preview links (`http://x.com:)`) still reads as an emoji: the link ends the text there, so the letter beside it does not protect it. A bare link an edit glues to a letter (`t` + `http://…`) stops being a link.
-- An edited list is written with one space after its marker. A neighbouring block indented to the old text column (`-  item`, then a paragraph indented by two) moves into the last item.
+- An emptied quote loses its `{.q}` when saved empty.
+- `{…}` right after `*em*` inside a note is refused.
+- A smiley right at a linked URL still reads as an emoji.
+- An edited list is written with one space after its marker.
 
 ## v4.1.0 — Exports Embed by Rule, Toggles Rebuilt
 
 ### ✨ New Features
 
-- **You decide which files a document names an export may embed: `markdownExtended.export.embedFiles`.** An export to HTML, PDF, PNG or JPG, and **Copy HTML** and **Copy HTML & Styles**, copy the local files a document names into their output — its images, the stylesheets it links with `<link>`, and the fonts and images those stylesheets name with `url()` — so a self-contained HTML file carries them to whoever receives it. The setting decides which, by one rule for all three. `workspace` (the default) embeds a file only when its real path lies in a workspace folder, or in the document's folder when the document lies in none: the folders the Visual Editor shows the document's images from, every folder of a multi-root workspace included. A symlink or junction leading out of them is followed, but its target is not embedded; and a broad document folder (a drive's root, your home folder) makes `workspace` as broad. `machine` embeds any readable file of a type that is embedded, from anywhere on the machine, as images were before. `none` embeds no file the document names: every local address stays as written, and the output panel says so once per export. **The default restricts images too:** an image outside those folders, which was embedded until now, keeps its `src` as written — set `machine` to embed it again. An image given as a `file:` URL is embedded by the same rule as a stylesheet given as one. A network path as written (`\\host\share\…`, `//host/…`, a `file:` URL with a host) is never opened, in any mode, and neither is a path along which a symlink or junction leads to one: each link along the path is read, without following it, before the file is looked up. A web image or stylesheet (`http:`, `https:`) is never downloaded, in any mode: it is shown but not embedded, loaded by the browser that renders the export — Chromium for the PDF and the images, the reader's browser for the HTML, which therefore needs to be online to show it. A file the setting leaves out is named in the *MDExtended* output panel with the reason, which names the setting and, under `workspace`, that `machine` would embed it; a `url()` in a linked stylesheet is named there with the stylesheet's path. An untitled document has no folder of its own: a relative path in it is looked up nowhere (it was looked up in VS Code's working directory), and under `workspace` an absolute path is embedded only from a workspace folder. A document of another scheme, such as `git:`, has its relative paths looked up in the folder its path names when that is a folder on this machine's disk; one that is not, such as `vscode-vfs:`, has no folder of its own, and the output panel says why. The setting is read for the document being exported, so a folder of a multi-root workspace may set its own in its `.vscode/settings.json`, as every export setting may; its value is read in any case (`Machine`), and a value the extension does not know counts as `workspace`. It is declared restricted, and so now are `markdownExtended.export.puppeteerExecutable` and its deprecated flat name: VS Code does not take them from a workspace it does not trust. The stylesheets in `markdown.styles` and those other extensions contribute are configuration, not files the document names, and are embedded in every mode, as before. The web build embeds nothing, as before.
+- New setting `markdownExtended.export.embedFiles` (`workspace`, `machine`, `none`) decides which local files an export embeds.
+- The default `workspace` embeds only files inside the workspace; set `machine` to embed images from elsewhere, as before.
+- `markdownExtended.export.puppeteerExecutable` is no longer read from untrusted workspaces.
 
 ### 🐛 Bug Fixes
 
-- **A heading's explicit `{#id}` reaches the preview and the exports.** `## FR-1: Name {#fr-1}` rendered `id="fr-1-name"` in the preview, in `markdown.api.render` and in the HTML and PDF exports, so a link to `#fr-1` — the anchors Req Explorer writes — landed nowhere outside the Visual Editor: VS Code's own heading rule, which runs after every extension's, set each heading's id from its slug over the one markdown-it-attrs had read. The id the author wrote is now set back after it, and the heading is `id="fr-1"`. Headings without one keep VS Code's slug, and an explicit-id heading still counts for the repeats after it, as before: `## Setup {#intro}` then `## Setup` are `intro` and `setup-1`. The heading keeps its slug as a second anchor, an empty `<a id="fr-1-name" class="code-line" data-line="…"></a>` at the start of its content, so a link written to the slug still lands, from another document's preview too (except for the document's last block: there the anchor stays out of the preview's scroll sync, which it would throw past the end) — unless some heading's explicit id is that slug, which then names that heading. The table of contents links an explicit-id heading by its id, escaped into its `href`. The Visual Editor's link following lands where the browser does: on the first heading in document order that carries the fragment, as its id or as that second anchor — an id the author wrote no longer wins over an earlier heading's slug of the same text, and a link to a heading of the same document is resolved by that rule too, where the page looked up its own ids — after the page's pending edit, so a heading pasted a moment before is found — and a heading with an explicit id inside a blockquote, an admonition or a container is brought into view itself, not its block's start. Link completion offers an id two headings carry once. An explicit id is not checked against the other headings' slugs: `## Setup {#setup-1}`, `## Setup`, `## Setup` are `setup-1`, `setup-1` and `setup-2`, and `#setup-1` names the first. Known limit: VS Code's Markdown language server slugs headings on its own and does not know explicit ids. Its completion offers `#fr-1-name`, which now lands on the second anchor, but with `markdown.validate.enabled` it reports `[x](#fr-1)` as a missing heading.
-- **A table of contents links to its headings** ([qjebbs/vscode-markdown-extended#70](https://github.com/qjebbs/vscode-markdown-extended/issues/70)). A `[[TOC]]` entry linked a slug of its own that the preview's headings did not carry: `What is new?` linked `#what-is-new%3F` while the heading's id is `what-is-new`, and the second and third `Setup` linked the first, while the preview names them `setup-1` and `setup-2`. Every entry now links the id the preview gives its heading, by VS Code's own rule, counting repeats over all headings in document order — the ids the preview's headings carry and the Visual Editor's link following resolves. A heading with an explicit `{#id}` is linked by that id (see above). A heading whose slug is empty (`## ???`) is listed without a link, as the preview gives it no id a link can name, and one with no text is left out. An entry is the heading's text, emoji included; a link in a heading no longer becomes a link inside the entry's link, and an entry no longer repeats the built-in Mermaid's configuration element.
-- **`@[toc]` makes a table of contents again** ([qjebbs/vscode-markdown-extended#174](https://github.com/qjebbs/vscode-markdown-extended/issues/174)). The marker of markdown-it-toc, which the extension once used, rendered as plain text. On a line of its own, `@[toc]` is now the same table of contents as `[[TOC]]`, and `@[toc](Title)` writes the title above it (parentheses one deep in the title).
-- **The Visual Editor's table of contents lists the document's headings.** A `[[TOC]]` source block rendered from its own lines alone, so it showed an empty list; it now lists the headings of the document, linked as in the preview. Known limit: it lists them as the document was last parsed, so a heading added or renamed in the Visual Editor shows in it once the document is reopened or changed in the text editor.
-- **A table with two columns spanning many rows keeps every row** ([#3](https://github.com/JackDMF/vscode-markdown-extended/issues/3)). With two `^^` columns spanning five rows, the preview and the exports dropped the fourth and fifth rows. markdown-it-multimd-table laid the spans out correctly, but markdown-it-attrs then laid them out a second time, as if they were its own `{rowspan=…}`, and hid every cell from the fourth spanned row on. attrs now sees only the spans written in its own syntax, and a multimd table's `^^` and `||` are rendered as multimd laid them out.
-- **The text editor's format toggles format what you selected, at every cursor, and read the document as the preview reads it** ([qjebbs/vscode-markdown-extended#113](https://github.com/qjebbs/vscode-markdown-extended/issues/113), [#173](https://github.com/qjebbs/vscode-markdown-extended/issues/173), [#180](https://github.com/qjebbs/vscode-markdown-extended/issues/180)). **Toggle Bold**, **Italics**, **Mark**, **Strikethrough**, **Code** and the other inline toggles widened every selection to the nearest spaces, so `sports,` was bolded with its comma, a partial selection was ignored, and in Chinese text, which has no spaces, the whole sentence was bolded; they acted on the first cursor only; and they read markers with patterns of their own, so the `**` of a code span such as `` `**/*.ts` `` or an escaped `\*` was taken for a marker and removed. Now the toggles read the document with the engine the Visual Editor parses with — the preview's plugins, and other extensions' — so code spans, escapes, fences inside quotes and lists, HTML blocks, admonition and footnote bodies and, when VS Code's math is on, `$$` math are what the preview shows. A selection is toggled as selected — only the whitespace at its ends stays outside the markers — in Chinese text too. Underline is the exception: its `_` does nothing next to a letter or digit in Markdown, so a selection ending inside or right next to a word takes in the rest of that word. A cursor toggles the word it is in, by the Markdown word VS Code uses, so punctuation stays outside; in Chinese text that word is still the run of characters up to the next punctuation mark, so to format a part of a sentence, select it. A cursor with no word inserts the marker pair with the cursor between, and toggling with the cursor still there removes it, in an empty list item, quote or definition too, a definition inside a quote or a list included — unless the pair would change what the document is: `~~~~` at the start of a line opens a code fence and `====` under a paragraph makes it a heading, so neither is inserted, and neither is a pair in a run of its marker's character that the next toggle could not take out again (`****‸****`), a pair on a blank line that would join the block below it, or one in a reference's or an abbreviation's definition, a link's destination or inline HTML. Taking a pair out again is checked like every toggle: where the markers are another span's, or the line without them would read otherwise (a thematic break, a heading's underline, a fence), the cursor toggles as if they were text. A selection lying within a formatted span, or a cursor in or next to one, removes that span's markers, the innermost span first. Any other selection is wrapped as selected, and the spans inside it stay: `make **this** bold` selected gives `**make **this** bold**`, which the preview shows as one bold run. A span the selection holds whole, markers and all, stays whole inside the new markers, over two lines too, where the new markers go around both lines' text as one span. A span of the same marker the selection touches becomes part of it, so `**foo**bar` with `bar` selected gives `**foobar**`, and Code takes the backticks out of the code spans it is written around or touches, since code does not nest. The markers go around text only: a list bullet or task box, a number, `#`, `>`, a definition's `:`, a footnote's label and an admonition's indentation stay outside, and so do a link's URL — a selection from inside a link's text to past its end formats only that text — and a table cell's padding, so a table row is toggled cell by cell. A selection over several lines formats each line's text, leaving alone blank lines, lines already formatted, and lines that are a block's syntax or literal text — code fences and the code in them, indented code, a table's delimiter row, thematic breaks, setext underlines, HTML blocks, a container's fences; toggled again, it removes every line's span. Such a line on its own is not toggled at all, and nothing is written into code. Every toggle is checked by reading the blocks it writes in again, with the blocks before and after them, as the preview reads them: one that would change a block's structure, the document's link, footnote and abbreviation definitions, a link's or an image's destination, inline HTML, math or code, the text itself, or which element a `{…}` attribute belongs to — `# Title foo{#x}` with `foo` bolded would give the id to the bold text, not the heading — or whose spans would not read as written — `~/.bashrc` struck through, whose `~~~` would open a fence, or `a*b` in italics before a `*c` — is not made, and the status bar says so; the toggles at many cursors are checked together, in a few readings however many cursors there are. Markers the toggles cannot place exactly, in a block too large to align exactly, are never removed. In a large document a toggle reads again only the blocks the last edit changed. A span of one character (`**a**`) is found, Italics finds `***bold***` and `*see **this***` but does not take Bold's `**` for its own, Subscript does not take Strikethrough's `~~`, Underline's `_` inside a word (`snake_case`) is no marker, as in Markdown, and Superscript leaves footnote references (`[^1]`) alone. Every cursor and selection is toggled, in one edit that one `Ctrl+Z` takes back, and each stays on its text; selections that overlap, and selections side by side, are toggled as one. The first inline toggle after VS Code starts builds the engine, activating the extensions that contribute markdown-it plugins, as opening the Visual Editor does. Quote and list toggles are unchanged.
-- **An image that cannot be embedded no longer fails the export** ([qjebbs/vscode-markdown-extended#157](https://github.com/qjebbs/vscode-markdown-extended/issues/157)). `![a](/does/not/exist.png)` stopped the HTML and PDF export with *Cannot read properties of null (reading 'replace')*: an absolute path was embedded without checking the file existed, the missing file gave no data URI, and the image was handed on with a `null` `src`. An image whose file is missing or cannot be read, or whose type has no data URI (such as `.tiff`, which threw *Unsupported mimeType*), now keeps the `src` exactly as written, and the reason is written to the *MDExtended* output panel. `.webp` and `.avif` images are now embedded; they were left out of the PDF.
-- **A stylesheet the document links applies to the PDF** ([qjebbs/vscode-markdown-extended#162](https://github.com/qjebbs/vscode-markdown-extended/issues/162)). `<link rel="stylesheet" href="style.css">` styled the preview but not the PDF, PNG or JPG: the page they are printed from has no address, so `style.css` was looked for nowhere. The exports now embed a stylesheet the document links, with the fonts and images its `url()`s name, as they embed images; the HTML export carries it too, so it stays self-contained. A linked stylesheet is embedded only when it is a `.css` file, judged by its real path, that `markdownExtended.export.embedFiles` (above) lets the document embed. Its default, `workspace`, holds images and the files a stylesheet's `url()`s name to the same rule — the workspace folders, and the document's folder when it lies in none — so an image from elsewhere on the disk, which was embedded before, now keeps its `src` as written unless the setting is `machine`. A network path as written (`\\host\share\…`, `//host/…`, a `file:` URL with a host) is never opened, for a linked stylesheet, an image or a `url()`, nor a path along which a symlink or junction leads to one. A `<link>` HTML reads as text — in a comment, or in `<script>`, `<style>`, `<textarea>`, `<title>` and the other raw-text elements, also when it opened in an earlier paragraph — is left alone. Why a stylesheet was not embedded is written to the *MDExtended* output panel. A web address is left as written. A stylesheet's `@import url("…")` of a local file is embedded one level deep — what that file imports or names with `url()` is not — and an `@import "…"` without `url()` is left as written.
-- **A stylesheet's `url()` that cannot be embedded is left as written.** When a stylesheet was embedded — a contributed one, or one the document links — every `url()` it could not read became `url("null")`: a web `@import url("https://…")`, a reference such as `url(#gradient)`, a missing file. They now stay as written, and a font named with a query (`font.woff2?v=4.7.0`, `?#iefix`) is embedded from its file.
-- **Headings of the same text get ids of their own in the exports.** Two `## Setup` headings were both `id="setup"` in the HTML and the PDF. The export rendered without the slug builder the preview passes to VS Code's Markdown engine, which then slugs each heading on its own; it now passes the same builder, so repeated headings get `-1`, `-2` as in the preview (`setup`, `setup-1`, `setup-2`).
-- **A link to a media file no longer blanks the preview** ([qjebbs/vscode-markdown-extended#154](https://github.com/qjebbs/vscode-markdown-extended/issues/154)). markdown-it-html5-embed embeds a link to an audio or video file in its place, but it then hid everything after the link to the end of the paragraph, and threw on a line break or `**bold**` there (`Unexpected token: softbreak`), so the preview showed nothing. It now hides only the link's own text; the rest of the paragraph renders. The link's text, the fallback inside the player, is escaped, so a `<` in it can no longer close the player early and swallow the rest of the page; so are a media image's source and title, which the HTML export decodes.
-- **A link to a `.ts` file is a link, not a video** ([qjebbs/vscode-markdown-extended#177](https://github.com/qjebbs/vscode-markdown-extended/issues/177)). `[file](src/foo.ts)` rendered as an empty `<video>`, because `.ts`, `.mts`, `.m2ts` and `.m2t` are also the extensions of MPEG-TS video, and `.dts` and `.m3u` became audio players the same way. A link is now embedded only when a browser plays its type: video `.mp4`, `.m4v`, `.webm`, `.ogv`; audio `.mp3`, `.m4a`, `.aac`, `.ogg`/`.oga`/`.opus`, `.wav`, `.weba`, `.flac`. Image syntax still embeds every audio and video type, `![clip](clip.ts)` included, since it asks for the embed. Together with the fix above, this is what blanked the preview of a document linking TypeScript files by reference (`[Name]` … `[Name]: src/name.ts`).
-- **A checkbox keeps the text before it.** `para [ ] mid` rendered only the box and `mid`, in a paragraph and in a table cell alike: markdown-it-checkbox replaced the whole text with the box and its label and lost what stood before the box. Its rule is replaced by one of this extension's, with the same markup, so the text before a box is kept. Three more of its mistakes go with it: an escaped `\[x\]` is text, a code span such as `a [x] b` keeps its code, and brackets inside a word (`a[x] b`) are not a box — a box starts the text or follows a space. A task list `- [ ] task` renders as before.
-- **A task's label holds its whole text, formatting included.** In `- [ ] task **one**` the label ended before the bold word, and a task written all in bold had an empty label, so a click on its text did not reach the box. The label now runs to the end of the task's text, or to the next box beside it, and ends with an HTML element the box stands in (`<span>[ ] a</span> b`). A box inside formatting or an HTML element the label takes in stays text, as no label holds another.
-- **An admonition's title may hold a quote, and a `{…}` after a quoted title styles the title bar** ([qjebbs/vscode-markdown-extended#131](https://github.com/qjebbs/vscode-markdown-extended/issues/131)). The opening line was split at its first `"` wherever it stood, so `!!! note <font color="red">Styled</font>` became a box with the class `<font color=` and a broken title, and in `!!! bug "Title" {style="color:#FF00FF"}` the attribute text ended up in the title. Now a title is quoted only when its `"` follows the type (and any further classes, as in `!!! warning big "Title"`) and its closing `"` ends the line; otherwise the rest of the line after the type is the title, quotes and all. As in Python-Markdown, a quoted phrase that ends the line still makes the words before it classes: `!!! warning Do not run "rm -rf"` is a warning with the classes `Do`, `not` and `run`, titled *rm -rf* — quote the whole title to keep it. A `{…}` after the closing quote goes to the title bar, as one after an unquoted title always did, and `!!! note "" {.x}` stays a box without a title. A quoted title is kept as written, spaces included; an unquoted one no longer starts with a space (`<p class="admonition-title"> Title</p>`). The Visual Editor reads the title from the same tokens, so `!!! note Say "hi" twice` is now an editable box titled *Say "hi" twice* there too, where it was a source block with two classes.
-- **A tab-indented admonition keeps the first characters of a table in it** ([qjebbs/vscode-markdown-extended#110](https://github.com/qjebbs/vscode-markdown-extended/issues/110)). With its body indented by a tab, a markdown-it-multimd-table table inside lost the first three characters of its first column (`<th>rst</th>`); four spaces worked. The admonition only raised the indentation it expects by four columns, and multimd cuts that many *characters* from each line — one tab is one character but four columns. The body's lines now start past the box's indentation, as a blockquote's start past `> `, so every rule inside reads a tab as the four spaces it stands for.
-- **A PowerShell hashtable is shown whole** ([qjebbs/vscode-markdown-extended#146](https://github.com/qjebbs/vscode-markdown-extended/issues/146)). `@{height = 65}` at the end of a table cell or a paragraph rendered as `@`: markdown-it-attrs took the braces for an attribute list and dropped them. A `{…}` in which a space stands beside the `=` that separates a key from its value (`{height = 65}`, `{a= b}`, `{a =b}`) is now text, kept whole: at the end of a paragraph, a heading, a list item or a cell, after inline markup, in a paragraph under a table or a list, after a `---`, in a fence's, a container's or an admonition's info, after a bracketed span (`[x]{a = b}` stays that text, brackets included). It holds when the `@` before it is escaped (`\@{height = 65}`, as the Visual Editor writes it) and when a literal follows it (`- item @{a = 1} {.row}` still gives the item its class). A line holding such a brace is never a whole-line literal, which reads differently from before: `{.x} {a = b}` under a table, after a list or on the line under a paragraph stays that text (it gave the table, the list or the paragraph the class `x` and dropped the line), and `--- {a = b} {.x}` is a paragraph with the class `x`, not a rule. A fence whose info is only such a brace (```` ```{a = b} ````) names no language, and an admonition's classes leave it out (`!!! note {a = b} "T"` is `admonition note`). Every other `{…}` reads as before: an end literal after such a brace (`x {y = {a=b}` gives `a="b"`, read from the last `{` as markdown-it-attrs reads it), an unclosed one (`[x]{a = b`), a glued one (`text{.lead}`, ```` ```js{4} ````, `## Title{#id}`, `@{height=65}`), an `=` inside a value (`{data-h=YQ==}`, `{integrity=sha256-abc=}`) and one in quotes (`{title="a = b"}`). The Visual Editor reads literals by the same rule: a paragraph ending in such a brace stays text, a heading whose line ends in one is never given it as its literal, and **Attributes…** refuses `{width = 50%}` with *Write it as {width=50%}* (an unclosed `{…` is refused as unclosed).
-- **A container's `{…}` reaches its `div`** ([qjebbs/vscode-markdown-extended#126](https://github.com/qjebbs/vscode-markdown-extended/issues/126)). `::: { .admonition .note }` rendered `<div class="">` and `::: note {#id .c}` `<div class="note">`: markdown-it-attrs read the literal, and the container's renderer, which wrote the `div` by hand, dropped it. The container is now rendered from its token, so the info's classes come first, the literal's after them, then its id and other attributes; `::: note {a = b}`, whose braces are text (above), is still `class="note"`. In the preview the `div` now also carries VS Code's `code-line` class, `data-line` and `dir="auto"`, as every other block does, so scroll sync finds the container's own line. In the Visual Editor a container written so is a source block, rendered as in the preview; **Attributes…** on a container stays disabled and now gives the true reason: the container node has no place for a literal.
-- **A container's info is escaped once.** `::: a"b` rendered `class="a&amp;quot;b"`, because `"` was escaped before `&`; the renderer now escapes every value once.
-- **Format Table lines up a column holding an emoji** ([qjebbs/vscode-markdown-extended#149](https://github.com/qjebbs/vscode-markdown-extended/issues/149)). An emoji such as 🍉 was measured as no column at all, so every other cell of its column got two spaces too many and the pipes no longer lined up. A cell is now measured by what a reader sees as one character, with Unicode's East Asian Width data: a wide or fullwidth character or an emoji takes two columns, a combining mark or a zero-width character none, any other character one. When a table is formatted, pasted as a table, or changed in the Visual Editor, these cells are padded differently than before: emoji (a flag, a skin tone and a family joined with ZWJ included), keycaps, enclosed and compatibility CJK (㈱, ㎡), Bopomofo, Yi, the vertical and small form variants, the ideographic description characters, Kanbun, CJK strokes, the Yijing hexagrams, the angle brackets U+2329 and U+232A, Khitan and the Tai Xuan Jing symbols now take two columns; halfwidth katakana and Hangul, arrows, box drawing, geometric shapes and block elements (○ ■ □ ▲ ▶ █ ▀) and about 18,600 characters outside the Basic Multilingual Plane that are not emoji (mathematical letters such as 𝐀, historic scripts), which took none, now take one; combining marks and zero-width characters, which took one, now take none. **Paste as Table** lines up cells that the CSV pads with spaces: a cell was measured with its spaces but written without them. The Visual Editor writes a changed table with the same measure, so it and Format Table pad a column alike; a table nobody changed is still written byte for byte.
-- **An email address, a `$` before a digit with no closing `$` after it, or a marker in code no longer makes a sidebar.** ``mail a@b.c and `@x` `` rendered `a` and then a right sidebar running from `b.c` into the code span: the sidebar rule took the next `@` (or `$`) anywhere in the paragraph as its end. Now a `$` or `@` right after an ASCII letter or digit opens no sidebar (`a@b.c`, `user@host`, `US$5`), a `$` followed by a digit closes none, so `$5 and $10` stays text — a `$` before a digit still opens a sidebar where a later `$` can close it (`Pay $5 and see $the note$.`), and the closing marker is found by the inline parser, so one inside inline code, a link, an autolink, inline HTML or after a backslash closes nothing. A bare URL in a sidebar still ends at the sidebar's closing marker. Sidebars next to CJK and other non-ASCII text are read as before (`这是$侧边栏内容$的例子`), and so are `$ left $` and `@(3 Min.)@`; one glued to an ASCII word (`Text$x$`) is now text, and so is one glued by a character reference that stands for a letter or digit (`REQ-&#49;$x$`, `$x$&#53;`). In the Visual Editor an edit after which a sidebar would not read back where it stands, or text would read as a sidebar the editor does not show, is refused with the reason: the editor writes every paragraph the save will write again — the edited one, and in a list, a quote or a table every other item, paragraph and cell, since the save writes that block whole — as the save will, and parses each with the preview engine's own markdown-it, linkify settings and inline plugins. So an edit that would glue a sidebar to a letter or digit before it, or a left sidebar to a digit after it, is refused with a hint to put a space there, and so is one after which a bare web address before a sidebar would read its marker into the address (`http://e.com/$x$` is one address), the escapes the line takes included (`C++http://e.com/$x$` is written `C\+\+http…`, and linkify reads that address): `See (http://e.com)$x$` stays a sidebar and editable, bold over the address included, while deleting that `)`, or typing a `)` into `See http://e.com/($x$` that closes the address's bracket, is refused; **Move to right**/**Move to left** is decided the same way (`(http://e.com)@x@` is a sidebar, `http://e.com,@x@` an address). With `markdown.preview.linkify` off nothing reads an address and nothing is refused for one. A formatting button, **Remove link**, **Remove attributes, keep text**, **Remove image**, **Remove note, keep text** or **Remove sidebar, keep text** whose result would glue is disabled with that reason, so a sidebar an edit makes is always read back as one, and a sidebar the file already holds never makes its paragraph uneditable — except where the line spells a character as a character reference the editor would write out and the sidebar would then read differently (`See h&#116;tp://e.com/$x$`), where every edit of the paragraph, and of the list, quote or table it stands in, is refused with a hint to edit that line once in the text editor; other extensions' markdown-it plugins are not part of that check; inline code, superscript and subscript in a sidebar may now hold the sidebar's `$` or `@`. With `markdown.math.enabled` on (VS Code's default) the math extension still claims every `$` first, so left sidebars still need it off, and while it is on the Visual Editor makes none: **Left sidebar** and **Move to left** are disabled, and an edit that would leave a left sidebar is refused, saying so.
-- **In the Visual Editor a copied block keeps its classes and loses only its ids.** A block other than a heading copied by dragging it with `Ctrl` (`Option` on macOS) and the second half of a split block lost their whole `{…}`, classes included, while a list copied without a `{…}` of its own kept its items' ids, so `- one {#i1}` was saved twice with the same id. Now a copy and the second half of a split keep every attribute but the id, for the top-level blocks — paragraphs, headings, lists, quotes, tables, code blocks and rules — and for the items of a list: `A wide one. {.wide #w}` copied is `A wide one. {.wide}`, `Classed. {.c}` and a list's `{.wide}` are copied as they are, `- one {#i1}` is copied as `- one`, and a heading loses its anchor and requirement id but keeps `{.unnumbered}`. A copy dropped directly before its original is the copy, not the original: the original keeps its id where it stands, and nothing of it is rewritten. The copy's `{…}` is kept only once the preview's own markdown-it and markdown-it-attrs read it back as the original's attributes less the id: `{title="a{b" #w}` is copied as `{title="a{b"}`, not as `{title=a{b}`, which the preview cuts at the brace, and `{k=a"b" #w}` as `{k=a"b"}`; nothing is escaped, since the preview reads a `\` before the attributes and shows the whole `{…}` as text. A copy whose other attributes no `{…}` can hold — a value with a space and a `"` — is copied without its `{…}`. A `{…}` that the preview shows as text — a `\`, an entity such as `&amp;`, code, emphasis, HTML, a link or a plugin's markup inside it — is text to the Visual Editor too, and the **Attributes…** field refuses it with that reason. That is judged where the `{…}` stands, as the preview reads it there: a code block's `{…}` is read off its opening line and a table's off the line under it, untouched by those rules, so ```` ```ps1 {title="C:\x"} ```` and a table's `{title="__init__.py"}` stay the block's and the block stays editable — on the fence it stands on: a `~~~` fence's ```` ~~~js {title="a`b"} ```` is the block's, and the field takes it there, while on a ```` ``` ```` fence, whose opening line holds no backtick, it is refused saying so; and with the preview's own settings — with `markdown.preview.linkify` off `Text. {data-u=http://x.org}` is the paragraph's, with superscript disabled in `markdownExtended.disabledPlugins` so is `{title="x^2^"}`, and with `markdown.math.enabled` on a `$…$` the math reads as a formula is text, by the math extension's own rules: `{title="$x$"}` is text, `{data-price="$5 - $10"}` is the paragraph's. A `{…}` is also judged with the rest of its block: two `$` in two literals of one paragraph (`A [x]{title="a $b"} c.` given `{title="d$ e"}`) pair as a formula, or without math as a left sidebar, so the field refuses that literal, though either alone reads. Any other edit is judged the same way: one after which a `{…}` would no longer read back — inline code typed after `[x]{title="a $b"}` that the math then reads into, a span pasted before a paragraph's `{title="d$ e"}` — is refused, naming the `{…}`, while a `$` typed as prose is written `\$` and changes nothing. What is judged is the save's own text: the block the edit makes the save write again — a list item by item, a table row by row, a quote, a container or an admonition block by block inside it, each as the save writes it, the wrap included — parsed whole by the preview's markdown-it with markdown-it-attrs and the container, admonition and table plugins, and compared with what the editor shows: every sidebar, every block's, item's, heading's and span's `{…}` as attributes, and nothing else read as either. So typing that moves the wrap so that `7" models {.spec}` would stand on a line of its own, its `"` opening a quote the `{` then stands in, is refused, and a `{…}` that is text, which the wrap would put where it reads as a class, is written as text (`\{.spec\}`). So is every `{…}` the editor shows as text that markdown-it-attrs would take anywhere in its line — after emphasis, inline code, a link, a highlight or an image (`see *a*{.c}`), before a span (`a {x}[t]{.s}`, where the span keeps its own), or at the end of a table cell, which the plugin gives the cell (`| GET /users/{id} |`): it is written `\{…\}`, the one the plugin takes and not a copy of it elsewhere in the line, so such text can be typed, and a file the editor wrote that way (`see *a*\{.c\}`, `| GET /users/\{id\} |`) opens editable and keeps its escapes. A `{…}` after an escaped character is read as the preview reads it: `A 5" display \* b {.spec}` is a paragraph with the class `spec` (the `"` stands in another text token than the `{`) and is kept and editable, while `A 5" display * b {.spec}` is text, and an edit keeps it text. Removing a `{…}` is judged by the same rule: it applies when the save then reads back everything the editor still shows — removing a span from `# Size [w]{.wide} of 5"$x$5" {#size}`, after which the heading's id would not read back, is refused, and the **Attributes…** field says so rather than "Attributes removed"; where a `{…}` the file holds already does not read back, the field names that one as the cause, unless that is the one being changed, whose new value is judged. A copied list item's `{…}` is judged with its list too, and dropped where it would not read back. A heading closed by a `#` run after its `{…}` (`# Title {#id} ##`) keeps it and stays editable. A heading's `{…}` with a `{` in a value (`## Head {title="a{b" #h}`) is read whole, and an edit to the heading keeps it. Not yet stripped on copy: an id inside an attribute span (`[x]{#s}`), an id on a container or an image or on a block inside a quote, and a heading nested in a quote.
-- **A wiki embed `![[…]]` is no longer a key** ([qjebbs/vscode-markdown-extended#168](https://github.com/qjebbs/vscode-markdown-extended/issues/168)). With Foam, `![[path/to/img.png]]` was rendered as `!<kbd>path/to/img.png</kbd>`, because markdown-it-kbd reads every `[[…]]` as a key, and Foam never saw its embed. An embed — `![[`, a name with no bracket and no line break, `]]` — is now read as literal text in the preview and the exports, the text plain Markdown would give Foam (escapes resolved), so Foam finds it again and nothing in its name is read as syntax; `![[x]](y)` is the embed and the text `(y)`, and a `{…}` right after it stays text. `\![[Ctrl]]` is a `!` and a key, and the Visual Editor writes a key typed after a `!` that way. In the Visual Editor an embed is one unit, drawn as its source in the colour of inline code, removed as a whole, made text with **Edit as text** in its toolbar (Backspace right after typing it makes it text too: Edit as text keeps the embed's marks on all of its text, Backspace gives back the text as it was before the closing `]`, and that `]`; delete the last `]` and type it again to make it an embed again; its tooltip says so), and written back exactly as it was, in a paragraph, a list, a quote, a heading, a table cell or a note alike (moved into a table cell or a note, a `|`, a backtick or the note's marker in its name is written as an escape or a character reference, which reads back as the same name, and moved out again it is written plain); `![[name]]` typed (at its closing `]]`), or in text pasted from anywhere but the Visual Editor itself (a browser, Obsidian, VS Code's text editor), becomes one too, outside code, superscript and subscript, which cannot hold one; a paste of the Visual Editor's own copy, in any document's Visual Editor, and a drag keep what they carry, so literal text stays literal (a plain-text paste, Ctrl+Shift+V, knows only the last copy made in the same Visual Editor page: a copy made in any other page, another document's or this document's before it was reopened, makes embeds, and outside text identical to the last copy is pasted as that copy); an escaped `!\[\[note\]\]` stays escaped text. A typed embed takes the marks of the text it replaces, with any you toggled on or off before the `]` (Ctrl+I, Ctrl+B), so an embed typed at the end of a link stays in the link. The text editor no longer highlights an embed as a key. A wiki *link* `[[note]]` is written exactly like a key and is still one. The new plugin name `wiki-embed` turns the embed rule off.
-- **An image's alt text keeps its escaped characters in the Visual Editor.** `![a\*b](x)` was read with the alt text `ab` once its paragraph was written again: an escape inside an image's text is a token the editor did not read.
-- **A link right after `\\!` no longer turns into an image in the Visual Editor.** The `!` before a link is escaped when it would make the link an image; a `!` after an escaped backslash was taken for an escaped one, and the link was written as `\\![text](url)`, an image.
+- A heading's explicit `{#id}` is its id in the preview and exports; its slug still works as a second anchor.
+- `[[TOC]]` entries link to the ids the preview gives its headings ([qjebbs/vscode-markdown-extended#70](https://github.com/qjebbs/vscode-markdown-extended/issues/70)).
+- `@[toc]` makes a table of contents again ([qjebbs/vscode-markdown-extended#174](https://github.com/qjebbs/vscode-markdown-extended/issues/174)).
+- The Visual Editor's table of contents lists the document's headings.
+- A table with two rowspan columns keeps every row ([#3](https://github.com/JackDMF/vscode-markdown-extended/issues/3)).
+- Format toggles act on exactly the selection (CJK text too), at every cursor, and skip markers in code and escapes ([qjebbs/vscode-markdown-extended#113](https://github.com/qjebbs/vscode-markdown-extended/issues/113), [#173](https://github.com/qjebbs/vscode-markdown-extended/issues/173), [#180](https://github.com/qjebbs/vscode-markdown-extended/issues/180)).
+- A missing or unsupported image no longer fails the export; `.webp` and `.avif` images are embedded ([qjebbs/vscode-markdown-extended#157](https://github.com/qjebbs/vscode-markdown-extended/issues/157)).
+- A stylesheet linked with `<link>` now applies to PDF, PNG and JPG exports ([qjebbs/vscode-markdown-extended#162](https://github.com/qjebbs/vscode-markdown-extended/issues/162)).
+- An embedded stylesheet's unreadable `url()` is kept as written instead of `url("null")`.
+- Headings of the same text get distinct ids (`setup`, `setup-1`) in exports.
+- A link to a media file no longer blanks the preview ([qjebbs/vscode-markdown-extended#154](https://github.com/qjebbs/vscode-markdown-extended/issues/154)).
+- A link to a `.ts` file is a link, not a video ([qjebbs/vscode-markdown-extended#177](https://github.com/qjebbs/vscode-markdown-extended/issues/177)).
+- A checkbox keeps the text before it; a task's label covers its whole text, formatting included.
+- Admonition titles may contain quotes, and `{…}` after a quoted title styles the title bar ([qjebbs/vscode-markdown-extended#131](https://github.com/qjebbs/vscode-markdown-extended/issues/131)).
+- A tab-indented admonition no longer cuts the start of a table inside it ([qjebbs/vscode-markdown-extended#110](https://github.com/qjebbs/vscode-markdown-extended/issues/110)).
+- `@{height = 65}` and other braces with a spaced `=` are shown as text ([qjebbs/vscode-markdown-extended#146](https://github.com/qjebbs/vscode-markdown-extended/issues/146)).
+- A container's `{…}` attributes reach its `div`, and its info is escaped once ([qjebbs/vscode-markdown-extended#126](https://github.com/qjebbs/vscode-markdown-extended/issues/126)).
+- **Format Table** and **Paste as Table** line up columns holding emoji and other wide characters ([qjebbs/vscode-markdown-extended#149](https://github.com/qjebbs/vscode-markdown-extended/issues/149)).
+- Email addresses, prices such as `$5` and markers inside code no longer create sidebars.
+- In the Visual Editor, a copied or split block keeps its classes and drops only its id.
+- A wiki embed `![[…]]` is no longer rendered as a key, and the Visual Editor keeps it intact ([qjebbs/vscode-markdown-extended#168](https://github.com/qjebbs/vscode-markdown-extended/issues/168)).
+- The Visual Editor keeps escapes in image alt text and no longer turns a link after `\\!` into an image.
+
+### ⚠️ Limits
+
+- With `markdown.validate.enabled`, VS Code reports links to an explicit `{#id}` as missing headings.
+- The Visual Editor's table of contents updates only after reopening or a change in the text editor.
+- A copied block inside a quote, a container or an image still keeps its id.
+- With `markdown.math.enabled` on (the default), the Visual Editor cannot make left sidebars.
 
 ## v4.0.0 — The Visual Editor
 
 *2026-09-30*
 
-This is a major release because it adds a new way to edit a Markdown file, the Visual Editor, which saves every block you did not touch byte for byte. It also changes two behaviours an existing document may notice: the PDF's print date now follows VS Code's display language unless `markdownExtended.pdf.locale` is set (it followed the operating system's locale), and every image now keeps its alt text in the preview and the exports (it was rendered as `alt=""`).
-
 ### ✨ New Features
 
-- **A Visual Editor for Markdown files, which saves an untouched block byte for byte.** Visual Editor: you edit the document as it reads; the technique is a rich-text editor over the file's own text. Open a `.md` file with **Markdown: Open in Visual Editor**, from the explorer or editor context menu, or through **Open With… → Markdown Visual Editor**. Paragraphs, headings, lists, quotes, code blocks and rules are edited in place, with `Ctrl+B`/`Ctrl+I`/``Ctrl+` `` and the usual Markdown shortcuts typed at the start of a line (`# `, `- `, `1. `, `> `, ` ``` `). It is opt-in: the text editor stays the default.
-- **Why fidelity is per block.** A rich editor that re-serialized the whole file on save would re-wrap every hand-wrapped paragraph, normalize every marker and rewrite the front matter — every save a diff. Here each top-level block keeps the exact slice of the file it was read from and is written back from it unless you changed it; a changed paragraph is re-wrapped at the width it was written at, and one with no width of its own at the new setting `markdownExtended.editor.wrapColumn` (default `90`). The serializer's form for a changed block is stable, so saving it again is not a second diff.
-- **It edits the file's own document.** The editor is a custom *text* editor over the same `TextDocument` the text editor shows, so dirty state, save and the document's undo history stay VS Code's, and a change made anywhere else — the text editor beside it, another extension's command — appears in the editor. Its own edits are written as one minimal replacement, so other views keep their cursors and decorations.
-- **One parser for preview and editor.** The editor parses with an engine composed like the preview's: this extension's plugins, then every other extension's `markdown.markdownItPlugins`, linkify and typographer from the preview's settings. What another extension injects into the preview is recognised by the mark it carries (Req Explorer's status badges, summary tables and snippet expansions) and shown as a read-only block; an expanded snippet offers **Open snippet**, which opens the file the body came from.
-- **Blocks outside the editable core stay editable as source.** Tables using markdown-it-multimd-table's extensions, raw HTML and the rest of the extended syntax (table of contents, footnotes, definition lists, task lists, abbreviations, …) render as in the preview; **Edit source** edits their Markdown in place, **Show in text editor** jumps to them. A requirement heading `## ID: Title {#anchor}` keeps its id and anchor read-only, and `Enter` inside it starts a paragraph, so the id is never written twice.
-- **A document that cannot be shown without loss is not edited.** The editor says so and offers the text editor; it writes nothing to such a document.
-- **A formatting toolbar, and a bubble over the selection.** One line at the top of the page — `Block type ▾ | i em b strong code | Formatting ▾ Annotation ▾ Insert ▾` — of controls of one height, which scrolls sideways in a narrow window instead of wrapping; the bubble offers the five marks above any selected text. In the menus every entry is the element the preview renders from its syntax (`<mark>`, `<kbd>`, a sidenote reference, a whole admonition box), drawn by the page's own stylesheets and scaled to one entry height, with the Markdown beside it; resting on an entry shows it at full size in a preview card. Menus work from the keyboard. Italic, emphasis, bold and strong are four buttons, because `*a*`, `_b_`, `**c**` and `__d__` render as `<i>`, `<em>`, `<b>` and `<strong>` and a stylesheet can style them apart; choosing one on another swaps the delimiter. Highlight, super- and subscript, strikethrough and keys toggle on the selection like bold; a sidenote, marginal note or sidebar is made of the selection in place (below). Admonitions (every type the plugin knows), containers and tables go in as rich text (below); the other block constructs — task lists, definition lists, abbreviations, table of contents — and the footnote go in **as source**: a block one is inserted with its **Edit source** box open, the footnote's paragraph becomes a source block rendered like the preview. One `Ctrl+Z` takes it back. The block type of a requirement heading is locked, with the reason in the tooltip, so one click cannot lose its id and anchor.
-- **The extension's inline syntax is edited in place.** `==highlight==`, `^sup^`, `~sub~`, `~~strike~~`, `[[keys]]`, sidenotes (`++reference|note++`), marginal notes (`!!reference|note!!`) and sidebars (`$…$`, `@…@`) no longer turn their paragraph into a source block: the paragraph stays rich text with a caret, and the reference and the note are each edited as rich text. A note is drawn exactly as the preview draws it — in the margin in a wide window — because the editor builds the same elements the notes plugin renders, so every stylesheet applies unchanged. A note from the toolbar or the bubble takes the selection as its reference and starts with its text `note` selected, so you type the note next; `Tab`/`Enter` move from the reference to the note and out, `Shift+Tab` back, `Esc` leaves, and `Backspace` at the start of an empty reference removes the whole note. A heading may hold a note. Req Explorer's conformance document's four §6.2 paragraphs are editable now.
-- **The selection bubble** offers the extension's five marks and the two notes beside the five native marks.
-- **A note's button removes it again.** With the caret or a selection in a sidenote, marginal note or sidebar, its button (menu or bubble) shows as active, and choosing it removes the note and keeps its text in the sentence: a note's reference, with its formatting, or a sidebar's text; the note's own text goes. One `Ctrl+Z` brings it back. `Backspace` still removes a whole note.
-- **Every object carries its verbs, the same way.** A note, a link, an image, a source block and an included snippet each show one small bar — the object's name, then its verbs — above the object's first line (below its last when there is no room), never over the line you are typing on. A block shows it while the pointer is on it or it is selected; an inline object once the caret has rested in it for 400 ms, and hides it when the caret leaves. Notes: **Remove note, keep text**, **Convert to marginal note** / **Convert to sidenote** (sidebars: **Move to right** / **Move to left**), **Edit source**. Links: **Open** (as Ctrl+click), **Edit link…**, **Remove link**. Images: **Edit image…**, **Open file**, **Remove image**. Source blocks: **Edit source**, **Show in text editor**, **Delete block**. Snippet expansions: **Open snippet** (when Req Explorer names its file), **Show in text editor**, **Delete directive**. Injected atoms show their name. Removing a note used to be two `Backspace`s at one spot, known or not found; now it is a labelled verb, and a removal is announced beside the caret (*Note removed — Ctrl+Z*), since otherwise all that happens is a disappearance. **Edit source**, **Edit link…** and **Edit image…** open a one-line field in the bar (`Enter` applies, `Esc` or clicking away cancels); a note's field holds its Markdown, and what you type is parsed by the host's engine — the preview's — so it comes back as a note again or, if it no longer is one, as the text typed. `Alt+Enter` opens the bar of the object at the caret with the focus on its first verb; arrows move, `Enter` chooses, `Esc` returns to the text. The source block's hover toolbar and the snippet's **Open snippet** button are this bar now.
-- **Attributes, spans, containers and admonitions are edited in place.** They used to turn their block into a source block, edited only as Markdown. Now an admonition (`!!! warning "Title"`) is its coloured box with its title bar, its body edited as text; a container (`::: name info` … `:::`) is a block with its classes, outlined in the editor, and may hold another one level deep; an attribute span (`[text]{.class}`) and a block's attributes (`text {.lead}`, a `{.class}` line under a paragraph or a list, ```` ```js {.numbered} ````, `--- {#cut}`) are drawn with exactly the attributes the preview gives them, so your stylesheets style them for real. Every `{…}` is kept as you wrote it and written back where it stood; an untouched block is still written byte for byte. **Insert → Admonition** and **Insert → Container** now make the block in place with the caret in its body, and **Formatting → Span with class** asks for the class in a field (`{.}` with the caret after the dot) and makes the selection a span. Each is an object with its verbs: a span **Edit attributes** and **Remove attributes, keep text**; an admonition **Change type** (a menu of every type), **Edit title** and **Remove admonition, keep content**; a container **Change name/info** and **Remove container, keep content**; a block with attributes **Attributes…** (below). In an admonition or a container, `Enter` in an empty last paragraph leaves it and `Backspace` at the start of an empty first one removes it, content kept.
-- **Ctrl+click follows a link; a plain click does not** (`Cmd+click` on macOS). In text a click places the caret in the link, on a rendered block it selects the block; a link's tooltip shows where it goes. A relative link opens the file against the document's folder, one to a heading of the same document scrolls there, a web or mail address opens outside VS Code, and links that would run something (`command:`, …) are not followed.
-- **Other extensions' code lenses and code actions, as the text editor shows them.** With the Visual Editor as a corpus's default, everything Req Explorer attaches to the text editor — its lenses on every requirement heading, its quick fixes — was gone. The editor now asks VS Code for them, as the text editor does, with no arrangement between the extensions. **Lenses** stand as a row above the block they belong to (a lens on a blank line belongs to the block after it, one in the front matter to the front matter), small and dimmed, `a | b | c`; a click runs one, `Tab` reaches them and `Enter` runs the focused one. They are asked again after every change and when you come back to the tab. The new setting `markdownExtended.editor.codeLenses` (default `true`) turns them off, and so does `editor.codeLens`. **Code actions** are verbs in a block's bar, after its own: the quick fixes and refactorings an extension offers on the block's lines — for a source block, a snippet, the front matter, a container, an admonition, a block with attributes, and a heading — a requirement heading has a bar for them alone, labelled with its id, shown only when there are some. Source actions, VS Code's *Surround With* snippets and inline chat's *Modify* are left out, since they act on the file or on a text editor's selection; inline objects have no actions yet. Product icons in lens titles are drawn with the codicon font (below).
-- **`$(icon)` in a lens or code-action title is the real icon.** A title such as `$(add) Add reference…` used to lose its icon, because the page had no icon font and a stand-in character read as a broken one. The page now links VS Code's own codicon font (`@vscode/codicons`, shipped in the package under `dist/codicons`) and draws each reference as the icon, in the label's size and colour, before the text — in lens rows, in the object toolbar's verbs (lenses and code actions alike, so a heading's verbs too) and nowhere at the cost of the bar's uniform button height. `$(name~spin)` draws the icon without spinning; an unknown name leaves an empty icon slot, and `\$(name)` is the literal text, as in the workbench. Tooltips, accessible names and the entries of the **Actions** menu, a native list that holds no elements, stay the title's plain text.
-- **A lens runs from the element it is about.** On a requirement heading the lens row repeated what the page already renders — the status is the badge, the priority and the edge counts are rows of the summary table — in identical grey tokens with no sign of which were clickable. Now a lens that names its surface is placed there: the **status badge** runs the status lens, the summary table's **Priority** row the priority lens, a **relation row** the lens counting that relation. At rest they look exactly as in the preview; the pointer on one underlines it and its tooltip names the verb; a click runs it, and `Tab` and `Enter` reach and run it from the keyboard. A lens that is a verb (**+ ref**) is a verb in the heading's object toolbar, and so is one whose element the page does not show (a count for a relation the table hides); past four such verbs the first three stay and the rest are behind **Actions**. The editor does not guess from titles: the other extension says which surface a lens belongs to, in the last of its command's arguments (`{ reqExplorer: { surface, artifact, relation? } }`), and Req Explorer does for its own. Every other lens keeps its row, except on a block that has lenses naming their surface, where they join them in the toolbar — one block, one grammar.
-- **In a requirement's summary table a click on a link opens it, and the status lens is on the Status row.** The table is a read model, nothing in it is edited, so the Ctrl+click rule of text protected nothing there and made a list of links look broken; a plain click now opens a target, as Ctrl+click does. A row's lens is therefore on its label (_Status_, _Priority_, _Verified by_) alone: the label underlines, names the verb and runs the lens (the relation's picker); the targets beside it are plain links. The status lens goes to the table's standing row (the row that states the artifact's status, whichever field it is), and to the badge beside the heading only where the table has none — Req Explorer drops the badge where the table shows the status. Elsewhere a link still needs Ctrl+click.
-- **A lens that sets looks like a dropdown, one that goes looks like a link.** An underline said "link" on the status and the priority too, whose click changes them. Now the status chip, the priority value and the badge show, on hover or keyboard focus, a soft rounded surface and a `▾` after the value; a relation's label, which opens its picker, stays underlined like the links beside it.
-- **The status lens goes on the standing row, and a derived standing's lens goes rather than sets.** A release's standing is a lifecycle field with another name, and a change request's is derived, so `tr[data-req-field="status"]` was only one case. The `status` lens now resolves to the row marked `data-req-standing` in the summary table first, and to the row of the field `status` where none is marked (every Req Explorer before 1.12.0). On a row marked `derived` (a change's stage, which has nothing to set) the lens is underlined like a link and shows no dropdown; on an `authored` row, the fallback row and the badge it still sets. The attribute is the contract agreed in workshop 2026-09-29 (NEU-UXD-009) and arrives with Req Explorer 1.12.0.
-- **A link to another document's heading lands on the heading.** The file used to open at its top. The `#fragment` is now resolved as the text editor's own link handling resolves it — a heading's `{#id}` first, then its GitHub-style slug by the built-in Markdown support's rule, then a line (`#L12`) — and the text editor shows the heading at the top of the window, the Visual Editor scrolls to it and puts the caret there. A fragment the file does not have opens it at the top.
-- **Insert → Include…, and Change snippet… on an included snippet.** The editor showed an include as one block and could open its snippet, but nothing inserted one: the snippet ids and the directive's syntax belong to the extension that resolves them, so this one does not know them — and should not keep a second copy. Now that extension says what can be included. **Insert → Include…** asks every installed extension that contributes a markdown-it plugin and exports `listIncludeChoices(documentUri)` for its choices (`{ label, description?, detail?, insert }`), shows them in VS Code's own quick pick under each extension's name, and inserts the chosen line after the current block exactly as given; the host parses it again at once, so it appears as the expanded snippet with **Open snippet**. An included snippet's bar gains **Change snippet…**, which replaces its directive line the same way — also on a snippet that was not found. With Req Explorer installed the list is the corpus's snippets by id, with their first heading and path. Without a providing extension both are disabled, saying why; with one that has nothing to offer, VS Code says *No extension offers includes for this document*. A provider that fails is logged and skipped, the others' choices still shown.
-- **Links and images are made in the editor, and relative images show.** `Ctrl+K` (`Cmd+K`) and **Insert → Link…** link the selected text — a field under it asks for the address — or, at the caret, ask for the text and then the address; in a link they change its address, as the link bar's **Edit link…** does. The address completes as you type: the workspace's files relative to the document (Markdown first, `files.exclude` and `search.exclude` respected, spaces as `%20`), `#` for this document's headings and `file.md#` for another's, each as the anchor a link lands on. **Insert → Image…** opens VS Code's file dialog in the document's folder, inserts `![name](relative/path.png)` and asks for the alt text, the file's name filled in. A file dropped from the Explorer view (`Shift` while dropping) is linked where it is dropped — an image as an image, any other file as a link; an image dropped from the system's file manager is copied, since a webview is given its contents and name but not its location — saved beside the document under its own name — and any other file from there is refused with a hint to drop it from the Explorer view; a pasted screenshot is saved as `images/<document>-<yyyymmdd-hhmmss>.png`. Copies go where `markdown.copyFiles.destination` says when it names a place, a taken name gets `-1`, `-2`, and nothing is saved where it could not be inserted (a drop onto code is refused, in a drop's words). While a link's or a span's field is open, the text it acts on stays highlighted; the completion list ends in a line of its keys (`↹ complete · ↵ set · Esc close`) and lists a file's anchors as `#anchor` with the heading beside it; a selected image is outlined. An image's bar has **Edit image…** (its alt text, then its path, which completes with image files) and **Open file**. An image with a relative path now shows: the host resolves it against the document, as a followed link is resolved, and the page loads it from the document's folder or the workspace, while the file keeps the path as written; web and `data:` images are shown as they are.
-- **Other extensions can ask which Visual Editor has the focus, and where its caret is.** A command another extension runs from the palette without arguments looks for the active text editor, which a Visual Editor is not — so Req Explorer's commands found no document and no requirement there. The extension now exports `visualEditor.active()`, the focused Visual Editor's document and the caret as a position in its text (0-based line and character, as every `vscode.Position`), and `visualEditor.onDidChangeActive`. The caret is `undefined` while a source block, the front matter or a badge is selected, and whenever the editor cannot place it exactly; it is never a position in a text the document no longer holds.
-- **Pipe tables are edited as tables.** A table used to be a source block, edited only as Markdown. Now a GFM pipe table — a header row, the delimiter row with its `:` alignment, body rows, one line each — is a table with a caret in its cells, and each cell's text is rich text like a paragraph's: emphasis, code, links, images, highlight, keys, sidebars. `Tab` goes to the next cell with its text selected (in the last cell it adds a row), `Shift+Tab` back, `Enter` to the cell below (in the last row it adds one; in an empty last row it leaves the table); `Shift+Enter` says that a cell holds one line. The table's bar has **Row** (insert above or below, delete), **Column** (insert left or right, delete), **Align** (left, center, right, the current one checked; choosing it again is the default), then **Attributes…** (below), **Edit source** and **Delete table**; while it shows, the caret's column is tinted, so left and right are plain. **Insert → Table** makes one in place, with a header row and two empty rows. A changed table is written as **Format Table** writes one — pipes lined up, every cell padded to its column, the colons in the delimiter row, `|` in a cell as `\|` — and an untouched one byte for byte, whatever its form. A table using markdown-it-multimd-table's extensions (a colspan `||`, a rowspan `^^`, a multi-line row, a caption, no header, a second body, `=` or `+` in the delimiter row) stays a source block, and its bar says *Source · multimd table*. A header row is always there: GFM has no table without one, so there is no toggle for it. The table you are in has a faint outline before its bar arrives, its cells a faint grid so an empty row can be seen and clicked into, new cells flash briefly, and after a delete the caret lands in the neighbouring cell.
-- **The toolbar, its menus and every bar are drawn as VS Code draws its own.** The formatting row was a floating card with greys, a radius and a shadow of its own inside the document's margin; it is now a full-width row at the top of the editor in the colours of the tab strip above it, with the workbench's font and 22px controls, VS Code's hover and pressed states and its chevron on every dropdown. The menus (block type, Formatting, Annotation, Insert, a table's Row, Column and Align) are drawn as VS Code's context menus, the object bars and the selection bubble as its editor widgets. Every colour comes from the current theme, so Light, Dark, High Contrast and any other theme follow without a rule of their own. The marks in the row stay the real elements your stylesheets draw, and the problems count keeps its place at the right end.
-- **A bar avoids text, and never moves the page.** A block's bar — a table's, a container's, a heading's, a source block's — used to sit above the block and could hide the line above it. It now goes where there is no text: beside the block's first line when the block is narrow (a table), else above it, inside its top-right corner or below it where that is free, and where nothing is free above the block at the column's right edge, over the end of the line above — as a heading's bar always did. No bar makes room for itself: a full-width table's bar used to push the table down while it showed, and the layout jumped on every visit. The selection bubble goes below the selection when the line above holds text, or beside it in a table. While the bubble shows, no block's bar does. In a menu, the current value — a column's alignment, the block type, a mark that is on — is a ✓, no longer a highlight that looked like the focus.
-- **Front matter is a properties panel, edited in place.** The YAML at the top of a file was a collapsed, read-only block. It is now a **Properties** panel, collapsed by default with the count of its keys and remembered open or closed per file, with **Edit as source** at its right. Open, each key is a row, its name in mono and its value in a control that fits it: a text field; a date as its `YYYY-MM-DD` text with a calendar button; a checkbox for `true`/`false`; chips with `×` and **+ add** for a list, which stays a flow list (`[a, b]`) or a block list (`- a`) as it was; the values the file uses for `lang`, listed under the field as the editor's other completions are; a `uid` (or a key ending in `uid`/`id` holding a UUID) read-only, copied on a click; and one row, *n items, nested · edit as source*, for anything nested, which opens the YAML at that key. `Enter` applies a row, `Esc` puts it back, `Tab` applies it and goes on; **+ Add property** asks for a name, then a value; a row's `×`, right after its value and reachable with `Tab`, or `Shift+Delete` removes the key (*Removed key — Ctrl+Z*), and each edit is one undo step of its own. Every edit changes only the characters of what changed — key order, comments, quoting, anchors, blank lines and line endings of the rest stay byte for byte — through the `yaml` package's parser, never a round trip through a YAML writer. **Insert → Properties** adds front matter to a document that has none. While a field has the focus, `visualEditor.active()` reports no caret.
-- **Notes and sidebars keep out of the editor's preview card.** The margin layout in `markdown-extended.css` now excludes descendants of `.mep-preview-card`, a class only the Visual Editor's page carries: its media query reads the window, and would float a note out of a 360px card in a wide window. The selectors keep their specificity (`:where()`), so your own `.sidenote` rules still win; the preview and exports are unchanged.
-- **Completion, problems and hovers from other extensions, in the Visual Editor.** What Req Explorer and VS Code's own Markdown support give the text editor while you type and read is now on the page, asked of VS Code as the text editor asks. **Completion:** a list opens under the caret when a provider answers for a character just typed (Req Explorer's `-` in `FRS-`, the built-in's `#`, `/`, `.` in a link) and on `Ctrl+Space`, never for a plain letter; letters filter it, `↓`/`↑` choose, `Tab`/`Enter` accept, `Esc` closes. Accepting applies the provider's own edit to the file — its range, over what you typed while the list filtered, and its extra edits — and the paragraph shows what the file now says. **Problems:** every diagnostic of the file is a squiggle on its text in the theme's error, warning and info colours (a bar at the whole block's left edge where it cannot be placed exactly — a table, a source block), one marker in the block's left margin, and a count at the right end of the toolbar (`⨯ 1 ⚠ 2`) that opens the Problems view. **Card:** after half a second on a squiggle or on text, one card shows the problems there with their quick fixes as links, and the hover providers' text; a hover's command links run only the commands the hover is trusted with. A long card fades out into **Show more**, which opens VS Code's own hover in the text editor. The card closes when the pointer leaves, on any key and on scroll.
-- **Formatting → Attributes… sets a block's `{…}`, written where markdown-it-attrs reads it.** A class, an id or any attribute on a block used to mean typing the literal in the text editor and knowing where the plugin looks for it — which differs by construct. Now **Formatting → Attributes…**, beside **Span with class**, opens a field at the block the caret is in, named after it (*Paragraph · Attributes*), prefilled with the block's literal or with `{.}` and the caret after the dot; `Enter` sets it and the page draws it at once, styled by your stylesheets, `{}` removes it, `Esc` changes nothing, and one `Ctrl+Z` takes it back (*Attributes set — Ctrl+Z*). The field takes the whole literal (`{.note #intro data-x=1}`), says so at its right (`↵ set · Esc cancel · {.class #id key=value}`, as **Span with class** now does too), and one markdown-it-attrs would not read back is refused with the reason. It is written where the plugin reads it: a paragraph's and a heading's at the end of the line, a list item's at the end of its first paragraph (`- text {.x}`, the item, not the list), a quote's as `> {.x}` under its last paragraph, a table's on a line of its own under a blank line after it (never glued to the block after it), a fenced code block's after its info string. Text that ends in braces (`\{x\}`) stays text, escaped, whether a literal follows it or not. Quotes, tables and list items with attributes are therefore no longer source blocks. The bars of a table and of any block that already has attributes carry the same **Attributes…**, and so does a heading's bar when it shows for other extensions' actions; a plain heading grows no bar for **Attributes…** alone, the menu reaches it. Where no literal can go the entry is disabled and says why, on its preview card as well as in its tooltip: a container (its renderer drops a literal), an admonition (the plugin gives it to the title bar), a quote ending in a list or code, a requirement heading (its anchor is Req Explorer's), an indented code block, a source block, the front matter.
+- **Markdown: Open in Visual Editor** edits a `.md` file as rich text and saves untouched blocks byte for byte.
+- Changed paragraphs keep their wrap width, or use `markdownExtended.editor.wrapColumn` (default `90`).
+- Undo, dirty state and saving stay VS Code's; changes from the text editor appear live.
+- Renders like the preview, other extensions' plugins included; blocks it cannot edit richly are edited as source.
+- A toolbar and a selection bubble for marks, block types, notes, admonitions, containers and tables.
+- Highlight, super- and subscript, strikethrough, keys, sidenotes, marginal notes and sidebars are edited in place.
+- Each note, link, image and block has a small bar with its actions; `Alt+Enter` opens it.
+- Admonitions, containers and `{…}` attributes are edited in place; **Formatting → Attributes…** sets a block's `{…}`.
+- Pipe tables are edited as tables, with row, column and alignment commands.
+- Front matter is an editable **Properties** panel that keeps the YAML's formatting.
+- `Ctrl+K`, **Insert → Link…** and **Insert → Image…** complete paths and headings; pasted and dropped images are saved beside the document.
+- `Ctrl+click` follows a link, to a heading in another document too.
+- Other extensions' code lenses, code actions, completion, problems and hovers appear in the Visual Editor; `markdownExtended.editor.codeLenses` turns lenses off.
+- **Insert → Include…** and **Change snippet…** insert snippets offered by other extensions such as Req Explorer.
+- Other extensions can ask for the focused Visual Editor and its caret (`visualEditor.active()`).
+- The toolbar, menus and bars follow the VS Code theme.
 
 ### 🐛 Fixes
 
-- **The PDF's date is formatted in VS Code's language.** The header and footer's `<span class='date'>` was filled by Chrome in the language Chrome found on its own, so a German VS Code still printed `9/30/26, 1:20 PM`. The export now writes the print time itself, in the same short date and time form Chrome uses, in VS Code's display language: `30.09.26, 13:20`. Chrome overwrites the text of any element with class `date`, so the printed element carries `print-date` instead (other classes and attributes stay, and a `.date` selector in the template's own `<style>` follows); any element name works, not only `span`. The new setting `markdownExtended.pdf.locale` (a BCP 47 tag such as `de-DE` or `fr-CH`) overrides it, per folder in a multi-root workspace; an invalid or unknown tag is reported once per export in the output panel and the default locale is used. With the setting empty the date now follows VS Code's display language rather than the operating system's.
-- **Format Table no longer writes a narrow aligned column's delimiter as a bare `:`.** A column whose cells were one character wide was measured before its alignment was known, so `:-` came out as `:` and `:-:` failed; the table stopped being a table. The column is now at least as wide as its delimiter needs.
-- **An image keeps its alt text in the preview, the exports and the editor.** `markdown-it-html5-embed` 0.3.3 keeps its image and link defaults in one hoisted variable, so with image and link embedding both on (this extension's setting) every image was rendered by the link's default and came out as `<img alt="">` — invisible to a screen reader and lost in an export. The plugin is now registered once per syntax; audio and video still embed from `![](clip.mp4)` and `[talk](talk.mp3)`.
-- **Export exports the document it was asked about, also from the Visual Editor.** `Markdown: Export to File` takes an optional uri (the resource VS Code passes from a title or explorer menu, or one another extension passes); with none it exports the active tab's document, a text tab or a custom editor, before the active text editor. A file open in the Visual Editor used to export a different visible file, or nothing.
-- **`*x*` and `**x**` looked different in the editor than in the preview.** This extension renders `*x*` as `<i>` and `**x**` as `<b>` (`markdown-it-ib`), `_x_` and `__x__` as `<em>` and `<strong>`; the editor drew every emphasis as `<em>` and `<strong>`, so a stylesheet that styles them apart showed the wrong one. It now draws each as the preview does, and a pasted `<em>` comes in as `_x_`.
-- **A source block's Edit source box showed no caret and no selection.** A click on a block selects it, and the editor then paints its own selection transparent until the next selection change; the box inherited that, so the caret and a dragged selection were there but invisible. The box now keeps its own. A double click on a source block opens the box too, with the caret at the end.
-- **A source block edited back into plain Markdown stayed a source block.** Removing a sidenote's markers in the box left the paragraph as an atom, edited only as a whole. Applying a source edit now asks for the document to be parsed again, and the block comes back as whatever it now is.
-- **A checkbox in a rendered block no longer toggles on a click**, which changed nothing in the file.
-- **A paragraph with a link on a line of its own was re-wrapped at the link's width.** A hand-wrapped paragraph whose longest line was one link (105 characters, in Req Explorer's release notes) came back from one changed word wrapped at 105 throughout: the wrapper could break inside the link's text, so that line counted as evidence of the width. A link is now one unbreakable run, for the wrapper and for the width it reads, so the width is the widest line that could have been broken (91 there), the link keeps a line of its own, and the lines after it are written as they were.
-- **A plain click on a link in the editor followed it**, VS Code's webview resolving the href against the page rather than the document; see Ctrl+click above.
-- **A link in a note whose address holds the note's marker closed the note inside the URL.** `[C++](https://en.wikipedia.org/wiki/C++)` in a sidenote was written with the raw `++`, which the notes plugin read as the note's end. A run of the marker character is now percent-encoded in a destination and a character reference in a title, and a bare link holding it is written as `[…](…)`.
-- **A note made inside superscript, subscript or inline code disappeared on save**: it took the surrounding mark, whose text is written as it is. It no longer does.
-- **A Ctrl+click on a malformed link (`http:////x`) was an unhandled error** instead of a warning in the log.
-- **The bubble drew a note's underline over one line and not over the next.** A toolbar glyph was held to its button by its content box, so a sample whose stylesheet gives it a border or padding — a sidenote reference underlined by a 1.5px border, a code chip, a key's frame — stood taller than the button and was cut at its edge; whether the underline survived depended on the fraction of a pixel the bubble happened to stand at. A glyph is now held by its whole box and the button clips at its own edge, so the row and the bubble draw a sample's border, padding and background whole, wherever they stand.
+- The PDF's print date follows VS Code's display language; `markdownExtended.pdf.locale` overrides it.
+- **Format Table** no longer breaks the delimiter of a narrow aligned column.
+- Images keep their alt text in the preview and exports.
+- **Export to File** exports the active document, also from the Visual Editor.
 
 ### ⚠️ Limits
 
-- **Change snippet…** is offered on an included snippet, not on a source block that happens to be one include line the extension could not expand at all: telling such a line from any other would take the directive's syntax, which is the providing extension's.
-- A table using markdown-it-multimd-table's extensions and raw HTML stay source blocks, and a document the editor cannot show without changing it is not written to: the editor says so and offers the text editor instead.
-- A table inside a container, a quote or a list is edited as source; so are footnotes, definition and task lists, abbreviations, the table of contents and reference definitions.
-- Containers and admonitions nest one level deep; a third level, a nested container closed by its parent's fence, an admonition with a second class, and attributes on a list item, a link, emphasis, an image, a quote, a nested block, a container or an admonition title stay source blocks. An admonition title holding Markdown shows its markers in the editor.
-- A note holds no note: the notes plugin allows one of another kind inside a note (`++a|see !!b|c!!++`), and such a paragraph stays a source block.
-- Inline code in a note cannot hold the note's `++` or `!!`, and inline code, superscript or subscript cannot hold a reference's `|` or a sidebar's `$` or `@`: the notes plugin finds those before anything else is read, and nothing escapes them there. The editor refuses such an edit and says why beside the caret; the Code, Superscript and Subscript buttons are disabled with the reason.
-- With VS Code's built-in math on (`markdown.math.enabled`, the default), `$…$` is a formula in the preview, the export and the editor, never a left sidebar. The documented way to use left sidebars is now `"markdown.math.enabled": false` in the workspace that uses them, at the cost of `$…$`/`$$…$$` math there (README, "Sidebars"); the editor rebuilds its engine when the setting changes.
-- A note holding a line break has no **Edit source** field (one line cannot show it); edit it in the text editor.
-- An image outside the document's folder and the workspace folders does not show in the editor (the webview may load only from those); a file dropped from another drive than the document's is not inserted, since no relative path reaches it.
-- Desktop only — the page inlines contributed stylesheets read from disk. In vscode.dev the command is hidden, but **Open With…** still lists the editor.
-- A lens or code action whose command works on the active text editor may do nothing in the Visual Editor, or act on another text editor; the command decides what it works on. A lens that counts things in other files is refreshed when the document changes or you come back to its tab, not the moment the other file changes: no extension hears another's lens events.
-- Keystrokes still inside the quarter-second before they are sent are dropped when the same file changes elsewhere in that moment; there is no merge. What was sent stays, and the editor's undo history survives the change.
-
-### 🧹 Internal
-
-- `src/editor/host/` (extension host: engine composition, the per-document session, the page, the provider) and `src/editor/webview/` (the ProseMirror page, bundled by a fourth esbuild context to `dist/editor-webview.js`) on top of the UI-free core in `src/editor/`. The protocol between them is typed in `src/editor/protocol.ts`; ARCHITECTURE.md describes it.
-- Tests: the minimal-replacement function, the host engine, the session protocol against a stand-in webview and a real `TextDocument` (an edit lands as one replacement and is not echoed; another writer's change is posted; a stale edit is refused), a smoke test that opening the editor writes nothing, the fidelity rules for `src`, `gap` and requirement ids across splits, moves, deletions and undo, the in-place re-sync, a save requested with an edit, and the page itself driven in headless Chromium — rendering, typing, a raw block's source edit, undo back to the exact bytes, undo past a change from the host, `Ctrl+S`, `Enter` in a requirement heading, snippet buttons and the error state. The Chromium test skips without a browser, as the other e2e tests do.
-- `npm test` now builds the bundles first (`pretest`), because the smoke test and the page test run what `dist/` holds.
-- Stage 2 of the editor: marks `mark`, `sup`, `sub`, `strike`, `kbd` and the inline nodes `sidenote`/`marginal_note` (a `note_ref` and a body each), `left_sidebar`, `right_sidebar` in the schema; the plugin's tokens in the editable set; the serializer writes a part's terminator (`|`, `$`, `@`) and a marker character touching a marker as character references, since the plugin searches the raw source for them. `webview/notes.ts` holds the note keys, a `beforeinput` handler that types and deletes at a note's edges itself, and `wrapInNote`; the toolbar's `wrap-node` kind uses it. The protocol gained `openLink { href }`, resolved by `host/links.ts`. Tests: every construct parsed, drawn as the engine renders it (`DOMSerializer` against the engine's HTML) and written back stably; the part terminators; wrapping across a note but not across sup, sub, a key or a link; the REL-RXE-135 paragraph; the note commands and keys; link resolution; and in headless Chromium the toolbar's sidenote followed by typing in the note, after it and in the paragraph, clicks and typing in paragraph, reference and body, the computed style of each note in the editor against the engine's rendering at 1400px, and plain and Ctrl+clicks on links in a table and in text.
-- Stage 3 of the editor: the mark `attr_span` (its `literal` verbatim), `attrsSuffix`/`attrsPlacement` on the top-level blocks markdown-it-attrs gives attributes to, and the block nodes `container` and `admonition`, drawn with the plugins' DOM (the admonition's title bar a page widget, since a content hole must be its element's only child). A span's literal is recovered from the block's source by matching `]{…}` occurrences, in order, to its tokens — inline tokens have no line map — with a normalized form as the fallback; a block's literal must read as its token's attributes or the block stays raw. `src/editor/attrs.ts` ports markdown-it-attrs' literal reader for the page, held to the plugin by a test that renders every literal it lists. The fidelity plugin drops a literal from the second half of a split block and from a block wrapped inside another, since only a top-level block's is written. Tests: literal recovery (`{.a}`, `{class="a b"}`, `{#x .a style="color:red"}`, two spans in a paragraph), each placement's round trip and stability, every new node's DOM against the engine's HTML, the nesting and closing rules, the keys and the verbs, and in headless Chromium Span with class, an inserted admonition typed into, and the admonition's, container's and span's bars.
-- `src/syntax/markers.ts` states the extension's markers once — the inline toggles', the notes' and sidebars' with their classes, the admonition types — for the text editor's toggle commands, the sidenote and admonition plugins and the toolbar alike; a test holds the rebuilt toggle expressions to the ones they replaced. The toolbar's action table (`src/editor/webview/toolbar/actions.ts`) is checked against the real engine: every button's syntax must render the element the button is drawn as. The protocol's `edit` gained `reparse`, which asks the host to post the document back parsed afresh.
-- Lenses and actions: `host/lenses.ts` asks `vscode.executeCodeLensProvider` (500 resolved) 300 ms after every posted document and applied edit, and on the page's `refreshLenses` (focus, visibility); `host/codeActions.ts` answers `actionsFor` with `vscode.executeCodeActionProvider` on the block's lines. Both keep the commands and actions in a host-side registry and post titles and ids (`lenses`, `actions`); `runLens` and `runAction` run them. A lens's line is mapped to the top-level block whose `lineRange` covers it (`blockIndexForLine`, over `blockLineRanges` — the grouping `parseDocument` builds from). On the page `webview/lenses.ts` holds the rows as widgets and follows each row's node through every transaction with `descent`, now exported from `fidelity.ts`. `heading` is an object kind. Tests: the host session against a registered test provider (resolve, front-matter, heading and blank-line placement, arguments that cannot cross `postMessage`, the setting), the filtered actions and their edits and commands, and in headless Chromium the rows, a click, `Tab`/`Enter`, a row following its block through an insertion, stale and replacing refreshes, the object toolbar kept off a row, and actions on a requirement heading and a source block.
-- Lens surfaces: `lensHintOf` (`host/lenses.ts`) reads the `LensHint` shape off the last argument of a lens's command — a known `LensSurface` and a non-empty `artifact`, `relation` only as a string; anything else is a foreign lens — and `LensItem` carries `surface`, `artifact`, `relation` to the page; the command is kept whole and runs with the hint in place. On the page `webview/lenses.ts` places each `lenses` message against the document: `status` on the heading holding the `inline_atom` whose mark names the artifact, `priority` and `links` on the `injected_block` whose mark names it when its HTML has `tr[data-req-field="priority"]` or `tr[data-req-relation]` of that key, everything else (and every lens of a block with a hinted one) as verbs of the artifact's heading — or, for a block with no object toolbar, a row. The placements follow their top-level nodes through every transaction with `descent`, as the rows did; a plugin view marks the elements (`mep-lens-target`, `data-lens`, the verb as `title`, `tabindex`) after every update and takes their pointer and keys in the capture phase. The object toolbar draws lens verbs after the object's own and before the code actions (`lensesAt`, `LENS_VERBS_INLINE`). The codicon stand-in glyphs are gone. Tests: the hint's parsing and forwarding; in headless Chromium the badge and both kinds of row marked and clicked, `Enter` on the focused badge, hover underline and tooltip, the hinted block without a row beside a paragraph's foreign row, a hidden relation, a foreign lens and an action in the heading's bar before its code actions, the overflow, placements following an insertion and cleared by empty lenses, and a status lens with no badge on the page.
-- Lens surfaces, review: a `links` hint may name its side (`direction: 'out' | 'in'`), matched against `tr[data-req-direction]`, so both rows of a symmetric relation get their lens; one without takes the relation's first row. An artifact's heading and table are looked for beside the lens first (its heading, the table right after), then across the document, so two headings sharing a readable id keep their own. An element takes one lens; a second for it is a verb rather than a lens nobody can reach. A `<summary>` in a placed row shows neither the underline nor the verb's tooltip, since a click on it opens its list. Tests: the side parsed and forwarded; in headless Chromium both sides of `conflicts-with`, two side-less lenses of one relation, two headings with one id, and hover, tooltip and click on a summary.
-- Acceptance rulings: `status` resolves to the standing row first (`tr[data-req-standing]`, else `tr[data-req-field="status"]`), the badge only without that row; a heading is the artifact's by its badge or its `reqPrefix`. Row lenses are marked on the row's `th` (`labelCellOf`), and `LensTargets` leaves links alone. `followLinksIn` takes `plainFollows`, which `InjectedBlockView` answers for a mark of kind `atom`. Tests: the three status cases (row only, badge only, both), a plain and a Ctrl click on a target link posting `openLink` and no `runLens`, the label cell running the lens, the link's own affordance and the label's tooltip.
-- A requirement heading is recognised by its summary table as well as by its badge: `liftRequirementPrefix` (`parse.ts`) also takes the artifact of an `injected_block` atom that is the next top-level block after a top-level heading, since Req Explorer drops the badge wherever the table shows the status (`CR-RXE-129`); the badge is still read first, for a heading with no table. Tests: the fake Req Explorer injects the table alone, and the heading lifts its prefix, keeps its anchor and suffix and is a `heading` object; neither signal, or a table naming another artifact, leaves the id editable; the text round-trips; in the page, a heading with its table and no badge takes the status lens on the Status row and its `action` lenses in its bar, labelled with the id.
-- Lens kinds and link fragments: `data-lens-kind` (`set` for an authored standing and `priority`, marked on the chip or value cell; `go` for `links`, on the `th`, and for a derived standing) drives `editor.css`. `host/links.ts` gains `githubSlug`, `slugBuilder`, `headingAnchors` and `fragmentLine`; `host/githubSlugRegex.ts` is generated from the built-in Markdown language server's `githubSlugReplaceRegex`; `VisualEditorSession.openAt` opens with `{ selection }` and reveals `AtTop`, or sends the new `revealAnchor { anchor, line }` to the target's session (sessions are kept by uri; `revealInVisualEditor`); `VISUAL_EDITOR_VIEW_TYPE` moved to `host/viewType.ts`. Tests: hover and keyboard focus of set and go targets; the slug regex against the test host's VS Code, `{#id}`/slug/repeated slug/line fragments; a link opening another file at the heading and a missing fragment at the top with nothing louder than info; a same-document link and a reveal waiting for its page; in the page, `revealAnchor` by anchor and by line. The test host's window renders nothing, so no scroll can be observed there: the text editor's top placement is not asserted, only that the heading is selected and in view.
-- Includes: `host/includes.ts` (`collectIncludeProviders`, `IncludeController`) on the same activated-extension list as the engine's extenders, now `markdownItExtensions` in `host/engineHost.ts`; the protocol gained `pickInclude { requestId, replace? }`, `includeChosen { requestId, insert? }` and `document.includes`; the toolbar's `insert-include` kind and `insertLineTransaction` / `changeIncludeTransaction` on the page. The session takes `includeProviders()` and `includePicker` from its host, the real collection and VS Code's UI by default. The **Delete directive** tooltip no longer spells Req Explorer's directive. Tests: choices collected with a separator per provider, a throwing, rejecting or listless provider and malformed choices skipped and logged, nothing to offer is the message and an empty answer, `pickInclude` answered behind the edit sent before it, `includes` in `document`; in headless Chromium Include… disabled and enabled, the chosen line inserted after the current block with `reparse`, a dismissed pick writing nothing, and Change snippet… replacing an expansion's line.
-- Source positions: `src/editor/positions.ts` maps a ProseMirror position to a line and UTF-16 character of the text the page would write, and back (`createPositionMap`: `sourcePositionOf`, `pagePositionOf`, `pageRangeOf`; `caretOf`). Offsets come from `serializeLayout`, the loop `serializeDocument` now is; inside a block the page's text is aligned with the block's `src` or fresh serialization by an affine-gap alignment in a band, with a line break before every textblock and a note's markers as anchors, so delimiters, prefixes and character references need no counting; a CRLF body is aligned as LF and mapped back. The page reports its caret (`caret { baseVersion, position }`, `webview/caret.ts`) 100 ms after the selection settles and only behind the pending edit; the session keeps it, drops a stale one, forgets it while it applies the page's edit and on another writer's change, and asks for it again (`reportCaret`) when that change came and went. The page owns the map: the session's `toSource(pos)` / `toPage(position)` ask it (`map` / `mapped`), answered from one cached `PositionMap` per document state behind the pending edit, and resolve `undefined` for an answer of another version or none in time. An escaped or entity-spelled character maps past its whole spelling; a source position inside a line's prefix or an entity is approximate. `host/activeEditor.ts` follows the panels' `active` flag for the exported `visualEditor` API; the web build exports the same shape. Tests: an unedited block, an edited paragraph with marks and wrapping, an edited heading, list items with a wrapped line and numbered text starting with a digit, a note with a character reference in its reference, a raw atom, an image, CRLF against LF, positions past the end and no positions, an empty paragraph, the greedy fallback, and the round trip for every text position of a document of every editable construct, LF and CRLF, unedited and re-serialized; the reporter's debounce, its wait for the edit and its version; the session's caret and positions against a real document; the tracker; the exported API with a real Visual Editor; a change undone before the re-sync asking for the caret; and in headless Chromium the caret after a click, `Home`, typing and `End`, none on a selected source block, and a `map` request answered after the edit being typed.
+- multimd tables, raw HTML, footnotes, definition and task lists, and nested tables are edited as source.
+- Containers and admonitions nest one level deep in the Visual Editor.
+- With `markdown.math.enabled` on (the default), `$…$` is math, not a left sidebar.
+- Images outside the document's folder and the workspace do not show in the Visual Editor.
+- The Visual Editor is desktop only.
+- A lens or action that works on the active text editor may do nothing in the Visual Editor.
 
 ## v3.1.3 — Customisable Notes, Leaner Package
 
 ### 🐛 Fixes
 
-- **`--md-note-surface` and `--md-note-border` were inert in the live preview.** They were written as a fallback - `var(--vscode-textBlockQuote-background, var(--md-note-surface))` - and in the preview the VS Code variable always exists, so the documented property was never consulted. The rule now reads the custom property directly, and the light/dark defaults carry the concrete colors, which also makes preview and export agree.
-- **Those properties could not be overridden at all.** They were declared on `:root` for light and `body.vscode-dark` for dark. Custom properties inherit from the *nearest* ancestor that sets them, so a `body` rule always beat a reader's `:root` rule no matter how specific, while `body.vscode-dark` outranked any plain `body` rule in dark themes. Both defaults now sit on `body`, the dark variant wrapped in `:where()` to hold the same specificity, so a reader's `body` block - loaded after this stylesheet - wins in both themes. Verified across light/dark, preview/export and both sides of the breakpoint.
-- `--md-note-border-width` and `--md-note-padding` added, so the block rendering can be neutralised entirely from custom properties rather than by re-declaring rules.
+- `--md-note-surface` and `--md-note-border` now take effect and can be overridden; `--md-note-border-width` and `--md-note-padding` added.
 
 ### 📦 Packaging
 
-- **The `.vsix` shipped files no VS Code user needs.** `sublime/` - Sublime Text and Textastic color schemes, a syntax definition and a PowerShell installer, 117 KB of another editor's files - went to every user; only four of its markdown files had ever been excluded. So did `ARCHITECTURE.md` (22 KB of contributor documentation), `COMPREHENSIVE_PLUGIN_TEST.md` and `test-bundled.md`. All are excluded now, and the README's link to ARCHITECTURE.md points at GitHub so it survives. 45 files / 2.24 MB becomes 35 files / 2.21 MB.
-- `.vscodeignore` is regrouped and commented, including why the three files in `dist/` must stay: `extension.js` is `main`, `extension.web.js` is the `browser` entry for vscode.dev, and `mermaid-browser.js` is read at runtime during export. A stray `!dist/extension.js` negation that re-included a file nothing had excluded is gone.
+- Smaller package: files for other editors and contributor documents are no longer shipped.
 
 ### 📖 Documentation
 
-- **The admonition "Removing Admonition Title" section described something that does not exist.** A bare `!!! type` has no title bar - that is the default, and `!!! danger ""` produces identical markup. The section is now "Admonition Without a Title" and says how to *add* one instead.
-- README documents what a custom stylesheet inherits from the built-in one since 3.1.2, with the measured scope: only the block rendering's background, border and padding, and only below the 1280px breakpoint - above it the margin layout already clears all three, and anything you declare yourself wins regardless. Includes a copy-paste block for restoring the pre-3.1.2 blank slate, and spells out the `body`-not-`:root` rule.
+- README: admonitions without a title, and what a custom stylesheet inherits from the built-in one.
 
 ## v3.1.2 — Sidenote Styles Actually Ship
 
 ### 🐛 Fixes
 
-- **The sidenote stylesheet was never loaded.** `styles/markdown-extended.css` has shipped in the package since sidenotes were introduced, but nothing ever referenced it — it was absent from `markdown.previewStyles` and from the exporter, so `.sn-ref`, `.sidenote`, `.mn-ref`, `.mnote`, `.left-sidebar` and `.right-sidebar` had no styling at all in preview or export. It is now contributed as a preview style, which also carries it into HTML, PDF and image export through `ContributesService`.
-- **Notes were invisible in dark-theme PDF export.** The print rules painted a hardcoded `#f5f5f5` surface with `opacity: 1`, while `markdownExtended.export.theme: dark` sets the body text to `#e6edf3` — about 1.1:1 contrast, with `printBackground` on so the grey really was painted. The note surface and border are now custom properties with a `body.vscode-dark` override, using the same palette as `markdown-extended-default.css` (`#f6f8fa`/`#d0d7de` light, `#161b22`/`#30363d` dark).
-- **Floated notes overflowed the page in HTML export.** Widths and offsets were percentages (`width: 50%`, `margin-right: -60%`), so the space a note demanded grew with the content column and could never fit beside it — against the centered 820px column of the built-in export theme a note ran roughly 300px past the viewport at 1200px, producing a horizontal scrollbar. Geometry is now absolute (`--md-note-width: 200px` plus `--md-note-gap: 24px`, offset via `calc()`), so a note needs a fixed 224px of gutter.
+- Sidenote and sidebar styles now load in the preview and exports.
+- Notes are readable in dark-theme PDF exports.
+- Floated notes no longer overflow the page in HTML exports.
 
 ### 🧹 Internal
 
-- **The layout is now built the other way round.** The stacked, in-flow block rendering is the base and the floated margin layout is a progressive enhancement inside `@media screen and (min-width: 1280px)` — the width at which an 820px column plus a note on either side fits (820 + 2 × 224 = 1268). Print never matches `screen`, so PDF export gets the block rendering for free, as do narrow preview panes and the 800px viewport Puppeteer uses for PNG/JPG. The separate `@media print` and `max-width: 800px` blocks that previously duplicated those rules are gone, and the old 800px breakpoint no longer coincides exactly with the image-export viewport.
-- Custom properties renamed for what they actually style: `--md-side-note-fs` → `--md-note-font-size`, `--md-sidebar-opacity` → `--md-note-opacity` (both applied to notes *and* sidebars under the old names), plus the new `--md-note-width`/`--md-note-gap`/`--md-sidebar-width`/`--md-sidebar-gap`/`--md-note-surface`/`--md-note-border`. Nothing depended on the old names, since the stylesheet had never been loaded.
-- `--vscode-*` variables are now only a first choice with a concrete fallback, matching the standalone-export rule stated in `markdown-extended-default.css`; exports have no `--vscode-*` values to read.
-- **Regression test for the combination.** `test/unit/services/exporter/noteStyles.e2e.test.ts` assembles the two stylesheets in the order `renderPage` emits them, renders in headless Chromium and measures computed styles: note contrast in print for both export themes, no horizontal overflow at 1280px, and stacking at the 800px image-export viewport. Against the previous stylesheet these report 1.08:1 and 262px of overflow. CI-safe in the same way as the mermaid e2e test — it skips unless a browser is already present and never triggers a download.
+- Notes float in the margin from 1280px wide and stack below; note custom properties renamed (`--md-note-font-size`, `--md-note-opacity`).
 
 ### 📖 Documentation
 
-- **Every documentation image is now generated, not drawn.** `scripts/screenshots.mjs` (`npm run screenshots`) renders each one from a fenced ```markdown block in README.md itself, through the extension's own compiled plugins and stylesheets in the order `renderPage` emits them. The README and its illustrations can no longer disagree. The generator mirrors the plugin registration order of `src/plugin/plugins.ts`, because markdown-it tries inline rules in registration order.
-- **New capability screenshots.** Sidenotes, marginal notes and both sidebars in the margin layout - the extension's headline feature, which had no image at all - plus a combined "Extended Inline Syntax" shot (mark, strikethrough, sub/sup, kbd, abbreviation, emoji, task lists, definition lists) and a footnote shot. `admonition-demo1/2` and `container-demo` are regenerated from current rendering.
-- **The three GIFs and the command-palette screenshot are gone.** All dated from 2022 and could not be regenerated without driving a real VS Code window. Table editing, Paste as Table and Export & Copy are now documented with before/after Markdown and command tables - copyable, searchable, and correct by construction: the before/after output was produced by running the extension's own table parser, stringifier and CSV converter. The command-palette shot listed seven commands against today's twenty-seven, and duplicated the keyboard-shortcut table that already existed.
-- The walkthrough's editing step moves from `pasteTable.gif` to `media/walkthrough/editing.md`, matching its five siblings, and its cheat-sheet now lists the extension's own `[[Ctrl+S]]` keyboard syntax instead of raw `<kbd>` HTML.
-- Corrected two errors in the new prose: `++ins++` was written up as underline syntax, but `++...++` belongs to sidenotes alone and `markdown-it-ib` provides `_underline_`; and the footnote example promised "multiple blocks" while showing one line.
-- README documents the note layout model, the breakpoint and every custom property.
-- **The `markdown-it-container` example could not produce its own screenshot.** It used Bootstrap 3 grid classes (`col-xs-6`) while linking Bootstrap 4.0.0, which dropped that name — so the two panels rendered full-width instead of side by side. The section is rewritten around a working Bootstrap 5 example that also demonstrates what the plugin is actually for: the fence's info string becomes the `class` attribute verbatim, markdown still renders inside, and putting the grid class and the panel class on separate nested fences is what gives the panels a gutter (a single `col-md-6 alert alert-success` makes them touch, which is what the old screenshot showed). A Bulma version and the nesting rule are documented alongside it, as is the fact that a script-only CDN such as Tailwind's cannot be used, since `markdown.styles` takes CSS.
-- **`images/container-demo.png` regenerated** (535×58 from 2022 → 1512×348 @2x). It is rendered from the README's own code block through the real container render rule and the linked Bootstrap 5 stylesheet, so the picture and the documented source cannot drift apart.
-- The Getting Started walkthrough said `markdown.styles` is "embedded into every export". That holds for a local file, but a URL is emitted as a `<link rel="stylesheet">`, so such an export needs the network at export time and stays tied to that URL. Both the walkthrough and the README now say so, along with the fact that setting `markdown.styles` at all switches off `markdownExtended.export.defaultStyles`.
+- README screenshots are generated from its own examples; new note and syntax screenshots; container example fixed for Bootstrap 5.
 
 ## v3.1.1 — Multiline Bold & Italic
 
 ### ✨ New Features
 
-- **Bold and italic spanning soft line breaks now highlight.** Markdown treats a line break without a blank line as mere source formatting — `**bold\ntext**` renders bold in preview and export — but the editor never showed it (not in 3.1.0, and not before: VS Code's built-in grammar demands the closing marker on the same line, and TextMate grammars tokenize line by line). It also cannot be fixed by adding an ordinary inline rule: the host grammar's `meta.paragraph` region *pops at every line end* and re-opens on the next line, discarding any inline region nested inside it. The extension now claims the paragraph itself — only when a line contains an unpaired `**`/`__`/`*`/`_` opener, via the `L:` block injection — reproducing the host's paragraph scope (`meta.paragraph.markdown`) and full inline highlighting inside, plus new paragraph-bounded `multiline_bold`/`multiline_italic` rules. Multiline emphasis also works inside admonition bodies (stable region, no takeover needed).
-- Known limits, by construction: an *unpaired* opener (`**stray`, `_oops`) highlights to the end of the paragraph — the next blank line, heading, list, quote, fence, table or container stops it (the renderer shows it literal; TextMate cannot look ahead across lines). Openers require strict flanking (non-word before, word after), so `5*3`, `*.md`, `2 ** 8` and `snake_case` stay plain. Emphasis across lines inside block quotes, lists and tables is not supported; single-line emphasis there is unchanged.
+- Bold and italic spanning soft line breaks are highlighted in the editor.
+
+### ⚠️ Limits
+
+- An unpaired `**` or `_` highlights to the end of its paragraph.
+- Multiline emphasis is not highlighted inside quotes, lists and tables.
 
 ### 🧹 Internal
 
-- **Grammar regression tests.** `test/unit/syntaxes/grammar.test.ts` tokenizes with the real built-in markdown grammar of the VS Code build the suite runs in (via `vscode.env.appRoot`) plus both injection grammars — 24 cases pinning multiline emphasis, the paragraph takeover staying invisible (headings, quotes, tables, single-line emphasis), flanking rules and admonition bodies. `vscode-textmate`/`vscode-oniguruma` added as dev dependencies.
-- **The unit suite now passes on Windows.** `calculateExportPath` tests built "absolute" paths as `\repo\archive` — absolute only on POSIX; on Windows `path.resolve` in the implementation correctly prepends the drive and the expectation didn't (the suite had only ever been run on macOS). Paths are now built with `path.resolve` and round-tripped through `Uri.file` to normalize drive-letter case.
-- **`Config.scoped` test de-flaked.** It asserted `alwaysCalledWith` over the whole test lifetime, but the suite runs inside the live extension host where unrelated code may read configuration at any await point — and the `ConfigReader` constructor itself reads unscoped, so the test failed whenever it was the first to touch the singleton (test order decides). The singleton is now materialized before stubbing, and the assertion covers exactly the synchronous `scoped()` call.
+- Internal: grammar tests and test fixes for Windows.
 
 ## v3.1.0 — Syntax Highlighting Rebuilt
 
 ### 🐛 Fixes
 
-- **Single-character marks now highlight.** Every inline pattern demanded at least two characters of content (`\S.*?\S`), so `^4^`, `$Z$`, `@5@` or `==M==` never matched. Superscript and subscript now mirror the actual renderer plugins (`markdown-it-sup-alt`/`-sub-alt`): lazy up to the next marker, one character minimum, spaces allowed.
-- **Superscript no longer swallows half the line.** When the old two-character minimum failed on `^4^`, the regex skipped ahead to the next `^` further down the line and marked everything in between as superscript — taking the rest of the line's highlighting with it.
-- **An inline mark at the start of a paragraph no longer kills the paragraph.** The grammar was injected with `L:` priority, so `> ^31^ …` won the position tie against the host grammar's paragraph-begin rule; the paragraph never opened and bold/italic/strikethrough stayed dead for the whole line. The grammar is now split in two: block rules (admonitions & co.) keep `L:`, all inline marks run as a second injection (`text.html.markdown.extended.inline`) at normal priority.
-- **Admonition bodies are fully highlighted.** Two causes: the `end` regex fired on blank lines (vscode-textmate appends `\n` when tokenizing, which `(?=\s*[^ ])` happily matched), after which the host grammar rendered the indented body as a code block; and the body only ever applied the host's inline rules — none of the extension's own marks, no nested block quotes, no headings. Both fixed: quotes with headings, lists, checkboxes and every custom mark now work inside `!!!` blocks.
-- `==mark==` follows strong-style flanking rules like the renderer (`markdown-it-mark`): adjacent punctuation, line start/end and intra-word marking all work; `a == b == c` stays plain.
-- `[[toc]]` is recognized case-insensitively and no longer shadowed by the `[[kbd]]` rule.
+- Single-character marks such as `^4^` and `==M==` are highlighted.
+- Superscript highlighting no longer swallows the rest of the line.
+- An inline mark at the start of a paragraph no longer breaks that line's highlighting.
+- Admonition bodies are fully highlighted.
+- `==mark==` is highlighted by the renderer's rules; `a == b == c` stays plain.
+- `[[toc]]` is recognised in any case and not highlighted as a key.
 
 ### ✨ New Features
 
-- **Attribute highlighting**: `{.class}`, `{#id}`, `{key=value}` (markdown-it-attrs) get scopes for braces, class/id names and key-value pairs.
-- **Container fences**: `::: name … :::` (markdown-it-container) lines are highlighted like admonition headers.
-- **Footnote definitions** (`[^1]: …`), **abbreviation definitions** (`*[ABBR]: …`) and **definition-list markers** (leading `: `) are recognized.
-- Both bundled themes color the new scopes.
+- Highlighting for `{.class #id}` attributes, `:::` containers, footnote and abbreviation definitions and definition lists.
 
 ### 🧹 Internal
 
-- The injections exclude fenced code, raw blocks, math and front matter (`-markup.fenced_code.block.markdown -markup.raw.block.markdown -markup.math.* -meta.embedded.block`), so extension marks no longer fire inside them. Note: VS Code's built-in Markdown math also claims `$...$`, which collides with the `$sidebar$` syntax — set `"markdown.math.enabled": false` in workspaces that use it.
+- Extension marks are no longer highlighted inside code, math or front matter.
 
 ## v3.0.3 — Folder Settings in Multi-Root Workspaces
 
 ### 🐛 Fixes
 
-- **`export.outDirName` now honours the folder's own `.vscode/settings.json` in a multi-root workspace.** The setting was read without a resource scope, so VS Code answered from user and workspace level only and the folder value was silently ignored — a folder exporting to a synced iCloud directory kept writing into the repository because the `.code-workspace` file said `Output`. Two things had to change: the export settings are now **declared with `scope: resource`** (VS Code refused folder-level values outright — "This setting cannot be applied in this workspace"), and every export setting — output directory, theme, default stylesheet, PDF page and margins, image quality — is **read with the document as resource scope** via `Config.scoped(uri)`. `export.puppeteerExecutable` is declared `machine-overridable`, since it names a binary on this machine.
-
-### 🧹 Internal
-
-- `dist/` is no longer committed. It is rebuilt from `src/` on every `vsce package` (via `vscode:prepublish`), so the committed copy was always some earlier build, never the shipped one — and every release left the working tree dirty, tripping the release guard's first check.
+- Export settings can be set per folder in a multi-root workspace.
 
 ## v3.0.2 — Export Location
 
 ### ✨ New Features
 
-- **`markdownExtended.export.outDirName` accepts an absolute path.** Keep the workspace in a repository and write exports somewhere else — a synced folder (iCloud, Dropbox) you can open on a tablet, for instance. A plain name such as `out` behaves exactly as before, relative to the workspace root.
-
-### 🐛 Fixes
-
-- An absolute export directory used to be **appended** to the workspace root (`path.join`), so `/Users/me/iCloud/Output` silently became `<workspace>/Users/me/iCloud/Output` and the files landed inside the repository after all. Resolved with `path.resolve`.
+- `markdownExtended.export.outDirName` accepts an absolute path.
 
 ### 🧹 Internal
 
-- `@vscode/test-electron` upgraded to 3.x. On VS Code 1.134 the macOS stable bundle ships its binary as `Code`, which 2.5.2 could not find (`spawn … /MacOS/Electron ENOENT`) — the suite downloaded VS Code and then failed to launch it.
-- Unit tests for `calculateExportPath` covering a plain directory name, an absolute one, and a document outside the workspace.
-- **`npm run release`** guards the release path: clean tree, up to date with the remote, version committed, CHANGELOG section present, tag free, then lint, the full suite, and a single `.vsix`. `npm run release:publish` adds tag, push and publishes *that* file — `vsce publish` without `--packagePath` would repackage and ship something the tests never saw. See [ARCHITECTURE.md](ARCHITECTURE.md#releasing).
+- Internal: test runner update and release tooling.
 
 ## v3.0.1 — Maintenance
 
 ### 🐛 Fixes
 
-- **Export page-load wait corrected for Puppeteer 24.43+.** `setContent` no longer accepts the `networkidle0` lifecycle event; exports now wait for `load` plus a short, bounded network settle. A slow remote resource can no longer stall or fail an export.
+- Exports no longer stall on slow remote resources.
 
 ### 🧹 Internal
 
-- Dependencies refreshed within their existing ranges (Puppeteer 24.43, mermaid 11.16.1, TypeScript 5.9.3, esbuild 0.27.7, highlight.js 11.12, and others).
-- `npm test` now runs the real suite. It previously pointed at a legacy runner requiring the long-deprecated `vscode` package, which was never installed — the script had been broken since the initial commit.
-- The test runner clears `ELECTRON_RUN_AS_NODE`, so the suite can be run from VS Code's integrated terminal instead of failing to launch.
-- Removed the dead `test/index.ts` runner and the placeholder `test/extension.test.ts`, which sat outside the test glob and never ran.
+- Internal: dependency updates and test runner fixes.
 
 ## v3.0.0 — Onboarding, Accessible Exports & Settings Overhaul
 
-> **Breaking changes.** Existing settings keep working through deprecated aliases; please migrate to the new grouped keys.
-
 ### ✨ New Features
 
-- **Getting Started walkthrough** that teaches the extended syntax and the export flow (Help → Get Started → *Get Started with Markdown Extended*).
-- **Accessible default export stylesheet.** Exports now ship with a self-contained, WCAG-AA base theme (light & dark) so HTML/PDF/PNG look good as standalone files. It applies **only when you haven't set your own `markdown.styles`** (your CSS otherwise fully controls the export), and can be turned off with `markdownExtended.export.defaultStyles: false`.
-- **Grouped settings IA.** Settings are reorganized under `pdf.*`, `image.*`, `export.*`, `plugins.*`, and `toc.*`. Old flat keys (e.g. `markdownExtended.pdfFormat`) still work but are deprecated and read as a fallback.
-- **Export theme control** — `markdownExtended.export.theme` sets exports to `light` (default), `dark`, or `auto` (follow your active VS Code theme).
-- **Validated inputs** — PDF size/margins accept CSS lengths only; image quality is 0–100.
-- Exporter selection is now an extensible **registry** (Open–Closed), and export command copy is clearer.
+- A **Getting Started** walkthrough for the extended syntax and exports.
+- An accessible built-in export stylesheet (light and dark); `markdownExtended.export.defaultStyles` turns it off.
+- Settings regrouped under `pdf.*`, `image.*`, `export.*`, `plugins.*` and `toc.*`.
+- PDF size and margins accept CSS lengths only; image quality is 0–100.
 
 ### ⚠️ Breaking Changes
 
-- Setting keys renamed (old keys deprecated but still honored): `pdfFormat` → `pdf.format`, `pdfMarginTop/Right/Bottom/Left` → `pdf.margin.*`, `pdfHeaderTemplate`/`pdfFooterTemplate` → `pdf.headerTemplate`/`pdf.footerTemplate`, `imageQuality`/`imageOmitBackground` → `image.*`, `exportTheme` → `export.theme`, `exportOutDirName` → `export.outDirName`, `puppeteerExecutable` → `export.puppeteerExecutable`, `disabledPlugins` → `plugins.disabled`, `tocLevels` → `toc.levels`.
-- Exports **without** a custom `markdown.styles` now use the built-in accessible base stylesheet (light, centered content) instead of the previous unstyled output. Set `markdownExtended.export.defaultStyles: false` to opt out; if you attach your own `markdown.styles`, it is used unchanged.
+- Old flat setting keys are deprecated but still read, e.g. `pdfFormat` → `pdf.format`, `disabledPlugins` → `plugins.disabled`.
+- Exports without `markdown.styles` use the built-in stylesheet instead of unstyled output.
 
 ### 🧹 Internal
 
-- Exporter selection refactored to an extensible registry (Open–Closed).
-- Removed the deprecated `config` / `Contributes` / `Contributors` / `htmlExporter` compatibility shims and barrel files; the codebase now uses one canonical `.instance` access path per service.
-- `ContributesService` takes its `IContributorService` collaborator via constructor injection (defaulting to the shared singleton) for easier testing.
+- Internal: exporter and service refactoring.
 
 ## v2.9.0 - Friendlier Exports
 
 ### ✨ New Features / Improvements
 
-- **Open or reveal your file right after export.** The post-export notification now offers **Open** (opens the exported file in the OS default app — browser, PDF viewer, image viewer) and **Reveal in Finder / File Explorer**, alongside the existing report. No more digging through folders for the artifact you just made.
-- **First-time PDF/PNG/JPG export now asks before downloading Chromium.** Previously the first image/PDF export silently pulled ~170 MB. You now get a clear one-time consent prompt explaining what the download is for; declining cancels cleanly without surfacing an error.
+- After an export, **Open** and **Reveal in Finder / File Explorer** are offered.
+- The first PDF/PNG/JPG export asks before downloading Chromium (~170 MB).
 
 ### 🧹 Internal / Code Quality
 
-- Removed the unused `ExporterType` enum (dead PhantomJS-era code).
-- Refactored the HTML and Puppeteer export loops from a `reduce`-over-promises chain to straightforward `for…await`, for readability.
-- Fixed identifier typos (`getSciprts` → `getScripts`, `ExportRport` → `ExportReport`).
-- User-initiated cancellations are now recognized centrally by the error handler and never reported as errors.
+- Internal: code cleanup; a cancelled action is no longer reported as an error.
 
 ## v2.8.0 - Dark Exports & Global Asset De-duplication
 
 ### ✨ New Features
 
-- **Export in dark (or auto) theme.** New `markdownExtended.exportTheme` setting controls the body theme class applied to exported HTML/PDF/PNG, so theme-aware stylesheets render in the chosen mode:
-  - `light` (default, unchanged behavior), `dark`, or `auto` (follows the active VS Code color theme at export time).
-  - Previously every export was hard-coded to `vscode-light`, so stylesheets that key off `body.vscode-dark` could never be exported in dark mode.
+- `markdownExtended.exportTheme` exports in `light`, `dark` or `auto` theme.
 
 ### 🐛 Bug Fixes / Improvements
 
-- **Contributed assets are now de-duplicated *globally*, across official and third-party extensions.** The 2.7.0 de-duplication ran on the official and third-party groups separately, so an asset shipped by both — e.g. `katex.min.css` from `vscode.markdown-math` (official) and `markdown-all-in-one` (third-party) — was still inlined twice. The two groups are now de-duplicated together (content-based, keep-last, cascade order official → third-party), so the shared asset is inlined once while each group is still rendered in its own section.
-
-### 🧪 Tests
-
-- Added unit tests for cross-group de-duplication (`partitionDedupedStyleFiles`) and export-theme resolution (`resolveExportTheme`).
+- Assets shared by several extensions (e.g. `katex.min.css`) are embedded only once.
 
 ## v2.7.2 - Export Style Regression Fix
 
 ### 🐛 Bug Fixes
 
-- **Fixed contributed styles being dropped from exports, which shifted layout (e.g. narrower blockquote padding).** The 2.7.0 asset de-duplication keyed on the **file name** and kept the **first** copy. Generic names like `markdown.css` are shipped by several extensions, so a *different* stylesheet could be discarded purely because it shared a name, and keeping the first (rather than last) copy of a duplicate changed the CSS cascade. De-duplication is now **content-based** (a hash of the file bytes) and keeps the **last** occurrence:
-  - Distinct files that merely share a base name are **all** kept — no extension's styling is silently dropped.
-  - Identical assets (e.g. `katex.min.css`) are still collapsed to one copy, preserving the ~370 KB export-size win, and keeping the last copy leaves the CSS cascade unchanged.
-
-### 🧪 Tests
-
-- Reworked the `dedupeContributeFiles` unit tests for content-based, keep-last behavior, including a regression guard that two different same-named `markdown.css` files both survive.
+- Styles from other extensions are no longer dropped from exports when they share a file name.
 
 ## v2.7.1 - Maintenance
 
 ### 🐛 Bug Fixes / Improvements
 
-- **Updated the README marketplace badges.** shields.io retired its VS Code Marketplace badges (both `vscode-marketplace` and `visual-studio-marketplace` now render "retired badge"), so the version/installs/rating badges now use the maintained [vsmarketplacebadges.dev](https://vsmarketplacebadges.dev) service.
+- README marketplace badges fixed.
 
 ## v2.7.0 - Mermaid Diagrams in Exports & Smaller HTML
 
 ### ✨ New Features
 
-- **Mermaid diagrams now render in exports (HTML/PDF/PNG).** Previously a ` ```mermaid ` block showed in the VS Code preview but exported as an unrendered code block, because the diagram is drawn by a client-side script that the export did not include.
-  - Diagrams are now **pre-rendered to inline `<svg>`** at export time, so the output is self-contained, needs no JavaScript, and stays small.
-  - Rendering runs the bundled mermaid library inside the bundled headless Chromium (the same browser used for PDF/PNG export). The mermaid library is **never written into the exported file** — only the resulting SVG is kept.
-  - The browser is launched **only when a document actually contains a mermaid diagram**; non-mermaid HTML export stays browser-free. If Chromium is unavailable or a diagram fails to parse, the export degrades gracefully and keeps the diagram source instead of failing.
+- Mermaid diagrams render in HTML, PDF and PNG exports.
 
 ### 🐛 Bug Fixes / Improvements
 
-- **Smaller exports: de-duplicated inlined preview assets.** Several extensions contribute the same asset (most notably `katex.min.css`, shipped by both `vscode.markdown-math` and `markdown-all-in-one`), which was inlined twice as base64 — adding ~370 KB of duplicated font data to every export. Contributed style/script files are now de-duplicated by file name, keeping the first occurrence.
-
-### 🧪 Tests
-
-- Added unit tests for mermaid detection and the render-orchestration/fallback logic (`test/unit/services/exporter/mermaidRenderer.test.ts`).
-- Added unit tests for contributed-file de-duplication (`dedupeContributeFiles`).
+- Smaller exports: assets several extensions contribute are embedded once.
 
 ## v2.6.0 - Attributes on Sidebars & Notes
 
 ### ✨ New Features
 
-- **`{.class #id key=val}` now works on sidenotes, marginal notes, and sidebars.** The opening-tag renderers are attribute-aware, so attributes added via [`markdown-it-attrs`](https://www.npmjs.com/package/markdown-it-attrs) merge with the built-in class instead of being dropped:
-  - `++ref|note++{.my-class}`, `!!ref|note!!{.my-class}`, `$left sidebar${.my-class}`, `@right sidebar@{.my-class}`
-  - Built-in classes are preserved; extra classes are appended and `#id`/custom attributes are escaped and rendered. Attributes attach to the outer/reference span.
+- `{.class #id}` attributes work on sidenotes, marginal notes and sidebars, e.g. `++ref|note++{.my-class}`.
 
 ## v2.5.1 - Front Matter Preview Fix
 
 ### 🐛 Bug Fixes
 
-- **Fixed "Failed to parse frontmatter" error in the preview.** Removed the bundled [`markdown-it-front-matter`](https://www.npmjs.com/package/markdown-it-front-matter) plugin (added in 2.4.0), whose `front_matter` token shape conflicted with VS Code's built-in frontmatter renderer, causing `Cannot read properties of undefined (reading 'length')`.
-  - YAML front matter is now handled natively: the built-in preview renders or hides it (per `markdown.preview.frontMatter`), and the export pipeline continues to strip it via `MarkdownDocument`.
-  - To hide the frontmatter table in the preview, set `"markdown.preview.frontMatter": "hide"`.
+- Fixed "Failed to parse frontmatter" in the preview; `markdown.preview.frontMatter` controls its display.
 
 ## v2.5.0 - CJK-Friendly Emphasis
 
 ### ✨ New Features
 
-- **`**bold**` and `*italic*` now work correctly next to Chinese, Japanese, and Korean text.** Integrated the [`markdown-it-cjk-friendly`](https://www.npmjs.com/package/markdown-it-cjk-friendly) plugin, which fixes the long-standing CommonMark issue where emphasis markers adjacent to CJK characters or punctuation (e.g. `**強調されます。**この文`) were rendered literally instead of as emphasis.
-  - Works in both the live preview and exports (HTML/PDF/PNG), and on web (vscode.dev).
-  - Can be turned off via `"markdownExtended.disabledPlugins": "cjk-friendly"`.
-  - Resolves the feature request from [PR #1](https://github.com/JackDMF/vscode-markdown-extended/pull/1).
+- `**bold**` and `*italic*` work next to Chinese, Japanese and Korean text ([PR #1](https://github.com/JackDMF/vscode-markdown-extended/pull/1)).
 
 ## v2.4.0 - YAML Front Matter Support
 
 ### ✨ New Features
 
-- **YAML front matter is no longer rendered** in the live preview or in exports (HTML/PDF/PNG). A leading `---` … `---` block is now consumed as document metadata instead of leaking into the output as a horizontal rule plus raw text.
-  - Uses the standard [`markdown-it-front-matter`](https://www.npmjs.com/package/markdown-it-front-matter) plugin, registered first so the block is parsed before any other rule.
-  - Brings preview behaviour in line with VS Code's built-in markdown preview and with the existing export pipeline, which already stripped front matter via `MarkdownDocument`.
+- YAML front matter is no longer rendered in the preview or exports.
 
 ## v2.3.0 - Web Extension Support (vscode.dev)
 
 ### ✨ New Features
 
-- **Works in vscode.dev and GitHub.dev** — the extension now ships as a web extension, enabling the full markdown preview and editing experience in browser-based VS Code
-  - All 20+ extended syntax plugins render correctly in the web preview
-  - All text-editing commands work (toggle bold/italic/lists/etc., table operations, paste as table, copy HTML to clipboard)
-  - Export to file (PDF/PNG/HTML) is not available in web — a clear message is shown if triggered
-- Added `"browser"` entry point (`dist/extension.web.js`) — a dedicated browser-safe bundle that excludes Node.js-only dependencies (puppeteer, fs, child_process)
-- Export and Install Browser context menu entries are hidden on web via `!isWeb` when-clause
-
-### 🧪 Tests
-
-- Added 13 unit tests for the new `fs` browser stub (`test/unit/stubs/fs.test.ts`)
-
----
+- Works in vscode.dev and github.dev: preview and editing commands; export stays desktop only.
 
 ## v2.2.4 - Fix PDF Export on macOS
 
 ### 🐛 Bug Fixes
 
-- **Fixed PDF export crash on macOS** when extensions contribute preview styles/scripts as objects instead of strings
-  - Root cause: `getContributeFiles` called `path.isAbsolute()` on an object (URI-like `{path: "..."}`) instead of a string
-  - Error: `The "path" argument must be of type string. Received an instance of Object`
-  - Now correctly handles both string and object-style contribution entries
-- **Fixed empty image embedding** during export (PR #2 by @GhostOps77)
-  - Skip embedding when image source is empty, preventing broken output
-
----
+- Fixed a PDF export crash on macOS caused by other extensions' contributed styles.
+- An image with an empty source is no longer embedded (PR #2 by @GhostOps77).
 
 ## v2.2.3 - Critical Bug Fix: Extension Host Crash
 
 ### 🐛 Bug Fixes
 
-- **Fixed extension host crash** when opening certain markdown files
-  - Root cause: Sidenote plugin tokenizers returned `true` in silent mode without incrementing `state.pos`, violating markdown-it's contract
-  - This caused the error: `"inline rule didn't increment state.pos"`
-  - Affected syntax: `@sidebar@`, `$sidebar$`, `++ref|note++`, `!!ref|note!!`
-  - Files with right-sidebar time notations like `@(3 Min.)@` would crash the extension host
-
-### 🧪 Tests
-
-- Added comprehensive unit tests for `markdownItSidenote` plugin (20 test cases)
-- Tests cover sidenotes, marginal notes, left/right sidebars, silent mode, and edge cases
-
----
+- Fixed an extension host crash on note and sidebar syntax such as `@(3 Min.)@`.
 
 ## v2.2.2 - PDF Layout Fixes
 
 ### 🖨️ Printing Improvements
 
-- Removed the hard-coded 1000px width override applied only during Puppeteer PDF export so printed output now matches the HTML preview.
-- Default Puppeteer settings now set `preferCSSPageSize: true`, allowing any `@page` rules in user stylesheets to dictate the final paper size, margins, and orientation.
-- PNG/JPG exports keep their deterministic width to avoid regressions, but PDFs now faithfully honor CSS-driven layouts.
-
----
+- PDF exports match the preview's width and honour `@page` rules in your stylesheets.
 
 ## v2.2.1 - Logo Updates for Marketplace
 
 ### 🎨 Visual Improvements
 
-- Updated extension logo for better marketplace visibility
-- Added optimized small logo (`logo-small.png`) for VS Code marketplace icon
-- Enhanced visual branding in extension listing
-
----
+- New extension logo.
 
 ## v2.2.0 - Performance & Architecture: Proper Plugin Bundling
 
 ### ✨ Major Improvements
 
-- **90% package size reduction**: 1.29 MB (36 files) vs 12.63 MB (4000 files in v2.1.4)
-- **Proper bundling architecture**: Converted dynamic `require()` to static imports for all markdown-it plugins
-- **Faster extension activation**: Bundled plugins load more efficiently than runtime require resolution
-- **Cleaner package structure**: Eliminated 4000+ node_modules files and esbuild performance warnings
-
-### 🔧 Technical Implementation
-
-**Root cause of v2.1.0 breakage identified and fixed:**
-
-- Dynamic `require(name)` calls with runtime variables cannot be bundled by esbuild
-- esbuild requires static imports for proper dependency analysis and bundling
-- Previous versions (2.1.2-2.1.4) worked around this by externalizing plugins and including entire node_modules
-
-**Proper solution implemented:**
-
-- Refactored `src/plugin/plugins.ts` to use static `import` statements for all 16 external plugins
-- Removed dynamic require fallback mechanism
-- esbuild now properly bundles all markdown-it plugins at build time
-
-### 📝 Changes
-
-- Converted all external markdown-it plugin requires to static imports in `plugins.ts`
-- Fixed `markdown-it-emoji` import (uses named export `full` instead of default)
-- Removed plugin names from esbuild `external` array (only `vscode` remains external)
-- Bundle size: 2.3 MB minified (4.38 MB unminified) - all plugins included
-
-### 🎯 Impact
-
-This release delivers the architectural solution v2.1.0 should have implemented. Previous workarounds (v2.1.2-2.1.4) were functional but suboptimal. Version 2.2.0 achieves:
-
-- ✅ All markdown-it plugins fully functional (admonitions, sup/sub, etc.)
-- ✅ Optimal package size (90% smaller than v2.1.4)
-- ✅ Better performance (no runtime module resolution overhead)
-- ✅ Future-proof bundling architecture
-- ✅ Cleaner codebase with better maintainability
-
----
+- Package 90% smaller, and the extension activates faster.
 
 ## v2.1.4 - Critical Fix: Include markdown-it plugin dependencies
 
 ### 🐛 Critical Bug Fix
 
-- **Fixed missing markdown-it plugins in published package**: Plugins and their dependencies are now correctly included
-- **Root cause**: `.vscodeignore` was excluding `node_modules`, preventing externalized plugins from being packaged
-- **Solution**: Removed `node_modules/**` exclusion and externalized plugins in esbuild configuration
-
-### 📝 Technical Details
-
-Previous versions (2.1.2 and 2.1.3) externalized markdown-it plugins in esbuild but failed to include them in the published `.vsix` package because `.vscodeignore` excluded all `node_modules`. This version:
-
-1. Externalizes markdown-it plugins in esbuild (not bundled into dist/extension.js)
-2. Includes plugin dependencies in the published package (removed node_modules exclusion)
-3. Results in proper plugin loading at runtime from node_modules
-
----
+- The markdown-it plugins are included in the package again.
 
 ## v2.1.3 - Republish of v2.1.2 Fix
 
-This version ensures the marketplace package includes the corrected `dist/extension.js` with externalized markdown-it plugins. No code changes from v2.1.2.
-
----
+- Republish of v2.1.2; no changes.
 
 ## v2.1.2 - Critical Bugfix: Markdown-it Plugins Not Loading
 
 ### 🐛 Critical Bug Fixes
 
-- **Fixed broken markdown-it plugins**: Admonitions, superscript, subscript, and all other markdown-it plugins now work correctly
-- **Root cause**: esbuild was bundling markdown-it plugins instead of loading them from node_modules at runtime
-- **Solution**: Externalized all markdown-it plugins in esbuild configuration to prevent bundling
-
-### 📝 Technical Details
-
-The v2.1.0 release switched from TypeScript compilation to esbuild bundling, but markdown-it plugins were being bundled into the main extension file. These plugins need to be loaded dynamically at runtime via `require()` from node_modules. The fix adds all markdown-it plugins to the esbuild `external` array:
-
-- `markdown-it-abbr`
-- `markdown-it-attrs`
-- `markdown-it-bracketed-spans`
-- `markdown-it-checkbox`
-- `markdown-it-container`
-- `markdown-it-deflist`
-- `markdown-it-emoji`
-- `markdown-it-footnote`
-- `markdown-it-html5-embed`
-- `markdown-it-ib`
-- `markdown-it-kbd`
-- `markdown-it-mark`
-- `markdown-it-multimd-table`
-- `markdown-it-sub-alt`
-- `markdown-it-sup-alt`
-- `markdown-it-table-of-contents`
-
-### ✅ What's Fixed
-
-- ✅ Admonitions now render with proper styling (note, warning, danger, tip)
-- ✅ Superscript syntax (`^text^`) works correctly
-- ✅ Subscript syntax (`~text~`) works correctly
-- ✅ All other markdown-it plugins function as expected
-
----
+- Admonitions, superscript, subscript and the other plugins work again.
 
 ## v2.1.1 - Patch Release: License and Repository Updates
 
 ### 📝 Updates
 
-- **License**: Updated copyright to acknowledge both original author (jebbs, 2018) and current maintainer (JackDMF, 2025)
-- **Repository URLs**: Updated all GitHub URLs from qjebbs to JackDMF organization
-  - Bug tracker URLs in package.json
-  - Homepage and repository links
-  - Issue reporter in error handler
-  - Documentation references in README
-
-### 🔧 Maintenance
-
-- No functional changes to extension behavior
-- Historical changelog references preserved for accuracy
-
----
+- License and repository links updated for the new maintainer.
 
 ## v2.1.0 - Feature Release: Enhanced Syntax Support
 
 ### ✨ New Features
 
-- **Extended Markdown Syntax**: Additional syntax highlighting and parsing improvements
-- **Enhanced Color Themes**: Improved color customization for sidenotes and sidebars
-  - Sidenote text color: `markdown.sidenote.textColor`
-  - Marginal note text color: `markdown.marginalnote.textColor`
-  - Left sidebar text color: `markdown.leftsidebar.textColor`
-  - Right sidebar text color: `markdown.rightsidebar.textColor`
+- Syntax highlighting improvements and theme colours for notes and sidebars (`markdown.sidenote.textColor` and siblings).
 
 ### 🔧 Improvements
 
-- Updated dependencies for better compatibility
-- Performance optimizations
-
----
+- Dependency updates and performance improvements.
 
 ## v2.0.1 - Patch Release: Stability and Bug Fixes
 
 ### 🐛 Bug Fixes
 
-- Fixed minor issues from v2.0.0 release
-- Improved error handling stability
-- Enhanced compatibility with latest VS Code versions
-
-### 🔧 Maintenance
-
-- Updated development dependencies
-- Minor documentation corrections
-
----
+- Stability and compatibility fixes.
 
 ## v2.0.0 - Major Release: Complete Architecture Modernization
 
-This release represents a complete rewrite and modernization of the extension with enterprise-grade architecture, comprehensive testing, and new features.
-
 ### 🏗️ Architecture Improvements
 
-- **Clean Architecture**: Implemented singleton services with dependency injection and separation of concerns
-- **TypeScript Migration**: Full TypeScript rewrite with strict type safety throughout
-- **Service Layer**: Introduced ExtensionContext, BrowserManager, ErrorHandler, and Config services
-- **Resource Management**: Proper cleanup, async file operations, memory leak prevention
-- **Error Handling**: Comprehensive error recovery and logging with graceful degradation
-- **Test Coverage**: Added 65+ unit tests with VS Code integration
-- **Documentation**: Created comprehensive ARCHITECTURE.md (500+ lines)
+- Internal: full TypeScript rewrite with unit tests.
 
 ### ✨ New Features
 
-- **Sidenotes & Annotations**: New markdown-it-sidenote plugin with full markdown support
-  - Sidenotes: `++reference text|note content++`
-  - Marginal notes: `!!reference text|note content!!`
-  - Left sidebar: `$content$`
-  - Right sidebar: `@content@`
-  - Recursion depth limiting and error handling
-  - Customizable CSS classes
+- Sidenotes `++ref|note++`, marginal notes `!!ref|note!!`, left sidebars `$…$` and right sidebars `@…@`.
 
 ### 🔧 Plugin Updates
 
-- **Fixed**: Plugin loading errors (`e.apply is not a function`)
-- **Fixed**: CommonJS import patterns for markdown-it plugins
-- **Updated**: `markdown-it-sup` → `markdown-it-sup-alt`
-- **Updated**: `markdown-it-sub` → `markdown-it-sub-alt`
-- **Updated**: `markdown-it-underline` → `markdown-it-ib` (italic-bold)
-- **Added**: `markdown-it-bracketed-spans` support
-- **Enhanced**: All plugins now properly integrated with type safety
+- Superscript, subscript and underline plugins replaced (`markdown-it-sup-alt`, `markdown-it-sub-alt`, `markdown-it-ib`); bracketed spans added.
 
 ### 📚 Documentation
 
-- **Comprehensive README**: Completely rewritten with accurate feature documentation
-- **Architecture Guide**: Detailed ARCHITECTURE.md covering design principles and patterns
-- **JSDoc Coverage**: 70+ JSDoc comments across services and plugins
-- **Code Examples**: Inline documentation with usage examples
-- **Maintenance Guide**: Guidelines for contributors and maintainers
+- README rewritten.
 
 ### 🐛 Bug Fixes
 
-- Fixed plugin double-use pattern causing initialization errors
-- Fixed CommonJS module import issues with markdown-it plugins
-- Resolved memory leaks in resource management
-- Fixed async operation handling throughout extension
-- Corrected deprecated function usage
+- Fixed plugin loading errors (`e.apply is not a function`).
 
 ### 🔄 Breaking Changes
 
-- Minimum VS Code version: 1.80.0
-- Plugin names updated in configuration (see README for new names)
-- Some internal APIs changed (extension API remains stable)
-
-### 🎯 Code Quality
-
-- Reduced technical debt across all modules
-- Implemented SOLID principles throughout
-- Extracted helper functions for better testability
-- Unified renderer patterns with discriminated unions
-- Comprehensive inline comments for complex logic
-
-### 📦 Dependencies
-
-- Updated all markdown-it plugins to latest versions
-- Updated puppeteer and development dependencies
-- Removed deprecated packages
+- Requires VS Code 1.80.0 or later.
+- Some plugin names in settings changed; see the README.
 
 ### 🙏 Credits
 
-- Original extension by **qjebbs**
-- v2.0.0 refactoring and modernization
-- Community contributions and feedback
-
-**Migration Notes**: This is a major version update. While the user-facing API remains compatible, some configuration setting names have been updated. See README.md for current plugin names and settings.
-
----
+- Original extension by **qjebbs**.
 
 ## v1.1.4
 
-Add `markdown-it-bracketed-spans` and update dependencies, **@zeedif**, [#160](https://github.com/qjebbs/vscode-markdown-extended/pull/160)
+- Add `markdown-it-bracketed-spans`, **@zeedif**, [#160](https://github.com/qjebbs/vscode-markdown-extended/pull/160)
 
 ## v1.1.3
 
-Fix: Get chromium revision for puppeteer downloading
+- Fix: Get chromium revision for puppeteer downloading
 
 ## v1.1.2
 
 - Improvement: Tables formatting preserves table indentation and handle code spans, **@rbolsius**, [#139](https://github.com/qjebbs/vscode-markdown-extended/pull/139)
 - Fix: Remove workaround introduced for [#98](https://github.com/qjebbs/vscode-markdown-extended/issues/98)
-- Update dependencies
 
 ## v1.1.1
 
@@ -710,11 +401,7 @@ Fix: Get chromium revision for puppeteer downloading
 
 - Add snippets ([#116](https://github.com/qjebbs/vscode-markdown-extended/pull/116)), thanks to [heartacker](https://github.com/heartacker)
 - Fix admonitions ([#122](https://github.com/qjebbs/vscode-markdown-extended/pull/122)), thanks to [Juan Cruz](https://github.com/IJuanI)
-- Remove default key bindings. [#111](https://github.com/qjebbs/vscode-markdown-extended/pull/111)[#112](https://github.com/qjebbs/vscode-markdown-extended/pull/112)[#118](https://github.com/qjebbs/vscode-markdown-extended/pull/118), please consider:
-
-  - Switch to use command palette
-  - Switch to use snippets
-  - Setup key bindings on your own
+- Remove default key bindings; use the command palette, snippets or your own bindings. [#111](https://github.com/qjebbs/vscode-markdown-extended/pull/111)[#112](https://github.com/qjebbs/vscode-markdown-extended/pull/112)[#118](https://github.com/qjebbs/vscode-markdown-extended/pull/118)
 
 ## v1.0.19
 
@@ -734,21 +421,20 @@ Fix: Get chromium revision for puppeteer downloading
 
 ## v1.0.15
 
-Fix: Cannot embed img not in workspace folder, [#71](https://github.com/qjebbs/vscode-markdown-extended/issues/71)
+- Fix: Cannot embed img not in workspace folder, [#71](https://github.com/qjebbs/vscode-markdown-extended/issues/71)
 
 ## v1.0.14
 
-- Improvement: Chane `Move Columns` key bindings to `ctrl+shift+t ctrl+shift+left/right`, [#68](https://github.com/qjebbs/vscode-markdown-extended/issues/68)
+- Improvement: Change `Move Columns` key bindings to `ctrl+shift+t ctrl+shift+left/right`, [#68](https://github.com/qjebbs/vscode-markdown-extended/issues/68)
 
 ## v1.0.13
 
-- Improvement: Chane `Move Columns` key bindings to `ctrl+shift+left/right`, [#57](https://github.com/qjebbs/vscode-markdown-extended/issues/57), [#59](https://github.com/qjebbs/vscode-markdown-extended/issues/57)
+- Improvement: Change `Move Columns` key bindings to `ctrl+shift+left/right`, [#57](https://github.com/qjebbs/vscode-markdown-extended/issues/57), [#59](https://github.com/qjebbs/vscode-markdown-extended/issues/57)
 
 ## v1.0.12
 
 - Improvement: No 'open preview first' prompt
 - Fix: Update package markdown-it-attrs, [#58](https://github.com/qjebbs/vscode-markdown-extended/issues/58)
-- Code optimization.
 
 ## v1.0.11
 
@@ -760,8 +446,6 @@ Fix: Cannot embed img not in workspace folder, [#71](https://github.com/qjebbs/v
 ## v1.0.10
 
 - Fix: Format with Japanese Hiragana characters [#51](https://github.com/qjebbs/vscode-markdown-extended/issues/51). Thanks to [TadaoYamaoka](https://github.com/TadaoYamaoka).
-- Update dependencies.
-- Code optimization.
 
 ## v1.0.9
 
@@ -770,8 +454,7 @@ Fix: Cannot embed img not in workspace folder, [#71](https://github.com/qjebbs/v
 ## v1.0.8
 
 - Add plugin markdown-it-emoji, solve [#39](https://github.com/qjebbs/vscode-markdown-extended/issues/39).
-- Add plugin markdown-it-multimd-table, solve [#42](https://github.com/qjebbs/vscode-markdown-extended/issues/42).
-- Add capability to format format multimd table
+- Add plugin markdown-it-multimd-table, with table formatting, solve [#42](https://github.com/qjebbs/vscode-markdown-extended/issues/42).
 
 ## v1.0.7
 
@@ -779,8 +462,7 @@ Fix: Cannot embed img not in workspace folder, [#71](https://github.com/qjebbs/v
 
 ## v1.0.6
 
-- Add plugin markdown-it-mark
-- Add command `Toggle Mark`
+- Add plugin markdown-it-mark and command `Toggle Mark`
 
 ## v1.0.5
 
@@ -802,9 +484,7 @@ Fix: Cannot embed img not in workspace folder, [#71](https://github.com/qjebbs/v
 
 ## v1.0.1 (v1.0.0)
 
-- New Feature: export with contribute scripts embedded, solve [#23](https://github.com/qjebbs/vscode-markdown-extended/issues/23).
-
-Export files with content which requires extra scripts (e.g. mermaid), now works as expected.
+- New Feature: export with contribute scripts embedded (e.g. mermaid), solve [#23](https://github.com/qjebbs/vscode-markdown-extended/issues/23).
 
 ## v0.9.6
 
@@ -822,7 +502,6 @@ Export files with content which requires extra scripts (e.g. mermaid), now works
 
 - Improvement: Add export report.
 - Improvement: Message & titles optimize.
-- Improvement: Code optimize.
 
 ## v0.9.2
 
@@ -831,7 +510,7 @@ Export files with content which requires extra scripts (e.g. mermaid), now works
 ## v0.9.1
 
 - Improvement: new admonition implement, support nesting and more qualifiers.
-- Improvement: better padding and align of table fomatting
+- Improvement: better padding and align of table formatting
 - Fix: paste as table problem if "-" in the second row
 - Improvement: update exportWorkspace command title
 
@@ -876,10 +555,7 @@ Export files with content which requires extra scripts (e.g. mermaid), now works
 
 ## v0.5.2
 
-- Improvement: Keep selections after table editing.
-- Improvement: Optimize selection after toggle format.
-
-> With these two improvements, you can smoothly toggling format and editing tables.
+- Improvement: Keep selections after table editing and after toggling format.
 
 ## v0.5.1
 
@@ -888,8 +564,6 @@ Export files with content which requires extra scripts (e.g. mermaid), now works
 ## v0.5.0
 
 - New Feature: Add many format and table editing helpers.
-- Small improvements
-- Some Fixes and Code Optimization.
 
 ## v0.4.4
 
@@ -898,8 +572,7 @@ Export files with content which requires extra scripts (e.g. mermaid), now works
 ## v0.4.3
 
 - Fix: Wrong anchor element.
-- Improvement: Precisely customize phantom pdf border.
-- Improvement: Set default border of phantom pdf to 1cm.
+- Improvement: Precisely customize phantom pdf border, 1cm by default.
 
 ## v0.4.2
 
@@ -909,7 +582,6 @@ Export files with content which requires extra scripts (e.g. mermaid), now works
 ## v0.4.1
 
 - Fix: Run phantomjs with no meta config
-- Improvement: Async error catch optimize
 
 ## v0.4.0
 
@@ -933,13 +605,13 @@ Export files with content which requires extra scripts (e.g. mermaid), now works
 ## v0.2.0
 
 - New Feature: Paste as Markdown Table.
-- New Feature: Formate Table.
+- New Feature: Format Table.
 - Fix: Copy HTML failed if content contains non-English characters.
 
 ## v0.1.4
 
 - Catch command errors to panel
-- Prompt open preview before copy or export, avoiding undefinded render
+- Prompt open preview before copy or export, avoiding undefined render
 - Validate phantomPath
 - Fix read previewStyles of undefined, solve [#2](https://github.com/qjebbs/vscode-markdown-extended/issues/2)
 
