@@ -266,7 +266,7 @@ function readPlaces(out: string): Int32Array {
 }
 
 /** The links of `links` as the escape compares them: text and address, in order. */
-function linksKey(links: readonly ReadAutoLink[]): string {
+function linksKey(links: readonly { text: string; href: string }[]): string {
     return links.map(l => `${l.text}\u0000${l.href}`).join('\n');
 }
 
@@ -435,7 +435,7 @@ const BLANKED_READS = 8;
  * so a textblock is read a bounded number of times.
  */
 function misreadBareLinks(text: string, read: readonly ReadAutoLink[], bare: readonly BareLink[]): BareLink[] {
-    const key = (l: { text: string; href: string }) => `${l.text}\u0000${l.href}`;
+    const key = (l: { text: string; href: string }) => linksKey([l]);
     const placed = new Set(read.filter(l => l.start !== null).map(l => `${l.start}\u0000${key(l)}`));
     const unplaced = new Map<string, number>();
     for (const l of read) {

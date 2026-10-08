@@ -4,7 +4,7 @@
 
 ### 🐛 Bug Fixes
 
-- A smiley typed right against a URL no longer saves as an emoji.
+- A smiley typed right against a URL in a paragraph, heading or cell no longer saves as an emoji.
 - A link an edit joined to a letter keeps its address and the letter when saved.
 - A smiley typed after a linked URL with a path no longer becomes part of the address.
 - Edits that put a sidebar or a `/` right after a link now apply instead of being refused.
@@ -16,6 +16,9 @@
 - `</3` typed right after a URL with a path also adds `%5C` to the address.
 - `]`, `*`, `$` or `@` typed right after a URL with a path can still join the address.
 - Any smiley inside `^sup^` or `~sub~` reads as an emoji, as before.
+- A smiley inside a sidenote or marginal note reads as an emoji even escaped, as before.
+- A smiley right against a URL in a sidebar that also holds `$` or `@` still reads as an emoji.
+- A paragraph repeating one address more than eight times, also in code or a link, may save later ones as `[url](url)`.
 
 ## v4.1.1 — Saves That Read Back
 

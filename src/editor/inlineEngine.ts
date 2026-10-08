@@ -41,12 +41,16 @@ import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
  * One of those, markdown-it-emoji, would turn text the page writes into an
  * emoji the page never showed (`5\$:)`); the save escapes every shortcut of
  * its table not beside a letter, digit or mark (`emojiShortcuts.ts`), and one
- * at the edge of a link this engine reads by itself (`readAutoLinks`), where
- * the host's text token ends and a letter is no guard; so text the page
- * writes reads as no emoji, but for `<3` and `</3` right after a URL with a
- * path, whose backslash linkify would take into the URL (`</3`'s escaped `<`
- * too, which puts `%5C` in the address), and any shortcut inside `^sup^` or
- * `~sub~`, whose plugins read their text apart from the escape.
+ * at the edge of a link this engine reads by itself in the textblock as
+ * written (`readAutoLinks`, `judged` in `serialize.ts`), sidebars included,
+ * where the host's text token ends and a letter is no guard; so text the
+ * page writes reads as no emoji, but for `<3` and `</3` right after a URL
+ * with a path, whose backslash linkify would take into the URL (`</3`'s
+ * escaped `<` too, which puts `%5C` in the address); any shortcut inside
+ * `^sup^` or `~sub~`, whose plugins read their text apart from the escape,
+ * and inside a sidenote or marginal note, whose plugin reads it even
+ * escaped; and one right against a URL in a sidebar whose markers the save
+ * spells as references, which the letter rule alone escapes.
  */
 
 /** The settings the editor's engine and the page's are built with. */

@@ -436,6 +436,12 @@ take in. So a letter an edit glues to it, a shortcut after a path, a sidebar's m
 the node after it stays outside the link, and the delimiters of emphasis around it are
 judged as written (`**http://x.com**s`). Each judgement reads a textblock a bounded number
 of times: past a few links whose place is uncertain, such a link is written `[url](url)`.
+A sidebar's or a note part's text is judged within the textblock that holds it. The render
+takes each text's escapes from the trial by the order of the `esc` calls, checked by the
+text; a text the trial does not find where it wrote it — a part whose markers the writer
+spells (`&#36;`), an image's alt — is escaped by the letter rule alone, so a smiley right
+against a URL there still reads as an emoji. In a sidenote or marginal note the plugin
+reads a smiley even escaped.
 A link's destination and title take no backslash escape either: there a run of the
 marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
 angle link holding the marker character is written inline.
