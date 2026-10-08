@@ -7,6 +7,9 @@ import {
     serializeDocument,
     fidelityPlugin,
 } from '../../../src/editor';
+import { OrderedInlineState, serializeNode } from '../../../src/editor/serialize';
+import { MarkdownSerializerState } from 'prosemirror-markdown';
+import { Node } from 'prosemirror-model';
 import { EditorState } from 'prosemirror-state';
 import { seamHolds } from '../../../src/editor/serialize';
 import { conformanceDocument, constructsFixture, hostEngine, readText, replaceChild, toCrlf, topChildren, touched } from './helpers';
@@ -335,6 +338,78 @@ suite('Editor serializer for changed blocks', () => {
             assertStable(readText(fixture.file));
         });
     }
+
+    /** Whether a node of `block`'s inline content begins two marks or more at once: where the ordered state may write otherwise than the library's. */
+    function coOpens(block: Node): boolean {
+        const parents: Node[] = block.inlineContent ? [block] : [];
+        block.descendants(node => {
+            if (node.inlineContent) {
+                parents.push(node);
+            }
+        });
+        return parents.some(parent => Array.from({ length: parent.childCount }, (_, i) => i).some(i => {
+            const before = i > 0 ? parent.child(i - 1).marks : [];
+            return parent.child(i).marks.filter(mark => !mark.isInSet(before)).length > 1;
+        }));
+    }
+
+    /** A block as the comparison sees it: each node by its type and marks, text by its string, no attributes. */
+    function structure(node: Node): string {
+        const marks = node.marks.map(m => m.type.name).join(',');
+        if (node.isText) {
+            return `[${marks}]${JSON.stringify(node.text)}`;
+        }
+        const inner: string[] = [];
+        node.forEach(child => inner.push(structure(child)));
+        return `[${marks}]${node.type.name}(${inner.join(' ')})`;
+    }
+
+    /** Each editable top-level block of `source` written by rule, through the library's own `renderInline` when `stock`. */
+    function blocksWritten(source: string, stock: boolean): Array<{ text: string; coOpens: boolean; block: Node }> {
+        const ordered = OrderedInlineState.prototype.renderInline;
+        if (stock) {
+            OrderedInlineState.prototype.renderInline = MarkdownSerializerState.prototype.renderInline;
+        }
+        try {
+            return topChildren(parseDocument(md, source).doc)
+                .filter(n => EDITABLE_TOP_NODES.has(n.type.name))
+                .map(n => ({ text: serializeNode(touched(n), options), coOpens: coOpens(n), block: n }));
+        } finally {
+            OrderedInlineState.prototype.renderInline = ordered;
+        }
+    }
+
+    test('the ordered state writes what prosemirror-markdown writes wherever no node opens two marks, and where one does what reads back: the copy of renderInline has not drifted', () => {
+        const sources = [
+            readText(constructsFixture),
+            ...[conformanceDocument('FR-CON.md'), conformanceDocument('FR-CON.de.md')].filter(c => c.present).map(c => readText(c.file)),
+            'A ==mark== here, ^sup^ and ~sub~, ~~strike~~ and [[Ctrl+S]].\n\nRich ++*em* ref|a **strong** `code` [link](x.md) body++ end.\n',
+            'A key [[a *b*]], **bold *and em* inside**, *em **and bold***, [see [term]{.x}](x.md) and [[t](x.md) more]{.x}.\n',
+            '- item *a* and **b**\n- [x] done ==c==\n\n> quoted *d* [e](x.md)\n\n| a | *b* |\n| - | --- |\n| `c` | ==d== |\n',
+            'A ==[a]{.x} b==, **_a_ b**, [*a* b](x.md) and ~~*==a==*~~~~b~~.\n\n- ==*[a]{.x} b* c== in an item\n\n> [[*a* b]] and ++*[r]{.x} s*|*==b==* c++ quoted\n',
+        ];
+        let compared = 0;
+        let judged = 0;
+        for (const source of sources) {
+            const stock = blocksWritten(source, true);
+            const own = blocksWritten(source, false);
+            assert.strictEqual(own.length, stock.length);
+            own.forEach((written, i) => {
+                if (!written.coOpens) {
+                    compared++;
+                    assert.strictEqual(written.text, stock[i].text);
+                } else {
+                    judged++;
+                    const [back] = topChildren(parseDocument(md, `${written.text}\n`).doc);
+                    assert.strictEqual(structure(back), structure(written.block), written.text);
+                }
+            });
+        }
+        assert.ok(compared > 30, `${compared} blocks compared`);
+        assert.ok(judged >= 3, `${judged} blocks where marks open together read back`);
+        // The comparison is between two writers: where two marks open together they differ.
+        assert.deepStrictEqual([blocksWritten('**_a_ b**\n', true)[0].text, blocksWritten('**_a_ b**\n', false)[0].text], ['_**a**_ **b**', '**_a_ b**']);
+    });
 
     test('the options object is the only configuration: defaultWrap does not touch untouched blocks', () => {
         const source = 'A line that is much longer than ten characters stays as it is.\n';

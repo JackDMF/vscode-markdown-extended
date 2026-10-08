@@ -681,8 +681,10 @@ export const editorSchema = new Schema({
         right_sidebar: notePart(RS.cssClass, { group: 'inline', parseDOM: [{ tag: `span.${RS.cssClass}` }] }),
     },
     marks: {
-        // Req Explorer's decoration: outermost, so it never splits the marks
-        // written inside it, and not inclusive, so typing after an id is prose.
+        // Req Explorer's decoration, written as nothing. It opens by its run as
+        // any mark does (`openingOrder` in `serialize.ts`), so one that ends
+        // inside another mark's run does not split it; its rank only breaks
+        // ties. Not inclusive, so typing after an id is prose.
         req_ref: {
             inclusive: false,
             attrs: {
@@ -697,9 +699,12 @@ export const editorSchema = new Schema({
         },
         // `[text]{…}` (markdown-it-bracketed-spans with markdown-it-attrs): a
         // `<span>` with exactly the attributes the engine renders from the
-        // literal, which is kept verbatim and written back as it was. Outside
-        // the other marks, as its brackets are around them; not inclusive, so
-        // typing after a span is prose.
+        // literal, which is kept verbatim and written back as it was. Its rank
+        // here is no nesting fact: the parser reads `==[a]{.x} b==` and
+        // `[==a== b]{.x}` alike. It breaks ties when marks open together and
+        // is the order the page draws in; which mark encloses which in the
+        // file is decided per run by the serializer (`openingOrder`). Not
+        // inclusive, so typing after a span is prose.
         attr_span: {
             inclusive: false,
             attrs: {

@@ -8,6 +8,7 @@ import { Token } from '../@types/markdown-it';
 import { AttrsCut, attrsCutsIn, attrsGivenTo } from '../plugin/markdownItAttrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
+import { parseDocument } from './parse';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
@@ -50,7 +51,19 @@ interface StateInternals {
     inTableCell?: boolean;
     /** prosemirror-markdown's own: write the pending block separator, `size` newlines' worth. */
     flushClose(size?: number): void;
+    /** prosemirror-markdown's own: the serializer's node writers and mark specs, which a state of its own is made with. */
+    nodes: unknown;
+    marks: unknown;
+    /** prosemirror-markdown's own: whether the output is at the start of a block, where a line-start character is escaped. */
+    atBlockStart: boolean;
+    /** prosemirror-markdown's own: the serializer spec of the mark named `name`. */
+    getMark(name: string): MarkSpec;
+    /** prosemirror-markdown's own: whether the next node from `index` that is not a hard break carries `marks` as its first marks. */
+    isMarkAhead(parent: Node, index: number, marks: readonly Mark[]): boolean;
 }
+
+/** A mark's entry in the serializer's table (prosemirror-markdown's `MarkSerializerSpec`, which it does not export). */
+type MarkSpec = ConstructorParameters<typeof MarkdownSerializer>[1][string];
 
 /**
  * `text` with every marker character that stands in a run of two or more
@@ -396,7 +409,10 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // No line break inside any of these three (the plugins refuse one), so
     // each is a held run the wrapper keeps on one line, as a code span is.
     // Mixable, so emphasis inside a key is written inside it (`[[a *b*]]`),
-    // not as a second key inside the emphasis.
+    // not as a second key inside the emphasis. A key may begin with emphasis
+    // but not with a span or a link: the plugin reads the `[[` of `[[[` as a
+    // nested key, so such a run is written as two keys (`[[[a]]]{.x}[[ b]]`),
+    // as the page draws it (`CANNOT_LEAD`).
     // A key right after a `!` would be read as a wiki embed's `![[…]]`
     // where the engine reads embeds (`InlineEngineDefinition.wikiEmbeds`), so
     // there that `!` is escaped, as a link's is.
@@ -418,6 +434,340 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
         escape: false,
     },
 };
+
+/**
+ * The marks a mark may not stand first inside, because the parser cannot read
+ * the text that would make. markdown-it-kbd (2.2.2) counts every `[[` inside a
+ * key as a nested key, so a key whose text begins with `[` has no closing:
+ * `[[[a]{.x} b]]` reads as the text `[` and the key `a]{.x} b`, and
+ * `[[[a](url) b]]` likewise. A key may begin with anything but a span or a
+ * link; where its run begins with one, the key opens inside it (`openingOrder`).
+ */
+const CANNOT_LEAD: Readonly<Record<string, readonly string[]>> = { kbd: ['attr_span', 'link'] };
+
+/**
+ * The order the marks of the node at `index` are opened in: `marks` as
+ * `renderInline` holds it, `marks.slice(0, keep)` already open, the ones up
+ * to `len` about to open (past `len` is the `escape: false` mark, written
+ * with the text). prosemirror-markdown opens them in schema order, a rank,
+ * so where two open together and the one ranked first ends sooner, the other
+ * is closed with it and opened again (`==[a]{.x} b==` written
+ * `[==a==]{.x} ==b==`). Here the mixable ones open in the order their runs
+ * end, the one that ends last outermost, ties in schema order, so each run is
+ * one; then a mark `CANNOT_LEAD` names moves inside the mark it may not
+ * stand first in, when that one would open right inside it. Marks that are
+ * not mixable keep their places after them.
+ */
+function openingOrder(parent: Node, index: number, marks: readonly Mark[], keep: number, len: number,
+    getMark: (name: string) => MarkSpec): readonly Mark[] {
+    if (len - keep < 2) {
+        return marks;
+    }
+    const opening = marks.slice(keep, len);
+    let mixable = 0;
+    while (mixable < opening.length && getMark(opening[mixable].type.name).mixable) {
+        mixable++;
+    }
+    const ordered = opening.slice(0, mixable).map((mark, rank) => ({ mark, rank, end: markSpan(mark, parent, index)[1] }));
+    ordered.sort((a, b) => b.end - a.end || a.rank - b.rank);
+    // Only the mark opened right inside stands first in a mark's text.
+    for (let moved = true; moved;) {
+        moved = false;
+        for (let k = 0; k + 1 < ordered.length; k++) {
+            if ((CANNOT_LEAD[ordered[k].mark.type.name] ?? []).includes(ordered[k + 1].mark.type.name)) {
+                ordered.splice(k + 1, 0, ...ordered.splice(k, 1));
+                moved = true;
+            }
+        }
+    }
+    return [...marks.slice(0, keep), ...ordered.map(o => o.mark), ...opening.slice(mixable), ...marks.slice(len)];
+}
+
+/** The library's state class with the constructor its typings leave undeclared. */
+const LibraryState = MarkdownSerializerState as unknown as new (nodes: unknown, marks: unknown, options: unknown) => MarkdownSerializerState;
+
+/**
+ * prosemirror-markdown's state, with marks that open on one node opened in
+ * `openingOrder`, where the parser reads that back.
+ *
+ * `renderOrdered` is the library's `renderInline` from 1.13.8
+ * (`dist/index.js`, the ESM build, lines 687–794), translated to this
+ * repository's TypeScript (types, `===`, braces, the undeclared members read
+ * through `internals`) with two changes, marked "Changed from the library":
+ * the reorder of the marks already open, and one line after the `keep` loop.
+ * On an upgrade, re-diff it against the library's and keep those two; the
+ * guard in `serialize.test.ts` fails where the two write differently on
+ * content whose order is not in question. Exported for that guard only.
+ *
+ * Which order a textblock is written in is judged by the parser, not by a
+ * model of it (`readsBack`): the order of the runs only where its text reads
+ * back as the textblock, else the library's — so the text is never worse than
+ * the library's, whether or not that reads back. `readsBack` compares runs
+ * exactly, so a space at a run's edge makes both orders fail it; the library's
+ * is then kept. A delimiter's flanking is what decides it: in `~~*==a==*b~~`
+ * the `*` between `=` and `b` cannot close, while the library's
+ * `*~~==a==~~*~~b~~` reads as written.
+ */
+export class OrderedInlineState extends LibraryState {
+    renderInline(parent: Node, fromBlockStart = true): void {
+        if (this.libraryOrderFor(parent, fromBlockStart)) {
+            super.renderInline(parent, fromBlockStart);
+        } else {
+            this.renderOrdered(parent, fromBlockStart);
+        }
+    }
+
+    /**
+     * Whether `parent` is written in the library's order: where `openingOrder`
+     * keeps the schema order at every node that holds two marks or more,
+     * there is no order to choose and it is written once; only where the two
+     * orders then write different text is the parser asked.
+     */
+    private libraryOrderFor(parent: Node, fromBlockStart: boolean): boolean {
+        const st = internals(this);
+        let choice = false;
+        parent.forEach((child, _offset, index) => {
+            if (choice || child.marks.length < 2) {
+                return;
+            }
+            // The marks the library keeps open from the node before, as it holds them: in schema order.
+            const before = index > 0 ? parent.child(index - 1).marks : [];
+            let keep = 0;
+            while (keep < before.length && keep < child.marks.length && child.marks[keep].eq(before[keep])) {
+                keep++;
+            }
+            const last = child.marks[child.marks.length - 1];
+            const len = child.marks.length - (st.getMark(last.type.name).escape === false ? 1 : 0);
+            const order = openingOrder(parent, index, child.marks, keep, len, name => st.getMark(name));
+            choice = order.some((mark, k) => mark !== child.marks[k]);
+        });
+        if (!choice) {
+            return true;
+        }
+        const ordered = this.trial(parent, fromBlockStart, true);
+        const library = this.trial(parent, fromBlockStart, false);
+        if (ordered === library) {
+            return false;
+        }
+        const key = `${inlineModel(parent)}\u0000${ordered}\u0000${library}`;
+        let verdict = orderVerdictCache.get(key);
+        if (verdict === undefined) {
+            verdict = !readsBack(ordered, parent);
+            if (orderVerdictCache.size >= UNIT_READ_CACHE_SIZE) {
+                orderVerdictCache.delete(orderVerdictCache.keys().next().value as string);
+            }
+            orderVerdictCache.set(key, verdict);
+        }
+        return verdict;
+    }
+
+    /** `parent` written on a state of its own, in the order of the runs or the library's, hold markers removed. */
+    private trial(parent: Node, fromBlockStart: boolean, ordered: boolean): string {
+        const st = internals(this);
+        const state = new OrderedInlineState(st.nodes, st.marks, this.options);
+        const into = internals(state);
+        into.inAutolink = st.inAutolink;
+        into.inTightList = st.inTightList;
+        into.linkForm = st.linkForm;
+        into.notePart = st.notePart;
+        into.noteMarker = st.noteMarker;
+        into.inTableCell = st.inTableCell;
+        // A trial's sidebars stand in its own output, not the one the seams are collected from.
+        const seams = seamCollector;
+        seamCollector = null;
+        try {
+            if (ordered) {
+                state.renderOrdered(parent, fromBlockStart);
+            } else {
+                LibraryState.prototype.renderInline.call(state, parent, fromBlockStart);
+            }
+        } finally {
+            seamCollector = seams;
+        }
+        return into.out.replace(HOLD_RE, '');
+    }
+
+    private renderOrdered(parent: Node, fromBlockStart: boolean): void {
+        const st = internals(this);
+        st.atBlockStart = fromBlockStart;
+        const active: Mark[] = [];
+        let trailing = '';
+        const progress = (node: Node | null, _offset: number, index: number) => {
+            let marks: readonly Mark[] = node ? node.marks : [];
+            // Remove marks from `hard_break` that are the last node inside
+            // that mark to prevent parser edge cases with new lines just
+            // before closing marks.
+            if (node && node.type.name === this.options.hardBreakNodeName) {
+                marks = marks.filter(m => {
+                    if (index + 1 === parent.childCount) {
+                        return false;
+                    }
+                    const next = parent.child(index + 1);
+                    return m.isInSet(next.marks) && (!next.isText || /\S/.test(next.text));
+                });
+            }
+            const inner = marks.length ? marks[marks.length - 1] : null;
+            const noEsc = inner && st.getMark(inner.type.name).escape === false;
+            const len = marks.length - (noEsc ? 1 : 0);
+            // Changed from the library (1 of 2): the mixable marks already
+            // open come first, in the order they were opened, then the others
+            // in theirs. The library moves each mark to its place in `active`
+            // one at a time, which cannot rebuild every order `openingOrder`
+            // puts there; one rule decides here instead.
+            let mixEnd = 0;
+            while (mixEnd < len && st.getMark(marks[mixEnd].type.name).mixable) {
+                mixEnd++;
+            }
+            const mixed = marks.slice(0, mixEnd);
+            const opened: Mark[] = [];
+            for (const other of active) {
+                if (!st.getMark(other.type.name).mixable) {
+                    break;
+                }
+                if (other.isInSet(mixed)) {
+                    opened.push(other);
+                }
+            }
+            marks = [...opened, ...mixed.filter(m => !m.isInSet(opened)), ...marks.slice(mixEnd)];
+            // Find the prefix of the mark set that didn't change
+            let keep = 0;
+            while (keep < Math.min(active.length, len) && marks[keep].eq(active[keep])) {
+                ++keep;
+            }
+            // Changed from the library (2 of 2): the marks about to open, in the order their runs need.
+            marks = openingOrder(parent, index, marks, keep, len, name => st.getMark(name));
+            let leading = trailing;
+            trailing = '';
+            // If whitespace has to be expelled from the node, adjust
+            // leading and trailing accordingly.
+            if (node && node.isText && marks.some(mark => {
+                const info = st.getMark(mark.type.name);
+                return info && info.expelEnclosingWhitespace && !active.some((m, i) => i < keep && m.eq(mark));
+            })) {
+                const [, lead, rest] = /^(\s*)(.*)$/m.exec(node.text);
+                if (lead) {
+                    leading += lead;
+                    node = rest ? withText(node, rest) : null;
+                    if (!node) {
+                        marks = active;
+                    }
+                }
+            }
+            if (node && node.isText && marks.some((mark, i) => {
+                const info = st.getMark(mark.type.name);
+                return info && info.expelEnclosingWhitespace && !st.isMarkAhead(parent, index + 1, marks.slice(0, i + 1));
+            })) {
+                const [, rest, trail] = /^(.*?)(\s*)$/m.exec(node.text);
+                if (trail) {
+                    trailing = trail;
+                    node = rest ? withText(node, rest) : null;
+                    if (!node) {
+                        marks = active;
+                    }
+                }
+            }
+            // Close the marks that need to be closed
+            if (node || index === parent.childCount) {
+                while (keep < active.length) {
+                    this.text(this.markString(active.pop(), false, parent, index), false);
+                }
+            }
+            // Output any previously expelled trailing whitespace outside the marks
+            if (leading) {
+                this.text(leading);
+            }
+            // Open the marks that need to be opened
+            if (node) {
+                while (active.length < len) {
+                    const add = marks[active.length];
+                    active.push(add);
+                    this.text(this.markString(add, true, parent, index), false);
+                    st.atBlockStart = false;
+                }
+                // Render the node. Special case code marks, since their content
+                // may not be escaped.
+                if (noEsc && node.isText) {
+                    this.text(this.markString(inner, true, parent, index) + node.text
+                        + this.markString(inner, false, parent, index + 1), false);
+                } else {
+                    this.render(node, parent, index);
+                }
+                st.atBlockStart = false;
+                // After the first non-empty text node is rendered, the end of output
+                // is no longer at block start.
+                //
+                // FIXME: If a non-text node writes something to the output for this
+                // block, the end of output is also no longer at block start. But how
+                // can we detect that?
+                if (node.isText && node.nodeSize > 0) {
+                    st.atBlockStart = false;
+                }
+            }
+        };
+        parent.forEach(progress);
+        progress(null, 0, parent.childCount);
+        st.atBlockStart = false;
+    }
+}
+
+/** A text node with other text and the same marks (prosemirror-model's `TextNode.withText`, undeclared on `Node`). */
+function withText(node: Node, text: string): Node {
+    return (node as Node & { withText(text: string): Node }).withText(text);
+}
+
+/** Whether to write a textblock in the library's order, by the model and its two texts (`libraryOrderFor`); the oldest is dropped first. */
+const orderVerdictCache = new Map<string, boolean>();
+
+/**
+ * The inline content of `parent` as the parser can give it back: each run of
+ * text by its mark types, adjacent text under the same marks one run, an
+ * inline node by its type, marks and content. Req Explorer's decoration is
+ * not written, and a hard break's marks are dropped at a run's end, so
+ * neither counts.
+ */
+function inlineModel(parent: Node): string {
+    const parts: string[] = [];
+    let text = '';
+    let marksOfText: string | null = null;
+    const flush = () => {
+        if (marksOfText !== null) {
+            parts.push(`${marksOfText}${JSON.stringify(text)}`);
+        }
+        text = '';
+        marksOfText = null;
+    };
+    parent.forEach(child => {
+        const marks = `[${child.marks.filter(m => m.type.name !== 'req_ref').map(m => m.type.name).join(',')}]`;
+        if (child.isText) {
+            if (marks !== marksOfText) {
+                flush();
+                marksOfText = marks;
+            }
+            text += child.text;
+            return;
+        }
+        flush();
+        parts.push(child.type.name === 'hard_break' ? 'hard_break' : `${marks}${child.type.name}(${inlineModel(child)})`);
+    });
+    flush();
+    return parts.join(' ');
+}
+
+/** Whether `text`, read whole by the page's engine as `readUnit` reads a part, is one paragraph holding what `parent` holds. */
+function readsBack(text: string, parent: Node): boolean {
+    const definition = currentInlineDefinition();
+    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition).doc;
+    return doc.childCount === 1 && doc.firstChild.type.name === 'paragraph' && inlineModel(doc.firstChild) === inlineModel(parent);
+}
+
+/** prosemirror-markdown's serializer, writing through `OrderedInlineState` (the library's `serialize`, 1.13.8, with that state). */
+class EditorMarkdownSerializer extends MarkdownSerializer {
+    serialize(content: Node, options: { tightLists?: boolean } = {}): string {
+        const state = new OrderedInlineState(this.nodes, this.marks, { ...this.options, ...options });
+        state.renderContent(content);
+        return internals(state).out;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Nodes
@@ -1186,7 +1536,7 @@ export function literalRewrittenBeside(block: Node, textblock: Node, lost: Liter
 const ESCAPE_IN_CELL = new RegExp(`${ESCAPE_EXTRA.source}|\\|`, 'g');
 
 function inlineSerializer(fromBlockStart: boolean, inTableCell: boolean): MarkdownSerializer {
-    return new MarkdownSerializer({
+    return new EditorMarkdownSerializer({
         ...inlineNodes,
         paragraph(state, node) {
             internals(state).inTableCell = inTableCell;
@@ -1417,7 +1767,7 @@ export function literalHolder(node: Node): string {
 }
 
 function blockSerializer(options: SerializeOptions): MarkdownSerializer {
-    return new MarkdownSerializer({
+    return new EditorMarkdownSerializer({
         ...inlineNodes,
         paragraph(state, node) {
             // Flush the pending block separator and write the line prefix first,
@@ -2528,6 +2878,7 @@ function forgetReadBack(): void {
     verdictCache = new WeakMap();
     unitReadCache.clear();
     seamCache.clear();
+    orderVerdictCache.clear();
 }
 
 /**
