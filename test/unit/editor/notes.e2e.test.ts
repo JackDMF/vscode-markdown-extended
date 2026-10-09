@@ -186,7 +186,7 @@ suite('Editor notes and links (e2e)', () => {
         assert.notStrictEqual(button.disabled, 'true', button.title);
     });
 
-    test('the page reads a textblock as the engine that parsed the document: a ")" that lets linkify read a sidebar into the address is refused with linkify on, typed with it off', async function () {
+    test('the page reads a textblock as the engine that parsed the document: a ")" that would let linkify read a sidebar into the address is typed with linkify on, the link written [url](url), and typed as is with it off', async function () {
         this.timeout(20000);
         const source = 'See http://e.com/($note$ here.\n';
         // This extension's plugins alone: VS Code's math would claim `$…$`.
@@ -200,13 +200,26 @@ suite('Editor notes and links (e2e)', () => {
             await clickBefore('note', 3);
             await page.keyboard.type(')');
             await settle();
-            if (linkify) {
-                await page.waitForSelector('.mep-hint:not([hidden])', { timeout: 2000 });
-                assert.ok((await page.$eval('.mep-hint', el => el.textContent ?? '')).includes('web address'), 'the hint says why');
-                assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'linkify on: nothing typed');
-            } else {
-                assert.strictEqual((await lastEdit())?.text, 'See http://e.com/($not)e$ here.\n', 'linkify off: typed');
-            }
+            assert.ok((await (editor as EditorPage).edits()).length > before, `linkify ${linkify}: typed`);
+            // Written bare with linkify on, the address would run on through `($not)e$`: the link is
+            // written `[…](…)`, which ends it before the `(`, and the sidebar reads back.
+            const saved = linkify ? 'See [http://e.com/](http://e.com/)($not)e$ here.\n' : 'See http://e.com/($not)e$ here.\n';
+            assert.strictEqual((await lastEdit())?.text, saved, `linkify ${linkify}: the save`);
+            const back = parseDocument(md, saved, {}).doc;
+            const sidebars: string[] = [];
+            const links: string[] = [];
+            back.descendants(node => {
+                if (node.type.name === 'left_sidebar') {
+                    sidebars.push(node.textContent);
+                }
+                const link = node.isText ? node.marks.find(m => m.type.name === 'link') : undefined;
+                if (link !== undefined) {
+                    links.push(`${node.text} ${link.attrs.href as string}`);
+                }
+            });
+            assert.deepStrictEqual(links, linkify ? ['http://e.com/ http://e.com/'] : [], `linkify ${linkify}: the links read back`);
+            assert.deepStrictEqual(sidebars, ['not)e'], `linkify ${linkify}: the sidebar reads back`);
+            assert.strictEqual(back.textContent, 'See http://e.com/(not)e here.', `linkify ${linkify}: the text reads back`);
         }
     });
 
