@@ -1,5 +1,11 @@
 # Change Log
 
+## Unreleased
+
+### ✨ Features
+
+- Every sidenote (`++text|note++`) carries `data-sn`, its position in its section (1 = a, 27 = aa), so a stylesheet can colour a note by its letter across paragraphs.
+
 ## v4.2.0 — Emoji You Can Edit Around
 
 ### ✨ Features

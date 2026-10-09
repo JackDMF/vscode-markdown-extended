@@ -367,3 +367,88 @@ suite('Sidebars: the closing marker is found by the inline parser, and the openi
         assert.ok(html.endsWith(', mail a@b.c and <code>@x</code>'), html);
     });
 });
+
+suite('Sidenote positions: data-sn is the number behind the letter the stylesheet prints', () => {
+    const md = preview();
+    /** The `data-sn` of every sidenote and marginal note in `source`, in order; `-` for none. */
+    const positions = (source: string): string[] =>
+        [...md.render(source).matchAll(/<span class="(?:sn|mn)-ref[^"]*"([^>]*)>/g)]
+            .map(([, rest]) => /data-sn="(\d+)"/.exec(rest)?.[1] ?? '-');
+
+    test('the count runs across paragraphs', () => {
+        assert.deepStrictEqual(positions('## A\n\n++a|x++ ++b|x++\n\n++c|x++'), ['1', '2', '3']);
+    });
+
+    test('a top-level heading starts it again', () => {
+        assert.deepStrictEqual(positions('## A\n\n++a|x++\n\n## B\n\n++b|x++'), ['1', '1']);
+    });
+
+    test('a note in a heading counts after the heading\'s reset', () => {
+        assert.deepStrictEqual(positions('### Title (++Joh. 13:13|x++)\n\n++b|x++'), ['1', '2']);
+    });
+
+    test('question items open their own count; after the list the outer one goes on', () => {
+        const source = '++a|x++\n\n- Q1 (++b|x++).{.sq}\n- Q2 (++c|x++).{.sq}\n\n++d|x++';
+        assert.deepStrictEqual(positions(source), ['1', '1', '1', '2']);
+    });
+
+    test('{class=sq} opens a count as {.sq} does', () => {
+        assert.deepStrictEqual(positions('++a|x++\n\n- Q (++b|x++).{class=sq}'), ['1', '1']);
+    });
+
+    test('a plain item after a question item counts on in its scope', () => {
+        const source = '++z|x++\n\n- Q (++a|x++).{.sq}\n- plain ++b|x++';
+        assert.deepStrictEqual(positions(source), ['1', '1', '2']);
+    });
+
+    test('a nested question item opens a count within its parent\'s', () => {
+        // As the lessons write it: a question, its part, an answer, the next question.
+        const source = '- Q (++a|x++).{class=sq}\n  - q (++b|x++).{.sq .part}\n  - answer ++c|x++\n- answer ++d|x++';
+        const html = md.render(source);
+        assert.strictEqual(html.match(/<li class="sq/g)?.length, 2, html);
+        assert.deepStrictEqual(positions(source), ['1', '1', '2', '2']);
+    });
+
+    test('a quote\'s title does not reset', () => {
+        assert.deepStrictEqual(positions('++z|x++\n\n- Q (++a|x++).{.sq}\n\n  > ## Joh. 3:16\n  > ++b|x++'), ['1', '1', '2']);
+    });
+
+    test('marginal notes are not counted and carry no position', () => {
+        assert.deepStrictEqual(positions('++a|x++ !!b|x!! ++c|x++'), ['1', '-', '2']);
+    });
+
+    test('notes before the first heading count from 1', () => {
+        assert.deepStrictEqual(positions('++a|x++'), ['1']);
+    });
+
+    test('an h6 does not reset', () => {
+        assert.deepStrictEqual(positions('## A\n\n++a|x++\n\n###### Label\n\n++b|x++'), ['1', '2']);
+    });
+
+    test('an ordered list\'s question item does not reset', () => {
+        assert.deepStrictEqual(positions('++a|x++\n\n1. Q (++b|x++).{.sq}'), ['1', '2']);
+    });
+
+    test('the value is never wrapped', () => {
+        const notes = Array.from({ length: 27 }, (_, i) => `++n${i}|x++`).join(' ');
+        assert.strictEqual(positions(notes).pop(), '27');
+    });
+
+    test('a pinned note keeps its class and still carries its position', () => {
+        const html = md.render('++a|x++{class=sn-7}');
+        assert.ok(html.includes('<span class="sn-ref sn-7" data-sn="1">'), html);
+    });
+
+    test('a data-sn the author wrote stands alone', () => {
+        const html = md.render('++a|x++{data-sn=9}');
+        assert.strictEqual(html.match(/data-sn=/g)?.length, 1, html);
+        assert.ok(html.includes('data-sn="9"'), html);
+    });
+
+    test('the position stays out of the token\'s attributes, which the Visual Editor reads as written ones', () => {
+        const inline = md.parse('++a|x++', {}).find(t => t.type === 'inline');
+        const open = inline?.children?.find(t => t.type === 'sidenote_open');
+        assert.ok(open, 'a sidenote');
+        assert.strictEqual(open.attrs, null);
+    });
+});

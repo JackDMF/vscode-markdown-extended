@@ -95,7 +95,8 @@ suite('Editor inline constructs: parsed as rich text', () => {
             '**Bold ++ref|body++ around** and *[[Ctrl]]*.',
         ]) {
             const block = firstBlock(`${source}\n`);
-            assert.strictEqual(drawn(block), md.renderInline(source), source);
+            // A sidenote's position (`data-sn`) is counted over the whole document, which a block's drawing does not know.
+            assert.strictEqual(drawn(block), md.renderInline(source).replace(/ data-sn="\d+"/g, ''), source);
         }
     });
 });

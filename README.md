@@ -891,6 +891,42 @@ Sidenotes appear as floating annotations next to your text:
 This is main text with ++reference text|This is the sidenote content with **markdown** support++.
 ```
 
+#### Sidenotes: HTML output
+
+`++text|note++` creates a lettered sidenote, `!!text|note!!` one with a symbol:
+
+```html
+<span class="sn-ref" data-sn="3">text<span class="sidenote">note</span></span>
+<span class="mn-ref">text<span class="mnote">note</span></span>
+```
+
+The extension writes structure only. Letters, symbols, colours and placement in the margin
+all come from your stylesheet.
+
+Every lettered sidenote carries `data-sn`, its position in the current counting scope: 1 for
+the first note, 2 for the second, and so on. It matches the letter a stylesheet prints with a
+CSS counter (1 = a, 26 = z, 27 = aa). The count starts again at:
+
+- every `h1`
+- every top-level `h2` to `h5`
+- every question item (`- … {.sq}` in a bulleted list), for that item and the items after it
+  in the same list; after the list, the outer count continues
+
+Headings inside quotes and admonitions, `h6` and marginal notes (`!!…!!`) do not affect the
+count. Use it to style notes by position, for example to give each letter its own colour
+across a whole section:
+
+```css
+.sn-ref[data-sn="1"] { --current-sn-color: var(--sn-1); }
+.sn-ref[data-sn="2"] { --current-sn-color: var(--sn-2); }
+```
+
+The value is never wrapped; if you cycle colours, do it in the stylesheet. Stylesheets that
+ignore `data-sn` are not affected. Classes you add are passed through unchanged, so you can pin
+a note to a style regardless of its position (`++Petrus|the apostle++{class=sn-7}`); the note
+still carries its `data-sn`, and your stylesheet decides which wins. A `{data-sn=…}` you write
+yourself replaces the counted one.
+
 #### Marginal Notes
 
 Marginal notes appear in the document margin:
