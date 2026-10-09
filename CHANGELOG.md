@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.2.0 — Emoji You Can Edit Around
 
 ### ✨ Features
 
