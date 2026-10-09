@@ -7,7 +7,7 @@ import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
 import { Command, Plugin } from 'prosemirror-state';
 import { fidelityPlugin } from '../fidelity';
-import { emojiPlugin } from './emoji';
+import { emojiKeymap, emojiPlugin } from './emoji';
 import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
@@ -134,6 +134,8 @@ export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds
         // Ahead of the Markdown keys: Tab, Enter and Backspace mean something else inside a note,
         // Enter and Backspace in an empty paragraph of a container or an admonition,
         // and Tab, Enter and Shift+Enter in a table cell (a sidebar in a cell keeps its own keys).
+        // Before the note's keys: an arrow beside an emoji steps over it, wherever it stands.
+        emojiKeymap(),
         noteKeymap(),
         wrapperKeymap(),
         tableKeymap(),

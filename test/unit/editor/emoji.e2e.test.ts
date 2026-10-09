@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot } from './pageHarness';
+import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, Theme, applyTheme } from './themes';
 import { undoKey } from '../../../src/editor/webview/hint';
 
@@ -139,7 +139,7 @@ suite('Editor emoji atom (e2e)', () => {
         await showDocument('Glad to see you :) here.\n', 'Glad');
         await pickAtom();
         await clickVerb('edit-emoji-as-text');
-        assert.deepStrictEqual(await hint(), { text: 'Emoji is text — Ctrl+Z', tone: 'neutral', shown: true });
+        assert.deepStrictEqual(await hint(), { text: `:) is text now — ${undoKey()}`, tone: 'neutral', shown: true });
         await settle();
         assert.strictEqual(await atoms(), 0);
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you \\:) here.\n');
@@ -186,60 +186,111 @@ suite('Editor emoji atom (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you :) here.\n');
     });
 
-    test('reached by the arrow keys the emoji is selected, and a key typed then takes its place', async function () {
+    const selected = () => page.$eval('.ProseMirror .mep-emoji', el => el.classList.contains('ProseMirror-selectednode'));
+
+    test('the arrow keys step over an emoji as over a character: the caret lands beside it, nothing is selected', async function () {
         this.timeout(15000);
         await showDocument('Glad to see you :) here.\n', 'Glad');
         await caretAfterAtom();
         await page.keyboard.press('ArrowLeft');
         await delay(80);
-        assert.strictEqual(await page.$eval('.ProseMirror .mep-emoji', el => el.classList.contains('ProseMirror-selectednode')), true, 'the arrow selects it');
+        assert.strictEqual(await selected(), false, 'not selected');
+        // The caret is before it: a letter typed there glues to it, which makes it text.
         await page.keyboard.type('k');
         await settle();
-        assert.strictEqual(await atoms(), 0);
+        assert.strictEqual((await lastEdit())?.text, 'Glad to see you k:) here.\n');
+        await showDocument('Glad to see you :) here.\n', 'Glad');
+        await caretAfterAtom();
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.press('ArrowRight');
+        await delay(80);
+        assert.strictEqual(await selected(), false);
+        await page.keyboard.type('Z');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Glad to see you :)Z here.\n', 'ArrowRight steps back over it');
+    });
+
+    test('Shift+arrow takes the emoji into a text selection, which typing replaces; a clicked emoji is replaced too', async function () {
+        this.timeout(15000);
+        await showDocument('Glad to see you :) here.\n', 'Glad');
+        await caretAfterAtom();
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.up('Shift');
+        await delay(80);
+        assert.strictEqual(await selected(), false, 'a text selection, not the node');
+        await page.keyboard.type('k');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Glad to see you k here.\n');
+        await showDocument('Glad to see you :) here.\n', 'Glad');
+        await pickAtom();
+        assert.strictEqual(await selected(), true, 'a click selects it');
+        await page.keyboard.type('k');
+        await settle();
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you k here.\n');
     });
 
-    test('its states, shot in light and dark: rest, hover, selected with the bar, after Edit as text, the hint, a full line, the arrow keys', async function () {
+    test('Alt+Enter beside an emoji, before or after it, selects it and opens its bar on its first verb', async function () {
+        this.timeout(20000);
+        for (const step of [null, 'ArrowLeft'] as const) {
+            await showDocument('Glad to see you :) here.\n', 'Glad');
+            await caretAfterAtom();
+            if (step !== null) {
+                await page.keyboard.press(step);
+            }
+            await page.keyboard.down('Alt');
+            await page.keyboard.press('Enter');
+            await page.keyboard.up('Alt');
+            await page.waitForSelector(`${BAR}[data-object="emoji"]`, { timeout: 2000 });
+            assert.strictEqual(await selected(), true, `${step ?? 'after'}: selected`);
+            assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.verb), 'edit-emoji-as-text');
+            await page.keyboard.press('Escape');
+        }
+        // Elsewhere Alt+Enter keeps its meaning: in plain text it opens nothing.
+        await showDocument('Glad to see you :) here.\n', 'Glad');
+        await clickText(page, 'Glad', 2);
+        await page.keyboard.down('Alt');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Alt');
+        await delay(300);
+        assert.strictEqual(await page.$(BAR), null);
+    });
+
+    test('its states, shot in light and dark: rest, a second paragraph\'s emoji clicked, the arrow keys, Alt+Enter, Edit as text, the hint', async function () {
         this.timeout(90000);
         const themes: [Theme, string][] = [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']];
-        const long = 'The sentence runs on long enough that the editor wraps it onto a second line, and there the emoji :) stands '
-            + 'with more words after it, so that the line it is on is full and the bar has to find a place beside it.\n';
+        const two = 'A first paragraph, there to stand above the second one.\n\nGlad to see you :) here, and :smile: there.\n';
         for (const [theme, name] of themes) {
             await applyTheme(page, theme);
-            await showDocument('Glad to see you :) here, and :smile: there.\n', 'Glad');
+            await showDocument(two, 'Glad');
             await shot(page, `emoji-${name}-1-rest.png`);
-            const box = await atomBox();
-            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-            await delay(1200);
-            assert.strictEqual(await page.$eval('.ProseMirror .mep-emoji:hover', el => (el as HTMLElement).title), 'Emoji :) — kept as written', 'the pointer rests on it');
-            // No shot of the hover: the tooltip is the browser's, which a screenshot does not show, and the arrow is the page's.
             await pickAtom();
+            await delay(600);
+            await shot(page, `emoji-${name}-2-second-paragraph-bar.png`);
+            await clearHint();
+            await showDocument(two, 'Glad');
+            await caretAfterAtom();
+            await page.keyboard.press('ArrowLeft');
             await delay(300);
-            await shot(page, `emoji-${name}-3-selected-bar.png`);
+            assert.strictEqual(await selected(), false);
+            await shot(page, `emoji-${name}-3-arrow-caret-before.png`);
+            await page.keyboard.down('Alt');
+            await page.keyboard.press('Enter');
+            await page.keyboard.up('Alt');
+            await page.waitForSelector(`${BAR}[data-object="emoji"]`, { timeout: 2000 });
+            await delay(600);
+            await shot(page, `emoji-${name}-4-alt-enter-bar.png`);
             await clickVerb('edit-emoji-as-text');
             await delay(200);
-            await shot(page, `emoji-${name}-4-edit-as-text.png`);
+            assert.strictEqual((await hint()).text, `:) is text now — ${undoKey()}`);
+            await shot(page, `emoji-${name}-5-edit-as-text.png`);
             await clearHint();
-            await showDocument('Glad to see you :) here, and :smile: there.\n', 'Glad');
+            await showDocument(two, 'Glad');
             await caretAfterAtom();
             await page.keyboard.type('Z');
             await delay(150);
             assert.strictEqual((await hint()).text, `:)Z is no longer an emoji — ${undoKey()}`);
-            await shot(page, `emoji-${name}-5-hint.png`);
-            await clearHint();
-            await showDocument(long, 'The sentence');
-            await pickAtom();
-            await delay(300);
-            await shot(page, `emoji-${name}-6-full-line-bar.png`);
-            await clearHint();
-            await showDocument('Glad to see you :) here, and :smile: there.\n', 'Glad');
-            await caretAfterAtom();
-            await page.keyboard.press('ArrowLeft');
-            await delay(300);
-            await shot(page, `emoji-${name}-7-arrow-selected.png`);
-            await page.keyboard.type('k');
-            await delay(300);
-            await shot(page, `emoji-${name}-8-arrow-typed.png`);
+            await shot(page, `emoji-${name}-6-hint.png`);
             await clearHint();
         }
         await applyTheme(page, LIGHT_MODERN);

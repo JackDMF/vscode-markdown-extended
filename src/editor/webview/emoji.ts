@@ -1,4 +1,5 @@
-import { EditorState, Plugin, PluginKey, TextSelection, Transaction } from 'prosemirror-state';
+import { Command, EditorState, NodeSelection, Plugin, PluginKey, TextSelection, Transaction } from 'prosemirror-state';
+import { keymap } from 'prosemirror-keymap';
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, fidelityPlan, isRepair } from '../fidelity';
 import { editorSchema } from '../schema';
 import { emojiBeyondAtoms, unreadEmojiAsText } from '../serialize';
@@ -82,24 +83,83 @@ export function emojiPlugin(): Plugin<EmojiNotice | null> {
     });
 }
 
-/** Why Edit as text is refused where the characters would still read as an emoji (`emojiTextStillRead`). */
-export const EMOJI_TEXT_STILL_READ = 'Here its characters would still be read as an emoji, so it cannot be made text.';
+/** The notes a refusal names the place by: inside one of them the characters would still read as an emoji. */
+const NOTE_PLACES: ReadonlySet<string> = new Set(['sidenote', 'marginal_note', 'left_sidebar', 'right_sidebar']);
 
 /**
- * Why `tr`, an atom made text (`emojiAsTextTransaction`), is refused: the
- * block holding it, as the save writes it, would read more emoji beyond its
- * atoms than before (`emojiBeyondAtoms`) — the characters would still be an
- * emoji to the preview, as in a sidenote, whose plugin reads one even
- * escaped. Asked of the parser, not of where the atom stands.
+ * Why `tr`, the atom at `from` made text (`emojiAsTextTransaction`), is
+ * refused: the block holding it, as the save writes it, would read more emoji
+ * beyond its atoms than before (`emojiBeyondAtoms`) — the characters would
+ * still be an emoji to the preview, as in a sidenote, whose plugin reads one
+ * even escaped. Asked of the parser, not of where the atom stands; the reason
+ * names the place in the user's terms, a note where the atom stands in one.
  */
-export function emojiTextStillRead(state: EditorState, tr: Transaction): string | null {
-    const from = tr.mapping.invert().map(tr.selection.from);
-    const $before = state.doc.resolve(Math.min(from, state.doc.content.size));
-    const $after = tr.doc.resolve(Math.min(tr.selection.from, tr.doc.content.size));
-    if ($before.depth === 0 || $after.depth === 0) {
+export function emojiTextStillRead(state: EditorState, tr: Transaction, from: number): string | null {
+    const atom = state.doc.nodeAt(from);
+    const $before = state.doc.resolve(from);
+    const $after = tr.doc.resolve(tr.mapping.map(from));
+    if (atom === null || $before.depth === 0 || $after.depth === 0) {
         return null;
     }
-    return emojiBeyondAtoms($after.node(1)) > emojiBeyondAtoms($before.node(1)) ? EMOJI_TEXT_STILL_READ : null;
+    if (emojiBeyondAtoms($after.node(1)) <= emojiBeyondAtoms($before.node(1))) {
+        return null;
+    }
+    const source = atom.attrs.source as string;
+    let inNote = false;
+    for (let d = $before.depth; d > 0; d--) {
+        inNote ||= NOTE_PLACES.has($before.node(d).type.name);
+    }
+    return inNote
+        ? `Inside a note, ${source} is still read as an emoji; Remove emoji works.`
+        : `Here, ${source} would still be read as an emoji; Remove emoji works.`;
+}
+
+/**
+ * An arrow key with the caret beside an emoji atom: the caret steps over it as
+ * over a character, landing beside it, no node selected; with Shift the text
+ * selection extends over it. A click still selects it as a node.
+ */
+function stepOverEmoji(dir: -1 | 1, extend: boolean): Command {
+    return (state, dispatch) => {
+        const sel = state.selection;
+        if (!(sel instanceof TextSelection) || (!extend && !sel.empty)) {
+            return false;
+        }
+        const $head = sel.$head;
+        const beside = dir < 0 ? $head.nodeBefore : $head.nodeAfter;
+        if (beside === null || beside.type !== editorSchema.nodes.emoji) {
+            return false;
+        }
+        const head = $head.pos + dir;
+        dispatch?.(state.tr.setSelection(TextSelection.create(state.doc, extend ? sel.anchor : head, head)).scrollIntoView());
+        return true;
+    };
+}
+
+/** The arrow keys over an emoji atom (`stepOverEmoji`). */
+export function emojiKeymap(): Plugin {
+    return keymap({
+        ArrowLeft: stepOverEmoji(-1, false),
+        ArrowRight: stepOverEmoji(1, false),
+        'Shift-ArrowLeft': stepOverEmoji(-1, true),
+        'Shift-ArrowRight': stepOverEmoji(1, true),
+    });
+}
+
+/**
+ * The emoji atom right beside the caret selected as a node — the one before
+ * it, else the one after — or `null` where none stands there: what Alt+Enter
+ * selects before it opens the object's bar (`objectToolbar.ts`), the keyboard's
+ * way to an emoji's verbs now that the arrows step over it.
+ */
+export function selectEmojiBeside(state: EditorState): Transaction | null {
+    const sel = state.selection;
+    if (!(sel instanceof TextSelection) || !sel.empty) {
+        return null;
+    }
+    const { $from } = sel;
+    const at = $from.nodeBefore?.type === editorSchema.nodes.emoji ? $from.pos - 1 : $from.nodeAfter?.type === editorSchema.nodes.emoji ? $from.pos : null;
+    return at === null ? null : state.tr.setSelection(NodeSelection.create(state.doc, at));
 }
 
 /**

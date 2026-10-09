@@ -10,7 +10,7 @@ import { EMOJI_RAW_REFUSAL, EMOJI_UNPLACED_REFUSAL, onUnreadEmojiSaved, unreadEm
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { notePasteTransaction, noteRefusal } from '../../../src/editor/webview/notes';
 import { inlineForNote, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
-import { EMOJI_TEXT_STILL_READ, emojiAsTextNotice, emojiAsTextTransaction } from '../../../src/editor/webview/emoji';
+import { emojiAsTextNotice, emojiAsTextTransaction } from '../../../src/editor/webview/emoji';
 import { undoKey } from '../../../src/editor/webview/hint';
 import { objectOfNode } from '../../../src/editor/webview/objects';
 import { emojiVerbs } from '../../../src/editor/webview/objectToolbar';
@@ -389,7 +389,7 @@ suite('Editor: emoji atoms, review 1', () => {
             const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
             assert.ok(object !== null);
             const [asText, remove] = emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined });
-            assert.strictEqual(asText.refusal, refused ? EMOJI_TEXT_STILL_READ : null, source);
+            assert.strictEqual(asText.refusal, refused ? 'Inside a note, :) is still read as an emoji; Remove emoji works.' : null, source);
             assert.strictEqual(remove.refusal, null, source);
         }
     });

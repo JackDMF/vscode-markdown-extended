@@ -172,7 +172,7 @@ img.mep-pending-range {
 
 .mep-emoji.ProseMirror-selectednode {
     outline: 1px solid var(--vscode-focusBorder, #0078d4);
-    outline-offset: 1px;
+    outline-offset: 0;
     border-radius: 2px;
 }
 

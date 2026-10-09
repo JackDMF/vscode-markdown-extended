@@ -42,7 +42,7 @@ import { HintTone, showChangeHint, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
-import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
+import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
@@ -335,8 +335,8 @@ interface AtomVerbTexts {
     none: string;
     /** The atom as text, or `null` where `[from, to)` is no such atom. */
     asTextTransaction(state: EditorState, from: number, to: number): Transaction | null;
-    /** Why Edit as text is refused besides the filters, if it is. */
-    asTextRefusal?(state: EditorState, tr: Transaction): string | null;
+    /** Why Edit as text is refused besides the filters, if it is: `tr` makes the atom at `from` text. */
+    asTextRefusal?(state: EditorState, tr: Transaction, from: number): string | null;
 }
 
 /**
@@ -355,7 +355,7 @@ function atomVerbs(state: EditorState, object: EditorObject, actions: EmbedActio
             title: texts.asText.title,
             refusal: refusalOnce(state, `${texts.asText.id}@${place}`, () => {
                 const tr = texts.asTextTransaction(state, object.from, object.to);
-                return filterRefusal(tr, texts.none) ?? (tr === null ? null : texts.asTextRefusal?.(state, tr) ?? null);
+                return filterRefusal(tr, texts.none) ?? (tr === null ? null : texts.asTextRefusal?.(state, tr, object.from) ?? null);
             }),
             run: () => actions.asText(),
         },
@@ -1585,7 +1585,7 @@ class ObjectToolbarView implements PluginView {
                                 this.view.dispatch(tr);
                             }
                             return tr !== null;
-                        }, 'Emoji is text'),
+                        }, `${source} is text now`),
                         remove: () => this.remove(object, 'Emoji removed'),
                     }),
                 };
@@ -1866,6 +1866,11 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
             handleKeyDown(view, event) {
                 if (event.key !== 'Enter' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
                     return false;
+                }
+                // Beside an emoji, the emoji is the object: the arrows step over it, so this is how the keyboard selects it.
+                const select = selectEmojiBeside(view.state);
+                if (select !== null) {
+                    view.dispatch(select);
                 }
                 const opened = toolbarViews.get(view)?.openFromKeyboard() ?? false;
                 if (opened) {

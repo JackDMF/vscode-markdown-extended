@@ -179,7 +179,8 @@ suite('Editor stylesheet colours', () => {
             return css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at)).trim().split(/\s*;\s*/).filter(d => d !== '');
         };
         assert.deepStrictEqual(rule('.mep-emoji'), ['font: inherit', 'color: inherit', 'cursor: default']);
-        assert.deepStrictEqual(rule('.mep-emoji.ProseMirror-selectednode'), [...rule('.mep-wiki-embed.ProseMirror-selectednode'), 'outline-offset: 1px', 'border-radius: 2px']);
+        // No offset: the word spaces beside it stay visible at the UI font.
+        assert.deepStrictEqual(rule('.mep-emoji.ProseMirror-selectednode'), [...rule('.mep-wiki-embed.ProseMirror-selectednode'), 'outline-offset: 0', 'border-radius: 2px']);
         // An atom is no text to place a caret in: the arrow, as over the embed.
         assert.ok(rule('.mep-wiki-embed').includes('cursor: default'));
         // Its spelling in the bar's label: the code font, no chip.
