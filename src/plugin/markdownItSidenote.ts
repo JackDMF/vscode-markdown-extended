@@ -276,7 +276,7 @@ function registerRendererRules(md: MarkdownIt, config: RenderConfig): void {
         // The note span is nested INSIDE the reference span, not a sibling of it — CSS should
         // target it as a descendant (e.g. `.sn-ref .sidenote`), never as `.sn-ref + .sidenote`.
         // The reference (outer) span carries any markdown-it-attrs attributes added via {.class}
-        md.renderer.rules[`${type}_open`] = (tokens, idx) => `<span${renderOpenTagAttrs(tokens[idx], config.refClass)}>`;
+        md.renderer.rules[`${type}_open`] = (tokens, idx) => `<span${renderOpenTagAttrs(tokens[idx], config.refClass)}${renderPosition(tokens[idx])}>`;
         md.renderer.rules[`${type}_ref_open`] = () => ''; // No additional wrapper
         md.renderer.rules[`${type}_ref_close`] = () => ''; // No additional wrapper
         md.renderer.rules[`${type}_content_open`] = () => `<span class="${config.cssClass}">`;
@@ -319,6 +319,17 @@ function renderOpenTagAttrs(token: any, baseClass: string): string {
     return result;
 }
 
+/**
+ * ` data-sn="N"` for a sidenote `notePositions` counted, unless the author wrote
+ * a `data-sn` of their own (`{data-sn=…}`), which then stands alone.
+ */
+function renderPosition(token: any): string {
+    const position = token?.meta?.[POSITION_META];
+    if (typeof position !== 'number') {return '';}
+    const written = (token.attrs ?? []).some(([name]: [string, string]) => name === POSITION_ATTR);
+    return written ? '' : ` ${POSITION_ATTR}="${position}"`;
+}
+
 /** Minimal HTML attribute escaping for rendered attribute values. */
 function md_escape(value: string): string {
     return String(value)
@@ -348,6 +359,92 @@ export default function (md: MarkdownIt) {
     md.inline.ruler.before('link', 'sidebars', sidebarTokenizer as any);
     registerRendererRules(md, leftSidebarConfig);
     registerRendererRules(md, rightSidebarConfig);
+
+    // Pushed last, so it runs after markdown-it-attrs has put `{.sq}` on the list items.
+    md.core.ruler.push('sidenote_positions', notePositions as any);
+}
+
+// ============================================================================
+// Sidenote Positions
+// ============================================================================
+
+/** The attribute a sidenote's reference carries its position in. */
+const POSITION_ATTR = 'data-sn';
+
+/**
+ * Where the position is kept on the `sidenote_open` token until it is rendered.
+ * Not in `attrs`: the Visual Editor parses with these plugins too and reads any
+ * attribute there as a `{…}` the author wrote (`blocks.ts`, `literalAttrs`).
+ */
+const POSITION_META = 'sidenotePosition';
+
+/** One counting scope: the document's, or the one a question item opens in its list. */
+interface PositionScope {
+    /** The `bullet_list_open` the question items that opened it stand in; `null` for the document's. */
+    list: any;
+    /** The notes counted in it so far. */
+    count: number;
+}
+
+/**
+ * Gives every sidenote (`++text|note++`) its position in its counting scope,
+ * the number behind the letter a stylesheet's `sidenotes` counter prints
+ * (1 = a, 27 = aa; never wrapped). The scopes are the stylesheet's:
+ *
+ * - an `h1` anywhere, and an `h2`–`h5` at the top level, start the count again
+ *   (`h1`, `body > div > :is(h2,h3,h4,h5) { counter-reset: sidenotes }`);
+ * - a question item (`li.sq` in a bulleted list) opens a count of its own for
+ *   itself, its content and the items after it, which the next question item
+ *   starts again; when its list ends the outer count goes on
+ *   (`ul > li.sq { counter-reset: sidenotes }`).
+ *
+ * Marginal notes (`!!text|note!!`) have a counter of their own and get no
+ * position; a sidenote inside another one's note is counted after it, as the
+ * stylesheet counts it.
+ */
+function notePositions(state: { tokens: any[] }): void {
+    const scopes: PositionScope[] = [{ list: null, count: 0 }];
+    const lists: any[] = [];
+    const current = () => scopes[scopes.length - 1];
+
+    for (const token of state.tokens) {
+        switch (token.type) {
+            case 'heading_open': {
+                const level = Number(token.tag.slice(1));
+                if (level === 1 || (level <= 5 && token.level === 0)) {current().count = 0;}
+                break;
+            }
+            case 'bullet_list_open':
+            case 'ordered_list_open':
+                lists.push(token);
+                break;
+            case 'bullet_list_close':
+            case 'ordered_list_close':
+                if (current().list === lists.pop()) {scopes.pop();}
+                break;
+            case 'list_item_open': {
+                const list = lists[lists.length - 1];
+                if (list?.type === 'bullet_list_open' && isQuestionItem(token)) {
+                    if (current().list === list) {current().count = 0;}
+                    else {scopes.push({ list, count: 0 });}
+                }
+                break;
+            }
+            case 'inline':
+                for (const child of token.children ?? []) {
+                    if (child.type === `${sideNoteConfig.type}_open`) {
+                        child.meta = { ...(child.meta ?? {}), [POSITION_META]: ++current().count };
+                    }
+                }
+                break;
+        }
+    }
+}
+
+/** Whether a list item carries the class `sq` (`- … {.sq}`, `{class=sq}`). */
+function isQuestionItem(token: any): boolean {
+    const classes: string = token.attrGet?.('class') ?? '';
+    return classes.split(/\s+/).includes('sq');
 }
 
 // ============================================================================
