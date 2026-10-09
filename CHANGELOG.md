@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.1.2 — Links That Keep Their Edges
 
 ### 🐛 Bug Fixes
 
