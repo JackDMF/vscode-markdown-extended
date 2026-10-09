@@ -447,20 +447,31 @@ An emoji the file holds is no text but an atom (`emoji`) carrying its spelling a
 read it: the registry's emoji plugin is wrapped (`markdownItEmoji.ts`) so each token says
 what of its text token it was split from (`meta.source`), divided by the package's own
 shortcut table where several stand together, `null` where that cannot be told, which
-leaves the block a source block, as does an emoji under `^sup^` or `~sub~`. The atom is
+leaves the block a source block, as does an emoji under `^sup^` or `~sub~`; and where it
+stands (`meta.at`), from the plugin's own match: its offset in the text token it split,
+plus where that text token begins in its inline token's text, noted by the first inline
+rule as the pending text begins (`mep_text_start`), moved by a note's place for a note's
+parts. The atom is
 written held and never escaped, a word that begins a line included (`escapeLineStart`), and
 whether that spelling still reads as that emoji where it stands is asked of the parser, not
 a rule: each part of the block as the save writes it (`unitsOf`) is read by the page's
-engine, which runs the same wrapped plugin, and its atoms are matched in order to the
-emoji read, by name and spelling (`unreadEmoji`). An atom that does not read back — a
+engine, which runs the same wrapped plugin, and each atom is paired with the emoji read at
+the place the writer wrote it (`unreadEmoji`): the textblock's inline token, and in its text
+the offset the writer noted (`WrittenTextblock.atoms`), runs of white space read as the
+parser's. An emoji read elsewhere — an equal atom beside it, a typed one in superscript or a
+note — keeps no atom; where the textblocks cannot be lined up with the inline tokens read,
+the atoms are matched in order by name and spelling. An atom that does not read back — a
 letter typed against it, a `>:(` an edit moved to a line start, a `:|` in a cell, whose
 `\|` the row needs — becomes its spelling as text, on the page right after the edit, in a
 transaction appended to it (`emojiPlugin`), in the document the check of the edit reads
 (`writtenEdit`) and in the save (`withReadEmoji`), which reports one the page did not
-catch; once text, the escape above applies to it. What the parse cannot be asked is
-refused: an atom under code, superscript or subscript, in a bare link, or right after a
-hard break, where the host's definition-list rule, which the page does not run, could read
-it (`unwritableEmoji`).
+catch; once text, the escape above applies to it. An atom under code, superscript or
+subscript is refused (`unwritableEmoji`): its block would be a source block. Edit as text is
+refused where the characters would still be read as an emoji — the block would read more
+emoji beyond its atoms than before (`emojiTextStillRead`), as in a sidenote, whose plugin
+reads a smiley even escaped. A note's part is parsed apart from its paragraph and joined
+with its escapes resolved, so an escaped smiley there (`\:)`) is recorded as `:)` and a
+changed note writes it so; it reads the same.
 A link's destination and title take no backslash escape either: there a run of the
 marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
 angle link holding the marker character is written inline.

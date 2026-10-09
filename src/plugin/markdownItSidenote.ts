@@ -1,6 +1,7 @@
 import { MarkdownIt } from 'markdown-it';
 import { NOTE_SEPARATOR, NOTE_SYNTAX, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { UrlMatcher, bareUrlAt } from '../syntax/linkify';
+import { shiftPlaces } from './markdownItEmoji';
 
 /**
  * Markdown-it plugin for sidenotes, marginal notes, and sidebar annotations.
@@ -837,9 +838,9 @@ function findClosingMarker(
  * @param content - Content to process
  * @param contextName - Description for error messages (unused - kept for future debugging)
  */
-function processContentSafely(state: MarkdownItState, content: string, _contextName: string): void {
+function processContentSafely(state: MarkdownItState, content: string, _contextName: string, at = 0): void {
     try {
-        processTextWithMarkdown(state, content);
+        processTextWithMarkdown(state, content, at);
     } catch {
         // Fallback to plain text on error - silently handle to prevent plugin failures
         const fallback = state.push('text', '', 0);
@@ -885,8 +886,8 @@ function processNote(state: MarkdownItState, silent: boolean, start: number, con
         return true;
     }
 
-    // Create token structure for the note
-    createNoteTokens(state, validated.text, validated.note, config);
+    // Create token structure for the note, each part's at its place in the source.
+    createNoteTokens(state, validated.text, validated.note, config, start + 2);
 
     // Update position past the closing marker
     state.pos = endPos + 2;
@@ -906,7 +907,7 @@ function processNote(state: MarkdownItState, silent: boolean, start: number, con
  * @param note - Note content (shown as annotation)
  * @param config - Note configuration
  */
-function createNoteTokens(state: MarkdownItState, text: string, note: string, config: NoteConfig): void {
+function createNoteTokens(state: MarkdownItState, text: string, note: string, config: NoteConfig, at = 0): void {
     const type = config.type;
     
     try {
@@ -916,12 +917,12 @@ function createNoteTokens(state: MarkdownItState, text: string, note: string, co
         
         // Create reference section (inline text)
         state.push(`${type}_ref_open`, '', 1);
-        processContentSafely(state, text, `${type} reference`);
+        processContentSafely(state, text, `${type} reference`, at);
         state.push(`${type}_ref_close`, '', -1);
         
         // Create note content section (annotation)
         state.push(`${type}_content_open`, 'span', 1);
-        processContentSafely(state, note, `${type} note`);
+        processContentSafely(state, note, `${type} note`, at + text.length + 1);
         state.push(`${type}_content_close`, 'span', -1);
         
         // Create closing token
@@ -967,7 +968,7 @@ function createNoteTokens(state: MarkdownItState, text: string, note: string, co
  * processTextWithMarkdown(state, content);
  * ```
  */
-function processTextWithMarkdown(state: MarkdownItState, content: string): void {
+function processTextWithMarkdown(state: MarkdownItState, content: string, at = 0): void {
     // Handle empty content edge case
     if (!content || content.length === 0) {
         const emptyText = state.push('text', '', 0);
@@ -1008,6 +1009,8 @@ function processTextWithMarkdown(state: MarkdownItState, content: string): void 
                         newToken[key] = token[key];
                     }
                 });
+                // The places markdown-it-emoji noted are in the part's text: moved to the whole's (`markdownItEmoji.ts`).
+                shiftPlaces(newToken as never, token as never, at);
             });
         } else {
             // Fallback if parsing fails unexpectedly

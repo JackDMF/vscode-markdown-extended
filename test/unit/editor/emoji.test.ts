@@ -1,19 +1,20 @@
 import * as assert from 'assert';
-import { Fragment, Node, Slice } from 'prosemirror-model';
-import { EditorState, TextSelection } from 'prosemirror-state';
+import { DOMSerializer, Fragment, Node, Slice } from 'prosemirror-model';
+import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { undo } from 'prosemirror-history';
 import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { groupSourceBlocks, splitLines } from '../../../src/editor/blocks';
 import { definitionOf } from '../../../src/editor/inlineEngine';
 import { createPositionMap } from '../../../src/editor/positions';
-import { EMOJI_AFTER_BREAK_REFUSAL, EMOJI_LINK_REFUSAL, EMOJI_RAW_REFUSAL, unwritableEmoji } from '../../../src/editor/serialize';
+import { EMOJI_RAW_REFUSAL, onUnreadEmojiSaved, unwritableEmoji } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
-import { noteRefusal } from '../../../src/editor/webview/notes';
-import { inlineForNote } from '../../../src/editor/webview/wikiEmbeds';
-import { emojiAsTextNotice, emojiAsTextTransaction } from '../../../src/editor/webview/emoji';
+import { notePasteTransaction, noteRefusal } from '../../../src/editor/webview/notes';
+import { inlineForNote, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
+import { EMOJI_TEXT_STILL_READ, emojiAsTextNotice, emojiAsTextTransaction } from '../../../src/editor/webview/emoji';
 import { objectOfNode } from '../../../src/editor/webview/objects';
 import { emojiVerbs } from '../../../src/editor/webview/objectToolbar';
 import { hostEngine, topChildren, touched } from './helpers';
+import { FakeNode, fakeDocument } from './fakeDom';
 
 const schema = editorSchema;
 
@@ -220,7 +221,7 @@ suite('Editor: an emoji atom that an edit makes unreadable becomes text at once'
         assert.strictEqual(hostEmoji(save(typed)), 1);
     });
 
-    test('an atom made code, superscript or subscript, put in a bare link, or right after a line break is refused, with its reason', () => {
+    test('an atom made code, superscript or subscript is refused, with its reason', () => {
         const state = stateOf('a :) b\n');
         const at = atomAt(state);
         for (const mark of [schema.marks.code, schema.marks.sup, schema.marks.sub]) {
@@ -228,11 +229,6 @@ suite('Editor: an emoji atom that an edit makes unreadable becomes text at once'
             assert.strictEqual(noteRefusal(tr), EMOJI_RAW_REFUSAL, mark.name);
             assert.strictEqual(state.apply(tr).doc, state.doc, `${mark.name}: refused`);
         }
-        const link = state.tr.addMark(at, at + 1, schema.marks.link.create({ href: 'http://e.com', markup: 'linkify' }));
-        assert.strictEqual(noteRefusal(link), EMOJI_LINK_REFUSAL);
-        const broken = state.tr.insert(at, schema.nodes.hard_break.create());
-        assert.strictEqual(noteRefusal(broken), EMOJI_AFTER_BREAK_REFUSAL);
-        assert.strictEqual(state.apply(broken).doc, state.doc, 'a break before it is refused');
         assert.strictEqual(unwritableEmoji(state.doc), null);
         assert.strictEqual(noteRefusal(state.tr.addMark(at, at + 1, schema.marks.strong.create())), null, 'bold is let through');
     });
@@ -299,4 +295,178 @@ suite('Editor: an emoji atom on the page — its look, its bar and its verbs', (
         assert.strictEqual(emojiAsTextNotice(more), null);
         assert.strictEqual(emojiAsTextNotice(caret), null);
     });
+});
+
+suite('Editor: an atom is judged where it was written, not by its name', () => {
+    const md = hostEngine();
+    const save = (state: EditorState) => serializeDocument({ doc: state.doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+    const stateOf = (source: string) => EditorState.create({ doc: parseDocument(md, source).doc, plugins: editorPlugins() });
+    const atoms = (state: EditorState) => {
+        const out: [number, string][] = [];
+        state.doc.descendants((n, pos) => {
+            if (n.type.name === 'emoji') {
+                out.push([pos, n.attrs.source as string]);
+            }
+        });
+        return out;
+    };
+    /** `source` with Q typed right after its atom `k`: the atoms the page keeps, and the file the save writes. */
+    const typedAfter = (source: string, k: number) => {
+        const state = stateOf(source);
+        const typed = state.apply(state.tr.insertText('Q', atoms(state)[k][0] + 1));
+        const saved = save(typed);
+        // The page and the file agree: reopened, the saved file holds the page's atoms.
+        assert.deepStrictEqual(atoms(stateOf(saved)).map(a => a[1]), atoms(typed).map(a => a[1]), `${source}: reopened ${saved}`);
+        return { kept: atoms(typed).map(a => a[1]), saved };
+    };
+
+    test('Q typed after one of six equal atoms: only that one becomes text', () => {
+        assert.deepStrictEqual(typedAfter('a :) :) :) :) :) :) b\n', 2), { kept: [':)', ':)', ':)', ':)', ':)'], saved: 'a :) :) :)Q :) :) :) b\n' });
+    });
+
+    test('Q typed after the first of two: the second stays an atom, written as it was', () => {
+        assert.deepStrictEqual(typedAfter('x :) y :) z\n', 0), { kept: [':)'], saved: 'x :)Q y :) z\n' });
+        assert.deepStrictEqual(typedAfter('x <3 y <3 z\n', 0), { kept: ['<3'], saved: 'x <3Q y <3 z\n' });
+        assert.deepStrictEqual(typedAfter('# x :) y :) z\n', 0), { kept: [':)'], saved: '# x :)Q y :) z\n' });
+        assert.deepStrictEqual(typedAfter('| :) a | :) b |\n| ---- | ---- |\n| c    | d    |\n', 0).kept, [':)']);
+    });
+
+    test('an emoji read elsewhere — in superscript, in another note — does not keep a broken atom an atom', () => {
+        const state = stateOf('a ^b^ x :) y\n');
+        let inSup = -1;
+        state.doc.descendants((n, pos) => {
+            inSup = inSup < 0 && n.isText && n.text === 'b' ? pos + 1 : inSup;
+        });
+        const typed = state.apply(state.tr.insertText(' :) ', inSup));
+        const broken = typed.apply(typed.tr.insertText('Q', atoms(typed)[0][0] + 1));
+        assert.deepStrictEqual(atoms(broken), []);
+        assert.strictEqual(save(broken), 'a ^b \\:) ^ x :)Q y\n');
+        assert.deepStrictEqual(typedAfter('a ++r|x :) y++ b ++s|z :) w++ c\n', 0), { kept: [':)'], saved: 'a ++r|x :)Q y++ b ++s|z :) w++ c\n' });
+    });
+});
+
+suite('Editor: emoji atoms, review 1', () => {
+    const md = hostEngine();
+    const save = (state: EditorState) => serializeDocument({ doc: state.doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+    const stateOf = (source: string) => EditorState.create({ doc: parseDocument(md, source).doc, plugins: editorPlugins() });
+    const atoms = (state: EditorState) => {
+        const out: [number, string][] = [];
+        state.doc.descendants((n, pos) => {
+            if (n.type.name === 'emoji') {
+                out.push([pos, n.attrs.source as string]);
+            }
+        });
+        return out;
+    };
+    const posOf = (state: EditorState, needle: string) => {
+        let found = -1;
+        state.doc.descendants((n, pos) => {
+            if (found < 0 && n.isText && (n.text ?? '').includes(needle)) {
+                found = pos + (n.text ?? '').indexOf(needle);
+            }
+        });
+        assert.ok(found >= 0, `no ${needle}`);
+        return found;
+    };
+    const atom = (source: string, name = 'smiley', ...marks: ReturnType<typeof schema.mark>[]) => schema.nodes.emoji.create({ source, name, glyph: '😃' }, null, marks);
+
+    test('a paste into a note keeps an emoji atom of the editor\'s own copy', () => {
+        const state = stateOf('x ++r|body++ y\n');
+        const inBody = posOf(state, 'body') + 4;
+        const at = state.apply(state.tr.setSelection(TextSelection.create(state.doc, inBody)));
+        const slice = new Slice(Fragment.from(schema.nodes.paragraph.create(null, [schema.text('a '), atom(':)')])), 1, 1);
+        const pasted = at.apply(notePasteTransaction(at, slice));
+        assert.deepStrictEqual(atoms(pasted).map(a => a[1]), [':)']);
+        assert.strictEqual(save(pasted), 'x ++r|bodya :)++ y\n');
+    });
+
+    test('Edit as text is refused where the text would still read as an emoji: inside a sidenote', () => {
+        for (const [source, refused] of [['a ++r|x :) y++ b\n', true], ['a !!r|x :) y!! b\n', true], ['a $x :) y$ b\n', false], ['a :) b\n', false]] as const) {
+            const state = stateOf(source);
+            const [at] = atoms(state)[0];
+            const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
+            assert.ok(object !== null);
+            const [asText, remove] = emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined });
+            assert.strictEqual(asText.refusal, refused ? EMOJI_TEXT_STILL_READ : null, source);
+            assert.strictEqual(remove.refusal, null, source);
+        }
+    });
+
+    test('an atom right after a line break is no refusal: bold over it applies, and a >:( there becomes text, no quote', () => {
+        const state = stateOf('a\\\n:) b\n');
+        const [at] = atoms(state)[0];
+        const bold = state.tr.addMark(at, at + 1, schema.marks.strong.create());
+        assert.strictEqual(noteRefusal(bold), null);
+        const applied = state.apply(bold);
+        assert.deepStrictEqual(atoms(applied).map(a => a[1]), [':)']);
+        // The paragraph keeps the width its lines were wrapped at.
+        assert.strictEqual(save(applied), 'a\\\n**:)**\nb\n');
+        assert.deepStrictEqual(emojiOf(parseDocument(md, save(applied)).doc).map(e => e[0]), [':)']);
+        const quoteLike = stateOf('a\\\nx >:( b\n');
+        const x = posOf(quoteLike, 'x ');
+        const moved = quoteLike.apply(quoteLike.tr.delete(x, x + 2));
+        assert.deepStrictEqual(atoms(moved), []);
+        assert.strictEqual(save(moved), 'a\\\n\\>\\:( b\n');
+        assert.deepStrictEqual(topChildren(parseDocument(md, save(moved)).doc).map(n => n.type.name), ['paragraph']);
+    });
+
+    test('an atom in a link read with linkify is written in the link\'s label, where it reads back', () => {
+        const link = schema.marks.link.create({ href: 'http://e.com/', markup: 'linkify' });
+        const doc = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [schema.text('see '), schema.text('http://e.com/', [link]), atom(':)', 'smiley', link), schema.text(' y')])]);
+        assert.strictEqual(unwritableEmoji(doc), null);
+        const saved = serializeDocument({ doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+        assert.strictEqual(saved, 'see [http://e.com/:)](http://e.com/) y\n');
+        assert.deepStrictEqual(emojiOf(parseDocument(md, saved).doc).map(e => e[0]), [':)']);
+    });
+
+    test('one edit in two blocks, the second holding a note: both atoms become text, and nothing is refused', () => {
+        const state = stateOf('x :) y\n\nz :) w ++r|n++\n');
+        const [[first], [second]] = atoms(state);
+        const tr = state.tr.insertText('R', second + 1).insertText('Q', first + 1);
+        assert.strictEqual(noteRefusal(tr), null);
+        const typed = state.apply(tr);
+        assert.deepStrictEqual(atoms(typed), []);
+        assert.strictEqual(save(typed), 'x :)Q y\n\nz :)R w ++r|n++\n');
+    });
+
+    test('a pasted span with an empty spelling is no atom', () => {
+        const rule = schema.nodes.emoji.spec.parseDOM?.[0] as { getAttrs: (dom: unknown) => unknown };
+        const attrs: Record<string, string> = { 'data-mep-emoji': '', 'data-mep-emoji-name': 'smiley' };
+        assert.strictEqual(rule.getAttrs({ getAttribute: (name: string) => attrs[name] ?? null, textContent: '😃' }), false);
+    });
+
+    test('the hint names the text as it now stands around each spelling made text, in document order, whole characters', () => {
+        const typeAt = (source: string, edit: (state: EditorState) => Transaction) => {
+            const state = stateOf(source);
+            return emojiAsTextNotice(state.apply(edit(state)));
+        };
+        const undoing = '';
+        assert.strictEqual(typeAt('x :) y\n', s => s.tr.insertText('5', atoms(s)[0][0])), `5:) is no longer an emoji${undoing}`);
+        assert.strictEqual(typeAt('x :) y\n', s => s.tr.insertText('😀', atoms(s)[0][0] + 1)), `:)😀 is no longer an emoji${undoing}`);
+        assert.strictEqual(typeAt('a :) b\n\nc :) d\n', s => {
+            const [[first], [second]] = atoms(s);
+            return s.tr.insertText('R', second + 1).insertText('Q', first + 1);
+        }), `:)Q, :)R are no longer emoji${undoing}`);
+    });
+
+    test('the position map writes an atom that does not read back without the save\'s report', () => {
+        const doc = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [atom('>:(', 'angry'), schema.text(' x')])]);
+        const seen: string[][] = [];
+        onUnreadEmojiSaved(sources => seen.push([...sources]));
+        try {
+            createPositionMap({ doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+        } finally {
+            onUnreadEmojiSaved(null);
+        }
+        assert.deepStrictEqual(seen, []);
+    });
+
+    test('a copy\'s HTML carries no editor tooltip on an emoji', () => {
+        const props = wikiEmbedPastePlugin(() => true).props as unknown as { clipboardSerializer: DOMSerializer };
+        const slice = Fragment.from(schema.nodes.paragraph.create(null, [schema.text('a '), atom(':)')]));
+        const html = (props.clipboardSerializer.serializeFragment(slice, { document: fakeDocument as unknown as Document }) as unknown as FakeNode).html();
+        assert.ok(html.includes('data-mep-emoji=":)"'), html);
+        assert.ok(!html.includes('title='), html);
+    });
+
 });

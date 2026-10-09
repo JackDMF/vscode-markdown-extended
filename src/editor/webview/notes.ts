@@ -31,7 +31,8 @@ import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, 
 import { undoInputRule } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { EditorView } from 'prosemirror-view';
-import { PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
+import { Mapping } from 'prosemirror-transform';
+import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
@@ -322,8 +323,6 @@ function typingAtNoteEdge(state: EditorState): boolean {
     return around.some(n => n !== null && NOTE_NODES.has(n.type.name));
 }
 
-/** prosemirror-history's meta key; an undo restores a state that was allowed. */
-const HISTORY_META = 'history$';
 
 /**
  * Why the transaction must not be applied: it leaves a note in the range it
@@ -351,9 +350,11 @@ export function noteRefusal(tr: Transaction): string | null {
     }
     const before = tr.before;
     const written = writtenEdit(tr);
-    return unwritableInNote(written.doc, range.from, range.to, {
+    // The written document is the edit's with atoms made text (`writtenEdit`): positions are read in it.
+    const mapping = new Mapping([...tr.mapping.maps, ...written.mapping.maps]);
+    return unwritableInNote(written.doc, written.mapping.map(range.from, -1), written.mapping.map(range.to, 1), {
         doc: before,
-        mapping: tr.mapping,
+        mapping,
         rewritten: written.rewritten,
         sourceOf: pos => textblockSource(before, pos),
     }) ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to);
@@ -465,18 +466,24 @@ export function notesPlugin(embedInput: Plugin): Plugin {
                 if (noteContextAt(sel.$from) === null && noteContextAt(sel.$to) === null) {
                     return false;
                 }
-                // One line of the slice's text, with the marks typed text takes
-                // here; a wiki embed atom stays one, text stays text (`inlineForNote`).
-                const marks = view.state.storedMarks ?? sel.$from.marks();
-                const inline = inlineForNote(slice, marks);
-                const tr = inline.some(n => n.type === editorSchema.nodes.wiki_embed)
-                    ? view.state.tr.replaceSelection(new Slice(Fragment.from(inline), 0, 0))
-                    : view.state.tr.insertText(inline.map(n => n.text ?? '').join(''));
-                view.dispatch(tr.scrollIntoView());
+                view.dispatch(notePasteTransaction(view.state, slice).scrollIntoView());
                 return true;
             },
         },
     });
+}
+
+/**
+ * A paste into a note's part: one line of the slice's text, with the marks
+ * typed text takes here; a wiki embed or an emoji atom stays one, text stays
+ * text (`inlineForNote`).
+ */
+export function notePasteTransaction(state: EditorState, slice: Slice): Transaction {
+    const marks = state.storedMarks ?? state.selection.$from.marks();
+    const inline = inlineForNote(slice, marks);
+    return inline.some(n => !n.isText)
+        ? state.tr.replaceSelection(new Slice(Fragment.from(inline), 0, 0))
+        : state.tr.insertText(inline.map(n => n.text ?? '').join(''));
 }
 
 // ---------------------------------------------------------------------------

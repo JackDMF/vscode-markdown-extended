@@ -691,11 +691,12 @@ export const editorSchema = new Schema({
             leafText: node => node.attrs.glyph as string,
             parseDOM: [{
                 tag: 'span[data-mep-emoji]',
-                getAttrs: (dom: HTMLElement) => ({
-                    source: dom.getAttribute('data-mep-emoji') ?? '',
+                // No spelling, no atom: the span is read as its text.
+                getAttrs: (dom: HTMLElement) => (dom.getAttribute('data-mep-emoji') ?? '') === '' ? false : {
+                    source: dom.getAttribute('data-mep-emoji'),
                     name: dom.getAttribute('data-mep-emoji-name') ?? '',
                     glyph: dom.textContent ?? '',
-                }),
+                },
             }],
             toDOM(node): DOMOutputSpec {
                 const source = node.attrs.source as string;

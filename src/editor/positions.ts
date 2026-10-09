@@ -160,7 +160,8 @@ export interface PositionMap {
 
 /** The mapping for the document `parsed` holds, against the text it serializes to with `options`. */
 export function createPositionMap(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions): PositionMap {
-    return new DocumentPositions(parsed.doc, serializeLayout(parsed, options));
+    // The page's text as written, not the save's fallback for an atom the page should have made text (`withReadEmoji`).
+    return new DocumentPositions(parsed.doc, serializeLayout(parsed, options, false));
 }
 
 /**

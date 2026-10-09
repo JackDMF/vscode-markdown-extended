@@ -16,7 +16,10 @@
 
 - An emoji inside `^sup^` or `~sub~` still keeps its paragraph a source block.
 - A smiley typed in a sidenote or marginal note reads as an emoji even escaped, and opens as one.
-- An emoji cannot be placed right after a line break, nor made code, superscript, subscript or part of a bare address.
+- An emoji cannot be made code, superscript or subscript.
+- Edit as text is unavailable for an emoji inside a sidenote or marginal note, which would still show it.
+- A changed note writes an escaped smiley (`\:)`, `&#58;)`) without its escape; it shows the same.
+- `x &#97;:) y` shows an emoji; any edit in that paragraph turns it into text.
 - `<\3` is never read as an emoji, so it stays text.
 
 ## v4.1.2 — Links That Keep Their Edges

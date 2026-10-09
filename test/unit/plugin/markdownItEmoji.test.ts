@@ -120,3 +120,43 @@ suite('MarkdownItEmoji: every emoji the host reads carries its spelling', () => 
         assert.deepStrictEqual(emojisOf(off, 'hi :) there' + NL), []);
     });
 });
+
+suite('MarkdownItEmoji: every emoji the host reads carries where it stands', () => {
+    /** Each emoji of `source` with its recorded place, and what the inline token's text holds there. */
+    const placed = (md: MarkdownIt.MarkdownIt, source: string) => {
+        const out: { source: unknown; at: unknown; there: string | null }[] = [];
+        for (const inline of md.parse(source, {}) as unknown as { type: string; content: string; children: EmojiToken[] | null }[]) {
+            if (inline.type !== 'inline') {
+                continue;
+            }
+            const walk = (tokens: EmojiToken[] | null) => {
+                for (const t of tokens ?? []) {
+                    if (t.type === 'emoji') {
+                        const meta = t.meta as { source?: string | null; at?: number | null } | null;
+                        const at = meta?.at ?? null;
+                        const spelled = meta?.source ?? '';
+                        out.push({ source: meta?.source, at, there: typeof at === 'number' ? inline.content.slice(at, at + spelled.length) : null });
+                    }
+                    walk(t.children);
+                }
+            };
+            walk(inline.children);
+        }
+        return out;
+    };
+
+    test('its offset in the inline text it was read from, where its spelling stands', () => {
+        const md = preview();
+        for (const [source, spelled] of CASES) {
+            const found = placed(md, source + NL);
+            assert.deepStrictEqual(found.map(f => f.source), spelled, source);
+            for (const f of found) {
+                assert.strictEqual(f.there, f.source, `${source}: ${String(f.source)} at ${String(f.at)}`);
+            }
+        }
+        // Equal spellings apart: each its own place.
+        assert.deepStrictEqual(placed(md, 'x :) y :) z\n').map(f => f.at), [2, 7]);
+        assert.deepStrictEqual(placed(md, 'a ++r|x :) y++ b ++s|z :) w++ c\n').map(f => f.at), [8, 23]);
+        assert.deepStrictEqual(placed(md, 'see http://e.com/ :) and :)\n').map(f => f.at), [18, 25]);
+    });
+});

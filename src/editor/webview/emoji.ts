@@ -1,7 +1,7 @@
 import { EditorState, Plugin, PluginKey, TextSelection, Transaction } from 'prosemirror-state';
-import { PRESERVE_SOURCE_META, asRepair, fidelityPlan, isRepair } from '../fidelity';
+import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, fidelityPlan, isRepair } from '../fidelity';
 import { editorSchema } from '../schema';
-import { unreadEmojiAsText } from '../serialize';
+import { emojiBeyondAtoms, unreadEmojiAsText } from '../serialize';
 import { showHint } from './hint';
 
 /**
@@ -12,7 +12,7 @@ import { showHint } from './hint';
  * plain text on the page at once, in a transaction appended to the edit, so
  * one undo takes both back; the file then holds that text, which reads as no
  * emoji. It is not spelled otherwise (`:smiley:`): what was written stays.
- * The caret hint says so, once, naming what the page now shows
+ * The caret hint says so, once, naming the text as it now stands
  * (`:)Z is no longer an emoji`).
  *
  * Decided here, on the page, right after the edit, by the parser: each
@@ -37,10 +37,7 @@ export const emojiPluginKey = new PluginKey<EmojiNotice | null>('mepEmoji');
 /** The meta on the transaction that made atoms text: what each became, with the character after it, as the page then shows it. */
 export const EMOJI_AS_TEXT_META = 'mepEmojiAsText';
 
-/** prosemirror-history's meta key: an undo or redo puts back a state judged already. */
-const HISTORY_META = 'history$';
-
-/** The hint for what an edit made text: each, with the character after it, as the page now shows it. */
+/** The hint for what an edit made text: each as the text now stands around it. */
 function noticeOf(shown: readonly string[]): string {
     return shown.length === 1 ? `${shown[0]} is no longer an emoji` : `${shown.join(', ')} are no longer emoji`;
 }
@@ -83,6 +80,26 @@ export function emojiPlugin(): Plugin<EmojiNotice | null> {
             },
         }),
     });
+}
+
+/** Why Edit as text is refused where the characters would still read as an emoji (`emojiTextStillRead`). */
+export const EMOJI_TEXT_STILL_READ = 'Here its characters would still be read as an emoji, so it cannot be made text.';
+
+/**
+ * Why `tr`, an atom made text (`emojiAsTextTransaction`), is refused: the
+ * block holding it, as the save writes it, would read more emoji beyond its
+ * atoms than before (`emojiBeyondAtoms`) — the characters would still be an
+ * emoji to the preview, as in a sidenote, whose plugin reads one even
+ * escaped. Asked of the parser, not of where the atom stands.
+ */
+export function emojiTextStillRead(state: EditorState, tr: Transaction): string | null {
+    const from = tr.mapping.invert().map(tr.selection.from);
+    const $before = state.doc.resolve(Math.min(from, state.doc.content.size));
+    const $after = tr.doc.resolve(Math.min(tr.selection.from, tr.doc.content.size));
+    if ($before.depth === 0 || $after.depth === 0) {
+        return null;
+    }
+    return emojiBeyondAtoms($after.node(1)) > emojiBeyondAtoms($before.node(1)) ? EMOJI_TEXT_STILL_READ : null;
 }
 
 /**
