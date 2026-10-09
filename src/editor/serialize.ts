@@ -1505,6 +1505,15 @@ let atomCollector: { node: Node; at: number }[] | null = null;
 interface WrittenTextblock {
     text: string;
     sidebars: ReadSidebar[];
+    /**
+     * The textblock as the save writes it with every character the writer
+     * adds that is no white space — a paragraph's line-start escapes
+     * (`wrapInline`) and brace escapes (`escapedLiterals`), as they report
+     * them; a heading's and a cell's are in `text` already — or `null` where
+     * those reports do not line up with the wrapped text.
+     */
+    atomText: string | null;
+    /** Where each emoji atom's spelling starts in `atomText`. */
     atoms: { node: Node; at: number }[];
 }
 
@@ -1677,11 +1686,69 @@ function writtenTextblock(textblock: Node): WrittenTextblock {
     } else {
         written = cellText(textblock, spelled);
     }
+    const sidebars = seams.map((seam, i) => ({ kind: seam.node.type.name, open: written.at[2 * i], close: written.at[2 * i + 1] }));
+    if (name !== 'paragraph') {
+        return { text: written.text, sidebars, atomText: written.text, atoms: atoms.map((atom, i) => ({ node: atom.node, at: written.at[2 * seams.length + i] })) };
+    }
+    const asWritten = paragraphAsWritten(textblock, inline, atoms.map(atom => atom.at));
     return {
         text: written.text,
-        sidebars: seams.map((seam, i) => ({ kind: seam.node.type.name, open: written.at[2 * i], close: written.at[2 * i + 1] })),
-        atoms: atoms.map((atom, i) => ({ node: atom.node, at: written.at[2 * seams.length + i] })),
+        sidebars,
+        atomText: asWritten?.text ?? null,
+        atoms: atoms.map((atom, i) => ({ node: atom.node, at: asWritten?.at[i] ?? -1 })),
     };
+}
+
+/**
+ * A paragraph's inline Markdown (`inline`, hold markers in it) as the save
+ * writes it, but for its white space, with the places `at` of `inline` moved
+ * along: the backslash the wrap puts at a line start where it reports one
+ * (`wrapInline`), the hold markers out, then each backslash the brace escape
+ * puts in the wrapped text (`escapedLiterals`), placed by the characters that
+ * are no white space, which the wrap writes as they were. `null` where those
+ * do not line up. The wrap's width is the paragraph's own at the line start;
+ * where it starts a line does not depend on it.
+ */
+function paragraphAsWritten(node: Node, inline: string, at: readonly number[]): Spelled | null {
+    const limit = (node.attrs.wrapWidth as number | null) ?? Math.max(writeOptions.defaultWrap, (node.attrs.lineWidth as number | null) ?? 0);
+    const inserted: number[] = [];
+    const wrapped = wrapInline(inline, limit, limit, inserted).join('\n');
+    // The line-start backslashes, before the characters the wrap reported, then the holds out.
+    let lined: Spelled = { text: inline, at: [...at] };
+    for (const place of [...inserted].sort((a, b) => b - a)) {
+        lined = { text: `${lined.text.slice(0, place)}\\${lined.text.slice(place)}`, at: lined.at.map(p => (p >= place ? p + 1 : p)) };
+    }
+    const plain = respelled(lined, HOLD_RE, () => '');
+    // The characters that are no white space stand in `wrapped` in the order they stand in `plain`.
+    const braces = escapedLiterals(node, wrapped, 'paragraph').at;
+    if (braces.length === 0) {
+        return plain;
+    }
+    const ofWrapped = new Map<number, number>();
+    let j = 0;
+    for (let i = 0; i < wrapped.length; i++) {
+        if (isBlank(wrapped[i])) {
+            continue;
+        }
+        while (j < plain.text.length && isBlank(plain.text[j])) {
+            j++;
+        }
+        if (plain.text[j] !== wrapped[i]) {
+            return null;
+        }
+        ofWrapped.set(i, j++);
+    }
+    let text = plain.text;
+    let places = plain.at;
+    for (const brace of [...braces].sort((a, b) => b - a)) {
+        const place = ofWrapped.get(brace);
+        if (place === undefined) {
+            return null;
+        }
+        text = `${text.slice(0, place)}\\${text.slice(place)}`;
+        places = places.map(p => (p >= place ? p + 1 : p));
+    }
+    return { text, at: places };
 }
 
 /**
@@ -3356,8 +3423,9 @@ function holdsEmoji(node: Node): boolean {
  * and each atom is paired with the emoji read at the place its spelling was
  * written: the textblock's inline token (one per paragraph with text, heading
  * and cell, in order), and in that token's text the offset the writer wrote it
- * at (`WrittenTextblock.atoms`) — the textblock as written, its runs of white
- * space read as the parser's (the wrap breaks lines at spaces), the literal
+ * at (`WrittenTextblock.atoms`) — the textblock as written, every character
+ * the writer adds as it reports it, its runs of white space read as the
+ * parser's (the wrap breaks lines at spaces), the literal
  * the save writes after it (`WrittenUnit.literals`) read off the end — against
  * the offset the plugin's own match gives the emoji (`markdownItEmoji.ts`).
  *
@@ -3423,7 +3491,7 @@ function atomsReadInPlace(unit: WrittenUnit, read: UnitRead): Map<Node, (boolean
             continue;
         }
         const written = writtenOf(node);
-        const places = written.atoms.length === count ? placesInRead(written.text, read.texts[i] ?? '', unit.literals.map(l => l.literal)) : null;
+        const places = written.atoms.length === count && written.atomText !== null ? placesInRead(written.atomText, read.texts[i] ?? '', unit.literals.map(l => l.literal)) : null;
         if (places === null) {
             return null;
         }
@@ -3469,10 +3537,9 @@ function isBlank(ch: string): boolean {
  * Where each place of `written`, a textblock as the save writes it unwrapped,
  * stands in `read`, the text of the inline token the parser made of it: the
  * same characters, but runs of white space (the wrap writes a line break for a
- * space, a run of spaces as one; the parser trims the ends), a backslash a
- * line start takes, and one the paragraph's writer puts before a brace
- * markdown-it-attrs would take (`escapedLiterals`, which it asks of the
- * wrapped text). `null` where they differ otherwise.
+ * space, a run of spaces as one; the parser trims the ends). Every other
+ * character the writer adds is in `written` already, as the writer reported
+ * it (`WrittenTextblock.atomText`). `null` where they differ otherwise.
  */
 function placesIn(written: string, read: string): Int32Array | null {
     const places = new Int32Array(written.length + 1).fill(-1);
@@ -3494,10 +3561,6 @@ function placesIn(written: string, read: string): Int32Array | null {
         }
         if (j < read.length && written[i] === read[j]) {
             places[i++] = j++;
-            continue;
-        }
-        if (j < read.length && read[j] === '\\' && (j === 0 || read[j - 1] === '\n' || ((written[i] === '{' || written[i] === '}') && read[j + 1] === written[i]))) {
-            j++;
             continue;
         }
         return null;

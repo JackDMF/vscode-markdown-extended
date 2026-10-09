@@ -587,3 +587,55 @@ suite('Editor: emoji atoms, review 2', () => {
         }
     });
 });
+
+suite('Editor: emoji atoms, review 3 — what the wrap writes at a line start is reported, not predicted', () => {
+    const md = hostEngine();
+    const save = (state: EditorState) => serializeDocument({ doc: state.doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+    const stateOf = (source: string) => EditorState.create({ doc: parseDocument(md, source).doc, plugins: editorPlugins() });
+    const atoms = (state: EditorState) => {
+        const out: [number, string][] = [];
+        state.doc.descendants((n, pos) => {
+            if (n.type.name === 'emoji') {
+                out.push([pos, n.attrs.source as string]);
+            }
+        });
+        return out;
+    };
+    const BS = '\\';
+    const verbsAt = (state: EditorState, k: number) => {
+        const [at] = atoms(state)[k];
+        const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
+        assert.ok(object !== null);
+        return emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined }).map(v => v.refusal);
+    };
+
+    test('an ordered marker the wrap escapes at a line start, after a break or first, keeps the paragraph editable', () => {
+        for (const source of [
+            `Termine:${BS}\n3. Mai :)\n`, 'Termine:  \n3. Mai :)\n', `1${BS}) a :)\n`, `x${BS}\n12. a :)\n`, `x${BS}\n3) a :)\n`,
+        ]) {
+            const state = stateOf(source);
+            assert.deepStrictEqual(topChildren(state.doc).map(n => n.type.name), ['paragraph'], source);
+            assert.deepStrictEqual(atoms(state).map(a => a[1]), [':)'], source);
+            assert.notStrictEqual(unreadEmoji(state.doc.firstChild as Node), null, `${source}: placed`);
+            const end = state.doc.child(0).nodeSize - 1;
+            const tr = state.tr.insertText(' ok', end);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const typed = state.apply(tr);
+            assert.deepStrictEqual(atoms(typed).map(a => a[1]), [':)'], `${source}: the atom stays`);
+            assert.deepStrictEqual(atoms(stateOf(save(typed))).map(a => a[1]), [':)'], `${source}: ${save(typed)}`);
+            assert.deepStrictEqual(verbsAt(state, 0), [null, null], `${source}: both verbs offered`);
+        }
+    });
+
+    test('two atoms after an ordered marker at a line start: breaking one leaves the other as it was', () => {
+        const state = stateOf(`Termine:${BS}\n3. Mai :) und :smile:\n`);
+        const tr = state.tr.insertText('Q', atoms(state)[0][0] + 1);
+        assert.strictEqual(noteRefusal(tr), null);
+        const typed = state.apply(tr);
+        assert.deepStrictEqual(atoms(typed).map(a => a[1]), [':smile:']);
+        // Wrapped at the width the paragraph's lines were written at.
+        assert.strictEqual(save(typed), `Termine:${BS}\n3${BS}. Mai :)Q\nund :smile:\n`);
+        assert.deepStrictEqual(verbsAt(state, 0), [null, null]);
+        assert.deepStrictEqual(verbsAt(state, 1), [null, null]);
+    });
+});

@@ -461,8 +461,10 @@ whether that spelling still reads as that emoji where it stands is asked of the 
 a rule: each part of the block as the save writes it (`unitsOf`) is read by the page's
 engine, which runs the same wrapped plugin, and each atom is paired with the emoji read at
 the place the writer wrote it (`unreadEmoji`): the textblock's inline token, and in its text
-the offset the writer noted (`WrittenTextblock.atoms`), runs of white space read as the
-parser's, a literal the save writes after it (`{.c}`, `{#x}`) read off the end of the
+the offset the writer noted (`WrittenTextblock.atoms`), with every character the writer
+adds as it reports it — the backslash the wrap puts at a line start (`wrapInline`'s
+`inserted`, an ordered marker's `3\.` too), the brace escapes (`escapedLiterals`) — runs of
+white space read as the parser's, a literal the save writes after it (`{.c}`, `{#x}`) read off the end of the
 parser's text. An emoji read elsewhere — an equal atom beside it, a typed one in a note —
 keeps no atom. An atom no emoji of its name and spelling was read for anywhere in its part
 does not read back; one that cannot be placed — an emoji of its kind read with no known
