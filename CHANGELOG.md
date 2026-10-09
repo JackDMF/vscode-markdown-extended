@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.3.0 — Notes That Know Their Letter
 
 ### ✨ Features
 
