@@ -542,7 +542,10 @@ export const EMOJI_UNPLACED_REASON = 'an emoji the editor cannot place in what i
  * cannot place as read (`unreadEmoji`, `null`) a source block instead, as
  * one holding an emoji was before the editor made atoms of them
  * (`EMOJI_UNPLACED_REASON`): written as it was read, drawn as the host
- * renders it. The judge reads with the page's current engine.
+ * renders it. The judge reads with the current inline definition
+ * (`currentInlineDefinition()`): on the host, where nothing sets one, the
+ * default (`DEFAULT_INLINE_ENGINE`, `math: false`), not the definition the
+ * host posts with the document.
  */
 function withUnplacedAsSource(doc: Node, blocks: readonly SourceBlock[], render: (block: SourceBlock) => string): Node {
     if (judgingEmoji) {

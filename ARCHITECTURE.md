@@ -461,10 +461,10 @@ whether that spelling still reads as that emoji where it stands is asked of the 
 a rule: each part of the block as the save writes it (`unitsOf`) is read by the page's
 engine, which runs the same wrapped plugin, and each atom is paired with the emoji read at
 the place the writer wrote it (`unreadEmoji`): the textblock's inline token, and in its text
-the offset the writer noted (`WrittenTextblock.atoms`), with every character the writer
-adds as it reports it — the backslash the wrap puts at a line start (`wrapInline`'s
-`inserted`, an ordered marker's `3\.` too), the brace escapes (`escapedLiterals`) — runs of
-white space read as the parser's, a literal the save writes after it (`{.c}`, `{#x}`) read off the end of the
+the offset the writer noted (`WrittenTextblock.atoms`), with the backslash the wrap puts
+at a line start as the wrap reports it (`wrapInline`'s `inserted`, an ordered marker's `3\.`
+too) and the brace escapes recomputed by the same function (`escapedLiterals`) on the
+paragraph wrapped at its own width — runs of white space read as the parser's, a literal the save writes after it (`{.c}`, `{#x}`) read off the end of the
 parser's text. An emoji read elsewhere — an equal atom beside it, a typed one in a note —
 keeps no atom. An atom no emoji of its name and spelling was read for anywhere in its part
 does not read back; one that cannot be placed — an emoji of its kind read with no known
@@ -473,7 +473,10 @@ made text: the edit is refused (`unplacedEmoji`, `unplacedRefusal`), and the pag
 the reason names the atom, a smiley in superscript where that is the cause, and the ways out
 that are open, each tried on the document the edit started from (Edit as text, Remove emoji).
 A block whose atoms cannot be placed as the file has them opens as a source block
-(`withUnplacedAsSource` in `parse.ts`), as one holding an emoji did before atoms.
+(`withUnplacedAsSource` in `parse.ts`), as one holding an emoji did before atoms. That
+check reads with the current inline definition (`currentInlineDefinition()`): on the host,
+where nothing sets one, the default (`DEFAULT_INLINE_ENGINE`, `math: false`), not the
+definition the host posts with the document.
 An atom that does not read back — a
 letter typed against it, a `>:(` an edit moved to a line start, a `:|` in a cell, whose
 `\|` the row needs — becomes its spelling as text, on the page right after the edit, in a

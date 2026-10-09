@@ -13,7 +13,7 @@ suite('Editor: emoji atoms, review 3 — a block whose atoms cannot be placed op
     const md = hostEngine();
 
     test('a block the judge cannot place an atom of, as read, opens as a source block, the others as they were', () => {
-        // Constructed: no input the judge cannot place is known since the wrap reports its escapes, so the judge says so.
+        // Constructed: no input the judge cannot place at load is known since the wrap reports its escapes, so the judge says so.
         const source = 'a :) b\n\nc :smile: d\n\ne f\n';
         const judge = serializeModule.unreadEmoji;
         const stub = sinon.stub(serializeModule, 'unreadEmoji').callsFake(block => (block.textContent.includes('a') ? null : judge(block)));
