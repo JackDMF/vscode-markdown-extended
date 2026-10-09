@@ -7,6 +7,7 @@ import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
 import { Command, Plugin } from 'prosemirror-state';
 import { fidelityPlugin } from '../fidelity';
+import { emojiPlugin } from './emoji';
 import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
@@ -146,6 +147,8 @@ export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds
         wikiEmbedPastePlugin(wikiEmbeds),
         admonitionTitlesPlugin(),
         ...tablesPlugins(),
+        // Before the fidelity plugin, which then clears `src` for the whole edit, this plugin's included.
+        emojiPlugin(),
         fidelityPlugin(),
     ];
 }

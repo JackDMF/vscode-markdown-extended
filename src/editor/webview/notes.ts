@@ -34,7 +34,7 @@ import { EditorView } from 'prosemirror-view';
 import { PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
-import { RAW_TEXT_MARKS, unwritableEmbed, unwritableInNote } from '../serialize';
+import { RAW_TEXT_MARKS, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { showHint } from './hint';
 import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
 
@@ -339,7 +339,8 @@ const HISTORY_META = 'history$';
  * puts back a document that was written or allowed. Nor is a repair a plugin
  * appends (`isRepair`): it follows a transaction checked here, and the
  * fidelity plugin's applies the very plan checked. Then a wiki embed under a
- * raw mark in that range (`unwritableEmbed`). The one check the filter makes,
+ * raw mark in that range (`unwritableEmbed`), and an emoji under one, in a bare
+ * link or after a line break (`unwritableEmoji`). The one check the filter makes,
  * and the one a verb asks before it is dispatched, so a button is disabled with
  * the filter's own reason.
  */
@@ -355,7 +356,7 @@ export function noteRefusal(tr: Transaction): string | null {
         mapping: tr.mapping,
         rewritten: written.rewritten,
         sourceOf: pos => textblockSource(before, pos),
-    }) ?? unwritableEmbed(tr.doc, range.from, range.to);
+    }) ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to);
 }
 
 /**

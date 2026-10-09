@@ -8,7 +8,7 @@ import {
     serializeDocument,
     fidelityPlugin,
 } from '../../../src/editor';
-import { OrderedInlineState, serializeNode } from '../../../src/editor/serialize';
+import { OrderedInlineState, UNREAD_EMOJI_SAVED, onUnreadEmojiSaved, serializeNode, unreadEmoji } from '../../../src/editor/serialize';
 import { MarkdownSerializerState } from 'prosemirror-markdown';
 import { Node } from 'prosemirror-model';
 import { EditorState } from 'prosemirror-state';
@@ -702,5 +702,146 @@ suite('Editor serializer for changed blocks', () => {
         assert.strictEqual(out, '# H\nAlpha\n\nbeta\n');
         const reread = topChildren(parseDocument(md, out).doc).map(n => `${n.type.name}:${n.textContent}`);
         assert.deepStrictEqual(reread, ['heading:H', 'paragraph:Alpha', 'paragraph:beta']);
+    });
+});
+
+/**
+ * An emoji the file holds is an atom written back as spelled, unescaped; the
+ * save reads every block holding one back with the page's engine and writes an
+ * atom that would not read as itself as its spelling in text (`unreadEmoji`).
+ */
+suite('Editor serializer: emoji atoms are written as spelled and judged by the parser', () => {
+    const md = hostEngine();
+    const save = (doc: Node) => serializeDocument({ doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+    const emoji = (source: string, name: string, ...marks: Array<ReturnType<typeof schema.mark>>) => schema.nodes.emoji.create({ source, name, glyph: 'G' }, null, marks);
+    const para = (...inline: Node[]) => schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, inline)]);
+    /** The emoji the host reads in `markdown`: name and spelling, in order. */
+    const hostReads = (markdown: string) => {
+        const out: string[] = [];
+        const walk = (tokens: { type: string; markup: string; meta: unknown; children: unknown }[] | null) => {
+            for (const t of tokens ?? []) {
+                if (t.type === 'emoji') {
+                    out.push(`${t.markup}=${String((t.meta as { source?: string } | null)?.source)}`);
+                }
+                walk(t.children as never);
+            }
+        };
+        walk(md.parse(markdown, {}) as never);
+        return out;
+    };
+    /** Run `body` with what the save reports recorded, as the console would show it. */
+    const warned = (body: () => void): string[] => {
+        const seen: string[] = [];
+        onUnreadEmojiSaved(sources => seen.push(`${UNREAD_EMOJI_SAVED} ${sources.join(' ')}`));
+        try {
+            body();
+        } finally {
+            onUnreadEmojiSaved(null);
+        }
+        return seen;
+    };
+
+    test('a typed :) is escaped and reads no emoji; one from the file is written as it was and reads one', () => {
+        assert.strictEqual(save(para(text('hi :) there'))), 'hi \\:) there\n');
+        assert.deepStrictEqual(hostReads('hi \\:) there\n'), []);
+        assert.strictEqual(save(para(text('hi '), emoji(':)', 'smiley'), text(' there'))), 'hi :) there\n');
+        assert.deepStrictEqual(hostReads('hi :) there\n'), ['smiley=:)']);
+        // Both in one line: the text stays text, the atom an atom, each written back exactly.
+        const source = 'a \\:) b :)\n';
+        const parsed = parseDocument(md, source);
+        const kinds: string[] = [];
+        parsed.doc.firstChild?.forEach(n => kinds.push(n.isText ? `text:${n.text}` : `${n.type.name}:${n.attrs.source as string}`));
+        assert.deepStrictEqual(kinds, ['text:a :) b ', 'emoji::)']);
+        assert.strictEqual(serializeDocument(allTouched(parsed), { defaultWrap: 90 }), source);
+    });
+
+    test('an atom that would open a quote at the line start is written as text, never a quote, and the save reports it', () => {
+        let out = '';
+        const seen = warned(() => {
+            out = save(para(emoji('>:(', 'angry'), text(' x')));
+        });
+        // The shortcut escape breaks it as typed text, the line start escape keeps it from a quote.
+        assert.strictEqual(out, '\\>\\:( x\n');
+        assert.deepStrictEqual(topChildren(parseDocument(md, out).doc).map(n => n.type.name), ['paragraph']);
+        assert.strictEqual(parseDocument(md, out).doc.textContent, '>:( x');
+        assert.deepStrictEqual(seen, [`${UNREAD_EMOJI_SAVED} >:(`]);
+        // Where it reads, nothing is reported.
+        assert.deepStrictEqual(warned(() => save(para(text('x '), emoji('>:(', 'angry')))), []);
+    });
+
+    test('an atom a letter is glued to is written as text, as the host reads it', () => {
+        let out = '';
+        warned(() => {
+            out = save(para(text('hi '), emoji(':)', 'smiley'), text('Z')));
+        });
+        assert.strictEqual(out, 'hi :)Z\n');
+        assert.deepStrictEqual(hostReads(out), []);
+        assert.deepStrictEqual(unreadEmoji(para(text('hi '), emoji(':)', 'smiley'), text('Z')).firstChild as Node), [4]);
+        assert.deepStrictEqual(unreadEmoji(para(text('hi '), emoji(':)', 'smiley')).firstChild as Node), []);
+    });
+
+    test('a :| atom in a table cell does not read back: the row needs its | escaped, and the engine reads :\\| there as text', () => {
+        // The table plugin ends the cell at a bare `|`; escaped, the inline parse gets `:` and an escape, no emoji.
+        assert.deepStrictEqual(hostReads('| a | b |\n|---|---|\n| x :| | y |\n'), []);
+        assert.deepStrictEqual(hostReads('| a | b |\n|---|---|\n| x :\\| | y |\n'), []);
+        const doc = schema.topNodeType.create(null, [schema.nodes.table.create(null, [
+            schema.nodes.table_row.create(null, [schema.nodes.table_header.create(null, [text('a')]), schema.nodes.table_header.create(null, [text('b')])]),
+            schema.nodes.table_row.create(null, [schema.nodes.table_cell.create(null, [emoji(':|', 'neutral_face')]), schema.nodes.table_cell.create(null, [text('y')])]),
+        ])]);
+        let out = '';
+        const seen = warned(() => {
+            out = save(doc);
+        });
+        assert.strictEqual(out, '| a   | b |\n| --- | - |\n| :\\| | y |\n');
+        assert.deepStrictEqual(seen, [`${UNREAD_EMOJI_SAVED} :|`]);
+        assert.strictEqual(parseDocument(md, out).doc.textContent, 'ab:|y');
+    });
+
+    test('adjacent atoms touched are written back unchanged', () => {
+        for (const source of [':):-)\n', 'x :) :) :) y\n', 'a :):smile: b\n', ':smile::smile::smile:\n', 'x >:(:( y\n']) {
+            const parsed = parseDocument(md, source);
+            assert.deepStrictEqual(warned(() => assert.strictEqual(serializeDocument(allTouched(parsed), { defaultWrap: 90 }), source, source)), [], source);
+        }
+    });
+
+    test('every write holding atoms is judged: the host reads exactly the atoms written as atoms', () => {
+        const docs: Node[] = [
+            para(emoji(':)', 'smiley'), text(' a')),
+            para(text('a'), emoji(':)', 'smiley')),
+            para(text('a '), emoji(':)', 'smiley'), text('8-)')),
+            para(text('a '), emoji(':)', 'smiley'), emoji('8-)', 'sunglasses')),
+            para(text('5$'), emoji(':)', 'smiley')),
+            para(text('a '), emoji('<3', 'heart'), text('3')),
+            para(text('http://e.com/'), emoji(':)', 'smiley')),
+            para(text('x '), emoji(':smile:', 'smile', schema.marks.strong.create()), text(' y')),
+            para(text('**'), emoji(':)', 'smiley'), text('**')),
+            para(emoji(':)', 'smiley', schema.marks.mark.create())),
+            para(text('a '), schema.nodes.sidenote.create(null, [schema.nodes.note_ref.create(null, [emoji(':|', 'neutral_face')]), schema.nodes.sidenote_body.create(null, [text('n '), emoji(':)', 'smiley')])]), text(' b')),
+            para(text('a '), schema.nodes.left_sidebar.create(null, [text('x '), emoji(':$', 'unamused')]), text(' b')),
+        ];
+        for (const doc of docs) {
+            let out = '';
+            const seen = warned(() => {
+                out = save(doc);
+            });
+            const atoms: string[] = [];
+            doc.descendants(n => {
+                if (n.type.name === 'emoji') {
+                    atoms.push(`${n.attrs.name as string}=${n.attrs.source as string}`);
+                }
+            });
+            const read = hostReads(out);
+            const asText = seen.length === 0 ? 0 : seen[0].slice(UNREAD_EMOJI_SAVED.length).trim().split(' ').length;
+            // Every emoji the host reads is an atom, in order, and every other atom was written as text, and said so.
+            let k = 0;
+            for (const r of read) {
+                while (k < atoms.length && atoms[k] !== r) {
+                    k++;
+                }
+                assert.ok(k < atoms.length, `${out}: ${r} read, which no atom is`);
+                k++;
+            }
+            assert.strictEqual(read.length + asText, atoms.length, `${out}: ${read.join(',')} of ${atoms.join(',')}, ${seen.join(';')}`);
+        }
     });
 });

@@ -421,6 +421,9 @@ export function inlineForNote(slice: Slice, marks: readonly Mark[]): Node[] {
             pushText(node.text ?? '');
         } else if (node.type === editorSchema.nodes.wiki_embed && !raw) {
             nodes.push(editorSchema.nodes.wiki_embed.create(node.attrs, null, marks));
+        } else if (node.type === editorSchema.nodes.emoji) {
+            // An emoji stays one; under a raw mark, which cannot hold one, it is its spelling.
+            nodes.push(raw ? editorSchema.text(node.attrs.source as string, marks) : editorSchema.nodes.emoji.create(node.attrs, null, marks));
         } else if (node.isLeaf) {
             pushText(node.type.spec.leafText?.(node) ?? ' ');
         }

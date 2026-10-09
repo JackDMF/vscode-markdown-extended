@@ -644,8 +644,7 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
 });
 
 suite('Editor notes: the page reads what it writes, with the host\'s engine', () => {
-    // Without emoji: the full engine reads `:/` after a linkified address as an emoji in the file, which
-    // makes the paragraph a source block until emoji is editable (see 'today a source block' below).
+    // Without emoji, as `plugins.disabled: emoji` builds it.
     const noEmoji = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-emoji'), extend: [] });
     const read = (source: string, md = hostEngine()) => {
         setInlineEngine(inlineEngineDefinition(md));
@@ -740,28 +739,35 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
         assert.deepStrictEqual(sidebarsIn(text(glued)), ['left_sidebar']);
     });
 
-    test('a sidebar the parser read after an address that is no URL to linkify stays editable', () => {
+    test('a sidebar the parser read after an address that is no URL to linkify stays editable, and the emoji after the address with it', () => {
         for (const source of ['See http://e~http://f.com/$x$ here.\n', 'See http://ühttp://f.com/$x$ here.\n']) {
-            const state = read(source, noEmoji);
-            assert.deepStrictEqual(sidebarsIn(source, noEmoji), ['left_sidebar'], source);
+            const state = read(source);
+            assert.deepStrictEqual(sidebarsIn(source), ['left_sidebar'], source);
             const tr = typeAtEnd(state);
             assert.strictEqual(noteRefusal(tr), null, source);
             const typed = state.apply(tr);
-            // The `:/` after the link starts a text token: the full engine reads it as an emoji
-            // (`confused`), so the save escapes it; under `noEmoji` the escape is accepted noise.
+            // The `:/` after the link starts a text token: the host reads it as an emoji (`confused`),
+            // which the page holds as an atom and the save writes back as spelled.
             const emojiIn = (markdown: string) => hostEngine().parse(markdown, {}).flatMap(t => t.children ?? []).filter(t => t.type === 'emoji').length;
             assert.strictEqual(emojiIn(source), 1, `${source}: the full engine reads an emoji`);
-            assert.strictEqual(text(typed), source.replace('here.', 'here.Z').replace('http://f.com', 'http\\://f.com'), source);
-            assert.strictEqual(emojiIn(text(typed)), 0, `${source}: the save reads none`);
-            assert.deepStrictEqual(sidebarsIn(text(typed), noEmoji), ['left_sidebar'], `${source}: read back`);
+            assert.strictEqual(text(typed), source.replace('here.', 'here.Z'), source);
+            assert.strictEqual(emojiIn(text(typed)), 1, `${source}: the save reads it back`);
+            assert.deepStrictEqual(sidebarsIn(text(typed)), ['left_sidebar'], `${source}: read back`);
             assert.strictEqual(markRefusal(select(state, 'See'), editorSchema.marks.strong, '**'), null, `${source}: bold is not disabled`);
         }
     });
 
-    test('the same address, read by the full engine, is today a source block: the emoji is in the file, not made by a save', () => {
-        // When an emoji the file holds becomes editable, this flips; the test above may then drop `noEmoji`.
+    test('the same address, read by the full engine, is a paragraph: the emoji the file holds is an atom', () => {
         for (const source of ['See http://e~http://f.com/$x$ here.\n', 'See http://ühttp://f.com/$x$ here.\n']) {
-            assert.deepStrictEqual(topChildren(parseDocument(hostEngine(), source, {}).doc).map(n => n.type.name), ['raw_block'], source);
+            const doc = parseDocument(hostEngine(), source, {}).doc;
+            assert.deepStrictEqual(topChildren(doc).map(n => n.type.name), ['paragraph'], source);
+            const atoms: string[] = [];
+            doc.descendants(n => {
+                if (n.type.name === 'emoji') {
+                    atoms.push(n.attrs.source as string);
+                }
+            });
+            assert.deepStrictEqual(atoms, [':/'], source);
         }
     });
 

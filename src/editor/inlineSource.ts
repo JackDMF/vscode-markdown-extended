@@ -1277,8 +1277,18 @@ function emit(inlines: readonly Token[], row: boolean): Emitted {
                     // Its source as written (`markdownItWikiEmbed.ts`), which no marker goes into.
                     chars(String((child.meta as { source?: unknown } | null)?.source ?? `![[${child.content}]]`), ENCLOSED);
                     break;
+                case 'emoji': {
+                    // Its spelling as written (`markdownItEmoji.ts`); one that could not be told matches nothing.
+                    const source = (child.meta as { source?: unknown } | null)?.source;
+                    if (typeof source === 'string') {
+                        chars(source, ENCLOSED);
+                    } else {
+                        push(UNMATCHABLE, ENCLOSED);
+                    }
+                    break;
+                }
                 default:
-                    // An emoji, a footnote reference, a task's box: written otherwise than shown.
+                    // A footnote reference, a task's box: written otherwise than shown.
                     push(UNMATCHABLE, ENCLOSED);
             }
         }

@@ -463,6 +463,11 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             node: 'wiki_embed',
             getAttrs: tok => ({ source: ((real(tok).meta as { source?: string } | null)?.source) ?? real(tok).content }),
         },
+        // An emoji: one atom carrying its spelling as the host read it (`markdownItEmoji.ts`), its name and glyph.
+        emoji: {
+            node: 'emoji',
+            getAttrs: tok => ({ source: (real(tok).meta as { source?: string } | null)?.source ?? '', name: real(tok).markup, glyph: real(tok).content }),
+        },
         em: { mark: 'em', getAttrs: tok => ({ markup: real(tok).markup || '*' }) },
         strong: { mark: 'strong', getAttrs: tok => ({ markup: real(tok).markup || '**' }) },
         link: {

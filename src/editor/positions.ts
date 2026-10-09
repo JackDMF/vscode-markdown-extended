@@ -232,6 +232,15 @@ function collectUnits(block: Node): Unit[] {
             anchor(source.slice(1));
             return;
         }
+        if (node.type.name === 'emoji') {
+            // As an embed: the atom matches its spelling's first character, and
+            // the rest of its spelling anchors it and is where it runs to.
+            const read = node.attrs.source as string;
+            const source = written ? writtenAtom(read, place) : read;
+            units.push({ pos, code: source.charCodeAt(0), spelledTo: source.length > 1 ? source.slice(1) : undefined });
+            anchor(source.slice(1));
+            return;
+        }
         if (node.isLeaf) {
             // A hard break is a line break in the source (`\` or two spaces before it).
             units.push({ pos, code: node.type.name === 'hard_break' ? NEWLINE : UNMATCHABLE });

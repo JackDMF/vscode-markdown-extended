@@ -53,9 +53,15 @@ export function isLineStartSyntax(word: string): boolean {
     return /^(?:[*+~]|-+|=+|\*{3,}|_{3,}|#{1,6}|\d{1,9}[.)])$/.test(w) || /^(?:[>|<:]|`{3,}|~{3,})/.test(w);
 }
 
-/** Escape a word that has to begin a line anyway (the first of the paragraph, or after a hard break). */
+/**
+ * Escape a word that has to begin a line anyway (the first of the paragraph, or
+ * after a hard break). A word that begins with a held run is left as it is: the
+ * run is written whole, and a backslash would change it — an emoji atom's
+ * spelling (`:)`, `>:(`), which the parser judges where it stands
+ * (`unreadEmoji` in `serialize.ts`), or an `<…>` autolink.
+ */
 export function escapeLineStart(word: string): string {
-    if (!isLineStartSyntax(word)) {
+    if (!isLineStartSyntax(word) || word.startsWith(HOLD_OPEN)) {
         return word;
     }
     const lead = LEADING_HOLDS.exec(word)?.[0] ?? '';

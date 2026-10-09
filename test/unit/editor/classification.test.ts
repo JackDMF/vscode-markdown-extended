@@ -245,9 +245,9 @@ suite('Editor block classification: a container with attributes', () => {
 });
 
 /**
- * An emoji the host reads in a paragraph makes it a source block (no editable
- * node holds one). The save escapes every shortcut of the plugin's table where
- * the host would read it, so what the page wrote opens editable again.
+ * An emoji the host reads in a paragraph is an atom carrying its spelling
+ * (`emoji`). The save escapes every shortcut of the plugin's table typed as
+ * text where the host would read it, so what the page wrote opens as text.
  */
 suite('Editor block classification: an emoji shortcut', () => {
     test('a paragraph saved as 5\\$\\:) opens as a paragraph holding 5$:)', () => {
@@ -256,10 +256,13 @@ suite('Editor block classification: an emoji shortcut', () => {
         assert.strictEqual(paragraph.textContent, '5$:)');
     });
 
-    test('as 5\\$:), what the save wrote before the shortcut was escaped, it is a source block: inline emoji', () => {
+    test('as 5\\$:), what the save wrote before the shortcut was escaped, it is a paragraph holding 5$ and the emoji the host reads', () => {
         const text = '5\\$:)\n';
         const grouped = groupSourceBlocks(hostEngine().parse(text, {}), splitLines(text), definitionOf(hostEngine())).blocks;
-        assert.deepStrictEqual(grouped.map(b => [b.kind, b.reason]), [['raw', 'inline emoji']]);
+        assert.deepStrictEqual(grouped.map(b => b.kind), ['editable']);
+        const [paragraph] = topChildren(parseDocument(hostEngine(), text).doc);
+        assert.deepStrictEqual([paragraph.type.name, paragraph.childCount, paragraph.child(0).text, paragraph.child(1).type.name, paragraph.child(1).attrs.source],
+            ['paragraph', 2, '5$', 'emoji', ':)']);
     });
 });
 

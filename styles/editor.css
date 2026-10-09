@@ -162,6 +162,16 @@ img.mep-pending-range {
     outline: 1px solid var(--vscode-focusBorder, #0078d4);
 }
 
+/* An emoji the file holds (`emoji`): its glyph, drawn as the text around it. */
+.mep-emoji {
+    font: inherit;
+    color: inherit;
+}
+
+.mep-emoji.ProseMirror-selectednode {
+    outline: 1px solid var(--vscode-focusBorder, #0078d4);
+}
+
 /* ------------------------------------------------------------------------- */
 /* Formatting toolbar, its menus and preview card, and the selection bubble   */
 /* ------------------------------------------------------------------------- */

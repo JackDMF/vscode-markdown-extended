@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- the serializer tables are keyed by the schema's node names, which ProseMirror spells in snake_case */
 import { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import { Mark, Node } from 'prosemirror-model';
+import { Transform } from 'prosemirror-transform';
 import type { Mapping } from 'prosemirror-transform';
 import { ALPHANUMERIC, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, opensInsideWords, plainWikiEmbed, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { AttrPair, NOTE_SYNTAX_CHARS, fenceHolder, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
@@ -1039,6 +1040,11 @@ function inlineModel(parent: Node): string {
             return;
         }
         flush();
+        if (child.type.name === 'emoji') {
+            // An emoji by its spelling: the parse gives it back only as the emoji it read.
+            parts.push(`${marks}emoji(${JSON.stringify(child.attrs.source)})`);
+            return;
+        }
         parts.push(child.type.name === 'hard_break' ? 'hard_break' : `${marks}${child.type.name}(${inlineModel(child)})`);
     });
     flush();
@@ -1094,6 +1100,11 @@ const inlineNodes: NodeSerializers = {
         }
         // Its source, as it was written, held on one line (`writtenAtom`).
         state.text(HOLD_OPEN + writtenAtom(plainWikiEmbed(node.attrs.source as string), st) + HOLD_CLOSE, false);
+    },
+    emoji(state, node) {
+        // Its spelling as the host read it, held on one line and never escaped (`writtenAtom`): whether it
+        // still reads as this emoji where it is written is the parser's to say (`unreadEmoji`).
+        state.text(HOLD_OPEN + writtenAtom(node.attrs.source as string, internals(state)) + HOLD_CLOSE, false);
     },
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
@@ -1211,6 +1222,45 @@ export function unwritableEmbed(doc: Node, from = 0, to = doc.content.size): str
             reason = 'A wiki embed cannot be inline code, superscript or subscript: their text is written as it is, and the embed would be plain text after a save.';
         }
         return reason === null;
+    });
+    return reason;
+}
+
+/** Why an emoji is not made code, superscript or subscript (`unwritableEmoji`). */
+export const EMOJI_RAW_REFUSAL = 'An emoji cannot be inline code, superscript or subscript: their text is written as it is, and the emoji would be plain text after a save.';
+/** Why an emoji is not put in a link written bare (`unwritableEmoji`). */
+export const EMOJI_LINK_REFUSAL = 'An emoji cannot be part of a bare web address: the address would be written around it, and read otherwise.';
+/** Why an emoji is not put right after a line break (`unwritableEmoji`). */
+export const EMOJI_AFTER_BREAK_REFUSAL = 'An emoji cannot start a line after a line break: the editor cannot tell how the preview would read it there. Put a character before it.';
+
+/**
+ * Why an emoji atom between `from` and `to` cannot be written so that it
+ * reads back as itself, where the read-back cannot be asked (`unreadEmoji`
+ * asks it everywhere else): under inline code, superscript or subscript
+ * (`RAW_TEXT_MARKS`), whose text is written as it is; in a link read with
+ * linkify or written `<…>`, whose text the link's form is decided by; and
+ * right after a hard break, at the start of a line, where the host's
+ * definition-list rule, which the page does not run, could read it. The
+ * editor refuses the edit that makes one (`webview/notes.ts`), as it does an
+ * embed under a raw mark (`unwritableEmbed`).
+ */
+export function unwritableEmoji(doc: Node, from = 0, to = doc.content.size): string | null {
+    let reason: string | null = null;
+    const start = Math.max(0, Math.min(from, to));
+    // And the node right after: a line break inserted before an atom puts it after one.
+    const end = Math.min(doc.content.size, Math.max(from, to) + 1);
+    doc.nodesBetween(start, end, (node, _pos, parent, index) => {
+        if (reason !== null || node.type.name !== 'emoji') {
+            return reason === null;
+        }
+        if (node.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
+            reason = EMOJI_RAW_REFUSAL;
+        } else if (node.marks.some(m => m.type.name === 'link' && (m.attrs.markup === 'linkify' || m.attrs.markup === 'autolink'))) {
+            reason = EMOJI_LINK_REFUSAL;
+        } else if (parent !== null && index > 0 && parent.child(index - 1).type.name === 'hard_break') {
+            reason = EMOJI_AFTER_BREAK_REFUSAL;
+        }
+        return false;
     });
     return reason;
 }
@@ -2857,6 +2907,8 @@ interface UnitRead {
     madeInline: boolean;
     /** Whether VS Code's math (its stand-in) read a formula: the page holds none in a block it edits. */
     math: boolean;
+    /** Each emoji read, in order: its name and its spelling (`markdownItEmoji.ts`). */
+    emoji: { name: string; source: string | null }[];
 }
 
 /** What each part's text reads as, by the text; the oldest is dropped first. */
@@ -2887,7 +2939,7 @@ function readUnit(text: string, key = text): UnitRead {
         return read;
     }
     const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
-    read = { blocks: [], spans: [], sidebars: [], inlines: 0, madeInline: false, math: false };
+    read = { blocks: [], spans: [], sidebars: [], inlines: 0, madeInline: false, math: false, emoji: [] };
     const found = read;
     const walk = (children: readonly Token[]) => {
         for (const child of children) {
@@ -2898,6 +2950,10 @@ function readUnit(text: string, key = text): UnitRead {
                 found.madeInline = true;
             }
             found.math ||= child.type.startsWith('math_');
+            if (child.type === 'emoji') {
+                const source = (child.meta as { source?: unknown } | null)?.source;
+                found.emoji.push({ name: child.markup, source: typeof source === 'string' ? source : null });
+            }
             walk(child.children ?? []);
         }
     };
@@ -3219,6 +3275,128 @@ export function literalsReadBack(block: Node): boolean {
 }
 
 /**
+ * The emoji atoms of the top-level `block` that do not read back as
+ * themselves once the save writes it: each part as the save writes it
+ * (`unitsOf`), parsed by the page's engine (`readUnit`), which runs the
+ * registry's emoji plugin where the host does. The atoms of a part are
+ * matched in order to the emoji it reads, by name and spelling; an atom no
+ * emoji read matches is returned, by its position from the block's start, in
+ * order.
+ * An emoji read that no atom is — typed text the escape could not break, in
+ * superscript or a note (`inlineEngine.ts`) — is the escape's matter, not
+ * an atom's. Nothing about where an emoji reads is modelled: a neighbour
+ * glued to it, a `>` that opens a quote at a line start, a table's or a
+ * note's encoding of a `|` are all found by the parse.
+ */
+export function unreadEmoji(block: Node): number[] {
+    let holds = false;
+    block.descendants(node => {
+        holds ||= node.type.name === 'emoji';
+        return !holds;
+    });
+    if (!holds) {
+        return [];
+    }
+    const unread: number[] = [];
+    for (const unit of unitsOf(block)) {
+        const atoms: { name: string; source: string; at: number }[] = [];
+        for (const { node, pos } of unit.textblocks) {
+            node.descendants((child, rel) => {
+                if (child.type.name === 'emoji') {
+                    atoms.push({ name: child.attrs.name as string, source: child.attrs.source as string, at: pos + 1 + rel });
+                }
+            });
+        }
+        if (atoms.length === 0) {
+            continue;
+        }
+        const read = readUnit(unit.text, unit.key).emoji;
+        let from = 0;
+        for (const atom of atoms) {
+            let i = from;
+            while (i < read.length && !(read[i].name === atom.name && read[i].source === atom.source)) {
+                i++;
+            }
+            if (i < read.length) {
+                from = i + 1;
+            } else {
+                unread.push(atom.at);
+            }
+        }
+    }
+    // A table's header is read with every row: its atoms are judged once per row, alike.
+    return [...new Set(unread)].sort((a, b) => a - b);
+}
+
+/**
+ * Every emoji atom of the top-level blocks at `offsets` (in the document `tr`
+ * started from) that would not read back as itself (`unreadEmoji`), made its
+ * spelling as text with its marks, on `tr` — again until every atom left
+ * reads back, as a conversion changes the text its neighbours are read in.
+ * What each became: its spelling, and that with the character after it, as
+ * the page then shows it.
+ * One conversion for the page, right after the edit (`emojiPlugin`), for
+ * the check of that edit (`writtenEdit`), and for the save (`withReadEmoji`).
+ */
+export function unreadEmojiAsText(tr: Transform, offsets: readonly number[]): { source: string; shown: string }[] {
+    const made: { source: string; shown: string }[] = [];
+    // Bounded: each round makes one atom text at least, and a block holds finitely many.
+    for (let changed = true; changed;) {
+        changed = false;
+        for (const offset of offsets) {
+            const start = tr.mapping.map(offset);
+            const block = tr.doc.nodeAt(start);
+            if (block === null) {
+                continue;
+            }
+            for (const rel of unreadEmoji(block).reverse()) {
+                const at = start + rel;
+                const atom = tr.doc.nodeAt(at);
+                if (atom === null || atom.type.name !== 'emoji') {
+                    continue;
+                }
+                const source = atom.attrs.source as string;
+                tr.replaceWith(at, at + 1, tr.doc.type.schema.text(source, atom.marks));
+                const end = tr.doc.resolve(at).end();
+                made.push({ source, shown: source + tr.doc.textBetween(at + source.length, Math.min(end, at + source.length + 1), '', '') });
+                changed = true;
+            }
+        }
+    }
+    return made.reverse();
+}
+
+/**
+ * `block` with every emoji atom that would not read back as itself its
+ * spelling as text (`unreadEmojiAsText`): what the save writes. The page has
+ * already made such an atom text, at the edit that made it unreadable
+ * (`emojiPlugin`), so one found here is a mismatch the page should have
+ * caught, and is reported.
+ */
+function withReadEmoji(block: Node): Node {
+    if (unreadEmoji(block).length === 0) {
+        return block;
+    }
+    const tr = new Transform(block.type.schema.topNodeType.create(null, [block]));
+    const made = unreadEmojiAsText(tr, [0]);
+    reportUnreadEmoji(made.map(m => m.source));
+    return tr.doc.firstChild as Node;
+}
+
+/** What the save reports when it writes an emoji atom as text: the page should have made it text already. */
+export const UNREAD_EMOJI_SAVED = 'Markdown Extended: the save wrote emoji that would not read back as text:';
+
+const warnUnreadEmoji = (sources: readonly string[]) => console.warn(`${UNREAD_EMOJI_SAVED} ${sources.join(' ')}`);
+
+/** Where the save reports the atoms it wrote as text (`withReadEmoji`): the page's console. */
+let reportUnreadEmoji: (sources: readonly string[]) => void = warnUnreadEmoji;
+
+/** Report the atoms the save wrote as text to `report` from now on, or to the console again with `null`. */
+export function onUnreadEmojiSaved(report: ((sources: readonly string[]) => void) | null): void {
+    reportUnreadEmoji = report ?? warnUnreadEmoji;
+}
+
+/**
  * One inline node written on its own, as in the middle of a line — a note's
  * `++reference|note++`, say — by the same rules a paragraph holding it is
  * written with, the node's own marks included. Hold markers are stripped; a
@@ -3292,11 +3470,18 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
         return node.type.name !== 'front_matter' && !SOURCE_NODES.has(node.type.name) && (src === null || src === undefined);
     };
     /** A node's text: its `src`, or its serialization with the document's `eol` and a final one. */
+    // Each block as written, its unreadable emoji as text (`withReadEmoji`), made once per node.
+    const asWritten = new Map<Node, Node>();
     const bodyOf = (node: Node): string => {
         if (!byRule(node)) {
             return (node.attrs.src as string | null | undefined) ?? '';
         }
-        const text = withBlockSuffix(node, serializer.serialize(editorSchema.topNodeType.create(null, [node])));
+        let written = asWritten.get(node);
+        if (written === undefined) {
+            written = withReadEmoji(node);
+            asWritten.set(node, written);
+        }
+        const text = withBlockSuffix(written, serializer.serialize(editorSchema.topNodeType.create(null, [written])));
         return text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
     };
     /**
