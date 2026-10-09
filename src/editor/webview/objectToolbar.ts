@@ -38,10 +38,11 @@ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
-import { HintTone, showHint, undoKey } from './hint';
+import { HintTone, showChangeHint, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
+import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
@@ -163,6 +164,8 @@ interface MenuEntry {
 
 interface Presentation {
     label: string;
+    /** Written after the label in the editor's code font: an atom's spelling (`Emoji :)`). */
+    code?: string;
     title: string;
     verbs: Verb[];
 }
@@ -312,10 +315,10 @@ function refusalOnce(state: EditorState, key: string, read: () => string | null)
  * Why the plugins' filters (the notes' and the tables') would refuse `tr` — asked
  * of the transaction before it is dispatched, so a verb shows the reason as a
  * disabled button instead of making the filter say it after the click — or `null`.
- * No transaction is no embed to act on.
+ * No transaction is no atom to act on: `none` says so.
  */
-function embedRefusal(tr: Transaction | null): string | null {
-    return tr === null ? 'There is no embed here.' : noteRefusal(tr) ?? tableRefusal(tr);
+function filterRefusal(tr: Transaction | null, none: string): string | null {
+    return tr === null ? none : noteRefusal(tr) ?? tableRefusal(tr);
 }
 
 /** What the verbs of a wiki embed do: the bar gives them, the verbs only say which. */
@@ -324,28 +327,72 @@ export interface EmbedActions {
     remove(): void;
 }
 
-/** The verbs of the wiki embed `object`, each with the reason it cannot be chosen in `state`, if there is one. */
-export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
+/** What sets an atom's two verbs apart (`atomVerbs`): their ids, labels and titles, and Edit as text's transaction and refusal. */
+interface AtomVerbTexts {
+    asText: { id: string; title: string };
+    remove: { id: string; label: string; title: string };
+    /** Why neither can be chosen where there is no such atom. */
+    none: string;
+    /** The atom as text, or `null` where `[from, to)` is no such atom. */
+    asTextTransaction(state: EditorState, from: number, to: number): Transaction | null;
+    /** Why Edit as text is refused besides the filters, if it is: `tr` makes the atom at `from` text. */
+    asTextRefusal?(state: EditorState, tr: Transaction, from: number): string | null;
+}
+
+/**
+ * The verbs of an atom `object` — a wiki embed, an emoji: Edit as text and
+ * Remove, each with the reason it cannot be chosen in `state`, if there is
+ * one. Refused as the notes' and the tables' filters would refuse it: the text
+ * takes the atom's marks, and an attribute span over it that holds a note
+ * marker (or `|` in a cell) is allowed over an atom and not over text.
+ */
+function atomVerbs(state: EditorState, object: EditorObject, actions: EmbedActions, texts: AtomVerbTexts): Verb[] {
     const place = `${object.from}:${object.to}`;
     return [
         {
-            id: 'edit-wiki-embed-as-text',
+            id: texts.asText.id,
             label: 'Edit as text',
-            title: 'Make it plain text, ![[name]], to edit its name; delete the last ] and type it again to make it an embed.',
-            // Refused as the notes' and the tables' filters would refuse it: the text takes the atom's
-            // marks, and an attribute span over it that holds a note marker (or `|` in a cell) is
-            // allowed over an atom and not over text.
-            refusal: refusalOnce(state, `edit-wiki-embed-as-text@${place}`, () => embedRefusal(embedAsTextTransaction(state, object.from, object.to))),
+            title: texts.asText.title,
+            refusal: refusalOnce(state, `${texts.asText.id}@${place}`, () => {
+                const tr = texts.asTextTransaction(state, object.from, object.to);
+                return filterRefusal(tr, texts.none) ?? (tr === null ? null : texts.asTextRefusal?.(state, tr, object.from) ?? null);
+            }),
             run: () => actions.asText(),
         },
         {
-            id: 'remove-wiki-embed',
-            label: 'Remove embed',
-            title: 'The embed goes from the text.',
-            refusal: refusalOnce(state, `remove-wiki-embed@${place}`, () => embedRefusal(deleteObjectTransaction(state, object))),
+            id: texts.remove.id,
+            label: texts.remove.label,
+            title: texts.remove.title,
+            refusal: refusalOnce(state, `${texts.remove.id}@${place}`, () => filterRefusal(deleteObjectTransaction(state, object), texts.none)),
             run: () => actions.remove(),
         },
     ];
+}
+
+/** The verbs of the wiki embed `object`, each with the reason it cannot be chosen in `state`, if there is one. */
+export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
+    return atomVerbs(state, object, actions, {
+        asText: { id: 'edit-wiki-embed-as-text', title: 'Make it plain text, ![[name]], to edit its name; delete the last ] and type it again to make it an embed.' },
+        remove: { id: 'remove-wiki-embed', label: 'Remove embed', title: 'The embed goes from the text.' },
+        none: 'There is no embed here.',
+        asTextTransaction: embedAsTextTransaction,
+    });
+}
+
+/**
+ * The verbs of the emoji atom `object`, each with the reason it cannot be
+ * chosen in `state`, if there is one: as an embed's, and Edit as text where
+ * its characters would still read as an emoji (`emojiTextStillRead`).
+ */
+export function emojiVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
+    const source = object.kind === 'emoji' ? object.node.attrs.source as string : '';
+    return atomVerbs(state, object, actions, {
+        asText: { id: 'edit-emoji-as-text', title: `Makes it the characters ${source} — they stay text and are saved as text; ${undoKey()} brings the emoji back.` },
+        remove: { id: 'remove-emoji', label: 'Remove emoji', title: 'The emoji goes from the text.' },
+        none: 'There is no emoji here.',
+        asTextTransaction: emojiAsTextTransaction,
+        asTextRefusal: emojiTextStillRead,
+    });
 }
 
 /** What a bar tells the view about its field. */
@@ -445,8 +492,14 @@ class ObjectBar {
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
+        if (presentation.code !== undefined) {
+            const code = document.createElement('span');
+            code.className = 'mep-object-label-code';
+            code.textContent = presentation.code;
+            label.append(' ', code);
+        }
         label.title = presentation.title;
-        this.el.setAttribute('aria-label', presentation.label);
+        this.el.setAttribute('aria-label', presentation.code === undefined ? presentation.label : `${presentation.label} ${presentation.code}`);
         this.buttons = presentation.verbs.map(verb => {
             const el = document.createElement('button');
             el.type = 'button';
@@ -1179,7 +1232,7 @@ class ObjectToolbarView implements PluginView {
         const before = this.view.state;
         const current = currentObject(before, object);
         if (current !== null && make(current) && this.view.state !== before && hint !== undefined) {
-            this.say(`${hint} — ${undoKey()}`, 'neutral');
+            showChangeHint(this.view, `${hint} — ${undoKey()}`);
         }
     }
 
@@ -1519,6 +1572,24 @@ class ObjectToolbarView implements PluginView {
                         remove: () => this.remove(object, 'Embed removed'),
                     }),
                 };
+            case 'emoji': {
+                const source = object.node.attrs.source as string;
+                return {
+                    label: 'Emoji',
+                    code: source,
+                    title: `Emoji ${source} — kept as written`,
+                    verbs: emojiVerbs(view.state, object, {
+                        asText: () => this.act(object, current => {
+                            const tr = emojiAsTextTransaction(this.view.state, current.from, current.to);
+                            if (tr !== null) {
+                                this.view.dispatch(tr);
+                            }
+                            return tr !== null;
+                        }, `${source} is text now`),
+                        remove: () => this.remove(object, 'Emoji removed'),
+                    }),
+                };
+            }
             case 'badge': {
                 const mark = object.node.attrs.mark as { rule?: unknown } | null;
                 return {
@@ -1795,6 +1866,11 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
             handleKeyDown(view, event) {
                 if (event.key !== 'Enter' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
                     return false;
+                }
+                // Beside an emoji, the emoji is the object: the arrows step over it, so this is how the keyboard selects it.
+                const select = selectEmojiBeside(view.state);
+                if (select !== null) {
+                    view.dispatch(select);
                 }
                 const opened = toolbarViews.get(view)?.openFromKeyboard() ?? false;
                 if (opened) {

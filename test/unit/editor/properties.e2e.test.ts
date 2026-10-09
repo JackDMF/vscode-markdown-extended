@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 /** A Req Explorer workshop note's front matter, as that corpus writes one, shortened. */
@@ -361,6 +361,11 @@ suite('Editor properties panel (e2e)', () => {
         await page.keyboard.press('Enter');
         assert.strictEqual(await page.$eval('.mep-hint', el => el.textContent), 'Already a property: stream');
         await page.keyboard.press('Escape');
+        // A refusal reports no change of the document: one made elsewhere leaves it standing.
+        await clickText(page, 'The plan agreed', 3);
+        await page.keyboard.type('x');
+        await delay(100);
+        assert.deepStrictEqual(await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden })), { text: 'Already a property: stream', shown: true });
     });
 
     test('× removes a row with its lines and says so; Ctrl+Z in the panel puts it back', async function () {
@@ -385,6 +390,15 @@ suite('Editor properties panel (e2e)', () => {
         assert.ok(edit);
         assert.strictEqual(edit.text, SOURCE);
         assert.ok(await page.$(row('lang')));
+        // The hint reports a change: the next change of the document takes it away.
+        await page.mouse.move(...Object.values(await centre(`${row('lang')} .mep-prop-key`)) as [number, number]);
+        await clickAt(`${row('lang')} .mep-prop-remove`);
+        await delay(100);
+        assert.strictEqual(await page.$eval('.mep-hint', el => (el as HTMLElement).hidden), false);
+        await clickText(page, 'The plan agreed', 3);
+        await page.keyboard.type('x');
+        await delay(100);
+        assert.strictEqual(await page.$eval('.mep-hint', el => (el as HTMLElement).hidden), true);
     });
 
     test('lang offers the file\'s values in the editor\'s completion list, opened on focus and narrowed as typed', async function () {

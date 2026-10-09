@@ -1,4 +1,4 @@
-import shortcuts from 'markdown-it-emoji/lib/data/shortcuts.mjs';
+import { EMOJI_ALIASES } from '../plugin/markdownItEmoji';
 import { escapeRegExp } from '../syntax/regExp';
 
 /**
@@ -29,7 +29,7 @@ import { escapeRegExp } from '../syntax/regExp';
  * `;`, else its first `<` or `-`. Throws at load if an alias has no character
  * to break it at.
  */
-const SHORTCUT_SPLITS: readonly { alias: string; at: number }[] = Object.values(shortcuts as Record<string, string[]>).flat().map(alias => {
+const SHORTCUT_SPLITS: readonly { alias: string; at: number }[] = Object.values(EMOJI_ALIASES).flat().map(alias => {
     const colon = alias.search(/[:;]/);
     const at = colon >= 0 ? colon : alias.search(/[<-]/);
     if (at < 0) {

@@ -1,5 +1,33 @@
 # Change Log
 
+## Unreleased
+
+### ✨ Features
+
+- Emoji already in a file (`:)`, `:smile:`) no longer make their paragraph a source block; they are saved as written.
+- An emoji an edit would turn back into text, like `:)Z`, becomes that text at once, with a hint offering undo.
+- That hint stays while you keep editing the paragraph, until you leave it or undo.
+- Click an emoji to select it; its bar offers Edit as text and Remove emoji.
+- Arrow keys step over an emoji like a character; Alt+Enter beside one opens its bar.
+- A notice such as "Embed is text" or "Removed lang" goes away once you type or undo.
+- A refused edit beside an emoji names the emoji and the verbs that can unblock it.
+- A refusal already shown is not shown again while it stays.
+
+### 🐛 Bug Fixes
+
+- An `<https://…>` link starting a changed paragraph is no longer saved with a backslash before it.
+
+### ⚠️ Limits
+
+- An emoji inside `^sup^` or `~sub~` still keeps its paragraph a source block.
+- A smiley typed in a sidenote or marginal note reads as an emoji even escaped, and opens as one.
+- An emoji cannot be made code, superscript or subscript.
+- An edit is refused where the editor cannot tell whether an emoji there still reads, as beside a smiley in `^sup^`.
+- Edit as text is unavailable for an emoji inside a sidenote or marginal note, which would still show it.
+- A changed note writes an escaped smiley (`\:)`, `&#58;)`) without its escape; it shows the same.
+- `x &#97;:) y` shows an emoji; any edit in that paragraph turns it into text.
+- `<\3` is never read as an emoji, so it stays text.
+
 ## v4.1.2 — Links That Keep Their Edges
 
 ### 🐛 Bug Fixes

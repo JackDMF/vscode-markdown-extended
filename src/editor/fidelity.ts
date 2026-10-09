@@ -1,9 +1,9 @@
 import { Attrs, Mark, Node, Slice } from 'prosemirror-model';
 import { Plugin, PluginKey, Transaction } from 'prosemirror-state';
-import { Transform } from 'prosemirror-transform';
+import { Mapping, Transform } from 'prosemirror-transform';
 import { withoutId } from './attrs';
 import { EDITABLE_TOP_NODES } from './schema';
-import { itemTakesLiteral, literalHolder, literalsReadBack, quoteLostLiteral } from './serialize';
+import { itemTakesLiteral, literalHolder, literalsReadBack, quoteLostLiteral, unreadEmojiAsText } from './serialize';
 
 export const fidelityPluginKey = new PluginKey('mepFidelity');
 
@@ -40,7 +40,7 @@ export function isRepair(tr: Transaction): boolean {
 }
 
 /** prosemirror-history's plugin key, as it names its meta; undo and redo carry it. */
-const HISTORY_META = 'history$';
+export const HISTORY_META = 'history$';
 
 /**
  * The heading attributes that name something and must not be written twice: the
@@ -299,17 +299,30 @@ export function applyFidelityPlan<T extends Transform>(tr: T, plan: FidelityPlan
 }
 
 /**
- * The document the save writes once `tr` is applied with the repair
- * `fidelityPlugin` appends to it, and the top-level blocks of it the save
- * writes by rule (`fidelityPlan`) — what the check of an edit reads
- * (`noteRefusal` in `webview/notes.ts`), so that it checks exactly the
- * document the plugin then makes: a copy whose id or literal the plan strips
- * is checked as it will be written, without them.
+ * The document the save writes once `tr` is applied with the repairs the
+ * page's plugins append to it — the emoji atoms it made unreadable made text
+ * (`emojiPlugin`, `unreadEmojiAsText`) and `fidelityPlugin`'s attributes —
+ * and the top-level blocks of it the save writes by rule (`fidelityPlan`):
+ * what the check of an edit reads (`noteRefusal` in `webview/notes.ts`), so
+ * that it checks exactly the document the plugins then make: a copy whose id
+ * or literal the plan strips is checked as it will be written, without them.
  */
-export function writtenEdit(tr: Transaction): { doc: Node; rewritten: RewrittenBlock[] } {
+export function writtenEdit(tr: Transaction): { doc: Node; rewritten: RewrittenBlock[]; mapping: Mapping } {
     const plan = fidelityPlan([tr], tr.before, tr.doc);
-    const doc = plan.updates.size === 0 ? tr.doc : applyFidelityPlan(new Transform(tr.doc), plan).doc;
-    return { doc, rewritten: plan.rewritten.map(block => ({ ...block, node: doc.nodeAt(block.offset) as Node })) };
+    // The plan sets attributes only, so its offsets hold in the document it makes.
+    const repaired = plan.updates.size === 0 ? new Transform(tr.doc) : applyFidelityPlan(new Transform(tr.doc), plan);
+    const converted = new Transform(repaired.doc);
+    unreadEmojiAsText(converted, plan.rewritten.map(block => block.offset));
+    const doc = converted.doc;
+    return {
+        doc,
+        rewritten: plan.rewritten.map(block => {
+            const offset = converted.mapping.map(block.offset);
+            return { ...block, offset, node: doc.nodeAt(offset) as Node };
+        }),
+        // From `tr.doc` to `doc`: the conversion's steps, which move what stands after an atom made text.
+        mapping: converted.mapping,
+    };
 }
 
 /**

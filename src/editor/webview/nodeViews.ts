@@ -29,6 +29,8 @@ export interface EditorPort {
     history(kind: 'undo' | 'redo'): boolean;
     /** Say `text` in the caret hint, under `near`. */
     hint(text: string, near: Element): void;
+    /** Say `text`, which reports a change to the document, in the caret hint under `near`: it goes at the next change (`showChangeHint`). */
+    changeHint(text: string, near: Element): void;
     /** What the page remembers per document under (the document's uri; `''` when the page was not told one). */
     documentKey(): string;
     /** Put the caret in the text after the front matter and give the editor the focus. */

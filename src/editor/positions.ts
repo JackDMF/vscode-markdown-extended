@@ -1,8 +1,8 @@
 import { Node } from 'prosemirror-model';
 import { Selection, TextSelection } from 'prosemirror-state';
-import { NOTE_SYNTAX, WIKI_EMBED_MARKERS } from '../syntax/markers';
+import { NOTE_SYNTAX, WIKI_EMBED_MARKERS, plainWikiEmbed } from '../syntax/markers';
 import { Alignment, ENTITY, Lines, NEWLINE, NOTE_ANCHORS, Normalized, UNMATCHABLE, Unit, align, normalize } from './alignment';
-import { NotePart, SerializeOptions, SerializedLayout, WikiEmbedPlace, serializeLayout, writtenWikiEmbed } from './serialize';
+import { AtomPlace, NotePart, SerializeOptions, SerializedLayout, serializeLayout, writtenAtom } from './serialize';
 
 /**
  * Where a place in the page stands in the document's text, and back.
@@ -160,7 +160,8 @@ export interface PositionMap {
 
 /** The mapping for the document `parsed` holds, against the text it serializes to with `options`. */
 export function createPositionMap(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: string }, options: SerializeOptions): PositionMap {
-    return new DocumentPositions(parsed.doc, serializeLayout(parsed, options));
+    // The page's text as written, not the save's fallback for an atom the page should have made text (`withReadEmoji`).
+    return new DocumentPositions(parsed.doc, serializeLayout(parsed, options, false));
 }
 
 /**
@@ -211,7 +212,7 @@ function collectUnits(block: Node): Unit[] {
             units.push({ pos: -1, code: text.charCodeAt(k) });
         }
     };
-    const visit = (node: Node, pos: number, place: WikiEmbedPlace): void => {
+    const visit = (node: Node, pos: number, place: AtomPlace): void => {
         if (node.isText) {
             const text = node.text ?? '';
             for (let k = 0; k < text.length; k++) {
@@ -224,11 +225,20 @@ function collectUnits(block: Node): Unit[] {
             // `]]` that closes it (`spellingEnd`), as an entity's runs to its
             // `;`: the position before it is the source's start, the one after
             // it its end. The spelling it has in this place anchors it: as read
-            // in an untouched block, as `writtenWikiEmbed` writes it in a changed
+            // in an untouched block, as `writtenAtom` writes it in a changed
             // one (`\|` in a cell, `&#124;` in a note's reference).
             const read = node.attrs.source as string;
-            const source = written ? writtenWikiEmbed(read, place) : read;
+            const source = written ? writtenAtom(plainWikiEmbed(read), place) : read;
             units.push({ pos, code: source.charCodeAt(0), spelledTo: WIKI_EMBED_MARKERS.close });
+            anchor(source.slice(1));
+            return;
+        }
+        if (node.type.name === 'emoji') {
+            // As an embed: the atom matches its spelling's first character, and
+            // the rest of its spelling anchors it and is where it runs to.
+            const read = node.attrs.source as string;
+            const source = written ? writtenAtom(read, place) : read;
+            units.push({ pos, code: source.charCodeAt(0), spelledTo: source.length > 1 ? source.slice(1) : undefined });
             anchor(source.slice(1));
             return;
         }

@@ -7,7 +7,7 @@ import { parseDocument } from '../../../src/editor/parse';
 import { PRESERVE_SOURCE_META, asRepair, descent, fidelityPlan, fidelityPlugin, isRepair, writtenEdit } from '../../../src/editor/fidelity';
 import { resyncTransaction } from '../../../src/editor/webview/resync';
 import { editorSchema } from '../../../src/editor/schema';
-import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
+import { DEFAULT_INLINE_ENGINE, createInlineEngine, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import {
     SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, SIDEBAR_LEFT_MATH, SIDEBAR_REWRITTEN, SIDEBAR_REWRITTEN_REFERENCE,
     serializeDocument, setInlineEngine, sidebarRewrittenBeside, unwritableInNote,
@@ -644,8 +644,7 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
 });
 
 suite('Editor notes: the page reads what it writes, with the host\'s engine', () => {
-    // Without emoji: the full engine reads `:/` after a linkified address as an emoji in the file, which
-    // makes the paragraph a source block until emoji is editable (see 'today a source block' below).
+    // Without emoji, as `plugins.disabled: emoji` builds it.
     const noEmoji = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-emoji'), extend: [] });
     const read = (source: string, md = hostEngine()) => {
         setInlineEngine(inlineEngineDefinition(md));
@@ -681,7 +680,17 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
             math: false,
             wikiEmbeds: true,
             attrs: true,
+            emoji: true,
         });
+        // Without markdown-it-emoji (`plugins.disabled: emoji`) the definition says so, and the page reads none.
+        assert.deepStrictEqual(inlineEngineDefinition(noEmoji), {
+            ...DEFAULT_INLINE_ENGINE,
+            plugins: DEFAULT_INLINE_ENGINE.plugins.filter(p => p.name !== 'markdown-it-emoji'),
+            emoji: false,
+        });
+        const offByExtenderEmoji = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable('emoji'); }] });
+        assert.strictEqual(inlineEngineDefinition(offByExtenderEmoji).emoji, false, 'emoji: read off the engine as built');
+        assert.strictEqual(createInlineEngine(inlineEngineDefinition(offByExtenderEmoji)).parse('hi :) there\n', {}).flatMap(t => t.children ?? []).filter(t => t.type === 'emoji').length, 0, 'the page reads none either');
         // markdown-it-attrs is no page plugin, so only `attrs` says the host ran it.
         const noAttrs = createEditorEngine({ linkify: true, typographer: false, plugins: plugins.filter(p => p.name !== 'markdown-it-attrs'), extend: [] });
         assert.deepStrictEqual(inlineEngineDefinition(noAttrs), { ...DEFAULT_INLINE_ENGINE, attrs: false });
@@ -693,6 +702,18 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
             const wrapperOff = createEditorEngine({ linkify: true, typographer: false, plugins, extend: [m => { m.core.ruler.disable(rule); }] });
             assert.strictEqual(inlineEngineDefinition(wrapperOff).attrs, true, `${rule}: attrs still run, so the fact stays on`);
         }
+    });
+
+    test('the page\'s engine reads emoji as the host does: each one, its name and its spelling', () => {
+        const BS = String.fromCharCode(92);
+        const page = createInlineEngine(DEFAULT_INLINE_ENGINE);
+        const emojiOf = (md: MarkdownIt, text: string) => md.parse(text, {}).flatMap(t => t.children ?? [])
+            .map(t => (t.type === 'emoji' ? `EMOJI(${t.markup}=${String((t.meta as { source?: string } | null)?.source)})` : t.type === 'text' ? JSON.stringify(t.content) : t.type)).join(' ');
+        const samples = ['Hello :) there', `a${BS}$:)`, `5${BS}$:)`, `x ${BS}:) y`, 'see http://e.com/:) now', 'a ^b :) c^ d', 'a $x :) y$ b', '>:( x', '8) x', '- :) x', ':) a', 'a:)', 'x :smile::+1: <3 y', 'a ++ref|note :) b++ c'];
+        for (const sample of samples) {
+            assert.strictEqual(emojiOf(page, `${sample}\n`), emojiOf(hostEngine(), `${sample}\n`), sample);
+        }
+        assert.ok(emojiOf(page, 'Hello :) there\n').includes('EMOJI(smiley=:))'));
     });
 
     test('a space deleted before a sidebar after an address is refused where the line as written lets linkify read on, unless the address is a link', () => {
@@ -718,28 +739,35 @@ suite('Editor notes: the page reads what it writes, with the host\'s engine', ()
         assert.deepStrictEqual(sidebarsIn(text(glued)), ['left_sidebar']);
     });
 
-    test('a sidebar the parser read after an address that is no URL to linkify stays editable', () => {
+    test('a sidebar the parser read after an address that is no URL to linkify stays editable, and the emoji after the address with it', () => {
         for (const source of ['See http://e~http://f.com/$x$ here.\n', 'See http://ühttp://f.com/$x$ here.\n']) {
-            const state = read(source, noEmoji);
-            assert.deepStrictEqual(sidebarsIn(source, noEmoji), ['left_sidebar'], source);
+            const state = read(source);
+            assert.deepStrictEqual(sidebarsIn(source), ['left_sidebar'], source);
             const tr = typeAtEnd(state);
             assert.strictEqual(noteRefusal(tr), null, source);
             const typed = state.apply(tr);
-            // The `:/` after the link starts a text token: the full engine reads it as an emoji
-            // (`confused`), so the save escapes it; under `noEmoji` the escape is accepted noise.
+            // The `:/` after the link starts a text token: the host reads it as an emoji (`confused`),
+            // which the page holds as an atom and the save writes back as spelled.
             const emojiIn = (markdown: string) => hostEngine().parse(markdown, {}).flatMap(t => t.children ?? []).filter(t => t.type === 'emoji').length;
             assert.strictEqual(emojiIn(source), 1, `${source}: the full engine reads an emoji`);
-            assert.strictEqual(text(typed), source.replace('here.', 'here.Z').replace('http://f.com', 'http\\://f.com'), source);
-            assert.strictEqual(emojiIn(text(typed)), 0, `${source}: the save reads none`);
-            assert.deepStrictEqual(sidebarsIn(text(typed), noEmoji), ['left_sidebar'], `${source}: read back`);
+            assert.strictEqual(text(typed), source.replace('here.', 'here.Z'), source);
+            assert.strictEqual(emojiIn(text(typed)), 1, `${source}: the save reads it back`);
+            assert.deepStrictEqual(sidebarsIn(text(typed)), ['left_sidebar'], `${source}: read back`);
             assert.strictEqual(markRefusal(select(state, 'See'), editorSchema.marks.strong, '**'), null, `${source}: bold is not disabled`);
         }
     });
 
-    test('the same address, read by the full engine, is today a source block: the emoji is in the file, not made by a save', () => {
-        // When an emoji the file holds becomes editable, this flips; the test above may then drop `noEmoji`.
+    test('the same address, read by the full engine, is a paragraph: the emoji the file holds is an atom', () => {
         for (const source of ['See http://e~http://f.com/$x$ here.\n', 'See http://ühttp://f.com/$x$ here.\n']) {
-            assert.deepStrictEqual(topChildren(parseDocument(hostEngine(), source, {}).doc).map(n => n.type.name), ['raw_block'], source);
+            const doc = parseDocument(hostEngine(), source, {}).doc;
+            assert.deepStrictEqual(topChildren(doc).map(n => n.type.name), ['paragraph'], source);
+            const atoms: string[] = [];
+            doc.descendants(n => {
+                if (n.type.name === 'emoji') {
+                    atoms.push(n.attrs.source as string);
+                }
+            });
+            assert.deepStrictEqual(atoms, [':/'], source);
         }
     });
 

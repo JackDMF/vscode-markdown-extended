@@ -265,6 +265,8 @@ export const EDITABLE_INLINE_TOKENS: ReadonlySet<string> = new Set([
     's_open', 's_close', 'kbd_open', 'kbd_close',
     // A wiki embed, `![[…]]` (`markdownItWikiEmbed.ts`): one atom carrying its source.
     'wiki_embed',
+    // An emoji the host read (`markdownItEmoji.ts`): one atom carrying its spelling.
+    'emoji',
     // … and the note family (`markdownItSidenote.ts`), whose reference and body are inline content.
     'sidenote_open', 'sidenote_ref_open', 'sidenote_ref_close', 'sidenote_content_open', 'sidenote_content_close', 'sidenote_close',
     'marginal_note_open', 'marginal_note_ref_open', 'marginal_note_ref_close',
@@ -273,6 +275,10 @@ export const EDITABLE_INLINE_TOKENS: ReadonlySet<string> = new Set([
     // `[text]{…}`: markdown-it-bracketed-spans makes the span, markdown-it-attrs gives it the attributes.
     'span_open', 'span_close',
 ]);
+
+/** The tokens that open and close superscript and subscript, whose text the editor writes as it is (`RAW_TEXT_MARKS` in `serialize.ts`). */
+const RAW_TEXT_OPEN: ReadonlySet<string> = new Set(['sup_open', 'sub_open']);
+const RAW_TEXT_CLOSE: ReadonlySet<string> = new Set(['sup_close', 'sub_close']);
 
 /** The tokens that open and close a note or a sidebar, which the schema holds one level deep. */
 export const NOTE_OPEN_TOKENS: ReadonlySet<string> = new Set(['sidenote_open', 'marginal_note_open', 'left_sidebar_open', 'right_sidebar_open']);
@@ -638,7 +644,22 @@ function notEditableBecause(tokens: readonly Token[], group: TokenGroup, lines: 
 function inlineNotEditable(children: readonly Token[]): string | null {
     let noteDepth = 0;
     let spanDepth = 0;
+    // Superscript and subscript open: their text is written as it is, so an emoji there has no atom.
+    let rawDepth = 0;
     for (const child of children) {
+        if (RAW_TEXT_OPEN.has(child.type)) {
+            rawDepth++;
+        } else if (RAW_TEXT_CLOSE.has(child.type)) {
+            rawDepth--;
+        } else if (child.type === 'emoji') {
+            if (rawDepth > 0) {
+                return 'emoji inside sup/sub';
+            }
+            if (typeof (child.meta as { source?: unknown } | null)?.source !== 'string') {
+                // The host could not tell how it was spelled, so it could not be written back as it was.
+                return 'emoji without its spelling';
+            }
+        }
         if (NOTE_OPEN_TOKENS.has(child.type)) {
             if (noteDepth > 0) {
                 // The plugin allows a note of another kind inside a note; the

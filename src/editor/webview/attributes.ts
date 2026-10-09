@@ -40,7 +40,7 @@
  * (`fidelity.ts`), and a list item's at any depth.
  */
 import { EditorView } from 'prosemirror-view';
-import { showHint, undoKey } from './hint';
+import { showChangeHint, showHint, undoKey } from './hint';
 import { FieldStep } from './inlineField';
 import { AttributesTarget, commitAttributes, literalOf } from './objects';
 import { SPAN_FIELD_PREFILL } from './toolbar/actions';
@@ -87,7 +87,7 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
             const before = view.state;
             view.dispatch(made.tr);
             if (view.state !== before) {
-                showHint(view, `${made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT} — ${undoKey()}`, 'neutral');
+                showChangeHint(view, `${made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT} — ${undoKey()}`);
             }
         },
     };

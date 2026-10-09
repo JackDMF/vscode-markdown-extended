@@ -31,10 +31,12 @@ import { Command, EditorState, NodeSelection, Plugin, Selection, TextSelection, 
 import { undoInputRule } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { EditorView } from 'prosemirror-view';
-import { PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
+import { Mapping } from 'prosemirror-transform';
+import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
-import { RAW_TEXT_MARKS, unwritableEmbed, unwritableInNote } from '../serialize';
+import { RAW_TEXT_MARKS, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
+import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
 import { showHint } from './hint';
 import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
 
@@ -322,8 +324,6 @@ function typingAtNoteEdge(state: EditorState): boolean {
     return around.some(n => n !== null && NOTE_NODES.has(n.type.name));
 }
 
-/** prosemirror-history's meta key; an undo restores a state that was allowed. */
-const HISTORY_META = 'history$';
 
 /**
  * Why the transaction must not be applied: it leaves a note in the range it
@@ -339,7 +339,10 @@ const HISTORY_META = 'history$';
  * puts back a document that was written or allowed. Nor is a repair a plugin
  * appends (`isRepair`): it follows a transaction checked here, and the
  * fidelity plugin's applies the very plan checked. Then a wiki embed under a
- * raw mark in that range (`unwritableEmbed`). The one check the filter makes,
+ * raw mark in that range (`unwritableEmbed`), an emoji under one
+ * (`unwritableEmoji`), and a block the save rewrites holding an emoji atom
+ * the judge cannot place (`unplacedRefusal`): whether it still reads cannot be
+ * told, so the edit is not applied. The one check the filter makes,
  * and the one a verb asks before it is dispatched, so a button is disabled with
  * the filter's own reason.
  */
@@ -350,12 +353,55 @@ export function noteRefusal(tr: Transaction): string | null {
     }
     const before = tr.before;
     const written = writtenEdit(tr);
-    return unwritableInNote(written.doc, range.from, range.to, {
+    // The written document is the edit's with atoms made text (`writtenEdit`): positions are read in it.
+    const mapping = new Mapping([...tr.mapping.maps, ...written.mapping.maps]);
+    return unwritableInNote(written.doc, written.mapping.map(range.from, -1), written.mapping.map(range.to, 1), {
         doc: before,
-        mapping: tr.mapping,
+        mapping,
         rewritten: written.rewritten,
         sourceOf: pos => textblockSource(before, pos),
-    }) ?? unwritableEmbed(tr.doc, range.from, range.to);
+    }) ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to) ?? unplacedRefusal(tr, written.rewritten, mapping);
+}
+
+/** Whether the ways out of an unplaced atom are being tried (`unplacedRefusal`): a way out is no edit to try them for again. */
+let tryingWaysOut = false;
+
+/**
+ * Why `tr` is refused where the save would write a block of `rewritten`
+ * holding an emoji atom the judge cannot place (`unplacedEmoji`), or `null`:
+ * whether it still reads as that emoji cannot be told, so it is neither kept
+ * nor made text. The reason names the atom, the cause where it is a smiley in
+ * superscript, and the ways out that are open — Edit as text and Remove emoji
+ * on that atom, each tried, as the object bar would, on the document the edit
+ * started from (`mapping`, from there to the written one).
+ */
+function unplacedRefusal(tr: Transaction, rewritten: readonly { node: Node; offset: number }[], mapping: Mapping): string | null {
+    const unplaced = unplacedEmoji(rewritten);
+    if (unplaced === null) {
+        return null;
+    }
+    const where = `Here ${unplaced.source} may still read as an emoji${unplaced.inSuperscript === null ? '' : ` beside the ${unplaced.inSuperscript} in superscript`}`;
+    const ways: string[] = [];
+    if (!tryingWaysOut) {
+        tryingWaysOut = true;
+        try {
+            const at = mapping.invert().map(unplaced.at);
+            const atom = tr.before.nodeAt(at);
+            if (atom !== null && atom.type === editorSchema.nodes.emoji && atom.attrs.source === unplaced.source) {
+                const state = EditorState.create({ doc: tr.before });
+                const asText = emojiAsTextTransaction(state, at, at + 1);
+                if (asText !== null && noteRefusal(asText) === null && emojiTextStillRead(state, asText, at) === null) {
+                    ways.push('Edit as text');
+                }
+                if (noteRefusal(state.tr.delete(at, at + 1)) === null) {
+                    ways.push('Remove emoji');
+                }
+            }
+        } finally {
+            tryingWaysOut = false;
+        }
+    }
+    return ways.length === 0 ? `${where}, so this edit is not applied.` : `${where}; ${ways.join(' or ')} on it first.`;
 }
 
 /**
@@ -464,18 +510,24 @@ export function notesPlugin(embedInput: Plugin): Plugin {
                 if (noteContextAt(sel.$from) === null && noteContextAt(sel.$to) === null) {
                     return false;
                 }
-                // One line of the slice's text, with the marks typed text takes
-                // here; a wiki embed atom stays one, text stays text (`inlineForNote`).
-                const marks = view.state.storedMarks ?? sel.$from.marks();
-                const inline = inlineForNote(slice, marks);
-                const tr = inline.some(n => n.type === editorSchema.nodes.wiki_embed)
-                    ? view.state.tr.replaceSelection(new Slice(Fragment.from(inline), 0, 0))
-                    : view.state.tr.insertText(inline.map(n => n.text ?? '').join(''));
-                view.dispatch(tr.scrollIntoView());
+                view.dispatch(notePasteTransaction(view.state, slice).scrollIntoView());
                 return true;
             },
         },
     });
+}
+
+/**
+ * A paste into a note's part: one line of the slice's text, with the marks
+ * typed text takes here; a wiki embed or an emoji atom stays one, text stays
+ * text (`inlineForNote`).
+ */
+export function notePasteTransaction(state: EditorState, slice: Slice): Transaction {
+    const marks = state.storedMarks ?? state.selection.$from.marks();
+    const inline = inlineForNote(slice, marks);
+    return inline.some(n => !n.isText)
+        ? state.tr.replaceSelection(new Slice(Fragment.from(inline), 0, 0))
+        : state.tr.insertText(inline.map(n => n.text ?? '').join(''));
 }
 
 // ---------------------------------------------------------------------------

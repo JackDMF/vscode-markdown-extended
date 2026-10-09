@@ -25,7 +25,7 @@ import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
-import { showHint } from './hint';
+import { showChangeHint, showHint } from './hint';
 import { hoverDocumentShown, hoverMessage, hoverPlugin } from './hover';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
 import { DROP_LOCK, IMAGE_LOCK, insertFilesTransaction, insertLockReason } from './objects';
@@ -277,6 +277,11 @@ const port: EditorPort = {
     hint: (text, near) => {
         if (view) {
             showHint(view, text, 'neutral', near);
+        }
+    },
+    changeHint: (text, near) => {
+        if (view) {
+            showChangeHint(view, text, near);
         }
     },
     documentKey: () => documentKey,

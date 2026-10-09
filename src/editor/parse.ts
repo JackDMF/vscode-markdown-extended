@@ -2,7 +2,7 @@
 // which this module never uses: the tokens come from the editor engine, handed
 // to MarkdownParser through the tokenizer wrapper below.
 import { MarkdownParser } from 'prosemirror-markdown';
-import { Attrs, Node } from 'prosemirror-model';
+import { Attrs, Fragment, Node } from 'prosemirror-model';
 import { Environment, MarkdownIt, Options, Token } from '../@types/markdown-it';
 import {
     BlockAttrs,
@@ -21,6 +21,7 @@ import { endLiteralOf } from './attrs';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
+import { unreadEmoji } from './serialize';
 
 /**
  * A document as the editor holds it: the ProseMirror tree plus the two facts
@@ -463,6 +464,11 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             node: 'wiki_embed',
             getAttrs: tok => ({ source: ((real(tok).meta as { source?: string } | null)?.source) ?? real(tok).content }),
         },
+        // An emoji: one atom carrying its spelling as the host read it (`markdownItEmoji.ts`), its name and glyph.
+        emoji: {
+            node: 'emoji',
+            getAttrs: tok => ({ source: (real(tok).meta as { source?: string } | null)?.source ?? '', name: real(tok).markup, glyph: real(tok).content }),
+        },
         em: { mark: 'em', getAttrs: tok => ({ markup: real(tok).markup || '*' }) },
         strong: { mark: 'strong', getAttrs: tok => ({ markup: real(tok).markup || '**' }) },
         link: {
@@ -518,5 +524,53 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     if (opened !== made) {
         throw new Error(`Rich editor: ${opened} notes became ${made} note nodes.`);
     }
-    return { doc, eol: detectEol(text), tail };
+    return { doc: withUnplacedAsSource(doc, blocks, render), eol: detectEol(text), tail };
+}
+
+/** Whether a parse is judging emoji already (`withUnplacedAsSource`): the judge parses what it writes, which needs no judging. */
+let judgingEmoji = false;
+
+/**
+ * Why a block opens as a source block although it is editable: an emoji atom
+ * of it as it was read cannot be placed (`unreadEmoji` is `null`), so no edit
+ * of it could be judged and every one would be refused.
+ */
+export const EMOJI_UNPLACED_REASON = 'an emoji the editor cannot place in what it would write';
+
+/**
+ * `doc` with each editable top-level block whose emoji atoms the judge
+ * cannot place as read (`unreadEmoji`, `null`) a source block instead, as
+ * one holding an emoji was before the editor made atoms of them
+ * (`EMOJI_UNPLACED_REASON`): written as it was read, drawn as the host
+ * renders it. The judge reads with the current inline definition
+ * (`currentInlineDefinition()`): on the host, where nothing sets one, the
+ * default (`DEFAULT_INLINE_ENGINE`, `math: false`), not the definition the
+ * host posts with the document.
+ */
+function withUnplacedAsSource(doc: Node, blocks: readonly SourceBlock[], render: (block: SourceBlock) => string): Node {
+    if (judgingEmoji) {
+        return doc;
+    }
+    judgingEmoji = true;
+    try {
+        let changed = false;
+        const children: Node[] = [];
+        doc.forEach((node, _offset, k) => {
+            const block = blocks[k];
+            let holds = false;
+            node.descendants(child => {
+                holds ||= child.type === editorSchema.nodes.emoji;
+                return !holds;
+            });
+            if (block.kind === 'editable' && holds && unreadEmoji(node) === null) {
+                changed = true;
+                children.push(editorSchema.nodes.raw_block.create({ src: block.src ?? '', gap: block.gap, html: render(block), construct: null }));
+            } else {
+                children.push(node);
+            }
+        });
+        return changed ? doc.copy(Fragment.from(children)) : doc;
+    } finally {
+        judgingEmoji = false;
+    }
 }

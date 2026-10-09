@@ -53,18 +53,30 @@ export function isLineStartSyntax(word: string): boolean {
     return /^(?:[*+~]|-+|=+|\*{3,}|_{3,}|#{1,6}|\d{1,9}[.)])$/.test(w) || /^(?:[>|<:]|`{3,}|~{3,})/.test(w);
 }
 
-/** Escape a word that has to begin a line anyway (the first of the paragraph, or after a hard break). */
+/**
+ * Escape a word that has to begin a line anyway (the first of the paragraph, or
+ * after a hard break). A word that begins with a held run is left as it is: the
+ * run is written whole, and a backslash would change it — an emoji atom's
+ * spelling (`:)`, `>:(`), which the parser judges where it stands
+ * (`unreadEmoji` in `serialize.ts`), or an `<…>` autolink.
+ */
 export function escapeLineStart(word: string): string {
-    if (!isLineStartSyntax(word)) {
-        return word;
+    const at = lineStartEscapeAt(word);
+    return at === null ? word : `${word.slice(0, at)}\\${word.slice(at)}`;
+}
+
+/**
+ * Where `escapeLineStart` puts its backslash in `word`: before the word's
+ * first character after its leading hold markers, or — an ordered-list
+ * marker (`3.`, `1)`) — before its delimiter; `null` where it puts none.
+ */
+export function lineStartEscapeAt(word: string): number | null {
+    if (!isLineStartSyntax(word) || word.startsWith(HOLD_OPEN)) {
+        return null;
     }
     const lead = LEADING_HOLDS.exec(word)?.[0] ?? '';
-    const rest = word.slice(lead.length);
-    const list = /^(\d{1,9})([.)])$/.exec(rest);
-    if (list) {
-        return `${lead}${list[1]}\\${list[2]}`;
-    }
-    return `${lead}\\${rest}`;
+    const list = /^(\d{1,9})([.)])$/.exec(word.slice(lead.length));
+    return list ? lead.length + list[1].length : lead.length;
 }
 
 /** An unbreakable run of the line: a word, plus every following word that may not begin a line. */
@@ -74,7 +86,8 @@ interface Chunk {
     sep: string;
 }
 
-function splitChunks(line: string): Chunk[] {
+/** `line` cut into chunks (`Chunk`), and where in `line` the escape of its first word went (`lineStartEscapeAt`), if one did. */
+function splitChunks(line: string): { chunks: Chunk[]; escapedAt: number | null } {
     const words: Chunk[] = [];
     let depth = 0;
     let current = '';
@@ -107,6 +120,8 @@ function splitChunks(line: string): Chunk[] {
     if (current !== '') {
         words.push({ text: current, sep });
     }
+    // The first word starts the line (`line` has no leading space): its escape stands where it stands in it.
+    const escapedAt = words.length > 0 ? lineStartEscapeAt(words[0].text) : null;
     if (words.length > 0) {
         words[0] = { text: escapeLineStart(words[0].text), sep: '' };
     }
@@ -119,7 +134,7 @@ function splitChunks(line: string): Chunk[] {
             chunks.push({ ...word });
         }
     }
-    return chunks;
+    return { chunks, escapedAt };
 }
 
 /**
@@ -128,17 +143,27 @@ function splitChunks(line: string): Chunk[] {
  * following one. A line breaks only between chunks, so it overruns the room
  * only when it is a single chunk — which is what `measureWrapWidth` relies on.
  * Spaces at a break are dropped: two of them at a line end would be a hard
- * break.
+ * break. Given `inserted`, it is told where in `inline` a backslash went
+ * (`escapeLineStart`, the first word of the paragraph and of each line after
+ * a hard break): before the character at each of those places, in order — the
+ * one thing the wrap writes that is no white space and not in `inline`.
  */
-export function wrapInline(inline: string, first: number, rest: number): string[] {
+export function wrapInline(inline: string, first: number, rest: number, inserted?: number[]): string[] {
     const out: string[] = [];
     const segments = inline.split('\n');
+    let offset = 0;
     segments.forEach((segment, k) => {
         const hardBreak = k < segments.length - 1 && segment.endsWith('\\');
-        const body = (hardBreak ? segment.slice(0, -1) : segment).replace(/^ +/, '').replace(/ +$/, '');
+        const unbroken = hardBreak ? segment.slice(0, -1) : segment;
+        const body = unbroken.replace(/^ +/, '').replace(/ +$/, '');
+        const { chunks, escapedAt } = splitChunks(body);
+        if (escapedAt !== null) {
+            inserted?.push(offset + (unbroken.length - unbroken.replace(/^ +/, '').length) + escapedAt);
+        }
+        offset += segment.length + 1;
         let line = '';
         let lineWidth = 0;
-        splitChunks(body).forEach((chunk, i) => {
+        chunks.forEach((chunk, i) => {
             const room = out.length === 0 ? first : rest;
             const candidate = lineWidth + characterCount(chunk.sep) + characterCount(chunk.text);
             if (i > 0 && candidate > room) {

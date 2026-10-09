@@ -10,6 +10,7 @@ import markdownItBracketedSpans from 'markdown-it-bracketed-spans';
 import { MarkdownItContainer } from './markdownItContainer';
 import { MarkdownItAdmonition } from './markdownItAdmonition';
 import markdownItMultimdTable from 'markdown-it-multimd-table';
+import { MarkdownItEmoji } from './markdownItEmoji';
 
 /**
  * The plugins of the registry (`plugins.ts`) that add an inline rule, by their
@@ -24,16 +25,14 @@ import markdownItMultimdTable from 'markdown-it-multimd-table';
  * - The block plugins but those of `PAGE_BLOCK_PLUGINS` (deflist, the table
  *   of contents) and markdown-it-html5-embed, which only renders: they read
  *   no inline text, and the editor writes none of their blocks.
- * - The core rules that run after the inline parse — markdown-it-emoji,
- *   markdown-it-abbr, markdown-it-checkbox, markdown-it-attrs (and its wrapper)
- *   — and markdown-it-ib, which only renders: they rewrite text tokens or move
+ * - The core rules that run after the inline parse — markdown-it-abbr,
+ *   markdown-it-checkbox, markdown-it-attrs (and its wrapper) — and
+ *   markdown-it-ib, which only renders: they rewrite text tokens or move
  *   attributes onto tokens the inline parse made, and never make or unmake a
- *   sidebar's tokens. markdown-it-emoji's shortcuts would still change what
- *   the page's text means; the serializer escapes its whole table where no
- *   letter, digit or mark stands beside it, or where it touches a link the
- *   page's engine reads (`emojiShortcuts.ts`), so text the page writes reads
- *   as no emoji, `<3` and `</3` right after a URL with a path and any shortcut in
- *   `^sup^` or `~sub~` excepted (`inlineEngine.ts`).
+ *   sidebar's tokens. markdown-it-emoji, a core rule too, is the exception
+ *   (`PAGE_CORE_PLUGINS`): an emoji the file holds is an atom the page writes
+ *   back as spelled, unescaped, and only the parser can say whether that
+ *   spelling still reads as that emoji where the save writes it.
  * - markdown-it-cjk-friendly: it changes which emphasis delimiters open and
  *   close, and an emphasis delimiter never takes a sidebar's marker.
  * - The export helper (`markdownItExportHelper.ts`), which reads the file
@@ -67,8 +66,19 @@ export const PAGE_BLOCK_PLUGINS = {
     'markdown-it-multimd-table': markdownItMultimdTable,
 } as const;
 
+/**
+ * The registry's core-rule plugins the page runs, by their registry name:
+ * markdown-it-emoji, wrapped so each emoji carries its spelling
+ * (`markdownItEmoji.ts`). The save writes an emoji atom back as it was
+ * spelled and reads the block back with the page's engine to see that it is
+ * still that emoji there (`unreadEmoji` in `serialize.ts`).
+ */
+export const PAGE_CORE_PLUGINS = {
+    'markdown-it-emoji': MarkdownItEmoji,
+} as const;
+
 /** Every plugin of the registry the page runs. */
-export const PAGE_PLUGINS = { ...PAGE_BLOCK_PLUGINS, ...INLINE_PLUGINS } as const;
+export const PAGE_PLUGINS = { ...PAGE_BLOCK_PLUGINS, ...INLINE_PLUGINS, ...PAGE_CORE_PLUGINS } as const;
 
 /**
  * The page's plugins in the registry's order, with the arguments the registry
@@ -84,6 +94,7 @@ export const PAGE_PLUGINS_IN_ORDER: readonly { name: string; args: unknown[] }[]
     { name: 'markdown-it-wiki-embed', args: [] },
     { name: 'markdown-it-kbd', args: [] },
     { name: 'markdown-it-mark', args: [] },
+    { name: 'markdown-it-emoji', args: [] },
     { name: 'markdown-it-multimd-table', args: [MULTIMD_TABLE_OPTIONS] },
     { name: 'markdown-it-sidenote', args: [] },
     { name: 'markdown-it-bracketed-spans', args: [] },

@@ -308,7 +308,7 @@ export function alignOfStyle(style: string | null | undefined): TableAlign {
 }
 
 /** The inline content of a table cell: the paragraph's, without hard breaks and the notes with a reference. */
-export const TABLE_CELL_CONTENT = '(text | image | inline_atom | wiki_embed | left_sidebar | right_sidebar)*';
+export const TABLE_CELL_CONTENT = '(text | image | inline_atom | wiki_embed | emoji | left_sidebar | right_sidebar)*';
 
 const tableSpecs = tableNodes({
     tableGroup: 'top_block',
@@ -366,7 +366,7 @@ export const editorSchema = new Schema({
         },
         heading: {
             // A note is written inside the heading's one line; a hard break is not.
-            content: '(text | image | inline_atom | wiki_embed | sidenote | marginal_note | left_sidebar | right_sidebar)*',
+            content: '(text | image | inline_atom | wiki_embed | emoji | sidenote | marginal_note | left_sidebar | right_sidebar)*',
             group: 'block',
             defining: true,
             attrs: {
@@ -670,6 +670,37 @@ export const editorSchema = new Schema({
                 const source = node.attrs.source as string;
                 // Shown plain: a place's encoding of a character (`&#124;` in a note) is how it is written, not its name.
                 return ['span', { class: 'mep-wiki-embed', 'data-mep-wiki-embed': source, title: WIKI_EMBED_TITLE }, plainWikiEmbed(source)];
+            },
+        },
+        // An emoji the file holds (`markdownItEmoji.ts`): one unit, drawn as its
+        // glyph and written back as `source`, its spelling as the host read it,
+        // never escaped. Its text, where ProseMirror reads text (a plain-text
+        // copy, an emptiness check), is the glyph; the editor's own copy keeps the
+        // atom by its `data-mep-emoji`.
+        emoji: {
+            inline: true,
+            group: 'inline note_inline',
+            atom: true,
+            selectable: true,
+            draggable: true,
+            attrs: {
+                source: {},
+                name: {},
+                glyph: {},
+            },
+            leafText: node => node.attrs.glyph as string,
+            parseDOM: [{
+                tag: 'span[data-mep-emoji]',
+                // No spelling, no atom: the span is read as its text.
+                getAttrs: (dom: HTMLElement) => (dom.getAttribute('data-mep-emoji') ?? '') === '' ? false : {
+                    source: dom.getAttribute('data-mep-emoji'),
+                    name: dom.getAttribute('data-mep-emoji-name') ?? '',
+                    glyph: dom.textContent ?? '',
+                },
+            }],
+            toDOM(node): DOMOutputSpec {
+                const source = node.attrs.source as string;
+                return ['span', { class: 'mep-emoji', 'data-mep-emoji': source, 'data-mep-emoji-name': node.attrs.name as string, title: `Emoji ${source} — kept as written` }, node.attrs.glyph as string];
             },
         },
         sidenote: noteNode(SN.refClass, 'sidenote_body', SN.noteClass),

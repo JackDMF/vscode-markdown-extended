@@ -5,9 +5,10 @@ import { MarkdownItAttrs, readsAttrs } from '../plugin/markdownItAttrs';
 import { useMathStandIn } from './mathStandIn';
 import { SIDEBAR_SPAN_META } from '../plugin/markdownItSidenote';
 import { WIKI_EMBED_TOKEN, readsWikiEmbeds } from '../plugin/markdownItWikiEmbed';
+import { EMOJI_RULE, readsEmoji } from '../plugin/markdownItEmoji';
 import { hasEnabledRule } from '../plugin/shared';
 import { configureLinkify } from '../syntax/linkify';
-import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
+import { EMOJI_PLACES_OPTION, WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
 
 /**
  * The engine the Visual Editor's page reads what it writes with, defined once
@@ -38,8 +39,12 @@ import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
  * Nor does it see the document's own reference and
  * footnote definitions, as a textblock is read on its own, or the plugins that
  * add no inline rule, which make or unmake no sidebar (`inlinePlugins.ts`).
- * One of those, markdown-it-emoji, would turn text the page writes into an
- * emoji the page never showed (`5\$:)`); the save escapes every shortcut of
+ * markdown-it-emoji, a core rule, runs here as on the host (`emoji`): an
+ * emoji the file holds is an atom written back as spelled, and whether that
+ * spelling still reads as that emoji where the save writes it is asked of
+ * this engine (`unreadEmoji` in `serialize.ts`). Typed text is still kept
+ * from becoming an emoji the page never showed (`5\$:)`) by escaping, not by
+ * this engine: the save escapes every shortcut of
  * its table not beside a letter, digit or mark (`emojiShortcuts.ts`), and one
  * at the edge of a link this engine reads by itself in the textblock as
  * written (`readAutoLinks`, `judged` in `serialize.ts`), sidebars included,
@@ -115,6 +120,16 @@ export interface InlineEngineDefinition extends EngineOptions {
      * selection (`currentReadsAttrs`), all by the same fact.
      */
     attrs: boolean;
+    /**
+     * Whether the host's engine reads emoji: markdown-it-emoji's core rule is
+     * in the chain and enabled as the engine was finally built (`readsEmoji`)
+     * — the registry ran `markdown-it-emoji`, `plugins.disabled` does not
+     * name it, and no extender disabled the rule after it. Where it holds,
+     * an emoji the file holds is an atom (`blocks.ts`) and the page's engine
+     * reads the blocks the save writes with the rule (`createInlineEngine`),
+     * so an atom whose spelling no longer reads becomes text (`unreadEmoji`).
+     */
+    emoji: boolean;
 }
 
 /**
@@ -127,8 +142,10 @@ export const MATH_INLINE_RULE = 'math_inline';
  * markdown-it as both engines start: raw HTML allowed, linkify and typographer
  * as the host's settings say, and linkify-it set as VS Code's preview sets it
  * (`configureLinkify`: no fuzzy links). Both keep a wiki embed a `wiki_embed`
- * token (`WIKI_EMBED_TOKENS_OPTION`, `markdownItWikiEmbed.ts`), the one option
- * that differs from the preview's engine: the editor edits it as one atom.
+ * token (`WIKI_EMBED_TOKENS_OPTION`, `markdownItWikiEmbed.ts`), which the
+ * editor edits as one atom, and record where each emoji stands
+ * (`EMOJI_PLACES_OPTION`, `markdownItEmoji.ts`): the two options that differ
+ * from the preview's engine.
  */
 export function baseEngine(options: EngineOptions): MarkdownIt {
     const md: MarkdownIt = markdownIt({
@@ -136,6 +153,7 @@ export function baseEngine(options: EngineOptions): MarkdownIt {
         linkify: options.linkify,
         typographer: options.typographer,
         [WIKI_EMBED_TOKENS_OPTION]: true,
+        [EMOJI_PLACES_OPTION]: true,
     } as Parameters<typeof markdownIt>[0]);
     configureLinkify(md.linkify);
     return md;
@@ -158,6 +176,7 @@ export function recordInlineDefinition(md: MarkdownIt, options: EngineOptions, p
         math: hasEnabledRule(md.inline.ruler, MATH_INLINE_RULE),
         wikiEmbeds: readsWikiEmbeds(md),
         attrs: readsAttrs(md),
+        emoji: readsEmoji(md),
     });
 }
 
@@ -185,6 +204,8 @@ export const DEFAULT_INLINE_ENGINE: InlineEngineDefinition = {
     wikiEmbeds: true,
     // The registry holds markdown-it-attrs.
     attrs: true,
+    // The registry holds markdown-it-emoji.
+    emoji: true,
 };
 
 /**
@@ -201,7 +222,8 @@ export function definitionOf(md: MarkdownIt): InlineEngineDefinition {
  * bundle is skipped, and one that threw on the host after changing its rules
  * (`threw`) runs as far as it gets here too. Then what the host's extenders
  * did after its registry: the wiki embed rule disabled where the host's is
- * not read (`wikiEmbeds`), and with `math` the stand-in for VS Code's math.
+ * not read (`wikiEmbeds`), the emoji rule where the host's is not
+ * (`emoji`), and with `math` the stand-in for VS Code's math.
  */
 export function createInlineEngine(definition: InlineEngineDefinition): MarkdownIt {
     const md = baseEngine(definition);
@@ -223,6 +245,9 @@ export function createInlineEngine(definition: InlineEngineDefinition): Markdown
     // that reads embeds listed it above; one that does not may still have run it.
     if (!definition.wikiEmbeds && readsWikiEmbeds(md)) {
         md.inline.ruler.disable(WIKI_EMBED_TOKEN);
+    }
+    if (!definition.emoji && readsEmoji(md)) {
+        md.core.ruler.disable(EMOJI_RULE);
     }
     return definition.math ? useMathStandIn(md) : md;
 }

@@ -277,7 +277,8 @@ class PasteParser extends DOMParser {
 /**
  * The schema's node serializers for the clipboard: an embed's tooltip in the
  * editor is a how-to for the editor's own verbs, and in other apps' clipboard
- * HTML it would be noise, so a copy carries the plain title the embed always had.
+ * HTML it would be noise, so a copy carries the plain title the embed always
+ * had; an emoji's, none.
  */
 function clipboardNodes(): ReturnType<typeof DOMSerializer.nodesFromSchema> {
     const nodes = DOMSerializer.nodesFromSchema(editorSchema);
@@ -285,6 +286,13 @@ function clipboardNodes(): ReturnType<typeof DOMSerializer.nodesFromSchema> {
     nodes.wiki_embed = node => {
         const [tag, attrs, ...content] = inEditor(node) as [string, Record<string, string>, ...unknown[]];
         return [tag, { ...attrs, title: 'Wiki embed' }, ...content] as unknown as DOMOutputSpec;
+    };
+    // An emoji's tooltip is the editor's too: other apps get the glyph and its spelling, no title.
+    const emojiInEditor = nodes.emoji;
+    nodes.emoji = node => {
+        const [tag, attrs, ...content] = emojiInEditor(node) as [string, Record<string, string>, ...unknown[]];
+        const { title: _title, ...rest } = attrs;
+        return [tag, rest, ...content] as unknown as DOMOutputSpec;
     };
     return nodes;
 }
@@ -421,6 +429,9 @@ export function inlineForNote(slice: Slice, marks: readonly Mark[]): Node[] {
             pushText(node.text ?? '');
         } else if (node.type === editorSchema.nodes.wiki_embed && !raw) {
             nodes.push(editorSchema.nodes.wiki_embed.create(node.attrs, null, marks));
+        } else if (node.type === editorSchema.nodes.emoji) {
+            // An emoji stays one; under a raw mark, which cannot hold one, it is its spelling.
+            nodes.push(raw ? editorSchema.text(node.attrs.source as string, marks) : editorSchema.nodes.emoji.create(node.attrs, null, marks));
         } else if (node.isLeaf) {
             pushText(node.type.spec.leafText?.(node) ?? ' ');
         }
