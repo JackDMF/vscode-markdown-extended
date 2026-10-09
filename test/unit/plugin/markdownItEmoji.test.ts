@@ -4,15 +4,21 @@ import MarkdownIt = require('markdown-it');
 import { full as markdownItEmojiAlone } from 'markdown-it-emoji';
 import { plugins } from '../../../src/plugin/plugins';
 import { MarkdownItEmoji, readsEmoji } from '../../../src/plugin/markdownItEmoji';
+import { EMOJI_PLACES_OPTION } from '../../../src/syntax/markers';
 
 interface EmojiToken { type: string; markup: string; content: string; children: EmojiToken[] | null; meta?: { source?: string | null } | null }
 
 /** The preview's engine: the registry, in its order. */
-function preview(registry = plugins): MarkdownIt.MarkdownIt {
-    const md = new MarkdownIt({ html: true, linkify: true });
+function preview(registry = plugins, options: Record<string, unknown> = {}): MarkdownIt.MarkdownIt {
+    const md = new MarkdownIt({ html: true, linkify: true, ...options } as MarkdownIt.Options);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     registry.forEach(p => md.use(p.plugin as any, ...p.args));
     return md;
+}
+
+/** The same registry built as the Visual Editor's engine is (`baseEngine`): the one that places each emoji. */
+function editorPreview(): MarkdownIt.MarkdownIt {
+    return preview(plugins, { [EMOJI_PLACES_OPTION]: true });
 }
 
 /** Every emoji token `md` reads in `source`, nested ones (a note's) included, in order. */
@@ -146,7 +152,7 @@ suite('MarkdownItEmoji: every emoji the host reads carries where it stands', () 
     };
 
     test('its offset in the inline text it was read from, where its spelling stands', () => {
-        const md = preview();
+        const md = editorPreview();
         for (const [source, spelled] of CASES) {
             const found = placed(md, source + NL);
             assert.deepStrictEqual(found.map(f => f.source), spelled, source);
@@ -158,5 +164,48 @@ suite('MarkdownItEmoji: every emoji the host reads carries where it stands', () 
         assert.deepStrictEqual(placed(md, 'x :) y :) z\n').map(f => f.at), [2, 7]);
         assert.deepStrictEqual(placed(md, 'a ++r|x :) y++ b ++s|z :) w++ c\n').map(f => f.at), [8, 23]);
         assert.deepStrictEqual(placed(md, 'see http://e.com/ :) and :)\n').map(f => f.at), [18, 25]);
+    });
+});
+
+suite('MarkdownItEmoji: places as the rules made them, in the editor\'s engine only', () => {
+    const BT = '`';
+    /** Each emoji's recorded place in `md`'s parse of `source`. */
+    const ats = (md: MarkdownIt.MarkdownIt, source: string) => {
+        const out: unknown[] = [];
+        const walk = (tokens: EmojiToken[] | null) => {
+            for (const t of tokens ?? []) {
+                if (t.type === 'emoji') {
+                    out.push((t.meta as { at?: unknown } | null)?.at);
+                }
+                walk(t.children);
+            }
+        };
+        walk(md.parse(source, {}) as unknown as EmojiToken[]);
+        return out;
+    };
+
+    test('a text piece linkify or the joining of fragments made is placed where it stands, or not at all', () => {
+        const md = editorPreview();
+        /** The places of `source`'s emoji, each where its spelling stands: none guessed. */
+        const placed = (source: string) => {
+            const [inline] = (md.parse(source, {}) as unknown as { type: string; content: string }[]).filter(t => t.type === 'inline');
+            return ats(md, source).map(at => (at === null || (typeof at === 'number' && inline.content.startsWith(':)', at)) ? at : `${String(at)} holds ${inline.content.slice(at as number, (at as number) + 2)}`));
+        };
+        assert.deepStrictEqual(placed(`w ${BT}a :) b${BT} :) x@example.com end\n`), [11]);
+        assert.deepStrictEqual(placed(`w ${BT}a :) b${BT} :) mailto:x@example.com end\n`), [11]);
+        assert.deepStrictEqual(placed(`w ${BT}a :) b${BT} :) www.example.com :) end\n`), [11, 30]);
+        assert.deepStrictEqual(placed(`${BT} x _:)${BT} x _:)\n`), [12]);
+        assert.deepStrictEqual(placed(`${BT}_:) e${BT} x _:) e\n`), [11]);
+        assert.deepStrictEqual(placed('a _:) e :)\n'), [3, 8]);
+        // Wherever a place is given, its spelling stands there; where it cannot be known, none is given.
+        for (const source of [`w ${BT}a :) b${BT} :) //example.com end :)\n`, '[a _:) e](u) x _:) e\n', 'x http://e.com/%41 :) y http://f.com :) z\n']) {
+            assert.ok(placed(source).every(at => at === null || typeof at === 'number'), `${source}: ${JSON.stringify(placed(source))}`);
+        }
+    });
+
+    test('the preview\'s engine reads emoji and their spelling, and places none: that is the editor\'s', () => {
+        assert.deepStrictEqual(ats(preview(), 'x :) y :) z\n'), [undefined, undefined]);
+        assert.deepStrictEqual(emojisOf(preview(), 'x :) y\n').map(t => t.meta?.source), [':)']);
+        assert.deepStrictEqual(ats(editorPreview(), 'x :) y :) z\n'), [2, 7]);
     });
 });

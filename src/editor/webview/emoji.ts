@@ -2,7 +2,7 @@ import { EditorState, Plugin, PluginKey, TextSelection, Transaction } from 'pros
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, fidelityPlan, isRepair } from '../fidelity';
 import { editorSchema } from '../schema';
 import { emojiBeyondAtoms, unreadEmojiAsText } from '../serialize';
-import { showHint, undoKey } from './hint';
+import { showChangeHint, undoKey } from './hint';
 
 /**
  * An emoji the file holds is an atom (`emoji`), written back as it was
@@ -75,7 +75,7 @@ export function emojiPlugin(): Plugin<EmojiNotice | null> {
             update(view, prevState) {
                 const notice = emojiPluginKey.getState(view.state);
                 if (notice != null && notice !== emojiPluginKey.getState(prevState)) {
-                    showHint(view, notice.text, 'neutral');
+                    showChangeHint(view, notice.text);
                 }
             },
         }),

@@ -1256,6 +1256,19 @@ export function unwritableEmoji(doc: Node, from = 0, to = doc.content.size): str
     return reason;
 }
 
+/** Why an edit is refused after which an emoji atom of a block it rewrites cannot be placed (`unreadEmoji` is `null`). */
+export const EMOJI_UNPLACED_REFUSAL = 'This paragraph could not be checked; the edit was not applied.';
+
+/**
+ * Why an edit is refused that makes the save write one of `blocks` again so
+ * that an emoji atom of it cannot be placed (`unreadEmoji`), or `null`: whether
+ * it still reads as that emoji cannot be told, so it is neither kept nor made
+ * text — the edit is not applied, and the page and the file still agree.
+ */
+export function unplacedEmoji(blocks: readonly { node: Node }[]): string | null {
+    return blocks.some(({ node }) => unreadEmoji(node) === null) ? EMOJI_UNPLACED_REFUSAL : null;
+}
+
 /**
  * How many emoji the page's engine reads in `block` as the save writes it
  * beyond its atoms, part by part (`unitsOf`): typed text that reads as an
@@ -1266,12 +1279,7 @@ export function unwritableEmoji(doc: Node, from = 0, to = doc.content.size): str
 export function emojiBeyondAtoms(block: Node): number {
     let beyond = 0;
     for (const unit of unitsOf(block)) {
-        let atoms = 0;
-        for (const { node } of unit.textblocks) {
-            node.descendants(child => {
-                atoms += child.type.name === 'emoji' ? 1 : 0;
-            });
-        }
+        const atoms = unit.textblocks.reduce((sum, { node }) => sum + atomsIn(node, 0).length, 0);
         beyond += Math.max(0, readUnit(unit.text, unit.key).emoji.length - atoms);
     }
     return beyond;
@@ -1392,7 +1400,14 @@ function referenceMarkerAt(st: StateInternals, at: number, ch: string, from: num
         backslashes++;
     }
     const start = at - (backslashes % 2);
-    st.out = st.out.slice(0, start) + MARKER_REFERENCES[ch] + st.out.slice(at + 1);
+    const reference = MARKER_REFERENCES[ch];
+    st.out = st.out.slice(0, start) + reference + st.out.slice(at + 1);
+    // The atoms noted after it stand that much further on (`atomCollector`).
+    for (const atom of atomCollector ?? []) {
+        if (atom.at > start) {
+            atom.at += reference.length - (at + 1 - start);
+        }
+    }
 }
 
 /**
@@ -3311,66 +3326,75 @@ export function literalsReadBack(block: Node): boolean {
     return literalNotReadBack(block) === null;
 }
 
-/**
- * The emoji atoms of the top-level `block` that do not read back as
- * themselves where they were written, once the save writes it: each part as
- * the save writes it (`unitsOf`), parsed by the page's engine (`readUnit`),
- * which runs the registry's emoji plugin where the host does. Each atom is
- * paired with the emoji read at the place its spelling was written: the
- * textblock's inline token (one per paragraph with text, heading and cell,
- * in order), and in that token's text the offset the writer wrote it at
- * (`WrittenTextblock.atoms`) — the textblock as written, its runs of white
- * space read as the parser's (the wrap breaks lines at spaces) — against the
- * offset the plugin's own match gives the emoji (`markdownItEmoji.ts`). An
- * atom no emoji stands at, of its name and spelling, is returned, by its
- * position from the block's start, in order. An emoji read elsewhere — a
- * typed one the escape could not break, in superscript or a note
- * (`inlineEngine.ts`), an equal atom beside it — keeps no atom. Where the
- * written textblocks cannot be lined up with the inline tokens read (the edit
- * made a part read as other blocks), each atom is matched in order by name and
- * spelling instead. Nothing about where an emoji reads is modelled: a
- * neighbour glued to it, a `>` that opens a quote at a line start, a table's or
- * a note's encoding of a `|` are all found by the parse.
- */
-export function unreadEmoji(block: Node): number[] {
+/** The emoji atoms `node` holds, in document order, each at its position from `base` (a node at `base` holds its content from `base + 1`). */
+function atomsIn(node: Node, base: number): { atom: Node; at: number }[] {
+    const out: { atom: Node; at: number }[] = [];
+    node.descendants((child, rel) => {
+        if (child.type.name === 'emoji') {
+            out.push({ atom: child, at: base + 1 + rel });
+        }
+    });
+    return out;
+}
+
+/** Whether `node` holds an emoji atom. */
+function holdsEmoji(node: Node): boolean {
     let holds = false;
-    block.descendants(node => {
-        holds ||= node.type.name === 'emoji';
+    node.descendants(child => {
+        holds ||= child.type.name === 'emoji';
         return !holds;
     });
-    if (!holds) {
+    return holds;
+}
+
+/**
+ * The emoji atoms of the top-level `block` that do not read back as
+ * themselves where they were written, once the save writes it — or `null`
+ * where an atom cannot be placed, so whether it reads cannot be told. Each
+ * part as the save writes it (`unitsOf`) is parsed by the page's engine
+ * (`readUnit`), which runs the registry's emoji plugin where the host does,
+ * and each atom is paired with the emoji read at the place its spelling was
+ * written: the textblock's inline token (one per paragraph with text, heading
+ * and cell, in order), and in that token's text the offset the writer wrote it
+ * at (`WrittenTextblock.atoms`) — the textblock as written, its runs of white
+ * space read as the parser's (the wrap breaks lines at spaces), the literal
+ * the save writes after it (`WrittenUnit.literals`) read off the end — against
+ * the offset the plugin's own match gives the emoji (`markdownItEmoji.ts`).
+ *
+ * An atom no emoji of its name and spelling stands at is returned, by its
+ * position from the block's start, in order — an emoji read elsewhere (a typed
+ * one the escape could not break, in superscript or a note, an equal atom
+ * beside it) keeps no atom. Where an emoji of its name and spelling was read
+ * in its inline token with no known place, or where the part's textblocks
+ * cannot be lined up with what was read (the edit made it read as other
+ * blocks), only an atom of which no emoji of its name and spelling was read
+ * anywhere in the part is returned; one of which some was read cannot be
+ * placed, and the answer is `null`: the edit that made it so is refused
+ * (`EMOJI_UNPLACED_REFUSAL`), never an atom made text that may still read.
+ * Nothing about where an emoji reads is modelled: a neighbour glued to it, a
+ * `>` that opens a quote at a line start, a table's or a note's encoding of a
+ * `|` are all found by the parse.
+ */
+export function unreadEmoji(block: Node): number[] | null {
+    if (!holdsEmoji(block)) {
         return [];
     }
     const unread: number[] = [];
     for (const unit of unitsOf(block)) {
-        const atoms: { name: string; source: string; at: number; textblock: Node; index: number }[] = [];
-        for (const { node, pos } of unit.textblocks) {
-            let index = 0;
-            node.descendants((child, rel) => {
-                if (child.type.name === 'emoji') {
-                    atoms.push({ name: child.attrs.name as string, source: child.attrs.source as string, at: pos + 1 + rel, textblock: node, index: index++ });
-                }
-            });
-        }
+        const atoms = unit.textblocks.flatMap(({ node, pos }) => atomsIn(node, pos).map((found, index) => ({ ...found, textblock: node, index })));
         if (atoms.length === 0) {
             continue;
         }
         const read = readUnit(unit.text, unit.key);
         const inPlace = atomsReadInPlace(unit, read);
-        if (inPlace !== null) {
-            unread.push(...atoms.filter(atom => !inPlace.get(atom.textblock)?.[atom.index]).map(atom => atom.at));
-            continue;
-        }
-        let from = 0;
-        for (const atom of atoms) {
-            let i = from;
-            while (i < read.emoji.length && !(read.emoji[i].name === atom.name && read.emoji[i].source === atom.source)) {
-                i++;
+        const readAnywhere = (atom: Node) => read.emoji.some(e => e.name === atom.attrs.name && e.source === atom.attrs.source);
+        for (const { atom, at, textblock, index } of atoms) {
+            const verdict = inPlace !== null ? (inPlace.get(textblock) as (boolean | null)[])[index] : readAnywhere(atom) ? null : false;
+            if (verdict === null) {
+                return null;
             }
-            if (i < read.emoji.length) {
-                from = i + 1;
-            } else {
-                unread.push(atom.at);
+            if (!verdict) {
+                unread.push(at);
             }
         }
     }
@@ -3380,37 +3404,60 @@ export function unreadEmoji(block: Node): number[] {
 
 /**
  * For each textblock of `unit` holding atoms, whether each of them, in order,
- * is read at the place it was written (`unreadEmoji`); `null` where the
- * textblocks cannot be lined up with what was read: another count of inline
- * tokens, a textblock's text that is not its inline token's, or atoms the
- * writer did not write as many as the textblock holds.
+ * is read at the place it was written (`unreadEmoji`): `true`, `false`, or
+ * `null` where an emoji of its name and spelling was read in its inline token
+ * with no known place; `null` for the whole where the textblocks cannot be
+ * lined up with what was read: another count of inline tokens, a textblock's
+ * text that is not its inline token's, or atoms the writer did not write as
+ * many as the textblock holds.
  */
-function atomsReadInPlace(unit: WrittenUnit, read: UnitRead): Map<Node, boolean[]> | null {
+function atomsReadInPlace(unit: WrittenUnit, read: UnitRead): Map<Node, (boolean | null)[]> | null {
     const shown = unit.textblocks.filter(({ node }) => node.type.name !== 'paragraph' || writtenOf(node).text.trim() !== '');
     if (shown.length !== read.inlines) {
         return null;
     }
-    const found = new Map<Node, boolean[]>();
+    const found = new Map<Node, (boolean | null)[]>();
     for (const [i, { node }] of shown.entries()) {
-        const written = writtenOf(node);
-        let count = 0;
-        node.descendants(child => {
-            count += child.type.name === 'emoji' ? 1 : 0;
-        });
+        const count = atomsIn(node, 0).length;
         if (count === 0) {
             continue;
         }
-        const places = written.atoms.length === count ? placesIn(written.text, read.texts[i] ?? '') : null;
+        const written = writtenOf(node);
+        const places = written.atoms.length === count ? placesInRead(written.text, read.texts[i] ?? '', unit.literals.map(l => l.literal)) : null;
         if (places === null) {
             return null;
         }
         const here = read.emoji.filter(e => e.inline === i);
-        found.set(node, written.atoms.map(atom => {
-            const at = places[atom.at];
-            return here.some(e => e.at === at && e.name === atom.node.attrs.name && e.source === atom.node.attrs.source);
+        found.set(node, written.atoms.map(({ node: atom, at: written }) => {
+            const same = here.filter(e => e.name === atom.attrs.name && e.source === atom.attrs.source);
+            const at = places[written];
+            return same.some(e => e.at === at) ? true : same.some(e => e.at === null) ? null : false;
         }));
     }
     return found;
+}
+
+/**
+ * Where each place of `written` stands in `read`, the inline token's text
+ * (`placesIn`): as it is, or — a paragraph's or a heading's with the literal
+ * the save writes after it, which the parser's text still holds at its end and
+ * markdown-it-attrs took — with one of `literals` read off that end.
+ */
+function placesInRead(written: string, read: string, literals: readonly string[]): Int32Array | null {
+    const places = placesIn(written, read);
+    if (places !== null) {
+        return places;
+    }
+    const text = read.trimEnd();
+    for (const literal of literals) {
+        if (literal !== '' && text.endsWith(literal)) {
+            const before = placesIn(written, text.slice(0, text.length - literal.length).trimEnd());
+            if (before !== null) {
+                return before;
+            }
+        }
+    }
+    return null;
 }
 
 /** Whether `ch` is white space the wrap may write as a line break, or the parser trims. */
@@ -3422,8 +3469,10 @@ function isBlank(ch: string): boolean {
  * Where each place of `written`, a textblock as the save writes it unwrapped,
  * stands in `read`, the text of the inline token the parser made of it: the
  * same characters, but runs of white space (the wrap writes a line break for a
- * space, a run of spaces as one; the parser trims the ends) and a backslash a
- * line start takes. `null` where they differ otherwise.
+ * space, a run of spaces as one; the parser trims the ends), a backslash a
+ * line start takes, and one the paragraph's writer puts before a brace
+ * markdown-it-attrs would take (`escapedLiterals`, which it asks of the
+ * wrapped text). `null` where they differ otherwise.
  */
 function placesIn(written: string, read: string): Int32Array | null {
     const places = new Int32Array(written.length + 1).fill(-1);
@@ -3447,7 +3496,7 @@ function placesIn(written: string, read: string): Int32Array | null {
             places[i++] = j++;
             continue;
         }
-        if (j < read.length && read[j] === '\\' && (j === 0 || read[j - 1] === '\n')) {
+        if (j < read.length && read[j] === '\\' && (j === 0 || read[j - 1] === '\n' || ((written[i] === '{' || written[i] === '}') && read[j + 1] === written[i]))) {
             j++;
             continue;
         }
@@ -3479,7 +3528,8 @@ export function unreadEmojiAsText(tr: Transform, offsets: readonly number[]): { 
             if (block === null) {
                 continue;
             }
-            for (const rel of unreadEmoji(block).reverse()) {
+            // A block whose atoms cannot be placed is left as it is: the check of the edit refuses it.
+            for (const rel of (unreadEmoji(block) ?? []).reverse()) {
                 const at = start + rel;
                 const atom = tr.doc.nodeAt(at);
                 if (atom === null || atom.type.name !== 'emoji') {
@@ -3510,10 +3560,12 @@ export function unreadEmojiAsText(tr: Transform, offsets: readonly number[]): { 
  * spelling as text (`unreadEmojiAsText`): what the save writes. The page has
  * already made such an atom text, at the edit that made it unreadable
  * (`emojiPlugin`), so one found here is a mismatch the page should have
- * caught, and is reported.
+ * caught, and is reported. A block whose atoms cannot be placed, which the
+ * page refuses to make, is written as it is.
  */
 function withReadEmoji(block: Node): Node {
-    if (unreadEmoji(block).length === 0) {
+    // Nothing to write otherwise, or nothing that can be told: written as it is.
+    if ((unreadEmoji(block) ?? []).length === 0) {
         return block;
     }
     const tr = new Transform(block.type.schema.topNodeType.create(null, [block]));

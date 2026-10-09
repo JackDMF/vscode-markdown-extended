@@ -6,7 +6,7 @@ import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serial
 import { groupSourceBlocks, splitLines } from '../../../src/editor/blocks';
 import { definitionOf } from '../../../src/editor/inlineEngine';
 import { createPositionMap } from '../../../src/editor/positions';
-import { EMOJI_RAW_REFUSAL, onUnreadEmojiSaved, unwritableEmoji } from '../../../src/editor/serialize';
+import { EMOJI_RAW_REFUSAL, EMOJI_UNPLACED_REFUSAL, onUnreadEmojiSaved, unreadEmoji, unwritableEmoji } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { notePasteTransaction, noteRefusal } from '../../../src/editor/webview/notes';
 import { inlineForNote, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
@@ -333,15 +333,16 @@ suite('Editor: an atom is judged where it was written, not by its name', () => {
     });
 
     test('an emoji read elsewhere — in superscript, in another note — does not keep a broken atom an atom', () => {
+        // Superscript's text is read unescaped, so where its emoji stands is not known: the edit is refused, the atom kept.
         const state = stateOf('a ^b^ x :) y\n');
         let inSup = -1;
         state.doc.descendants((n, pos) => {
             inSup = inSup < 0 && n.isText && n.text === 'b' ? pos + 1 : inSup;
         });
         const typed = state.apply(state.tr.insertText(' :) ', inSup));
-        const broken = typed.apply(typed.tr.insertText('Q', atoms(typed)[0][0] + 1));
-        assert.deepStrictEqual(atoms(broken), []);
-        assert.strictEqual(save(broken), 'a ^b \\:) ^ x :)Q y\n');
+        const tr = typed.tr.insertText('Q', atoms(typed)[0][0] + 1);
+        assert.strictEqual(noteRefusal(tr), EMOJI_UNPLACED_REFUSAL);
+        assert.strictEqual(typed.apply(tr).doc, typed.doc);
         assert.deepStrictEqual(typedAfter('a ++r|x :) y++ b ++s|z :) w++ c\n', 0), { kept: [':)'], saved: 'a ++r|x :)Q y++ b ++s|z :) w++ c\n' });
     });
 });
@@ -477,5 +478,112 @@ suite('Editor: emoji atoms, review 1', () => {
         assert.ok(object !== null);
         const [asText] = emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined });
         assert.strictEqual(asText.title, `Makes it the characters :wave: — they stay text and are saved as text; ${undoKey()} brings the emoji back.`);
+    });
+});
+
+suite('Editor: emoji atoms, review 2', () => {
+    const md = hostEngine();
+    const save = (state: EditorState) => serializeDocument({ doc: state.doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+    const stateOf = (source: string) => EditorState.create({ doc: parseDocument(md, source).doc, plugins: editorPlugins() });
+    const atoms = (state: EditorState) => {
+        const out: [number, string][] = [];
+        state.doc.descendants((n, pos) => {
+            if (n.type.name === 'emoji') {
+                out.push([pos, n.attrs.source as string]);
+            }
+        });
+        return out;
+    };
+    const breakFirst = (state: EditorState) => state.tr.insertText('Q', atoms(state)[0][0] + 1);
+    const BT = '`';
+    const BS = '\\';
+
+    test('a block ending in an attribute literal is judged where it was written: the untouched atom stays', () => {
+        for (const [source, saved] of [
+            ['a :) b :) c {.c}\n', 'a :)Q b :) c {.c}\n'],
+            ['a :) b :) c {#x}\n', 'a :)Q b :) c {#x}\n'],
+            ['## a :) b :) c {#x}\n', '## a :)Q b :) c {#x}\n'],
+            ['## a :) b :) c {.c}\n', '## a :)Q b :) c {.c}\n'],
+        ]) {
+            const state = stateOf(source);
+            const tr = breakFirst(state);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const typed = state.apply(tr);
+            assert.deepStrictEqual(atoms(typed).map(a => a[1]), [':)'], source);
+            assert.strictEqual(save(typed), saved, source);
+        }
+        const sup = stateOf('a ^b^ x :) y {.c}\n');
+        let inSup = -1;
+        sup.doc.descendants((n, pos) => {
+            inSup = inSup < 0 && n.isText && n.text === 'b' ? pos + 1 : inSup;
+        });
+        const typed = sup.apply(sup.tr.insertText(' :) ', inSup));
+        // The emoji superscript reads has no known place (its text is read unescaped): never a guess, the edit is refused.
+        assert.strictEqual(noteRefusal(breakFirst(typed)), EMOJI_UNPLACED_REFUSAL);
+        assert.strictEqual(typed.apply(breakFirst(typed)).doc, typed.doc);
+    });
+
+    test('every context the judge can place an atom in is judged by its place: no edit in them is refused', () => {
+        const long = 'lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore';
+        const sources = [
+            'a :) b :) c\n', 'a :) b :) c {.c}\n', '## a :) b :) c {#x}\n', '## a :) b :) c ##\n',
+            `a :) b ${long} ${long} :) c\n`, `- a :) b ${long} ${long} :) c\n`, `> a :) b ${long} ${long} :) c\n`,
+            `a :) b ${long} x 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. :) c\n`,
+            `a :) b ${long} x - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - :) c\n`,
+            `a :) b ${long} x > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > :) c\n`,
+            `a :) b ${long} x ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: ::: :) c\n`,
+            `a :) b${BS}\nc :) d\n`, 'a :) b  \nc :) d\n',
+            '| a :) b :) c | d |\n| --- | --- |\n| e | f |\n', `| a ${BS}| :) b :) c | d |\n| --- | --- |\n| e | f |\n`,
+            '| a :) b | :) c |\n| --- | --- |\n| e | f |\n', '| h | i |\n| --- | --- |\n| a :) b | c |\n| :) d | e |\n',
+            'x ++r|a :) b :) c++ y\n', 'x ++r|a &#124; :) b :) c++ y\n', 'x ++a :) b|c :) d++ y\n', 'x !!r|a :) b :) c!! y\n',
+            'x [[a :) b]] :) c\n', 'x ==a :) b== :) c\n', 'x [a :) b]{.c} :) c\n', 'x [a :) b](http://e.com) :) c\n',
+            'x http://e.com/ a :) b :) c\n', 'x &amp; a :) b :) c\n', 'x &nbsp; a :) b :) c\n', 'x\ta :) b :) c\n',
+            `x ${BS}* a :) b :) c\n`, `x a :) b ${BT}q${BT} :) c\n`, '::: note\na :) b :) c\n:::\n', '!!! note\n    a :) b :) c\n',
+            '- a :) b\n\n  c :) d\n', '- a :) b\n- c :) d\n', '> a :) b\n>\n> c :) d\n', 'x $a$ :) b :) c\n',
+            'x ![i](u.png) :) b :) c\n', 'x ![[p]] :) b :) c\n', 'x ^s^ :) b :) c\n', `w ${BT}a :) b${BT} :) x@example.com end :)\n`,
+            `${BT}a${BT} _:) e ${BT}_:) e${BT} :)\n`, 'a _:) e :)\n',
+        ];
+        for (const source of sources) {
+            const state = stateOf(source);
+            assert.ok(atoms(state).length >= 2, `${source}: ${atoms(state).length} atoms`);
+            const tr = breakFirst(state);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const typed = state.apply(tr);
+            assert.strictEqual(atoms(typed).length, atoms(state).length - 1, `${source}: only the broken atom is text`);
+            const block = typed.doc.resolve(atoms(state)[1][0]).node(1);
+            assert.notStrictEqual(unreadEmoji(block), null, `${source}: placed`);
+        }
+    });
+
+    test('an atom the judge cannot place is never made text: the edit is refused, with its reason', () => {
+        // A quote the edit makes holds an equal emoji: which one the quote's `>:(` is cannot be told.
+        const state = stateOf(`a${BS}\nx >:( b >:( c\n`);
+        let x = -1;
+        state.doc.descendants((n, pos) => {
+            x = x < 0 && n.isText && n.text === 'x ' ? pos : x;
+        });
+        const tr = state.tr.delete(x, x + 2);
+        assert.strictEqual(noteRefusal(tr), EMOJI_UNPLACED_REFUSAL);
+        assert.strictEqual(state.apply(tr).doc, state.doc, 'refused');
+        // Where no emoji of its name is read at all, it is text for certain.
+        const single = stateOf(`a${BS}\nx >:( b\n`);
+        let y = -1;
+        single.doc.descendants((n, pos) => {
+            y = y < 0 && n.isText && n.text === 'x ' ? pos : y;
+        });
+        const moved = single.apply(single.tr.delete(y, y + 2));
+        assert.deepStrictEqual(atoms(moved), []);
+    });
+
+    test('a note\'s reference whose marker character the writer spells as a reference keeps its atoms where they were written', () => {
+        for (const source of [`a ++${BS}+ x :) y|body++ b\n`, `a !!${BS}! x :) y|body!! b\n`]) {
+            const state = stateOf(source);
+            const end = state.doc.child(0).nodeSize - 1;
+            const tr = state.tr.insertText('Q', end);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const typed = state.apply(tr);
+            assert.deepStrictEqual(atoms(typed).map(a => a[1]), [':)'], source);
+            assert.deepStrictEqual(atoms(stateOf(save(typed))).map(a => a[1]), [':)'], `${source}: ${save(typed)}`);
+        }
     });
 });

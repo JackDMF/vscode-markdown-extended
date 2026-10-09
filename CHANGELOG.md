@@ -18,6 +18,7 @@
 - An emoji inside `^sup^` or `~sub~` still keeps its paragraph a source block.
 - A smiley typed in a sidenote or marginal note reads as an emoji even escaped, and opens as one.
 - An emoji cannot be made code, superscript or subscript.
+- An edit is refused where the editor cannot tell whether an emoji there still reads, as beside a smiley in `^sup^`.
 - Edit as text is unavailable for an emoji inside a sidenote or marginal note, which would still show it.
 - A changed note writes an escaped smiley (`\:)`, `&#58;)`) without its escape; it shows the same.
 - `x &#97;:) y` shows an emoji; any edit in that paragraph turns it into text.

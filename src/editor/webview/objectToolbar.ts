@@ -38,7 +38,7 @@ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
-import { HintTone, showHint, undoKey } from './hint';
+import { HintTone, showChangeHint, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
@@ -1232,7 +1232,7 @@ class ObjectToolbarView implements PluginView {
         const before = this.view.state;
         const current = currentObject(before, object);
         if (current !== null && make(current) && this.view.state !== before && hint !== undefined) {
-            this.say(`${hint} — ${undoKey()}`, 'neutral');
+            showChangeHint(this.view, `${hint} — ${undoKey()}`);
         }
     }
 

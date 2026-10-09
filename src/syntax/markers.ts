@@ -80,6 +80,14 @@ export const WIKI_EMBED_MARKERS = { open: '![[', close: ']]' } as const;
 export const WIKI_EMBED_TOKENS_OPTION = 'mepWikiEmbedTokens';
 
 /**
+ * The engine option under which markdown-it-emoji's wrapper records where each
+ * emoji stands (`meta.at`, `markdownItEmoji.ts`): the Visual Editor's engines
+ * set it (`baseEngine`), the preview's does not, as only the editor asks and
+ * the recording costs every parse.
+ */
+export const EMOJI_PLACES_OPTION = 'mepEmojiPlaces';
+
+/**
  * The spellings the Visual Editor writes a character of an embed's name in
  * where the place would read the bare character as its own syntax (a table
  * cell's `|` and backtick, a note's terminator and marker), each read back by

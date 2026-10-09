@@ -447,20 +447,28 @@ An emoji the file holds is no text but an atom (`emoji`) carrying its spelling a
 read it: the registry's emoji plugin is wrapped (`markdownItEmoji.ts`) so each token says
 what of its text token it was split from (`meta.source`), divided by the package's own
 shortcut table where several stand together, `null` where that cannot be told, which
-leaves the block a source block, as does an emoji under `^sup^` or `~sub~`; and where it
-stands (`meta.at`), from the plugin's own match: its offset in the text token it split,
-plus where that text token begins in its inline token's text, noted by the first inline
-rule as the pending text begins (`mep_text_start`), moved by a note's place for a note's
-parts. The atom is
+leaves the block a source block, as does an emoji under `^sup^` or `~sub~`; and, in the
+editor's engines only (`EMOJI_PLACES_OPTION`), where it stands (`meta.at`), from the
+plugin's own match: its offset in the text token it split, plus where that text token
+begins in its inline token's text, as the rule that made the token recorded it — the
+pending text's start (`mep_text_start`), the first of the text tokens `fragments_join`
+joins (`mep_text_runs`), linkify's pieces after the verbatim text before them
+(`mep_linkify_aside`, `mep_linkify_back`), moved by a note's place for a note's parts — and
+`null` where that is not known (a link whose text linkify normalised, superscript's text
+read unescaped), never searched for. The atom is
 written held and never escaped, a word that begins a line included (`escapeLineStart`), and
 whether that spelling still reads as that emoji where it stands is asked of the parser, not
 a rule: each part of the block as the save writes it (`unitsOf`) is read by the page's
 engine, which runs the same wrapped plugin, and each atom is paired with the emoji read at
 the place the writer wrote it (`unreadEmoji`): the textblock's inline token, and in its text
 the offset the writer noted (`WrittenTextblock.atoms`), runs of white space read as the
-parser's. An emoji read elsewhere — an equal atom beside it, a typed one in superscript or a
-note — keeps no atom; where the textblocks cannot be lined up with the inline tokens read,
-the atoms are matched in order by name and spelling. An atom that does not read back — a
+parser's, a literal the save writes after it (`{.c}`, `{#x}`) read off the end of the
+parser's text. An emoji read elsewhere — an equal atom beside it, a typed one in a note —
+keeps no atom. An atom no emoji of its name and spelling was read for anywhere in its part
+does not read back; one that cannot be placed — an emoji of its kind read with no known
+place, textblocks that cannot be lined up with the inline tokens read — is neither kept nor
+made text: the edit is refused (`unplacedEmoji`), and the page and the file still agree.
+An atom that does not read back — a
 letter typed against it, a `>:(` an edit moved to a line start, a `:|` in a cell, whose
 `\|` the row needs — becomes its spelling as text, on the page right after the edit, in a
 transaction appended to it (`emojiPlugin`), in the document the check of the edit reads

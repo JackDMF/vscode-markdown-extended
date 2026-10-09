@@ -63,11 +63,12 @@ function sameRules(a: readonly unknown[], b: readonly unknown[]): boolean {
  * extension's extender. The page's engine is recorded with it
  * (`inlineEngineDefinition`), for the host to post with each document.
  *
- * One option differs from the preview's engine: `WIKI_EMBED_TOKENS_OPTION`,
+ * Two options differ from the preview's engine: `WIKI_EMBED_TOKENS_OPTION`,
  * which keeps each wiki embed a `wiki_embed` token where the preview's engine
  * makes it text (`markdownItWikiEmbed.ts`, and "The one exception: wiki
- * embeds" in ARCHITECTURE.md). Text read from tokens goes through `tokenText`,
- * which reads both alike.
+ * embeds" in ARCHITECTURE.md), and `EMOJI_PLACES_OPTION`, under which each
+ * emoji token records where it stands (`markdownItEmoji.ts`), which nothing
+ * renders. Text read from tokens goes through `tokenText`, which reads both alike.
  *
  * The front-matter rule is registered here and nowhere else. The preview engine
  * must not get one from this extension — VS Code's own preview already

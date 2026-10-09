@@ -8,7 +8,7 @@ import { WIKI_EMBED_TOKEN, readsWikiEmbeds } from '../plugin/markdownItWikiEmbed
 import { EMOJI_RULE, readsEmoji } from '../plugin/markdownItEmoji';
 import { hasEnabledRule } from '../plugin/shared';
 import { configureLinkify } from '../syntax/linkify';
-import { WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
+import { EMOJI_PLACES_OPTION, WIKI_EMBED_TOKENS_OPTION } from '../syntax/markers';
 
 /**
  * The engine the Visual Editor's page reads what it writes with, defined once
@@ -142,8 +142,10 @@ export const MATH_INLINE_RULE = 'math_inline';
  * markdown-it as both engines start: raw HTML allowed, linkify and typographer
  * as the host's settings say, and linkify-it set as VS Code's preview sets it
  * (`configureLinkify`: no fuzzy links). Both keep a wiki embed a `wiki_embed`
- * token (`WIKI_EMBED_TOKENS_OPTION`, `markdownItWikiEmbed.ts`), the one option
- * that differs from the preview's engine: the editor edits it as one atom.
+ * token (`WIKI_EMBED_TOKENS_OPTION`, `markdownItWikiEmbed.ts`), which the
+ * editor edits as one atom, and record where each emoji stands
+ * (`EMOJI_PLACES_OPTION`, `markdownItEmoji.ts`): the two options that differ
+ * from the preview's engine.
  */
 export function baseEngine(options: EngineOptions): MarkdownIt {
     const md: MarkdownIt = markdownIt({
@@ -151,6 +153,7 @@ export function baseEngine(options: EngineOptions): MarkdownIt {
         linkify: options.linkify,
         typographer: options.typographer,
         [WIKI_EMBED_TOKENS_OPTION]: true,
+        [EMOJI_PLACES_OPTION]: true,
     } as Parameters<typeof markdownIt>[0]);
     configureLinkify(md.linkify);
     return md;
