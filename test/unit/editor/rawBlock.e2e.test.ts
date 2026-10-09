@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, MOD, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const TABLE = '| a | b |\n| = | = |\n| 1 | 2 |\n';
@@ -208,13 +208,13 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await page.waitForSelector('.mep-raw-editor');
         assert.strictEqual((await area()).value, 'Alpha <kbd>beta</kbd> gamma.');
 
-        await page.keyboard.down('Control');
-        await page.keyboard.press('a');
-        await page.keyboard.up('Control');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a', editCommand('a'));
+        await page.keyboard.up(MOD);
         await page.keyboard.type('Alpha beta gamma.');
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('Enter');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         // No settle: the commit goes at once, asking to be parsed again.
         const edit = await lastEdit();
         assert.strictEqual(edit?.reparse, true);
@@ -240,9 +240,9 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await openTableSource();
         await page.keyboard.type('\n| 3 | 4 |');
         const before = (await (editor as EditorPage).edits()).length;
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('s');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         const all = await (editor as EditorPage).edits();
         assert.strictEqual(all.length, before + 1, 'one edit, the save');
         const saved = all[all.length - 1];

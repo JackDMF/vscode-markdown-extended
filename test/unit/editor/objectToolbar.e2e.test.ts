@@ -6,7 +6,7 @@ import { WebviewMessage } from '../../../src/editor/protocol';
 import { SIDEBAR_GLUED_BEFORE } from '../../../src/editor/serialize';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { OWN_COPY } from '../../../src/editor/webview/wikiEmbeds';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, MOD, UNDO, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 /** The selection's object toolbar, shown. */
@@ -159,7 +159,7 @@ suite('Editor object toolbar (e2e)', () => {
         await clickVerb('remove-note');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Alpha beta ref gamma.\n');
-        assert.deepStrictEqual(await hint(), { text: 'Note removed — Ctrl+Z', tone: 'neutral', shown: true });
+        assert.deepStrictEqual(await hint(), { text: `Note removed — ${UNDO}`, tone: 'neutral', shown: true });
         assert.strictEqual(await page.$(BAR), null, 'no object at the caret any more');
         await page.keyboard.type('!');
         await settle();
@@ -224,7 +224,7 @@ suite('Editor object toolbar (e2e)', () => {
         await clickVerb('remove-link');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'See the spec here.\n');
-        assert.strictEqual((await hint()).text, 'Link removed — Ctrl+Z');
+        assert.strictEqual((await hint()).text, `Link removed — ${UNDO}`);
     });
 
     test('an Edit link… commit keeps the bar shown throughout: it does not blink out and wait for the delay again', async function () {
@@ -304,17 +304,17 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'pic', 'the alt text first');
         await page.keyboard.press('Enter');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'p.png', 'then the path');
-        await page.keyboard.down('Control');
-        await page.keyboard.press('a');
-        await page.keyboard.up('Control');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a', editCommand('a'));
+        await page.keyboard.up(MOD);
         await page.keyboard.type('q.png');
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An ![pic](q.png) here.\n');
 
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('z');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png) here.\n');
         await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
@@ -349,16 +349,16 @@ suite('Editor object toolbar (e2e)', () => {
         };
         const atoms = () => page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length);
         const undo = async () => {
-            await page.keyboard.down('Control');
+            await page.keyboard.down(MOD);
             await page.keyboard.press('z');
-            await page.keyboard.up('Control');
+            await page.keyboard.up(MOD);
             await settle();
         };
         await showDocument('An ![[note]] here.\n', 'An');
         assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => (el as HTMLElement).title.includes('Edit as text')), true, 'the chip\'s tooltip names the way to text');
         await pickEmbed();
         await clickVerb('edit-wiki-embed-as-text');
-        assert.deepStrictEqual(await hint(), { text: 'Embed is text — Ctrl+Z', tone: 'neutral', shown: true });
+        assert.deepStrictEqual(await hint(), { text: `Embed is text — ${UNDO}`, tone: 'neutral', shown: true });
         await settle();
         assert.strictEqual(await atoms(), 0);
         assert.strictEqual((await lastEdit())?.text, 'An !\\[\\[note\\]\\] here.\n');
@@ -454,17 +454,17 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 2);
     });
 
-    /** Ctrl+`key`, or Ctrl+Shift+`key`, as typed: the browser's own copy and paste, through its clipboard (the page's, never the system's: the browser is headless). */
+    /** Ctrl+`key`, or Ctrl+Shift+`key`, as typed (⌘ on macOS): the browser's own copy and paste, through its clipboard (the page's, never the system's: the browser is headless). */
     const pressCtrl = async (key: puppeteer.KeyInput, shift = false) => {
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         if (shift) {
             await page.keyboard.down('Shift');
         }
-        await page.keyboard.press(key);
+        await page.keyboard.press(key, editCommand(key, shift));
         if (shift) {
             await page.keyboard.up('Shift');
         }
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
     };
 
     /** From now on, the HTML each paste brings, read before the editor's handling (`pastedHtml`). */
@@ -487,9 +487,9 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
             await showDocument(source, 'Lit');
             // The whole document, the one paragraph, copied through the clipboard.
             await clickBefore('Lit', 0);
-            await page.keyboard.down('Control');
-            await page.keyboard.press('a');
-            await page.keyboard.up('Control');
+            await page.keyboard.down(MOD);
+            await page.keyboard.press('a', editCommand('a'));
+            await page.keyboard.up(MOD);
             await delay(100);
             await pressCtrl('KeyC');
             // Then a drag of other text, which serializes it like a copy: it is no copy.
@@ -755,7 +755,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await page.mouse.click(button.x + button.width / 2, button.y + button.height / 2);
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Before.\n\nAfter.\n');
-        assert.strictEqual((await hint()).text, 'Block deleted — Ctrl+Z');
+        assert.strictEqual((await hint()).text, `Block deleted — ${UNDO}`);
         await page.mouse.move(2, 2);
         await delay(500);
         assert.strictEqual(await page.$(HOVER_BAR), null, 'the pointer gone, the bar goes');
@@ -821,7 +821,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await clickVerb('remove-container');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Intro.\n\nFirst kept.\n\nSecond kept.\n\nAfter.\n');
-        assert.strictEqual((await hint()).text, 'Container removed — Ctrl+Z');
+        assert.strictEqual((await hint()).text, `Container removed — ${UNDO}`);
         assert.strictEqual(await page.$('.ProseMirror div[data-mep-container]'), null);
     });
 

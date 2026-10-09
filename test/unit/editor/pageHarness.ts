@@ -77,6 +77,29 @@ export async function showDiagnostics(editor: EditorPage, version: number, items
 }
 
 /**
+ * The modifier the page's `Mod-` keys and the browser's own editing commands
+ * (copy, paste, select all) answer to, and a link's open-click: ⌘ on macOS, Ctrl
+ * elsewhere. The browser runs on this machine, so its platform is this one's.
+ */
+export const MOD: puppeteer.KeyInput = process.platform === 'darwin' ? 'Meta' : 'Control';
+
+/** How a hint names undo (`hint.ts`): `Cmd+Z` on macOS, `Ctrl+Z` elsewhere. */
+export const UNDO = process.platform === 'darwin' ? 'Cmd+Z' : 'Ctrl+Z';
+
+/**
+ * The options for pressing `key` with `MOD` held where the browser's own editing
+ * command should run (select all, copy, cut, paste): on macOS the protocol
+ * delivers the keys but not the command they stand for, so it is named.
+ */
+export function editCommand(key: string, shift = false): puppeteer.KeyPressOptions | undefined {
+    if (process.platform !== 'darwin') {
+        return undefined;
+    }
+    const command = ({ a: 'SelectAll', c: 'Copy', x: 'Cut', v: shift ? 'PasteAndMatchStyle' : 'Paste' } as Record<string, string>)[key.replace(/^Key/, '').toLowerCase()];
+    return command ? { commands: [command] } : undefined;
+}
+
+/**
  * The page bundle (`dist/editor-webview.js`) loaded into headless Chromium, with
  * `acquireVsCodeApi` replaced by a recorder, and `styles/editor.css` beside it.
  *

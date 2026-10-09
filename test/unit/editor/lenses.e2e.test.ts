@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { LensRow, WebviewMessage } from '../../../src/editor/protocol';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
-import { closeEditorPage, delay, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, delay, EditorPage, EXTENSION_ID, openEditorPage, settle, MOD } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const SOURCE = 'Intro.\n\n# Heading\n\nA paragraph.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n';
@@ -649,9 +649,9 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         await clickCentre(`${ROW} a`);
         const box = await (await page.$(`${ROW} a`))?.boundingBox();
         assert.ok(box);
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await delay(80);
         assert.deepStrictEqual((await opens()).slice(beforeOpens), [{ type: 'openLink', href: 'TST-001.md' }, { type: 'openLink', href: 'TST-001.md' }]);
         assert.deepStrictEqual((await runs()).slice(beforeRuns), [], 'a link click is not the lens\'s');

@@ -7,7 +7,7 @@ import { createEditorEngine } from '../../../src/editor/engine';
 import { SIDEBAR_GLUED_BEFORE } from '../../../src/editor/serialize';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine } from './helpers';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, MOD } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 
 /** Narrower than the notes' 1280px breakpoint: the notes render stacked, in the text flow, where a click reaches them. */
@@ -320,9 +320,9 @@ suite('Editor notes and links (e2e)', () => {
         assert.ok(await page.$('.mep-raw-block.ProseMirror-selectednode'), 'the block is selected');
         assert.strictEqual((await openLinks()).length, linksBefore, 'a plain click follows nothing');
 
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.click('.mep-raw-block table a');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await delay(100);
         const posted = await openLinks();
         assert.deepStrictEqual(posted.slice(linksBefore), [{ type: 'openLink', href: 'spec.md#part' }], 'as written, for the host to resolve');
@@ -346,9 +346,9 @@ suite('Editor notes and links (e2e)', () => {
         assert.strictEqual((await openLinks()).length, linksBefore);
 
         const p = await pointAt('Xspec', 2);
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.mouse.click(p.x, p.y);
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await delay(100);
         assert.deepStrictEqual((await openLinks()).slice(linksBefore), [{ type: 'openLink', href: 'spec.md' }]);
         assert.strictEqual(await windowClicks(), clicksBefore, 'no click reached VS Code\'s listener');
@@ -362,9 +362,9 @@ suite('Editor notes and links (e2e)', () => {
         const linksBefore = (await openLinks()).length;
         await page.evaluate(() => window.scrollTo(0, 0));
         const p = await pointAt('the end', 1);
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.mouse.click(p.x, p.y);
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await delay(150);
         // The slug rule lives on the host (`fragmentLine`): the page does not look the fragment up itself.
         assert.deepStrictEqual((await openLinks()).slice(linksBefore), [{ type: 'openLink', href: '#the-end' }]);

@@ -3,9 +3,8 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot } from './pageHarness';
+import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, MOD, UNDO } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, Theme, applyTheme } from './themes';
-import { undoKey } from '../../../src/editor/webview/hint';
 
 /** The selection's object toolbar, shown. */
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
@@ -139,17 +138,17 @@ suite('Editor emoji atom (e2e)', () => {
         await showDocument('Glad to see you :) here.\n', 'Glad');
         await pickAtom();
         await clickVerb('edit-emoji-as-text');
-        assert.deepStrictEqual(await hint(), { text: `:) is text now — ${undoKey()}`, tone: 'neutral', shown: true });
+        assert.deepStrictEqual(await hint(), { text: `:) is text now — ${UNDO}`, tone: 'neutral', shown: true });
         await settle();
         assert.strictEqual(await atoms(), 0);
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you \\:) here.\n');
         await page.keyboard.type('X');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you :)X here.\n', 'typed right after the spelling, glued to it: text, as the host reads it');
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('z');
         await page.keyboard.press('z');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await settle();
         assert.strictEqual(await atoms(), 1);
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you :) here.\n');
@@ -161,7 +160,7 @@ suite('Editor emoji atom (e2e)', () => {
         await caretAfterAtom();
         await page.keyboard.type('Z');
         await delay(80);
-        assert.deepStrictEqual(await hint(), { text: `:)Z is no longer an emoji — ${undoKey()}`, tone: 'neutral', shown: true });
+        assert.deepStrictEqual(await hint(), { text: `:)Z is no longer an emoji — ${UNDO}`, tone: 'neutral', shown: true });
         await settle();
         assert.strictEqual(await atoms(), 0);
         assert.strictEqual(await page.$eval('.ProseMirror p', el => el.textContent), 'Glad to see you :)Z here.');
@@ -176,7 +175,7 @@ suite('Editor emoji atom (e2e)', () => {
         await delay(100);
         await page.keyboard.type('great ', { delay: 30 });
         await delay(100);
-        assert.deepStrictEqual(await hint(), { text: `g:) is no longer an emoji — ${undoKey()}`, tone: 'neutral', shown: true }, 'it stays as the typing goes on');
+        assert.deepStrictEqual(await hint(), { text: `g:) is no longer an emoji — ${UNDO}`, tone: 'neutral', shown: true }, 'it stays as the typing goes on');
         await delay(3500);
         assert.strictEqual((await hint()).shown, true, 'no time takes it away');
         await clickText(page, 'Intro', 2);
@@ -211,9 +210,9 @@ suite('Editor emoji atom (e2e)', () => {
         await settle();
         assert.strictEqual((await hint()).shown, true);
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you :)Z here.\n');
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('z');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await delay(80);
         assert.strictEqual((await hint()).shown, false, 'the hint is stale once the document changed');
         assert.strictEqual(await atoms(), 1);
@@ -317,14 +316,14 @@ suite('Editor emoji atom (e2e)', () => {
             await shot(page, `emoji-${name}-4-alt-enter-bar.png`);
             await clickVerb('edit-emoji-as-text');
             await delay(200);
-            assert.strictEqual((await hint()).text, `:) is text now — ${undoKey()}`);
+            assert.strictEqual((await hint()).text, `:) is text now — ${UNDO}`);
             await shot(page, `emoji-${name}-5-edit-as-text.png`);
             await clearHint();
             await showDocument(two, 'Glad');
             await caretAfterAtom();
             await page.keyboard.type('Z');
             await delay(150);
-            assert.strictEqual((await hint()).text, `:)Z is no longer an emoji — ${undoKey()}`);
+            assert.strictEqual((await hint()).text, `:)Z is no longer an emoji — ${UNDO}`);
             await shot(page, `emoji-${name}-6-hint.png`);
             await clearHint();
         }

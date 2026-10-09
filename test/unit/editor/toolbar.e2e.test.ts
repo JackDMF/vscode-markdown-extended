@@ -5,7 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { PREVIEW_CARD_CLASS, TOOLBAR_ACTIONS, inRow, menuOf } from '../../../src/editor/webview/toolbar/actions';
 import { ALL_LOCK, REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, MOD } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const SOURCE = [
@@ -261,7 +261,7 @@ suite('Editor toolbar (e2e)', () => {
         assert.strictEqual(await page.$eval('.ProseMirror p .sn-ref .sidenote', el => el.textContent), 'note');
 
         await page.focus('.ProseMirror');
-        await pressWith('Control', 'z');
+        await pressWith(MOD, 'z');
         await settle();
         assert.strictEqual((await lastEdit())?.text, SOURCE, 'one undo');
         assert.strictEqual(await page.$('.ProseMirror .sn-ref'), null);
@@ -315,7 +315,7 @@ suite('Editor toolbar (e2e)', () => {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('beta');
-        await pressWith('Control', 'a');
+        await pressWith(MOD, 'a');
         await delay(100);
         const locked = await page.$eval(face('block-type'), el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
         assert.strictEqual(locked.disabled, 'true');
@@ -331,9 +331,9 @@ suite('Editor toolbar (e2e)', () => {
         this.timeout(10000);
         await showDocument(SOURCE.replace('Alpha beta gamma.', 'Alpha __beta__ _gamma_.'));
         await selectText('beta');
-        await pressWith('Control', 'b');
+        await pressWith(MOD, 'b');
         await selectText('gamma');
-        await pressWith('Control', 'i');
+        await pressWith(MOD, 'i');
         await settle();
         assert.ok((await lastEdit())?.text.includes('\nAlpha beta gamma.\n'), (await lastEdit())?.text);
     });
