@@ -7,6 +7,7 @@ import { MarkdownItAttrs } from './markdownItAttrs';
 import { MarkdownItTableOfContents } from './markdownItTableOfContents';
 import { MarkdownItHtml5Embed } from './markdownItHtml5Embed';
 import { MarkdownItCheckbox } from './markdownItCheckbox';
+import { MarkdownItEmoji } from './markdownItEmoji';
 import { tokenText } from '../syntax/tokenText';
 import { Config } from '../services/common/config';
 import { MarkdownIt, Token } from '../@types/markdown-it';
@@ -16,7 +17,6 @@ import { INLINE_PLUGINS, MULTIMD_TABLE_OPTIONS } from './inlinePlugins';
 import markdownItAbbr from 'markdown-it-abbr';
 import markdownItIb from 'markdown-it-ib';
 import markdownItDeflist from 'markdown-it-deflist';
-import { full as markdownItEmoji } from 'markdown-it-emoji';
 import markdownItMultimdTable from 'markdown-it-multimd-table';
 import markdownItCjkFriendly from 'markdown-it-cjk-friendly';
 
@@ -45,7 +45,8 @@ const myPlugins: Record<string, any> = {
     'markdown-it-attrs': MarkdownItAttrs,
     'markdown-it-ib': markdownItIb,
     'markdown-it-deflist': markdownItDeflist,
-    'markdown-it-emoji': markdownItEmoji,
+    // Wrapped: each emoji token carries its spelling (`meta.source`), which the Visual Editor writes back.
+    'markdown-it-emoji': MarkdownItEmoji,
     'markdown-it-multimd-table': markdownItMultimdTable,
     // Wrapped: a media link hides only its own text, and `.ts` stays a link.
     'markdown-it-html5-embed': MarkdownItHtml5Embed,
