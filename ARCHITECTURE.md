@@ -443,6 +443,24 @@ spells (`&#36;`), an image's alt, a text whose last character a later writer rew
 `!` before a link or span, a `+` or `!` before a note) — is escaped by the letter rule
 alone, so a smiley right against a URL there still reads as an emoji. In a sidenote or
 marginal note the plugin reads a smiley even escaped.
+An emoji the file holds is no text but an atom (`emoji`) carrying its spelling as the host
+read it: the registry's emoji plugin is wrapped (`markdownItEmoji.ts`) so each token says
+what of its text token it was split from (`meta.source`), divided by the package's own
+shortcut table where several stand together, `null` where that cannot be told, which
+leaves the block a source block, as does an emoji under `^sup^` or `~sub~`. The atom is
+written held and never escaped, a word that begins a line included (`escapeLineStart`), and
+whether that spelling still reads as that emoji where it stands is asked of the parser, not
+a rule: each part of the block as the save writes it (`unitsOf`) is read by the page's
+engine, which runs the same wrapped plugin, and its atoms are matched in order to the
+emoji read, by name and spelling (`unreadEmoji`). An atom that does not read back — a
+letter typed against it, a `>:(` an edit moved to a line start, a `:|` in a cell, whose
+`\|` the row needs — becomes its spelling as text, on the page right after the edit, in a
+transaction appended to it (`emojiPlugin`), in the document the check of the edit reads
+(`writtenEdit`) and in the save (`withReadEmoji`), which reports one the page did not
+catch; once text, the escape above applies to it. What the parse cannot be asked is
+refused: an atom under code, superscript or subscript, in a bare link, or right after a
+hard break, where the host's definition-list rule, which the page does not run, could read
+it (`unwritableEmoji`).
 A link's destination and title take no backslash escape either: there a run of the
 marker character is `%2B%2B` or `&#43;&#43;` (`C++` in a Wikipedia URL), and a bare or
 angle link holding the marker character is written inline.

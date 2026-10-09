@@ -1,5 +1,24 @@
 # Change Log
 
+## Unreleased
+
+### ✨ Features
+
+- Emoji already in a file (`:)`, `:smile:`) no longer make their paragraph a source block; they are saved as written.
+- An emoji an edit would turn back into text, like `:)Z`, becomes that text at once, with a hint.
+- Click an emoji to select it; its bar offers Edit as text and Remove emoji.
+
+### 🐛 Bug Fixes
+
+- An `<https://…>` link starting a changed paragraph is no longer saved with a backslash before it.
+
+### ⚠️ Limits
+
+- An emoji inside `^sup^` or `~sub~` still keeps its paragraph a source block.
+- A smiley typed in a sidenote or marginal note reads as an emoji even escaped, and opens as one.
+- An emoji cannot be placed right after a line break, nor made code, superscript, subscript or part of a bare address.
+- `<\3` is never read as an emoji, so it stays text.
+
 ## v4.1.2 — Links That Keep Their Edges
 
 ### 🐛 Bug Fixes
