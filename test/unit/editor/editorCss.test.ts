@@ -172,14 +172,18 @@ suite('Editor stylesheet colours', () => {
             ['--vscode-menu-selectionBackground falls back to Highlight, not transparent']);
     });
 
-    test('an emoji atom is drawn as the text around it, no chip, and selected it has the wiki embed\'s focus outline', () => {
+    test('an emoji atom is drawn as the text around it, no chip, with the arrow, and selected the focus outline set off from it', () => {
         const rule = (selector: string) => {
             const at = css.indexOf(`${selector} {`);
             assert.ok(at >= 0, `editor.css has ${selector}`);
             return css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at)).trim().split(/\s*;\s*/).filter(d => d !== '');
         };
-        assert.deepStrictEqual(rule('.mep-emoji'), ['font: inherit', 'color: inherit']);
-        assert.deepStrictEqual(rule('.mep-emoji.ProseMirror-selectednode'), rule('.mep-wiki-embed.ProseMirror-selectednode'));
+        assert.deepStrictEqual(rule('.mep-emoji'), ['font: inherit', 'color: inherit', 'cursor: default']);
+        assert.deepStrictEqual(rule('.mep-emoji.ProseMirror-selectednode'), [...rule('.mep-wiki-embed.ProseMirror-selectednode'), 'outline-offset: 1px', 'border-radius: 2px']);
+        // An atom is no text to place a caret in: the arrow, as over the embed.
+        assert.ok(rule('.mep-wiki-embed').includes('cursor: default'));
+        // Its spelling in the bar's label: the code font, no chip.
+        assert.deepStrictEqual(rule('.mep-object-label-code'), ['font-family: var(--vscode-editor-font-family, monospace)']);
     });
 
     test('the row, the menus and the bars read the workbench\'s chrome variables', () => {

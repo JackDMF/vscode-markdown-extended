@@ -150,6 +150,7 @@ img.mep-pending-range {
  * colour of inline code: it is source, and Ctrl+click on it opens nothing.
  */
 .mep-wiki-embed {
+    cursor: default;
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 0.9em;
     color: var(--vscode-textPreformat-foreground, inherit);
@@ -166,10 +167,13 @@ img.mep-pending-range {
 .mep-emoji {
     font: inherit;
     color: inherit;
+    cursor: default;
 }
 
 .mep-emoji.ProseMirror-selectednode {
     outline: 1px solid var(--vscode-focusBorder, #0078d4);
+    outline-offset: 1px;
+    border-radius: 2px;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -570,6 +574,11 @@ img.mep-pending-range {
     overflow: hidden;
     text-overflow: ellipsis;
     color: var(--vscode-descriptionForeground, GrayText);
+}
+
+/* An atom's spelling in its label (`Emoji :)`): the editor's code font, no chip. */
+.mep-object-label-code {
+    font-family: var(--vscode-editor-font-family, monospace);
 }
 
 /* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through. */

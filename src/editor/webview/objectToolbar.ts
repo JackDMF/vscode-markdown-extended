@@ -164,6 +164,8 @@ interface MenuEntry {
 
 interface Presentation {
     label: string;
+    /** Written after the label in the editor's code font: an atom's spelling (`Emoji :)`). */
+    code?: string;
     title: string;
     verbs: Verb[];
 }
@@ -385,7 +387,7 @@ export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions
 export function emojiVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
     const source = object.kind === 'emoji' ? object.node.attrs.source as string : '';
     return atomVerbs(state, object, actions, {
-        asText: { id: 'edit-emoji-as-text', title: `Make it its spelling, ${source}, as plain text; typed text is saved so it shows as typed.` },
+        asText: { id: 'edit-emoji-as-text', title: `Makes it the characters ${source} — they stay text and are saved as text; ${undoKey()} brings the emoji back.` },
         remove: { id: 'remove-emoji', label: 'Remove emoji', title: 'The emoji goes from the text.' },
         none: 'There is no emoji here.',
         asTextTransaction: emojiAsTextTransaction,
@@ -490,8 +492,14 @@ class ObjectBar {
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
+        if (presentation.code !== undefined) {
+            const code = document.createElement('span');
+            code.className = 'mep-object-label-code';
+            code.textContent = presentation.code;
+            label.append(' ', code);
+        }
         label.title = presentation.title;
-        this.el.setAttribute('aria-label', presentation.label);
+        this.el.setAttribute('aria-label', presentation.code === undefined ? presentation.label : `${presentation.label} ${presentation.code}`);
         this.buttons = presentation.verbs.map(verb => {
             const el = document.createElement('button');
             el.type = 'button';
@@ -1567,8 +1575,9 @@ class ObjectToolbarView implements PluginView {
             case 'emoji': {
                 const source = object.node.attrs.source as string;
                 return {
-                    label: `Emoji ${source}`,
-                    title: `${source}: kept as written, saved as it stands in the file.`,
+                    label: 'Emoji',
+                    code: source,
+                    title: `Emoji ${source} — kept as written`,
                     verbs: emojiVerbs(view.state, object, {
                         asText: () => this.act(object, current => {
                             const tr = emojiAsTextTransaction(this.view.state, current.from, current.to);

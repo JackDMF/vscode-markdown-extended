@@ -11,6 +11,7 @@ import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { notePasteTransaction, noteRefusal } from '../../../src/editor/webview/notes';
 import { inlineForNote, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
 import { EMOJI_TEXT_STILL_READ, emojiAsTextNotice, emojiAsTextTransaction } from '../../../src/editor/webview/emoji';
+import { undoKey } from '../../../src/editor/webview/hint';
 import { objectOfNode } from '../../../src/editor/webview/objects';
 import { emojiVerbs } from '../../../src/editor/webview/objectToolbar';
 import { hostEngine, topChildren, touched } from './helpers';
@@ -289,7 +290,7 @@ suite('Editor: an emoji atom on the page — its look, its bar and its verbs', (
         const at = atomAt(state);
         const caret = state.apply(state.tr.setSelection(TextSelection.create(state.doc, at + 1)));
         const typed = caret.apply(caret.tr.insertText('Z'));
-        assert.deepStrictEqual(emojiAsTextNotice(typed), ':)Z is no longer an emoji');
+        assert.deepStrictEqual(emojiAsTextNotice(typed), `:)Z is no longer an emoji — ${undoKey()}`);
         // The next edit, which makes none text, says nothing.
         const more = typed.apply(typed.tr.insertText('Y'));
         assert.strictEqual(emojiAsTextNotice(more), null);
@@ -435,12 +436,12 @@ suite('Editor: emoji atoms, review 1', () => {
         assert.strictEqual(rule.getAttrs({ getAttribute: (name: string) => attrs[name] ?? null, textContent: '😃' }), false);
     });
 
-    test('the hint names the text as it now stands around each spelling made text, in document order, whole characters', () => {
+    test('the hint names the text as it now stands around each spelling made text, in document order, whole characters, with the undo', () => {
         const typeAt = (source: string, edit: (state: EditorState) => Transaction) => {
             const state = stateOf(source);
             return emojiAsTextNotice(state.apply(edit(state)));
         };
-        const undoing = '';
+        const undoing = ` — ${undoKey()}`;
         assert.strictEqual(typeAt('x :) y\n', s => s.tr.insertText('5', atoms(s)[0][0])), `5:) is no longer an emoji${undoing}`);
         assert.strictEqual(typeAt('x :) y\n', s => s.tr.insertText('😀', atoms(s)[0][0] + 1)), `:)😀 is no longer an emoji${undoing}`);
         assert.strictEqual(typeAt('a :) b\n\nc :) d\n', s => {
@@ -469,4 +470,12 @@ suite('Editor: emoji atoms, review 1', () => {
         assert.ok(!html.includes('title='), html);
     });
 
+    test('the bar\'s verb says Edit as text is one way, with the real spelling and undo key', () => {
+        const state = stateOf('a :wave: b\n');
+        const [at] = atoms(state)[0];
+        const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
+        assert.ok(object !== null);
+        const [asText] = emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined });
+        assert.strictEqual(asText.title, `Makes it the characters :wave: — they stay text and are saved as text; ${undoKey()} brings the emoji back.`);
+    });
 });

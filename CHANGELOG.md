@@ -5,8 +5,9 @@
 ### ✨ Features
 
 - Emoji already in a file (`:)`, `:smile:`) no longer make their paragraph a source block; they are saved as written.
-- An emoji an edit would turn back into text, like `:)Z`, becomes that text at once, with a hint.
+- An emoji an edit would turn back into text, like `:)Z`, becomes that text at once, with a hint offering undo.
 - Click an emoji to select it; its bar offers Edit as text and Remove emoji.
+- A notice such as "Embed is text" goes away once you type or undo.
 
 ### 🐛 Bug Fixes
 

@@ -6,7 +6,10 @@
  * filter); a **neutral** one announces the result of a verb that leaves
  * nothing visible behind but a disappearance ("Note removed — Ctrl+Z", the
  * object toolbar). Both are the same element: one place beside the caret where
- * the page speaks, not two that could stand on each other.
+ * the page speaks, not two that could stand on each other. A neutral hint
+ * reports a change, so the next change of the document — typing, an undo, a
+ * redo — makes it stale, and it goes then; a refusal stays its time, as the
+ * document did not change.
  */
 import { Plugin } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
@@ -43,6 +46,14 @@ class CaretHint {
         }, HINT_MS[tone]);
     }
 
+    /** Hide a neutral hint that is showing: the document changed since. */
+    staleAfterChange(): void {
+        if (!this.el.hidden && this.el.dataset.tone === 'neutral') {
+            clearTimeout(this.timer);
+            this.el.hidden = true;
+        }
+    }
+
     destroy(): void {
         clearTimeout(this.timer);
         this.el.remove();
@@ -68,6 +79,12 @@ export function hintPlugin(): Plugin {
             const hint = new CaretHint(editorView);
             hints.set(editorView, hint);
             return {
+                // Before the plugins after it, whose views may show a hint for this very change.
+                update(view, prevState) {
+                    if (view.state.doc !== prevState.doc) {
+                        hint.staleAfterChange();
+                    }
+                },
                 destroy() {
                     hints.delete(editorView);
                     hint.destroy();

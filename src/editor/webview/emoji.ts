@@ -2,7 +2,7 @@ import { EditorState, Plugin, PluginKey, TextSelection, Transaction } from 'pros
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, fidelityPlan, isRepair } from '../fidelity';
 import { editorSchema } from '../schema';
 import { emojiBeyondAtoms, unreadEmojiAsText } from '../serialize';
-import { showHint } from './hint';
+import { showHint, undoKey } from './hint';
 
 /**
  * An emoji the file holds is an atom (`emoji`), written back as it was
@@ -13,7 +13,7 @@ import { showHint } from './hint';
  * one undo takes both back; the file then holds that text, which reads as no
  * emoji. It is not spelled otherwise (`:smiley:`): what was written stays.
  * The caret hint says so, once, naming the text as it now stands
- * (`:)Z is no longer an emoji`).
+ * (`:)Z is no longer an emoji — Ctrl+Z`).
  *
  * Decided here, on the page, right after the edit, by the parser: each
  * top-level block the save writes by rule after the edit (`fidelityPlan`) is
@@ -37,9 +37,9 @@ export const emojiPluginKey = new PluginKey<EmojiNotice | null>('mepEmoji');
 /** The meta on the transaction that made atoms text: what each became, with the character after it, as the page then shows it. */
 export const EMOJI_AS_TEXT_META = 'mepEmojiAsText';
 
-/** The hint for what an edit made text: each as the text now stands around it. */
+/** The hint for what an edit made text: each as the text now stands around it, and the undo that gives the emoji back. */
 function noticeOf(shown: readonly string[]): string {
-    return shown.length === 1 ? `${shown[0]} is no longer an emoji` : `${shown.join(', ')} are no longer emoji`;
+    return `${shown.length === 1 ? `${shown[0]} is no longer an emoji` : `${shown.join(', ')} are no longer emoji`} — ${undoKey()}`;
 }
 
 /** The hint the transaction that led to `state` gives, or `null`: only the one that made atoms text. */
