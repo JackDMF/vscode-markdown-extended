@@ -420,8 +420,8 @@ In any text, a note's included, `ESCAPE_EXTRA` also escapes an emoji shortcode (
 and the state's `esc` every shortcut of markdown-it-emoji's own table (`emojiShortcuts.ts`)
 not beside a letter, digit or mark: the plugin reads one at a token's edge without looking
 further, and the escape of a neighbour makes such an edge (`5\$:)` is `5$` and a smiley), so
-`5$:)` is written `5\$\:)`. The page's engine runs no emoji rule; this escape is why it
-needs none. A bare link is another such edge, and where it starts and ends is asked of the
+`5$:)` is written `5\$\:)`. Typed text needs no emoji rule for that; the page's engine runs
+the registry's emoji plugin for the emoji the file holds, which are atoms (below). A bare link is another such edge, and where it starts and ends is asked of the
 page's engine, reading the textblock as written, never computed (`judged`,
 `readAutoLinks`): a shortcut inside a link is left, one at its edge is escaped though a
 letter stands beside it, and a backslash there is kept only where the engine still reads
