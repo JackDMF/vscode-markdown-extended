@@ -470,6 +470,8 @@ keeps no atom. An atom no emoji of its name and spelling was read for anywhere i
 does not read back; one that cannot be placed — an emoji of its kind read with no known
 place, textblocks that cannot be lined up with the inline tokens read — is neither kept nor
 made text: the edit is refused (`unplacedEmoji`), and the page and the file still agree.
+A block whose atoms cannot be placed as the file has them opens as a source block
+(`withUnplacedAsSource` in `parse.ts`), as one holding an emoji did before atoms.
 An atom that does not read back — a
 letter typed against it, a `>:(` an edit moved to a line start, a `:|` in a cell, whose
 `\|` the row needs — becomes its spelling as text, on the page right after the edit, in a
