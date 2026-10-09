@@ -390,6 +390,15 @@ suite('Editor properties panel (e2e)', () => {
         assert.ok(edit);
         assert.strictEqual(edit.text, SOURCE);
         assert.ok(await page.$(row('lang')));
+        // The hint reports a change: the next change of the document takes it away.
+        await page.mouse.move(...Object.values(await centre(`${row('lang')} .mep-prop-key`)) as [number, number]);
+        await clickAt(`${row('lang')} .mep-prop-remove`);
+        await delay(100);
+        assert.strictEqual(await page.$eval('.mep-hint', el => (el as HTMLElement).hidden), false);
+        await clickText(page, 'The plan agreed', 3);
+        await page.keyboard.type('x');
+        await delay(100);
+        assert.strictEqual(await page.$eval('.mep-hint', el => (el as HTMLElement).hidden), true);
     });
 
     test('lang offers the file\'s values in the editor\'s completion list, opened on focus and narrowed as typed', async function () {

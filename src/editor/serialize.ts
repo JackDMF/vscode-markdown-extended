@@ -1256,17 +1256,23 @@ export function unwritableEmoji(doc: Node, from = 0, to = doc.content.size): str
     return reason;
 }
 
-/** Why an edit is refused after which an emoji atom of a block it rewrites cannot be placed (`unreadEmoji` is `null`). */
-export const EMOJI_UNPLACED_REFUSAL = 'This paragraph could not be checked; the edit was not applied.';
-
 /**
- * Why an edit is refused that makes the save write one of `blocks` again so
- * that an emoji atom of it cannot be placed (`unreadEmoji`), or `null`: whether
- * it still reads as that emoji cannot be told, so it is neither kept nor made
- * text — the edit is not applied, and the page and the file still agree.
+ * The first emoji atom of `blocks` (top-level blocks, each with its offset)
+ * the judge cannot place (`unreadEmoji` is `null`), by its position, with its
+ * spelling and — where the emoji of its kind read with no known place stands
+ * in superscript — that one's spelling: whether it still reads as that emoji
+ * cannot be told, so an edit that leaves it so is not applied
+ * (`unplacedRefusal` in `webview/notes.ts`), and the page and the file still
+ * agree. `null` where every atom is placed.
  */
-export function unplacedEmoji(blocks: readonly { node: Node }[]): string | null {
-    return blocks.some(({ node }) => unreadEmoji(node) === null) ? EMOJI_UNPLACED_REFUSAL : null;
+export function unplacedEmoji(blocks: readonly { node: Node; offset: number }[]): { at: number; source: string; inSuperscript: string | null } | null {
+    for (const { node, offset } of blocks) {
+        const verdict = judgedEmoji(node);
+        if ('unplaced' in verdict) {
+            return { ...verdict.unplaced, at: offset + verdict.unplaced.at };
+        }
+    }
+    return null;
 }
 
 /**
@@ -3019,7 +3025,7 @@ interface UnitRead {
     /** Whether VS Code's math (its stand-in) read a formula: the page holds none in a block it edits. */
     math: boolean;
     /** Each emoji read, in order: its name, its spelling and its place in its inline token's text (`markdownItEmoji.ts`), and that inline token (`inlines`). */
-    emoji: { name: string; source: string | null; at: number | null; inline: number }[];
+    emoji: { name: string; source: string | null; at: number | null; inline: number; inSuperscript: boolean }[];
     /** Each inline token's text, the text its rules read, by its index (`inlines`). */
     texts: string[];
 }
@@ -3054,8 +3060,11 @@ function readUnit(text: string, key = text): UnitRead {
     const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
     read = { blocks: [], spans: [], sidebars: [], inlines: 0, madeInline: false, math: false, emoji: [], texts: [] };
     const found = read;
+    // Superscript's text is read apart (markdown-it-sup-alt): an emoji there may have no known place.
+    let superscript = 0;
     const walk = (children: readonly Token[]) => {
         for (const child of children) {
+            superscript += child.type === 'sup_open' ? 1 : child.type === 'sup_close' ? -1 : 0;
             const given = attrsGivenTo(child).map(([n, v]) => [n, v] as AttrPair);
             if (child.type === 'span_open') {
                 found.spans.push({ given, inline: found.inlines });
@@ -3070,6 +3079,7 @@ function readUnit(text: string, key = text): UnitRead {
                     source: typeof meta?.source === 'string' ? meta.source : null,
                     at: typeof meta?.at === 'number' ? meta.at : null,
                     inline: found.inlines,
+                    inSuperscript: superscript > 0,
                 });
             }
             walk(child.children ?? []);
@@ -3438,14 +3448,25 @@ function holdsEmoji(node: Node): boolean {
  * blocks), only an atom of which no emoji of its name and spelling was read
  * anywhere in the part is returned; one of which some was read cannot be
  * placed, and the answer is `null`: the edit that made it so is refused
- * (`EMOJI_UNPLACED_REFUSAL`), never an atom made text that may still read.
+ * (`unplacedEmoji`), never an atom made text that may still read.
  * Nothing about where an emoji reads is modelled: a neighbour glued to it, a
  * `>` that opens a quote at a line start, a table's or a note's encoding of a
  * `|` are all found by the parse.
  */
 export function unreadEmoji(block: Node): number[] | null {
+    const verdict = judgedEmoji(block);
+    return 'unread' in verdict ? verdict.unread : null;
+}
+
+/**
+ * `unreadEmoji`'s judgement: the atoms that do not read back, or the first one
+ * that cannot be placed, by its position from the block's start, its spelling,
+ * and the spelling of the emoji of its kind read in superscript with no known
+ * place that made it so, if one did.
+ */
+function judgedEmoji(block: Node): { unread: number[] } | { unplaced: { at: number; source: string; inSuperscript: string | null } } {
     if (!holdsEmoji(block)) {
-        return [];
+        return { unread: [] };
     }
     const unread: number[] = [];
     for (const unit of unitsOf(block)) {
@@ -3459,7 +3480,9 @@ export function unreadEmoji(block: Node): number[] | null {
         for (const { atom, at, textblock, index } of atoms) {
             const verdict = inPlace !== null ? (inPlace.get(textblock) as (boolean | null)[])[index] : readAnywhere(atom) ? null : false;
             if (verdict === null) {
-                return null;
+                const source = atom.attrs.source as string;
+                const cause = read.emoji.find(e => e.at === null && e.inSuperscript && e.name === atom.attrs.name && e.source === source);
+                return { unplaced: { at, source, inSuperscript: cause?.source ?? null } };
             }
             if (!verdict) {
                 unread.push(at);
@@ -3467,7 +3490,7 @@ export function unreadEmoji(block: Node): number[] | null {
         }
     }
     // A table's header is read with every row: its atoms are judged once per row, alike.
-    return [...new Set(unread)].sort((a, b) => a - b);
+    return { unread: [...new Set(unread)].sort((a, b) => a - b) };
 }
 
 /**

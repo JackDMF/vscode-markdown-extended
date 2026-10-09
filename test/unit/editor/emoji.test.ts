@@ -6,7 +6,7 @@ import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serial
 import { groupSourceBlocks, splitLines } from '../../../src/editor/blocks';
 import { definitionOf } from '../../../src/editor/inlineEngine';
 import { createPositionMap } from '../../../src/editor/positions';
-import { EMOJI_RAW_REFUSAL, EMOJI_UNPLACED_REFUSAL, onUnreadEmojiSaved, unreadEmoji, unwritableEmoji } from '../../../src/editor/serialize';
+import { EMOJI_RAW_REFUSAL, onUnreadEmojiSaved, unreadEmoji, unwritableEmoji } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { notePasteTransaction, noteRefusal } from '../../../src/editor/webview/notes';
 import { inlineForNote, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
@@ -341,7 +341,8 @@ suite('Editor: an atom is judged where it was written, not by its name', () => {
         });
         const typed = state.apply(state.tr.insertText(' :) ', inSup));
         const tr = typed.tr.insertText('Q', atoms(typed)[0][0] + 1);
-        assert.strictEqual(noteRefusal(tr), EMOJI_UNPLACED_REFUSAL);
+        // The cause, and the ways out that are open there.
+        assert.strictEqual(noteRefusal(tr), 'Here :) may still read as an emoji beside the :) in superscript; Edit as text or Remove emoji on it first.');
         assert.strictEqual(typed.apply(tr).doc, typed.doc);
         assert.deepStrictEqual(typedAfter('a ++r|x :) y++ b ++s|z :) w++ c\n', 0), { kept: [':)'], saved: 'a ++r|x :)Q y++ b ++s|z :) w++ c\n' });
     });
@@ -519,7 +520,7 @@ suite('Editor: emoji atoms, review 2', () => {
         });
         const typed = sup.apply(sup.tr.insertText(' :) ', inSup));
         // The emoji superscript reads has no known place (its text is read unescaped): never a guess, the edit is refused.
-        assert.strictEqual(noteRefusal(breakFirst(typed)), EMOJI_UNPLACED_REFUSAL);
+        assert.strictEqual(noteRefusal(breakFirst(typed)), 'Here :) may still read as an emoji beside the :) in superscript; Edit as text or Remove emoji on it first.');
         assert.strictEqual(typed.apply(breakFirst(typed)).doc, typed.doc);
     });
 
@@ -563,7 +564,7 @@ suite('Editor: emoji atoms, review 2', () => {
             x = x < 0 && n.isText && n.text === 'x ' ? pos : x;
         });
         const tr = state.tr.delete(x, x + 2);
-        assert.strictEqual(noteRefusal(tr), EMOJI_UNPLACED_REFUSAL);
+        assert.strictEqual(noteRefusal(tr), 'Here >:( may still read as an emoji; Edit as text or Remove emoji on it first.');
         assert.strictEqual(state.apply(tr).doc, state.doc, 'refused');
         // Where no emoji of its name is read at all, it is text for certain.
         const single = stateOf(`a${BS}\nx >:( b\n`);

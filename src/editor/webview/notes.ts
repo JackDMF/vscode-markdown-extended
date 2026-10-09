@@ -36,6 +36,7 @@ import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } f
 import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
+import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
 import { showHint } from './hint';
 import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
 
@@ -340,7 +341,7 @@ function typingAtNoteEdge(state: EditorState): boolean {
  * fidelity plugin's applies the very plan checked. Then a wiki embed under a
  * raw mark in that range (`unwritableEmbed`), an emoji under one
  * (`unwritableEmoji`), and a block the save rewrites holding an emoji atom
- * the judge cannot place (`unplacedEmoji`): whether it still reads cannot be
+ * the judge cannot place (`unplacedRefusal`): whether it still reads cannot be
  * told, so the edit is not applied. The one check the filter makes,
  * and the one a verb asks before it is dispatched, so a button is disabled with
  * the filter's own reason.
@@ -359,7 +360,48 @@ export function noteRefusal(tr: Transaction): string | null {
         mapping,
         rewritten: written.rewritten,
         sourceOf: pos => textblockSource(before, pos),
-    }) ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to) ?? unplacedEmoji(written.rewritten);
+    }) ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to) ?? unplacedRefusal(tr, written.rewritten, mapping);
+}
+
+/** Whether the ways out of an unplaced atom are being tried (`unplacedRefusal`): a way out is no edit to try them for again. */
+let tryingWaysOut = false;
+
+/**
+ * Why `tr` is refused where the save would write a block of `rewritten`
+ * holding an emoji atom the judge cannot place (`unplacedEmoji`), or `null`:
+ * whether it still reads as that emoji cannot be told, so it is neither kept
+ * nor made text. The reason names the atom, the cause where it is a smiley in
+ * superscript, and the ways out that are open — Edit as text and Remove emoji
+ * on that atom, each tried, as the object bar would, on the document the edit
+ * started from (`mapping`, from there to the written one).
+ */
+function unplacedRefusal(tr: Transaction, rewritten: readonly { node: Node; offset: number }[], mapping: Mapping): string | null {
+    const unplaced = unplacedEmoji(rewritten);
+    if (unplaced === null) {
+        return null;
+    }
+    const where = `Here ${unplaced.source} may still read as an emoji${unplaced.inSuperscript === null ? '' : ` beside the ${unplaced.inSuperscript} in superscript`}`;
+    const ways: string[] = [];
+    if (!tryingWaysOut) {
+        tryingWaysOut = true;
+        try {
+            const at = mapping.invert().map(unplaced.at);
+            const atom = tr.before.nodeAt(at);
+            if (atom !== null && atom.type === editorSchema.nodes.emoji && atom.attrs.source === unplaced.source) {
+                const state = EditorState.create({ doc: tr.before });
+                const asText = emojiAsTextTransaction(state, at, at + 1);
+                if (asText !== null && noteRefusal(asText) === null && emojiTextStillRead(state, asText, at) === null) {
+                    ways.push('Edit as text');
+                }
+                if (noteRefusal(state.tr.delete(at, at + 1)) === null) {
+                    ways.push('Remove emoji');
+                }
+            }
+        } finally {
+            tryingWaysOut = false;
+        }
+    }
+    return ways.length === 0 ? `${where}, so this edit is not applied.` : `${where}; ${ways.join(' or ')} on it first.`;
 }
 
 /**

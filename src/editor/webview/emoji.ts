@@ -3,7 +3,7 @@ import { keymap } from 'prosemirror-keymap';
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, fidelityPlan, isRepair } from '../fidelity';
 import { editorSchema } from '../schema';
 import { emojiBeyondAtoms, unreadEmojiAsText } from '../serialize';
-import { showChangeHint, undoKey } from './hint';
+import { HINT_PARAGRAPH_META, showParagraphHint, undoKey } from './hint';
 
 /**
  * An emoji the file holds is an atom (`emoji`), written back as it was
@@ -70,13 +70,14 @@ export function emojiPlugin(): Plugin<EmojiNotice | null> {
             const plan = fidelityPlan(transactions, oldState.doc, newState.doc);
             const tr = newState.tr;
             const made = unreadEmojiAsText(tr, plan.rewritten.map(block => block.offset));
-            return tr.docChanged ? asRepair(tr).setMeta(EMOJI_AS_TEXT_META, made.map(m => m.shown)) : null;
+            // The hint it gives is about the paragraph the caret is in (`showParagraphHint`).
+            return tr.docChanged ? asRepair(tr).setMeta(EMOJI_AS_TEXT_META, made.map(m => m.shown)).setMeta(HINT_PARAGRAPH_META, true) : null;
         },
         view: () => ({
             update(view, prevState) {
                 const notice = emojiPluginKey.getState(view.state);
                 if (notice != null && notice !== emojiPluginKey.getState(prevState)) {
-                    showChangeHint(view, notice.text);
+                    showParagraphHint(view, notice.text);
                 }
             },
         }),

@@ -469,7 +469,9 @@ parser's text. An emoji read elsewhere — an equal atom beside it, a typed one 
 keeps no atom. An atom no emoji of its name and spelling was read for anywhere in its part
 does not read back; one that cannot be placed — an emoji of its kind read with no known
 place, textblocks that cannot be lined up with the inline tokens read — is neither kept nor
-made text: the edit is refused (`unplacedEmoji`), and the page and the file still agree.
+made text: the edit is refused (`unplacedEmoji`, `unplacedRefusal`), and the page and the file still agree;
+the reason names the atom, a smiley in superscript where that is the cause, and the ways out
+that are open, each tried on the document the edit started from (Edit as text, Remove emoji).
 A block whose atoms cannot be placed as the file has them opens as a source block
 (`withUnplacedAsSource` in `parse.ts`), as one holding an emoji did before atoms.
 An atom that does not read back — a

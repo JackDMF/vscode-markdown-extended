@@ -6,9 +6,12 @@
 
 - Emoji already in a file (`:)`, `:smile:`) no longer make their paragraph a source block; they are saved as written.
 - An emoji an edit would turn back into text, like `:)Z`, becomes that text at once, with a hint offering undo.
+- That hint stays while you keep editing the paragraph, until you leave it or undo.
 - Click an emoji to select it; its bar offers Edit as text and Remove emoji.
 - Arrow keys step over an emoji like a character; Alt+Enter beside one opens its bar.
-- A notice such as "Embed is text" goes away once you type or undo.
+- A notice such as "Embed is text" or "Removed lang" goes away once you type or undo.
+- A refused edit beside an emoji names the emoji and the verbs that can unblock it.
+- A refusal already shown is not shown again while it stays.
 
 ### 🐛 Bug Fixes
 

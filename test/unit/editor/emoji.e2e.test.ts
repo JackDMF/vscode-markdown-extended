@@ -168,6 +168,41 @@ suite('Editor emoji atom (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you :)Z here.\n');
     });
 
+    test('the hint that an emoji is text stays while the caret is in its paragraph, and goes when it leaves', async function () {
+        this.timeout(15000);
+        await showDocument('Intro.\n\nnice :) end\n', 'nice');
+        const box = await atomBox();
+        await page.mouse.click(box.x - 1, box.y + box.height / 2);
+        await delay(100);
+        await page.keyboard.type('great ', { delay: 30 });
+        await delay(100);
+        assert.deepStrictEqual(await hint(), { text: `g:) is no longer an emoji — ${undoKey()}`, tone: 'neutral', shown: true }, 'it stays as the typing goes on');
+        await delay(3500);
+        assert.strictEqual((await hint()).shown, true, 'no time takes it away');
+        await clickText(page, 'Intro', 2);
+        await delay(100);
+        assert.strictEqual((await hint()).shown, false, 'the caret left the paragraph');
+    });
+
+    test('the same refusal is not said again while it is shown', async function () {
+        this.timeout(20000);
+        // Typing into the code span of a note's reference that holds its marker is refused (`noteRefusal`).
+        await showDocument('A ++ref `xy` w|body++ z.\n', 'A');
+        await clickText(page, 'xy', 1);
+        const refuse = async () => {
+            await page.keyboard.type('|');
+            await delay(80);
+        };
+        await refuse();
+        const first = await hint();
+        assert.strictEqual(first.tone, 'refusal');
+        assert.strictEqual(first.shown, true);
+        await delay(2500);
+        await refuse();
+        await delay(1500);
+        assert.strictEqual((await hint()).shown, false, 'gone at the first one\'s time, not held up by the repeat');
+    });
+
     test('the hint goes with the next change: Ctrl+Z gives the emoji back and takes the hint away', async function () {
         this.timeout(15000);
         await showDocument('Glad to see you :) here.\n', 'Glad');
