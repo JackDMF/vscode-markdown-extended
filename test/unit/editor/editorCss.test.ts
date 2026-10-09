@@ -172,6 +172,16 @@ suite('Editor stylesheet colours', () => {
             ['--vscode-menu-selectionBackground falls back to Highlight, not transparent']);
     });
 
+    test('an emoji atom is drawn as the text around it, no chip, and selected it has the wiki embed\'s focus outline', () => {
+        const rule = (selector: string) => {
+            const at = css.indexOf(`${selector} {`);
+            assert.ok(at >= 0, `editor.css has ${selector}`);
+            return css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at)).trim().split(/\s*;\s*/).filter(d => d !== '');
+        };
+        assert.deepStrictEqual(rule('.mep-emoji'), ['font: inherit', 'color: inherit']);
+        assert.deepStrictEqual(rule('.mep-emoji.ProseMirror-selectednode'), rule('.mep-wiki-embed.ProseMirror-selectednode'));
+    });
+
     test('the row, the menus and the bars read the workbench\'s chrome variables', () => {
         for (const variable of [
             '--vscode-editorGroupHeader-tabsBackground', '--vscode-editorGroupHeader-tabsBorder', '--vscode-toolbar-hoverBackground', '--vscode-toolbar-activeBackground',

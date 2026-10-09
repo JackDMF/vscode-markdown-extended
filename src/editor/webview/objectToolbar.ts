@@ -42,6 +42,7 @@ import { HintTone, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
+import { emojiAsTextTransaction } from './emoji';
 import { clearPendingRange, showPendingRange } from './pendingRange';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
@@ -343,6 +344,28 @@ export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions
             label: 'Remove embed',
             title: 'The embed goes from the text.',
             refusal: refusalOnce(state, `remove-wiki-embed@${place}`, () => embedRefusal(deleteObjectTransaction(state, object))),
+            run: () => actions.remove(),
+        },
+    ];
+}
+
+/** The verbs of the emoji atom `object`, each with the reason it cannot be chosen in `state`, if there is one: as an embed's. */
+export function emojiVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
+    const place = `${object.from}:${object.to}`;
+    const refusal = (tr: Transaction | null) => (tr === null ? 'There is no emoji here.' : noteRefusal(tr) ?? tableRefusal(tr));
+    return [
+        {
+            id: 'edit-emoji-as-text',
+            label: 'Edit as text',
+            title: 'Make it its spelling as plain text; typed text is saved so it shows as typed.',
+            refusal: refusalOnce(state, `edit-emoji-as-text@${place}`, () => refusal(emojiAsTextTransaction(state, object.from, object.to))),
+            run: () => actions.asText(),
+        },
+        {
+            id: 'remove-emoji',
+            label: 'Remove emoji',
+            title: 'The emoji goes from the text.',
+            refusal: refusalOnce(state, `remove-emoji@${place}`, () => refusal(deleteObjectTransaction(state, object))),
             run: () => actions.remove(),
         },
     ];
@@ -1519,6 +1542,23 @@ class ObjectToolbarView implements PluginView {
                         remove: () => this.remove(object, 'Embed removed'),
                     }),
                 };
+            case 'emoji': {
+                const source = object.node.attrs.source as string;
+                return {
+                    label: `Emoji ${source}`,
+                    title: `${source}: kept as written, saved as it stands in the file.`,
+                    verbs: emojiVerbs(view.state, object, {
+                        asText: () => this.act(object, current => {
+                            const tr = emojiAsTextTransaction(this.view.state, current.from, current.to);
+                            if (tr !== null) {
+                                this.view.dispatch(tr);
+                            }
+                            return tr !== null;
+                        }, 'Emoji is text'),
+                        remove: () => this.remove(object, 'Emoji removed'),
+                    }),
+                };
+            }
             case 'badge': {
                 const mark = object.node.attrs.mark as { rule?: unknown } | null;
                 return {

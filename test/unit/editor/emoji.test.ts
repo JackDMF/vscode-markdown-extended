@@ -10,6 +10,9 @@ import { EMOJI_AFTER_BREAK_REFUSAL, EMOJI_LINK_REFUSAL, EMOJI_RAW_REFUSAL, unwri
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { noteRefusal } from '../../../src/editor/webview/notes';
 import { inlineForNote } from '../../../src/editor/webview/wikiEmbeds';
+import { emojiAsTextNotice, emojiAsTextTransaction } from '../../../src/editor/webview/emoji';
+import { objectOfNode } from '../../../src/editor/webview/objects';
+import { emojiVerbs } from '../../../src/editor/webview/objectToolbar';
 import { hostEngine, topChildren, touched } from './helpers';
 
 const schema = editorSchema;
@@ -114,7 +117,7 @@ suite('Editor: an emoji the file holds is an atom carrying its spelling', () => 
         const doc = schema.topNodeType.create(null, [schema.nodes.paragraph.create(null, [schema.text('a '), atom, schema.text(' b')])]);
         assert.strictEqual(doc.textContent, 'a 😃 b');
         assert.strictEqual(doc.textBetween(0, doc.content.size), 'a 😃 b');
-        assert.deepStrictEqual(schema.nodes.emoji.spec.toDOM?.(atom), ['span', { class: 'mep-emoji', 'data-mep-emoji': ':-)', 'data-mep-emoji-name': 'smiley' }, '😃']);
+        assert.deepStrictEqual(schema.nodes.emoji.spec.toDOM?.(atom), ['span', { class: 'mep-emoji', 'data-mep-emoji': ':-)', 'data-mep-emoji-name': 'smiley', title: 'Emoji :-) — kept as written' }, '😃']);
         const rule = schema.nodes.emoji.spec.parseDOM?.[0] as { tag: string; getAttrs: (dom: unknown) => unknown };
         assert.strictEqual(rule.tag, 'span[data-mep-emoji]');
         const attrs: Record<string, string> = { 'data-mep-emoji': ':-)', 'data-mep-emoji-name': 'smiley' };
@@ -239,5 +242,61 @@ suite('Editor: an emoji atom that an edit makes unreadable becomes text at once'
         const slice = new Slice(Fragment.from(schema.nodes.paragraph.create(null, [schema.text('a '), atom])), 1, 1);
         assert.deepStrictEqual(inlineForNote(slice, []).map(n => (n.isText ? n.text : n.type.name)), ['a ', 'emoji']);
         assert.deepStrictEqual(inlineForNote(slice, [schema.marks.code.create()]).map(n => (n.isText ? n.text : n.type.name)), ['a ', ':)']);
+    });
+});
+
+suite('Editor: an emoji atom on the page — its look, its bar and its verbs', () => {
+    const md = hostEngine();
+    const save = (state: EditorState) => serializeDocument({ doc: state.doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+    const stateOf = (source: string) => EditorState.create({ doc: parseDocument(md, source).doc, plugins: editorPlugins() });
+    const atomAt = (state: EditorState) => {
+        let at = -1;
+        state.doc.descendants((n, pos) => {
+            at = at < 0 && n.type.name === 'emoji' ? pos : at;
+        });
+        return at;
+    };
+
+    test('drawn as its glyph with a tooltip naming its spelling', () => {
+        const atom = schema.nodes.emoji.create({ source: ':)', name: 'smiley', glyph: '😃' });
+        const [, attrs] = schema.nodes.emoji.spec.toDOM?.(atom) as [string, Record<string, string>, string];
+        assert.strictEqual(attrs.title, 'Emoji :) — kept as written');
+    });
+
+    test('it is an object of its own, whose bar offers Edit as text and Remove emoji', () => {
+        const state = stateOf('a *:)* b\n');
+        const at = atomAt(state);
+        const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
+        assert.ok(object !== null && object.kind === 'emoji');
+        const verbs = emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined });
+        assert.deepStrictEqual(verbs.map(v => [v.id, v.label, v.refusal]), [['edit-emoji-as-text', 'Edit as text', null], ['remove-emoji', 'Remove emoji', null]]);
+    });
+
+    test('Edit as text: its spelling as text with its marks and the caret after it, saved escaped, undone as one step', () => {
+        const state = stateOf('a *:)* b\n');
+        const at = atomAt(state);
+        const tr = emojiAsTextTransaction(state, at, at + 1);
+        assert.ok(tr !== null);
+        const asText = state.apply(tr);
+        assert.strictEqual(atomAt(asText), -1);
+        assert.strictEqual(asText.doc.textBetween(0, asText.selection.from), 'a :)');
+        assert.ok(asText.doc.nodeAt(at)?.marks.some(m => m.type.name === 'em'), 'it keeps the emphasis');
+        assert.strictEqual(save(asText), 'a *\\:)* b\n');
+        let undone: EditorState | undefined;
+        undo(asText, t => { undone = asText.apply(t); });
+        assert.strictEqual(atomAt(undone as EditorState), at);
+        assert.strictEqual(emojiAsTextTransaction(state, 1, 2), null, 'a text position is no emoji');
+    });
+
+    test('an edit that makes an atom text says so once, naming what the page now shows', () => {
+        const state = stateOf('hi :) there\n');
+        const at = atomAt(state);
+        const caret = state.apply(state.tr.setSelection(TextSelection.create(state.doc, at + 1)));
+        const typed = caret.apply(caret.tr.insertText('Z'));
+        assert.deepStrictEqual(emojiAsTextNotice(typed), ':)Z is no longer an emoji');
+        // The next edit, which makes none text, says nothing.
+        const more = typed.apply(typed.tr.insertText('Y'));
+        assert.strictEqual(emojiAsTextNotice(more), null);
+        assert.strictEqual(emojiAsTextNotice(caret), null);
     });
 });

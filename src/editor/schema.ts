@@ -698,7 +698,8 @@ export const editorSchema = new Schema({
                 }),
             }],
             toDOM(node): DOMOutputSpec {
-                return ['span', { class: 'mep-emoji', 'data-mep-emoji': node.attrs.source as string, 'data-mep-emoji-name': node.attrs.name as string }, node.attrs.glyph as string];
+                const source = node.attrs.source as string;
+                return ['span', { class: 'mep-emoji', 'data-mep-emoji': source, 'data-mep-emoji-name': node.attrs.name as string, title: `Emoji ${source} — kept as written` }, node.attrs.glyph as string];
             },
         },
         sidenote: noteNode(SN.refClass, 'sidenote_body', SN.noteClass),
