@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { HostMessage, WebviewMessage } from '../../../src/editor/protocol';
-import { closeEditorPage, EXTENSION_ID, EditorPage, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, EXTENSION_ID, EditorPage, openEditorPage, settle, MOD } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const FRONT_AND_HEADING = [
@@ -45,9 +45,9 @@ suite('Editor webview (e2e)', () => {
     const edits = () => (editor as EditorPage).edits();
     const send = (message: HostMessage) => (editor as EditorPage).send(message);
     const pressSave = async () => {
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('s');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
     };
     /**
      * Listen for Ctrl+S where a webview forwards keys to VS Code: on its window,
@@ -57,7 +57,7 @@ suite('Editor webview (e2e)', () => {
         const w = window as unknown as { forwardedSave?: boolean };
         w.forwardedSave = false;
         window.addEventListener('keydown', e => {
-            if (e.key === 's' && e.ctrlKey) {
+            if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
                 w.forwardedSave = true;
             }
         });
@@ -158,9 +158,9 @@ suite('Editor webview (e2e)', () => {
             (el as HTMLTextAreaElement).value = '| a | b |\n| = | = |\n| 9 | 9 |';
         });
         await page.focus('.mep-raw-editor');
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('Enter');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
 
         const render = (await posted()).find((m): m is Extract<WebviewMessage, { type: 'render' }> => m.type === 'render');
         assert.ok(render, 'no render request');
@@ -177,9 +177,9 @@ suite('Editor webview (e2e)', () => {
         this.timeout(10000);
         await page.focus('.ProseMirror');
         for (let i = 0; i < 2; i++) {
-            await page.keyboard.down('Control');
+            await page.keyboard.down(MOD);
             await page.keyboard.press('z');
-            await page.keyboard.up('Control');
+            await page.keyboard.up(MOD);
         }
         await settle();
         const last = (await edits()).pop();
@@ -212,9 +212,9 @@ suite('Editor webview (e2e)', () => {
         assert.strictEqual((await edits()).length, before + 1, 'taking the host\'s document wrote nothing back');
 
         await page.focus('.ProseMirror');
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('z');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await settle();
         all = await edits();
         assert.strictEqual(all.length, before + 2);

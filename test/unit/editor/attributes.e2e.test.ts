@@ -8,7 +8,7 @@ import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } f
 import { CONTAINER_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import type { WebviewMessage } from '../../../src/editor/protocol';
-import { closeEditorPage, EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle } from './pageHarness';
+import { closeEditorPage, EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle, UNDO } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -219,7 +219,7 @@ suite('Editor Attributes… (e2e)', () => {
         const drawn = await page.$eval('.ProseMirror p.note', el => ({ text: el.textContent, border: getComputedStyle(el).borderLeftWidth }));
         assert.ok(drawn.text?.startsWith('Requirement states'), JSON.stringify(drawn));
         assert.strictEqual(drawn.border, '4px', 'the page\'s stylesheet styles the class, as the preview does');
-        assert.deepStrictEqual(await hint(), { text: `${ATTRIBUTES_SET_HINT} — Ctrl+Z`, tone: 'neutral', shown: true });
+        assert.deepStrictEqual(await hint(), { text: `${ATTRIBUTES_SET_HINT} — ${UNDO}`, tone: 'neutral', shown: true });
         await shot('03-paragraph-with-class.png');
 
         // The same entry again: prefilled with the literal, `{}` removes it.
@@ -233,7 +233,7 @@ suite('Editor Attributes… (e2e)', () => {
         await settle();
         assert.ok((await lastEdit())?.text.includes('a paragraph can carry a class of its own.\n'), (await lastEdit())?.text);
         assert.strictEqual(await page.$('.ProseMirror p.note'), null);
-        assert.strictEqual((await hint()).text, `${ATTRIBUTES_REMOVED_HINT} — Ctrl+Z`);
+        assert.strictEqual((await hint()).text, `${ATTRIBUTES_REMOVED_HINT} — ${UNDO}`);
     });
 
     test('a plain heading grows no bar for Attributes… alone; with another extension\'s action its bar carries it first, and the literal goes at the end of its line', async function () {

@@ -6,7 +6,7 @@ import { WebviewMessage } from '../../../src/editor/protocol';
 import { SYSTEM_FILE_LOCK } from '../../../src/editor/webview/images';
 import { COMPLETION_KEYS } from '../../../src/editor/webview/inlineField';
 import { DROP_LOCK } from '../../../src/editor/webview/objects';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, MOD } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 type Posted<T extends WebviewMessage['type']> = Extract<WebviewMessage, { type: T }>;
@@ -68,9 +68,9 @@ suite('Editor links and images (e2e)', () => {
     };
 
     const ctrl = async (key: puppeteer.KeyInput) => {
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press(key);
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await delay(80);
     };
 

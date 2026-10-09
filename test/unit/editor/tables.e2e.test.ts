@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { CELL_BREAK_REFUSAL } from '../../../src/editor/serialize';
-import { closeEditorPage, clickText, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot as saveShot, vscodeMarkdownCss } from './pageHarness';
+import { closeEditorPage, clickText, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot as saveShot, vscodeMarkdownCss, MOD, UNDO } from './pageHarness';
 import { LIGHT_MODERN, applyTheme } from './themes';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
@@ -449,7 +449,7 @@ suite('Editor pipe tables (e2e)', () => {
         await choose('row', 'insert-row-above');
         await choose('column', 'insert-column-left');
         await choose('column', 'delete-column');
-        assert.strictEqual((await hint()).text, 'Column deleted — Ctrl+Z');
+        assert.strictEqual((await hint()).text, `Column deleted — ${UNDO}`);
         assert.strictEqual(await caretCell(), '', 'the caret in the cell now standing where the deleted one stood: the new row\'s first');
         await barFor('Beta');
         await choose('row', 'delete-row');
@@ -467,7 +467,7 @@ suite('Editor pipe tables (e2e)', () => {
             'After the table.',
             '',
         ].join('\n'), 'the column made and taken away again, Beta\'s row gone (and "second" with it, so the column is narrower), the rows inserted kept');
-        assert.strictEqual((await hint()).text, 'Row deleted — Ctrl+Z');
+        assert.strictEqual((await hint()).text, `Row deleted — ${UNDO}`);
 
         await barFor('Name');
         await choose('row', 'delete-row');
@@ -542,7 +542,7 @@ suite('Editor pipe tables (e2e)', () => {
         await (await page.$(`${BAR} [data-verb="delete-table"]`))?.click();
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Intro paragraph.\n\nAfter the table.\n');
-        assert.strictEqual((await hint()).text, 'Table deleted — Ctrl+Z');
+        assert.strictEqual((await hint()).text, `Table deleted — ${UNDO}`);
     });
 
     test('a multimd table is a source block that says so, beside a native one', async function () {
@@ -573,7 +573,7 @@ suite('Editor pipe tables (e2e)', () => {
             (document.getSelection() as Selection).setBaseAndExtent(text, 0, text, 3);
         });
         await delay(100);
-        await press('b', 'Control');
+        await press('b', MOD);
         await delay(INLINE_DELAY_MS + 100);
         assert.ok(await page.$('.mep-bubble:not([hidden])'), 'the bubble shows over the selected text');
         assert.strictEqual(await page.$(BAR), null, 'and no block\'s bar beside it: one thing at a time');

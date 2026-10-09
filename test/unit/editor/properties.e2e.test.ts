@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle } from './pageHarness';
+import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, MOD, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 /** A Req Explorer workshop note's front matter, as that corpus writes one, shortened. */
@@ -99,9 +99,9 @@ suite('Editor properties panel (e2e)', () => {
     const row = (key: string) => `.mep-prop-row[data-key="${key}"]`;
 
     const selectAllAndType = async (text: string) => {
-        await page.keyboard.down('Control');
-        await page.keyboard.press('a');
-        await page.keyboard.up('Control');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a', editCommand('a'));
+        await page.keyboard.up(MOD);
         await page.keyboard.type(text);
     };
 
@@ -329,9 +329,9 @@ suite('Editor properties panel (e2e)', () => {
         await page.waitForSelector('.mep-props-editor');
         await page.keyboard.press('End');
         await page.keyboard.type('\n  - heading: A third');
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('Enter');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await settle();
         const edit = await lastEdit();
         assert.ok(edit);
@@ -382,9 +382,9 @@ suite('Editor properties panel (e2e)', () => {
         assert.strictEqual(await page.$(row('lang')), null);
         // The focus is on the panel (its toggle, after the row went): the editor's undo.
         await page.focus('.mep-props-toggle');
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('z');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await settle();
         edit = await lastEdit();
         assert.ok(edit);
@@ -464,9 +464,9 @@ suite('Editor properties panel (e2e)', () => {
         await page.keyboard.press('Enter');
         await delay(50);
         await page.focus('.mep-props-toggle');
-        await page.keyboard.down('Control');
+        await page.keyboard.down(MOD);
         await page.keyboard.press('z');
-        await page.keyboard.up('Control');
+        await page.keyboard.up(MOD);
         await settle();
         const edit = await lastEdit();
         assert.ok(edit);
