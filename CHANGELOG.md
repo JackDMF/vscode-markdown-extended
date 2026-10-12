@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.3.1 — Boxes That Hold the Bars
 
 ### 🐛 Bug Fixes
 
