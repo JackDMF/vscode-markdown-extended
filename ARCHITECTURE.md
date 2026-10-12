@@ -1454,9 +1454,13 @@ The layers:
   has the focus (`focusPlace.ts`), the reason (`controlLock`, by the control's `role`: a
   source box's *Editing source · Ctrl+Enter apply · Esc cancel*, a property's field's
   *Editing a property · Enter apply · Esc cancel*, a button's *Focus is outside the text ·
-  Esc or click into the text*) shown in the room the tools leave before the status — not
-  pinned, so a narrow row cuts it with an ellipsis, down to nothing, rather than covering a
-  tool — as its `aria-description` and in each tooltip, and pointed at in the refusal's
+  Esc or click into the text*) shown in the room the tools leave before the status, never
+  pinned over them, and where it does not fit there whole — measured (`placeLock`, on every
+  lock and every size change of the row or its status), not a breakpoint — on a thin line
+  of its own under the row (`mep-row-lock-below`), cut with an ellipsis only where even that
+  line is too narrow; the line covers the page's top as the row does and is part of the
+  row's ceiling for the bars (`rowCeiling`), and goes with the lock — as its
+  `aria-description` and in each tooltip, and pointed at in the refusal's
   amber when a refused tool is pressed; read again once per focus move, since a
   box taking the focus changes no state — the block-type face (the
   current type's name, locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,

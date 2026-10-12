@@ -55,10 +55,15 @@ const OPEN_CARDS = ':scope > .mep-language-card, :scope > .mep-completions';
 /** What counts as content inside a rendered block, besides its text. */
 const OCCUPIED_WITHIN = 'img:not(.ProseMirror-separator), td, th, .mep-inline-atom';
 
-/** The bottom of the formatting row (fixed at the editor's top) in `mount`: nothing is placed under it. */
+/**
+ * The bottom of the formatting row (fixed at the editor's top) in `mount` —
+ * with the line under it that holds a lock's reason, while it does — nothing
+ * is placed under it.
+ */
 export function rowCeiling(mount: HTMLElement): number {
     const row = mount.querySelector(':scope > .mep-toolbar');
-    return Math.max(0, row ? row.getBoundingClientRect().bottom : 0);
+    const line = mount.querySelector(':scope > .mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+    return Math.max(0, row ? row.getBoundingClientRect().bottom : 0, line ? line.getBoundingClientRect().bottom : 0);
 }
 
 function overlaps(a: Band, b: Band): boolean {

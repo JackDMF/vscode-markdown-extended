@@ -76,6 +76,9 @@ const PREVIEW_DELAY_MS = 300;
 const LOCK_FLASH_CLASS = 'mep-row-lock-flash';
 const LOCK_FLASH_MS = 900;
 
+/** On the row while the lock's reason does not fit beside the tools: it stands on a line of its own under them (`editor.css`). */
+const LOCK_BELOW_CLASS = 'mep-row-lock-below';
+
 /** Draw a sample: the element the parser makes, with its classes, attributes and content. */
 export function renderSample(spec: SampleSpec): HTMLElement {
     const node = document.createElement(spec.tag);
@@ -239,6 +242,8 @@ class ToolbarView implements PluginView {
     /** The row's reason while it is locked (`showLock`), at its right end. */
     private lockNote!: HTMLElement;
     private flashTimer: ReturnType<typeof setTimeout> | undefined;
+    /** Watches the row and its status for a size that changes where the reason fits (`placeLock`). */
+    private rowSize: ResizeObserver | undefined;
     /** The update a focus move asked for, while it waits. */
     private focusTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -291,6 +296,13 @@ class ToolbarView implements PluginView {
             }
         }, true);
         this.listen(window, 'resize', () => this.closeAll());
+        // Whether the reason fits beside the tools changes with the row's width
+        // and with the count beside it: measured again when either changes.
+        if (typeof ResizeObserver !== 'undefined') {
+            this.rowSize = new ResizeObserver(() => this.placeLock());
+            this.rowSize.observe(this.row);
+            this.rowSize.observe(this.row.querySelector('.mep-row-status') as Element);
+        }
         // The row draws no scrollbar (it would take the controls' height): a
         // narrow row scrolls sideways by the wheel, a vertical wheel included.
         this.listen(this.row, 'wheel', e => {
@@ -351,6 +363,24 @@ class ToolbarView implements PluginView {
         } else {
             this.row.setAttribute('aria-description', reason);
         }
+        this.placeLock();
+    }
+
+    /**
+     * The reason beside the tools where it fits there whole, else on its own
+     * line under the row (`LOCK_BELOW_CLASS`): measured, not set by a width,
+     * so it holds for any tool set and font. The tools and the count never
+     * move; the line goes with the lock.
+     */
+    private placeLock(): void {
+        this.row.classList.remove(LOCK_BELOW_CLASS);
+        if (this.lockNote.hidden) {
+            return;
+        }
+        const note = this.lockNote;
+        if (note.scrollWidth > note.clientWidth + 1) {
+            this.row.classList.add(LOCK_BELOW_CLASS);
+        }
     }
 
     /** A refused tool was pressed while the row is locked: its reason is pointed at for a moment, not a silent nothing. */
@@ -368,6 +398,7 @@ class ToolbarView implements PluginView {
 
     destroy(): void {
         this.destroyed = true;
+        this.rowSize?.disconnect();
         clearTimeout(this.cardTimer);
         clearTimeout(this.flashTimer);
         clearTimeout(this.focusTimer);

@@ -14,7 +14,6 @@
 ### ⚠️ Limits
 
 - After Esc from the YAML box, the row says "Focus is outside the text" until a second Esc or a click.
-- In a narrow editor the row's reason is cut short or hidden; its buttons' tooltips still say it.
 
 ## v4.3.0 — Notes That Know Their Letter
 

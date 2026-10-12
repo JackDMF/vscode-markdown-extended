@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, showDiagnostics, MOD, SHOTS_DIR, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, assertReasonFits, assertRowFree, assertRowLocked } from './rowLock';
+import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, RowBoxes, assertReasonShown, assertRowFree, assertRowLocked, rowBoxes } from './rowLock';
 import { DARK_MODERN, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 /** A Req Explorer workshop note's front matter, as that corpus writes one, shortened. */
@@ -669,39 +669,46 @@ suite('Editor properties panel (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
-    /** Each of the three reasons, in turn, at the page's width now: `each` is called with the reason the row shows. */
-    const walkReasons = async (each: (reason: string, state: string) => Promise<void>) => {
+    /** Each of the three reasons, in turn, at the page's width now: `each` is called with the reason the row shows, and the row's tools and count as they stood unlocked. */
+    const walkReasons = async (each: (reason: string, state: string, before: RowBoxes) => Promise<void>) => {
         await showDocument(BOXES);
         await showDiagnostics(editor as EditorPage, version, [
             { range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } }, severity: 'warning', message: 'A warning, for the count' },
         ]);
         // No caret in the table first: on a narrow page its bar would stand over the header's button.
         await clickText(page, 'some words', 2);
+        const before = await rowBoxes(page);
         await clickAt('.mep-properties .mep-props-source');
         await page.waitForSelector('.mep-props-editor');
         await delay(120);
-        await each(LOCK_SOURCE, 'source');
+        await each(LOCK_SOURCE, 'source', before);
         await page.keyboard.press('Escape');
         await delay(120);
-        await each(LOCK_BUTTON, 'button');
+        await each(LOCK_BUTTON, 'button', before);
         await page.keyboard.press('Escape');
         await delay(80);
         await expand();
         await clickAt(`${row('stream')} input`);
         await delay(120);
-        await each(LOCK_PROPERTY, 'property');
+        await each(LOCK_PROPERTY, 'property', before);
         await page.keyboard.press('Escape');
     };
 
-    test('at narrow widths the reason is cut with an ellipsis, covers no tool, and leaves the diagnostics count whole', async function () {
-        this.timeout(40000);
+    test('the reason stands beside the tools where it fits, else on its own line under the row: whole, covering no tool, nothing moved', async function () {
+        this.timeout(60000);
         try {
-            for (const width of [600, 400]) {
+            for (const [width, where] of [[1280, 'beside'], [600, 'below'], [400, 'below']] as const) {
                 await page.setViewport({ width, height: 800 });
-                await walkReasons(async (reason, state) => {
-                    assert.strictEqual(await page.$eval('.mep-toolbar', el => el.getAttribute('aria-description')), reason, `${width}px, ${state}: the full reason is the row's description`);
-                    await assertReasonFits(page, `${width}px, ${state}`);
+                await walkReasons(async (reason, state, before) => {
+                    const when = `${width}px, ${state}`;
+                    const shown = await page.$eval('.mep-toolbar', el => ({ description: el.getAttribute('aria-description'), text: el.querySelector('.mep-row-lock')?.textContent }));
+                    assert.deepStrictEqual(shown, { description: reason, text: reason }, `${when}: the reason, whole`);
+                    await assertReasonShown(page, when, where, before);
                 });
+                // Unlocked again: no line under the row.
+                await clickText(page, 'Last paragraph', 2);
+                await delay(120);
+                assert.strictEqual(await page.$eval('.mep-toolbar .mep-row-lock', el => (el as HTMLElement).hidden), true, `${width}px: the line goes with the lock`);
             }
         } finally {
             await page.setViewport({ width: 1280, height: 800 });

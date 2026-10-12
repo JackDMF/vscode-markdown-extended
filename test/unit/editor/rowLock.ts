@@ -56,37 +56,77 @@ export async function assertRowFree(page: puppeteer.Page, when: string): Promise
 }
 
 /**
- * At whatever width: the shown reason covers no tool of the row, is cut with
- * an ellipsis where it does not fit, and leaves the diagnostics count, when
- * there is one, whole and uncovered beside it.
+ * Where the shown reason stands: `beside` the tools in the row, where it fits
+ * there, or `below` them on a line of its own under the row. Either way it is
+ * shown whole (cut with an ellipsis only where even its own line is too
+ * narrow), it covers no tool, and the tools and the diagnostics count stand
+ * where they stood before the lock (`before`, from `rowBoxes`).
  */
-export async function assertReasonFits(page: puppeteer.Page, when: string): Promise<void> {
-    const layout = await page.$eval('.mep-toolbar', row => {
+export async function assertReasonShown(page: puppeteer.Page, when: string, where: 'beside' | 'below', before?: RowBoxes): Promise<void> {
+    const layout = await reasonLayout(page);
+    assert.ok(layout.lock.width > 0 && layout.lock.height > 0, `${when}: the reason is shown`);
+    assert.ok(layout.whole || layout.ellipsis, `${when}: the reason is whole, or cut with an ellipsis`);
+    if (where === 'below') {
+        assert.ok(layout.lock.top >= layout.row.bottom - 0.5, `${when}: the reason is on its own line under the row (${layout.lock.top} < ${layout.row.bottom})`);
+        assert.ok(layout.whole || layout.lock.width >= layout.viewport - 32, `${when}: cut only where its own line is too narrow`);
+    } else {
+        assert.ok(layout.lock.top < layout.row.bottom && layout.lock.bottom <= layout.row.bottom + 0.5, `${when}: the reason is in the row, beside the tools`);
+        assert.ok(layout.whole, `${when}: and whole there`);
+    }
+    const covered = layout.boxes.tools.filter(t => t.left < layout.lock.right && t.right > layout.lock.left && t.top < layout.lock.bottom && t.bottom > layout.lock.top);
+    assert.deepStrictEqual(covered.map(t => t.id), [], `${when}: the reason covers no tool`);
+    if (layout.countFull !== null) {
+        assert.ok(layout.countFull, `${when}: the diagnostics count stays whole`);
+    }
+    if (before) {
+        assert.deepStrictEqual(layout.boxes, before, `${when}: the tools and the count did not move`);
+    }
+}
+
+export interface Box {
+    id: string;
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+}
+
+/** The row's tools, and its diagnostics count, where they stand. */
+export interface RowBoxes {
+    tools: Box[];
+    count: Box | null;
+}
+
+/** Where the row's tools and count stand now, to compare with them under a lock. */
+export async function rowBoxes(page: puppeteer.Page): Promise<RowBoxes> {
+    return (await reasonLayout(page)).boxes;
+}
+
+function reasonLayout(page: puppeteer.Page) {
+    return page.$eval('.mep-toolbar', row => {
         const box = (el: Element) => {
             const r = el.getBoundingClientRect();
-            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width };
+            return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+        };
+        const place = (el: Element, id: string) => {
+            const b = box(el);
+            return { id, left: b.left, right: b.right, top: b.top, bottom: b.bottom };
         };
         const lock = row.querySelector('.mep-row-lock') as HTMLElement;
         const style = getComputedStyle(lock);
         const view = box(row);
         const tools = Array.from(row.querySelectorAll('.mep-tool'))
-            .map(el => ({ id: (el as HTMLElement).dataset.action ?? (el as HTMLElement).dataset.menu ?? '', ...box(el) }))
+            .map(el => place(el, (el as HTMLElement).dataset.action ?? (el as HTMLElement).dataset.menu ?? ''))
             .filter(t => t.right > view.left && t.left < view.right);
-        const count = row.querySelector('.mep-diag-count:not([hidden])');
+        const count = row.querySelector('.mep-diag-count:not([hidden])') as HTMLElement | null;
         return {
+            row: view,
+            viewport: window.innerWidth,
             lock: box(lock),
+            whole: lock.scrollWidth <= lock.clientWidth + 1,
             ellipsis: style.textOverflow === 'ellipsis' && style.overflow === 'hidden',
-            tools,
-            count: count ? { ...box(count), full: (count as HTMLElement).scrollWidth <= (count as HTMLElement).clientWidth + 1 } : null,
+            boxes: { tools, count: count ? place(count, 'count') : null },
+            countFull: count ? count.scrollWidth <= count.clientWidth + 1 && count.getBoundingClientRect().width > 0 : null,
         };
     });
-    assert.ok(layout.ellipsis, `${when}: a reason that does not fit is cut with an ellipsis`);
-    if (layout.lock.width > 0) {
-        const covered = layout.tools.filter(t => t.left < layout.lock.right && t.right > layout.lock.left);
-        assert.deepStrictEqual(covered.map(t => t.id), [], `${when}: the reason covers no tool`);
-    }
-    if (layout.count) {
-        assert.ok(layout.count.width > 0 && layout.count.full, `${when}: the diagnostics count stays whole`);
-        assert.ok(layout.lock.width === 0 || layout.lock.right <= layout.count.left + 0.5, `${when}: the reason stops before the count`);
-    }
 }
