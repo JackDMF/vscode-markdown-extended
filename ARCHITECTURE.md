@@ -1453,7 +1453,8 @@ The layers:
   active and disabled states per action — every one refused while a node view's control
   has the focus (`focusPlace.ts`), the reason (`controlLock`: a field's *Editing source ·
   Ctrl+Enter apply · Esc cancel*, a button's *Focus is outside the text · Esc or click into
-  the text*) in each tooltip; read again once per focus move, since a
+  the text*) shown at the row's right end, as its `aria-description` and in each tooltip,
+  and pointed at when a refused tool is pressed; read again once per focus move, since a
   box taking the focus changes no state — the block-type face (the
   current type's name, locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
   `Enter`, `Esc`), the card, the bubble (placed from `coordsAtPos` inside `.mep-editor`,
@@ -1580,7 +1581,7 @@ While a `control` has the focus the selection is still there, hidden behind it, 
 may act on it: the selection's bar is the owning block's own verbs only (a source block's
 without **Edit source**, its box being the edit, and without other extensions' lenses and
 code actions; the front matter's, barless), the pointer's bar is hidden, and the
-formatting row refuses everything, saying why (`controlLock`). It is the focus,
+formatting row refuses everything, saying why at its end (`controlLock`). It is the focus,
 not an open box: after `Esc` out of the YAML box the focus is on the header's **Edit as
 source**, and the bars wait for the next `Esc` or a click into the text (Daniel,
 2026-10-12); a raw block's box, closing, leaves the focus nowhere (`away`). A verb run from

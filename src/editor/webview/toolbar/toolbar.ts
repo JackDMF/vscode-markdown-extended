@@ -72,6 +72,10 @@ export interface ToolbarHost {
 /** How long the pointer or the focus rests on an entry before its preview card shows. */
 const PREVIEW_DELAY_MS = 300;
 
+/** The class that points at the lock's reason after a refused press (`editor.css`), and how long it stays. */
+const LOCK_FLASH_CLASS = 'mep-row-lock-flash';
+const LOCK_FLASH_MS = 900;
+
 /** Draw a sample: the element the parser makes, with its classes, attributes and content. */
 export function renderSample(spec: SampleSpec): HTMLElement {
     const node = document.createElement(spec.tag);
@@ -232,6 +236,9 @@ class ToolbarView implements PluginView {
     /** The field an action asked for a value in (a span's literal, a link's address, an image's alt text), while it is open. */
     private fieldBar: { bar: HTMLElement; field: InlineField } | null = null;
     private destroyed = false;
+    /** The row's reason while it is locked (`showLock`), at its right end. */
+    private lockNote!: HTMLElement;
+    private flashTimer: ReturnType<typeof setTimeout> | undefined;
     /** The update a focus move asked for, while it waits. */
     private focusTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -303,9 +310,11 @@ class ToolbarView implements PluginView {
         const states = new Map<ToolbarAction, ActionState>();
         const includes = this.host.includesOffered();
         // While a source box or the properties panel has the focus, the
-        // selection is hidden behind it: nothing here may act on it.
+        // selection is hidden behind it: nothing here may act on it, and the
+        // row says why at its end.
         const place = focusPlace(view);
         const lock = place.kind === 'control' ? controlLock(place.field) : null;
+        this.showLock(lock);
         const stateOf = (action: ToolbarAction) => {
             let s = states.get(action);
             if (!s) {
@@ -331,9 +340,36 @@ class ToolbarView implements PluginView {
         this.placeBubble();
     }
 
+    /** The lock's reason at the row's end and as its description; `null` takes both away. */
+    private showLock(reason: string | null): void {
+        this.lockNote.hidden = reason === null;
+        this.lockNote.textContent = reason ?? '';
+        if (reason === null) {
+            this.row.removeAttribute('aria-description');
+            this.lockNote.classList.remove(LOCK_FLASH_CLASS);
+            clearTimeout(this.flashTimer);
+        } else {
+            this.row.setAttribute('aria-description', reason);
+        }
+    }
+
+    /** A refused tool was pressed while the row is locked: its reason is pointed at for a moment, not a silent nothing. */
+    private flashLock(): void {
+        if (this.lockNote.hidden) {
+            return;
+        }
+        this.lockNote.classList.remove(LOCK_FLASH_CLASS);
+        // Read the layout so the animation starts again on a second press.
+        void this.lockNote.offsetWidth;
+        this.lockNote.classList.add(LOCK_FLASH_CLASS);
+        clearTimeout(this.flashTimer);
+        this.flashTimer = setTimeout(() => this.lockNote.classList.remove(LOCK_FLASH_CLASS), LOCK_FLASH_MS);
+    }
+
     destroy(): void {
         this.destroyed = true;
         clearTimeout(this.cardTimer);
+        clearTimeout(this.flashTimer);
         clearTimeout(this.focusTimer);
         this.closeFieldBar();
         for (const [target, type, listener, capture] of this.listeners) {
@@ -370,7 +406,12 @@ class ToolbarView implements PluginView {
         }
         // The row's right end: what the page says about the document as a
         // whole (the diagnostics count, `diagnostics.ts`), not a control of the text.
-        row.append(div('mep-row-status'));
+        // The lock's reason (`showLock`) stands first in it, while the row is refused.
+        const status = div('mep-row-status');
+        this.lockNote = span('mep-row-lock', '');
+        this.lockNote.hidden = true;
+        status.append(this.lockNote);
+        row.append(status);
         return row;
     }
 
@@ -617,6 +658,7 @@ class ToolbarView implements PluginView {
 
     private openMenu(menu: Menu, focusFirst: boolean): void {
         if (menu.face && isDisabled(menu.face)) {
+            this.flashLock();
             return;
         }
         if (menu.parent) {
@@ -773,6 +815,7 @@ class ToolbarView implements PluginView {
 
     private activate(tool: Tool): void {
         if (isDisabled(tool.el)) {
+            this.flashLock();
             return;
         }
         this.closeAll();

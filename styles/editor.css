@@ -1280,7 +1280,29 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     padding: 0 0 0 8px;
     background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
 }
-.mep-row-status:empty { display: none; }
+.mep-row-status:empty,
+.mep-row-status:not(:has(> :not([hidden]))) { display: none; }
+
+/*
+ * Why the row is refused while a source box or the properties panel has the
+ * focus, and the way back (`toolbar.ts`, `showLock`): text, not grey alone. A
+ * press on a refused tool points at it for a moment (`-flash`).
+ */
+.mep-row-lock {
+    box-sizing: border-box;
+    padding: 1px 8px;
+    margin-right: 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground, #717171);
+    outline: 1px solid transparent;
+}
+.mep-row-lock[hidden] { display: none; }
+.mep-row-lock.mep-row-lock-flash {
+    color: var(--vscode-foreground, CanvasText);
+    outline-color: var(--vscode-focusBorder, #0078d4);
+}
 
 .mep-diag-count {
     display: inline-flex;

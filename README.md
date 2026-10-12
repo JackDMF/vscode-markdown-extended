@@ -482,11 +482,14 @@ have for that block**, after its own verbs (see below).
   comes back as a note — of whichever kind its markers now say — or, if it no longer is
   one, as the text you typed. A source block's **Edit source** opens its Markdown in the
   block itself, as before (below).
-- **A box in the text has the bars to itself.** While a source block's box or a property's
-  field has the focus, what is selected in the text is not what you are editing: the
-  block's bar offers only **Show in text editor** and **Delete block**, no other bar shows,
-  and the formatting row is off, its tooltips saying why. Apply or cancel (`Ctrl+Enter`,
-  `Esc`), or click into the text, and they are back.
+- **A box in the text has the bars to itself.** While a source block's box or the
+  properties panel has the focus, what is selected in the text is not what you are
+  editing: the block's bar offers only **Show in text editor** and **Delete block**, no
+  other bar shows, and the formatting row is off, saying why at its right end —
+  *Editing source · Ctrl+Enter apply · Esc cancel* (`Cmd` on macOS) — and pointing at that
+  when you press one of its buttons. A source block's box gives the focus up when it
+  closes (`Ctrl+Enter`, `Esc`): click into the text, and the bars are back there. A lens,
+  a status badge or a link in a rendered block takes the focus without any of this.
 - The note buttons in the Annotation menu and the bubble still remove a note too: inside
   one they show as active, and choosing one removes it, text kept.
 
@@ -757,8 +760,9 @@ the same — announced as *Removed key — Ctrl+Z*; `Ctrl+Z` in the panel is the
 comes back. **Edit as source** and a nested row's link open the YAML between the `---`
 lines in a box (`Ctrl+Enter` or clicking away applies, `Esc` cancels). While a row, the box
 or the header's buttons have the focus, the formatting row is off and no bar shows for what
-is selected in the text; `Esc` until the caret is back in the text, or a click into it,
-brings them back. A document without
+is selected in the text; on a button the row says *Focus is outside the text · Esc or click
+into the text*. `Esc` until the caret is back in the text, or a click into it, brings them
+back. A document without
 front matter has no panel; **Insert → Properties** adds one at the top and asks for the
 first key.
 

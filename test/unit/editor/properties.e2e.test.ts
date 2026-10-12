@@ -595,7 +595,7 @@ suite('Editor properties panel (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
-    test('the YAML box open over selected words: Bold in the row is refused, and Mod+B and Alt+Enter typed in the box do nothing outside it', async function () {
+    test('the YAML box open over selected words: Bold in the row is refused, pointing at the reason, and Mod+B and Alt+Enter typed in the box do nothing outside it', async function () {
         this.timeout(20000);
         await showDocument(BOXES);
         await selectWords();
@@ -604,6 +604,7 @@ suite('Editor properties panel (e2e)', () => {
         await delay(80);
         const before = await editCount();
         await clickAt('.mep-toolbar [data-action="bold"]');
+        assert.strictEqual(await page.$eval('.mep-toolbar .mep-row-lock', el => el.classList.contains('mep-row-lock-flash')), true, 'the refused click points at the reason');
         await delay(300);
         assert.strictEqual(await editCount(), before, 'nothing is written');
         assert.ok(await page.$('.mep-raw-editor'), 'the box is still open');
