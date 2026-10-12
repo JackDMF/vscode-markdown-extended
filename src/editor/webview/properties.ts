@@ -51,6 +51,21 @@ const STORAGE_PREFIX = 'markdownExtended.properties.expanded:';
 /** Each panel by its DOM, so the toolbar's **Insert → Properties** can reach the view ProseMirror made. */
 const panels = new WeakMap<globalThis.Node, PropertiesView>();
 
+/**
+ * The control the panel declares for `el` (`focusPlace.ts`): anything in it —
+ * a field (the source box, a row's text) or a button (the header's, a row's ×,
+ * a checkbox) — `null` outside every panel.
+ */
+export function panelControl(el: Element): { pos: number | undefined; field: boolean } | null {
+    const dom = el.closest('.mep-properties');
+    const panel = dom ? panels.get(dom) : undefined;
+    if (!panel) {
+        return null;
+    }
+    const field = el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !/^(checkbox|radio|button|submit|reset|color|file|range)$/.test(el.type));
+    return { pos: panel.position(), field };
+}
+
 /** Open the panel at `pos` and start adding a property. False when there is no panel there. */
 export function addPropertyAt(dom: globalThis.Node | null): boolean {
     const panel = dom ? panels.get(dom) : undefined;
@@ -197,6 +212,10 @@ export class PropertiesView implements NodeView, SourceEditor {
         this.untrackDirty?.();
         this.untrackArea = null;
         this.untrackDirty = null;
+    }
+
+    position(): number | undefined {
+        return this.getPos();
     }
 
     /** A save: every row's typing and the open source box go into the document now. */

@@ -34,6 +34,7 @@
  */
 import { EditorState, Plugin, PluginKey, PluginView, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection, isInTable, selectedRect } from 'prosemirror-tables';
+import { Mapping } from 'prosemirror-transform';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
@@ -803,6 +804,8 @@ class ObjectToolbarView implements PluginView {
     private hovered: HTMLElement | null = null;
     private hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private destroyed = false;
+    /** While `act` moves the focus: what the transactions dispatched meanwhile (a source box's commit) did to positions. */
+    private focusMoves: Mapping | null = null;
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -857,6 +860,13 @@ class ObjectToolbarView implements PluginView {
         this.refresh();
     }
 
+    /** The view applied `transactions` (`appendTransaction`): followed while `act` moves the focus. */
+    applied(transactions: readonly Transaction[]): void {
+        for (const tr of transactions) {
+            this.focusMoves?.appendMapping(tr.mapping);
+        }
+    }
+
     destroy(): void {
         this.destroyed = true;
         if (this.placeFrame !== undefined) {
@@ -895,19 +905,29 @@ class ObjectToolbarView implements PluginView {
 
     /**
      * The object the selection's bar is for, by where the focus is
-     * (`focusPlace.ts`): the selection's while the text or the editor's own
-     * controls have it; while a node view's control has it — a source box, a
-     * property's field — the selection is hidden behind it, and the bar is the
+     * (`focusPlace.ts`): the selection's while the text, what else in it can
+     * take the focus, or the editor's own controls have it — but not another
+     * inline field than the bars' own: the row's **Insert → Link…** field is
+     * the one bar then; while a node view's control has it — a source box, the
+     * properties panel — the selection is hidden behind it, and the bar is the
      * control's block's; elsewhere, none. A bar's open field counts as the
      * bars' however the focus left: it keeps itself open while the window is
      * away (`InlineField`).
      */
+    /** Whether the control that has the focus is `object`'s own (`focusPlace.ts`): its source box, its panel. */
+    private holdsFocusedControl(object: EditorObject): boolean {
+        const place = focusPlace(this.view);
+        return place.kind === 'control' && place.owner?.pos === object.from;
+    }
+
     private selectionObject(): EditorObject | null {
-        const place: FocusPlace = this.selectionBar.editing ? { kind: 'chrome' } : focusPlace(this.view);
+        const place: FocusPlace = this.selectionBar.editing || this.hoverBar.editing ? { kind: 'chrome', field: false } : focusPlace(this.view);
         switch (place.kind) {
             case 'text':
-            case 'chrome':
+            case 'content':
                 return objectAtSelection(this.view.state);
+            case 'chrome':
+                return place.field ? null : objectAtSelection(this.view.state);
             case 'control':
                 return place.owner === null ? null : objectOfNode(place.owner.node, place.owner.pos);
             case 'away':
@@ -1244,9 +1264,28 @@ class ObjectToolbarView implements PluginView {
      * be untrue.
      */
     private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string): void {
-        this.view.focus();
+        // What the verb was offered for, read before the focus moves: leaving a
+        // source box commits it, which rewrites its block or — emptied — removes
+        // it, and the next block would then stand where it stood. The block is
+        // followed through the commit; one the commit removed is done with.
+        const offered = currentObject(this.view.state, object);
+        const moved = new Mapping();
+        this.focusMoves = moved;
+        try {
+            this.view.focus();
+        } finally {
+            this.focusMoves = null;
+        }
+        if (offered === null) {
+            return;
+        }
+        const from = moved.map(offered.from, 1);
+        const to = moved.map(offered.to, -1);
+        if (to <= from) {
+            return;
+        }
         const before = this.view.state;
-        const current = currentObject(before, object);
+        const current = currentObject(before, { ...offered, from, to });
         if (current !== null && make(current) && this.view.state !== before && hint !== undefined) {
             showChangeHint(this.view, `${hint} — ${undoKey()}`);
         }
@@ -1260,11 +1299,14 @@ class ObjectToolbarView implements PluginView {
      * The object's own verbs, then — for a whole top-level block — the lenses
      * other extensions put on it as verbs (`lenses.ts`), then the code actions
      * they offer for its lines, as the text editor's light bulb would offer
-     * them there; each group after a separator.
+     * them there; each group after a separator. While the block's own control
+     * has the focus — its source box, the properties panel — only its own
+     * verbs: the control is the edit, and another extension's command would
+     * run on what the box has not applied yet.
      */
     private present(object: EditorObject): Presentation {
         const own = this.ownPresentation(object);
-        if (!isTopLevelBlock(this.view.state, object)) {
+        if (!isTopLevelBlock(this.view.state, object) || this.holdsFocusedControl(object)) {
             return own;
         }
         const lenses = this.lensVerbs(this.host.lensesAt(object.from), own.verbs.length > 0);
@@ -1616,8 +1658,7 @@ class ObjectToolbarView implements PluginView {
             }
             case 'raw_block': {
                 // While its own source box has the focus, the box is the edit: no Edit source to offer.
-                const place = focusPlace(view);
-                const editing = place.kind === 'control' && place.owner?.pos === object.from;
+                const editing = this.holdsFocusedControl(object);
                 const editSource: Verb = {
                     id: 'edit-source',
                     label: 'Edit source',
@@ -1860,6 +1901,7 @@ const toolbarViews = new WeakMap<EditorView, ObjectToolbarView>();
 
 /** The object toolbar, as a plugin: its view follows every state, and `Alt+Enter` opens it from the keyboard. */
 export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
+    let toolbar: ObjectToolbarView | null = null;
     return new Plugin<BarDecor>({
         key: decorKey,
         state: {
@@ -1876,9 +1918,13 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
             },
         },
         view(editorView) {
-            const toolbar = new ObjectToolbarView(editorView, host);
+            toolbar = new ObjectToolbarView(editorView, host);
             toolbarViews.set(editorView, toolbar);
             return toolbar;
+        },
+        appendTransaction(transactions) {
+            toolbar?.applied(transactions);
+            return null;
         },
         props: {
             decorations(state) {

@@ -4,14 +4,15 @@
 
 ### 🐛 Bug Fixes
 
-- While a source box or property field has the focus, the formatting row is off and says why.
+- While a source box or the properties panel has the focus, the row is off and says why.
 - Bold and the other row buttons no longer change hidden text behind an open source box.
 - An open box shows no bar for the text selected behind it, nor for blocks under the pointer.
-- A source block's bar no longer offers Edit source while its own box is open.
+- A source block's bar offers only Show in text editor and Delete block while its own box is open.
+- Delete block after emptying a source box no longer deletes the block after it too.
 
 ### ⚠️ Limits
 
-- After Esc from the properties' YAML box, the row stays off until a second Esc or a click into text.
+- After Esc from the YAML box, the row says "Focus is outside the text" until a second Esc or a click.
 
 ## v4.3.0 — Notes That Know Their Letter
 

@@ -115,19 +115,15 @@ const caretReporter = new CaretReporter({
             return undefined;
         }
         const map = pageMap(view.state.doc);
-        // A property's field is not a place in the text: no caret while one has the focus.
-        return { text: map.text, caret: inPropertiesPanel() ? null : caretOf(view.state.selection, map) };
+        // A source box or a property's field is not a place in the text: no caret while one has the focus.
+        return { text: map.text, caret: inControl() ? null : caretOf(view.state.selection, map) };
     },
     post,
 });
 
-/** Whether the focus is in the front matter's properties panel (`properties.ts`), whose fields are no source caret: a control the front matter owns (`focusPlace.ts`). */
-function inPropertiesPanel(): boolean {
-    if (!view) {
-        return false;
-    }
-    const place = focusPlace(view);
-    return place.kind === 'control' && place.owner?.node.type === editorSchema.nodes.front_matter;
+/** Whether a node view's control has the focus — an open source box, the properties panel (`focusPlace.ts`) — which is no source caret. */
+function inControl(): boolean {
+    return view !== undefined && focusPlace(view).kind === 'control';
 }
 
 /** The document's uri, as the host wrote it on the page (`html.ts`): what the panel remembers its open state under. */

@@ -173,6 +173,15 @@ export class RawBlockView extends AtomView implements SourceEditor {
         return target !== null && (this.editor?.contains(target) ?? false);
     }
 
+    /** Whether `el` is in the open source box: the block's one control (`rawBlockControl`). */
+    holdsFocusOf(el: globalThis.Node): boolean {
+        return this.editor?.contains(el) ?? false;
+    }
+
+    position(): number | undefined {
+        return this.getPos();
+    }
+
     /** Open the block's source in a textarea; the object toolbar's **Edit source** calls it, and the formatting toolbar for a block it inserted. */
     editSource(): void {
         if (this.editor) {
@@ -276,6 +285,17 @@ function inertControls(content: HTMLElement): void {
 
 /** Each raw block's view by its DOM, so the page can reach the view ProseMirror made for a block. */
 const rawBlockViews = new WeakMap<globalThis.Node, RawBlockView>();
+
+/**
+ * The control a raw block declares for `el` (`focusPlace.ts`): its open
+ * source box, a field, when `el` is in it; `null` for anything else — a link
+ * or a `<summary>` in its rendering is not its control.
+ */
+export function rawBlockControl(el: Element): { pos: number | undefined; field: boolean } | null {
+    const atom = el.closest('.mep-raw-block');
+    const rawView = atom ? rawBlockViews.get(atom) : undefined;
+    return rawView?.holdsFocusOf(el) ? { pos: rawView.position(), field: true } : null;
+}
 
 /** Open the **Edit source** box of the raw block at `pos`. False when there is no raw block there. */
 export function editRawSourceAt(view: EditorView, pos: number): boolean {

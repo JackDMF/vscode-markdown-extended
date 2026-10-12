@@ -995,8 +995,9 @@ setext heading on the next parse. An emptied box leaves `---` twice.
 
 *The caret, positions and the bar.* The node is still an atom for `positions.ts`: the
 position before it is its slice's start, one inside it maps before it. A field is not a place
-in the text, so while one has the focus the page reports the caret as none (`inPropertiesPanel`
-in `main.ts`, a `control` the front matter owns in `focusPlace.ts`, and a `focusin`/`focusout` listener that reports again) and
+in the text, so while one has the focus the page reports the caret as none (`inControl` in
+`main.ts`, a `control` in `focusPlace.ts` — an open source box too — and a
+`focusin`/`focusout` listener that reports again) and
 `visualEditor.active()` answers `caret: undefined`. The object toolbar draws no bar for the
 front matter's label alone (`barless`, which a heading shares): its verbs are the panel's
 header, and the bar carries only other extensions' code actions, when there are some. While
@@ -1449,9 +1450,11 @@ The layers:
   pipe table (above, "Tables"). `wrap-source` and `insert-source` are for what the core does
   not edit — the footnote and the other block constructs (below).
 - **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
-  active and disabled states per action — every one refused with `CONTROL_LOCK` while a
-  node view's control has the focus (`focusPlace.ts`), read again on every `focusin` and
-  `focusout`, since a box taking the focus changes no state — the block-type face (the
+  active and disabled states per action — every one refused while a node view's control
+  has the focus (`focusPlace.ts`), the reason (`controlLock`: a field's *Editing source ·
+  Ctrl+Enter apply · Esc cancel*, a button's *Focus is outside the text · Esc or click into
+  the text*) in each tooltip; read again once per focus move, since a
+  box taking the focus changes no state — the block-type face (the
   current type's name, locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
   `Enter`, `Esc`), the card, the bubble (placed from `coordsAtPos` inside `.mep-editor`,
   above the selection where that covers no content and is clear of the fixed row, else
@@ -1564,17 +1567,28 @@ pointer resting on a table shows both, and the pointer's bar hides while it woul
 what the selection's already shows. The selection's bar shows only while the focus is in
 the editor or in its chrome — the formatting row, the bubble, a menu, a bar. *Where the
 focus is* has one answer, `webview/focusPlace.ts`, which every bar reads and nothing
-writes: `text` (the editable root), `chrome` (inside the editor's mount, outside the text's
-element), `control` (inside the text's element but not the root: a source box, a property's
-field, the properties' header buttons — with the block that owns it, found by the element
-ProseMirror drew for it), `away`. While a `control` has the focus the selection is still
-there, hidden behind it, so no bar may act on it: the selection's bar is the owning block's
-(a source block's without **Edit source**, its box being the edit; the front matter's,
-barless), the pointer's bar is hidden, and the formatting row refuses everything with the
-reason (`CONTROL_LOCK`). It is the focus, not an open box: after `Esc` out of the YAML box
-the focus is on the header's **Edit as source**, and the bars wait for the next `Esc` or a
-click into the text (Daniel, 2026-10-12). Four surfaces used to answer the question with
-four predicates, and the row's Bold applied to the hidden selection behind an open box.
+writes: `text` (the editable root); `chrome` (inside the editor's mount, outside the text's
+element — `field` when it is an inline field: the row's own **Insert → Link…** field is
+then the one bar, and the selection's is not shown beside it); `control`, only what a node
+view *declares* its control — a raw block's open source box (`rawBlockControl`), anything
+in the properties panel (`panelControl`), each found from the focused element through the
+view's own `WeakMap` with the block's `getPos`, and each a `field` or a button; `content`
+(anything else in the text's element that takes the focus — another extension's lens, a
+status badge, a summary table's cell, a link or `<summary>` in a rendering: the bars read
+the selection as for the text, the row stays offered, but there is no bubble); `away`.
+While a `control` has the focus the selection is still there, hidden behind it, so no bar
+may act on it: the selection's bar is the owning block's own verbs only (a source block's
+without **Edit source**, its box being the edit, and without other extensions' lenses and
+code actions; the front matter's, barless), the pointer's bar is hidden, and the
+formatting row refuses everything, saying why (`controlLock`). It is the focus,
+not an open box: after `Esc` out of the YAML box the focus is on the header's **Edit as
+source**, and the bars wait for the next `Esc` or a click into the text (Daniel,
+2026-10-12); a raw block's box, closing, leaves the focus nowhere (`away`). A verb run from
+the owner's bar reads its object before the focus leaves the box, and follows it through
+the box's commit (`act`): an emptied box removes its block, and the next block would
+otherwise stand at its position and be the one deleted. Four surfaces used to answer the
+question with four predicates, and the row's Bold applied to the hidden selection behind
+an open box.
 `Alt+Enter` (a `handleKeyDown` prop, which no other keymap
 binds) skips the delay and focuses the first verb; the arrow keys move between verbs
 (wrapping), `Enter` chooses, `Esc` returns the focus to the text.

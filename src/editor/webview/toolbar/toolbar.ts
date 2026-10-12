@@ -33,7 +33,7 @@ import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading, fieldKeys } from '../inlineField';
 import { chevronNode } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
-import { CONTROL_LOCK, focusPlace } from '../focusPlace';
+import { controlLock, focusPlace, placeOfElement } from '../focusPlace';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
@@ -232,6 +232,8 @@ class ToolbarView implements PluginView {
     /** The field an action asked for a value in (a span's literal, a link's address, an image's alt text), while it is open. */
     private fieldBar: { bar: HTMLElement; field: InlineField } | null = null;
     private destroyed = false;
+    /** The update a focus move asked for, while it waits. */
+    private focusTimer: ReturnType<typeof setTimeout> | undefined;
 
     constructor(private readonly view: EditorView, private readonly host: ToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -254,12 +256,18 @@ class ToolbarView implements PluginView {
         this.listen(this.bubble, 'focusout', e => this.focusLeft(e as FocusEvent));
         // A source box or a property's field taking the focus, or giving it
         // back, changes no state: the row is read again once the focus has
-        // moved (`focusPlace.ts`).
-        const later = () => setTimeout(() => {
-            if (!this.destroyed) {
-                this.update(this.view);
+        // moved (`focusPlace.ts`) — once per move: a move fires a focusout and a focusin.
+        const later = () => {
+            if (this.focusTimer !== undefined) {
+                return;
             }
-        }, 0);
+            this.focusTimer = setTimeout(() => {
+                this.focusTimer = undefined;
+                if (!this.destroyed) {
+                    this.update(this.view);
+                }
+            }, 0);
+        };
         this.listen(document, 'focusin', later);
         this.listen(document, 'focusout', later);
         this.listen(document, 'mousedown', e => {
@@ -294,13 +302,14 @@ class ToolbarView implements PluginView {
         const state = view.state;
         const states = new Map<ToolbarAction, ActionState>();
         const includes = this.host.includesOffered();
-        // While a source box or a property's field has the focus, the selection
-        // is hidden behind it: nothing here may act on it.
-        const locked = focusPlace(view).kind === 'control';
+        // While a source box or the properties panel has the focus, the
+        // selection is hidden behind it: nothing here may act on it.
+        const place = focusPlace(view);
+        const lock = place.kind === 'control' ? controlLock(place.field) : null;
         const stateOf = (action: ToolbarAction) => {
             let s = states.get(action);
             if (!s) {
-                s = locked ? { enabled: false, active: false, reason: CONTROL_LOCK } : evaluate(action, state, includes);
+                s = lock !== null ? { enabled: false, active: false, reason: lock } : evaluate(action, state, includes);
                 states.set(action, s);
             }
             return s;
@@ -316,7 +325,7 @@ class ToolbarView implements PluginView {
                 setState(menu.opener, enabled, false);
             }
             if (menu.face) {
-                this.updateFace(menu, stateOf, locked);
+                this.updateFace(menu, stateOf, lock);
             }
         }
         this.placeBubble();
@@ -325,6 +334,7 @@ class ToolbarView implements PluginView {
     destroy(): void {
         this.destroyed = true;
         clearTimeout(this.cardTimer);
+        clearTimeout(this.focusTimer);
         this.closeFieldBar();
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
@@ -430,9 +440,9 @@ class ToolbarView implements PluginView {
     /**
      * A block-type face names the type the selection is in, as text; a locked
      * one says why. Any other face is disabled when none of its entries applies.
-     * `locked`: a node view's control has the focus (`CONTROL_LOCK`).
+     * `lock`: a node view's control has the focus, and why the row is refused (`controlLock`).
      */
-    private updateFace(menu: Menu, stateOf: (a: ToolbarAction) => ActionState, locked: boolean): void {
+    private updateFace(menu: Menu, stateOf: (a: ToolbarAction) => ActionState, lock: string | null): void {
         const face = menu.face as HTMLElement;
         const all = [...menu.tools, ...menu.children.flatMap(c => c.tools)];
         let label = MENU_LABELS[menu.id];
@@ -444,7 +454,7 @@ class ToolbarView implements PluginView {
             const active = menu.tools.map(t => t.action).find(a => a.apply.kind === 'block' && isCurrent(current, a.apply.node, a.apply.level));
             face.dataset.shows = active?.id ?? '';
             label = active?.label ?? label;
-            reason = locked ? CONTROL_LOCK : blockLockReason(this.view.state);
+            reason = lock ?? blockLockReason(this.view.state);
             enabled = reason === null;
         } else {
             enabled = all.some(t => stateOf(t.action).enabled);
@@ -1085,8 +1095,8 @@ class ToolbarView implements PluginView {
     // -- the bubble ------------------------------------------------------------
 
     private focusLeft(e: FocusEvent): void {
-        const to = e.relatedTarget as Node | null;
-        if (to && (this.bubble.contains(to) || this.view.dom.contains(to))) {
+        const to = e.relatedTarget as Element | null;
+        if (to && (this.bubble.contains(to) || placeOfElement(this.view, to).kind === 'text')) {
             return;
         }
         this.bubble.hidden = true;
