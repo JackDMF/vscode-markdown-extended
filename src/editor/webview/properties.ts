@@ -31,6 +31,7 @@ import {
     FrontMatterParts, KeyRef, Property, PropertiesRead, addItem, addProperty, eolOf, isDate, joinFrontMatter, readProperties,
     removeItem, removeProperty, setBoolean, setText, splitFrontMatter,
 } from '../frontMatter';
+import { lockLineHeight } from './clearance';
 import { CompletionListView } from './completionList';
 import { DeclaredControl, panelRole } from './focusPlace';
 import { undoKey } from './hint';
@@ -772,10 +773,12 @@ export class PropertiesView implements NodeView, SourceEditor {
         const style = getComputedStyle(area);
         const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4 || 18;
         const top = area.getBoundingClientRect().top + (parseFloat(style.paddingTop) || 0) + line * lineHeight;
-        // Clear of the formatting row fixed at the top, with the margin the page keeps above a
-        // caret it scrolls to (main.ts, SCROLL_MARGIN: 64px).
-        if (property !== null || top < 64 || top > window.innerHeight - lineHeight) {
-            window.scrollBy(0, top - 80);
+        // Clear of the formatting row fixed at the top — and of the lock's line under it, while
+        // it stands there — with the margin the page keeps above a caret it scrolls to
+        // (main.ts, SCROLL_MARGIN: 64px).
+        const lockLine = lockLineHeight(this.dom.closest('.mep-editor'));
+        if (property !== null || top < 64 + lockLine || top > window.innerHeight - lineHeight) {
+            window.scrollBy(0, top - 80 - lockLine);
         }
     }
 

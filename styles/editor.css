@@ -200,6 +200,8 @@ img.mep-pending-range {
     --mep-row-height: 27px;
     /* The space between the row's edge and the document's first block. */
     --mep-row-gap: 8px;
+    /* The room kept for the lock's line under the row while it stands there (`toolbar.ts`, `settleRoom`). */
+    --mep-lock-room: 0px;
     /* The row's bottom edge, as the workbench draws the edge under its tabs. */
     --mep-chrome-border: var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-editorGroupHeader-border, var(--vscode-widget-border, transparent)));
     /*
@@ -216,7 +218,7 @@ img.mep-pending-range {
  * document that begins with a table, a fence or a container does not sit
  * against the row's edge: the row stands over the page, not in it.
  */
-.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-row-gap)); }
+.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-lock-room) + var(--mep-row-gap)); }
 
 /*
  * The row: full width, fixed at the top of the editor as the workbench's rows
@@ -1196,7 +1198,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 
 /* A block brought into view (a followed link's fragment) stands below the formatting row, not under it; so does an element inside one found by its id. */
 .mep-editor .ProseMirror > *,
-.mep-editor .ProseMirror [id] { scroll-margin-top: 64px; }
+.mep-editor .ProseMirror [id] { scroll-margin-top: calc(64px + var(--mep-lock-room)); }
 
 /* ------------------------------------------------------------------------- */
 /* The document cannot be shown without loss                                 */
@@ -1326,9 +1328,12 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     outline: 1px solid var(--vscode-contrastBorder, transparent);
     outline-offset: -1px;
 }
+/* Two pixels, the amber drawn a third towards the text colour: Light Modern's own amber stands at 2.5:1 on the tint, this at 3.6:1 (5.8 dark, 16 high contrast). */
 .mep-row-lock.mep-row-lock-flash > .mep-row-lock-text {
-    outline: 1px solid var(--vscode-editorWarning-foreground, #bf8803);
-    box-shadow: inset 3px 0 0 var(--vscode-editorWarning-foreground, #bf8803);
+    outline: 2px solid color-mix(in srgb, var(--vscode-editorWarning-foreground, #bf8803) 70%, var(--vscode-foreground, CanvasText));
+    /* Inside the note: the reason's box clips what stands out of it. */
+    outline-offset: -2px;
+    box-shadow: inset 4px 0 0 color-mix(in srgb, var(--vscode-editorWarning-foreground, #bf8803) 70%, var(--vscode-foreground, CanvasText));
 }
 
 .mep-diag-count {

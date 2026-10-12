@@ -1458,8 +1458,14 @@ The layers:
   pinned over them, and where it does not fit there whole — measured (`placeLock`, on every
   lock and every size change of the row or its status), not a breakpoint — on a thin line
   of its own under the row (`mep-row-lock-below`), cut with an ellipsis only where even that
-  line is too narrow; the line covers the page's top as the row does and is part of the
-  row's ceiling for the bars (`rowCeiling`), and goes with the lock — as its
+  line is too narrow. The page makes room for the line (`--mep-lock-room`, `settleRoom`)
+  once a held pointer is released — a page that moved between press and release would take
+  the click from the header's toggle or Edit as source — keeping its scroll position, so
+  what stood just under the chrome stands just under it still (the browser's scroll
+  anchoring, which would scroll it back under the line, is overruled); the room goes with
+  the lock the same way. The line is part of the row's ceiling for the bars (`rowCeiling`,
+  which re-places them on `CHROME_MOVED`) and of every scroll-into-view margin
+  (`lockLineHeight`: `SCROLL_MARGIN.top`, the panel's source box, `scroll-margin-top`) — as its
   `aria-description` and in each tooltip, and pointed at in the refusal's
   amber when a refused tool is pressed; read again once per focus move, since a
   box taking the focus changes no state — the block-type face (the

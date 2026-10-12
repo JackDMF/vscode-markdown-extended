@@ -24,6 +24,7 @@ import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
+import { lockLineHeight } from './clearance';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
 import { showChangeHint, showHint } from './hint';
@@ -782,8 +783,19 @@ const plugins = [
     }, placeDrop),
 ];
 
-/** Room above the caret for the formatting row fixed at the top when ProseMirror scrolls the selection into view. */
-const SCROLL_MARGIN = { top: 64, bottom: 8, left: 8, right: 8 };
+/**
+ * Room above the caret for the formatting row fixed at the top when ProseMirror
+ * scrolls the selection into view — and for the lock's line under it while it
+ * stands there (`lockLineHeight`): read each time ProseMirror scrolls.
+ */
+const SCROLL_MARGIN = {
+    get top(): number {
+        return 64 + lockLineHeight(mount);
+    },
+    bottom: 8,
+    left: 8,
+    right: 8,
+};
 
 function dispatchTransaction(this: EditorView, tr: Transaction): void {
     this.updateState(this.state.apply(tr));

@@ -53,7 +53,7 @@ import {
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { attributesStep } from './attributes';
-import { Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
+import { CHROME_MOVED, Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { followPointer, selectionBubbleShown } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
@@ -839,6 +839,8 @@ class ObjectToolbarView implements PluginView {
         // A scroll fires many times a frame, and placing probes the layout: once per frame.
         this.listen(window, 'scroll', () => this.placeAllInFrame(), true);
         this.listen(window, 'resize', () => this.placeAllInFrame());
+        // The lock's line came under the formatting row or went, or the page moved for it: a bar keeps clear of the chrome.
+        this.listen(this.mount, CHROME_MOVED, () => this.placeAllInFrame());
         this.refresh();
     }
 

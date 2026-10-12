@@ -489,8 +489,8 @@ have for that block**, after its own verbs (see below).
   source box *Editing source · Ctrl+Enter apply · Esc cancel* (`Cmd` on macOS), in a
   property's field *Editing a property · Enter apply · Esc cancel* — and pointing at that
   when you press one of its buttons. Where it does not fit beside the buttons, it stands
-  on a thin line of its own under the row while the lock lasts; the buttons stay where
-  they are. A source block's box gives the focus up when it
+  on a thin line of its own under the row while the lock lasts, and the page makes room
+  for it once your click is done; the buttons stay where they are. A source block's box gives the focus up when it
   closes (`Ctrl+Enter`, `Esc`): click into the text, and the bars are back there. A lens,
   a status badge or a link in a rendered block takes the focus without any of this.
 - The note buttons in the Annotation menu and the bubble still remove a note too: inside

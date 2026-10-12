@@ -5,7 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, showDiagnostics, MOD, SHOTS_DIR, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, RowBoxes, assertReasonShown, assertRowFree, assertRowLocked, rowBoxes } from './rowLock';
-import { DARK_MODERN, LIGHT_MODERN, Theme, applyTheme } from './themes';
+import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 /** A Req Explorer workshop note's front matter, as that corpus writes one, shortened. */
 const FRONT = [
@@ -694,6 +694,69 @@ suite('Editor properties panel (e2e)', () => {
         await page.keyboard.press('Escape');
     };
 
+    test('on a narrow page the line under the row gets room once the click is done: the header uncovered, its focus ring after Esc visible, the clicks still land', async function () {
+        this.timeout(40000);
+        try {
+            for (const width of [600, 420]) {
+                await page.setViewport({ width, height: 800 });
+                await showDocument(BOXES);
+                await clickText(page, 'some words', 2);
+                // Counted as the page receives them: a click lands only where press and release meet one element.
+                await page.evaluate(() => {
+                    const w = window as unknown as { clicks: string[] };
+                    w.clicks = [];
+                    for (const cls of ['mep-props-toggle', 'mep-props-source']) {
+                        document.querySelector(`.mep-properties .${cls}`)?.addEventListener('click', () => w.clicks.push(cls));
+                    }
+                });
+                const clicks = () => page.evaluate(() => (window as unknown as { clicks: string[] }).clicks);
+                const headerAgainst = () => page.evaluate(() => {
+                    const header = (document.querySelector('.mep-properties .mep-props-header') as HTMLElement).getBoundingClientRect();
+                    const active = (document.activeElement as HTMLElement).getBoundingClientRect();
+                    const line = document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+                    const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
+                    return { header: header.top, active: active.top, chrome: line ? line.getBoundingClientRect().bottom : row.bottom, below: line !== null };
+                });
+
+                // The toggle, pressed and released as a person does: the room comes after the release.
+                const toggle = await centre('.mep-properties .mep-props-toggle');
+                await page.mouse.click(toggle.x, toggle.y, { delay: 60 });
+                await delay(150);
+                assert.deepStrictEqual(await clicks(), ['mep-props-toggle'], `${width}px: the toggle's click landed`);
+                let at = await headerAgainst();
+                assert.ok(at.below, `${width}px: the reason on its own line`);
+                assert.ok(at.header >= at.chrome - 0.5, `${width}px, the toggle focused: the header is not covered (${at.header} < ${at.chrome})`);
+
+                await clickAt('.mep-properties .mep-props-source');
+                await page.waitForSelector('.mep-props-editor');
+                await delay(150);
+                assert.deepStrictEqual(await clicks(), ['mep-props-toggle', 'mep-props-source'], `${width}px: Edit as source's click landed`);
+                at = await headerAgainst();
+                assert.ok(at.header >= at.chrome - 0.5, `${width}px, the YAML box open: the header is not covered`);
+
+                // After Esc the focus is on Edit as source: its ring (outside the button) is below the line.
+                await page.keyboard.press('Escape');
+                await delay(150);
+                assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).className), 'mep-props-source');
+                at = await headerAgainst();
+                assert.ok(at.active - 2 >= at.chrome - 0.5, `${width}px: Edit as source's focus ring shows (${at.active} vs ${at.chrome})`);
+
+                // Back in the text: the room goes, and the page does not jump under the row.
+                const before = await page.evaluate(() => (document.querySelector('.mep-properties') as HTMLElement).getBoundingClientRect().top - (document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock') as HTMLElement).getBoundingClientRect().bottom);
+                await page.keyboard.press('Escape');
+                await delay(150);
+                const after = await page.evaluate(() => ({
+                    gap: (document.querySelector('.mep-properties') as HTMLElement).getBoundingClientRect().top - (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect().bottom,
+                    room: getComputedStyle(document.querySelector('.mep-editor') as HTMLElement).paddingTop,
+                }));
+                assert.ok(Math.abs(after.gap - before) < 1, `${width}px: what stood under the line stands under the row (${before} -> ${after.gap})`);
+                assert.strictEqual(after.room, '35px', `${width}px: the room is given back`);
+            }
+        } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+        }
+    });
+
     test('the reason stands beside the tools where it fits, else on its own line under the row: whole, covering no tool, nothing moved', async function () {
         this.timeout(60000);
         try {
@@ -715,12 +778,12 @@ suite('Editor properties panel (e2e)', () => {
         }
     });
 
-    test('the refused row, shot in light and dark at full width, ~600 and ~400 px: the YAML box, after Esc, a property\'s field, the flash after a press on Bold', async function () {
+    test('the refused row, shot in light, dark and high contrast at full width, ~600 and ~400 px: the YAML box, after Esc, a property\'s field, the flash after a press on Bold', async function () {
         if (!SHOTS_DIR) {
             return;
         }
-        this.timeout(120000);
-        const themes: [Theme, string][] = [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']];
+        this.timeout(180000);
+        const themes: [Theme, string][] = [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark'], [HC_DARK, 'hc']];
         try {
             for (const [theme, name] of themes) {
                 await applyTheme(page, theme);

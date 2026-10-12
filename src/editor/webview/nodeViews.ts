@@ -171,7 +171,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
      */
     stopEvent(event: Event): boolean {
         const target = event.target as globalThis.Node | null;
-        return target !== null && (this.editor?.contains(target) ?? false);
+        return target !== null && this.holdsFocusOf(target);
     }
 
     /** Whether `el` is in the open source box: the block's one control (`rawBlockControl`). */

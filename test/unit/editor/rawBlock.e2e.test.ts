@@ -473,6 +473,72 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         assert.ok((await lastEdit())?.text.includes('| South | 5 | 6 |'), 'the typing is in the document');
     });
 
+    /** The bottom of the chrome over the page: the row, and the line under it while the reason stands there. */
+    const chromeBottom = () => page.evaluate(() => {
+        const line = document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+        return (line ?? document.querySelector('.mep-toolbar') as Element).getBoundingClientRect().bottom;
+    });
+
+    const FILLER = Array.from({ length: 40 }, (_, i) => `Filler paragraph ${i}.`).join('\n\n');
+    const SCROLLED = `${FILLER}\n\n<div>target block<br>second line<br>third line</div>\n\n${FILLER}\n`;
+
+    /** SCROLLED with the source block's top just under the row; the room under the row is what the page keeps there. */
+    const scrollBlockUnderRow = async () => {
+        await showFresh(SCROLLED);
+        await page.waitForSelector('.mep-raw-block');
+        await page.evaluate(() => {
+            const block = document.querySelector('.ProseMirror > .mep-raw-block') as HTMLElement;
+            const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect().bottom;
+            document.scrollingElement!.scrollTop += block.getBoundingClientRect().top - row - 6;
+        });
+        await delay(100);
+    };
+
+    test('on a narrow page a source box scrolled just under the row keeps its first line in view, and closing it gives the room back without a jump', async function () {
+        this.timeout(20000);
+        try {
+            await page.setViewport({ width: 480, height: 700 });
+            await scrollBlockUnderRow();
+            const block = await (await page.$('.ProseMirror > .mep-raw-block'))?.boundingBox();
+            assert.ok(block);
+            await page.mouse.click(block.x + block.width / 2, block.y + block.height / 2, { clickCount: 2, delay: 40 });
+            await page.waitForSelector('.mep-raw-editor');
+            await delay(200);
+            const opened = await page.evaluate(() => (document.querySelector('.mep-raw-editor') as HTMLElement).getBoundingClientRect().top);
+            const chrome = await chromeBottom();
+            assert.ok(opened >= chrome - 0.5, `the box's first line is below the line (${opened} < ${chrome})`);
+            const gapOpen = opened - chrome;
+
+            await page.keyboard.press('Escape');
+            await delay(200);
+            const closed = await page.evaluate(() => (document.querySelector('.ProseMirror > .mep-raw-block') as HTMLElement).getBoundingClientRect().top);
+            assert.ok(Math.abs(closed - (await chromeBottom()) - gapOpen) < 1.5, `the block keeps its place under the chrome (${gapOpen} -> ${closed - await chromeBottom()})`);
+        } finally {
+            await page.setViewport({ width: 1200, height: 900 });
+        }
+    });
+
+    test('the window narrowed with a box open: the line comes under the row and the box\'s bar is placed below it', async function () {
+        this.timeout(20000);
+        try {
+            await page.setViewport({ width: 1200, height: 700 });
+            await scrollBlockUnderRow();
+            await clickAt(await centre('.ProseMirror > .mep-raw-block .mep-atom-content'));
+            await clickVerb('edit-source');
+            await page.waitForSelector('.mep-raw-editor');
+            await delay(200);
+            await page.setViewport({ width: 480, height: 700 });
+            await delay(400);
+            const bar = await page.$eval(SELECTED_BLOCK_BAR, el => el.getBoundingClientRect().top);
+            const chrome = await chromeBottom();
+            assert.ok(await page.$('.mep-toolbar.mep-row-lock-below'), 'the reason went under the row');
+            assert.ok(bar >= chrome - 0.5, `the bar stands below the line (${bar} < ${chrome})`);
+            await page.keyboard.press('Escape');
+        } finally {
+            await page.setViewport({ width: 1200, height: 900 });
+        }
+    });
+
     test('a source box\'s bar, shot in light and dark at full width, ~600 and ~400 px', async function () {
         if (!SHOTS_DIR) {
             return;

@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import { readText, repoRoot } from './helpers';
+import { DARK_MODERN, HC_DARK, LIGHT_MODERN } from './themes';
 
 /** The properties whose value is, or holds, a colour. A custom property counts when its name says it is one. */
 const COLOUR_PROPERTY = /^(?:color|background(?:-color)?|border(?:-(?:top|right|bottom|left|block|inline)(?:-(?:start|end))?)?(?:-color)?|outline(?:-color)?|box-shadow|text-decoration(?:-color)?|accent-color|caret-color|column-rule(?:-color)?|fill|stroke|--mep-[-a-z]*(?:border|separator|edge|bar|colou?r))$/;
@@ -213,5 +214,43 @@ suite('Editor stylesheet colours', () => {
         // The caret hint's refusal tone (`.mep-hint[data-tone="refusal"]`), not the focus blue.
         assert.ok(flash.some(d => d.includes('var(--vscode-editorWarning-foreground, #bf8803)')), flash.join('; '));
         assert.ok(!flash.some(d => d.includes('focusBorder')), flash.join('; '));
+        // Two pixels, in the amber drawn towards the theme's text colour: Light Modern's own
+        // amber stands at 2.5:1 on the tint, under the 3:1 a mark needs to be seen.
+        assert.ok(flash.includes(`outline: 2px solid ${FLASH_AMBER}`), flash.join('; '));
+    });
+
+    test('the flash\'s amber stands at 3:1 or more against the tint and the row, in light, dark and high contrast', () => {
+        for (const theme of [LIGHT_MODERN, DARK_MODERN, HC_DARK]) {
+            const v = theme.variables;
+            const amber = mix(hex(v['editorWarning-foreground']), hex(v['foreground']), 0.7);
+            for (const [what, against] of [['tint', v['inputValidation-infoBackground']], ['row', v['editorGroupHeader-tabsBackground'] ?? v['editor-background']]] as const) {
+                const ratio = contrast(amber, hex(against));
+                assert.ok(ratio >= 3, `${theme.name}: ${ratio.toFixed(2)}:1 against the ${what}`);
+            }
+        }
     });
 });
+
+/** The flash's colour as `editor.css` writes it: the refusal's amber, 70%, mixed with the theme's text colour. */
+const FLASH_AMBER = 'color-mix(in srgb, var(--vscode-editorWarning-foreground, #bf8803) 70%, var(--vscode-foreground, CanvasText))';
+
+function hex(colour: string): number[] {
+    return [1, 3, 5].map(i => parseInt(colour.slice(i, i + 2), 16));
+}
+
+function mix(a: number[], b: number[], share: number): number[] {
+    return a.map((c, i) => c * share + b[i] * (1 - share));
+}
+
+/** WCAG's contrast ratio of two sRGB colours. */
+function contrast(a: number[], b: number[]): number {
+    const lum = (c: number[]) => {
+        const [r, g, bl] = c.map(x => {
+            const s = x / 255;
+            return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+    };
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+}

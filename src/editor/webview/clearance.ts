@@ -62,9 +62,25 @@ const OCCUPIED_WITHIN = 'img:not(.ProseMirror-separator), td, th, .mep-inline-at
  */
 export function rowCeiling(mount: HTMLElement): number {
     const row = mount.querySelector(':scope > .mep-toolbar');
-    const line = mount.querySelector(':scope > .mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
-    return Math.max(0, row ? row.getBoundingClientRect().bottom : 0, line ? line.getBoundingClientRect().bottom : 0);
+    return Math.max(0, row ? row.getBoundingClientRect().bottom : 0) + lockLineHeight(mount);
 }
+
+/**
+ * The height of the line under the formatting row that holds a lock's reason
+ * when it does not fit beside the tools (`toolbar.ts`, `placeLock`), while it
+ * stands there; else 0. What scrolls something into view below the row keeps
+ * this much more room.
+ */
+export function lockLineHeight(mount: HTMLElement | null): number {
+    const line = mount?.querySelector(':scope > .mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+    return line ? line.getBoundingClientRect().height : 0;
+}
+
+/** Dispatched on the mount when the chrome over the page grew or shrank (the lock's line) or the page moved under it: bars placed against it are placed again. */
+export const CHROME_MOVED = 'mep-chrome-moved';
+
+/** The custom property on the mount that holds the room the page keeps for the lock's line (`editor.css`). */
+export const LOCK_ROOM_PROPERTY = '--mep-lock-room';
 
 function overlaps(a: Band, b: Band): boolean {
     return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;

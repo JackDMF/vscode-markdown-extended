@@ -28,7 +28,7 @@ import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'p
 import { EditorView } from 'prosemirror-view';
 import type { LinkChoice, LinkedFile } from '../../protocol';
 import { editorSchema } from '../../schema';
-import { firstFree } from '../clearance';
+import { CHROME_MOVED, LOCK_ROOM_PROPERTY, firstFree } from '../clearance';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading, fieldKeys } from '../inlineField';
 import { chevronNode } from '../lenses';
@@ -242,6 +242,10 @@ class ToolbarView implements PluginView {
     /** The row's reason while it is locked (`showLock`), at its right end. */
     private lockNote!: HTMLElement;
     private flashTimer: ReturnType<typeof setTimeout> | undefined;
+    /** A pointer button is down: the page does not move under it (`settleRoom`). */
+    private pointerHeld = false;
+    /** The height the page keeps free under the row for the reason's line (`settleRoom`). */
+    private room = 0;
     /** Watches the row and its status for a size that changes where the reason fits (`placeLock`). */
     private rowSize: ResizeObserver | undefined;
     /** The update a focus move asked for, while it waits. */
@@ -298,6 +302,17 @@ class ToolbarView implements PluginView {
         this.listen(window, 'resize', () => this.closeAll());
         // Whether the reason fits beside the tools changes with the row's width
         // and with the count beside it: measured again when either changes.
+        // A button held: the room under the row waits for its release (`settleRoom`),
+        // and is settled after the click the release makes.
+        this.listen(document, 'pointerdown', () => {
+            this.pointerHeld = true;
+        }, true);
+        const released = () => {
+            this.pointerHeld = false;
+            setTimeout(() => this.settleRoom(), 0);
+        };
+        this.listen(document, 'pointerup', released, true);
+        this.listen(document, 'pointercancel', released, true);
         if (typeof ResizeObserver !== 'undefined') {
             this.rowSize = new ResizeObserver(() => this.placeLock());
             this.rowSize.observe(this.row);
@@ -326,7 +341,6 @@ class ToolbarView implements PluginView {
         // row says why at its end.
         const place = focusPlace(view);
         const lock = place.kind === 'control' ? controlLock(place.role) : null;
-        this.showLock(lock);
         const stateOf = (action: ToolbarAction) => {
             let s = states.get(action);
             if (!s) {
@@ -349,6 +363,8 @@ class ToolbarView implements PluginView {
                 this.updateFace(menu, stateOf, lock);
             }
         }
+        // After the faces: a face relabelled ("Paragraph", "Heading 2") changes the room the reason has beside them.
+        this.showLock(lock);
         this.placeBubble();
     }
 
@@ -370,17 +386,56 @@ class ToolbarView implements PluginView {
      * The reason beside the tools where it fits there whole, else on its own
      * line under the row (`LOCK_BELOW_CLASS`): measured, not set by a width,
      * so it holds for any tool set and font. The tools and the count never
-     * move; the line goes with the lock.
+     * move; the line goes with the lock. The page makes room for the line
+     * (`settleRoom`) — and the bars, which keep clear of the chrome, are
+     * placed again — when it comes or goes.
      */
     private placeLock(): void {
+        const was = this.row.classList.contains(LOCK_BELOW_CLASS);
         this.row.classList.remove(LOCK_BELOW_CLASS);
-        if (this.lockNote.hidden) {
+        const note = this.lockNote;
+        const below = !note.hidden && note.scrollWidth > note.clientWidth + 1;
+        this.row.classList.toggle(LOCK_BELOW_CLASS, below);
+        if (below !== was) {
+            this.chromeMoved();
+        }
+        this.settleRoom();
+    }
+
+    /**
+     * The page keeps the line's height free under the row (`--mep-lock-room`)
+     * while the line stands there, so it covers nothing — but never while a
+     * button is held: a page that moved between the press and the release
+     * would take the click from what was pressed (the header's toggle, Edit as
+     * source) or drag a selection. It is settled once the pointer is up
+     * (`pointerup`, after the click), or at once for a key. The scroll
+     * position is kept as it was: what stood just under the chrome stands just
+     * under it still — under the line when it comes, under the row when it
+     * goes — and the browser's scroll anchoring, which would scroll the content
+     * back under the line, is overruled.
+     */
+    private settleRoom(): void {
+        if (this.destroyed || this.pointerHeld) {
             return;
         }
-        const note = this.lockNote;
-        if (note.scrollWidth > note.clientWidth + 1) {
-            this.row.classList.add(LOCK_BELOW_CLASS);
+        const want = this.row.classList.contains(LOCK_BELOW_CLASS) ? this.lockNote.getBoundingClientRect().height : 0;
+        if (Math.abs(want - this.room) < 0.5) {
+            return;
         }
+        const scroller = document.scrollingElement;
+        const top = scroller?.scrollTop ?? 0;
+        this.room = want;
+        this.mount.style.setProperty(LOCK_ROOM_PROPERTY, `${want}px`);
+        if (scroller) {
+            scroller.scrollTop = top;
+        }
+        this.chromeMoved();
+    }
+
+    /** The chrome over the page grew or shrank, or the page moved under it: what is placed against it is placed again. */
+    private chromeMoved(): void {
+        this.mount.dispatchEvent(new Event(CHROME_MOVED));
+        this.placeBubble();
     }
 
     /** A refused tool was pressed while the row is locked: its reason is pointed at for a moment, not a silent nothing. */
@@ -399,6 +454,7 @@ class ToolbarView implements PluginView {
     destroy(): void {
         this.destroyed = true;
         this.rowSize?.disconnect();
+        this.mount.style.removeProperty(LOCK_ROOM_PROPERTY);
         clearTimeout(this.cardTimer);
         clearTimeout(this.flashTimer);
         clearTimeout(this.focusTimer);
