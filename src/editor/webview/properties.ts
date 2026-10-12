@@ -775,7 +775,7 @@ export class PropertiesView implements NodeView, SourceEditor {
         const top = area.getBoundingClientRect().top + (parseFloat(style.paddingTop) || 0) + line * lineHeight;
         // Clear of the formatting row fixed at the top — and of the lock's line under it, while
         // it stands there — with the margin the page keeps above a caret it scrolls to
-        // (main.ts, SCROLL_MARGIN: 64px).
+        // (main.ts, SCROLL_MARGIN.top: 64px and the line's height).
         const lockLine = lockLineHeight(this.dom.closest('.mep-editor'));
         if (property !== null || top < 64 + lockLine || top > window.innerHeight - lineHeight) {
             window.scrollBy(0, top - 80 - lockLine);

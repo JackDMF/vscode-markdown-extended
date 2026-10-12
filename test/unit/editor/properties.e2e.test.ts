@@ -694,6 +694,64 @@ suite('Editor properties panel (e2e)', () => {
         await page.keyboard.press('Escape');
     };
 
+    test('a press whose release never reaches the page does not hold the room back: a window blur or a move with no button frees it, and a right press never holds it', async function () {
+        this.timeout(30000);
+        try {
+            await page.setViewport({ width: 420, height: 800 });
+            await showDocument(BOXES);
+            await clickText(page, 'some words', 2);
+            // A press the page sees go down and never come up: the webview's context menu on
+            // macOS, Alt-Tab while it is held, take the release.
+            const lostPress = (button: number) => page.evaluate(b => {
+                document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: b, buttons: b === 0 ? 1 : 2 }));
+            }, button);
+            const layout = () => page.evaluate(() => {
+                const line = document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+                const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
+                return {
+                    line: line !== null,
+                    chrome: line ? line.getBoundingClientRect().bottom : row.bottom,
+                    panel: (document.querySelector('.mep-properties') as HTMLElement).getBoundingClientRect().top,
+                    room: getComputedStyle(document.querySelector('.mep-editor') as HTMLElement).paddingTop,
+                    focus: (document.activeElement as HTMLElement).className,
+                };
+            });
+
+            // A lost left press, then a lock by key (Tab from the text to the panel's toggle): the line comes; the room once the window blurs.
+            await lostPress(0);
+            await page.keyboard.press('Tab');
+            await delay(150);
+            let at = await layout();
+            assert.ok(at.line && at.focus === 'mep-props-toggle', JSON.stringify(at));
+            await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+            await delay(100);
+            at = await layout();
+            assert.ok(at.panel >= at.chrome - 0.5, `after a blur nothing is under the line: ${JSON.stringify(at)}`);
+
+            // A lost press again, then the lock ends by key (Esc into the text): no empty band once the pointer moves with no button held.
+            await lostPress(0);
+            await page.keyboard.press('Escape');
+            await delay(150);
+            await page.mouse.move(5, 400);
+            await delay(100);
+            at = await layout();
+            assert.ok(!at.line, JSON.stringify(at));
+            assert.strictEqual(at.room, '35px', `no band where the line was: ${JSON.stringify(at)}`);
+
+            // A right press — its menu may take the release — never holds the room back.
+            // (From the words again: Esc left the caret in the table, where Tab goes to the next cell.)
+            await clickText(page, 'some words', 2);
+            await lostPress(2);
+            await page.keyboard.press('Tab');
+            await delay(150);
+            at = await layout();
+            assert.ok(at.line && at.panel >= at.chrome - 0.5, `the room comes at once after a right press: ${JSON.stringify(at)}`);
+            await page.keyboard.press('Escape');
+        } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+        }
+    });
+
     test('on a narrow page the line under the row gets room once the click is done: the header uncovered, its focus ring after Esc visible, the clicks still land', async function () {
         this.timeout(40000);
         try {

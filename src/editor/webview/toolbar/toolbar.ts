@@ -302,10 +302,13 @@ class ToolbarView implements PluginView {
         this.listen(window, 'resize', () => this.closeAll());
         // Whether the reason fits beside the tools changes with the row's width
         // and with the count beside it: measured again when either changes.
-        // A button held: the room under the row waits for its release (`settleRoom`),
-        // and is settled after the click the release makes.
-        this.listen(document, 'pointerdown', () => {
-            this.pointerHeld = true;
+        // The main button held: the room under the row waits for its release
+        // (`settleRoom`), and is settled after the click the release makes. Only
+        // the main button — a right press opens a menu that may take its release.
+        this.listen(document, 'pointerdown', e => {
+            if ((e as PointerEvent).button === 0) {
+                this.pointerHeld = true;
+            }
         }, true);
         const released = () => {
             this.pointerHeld = false;
@@ -313,6 +316,21 @@ class ToolbarView implements PluginView {
         };
         this.listen(document, 'pointerup', released, true);
         this.listen(document, 'pointercancel', released, true);
+        // A release that never reaches the page — the window left while the
+        // button was down (Alt-Tab), a menu took it — would hold the room back
+        // for good: a blur, or a move with no button down, says the press is over.
+        const lost = () => {
+            if (this.pointerHeld) {
+                this.pointerHeld = false;
+                this.settleRoom();
+            }
+        };
+        this.listen(window, 'blur', lost);
+        this.listen(document, 'pointermove', e => {
+            if ((e as PointerEvent).buttons === 0) {
+                lost();
+            }
+        }, true);
         if (typeof ResizeObserver !== 'undefined') {
             this.rowSize = new ResizeObserver(() => this.placeLock());
             this.rowSize.observe(this.row);
