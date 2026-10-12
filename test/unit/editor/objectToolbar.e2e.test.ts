@@ -202,12 +202,12 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(edit?.text, 'Alpha ++beta ref|a new body++ gamma.\n');
     });
 
-    test('the caret in a link: Open, Edit link… and Remove link; Edit link… is prefilled; the new URL and the kept text are what is posted', async function () {
+    test('the caret in a link: Open, Edit link…, Attributes… and Remove link; Edit link… is prefilled; the new URL and the kept text are what is posted', async function () {
         this.timeout(15000);
         await showDocument('See [the spec](spec.md) here.\n', 'See');
         await clickBefore('spec', 1);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'remove-link'] });
+        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'link-attributes', 'remove-link'] });
 
         await clickVerb('edit-link');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'spec.md');
@@ -244,7 +244,7 @@ suite('Editor object toolbar (e2e)', () => {
         await page.keyboard.press('Enter');
         await delay(INLINE_DELAY_MS + 200);
         assert.deepStrictEqual(await page.evaluate(() => (window as unknown as { barHidden: boolean[] }).barHidden.filter(h => h)), [], 'never hidden');
-        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'remove-link'] });
+        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'link-attributes', 'remove-link'] });
         assert.strictEqual((await active()).editor, true, 'the focus is back in the text');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'See [the spec](other.md) here.\n');

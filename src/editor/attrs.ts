@@ -1,8 +1,9 @@
 /**
  * markdown-it-attrs' `{…}` literal, read the way the plugin reads it.
  *
- * An attribute span (`[text]{.a}`) and a block's attribute suffix are drawn
- * with the attributes their literal gives, and a literal typed into a field is
+ * An attribute span (`[text]{.a}`), emphasis or a link with a literal after
+ * it (`_x_{.a}`, `[x](u){.a}`) and a block's attribute suffix are drawn with
+ * the attributes their literal gives, and a literal typed into a field is
  * checked before it is written. Everything else about a literal — where it
  * stands, what it attaches to — is the host's parse (`blocks.ts`); this module
  * only turns a literal into attribute pairs and back.
@@ -272,8 +273,16 @@ function writtenLiteral(attrs: readonly AttrPair[]): string | null {
  * holds no backtick, after tildes it may. A paragraph's literal on a line of
  * its own is one text after a soft break, as at its end; a list's under its
  * last line the same as after a blank line.
+ *
+ * Emphasis, strikethrough, a highlight and a link take a literal written
+ * right after their closing delimiter (`_x_{.a}`, `[x](u){.a}`), as a span
+ * does after its `]`: the plugin gives the text that starts with it to the
+ * element the closing tag before it closes. They are held by their mark's
+ * name (`INLINE_LITERAL_HOLDERS`, `blocks.ts`). A link's `href` is the
+ * token's before the plugin runs, and no literal's (`omit`): one that sets
+ * `href` or `title` is read as other attributes than it gives, so it is none.
  */
-const READ_BACK: Record<string, { source: (literal: string) => string; token: string }> = {
+const READ_BACK: Record<string, { source: (literal: string) => string; token: string; omit?: readonly string[] }> = {
     paragraph: { source: l => `x ${l}`, token: 'paragraph_open' },
     heading: { source: l => `# x ${l}`, token: 'heading_open' },
     'list_item': { source: l => `- x ${l}`, token: 'list_item_open' },
@@ -285,6 +294,11 @@ const READ_BACK: Record<string, { source: (literal: string) => string; token: st
     blockquote: { source: l => `> x\n> ${l}`, token: 'blockquote_open' },
     table: { source: l => `| x |\n| - |\n\n${l}`, token: 'table_open' },
     span: { source: l => `[x]${l}`, token: 'span_open' },
+    em: { source: l => `*x*${l}`, token: 'em_open' },
+    strong: { source: l => `**x**${l}`, token: 'strong_open' },
+    strike: { source: l => `~~x~~${l}`, token: 's_open' },
+    mark: { source: l => `==x==${l}`, token: 'mark_open' },
+    link: { source: l => `[x](u)${l}`, token: 'link_open', omit: ['href'] },
 };
 
 /**
@@ -316,7 +330,8 @@ export function readBack(literal: string, holder: string, definition: InlineEngi
         return null;
     }
     const token = all.find(t => t.type === shape.token);
-    return token === undefined ? null : (token.attrs ?? []).map(([name, value]) => [name, value] as AttrPair);
+    const omit = shape.omit ?? [];
+    return token === undefined ? null : (token.attrs ?? []).filter(([name]) => !omit.includes(name)).map(([name, value]) => [name, value] as AttrPair);
 }
 
 /**

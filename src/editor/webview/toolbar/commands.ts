@@ -57,19 +57,68 @@ function markTransaction(state: EditorState, type: MarkType, markup: string | nu
         return null;
     }
     const active = removes(state);
-    const mark = markup === null ? type.create() : type.create({ markup });
     const tr = state.tr;
     if (state.selection.empty) {
-        return active ? tr.removeStoredMark(type) : tr.addStoredMark(mark);
+        const kept = literalsOf((state.storedMarks ?? state.selection.$from.marks()).filter(m => m.type === type));
+        return active ? tr.removeStoredMark(type) : tr.addStoredMark(markWith(type, markup, kept.length === 1 ? kept[0] : null));
     }
     for (const range of state.selection.ranges) {
         if (active) {
             tr.removeMark(range.$from.pos, range.$to.pos, type);
         } else {
-            tr.addMark(range.$from.pos, range.$to.pos, mark);
+            addKeepingLiterals(tr, range.$from.pos, range.$to.pos, type, markup);
         }
     }
     return tr.scrollIntoView();
+}
+
+/** `type` written with `markup` (`null`: a mark with no delimiter attribute) and, where the type keeps one, the literal `literal`. */
+function markWith(type: MarkType, markup: string | null, literal: string | null): Mark {
+    const attrs: Record<string, unknown> = markup === null ? {} : { markup };
+    if (literal !== null && type.spec.attrs !== undefined && 'literal' in type.spec.attrs) {
+        attrs.literal = literal;
+    }
+    return type.create(attrs);
+}
+
+/** The distinct literals `marks` carry (`_x_{.a}`), in order. */
+function literalsOf(marks: readonly Mark[]): string[] {
+    const out: string[] = [];
+    for (const mark of marks) {
+        const literal = (mark.attrs as { literal?: unknown }).literal;
+        if (typeof literal === 'string' && !out.includes(literal)) {
+            out.push(literal);
+        }
+    }
+    return out;
+}
+
+/**
+ * `type` added over `from`–`to` in `tr`, written with `markup`, without losing
+ * a literal the same type carries there (`_x_{.a}`, `~~x~~{.a}`): a mark type
+ * excludes itself, so the mark added replaces the one there, literal and all.
+ * Where the range holds one literal of that type, the mark added carries it —
+ * the run is extended or given the other delimiter, and keeps its attributes;
+ * where it holds several, each piece keeps its own and the rest gets none, as
+ * a literal belongs to the run it was written after.
+ */
+function addKeepingLiterals(tr: Transaction, from: number, to: number, type: MarkType, markup: string | null): void {
+    const pieces: { from: number; to: number; literal: string | null }[] = [];
+    tr.doc.nodesBetween(from, to, (node, pos) => {
+        if (node.isText) {
+            const own = literalsOf(node.marks.filter(m => m.type === type));
+            pieces.push({ from: Math.max(from, pos), to: Math.min(to, pos + node.nodeSize), literal: own[0] ?? null });
+        }
+    });
+    const literals = [...new Set(pieces.flatMap(p => (p.literal === null ? [] : [p.literal])))];
+    tr.addMark(from, to, markWith(type, markup, literals.length === 1 ? literals[0] : null));
+    if (literals.length > 1) {
+        for (const piece of pieces) {
+            if (piece.literal !== null) {
+                tr.addMark(piece.from, piece.to, markWith(type, markup, piece.literal));
+            }
+        }
+    }
 }
 
 /**

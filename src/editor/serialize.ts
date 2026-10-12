@@ -10,6 +10,7 @@ import { AttrsCut, attrsCutsIn, attrsGivenTo } from '../plugin/markdownItAttrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { parseDocument } from './parse';
+import { NOTE_CLOSE_TOKENS, NOTE_OPEN_TOKENS } from './blocks';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
@@ -320,7 +321,8 @@ function emphasisDelimiter(mark: Mark, parent: Node, index: number, opening: boo
     }
     const at = opening ? index : Math.max(0, index - 1);
     const [from, to] = markSpan(mark, parent, Math.min(at, parent.childCount - 1));
-    const glued = gluedAt(mark, parent, from - 1, 'before') || gluedAt(mark, parent, to, 'after');
+    // A literal after the closing delimiter stands between it and a letter after the run.
+    const glued = gluedAt(mark, parent, from - 1, 'before') || (markLiteralOf(mark) === null && gluedAt(mark, parent, to, 'after'));
     // linkify takes a trailing `_` into a URL (`https://x/a_`), never a `*`.
     const last = parent.child(to - 1);
     const endsInUrl = last.isText && /(?:[A-Za-z][\w+.-]*:\/\/|www\.)\S*$|[^\s@]+@[^\s@]+$/.test(last.text ?? '');
@@ -404,7 +406,8 @@ function linkForm(state: MarkdownSerializerState, mark: Mark, parent: Node, inde
     }
     const text = node.text ?? '';
     const href = mark.attrs.href as string;
-    if (markup === 'linkify' && text !== '' && !/\s/.test(text)) {
+    // A bare address has no closing character a literal could follow: a link with one is written `[…](…){…}`.
+    if (markup === 'linkify' && text !== '' && !/\s/.test(text) && markLiteralOf(mark) === null) {
         return internals(state).inlineLinks?.get(parent)?.has(index) ? 'inline' : 'bare';
     }
     if (markup === 'autolink' && (text === href || `mailto:${text}` === href) && !/[\s<>]/.test(text)) {
@@ -529,6 +532,52 @@ function backtickFence(text: string): { open: string; close: string } {
     return { open: ticks + pad, close: pad + ticks };
 }
 
+/**
+ * The `{…}` literal a mark carries (`literal`: an attribute span's, emphasis',
+ * strikethrough's, a highlight's, a link's), or `null` for none or a mark that
+ * has no such attribute.
+ */
+export function markLiteralOf(mark: Mark): string | null {
+    const literal = (mark.attrs as { literal?: unknown }).literal;
+    return typeof literal === 'string' ? literal : null;
+}
+
+/** The token markdown-it-attrs gives each mark's literal to: the mark's opening token. */
+const MARK_LITERAL_TOKENS: Readonly<Record<string, string>> = {
+    'attr_span': 'span_open',
+    em: 'em_open',
+    strong: 'strong_open',
+    strike: 's_open',
+    mark: 'mark_open',
+    link: 'link_open',
+};
+
+/** The opening tokens of the marks that carry a literal (`MARK_LITERAL_TOKENS`). */
+const LITERAL_OPEN_TOKENS: ReadonlySet<string> = new Set(Object.values(MARK_LITERAL_TOKENS));
+
+/** What each mark that carries a literal is called at the start of a refusal. */
+const MARK_LITERAL_NOUNS: Readonly<Record<string, string>> = {
+    'attr_span': 'An attribute span',
+    em: 'Emphasis',
+    strong: 'Strong emphasis',
+    strike: 'Strikethrough',
+    mark: 'A highlight',
+    link: 'A link',
+};
+
+/**
+ * A closing delimiter with the mark's literal after it, when it has one
+ * (`_x_{.a}`): markdown-it-attrs gives a `{…}` that starts the text right
+ * after a closing tag to the element it closes, so that is where the literal
+ * is written. The two are held (`HOLD_OPEN`), so no line break falls between
+ * them nor inside the literal; without a literal the delimiter is written as
+ * it always was.
+ */
+function withMarkLiteral(mark: Mark, delimiter: string): string {
+    const literal = markLiteralOf(mark);
+    return literal === null ? delimiter : HOLD_OPEN + delimiter + literal + HOLD_CLOSE;
+}
+
 const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // The decoration is Req Explorer's wrapper; only the text it wraps is in the file.
     req_ref: { open: '', close: '', mixable: true },
@@ -548,13 +597,13 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     },
     em: {
         open: (_state, mark, parent, index) => emphasisDelimiter(mark, parent, index, true, '*'),
-        close: (_state, mark, parent, index) => emphasisDelimiter(mark, parent, index, false, '*'),
+        close: (_state, mark, parent, index) => withMarkLiteral(mark, emphasisDelimiter(mark, parent, index, false, '*')),
         mixable: true,
         expelEnclosingWhitespace: true,
     },
     strong: {
         open: (_state, mark, parent, index) => emphasisDelimiter(mark, parent, index, true, '**'),
-        close: (_state, mark, parent, index) => emphasisDelimiter(mark, parent, index, false, '**'),
+        close: (_state, mark, parent, index) => withMarkLiteral(mark, emphasisDelimiter(mark, parent, index, false, '**')),
         mixable: true,
         expelEnclosingWhitespace: true,
     },
@@ -584,19 +633,21 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
             const form = st.linkForm ?? 'inline';
             st.linkForm = undefined;
             st.inAutolink = undefined;
+            // A literal follows the link's last character (`[x](u){.a}`, `<u>{.a}`), inside its hold.
+            const literal = markLiteralOf(mark) ?? '';
             if (form === 'bare') {
                 return HOLD_CLOSE;
             }
             if (form === 'angle') {
-                return '>' + HOLD_CLOSE;
+                return '>' + literal + HOLD_CLOSE;
             }
-            return '](' + target(st, mark.attrs.href as string, mark.attrs.title as string | null) + ')' + HOLD_CLOSE;
+            return '](' + target(st, mark.attrs.href as string, mark.attrs.title as string | null) + ')' + literal + HOLD_CLOSE;
         },
         mixable: true,
     },
-    // Delimiter runs like emphasis, with the same flanking rules.
-    strike: { open: INLINE_MARKERS.strikethrough, close: INLINE_MARKERS.strikethrough, mixable: true, expelEnclosingWhitespace: true },
-    mark: { open: INLINE_MARKERS.mark, close: INLINE_MARKERS.mark, mixable: true, expelEnclosingWhitespace: true },
+    // Delimiter runs like emphasis, with the same flanking rules, and a literal after the closing one as emphasis has.
+    strike: { open: INLINE_MARKERS.strikethrough, close: (_state, mark) => withMarkLiteral(mark, INLINE_MARKERS.strikethrough), mixable: true, expelEnclosingWhitespace: true },
+    mark: { open: INLINE_MARKERS.mark, close: (_state, mark) => withMarkLiteral(mark, INLINE_MARKERS.mark), mixable: true, expelEnclosingWhitespace: true },
     // No line break inside any of these three (the plugins refuse one), so
     // each is a held run the wrapper keeps on one line, as a code span is.
     // Mixable, so emphasis inside a key is written inside it (`[[a *b*]]`),
@@ -1197,9 +1248,9 @@ function noteUnwritable(note: Node): string | null {
             const text = child.text ?? '';
             const code = child.marks.some(m => m.type.name === 'code');
             const raw = child.marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
-            const span = child.marks.find(m => m.type.name === 'attr_span' && NOTE_SYNTAX_CHARS.test(m.attrs.literal as string));
+            const span = child.marks.find(m => NOTE_SYNTAX_CHARS.test(markLiteralOf(m) ?? ''));
             if (span !== undefined) {
-                reason = `An attribute span in a note cannot hold ${span.attrs.literal as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+                reason = `${MARK_LITERAL_NOUNS[span.type.name]} in a note cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
             } else if (raw && terminator !== undefined && text.includes(terminator)) {
                 reason = `Inline code, superscript and subscript in this part of a note cannot hold "${terminator}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
             } else if (code && marker !== null && text.includes(marker)) {
@@ -2166,7 +2217,7 @@ export const CELL_BREAK_REFUSAL = 'A table cell holds one line: a pipe table has
  * as itself, or `null` — what the tidy form above has no spelling for, which
  * the page refuses to make (`webview/tables.ts`), as it refuses an unwritable
  * note: a hard break in a cell (a sidebar can hold one), code holding a `|`,
- * an attribute span whose literal holds a `|` or a backtick.
+ * an attribute span, emphasis or a link whose literal holds a `|` or a backtick.
  */
 export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): string | null {
     let reason: string | null = null;
@@ -2188,9 +2239,9 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
             } else if (child.isText && (child.text ?? '').includes('|') && child.marks.some(m => m.type.name === 'code')) {
                 reason = 'Inline code in a table cell cannot hold "|": the table plugin splits the row at it, and nothing escapes it there.';
             } else {
-                const span = child.marks.find(m => m.type.name === 'attr_span' && /[|`]/.test(m.attrs.literal as string));
+                const span = child.marks.find(m => /[|`]/.test(markLiteralOf(m) ?? ''));
                 if (span !== undefined) {
-                    reason = `An attribute span in a table cell cannot hold ${span.attrs.literal as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
+                    reason = `${MARK_LITERAL_NOUNS[span.type.name]} in a table cell cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
                 }
             }
             return true;
@@ -2465,7 +2516,9 @@ const ESCAPE_CACHE_SIZE = 512;
  * of the line: the text is parsed as the save writes it, wrap included, and
  * every `{…}` the plugin cut off a text token (`attrsCutsIn`) is one the page
  * shows as text — but a span's own literal, the first cut right after its
- * `]`. That covers each place the plugin takes one: off the end of the last
+ * `]`, and a mark's (`_x_{.a}`, `[x](u){.a}`), the first cut right after its
+ * closing tag where the plugin gave that mark the literal its run holds
+ * (`literalCutsIn`). That covers each place the plugin takes one: off the end of the last
  * text, which it reaches past an escape (`b {x}\$` takes `{x}`) or emphasis —
  * the block's — the line the wrap left it alone on, and right after emphasis,
  * a link, inline code, an image or a span (`see *a*{.c}`, anywhere in the
@@ -2479,17 +2532,20 @@ const ESCAPE_CACHE_SIZE = 512;
  * the inline rules make every text token a verbatim run of it — and the parse
  * is asked again: an escape is kept when the plugin then takes one `{…}` less
  * and every span's literal still, so a copy of the same text elsewhere in the
- * line (`a {x}[{x}](u)`) is never the one escaped. Until it takes none.
- * Remembered by the text.
+ * line (`a {x}[{x}](u)`) is never the one escaped, and no mark loses the
+ * literal it was given — a text `{b}` the plugin joined to a link's `{.x}` is
+ * escaped, not the literal. Until it takes none.
+ * Remembered by the text and the marks' literals.
  */
 function escapedLiterals(node: Node, written: string, where: keyof typeof LITERAL_CONTEXTS): Spelled {
     if (!node.textContent.includes('}') || !written.includes('{')) {
         return { text: written, at: [] };
     }
-    const key = `${where}\u0000${written}`;
+    const owned = markLiteralsOf(node);
+    const key = `${where}\u0000${written}\u0000${JSON.stringify([...owned])}`;
     let at = escapeCache.get(key);
     if (at === undefined) {
-        at = literalEscapes(written, LITERAL_CONTEXTS[where]);
+        at = literalEscapes(written, LITERAL_CONTEXTS[where], owned);
         if (escapeCache.size >= ESCAPE_CACHE_SIZE) {
             escapeCache.delete(escapeCache.keys().next().value as string);
         }
@@ -2500,44 +2556,134 @@ function escapedLiterals(node: Node, written: string, where: keyof typeof LITERA
     return { text: backslashedAt(written, at), at };
 }
 
-/** The `{…}`s markdown-it-attrs cut off text in a parse: those the page shows as text (`made`), and how many span literals it read. */
+/**
+ * The `{…}`s markdown-it-attrs cut off text in a parse: those an escape may
+ * take back (`tryable`) — every one but a span's own, the ones no mark's
+ * literal could be first — how many of them the page shows as text
+ * (`excess`), how many span literals it read, and how many marks it gave
+ * their own literal (`owned`).
+ */
 interface LiteralCuts {
-    made: AttrsCut[];
+    tryable: AttrsCut[];
+    excess: number;
     spans: number;
+    owned: number;
 }
 
-/** What the page's engine with markdown-it-attrs cuts off text in `text` (`LiteralCuts`). */
-function literalCutsIn(text: string): LiteralCuts {
-    const found: LiteralCuts = { made: [], spans: 0 };
-    for (const token of attrsEngineFor(currentInlineDefinition()).parse(text, {})) {
+/**
+ * Each run, by the opening token its mark is read back as (`em_open`,
+ * `link_open`, …), of a mark that may carry a literal in a textblock's own
+ * inline content — an attribute span's aside, whose first cut is always its
+ * own, and a note's, whose text the plugin reads apart — in order: its
+ * literal, `null` for none (`markInstancesIn`, without the notes).
+ */
+function markLiteralsOf(node: Node): Map<string, (string | null)[]> {
+    const out = new Map<string, (string | null)[]>();
+    const open = new Map<string, Mark>();
+    node.forEach(child => {
+        for (const [name, token] of Object.entries(MARK_LITERAL_TOKENS)) {
+            const mark = child.marks.find(m => m.type.name === name);
+            const before = open.get(name);
+            if (mark !== undefined && name !== 'attr_span' && (before === undefined || !mark.eq(before))) {
+                out.set(token, [...(out.get(token) ?? []), markLiteralOf(mark)]);
+            }
+            if (mark === undefined) {
+                open.delete(name);
+            } else {
+                open.set(name, mark);
+            }
+        }
+    });
+    return out;
+}
+
+/**
+ * How many marks of a parse were given their own literal: the tokens of each
+ * kind in `expected` outside notes, held run by run to the runs the
+ * textblock holds where the counts agree (`markLiteralsOf`), else matched by
+ * their attributes in any order.
+ */
+function ownedLiterals(tokens: readonly Token[], expected: ReadonlyMap<string, readonly (string | null)[]>): number {
+    const given = new Map<string, string[]>();
+    for (const token of tokens) {
+        let noteDepth = 0;
+        for (const child of token.type === 'inline' ? token.children ?? [] : []) {
+            noteDepth += NOTE_OPEN_TOKENS.has(child.type) ? 1 : NOTE_CLOSE_TOKENS.has(child.type) ? -1 : 0;
+            if (noteDepth === 0 && expected.has(child.type)) {
+                given.set(child.type, [...(given.get(child.type) ?? []), attrsKey(attrsGivenTo(child).map(([n, v]) => [n, v] as AttrPair))]);
+            }
+        }
+    }
+    let owned = 0;
+    for (const [type, literals] of expected) {
+        const read = given.get(type) ?? [];
+        const wanted = literals.map(literal => (literal === null ? null : attrsKey(literalPairs(literal))));
+        if (read.length === wanted.length) {
+            owned += wanted.filter((key, k) => key !== null && key === read[k]).length;
+            continue;
+        }
+        const left = [...read];
+        for (const key of wanted) {
+            const at = key === null ? -1 : left.indexOf(key);
+            if (at >= 0) {
+                left.splice(at, 1);
+                owned++;
+            }
+        }
+    }
+    return owned;
+}
+
+/**
+ * What the page's engine with markdown-it-attrs cuts off text in `text`
+ * (`LiteralCuts`), `expected` the literals of the textblock's marks
+ * (`markLiteralsOf`): a cut that is the first after a mark's closing tag is
+ * that mark's literal when the mark was given the one its run holds
+ * (`ownedLiterals`), and text otherwise — which of them is told by escaping
+ * one and reading again, as for every other cut.
+ */
+function literalCutsIn(text: string, expected: ReadonlyMap<string, readonly (string | null)[]> = new Map()): LiteralCuts {
+    const found: LiteralCuts = { tryable: [], excess: 0, spans: 0, owned: 0 };
+    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+    const candidates: AttrsCut[] = [];
+    for (const token of tokens) {
         if (token.type !== 'inline') {
             continue;
         }
         for (const cut of attrsCutsIn(token)) {
             if (!cut.end && cut.first && cut.after === 'span_close') {
                 found.spans++;
+                continue;
+            }
+            if (!cut.end && cut.first && cut.after !== null && expected.has(cut.after.replace(/_close$/, '_open'))) {
+                candidates.push(cut);
             } else {
-                found.made.push(cut);
+                found.tryable.push(cut);
+                found.excess++;
             }
         }
     }
+    found.tryable.push(...candidates);
+    found.owned = expected.size === 0 ? 0 : ownedLiterals(tokens, expected);
+    found.excess += Math.max(0, candidates.length - found.owned);
     return found;
 }
 
 /**
  * Where `escapedLiterals` puts a backslash in `written`, in order: before the
  * `{` and the `}` of each `{…}` it escapes. `context` is what stands before
- * and after the text as the parser meets it (`LITERAL_CONTEXTS`).
+ * and after the text as the parser meets it (`LITERAL_CONTEXTS`); `owned` the
+ * marks' literals, which are never escaped (`markLiteralsOf`).
  */
-function literalEscapes(written: string, [before, after]: readonly [string, string]): number[] {
+function literalEscapes(written: string, [before, after]: readonly [string, string], owned: ReadonlyMap<string, readonly (string | null)[]>): number[] {
     const at: number[] = [];
     let text = written;
     // Each UTF-16 unit's place in `written` (the strings are sliced by unit, so not `Array.from(written)`, which walks code points and comes up short by one per astral character); -1 for a backslash put in.
     let origin = Array.from({ length: written.length }, (_, i) => i);
-    let cuts = literalCutsIn(before + text + after);
-    while (cuts.made.length > 0) {
+    let cuts = literalCutsIn(before + text + after, owned);
+    while (cuts.excess > 0) {
         let next: { text: string; origin: number[]; places: number[]; cuts: LiteralCuts } | null = null;
-        for (const cut of cuts.made) {
+        for (const cut of cuts.tryable) {
             const literal = cut.text.slice(cut.from, cut.to);
             for (const place of placesOf(before + text + after, cut)) {
                 const start = place - before.length;
@@ -2546,8 +2692,8 @@ function literalEscapes(written: string, [before, after]: readonly [string, stri
                     continue;
                 }
                 const escaped = `${text.slice(0, start)}\\${text.slice(start, end)}\\${text.slice(end)}`;
-                const again = literalCutsIn(before + escaped + after);
-                if (again.made.length < cuts.made.length && again.spans === cuts.spans) {
+                const again = literalCutsIn(before + escaped + after, owned);
+                if (again.excess < cuts.excess && again.spans === cuts.spans && again.owned >= cuts.owned) {
                     next = { text: escaped, origin: [...origin.slice(0, start), -1, ...origin.slice(start, end), -1, ...origin.slice(end)], places: [origin[start], origin[end]], cuts: again };
                     break;
                 }
@@ -2678,17 +2824,31 @@ function withBlockSuffix(node: Node, text: string): string {
     return placement === 'end' ? `${text.replace(/[ \t]+$/, '')} ${suffix}` : `${text}\n${suffix}`;
 }
 
-/** The literal of each attribute span in `node`'s inline content, notes' included, in order: one per run of one mark. */
-function spanLiteralsIn(node: Node): string[] {
-    const out: string[] = [];
+/**
+ * Every run of a mark that can carry a literal in `node`'s inline content
+ * (`MARK_LITERAL_TOKENS`: an attribute span, emphasis, strikethrough, a
+ * highlight, a link), notes' included, in document order — with its literal,
+ * `null` for none, and the token it is read back as. One per run of one mark,
+ * so the instances of one kind stand in the order the parser opens their
+ * tokens in.
+ */
+function markInstancesIn(node: Node): { token: string; literal: string | null }[] {
+    const out: { token: string; literal: string | null }[] = [];
     const walk = (parent: Node) => {
-        let open: Mark | null = null;
+        const open = new Map<string, Mark>();
         parent.forEach(child => {
-            const mark = child.marks.find(m => m.type.name === 'attr_span') ?? null;
-            if (mark !== null && (open === null || !mark.eq(open))) {
-                out.push(mark.attrs.literal as string);
+            for (const [name, token] of Object.entries(MARK_LITERAL_TOKENS)) {
+                const mark = child.marks.find(m => m.type.name === name);
+                const before = open.get(name);
+                if (mark !== undefined && (before === undefined || !mark.eq(before))) {
+                    out.push({ token, literal: markLiteralOf(mark) });
+                }
+                if (mark === undefined) {
+                    open.delete(name);
+                } else {
+                    open.set(name, mark);
+                }
             }
-            open = mark;
             if (!child.isLeaf) {
                 walk(child);
             }
@@ -3014,13 +3174,18 @@ function wrapperUnits(block: Node): WrittenUnit[] | null {
 interface UnitRead {
     /** Each token of the stream markdown-it-attrs gave attributes, in order, with what it gave. */
     blocks: { type: string; given: AttrPair[] }[];
-    /** Each attribute span read, in order, with what markdown-it-attrs gave it, and the inline token it stands in (`inlines`). */
-    spans: { given: AttrPair[]; inline: number }[];
+    /**
+     * Each token of a mark that can carry a literal read (`LITERAL_OPEN_TOKENS`:
+     * an attribute span's, emphasis', a link's …), in order, with what
+     * markdown-it-attrs gave it — nothing, mostly — and the inline token it
+     * stands in (`inlines`).
+     */
+    marks: { type: string; given: AttrPair[]; inline: number }[];
     /** Each sidebar read, in order, its kind, its text between the markers (`sidebarBody`) and the inline token it stands in. */
     sidebars: { kind: string; body: string; inline: number }[];
     /** How many inline tokens it holds, an admonition's title's aside: one per paragraph with text, heading and cell. */
     inlines: number;
-    /** Whether markdown-it-attrs gave attributes to an inline token other than a span. */
+    /** Whether markdown-it-attrs gave attributes to an inline token whose mark carries no literal: inline code, an image, superscript … */
     madeInline: boolean;
     /** Whether VS Code's math (its stand-in) read a formula: the page holds none in a block it edits. */
     math: boolean;
@@ -3058,7 +3223,7 @@ function readUnit(text: string, key = text): UnitRead {
         return read;
     }
     const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
-    read = { blocks: [], spans: [], sidebars: [], inlines: 0, madeInline: false, math: false, emoji: [], texts: [] };
+    read = { blocks: [], marks: [], sidebars: [], inlines: 0, madeInline: false, math: false, emoji: [], texts: [] };
     const found = read;
     // Superscript's text is read apart (markdown-it-sup-alt): an emoji there may have no known place.
     let superscript = 0;
@@ -3066,8 +3231,8 @@ function readUnit(text: string, key = text): UnitRead {
         for (const child of children) {
             superscript += child.type === 'sup_open' ? 1 : child.type === 'sup_close' ? -1 : 0;
             const given = attrsGivenTo(child).map(([n, v]) => [n, v] as AttrPair);
-            if (child.type === 'span_open') {
-                found.spans.push({ given, inline: found.inlines });
+            if (LITERAL_OPEN_TOKENS.has(child.type)) {
+                found.marks.push({ type: child.type, given, inline: found.inlines });
             } else if (given.length > 0) {
                 found.madeInline = true;
             }
@@ -3325,19 +3490,57 @@ function textblockOfInline(unit: WrittenUnit, read: UnitRead, index?: number): N
     return (index !== undefined && shown.length === read.inlines ? shown[index]?.node : undefined) ?? unit.textblocks[0]?.node ?? unit.anchor;
 }
 
-/** The first literal of `unit` that `read` does not give back, its spans' first, or attributes it reads that none gives. */
+/**
+ * The marks' literals of `unit` matched to what `read` gives their tokens,
+ * kind by kind (`MARK_LITERAL_TOKENS`): the first literal not given back, and
+ * the first token given attributes no literal gives. Where the parser opens
+ * as many tokens of a kind as the textblocks hold runs of that mark, each run
+ * is held to its own token, the runs without a literal to none — so a literal
+ * read on the emphasis before its own is lost, not found; where the counts
+ * differ (a run the save writes in two, a bare address the parser links),
+ * the literals are matched in order to the tokens given attributes.
+ */
+function markLiteralVerdict(unit: WrittenUnit, read: UnitRead): { missing?: { literal: string; at: Node }; extra?: { inline: number } } {
+    const instances = unit.textblocks.flatMap(({ node }) => markInstancesIn(node).map(instance => ({ ...instance, key: attrsKey(literalPairs(instance.literal)), at: node })));
+    let missing: { literal: string; at: Node } | undefined;
+    let extra: { inline: number } | undefined;
+    for (const token of LITERAL_OPEN_TOKENS) {
+        const wanted = instances.filter(w => w.token === token);
+        const found = read.marks.filter(f => f.type === token);
+        if (wanted.length === found.length) {
+            wanted.forEach((w, k) => {
+                if (w.key === attrsKey(found[k].given)) {
+                    return;
+                }
+                if (w.literal !== null) {
+                    missing ??= { literal: w.literal, at: w.at };
+                } else {
+                    extra ??= found[k];
+                }
+            });
+            continue;
+        }
+        const match = matchInOrder(wanted.filter(w => w.literal !== null), found.filter(f => f.given.length > 0 || token === 'span_open'), (w, f) => w.key === attrsKey(f.given));
+        if (match.missing !== undefined) {
+            missing ??= { literal: match.missing.literal as string, at: match.missing.at };
+        }
+        extra ??= match.extra;
+    }
+    return { missing, extra };
+}
+
+/** The first literal of `unit` that `read` does not give back, its marks' first, or attributes it reads that none gives. */
 function literalVerdict(unit: WrittenUnit, read: UnitRead): LiteralLoss | null {
-    const spans = unit.textblocks.flatMap(({ node }) => spanLiteralsIn(node).map(literal => ({ literal, key: attrsKey(literalPairs(literal)), at: node })));
-    const spanMatch = matchInOrder(spans, read.spans, (w, f) => w.key === attrsKey(f.given));
-    if (spanMatch.missing !== undefined) {
-        return { literal: spanMatch.missing.literal, at: spanMatch.missing.at };
+    const markMatch = markLiteralVerdict(unit, read);
+    if (markMatch.missing !== undefined) {
+        return { literal: markMatch.missing.literal, at: markMatch.missing.at };
     }
     const blockMatch = matchInOrder(unit.literals, read.blocks, (w, f) => w.token === f.type && sameAttrs(f.given, literalPairs(w.literal)));
     if (blockMatch.missing !== undefined) {
         return { literal: blockMatch.missing.literal, at: blockMatch.missing.node };
     }
-    if (spanMatch.extra !== undefined || blockMatch.extra !== undefined || read.madeInline) {
-        return { literal: null, at: textblockOfInline(unit, read, spanMatch.extra?.inline) };
+    if (markMatch.extra !== undefined || blockMatch.extra !== undefined || read.madeInline) {
+        return { literal: null, at: textblockOfInline(unit, read, markMatch.extra?.inline) };
     }
     return null;
 }
