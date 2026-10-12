@@ -276,7 +276,7 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
                     const attrs = (all.find(t => t.type === type)?.attrs ?? []).map(([n, v]) => [n, v] as [string, string]);
                     const reads = attrs.length > 0 && !all.some(t => t.type === 'text' && /[{}]/.test(t.content)) && sameAttrs(attrs, joinAttrs(pairs));
                     const kept = groupSourceBlocks(engine.parse(src, {}), splitLines(src), definitionOf(engine)).blocks
-                        .some(b => b.attrs?.suffix === literal || b.spanLiterals.includes(literal) || b.itemLiterals.includes(literal));
+                        .some(b => b.attrs?.suffix === literal || b.inlineLiterals.includes(literal) || b.itemLiterals.includes(literal));
                     const where = `${literal} in a ${shape}, ${settings}`;
                     assert.strictEqual(kept, reads, `${where}: ${reads ? 'the host reads it, the editor must keep it' : 'the host shows it as text, the editor must not take it'}`);
                 }

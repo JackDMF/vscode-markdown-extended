@@ -9,6 +9,7 @@ import {
     InjectionMark,
     NOTE_OPEN_TOKENS,
     SourceBlock,
+    carriesInlineLiteral,
     detectEol,
     groupSourceBlocks,
     headingLiteral,
@@ -223,12 +224,12 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
     // Attributes MarkdownParser cannot derive from a token alone: the source
     // slice of a top-level block and its attribute literal, a heading's lifted
     // prefix, an admonition's title (its tokens are not in the stream), and the
-    // literal each attribute span was written with.
+    // literal each attribute span, emphasis or link was written with.
     const topAttrs = new WeakMap<object, { src: string | null; gap: string | null }>();
     const blockAttrs = new WeakMap<object, BlockAttrs>();
     const headingPrefix = new WeakMap<object, string>();
     const admonitionTitle = new WeakMap<object, string>();
-    const spanLiteral = new WeakMap<object, string>();
+    const inlineLiteral = new WeakMap<object, string>();
     const itemLiteral = new WeakMap<object, string>();
     // A heading's inline token as the engine made it, whose text markdown-it-attrs took the literal off (`headingLiteral`).
     const headingInline = new WeakMap<object, Token>();
@@ -273,7 +274,7 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                         foreignLiteral.set(tokens[p], block.attrs);
                     }
                 }
-                let span = 0;
+                let carrier = 0;
                 let item = 0;
                 for (let i = start; i < end; i++) {
                     const t = tokens[i];
@@ -294,8 +295,8 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                         continue;
                     }
                     for (const child of t.children ?? []) {
-                        if (child.type === 'span_open') {
-                            spanLiteral.set(child, block.spanLiterals[span++]);
+                        if (carriesInlineLiteral(child)) {
+                            inlineLiteral.set(child, block.inlineLiterals[carrier++]);
                         }
                     }
                     let children = preprocessInline(engine, env, t.children ?? []);
@@ -449,8 +450,8 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 return { ...sourceOf(tok), markup, ...suffix };
             },
         },
-        // `[text]{…}`: the literal as the block's source spells it (`recoverSpanLiterals`).
-        span: { mark: 'attr_span', getAttrs: tok => ({ literal: spanLiteral.get(tok) ?? '{}' }) },
+        // `[text]{…}`: the literal as the block's source spells it (`recoverInlineLiterals`).
+        span: { mark: 'attr_span', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? '{}' }) },
         image: {
             node: 'image',
             getAttrs: tok => {
@@ -469,8 +470,10 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             node: 'emoji',
             getAttrs: tok => ({ source: (real(tok).meta as { source?: string } | null)?.source ?? '', name: real(tok).markup, glyph: real(tok).content }),
         },
-        em: { mark: 'em', getAttrs: tok => ({ markup: real(tok).markup || '*' }) },
-        strong: { mark: 'strong', getAttrs: tok => ({ markup: real(tok).markup || '**' }) },
+        // Emphasis and a link with a `{…}` after their closing delimiter carry it
+        // as their `literal`, as the source spells it (`recoverInlineLiterals`).
+        em: { mark: 'em', getAttrs: tok => ({ markup: real(tok).markup || '*', literal: inlineLiteral.get(tok) ?? null }) },
+        strong: { mark: 'strong', getAttrs: tok => ({ markup: real(tok).markup || '**', literal: inlineLiteral.get(tok) ?? null }) },
         link: {
             mark: 'link',
             getAttrs: tok => {
@@ -479,13 +482,14 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                     href: attr(t, 'href') ?? '',
                     title: attr(t, 'title'),
                     markup: t.markup === 'linkify' || t.markup === 'autolink' ? t.markup : null,
+                    literal: inlineLiteral.get(tok) ?? null,
                 };
             },
         },
         code_inline: { mark: 'code', noCloseToken: true },
         // The extension's inline syntax, each delimiter pair a mark.
-        mark: { mark: 'mark' },
-        s: { mark: 'strike' },
+        mark: { mark: 'mark', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
+        s: { mark: 'strike', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
         sup: { mark: 'sup' },
         sub: { mark: 'sub' },
         kbd: { mark: 'kbd' },

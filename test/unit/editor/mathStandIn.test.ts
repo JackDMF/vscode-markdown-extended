@@ -140,7 +140,7 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
                 const attrs = (all.find(t => t.type === type)?.attrs ?? []).map(([n, v]) => [n, v] as [string, string]);
                 const reads = attrs.length > 0 && !all.some(t => t.type === 'text' && /[{}]/.test(t.content)) && sameAttrs(attrs, joinAttrs(pairs));
                 const kept = groupSourceBlocks(host.parse(src, {}), splitLines(src), definition).blocks
-                    .some(b => b.attrs?.suffix === literal || b.spanLiterals.includes(literal) || b.itemLiterals.includes(literal));
+                    .some(b => b.attrs?.suffix === literal || b.inlineLiterals.includes(literal) || b.itemLiterals.includes(literal));
                 assert.strictEqual(kept, reads, `${literal} in a ${shape}: ${reads ? 'the host reads it, the editor must keep it' : 'the host shows it as text, the editor must not take it'}`);
                 read += reads ? 1 : 0;
                 text += reads ? 0 : 1;

@@ -38,7 +38,8 @@ import { domAttrsOf } from './attrs';
  * the page as the plugin's `p.admonition-title`, see `admonitionTitleSpec`).
  *
  * A `{…}` attribute literal is kept verbatim wherever the editor edits it — the
- * span mark's `literal`, a top-level block's `attrsSuffix` — and the element is
+ * span mark's `literal`, emphasis' and a link's `literal` (`_x_{.a}`), a
+ * top-level block's `attrsSuffix` — and the element is
  * drawn with the attributes the literal gives (`domAttrsOf`), so the page's
  * stylesheets style it as they style the preview.
  *
@@ -139,12 +140,36 @@ function headingDOM(node: Node): DOMOutputSpec {
 export const EMPHASIS_TAGS: Readonly<Record<string, string>> = { '*': 'i', '_': 'em', '**': 'b', '__': 'strong' };
 
 function emphasisDOM(mark: Mark): DOMOutputSpec {
-    return [EMPHASIS_TAGS[mark.attrs.markup as string] ?? (mark.type.name === 'em' ? 'i' : 'b')];
+    const tag = EMPHASIS_TAGS[mark.attrs.markup as string] ?? (mark.type.name === 'em' ? 'i' : 'b');
+    return mark.attrs.literal ? [tag, literalDOM(mark)] : [tag];
 }
 
-/** Each delimiter's element read back as that delimiter, so a copied `<em>` pastes as `_`, not `*`. */
-function emphasisParseRules(markups: readonly string[]): { tag: string; attrs: { markup: string } }[] {
-    return markups.map(markup => ({ tag: EMPHASIS_TAGS[markup], attrs: { markup } }));
+/** Each delimiter's element read back as that delimiter, so a copied `<em>` pastes as `_`, not `*`; with the literal it was drawn with. */
+function emphasisParseRules(markups: readonly string[]): (TagParseRule & { attrs: { markup: string } })[] {
+    return markups.map(markup => ({ tag: EMPHASIS_TAGS[markup], attrs: { markup }, getAttrs: (dom: HTMLElement) => ({ markup, literal: literalOfDOM(dom) }) }));
+}
+
+/**
+ * A mark's `{…}` literal written after its closing delimiter — emphasis',
+ * strikethrough's, a highlight's, a link's (`_x_{.a}`, `[x](u){.a}`): kept
+ * verbatim, `null` for none, and written back after that delimiter.
+ */
+const markLiteral = { literal: { default: null as string | null } };
+
+/**
+ * The attributes a mark with a literal is drawn with: what the literal gives
+ * (`domAttrsOf`), as the engine renders them on the element, and the literal
+ * itself in `data-mep-attrs`, by which a copy of it in the page pastes with
+ * it — as an attribute span's is (`attr_span`).
+ */
+function literalDOM(mark: Mark): Record<string, string> {
+    const literal = mark.attrs.literal as string;
+    return { ...domAttrsOf(literal), 'data-mep-attrs': literal };
+}
+
+/** The literal an element of the page was drawn with (`literalDOM`), or `null`: HTML from elsewhere carries none. */
+function literalOfDOM(dom: HTMLElement): string | null {
+    return dom.getAttribute('data-mep-attrs') || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -748,10 +773,14 @@ export const editorSchema = new Schema({
                 return ['span', { ...domAttrsOf(literal), 'data-mep-attrs': literal }, 0];
             },
         },
+        // A literal after the closing delimiter (`_x_{.a}`) is the mark's
+        // `literal`, drawn on its element (`literalDOM`); two runs with
+        // different literals are two marks, written each with its own.
         em: {
             attrs: {
                 /** `*` or `_`, as written. `markdown-it-ib` renders `*` as `<i>` and `_` as `<em>`, so the choice is visible. */
                 markup: { default: '*' },
+                ...markLiteral,
             },
             parseDOM: emphasisParseRules(['*', '_']),
             toDOM: emphasisDOM,
@@ -760,6 +789,7 @@ export const editorSchema = new Schema({
             attrs: {
                 /** `**` or `__`, as written; `markdown-it-ib` renders them as `<b>` and `<strong>`. */
                 markup: { default: '**' },
+                ...markLiteral,
             },
             parseDOM: emphasisParseRules(['**', '__']),
             toDOM: emphasisDOM,
@@ -767,12 +797,14 @@ export const editorSchema = new Schema({
         // `~~x~~` and `==x==` are delimiter runs like emphasis: any mark may be
         // inside them, and they may span a line break.
         strike: {
-            parseDOM: [{ tag: 's' }, { tag: 'del' }, { tag: 'strike' }],
-            toDOM(): DOMOutputSpec { return ['s']; },
+            attrs: markLiteral,
+            parseDOM: ['s', 'del', 'strike'].map(tag => ({ tag, getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }) })),
+            toDOM(mark: Mark): DOMOutputSpec { return mark.attrs.literal ? ['s', literalDOM(mark)] : ['s']; },
         },
         mark: {
-            parseDOM: [{ tag: 'mark' }],
-            toDOM(): DOMOutputSpec { return ['mark']; },
+            attrs: markLiteral,
+            parseDOM: [{ tag: 'mark', getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }) }],
+            toDOM(mark: Mark): DOMOutputSpec { return mark.attrs.literal ? ['mark', literalDOM(mark)] : ['mark']; },
         },
         link: {
             inclusive: false,
@@ -781,6 +813,7 @@ export const editorSchema = new Schema({
                 title: { default: null as string | null },
                 /** `linkify` for a bare URL, `autolink` for `<…>`, `null` for `[text](href)`. */
                 markup: { default: null as string | null },
+                ...markLiteral,
             },
             parseDOM: [{
                 tag: 'a[href]',
@@ -789,13 +822,17 @@ export const editorSchema = new Schema({
                 getAttrs: (dom: HTMLElement) => ({
                     href: dom.getAttribute('href'),
                     title: dom.hasAttribute(LINK_TITLE_ATTR) ? dom.getAttribute(LINK_TITLE_ATTR) || null : dom.getAttribute('title'),
+                    literal: literalOfDOM(dom),
                 }),
             }],
             toDOM(mark: Mark): DOMOutputSpec {
                 const href = mark.attrs.href as string;
                 const title = mark.attrs.title as string | null;
-                // Hovering says where a Ctrl+click goes (README, "Links").
-                return ['a', { href, title: title ? `${title}\n${href}` : href, [LINK_TITLE_ATTR]: title ?? '' }];
+                // Hovering says where a Ctrl+click goes (README, "Links"). A
+                // literal's attributes follow the href, as the engine renders
+                // them; none of them is an href or a title (`READ_BACK`).
+                const own = { href, title: title ? `${title}\n${href}` : href, [LINK_TITLE_ATTR]: title ?? '' };
+                return ['a', mark.attrs.literal ? { ...own, ...literalDOM(mark), ...own } : own];
             },
         },
         // Inside a link, not around one: `[[[x]]](url)` is a link holding a
