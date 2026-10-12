@@ -1,5 +1,21 @@
 # Change Log
 
+## Unreleased
+
+### ✨ Features
+
+- A link or emphasis with attributes after it (`[Source](…){.source}`, `_✓_{.colorize}`, also `**`, `__`, `~~`, `==`) no longer makes its block a source block; the `{…}` is saved as written.
+- The editor draws those attributes on the element, so a stylesheet rule for `a.source` or `em.colorize` applies while you edit.
+- A link's bar offers **Attributes…**; emphasis with attributes has a bar with **Edit attributes** and **Remove attributes, keep formatting**.
+- Switching `*` for `_`, or extending the emphasis over more text, keeps its attributes.
+
+### ⚠️ Limits
+
+- Attributes on inline code, an image, superscript, subscript or a key still keep their block a source block.
+- New attributes on emphasis are added in the text editor; the bar edits only ones it has.
+- A `{…}` typed as text right after a link or emphasis is saved escaped (`\{…\}`).
+- Splitting or copying a mark with `{#id}` writes the id twice, as for a span.
+
 ## v4.3.1 — Boxes That Hold the Bars
 
 ### 🐛 Bug Fixes

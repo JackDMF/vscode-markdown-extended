@@ -604,6 +604,43 @@ every attribute (`readsAsRuleLiteral`). A span in an admonition's title is part 
 title's string, not a mark: recovery skips the title's lines, as the parse skips its tokens,
 and the title's inline content is held to the same editability rules as any other.
 
+**Emphasis and a link carry theirs as a span does** (`_x_{.a}`, `**x**{.a}`, `~~x~~{.a}`,
+`==x=={.a}`, `[x](u){.a}`, `<u>{.a}`). markdown-it-attrs' "inline attributes" rule gives a
+`{…}` that starts the text right after a closing tag to the element that tag closes, so
+the literal belongs to that mark instance and stands right after its closing delimiter.
+The marks `em`, `strong`, `strike`, `mark` and `link` have a `literal` attribute (`null`
+for none); two runs with different literals are two marks, as two spans are. Recovery
+is the span's, generalised (`recoverInlineLiterals`, `INLINE_LITERAL_HOLDERS` in
+`blocks.ts`): the literals are matched in the order the marks *close* — a link's after the
+emphasis inside it — to the next `{…}` that follows such a mark's closing character (`]`,
+`)`, `>`, the delimiter's last character) and reads on that mark as exactly its token's
+attributes (`readsBackAs`, holders `em`, `strong`, `strike`, `mark`, `link` in
+`READ_BACK`), and handed to the opening tokens in order (`SourceBlock.inlineLiterals`).
+Where none matches — a second literal the plugin merged in (`_x_{.a}{.b}`), a bare
+address — the normalized form is written. A link's `href` and `title` are the link's, so
+a literal that sets either is none. The element is drawn with the literal's attributes
+and `data-mep-attrs` (`literalDOM` in `schema.ts`), so `em.colorize` and `a.source`
+apply in the page and a copy in the page pastes with its literal. The serializer writes
+the literal held right after the closing delimiter (`withMarkLiteral`); a link with one is
+never written bare, and a `_` closer followed by a letter keeps its `_`, since the literal
+stands between. Superscript, subscript, a key, inline code and an image keep their block a
+source block when they carry a literal.
+
+Two checks keep a save from reading attributes elsewhere. The read-back
+(`markLiteralVerdict`) holds every run of these marks to its own token, kind by kind,
+where the parser opens as many tokens of a kind as there are runs — so a literal read on
+the emphasis before its own counts as lost — and matches the literals in order to the
+tokens given attributes where the counts differ. And brace escaping (`literalCutsIn`)
+counts a cut that is the first after such a closing tag as the mark's own only while the
+marks hold the literals their runs carry (`ownedLiterals`): a text `{b}` the plugin joined
+to a link's `{.x}`, or a `{.y}` typed after an earlier emphasis, is escaped, never the
+literal. The toolbar's mark toggle keeps the literal of the run it extends or gives the
+other delimiter (`addKeepingLiterals` in `toolbar/commands.ts`); taking the mark off part
+of a run leaves the literal on the rest. A link's bar has **Attributes…**, and a run of
+emphasis, strikethrough or a highlight carrying a literal is an object of its own
+(`styled`), with **Edit attributes** and **Remove attributes, keep formatting**; both go
+through `changeMarkLiteralTransaction`, which `{}` or an empty field makes a removal.
+
 **A block's literal carries where it stood** (`attrsPlacement`, `AttrsPlacement` in
 `blocks.ts`): `end` — after a space at the end of the last line (a paragraph's
 `text {.a}`, a fence's opening line, a rule's `--- {#id}`); `line` — a line of its own

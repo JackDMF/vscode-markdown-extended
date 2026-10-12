@@ -361,7 +361,11 @@ blocks and horizontal rules, and inside them:
   heading may hold a note too;
 - attribute spans (`[text]{.class}`, `[text]{#id style="…"}`), drawn with exactly the
   attributes the preview gives them, so your stylesheets style them for real; the `{…}`
-  is kept as you wrote it.
+  is kept as you wrote it;
+- attributes after a link or emphasis (`[Source](https://…){.source}`, `_✓_{.colorize}`,
+  `**x**{#id}`, `~~x~~{.c}`, `==x=={.c}`), drawn on the link's or the emphasis' element as
+  the preview draws them — a rule for `a.source` or `em.colorize` applies in the editor —
+  and written back as you wrote them, right after the closing delimiter.
 
 And these blocks, edited in place with their content as rich text:
 
@@ -448,8 +452,9 @@ are typing on, and never moves the page.
 | ------ | ------------- | ----- |
 | Sidenote, marginal note | while the caret is inside, after a moment | **Remove note, keep text** · **Convert to marginal note** / **Convert to sidenote** · **Edit source** |
 | Left or right sidebar | while the caret is inside, after a moment | **Remove sidebar, keep text** · **Move to right** / **Move to left** · **Edit source** |
-| Link | while the caret is in its text, after a moment | **Open** · **Edit link…** · **Remove link** |
+| Link | while the caret is in its text, after a moment | **Open** · **Edit link…** · **Attributes…** (its `{…}`; `{}` or empty removes it) · **Remove link** |
 | Span (`[text]{…}`) | while the caret is in its text, after a moment | **Edit attributes** · **Remove attributes, keep text** |
+| Emphasis, strikethrough or highlight with attributes (`_x_{…}`) | while the caret is in its text, after a moment | **Edit attributes** · **Remove attributes, keep formatting** |
 | Image | when you click it, after a moment | **Edit image…** (its alt text, then its path) · **Open file** · **Remove image** |
 | Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Attributes…** (disabled: the plugin gives a `{…}` to the title bar) · **Remove admonition, keep content** |
 | Container | while the caret is in it, after a moment | **Change name/info** · **Attributes…** (disabled: the editor keeps no `{…}` on a `:::` line; a container written with one is a source block) · **Remove container, keep content** |
@@ -789,9 +794,9 @@ place — each for a reason:
 - **Tables using markdown-it-multimd-table's extensions, raw HTML and the rest of the extended syntax** — the table of contents,
   footnotes and their definitions, definition lists, task lists, abbreviations, reference
   definitions, setext headings — are *source blocks*, and so is a block whose attributes
-  the editor could not write back where they stand: on a list item, a link, emphasis, an
-  image, inline code, a quote, a block inside another, a container, or an admonition's
-  title; a span whose `{…}` holds a quoted `}`, which the plugin cuts short; a container
+  the editor could not write back where they stand: on an image, inline code, superscript,
+  subscript or a key, a block inside another, a container, or an admonition's title; a
+  span, a link or emphasis whose `{…}` holds a quoted `}`, which the plugin cuts short; a container
   or admonition nested more than one level deep, or closed by its parent's fence rather
   than its own. Hover or
   select one and choose **Edit source** in its bar — or double-click it — to edit its
@@ -846,6 +851,18 @@ rather than a second heading, so the id and the anchor are never written twice.
   item the `{…}` line could no longer reach is written with the `{…}` after a blank line,
   which markdown-it-attrs also gives the list. Changing a block's type keeps its
   attributes; splitting it leaves them on the first half.
+- **Attributes on a link or on emphasis belong to that mark.** Typing inside it keeps them;
+  extending the emphasis over more text, or switching `*` for `_`, keeps them; taking the
+  emphasis off part of it leaves them on the rest. A paragraph split inside the mark, or
+  the mark copied, gives both pieces the same `{…}` — an `{#id}` then stands twice, as it
+  does for a span. A `{…}` you type as text right after a link or emphasis is written
+  escaped (`\{…\}`), so it stays text. An edit after which the preview would read the
+  attributes differently is refused, with the reason beside the caret. Emphasis gets its
+  first attributes only in the text editor (or as a span with **Span with class**); a link
+  gets them from **Attributes…** on its bar. A bare web address with attributes is written
+  `[address](address){…}`, and two `{…}` after one mark (`_x_{.a}{.b}`) are written as one
+  (`{.a .b}`) once the block changes. Nested marks may be written the other way round
+  (`**_x_{.a}**{.b}` as `_**x**{.b}_{.a}`), which the preview reads as the same attributes.
 - **A note holds no note.** The notes plugin allows a note of another kind inside one
   (`++a|see !!b|c!!++`); a paragraph written so stays a source block.
 - **Some characters cannot be in inline code inside a note.** The notes plugin finds a
