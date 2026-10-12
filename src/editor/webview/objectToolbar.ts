@@ -44,6 +44,7 @@ import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './note
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
 import { clearPendingRange, showPendingRange } from './pendingRange';
+import { FocusPlace, focusPlace } from './focusPlace';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
@@ -892,13 +893,26 @@ class ObjectToolbarView implements PluginView {
         this.listeners.push([target, type, listener, capture]);
     }
 
-    /** The focus is in the editor or a bar — or a bar's field is open: it keeps itself open while the window is away (`InlineField`). */
-    private focusInside(): boolean {
-        if (this.selectionBar.editing) {
-            return true;
+    /**
+     * The object the selection's bar is for, by where the focus is
+     * (`focusPlace.ts`): the selection's while the text or the editor's own
+     * controls have it; while a node view's control has it — a source box, a
+     * property's field — the selection is hidden behind it, and the bar is the
+     * control's block's; elsewhere, none. A bar's open field counts as the
+     * bars' however the focus left: it keeps itself open while the window is
+     * away (`InlineField`).
+     */
+    private selectionObject(): EditorObject | null {
+        const place: FocusPlace = this.selectionBar.editing ? { kind: 'chrome' } : focusPlace(this.view);
+        switch (place.kind) {
+            case 'text':
+            case 'chrome':
+                return objectAtSelection(this.view.state);
+            case 'control':
+                return place.owner === null ? null : objectOfNode(place.owner.node, place.owner.pos);
+            case 'away':
+                return null;
         }
-        const active = document.activeElement;
-        return active !== null && (this.view.dom.contains(active) || this.selectionBar.el.contains(active) || this.hoverBar.el.contains(active));
     }
 
     private cancelPending(): void {
@@ -914,7 +928,7 @@ class ObjectToolbarView implements PluginView {
         if (this.destroyed) {
             return;
         }
-        const object = this.focusInside() ? objectAtSelection(this.view.state) : null;
+        const object = this.selectionObject();
         if (object === null) {
             this.cancelPending();
             this.matured = null;
@@ -1034,7 +1048,9 @@ class ObjectToolbarView implements PluginView {
     private refreshHover(): void {
         const object = this.hoveredObject();
         // The cheap reasons first: the presentation asks for code actions and lenses.
+        // While a node view's control has the focus nothing else is offered: the control is the edit.
         const presentation = object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object)) || selectionBubbleShown(this.view)
+            || focusPlace(this.view).kind === 'control'
             ? null
             : this.present(object);
         if (object === null || presentation === null || barless(object, presentation)) {
@@ -1598,24 +1614,29 @@ class ObjectToolbarView implements PluginView {
                     verbs: [],
                 };
             }
-            case 'raw_block':
+            case 'raw_block': {
+                // While its own source box has the focus, the box is the edit: no Edit source to offer.
+                const place = focusPlace(view);
+                const editing = place.kind === 'control' && place.owner?.pos === object.from;
+                const editSource: Verb = {
+                    id: 'edit-source',
+                    label: 'Edit source',
+                    title: 'Edit this block as Markdown (Ctrl+Enter to apply, Esc to cancel).',
+                    run: () => {
+                        if (currentObject(view.state, object)) {
+                            editRawSourceAt(view, object.from);
+                        }
+                    },
+                };
                 return {
                     ...rawBlockLabel(object.node.attrs.construct as string | null),
                     verbs: [
-                        {
-                            id: 'edit-source',
-                            label: 'Edit source',
-                            title: 'Edit this block as Markdown (Ctrl+Enter to apply, Esc to cancel).',
-                            run: () => {
-                                if (currentObject(view.state, object)) {
-                                    editRawSourceAt(view, object.from);
-                                }
-                            },
-                        },
+                        ...(editing ? [] : [editSource]),
                         this.showInTextEditor(object),
                         { id: 'delete-block', label: 'Delete block', title: 'The block goes from the file.', run: () => this.remove(object, 'Block deleted') },
                     ],
                 };
+            }
             case 'injected_block': {
                 const kind = object.node.attrs.kind as string;
                 const mark = object.node.attrs.mark as { snippet?: unknown; path?: unknown; missing?: unknown } | null;

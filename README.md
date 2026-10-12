@@ -455,7 +455,7 @@ are typing on, and never moves the page.
 | Container | while the caret is in it, after a moment | **Change name/info** · **Attributes…** (disabled: the editor keeps no `{…}` on a `:::` line; a container written with one is a source block) · **Remove container, keep content** |
 | A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Attributes…** (`{}` or empty removes them) |
 | Table | while the caret is in it, after a moment; the caret's column is tinted | **Row** (insert above, insert below, delete) · **Column** (insert left, insert right, delete) · **Align** (left, center, right; the current one marked) · **Attributes…** · **Edit source** · **Delete table** |
-| Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected | **Edit source** · **Show in text editor** · **Delete block** |
+| Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected, or its box is open | **Edit source** (not while its box is open) · **Show in text editor** · **Delete block** |
 | Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Change snippet…** · **Show in text editor** · **Delete directive** |
 | A status badge, a summary table | as above | its name only |
 | Front matter | — | its verbs are the properties panel's header (below); the bar shows only for other extensions' actions |
@@ -482,6 +482,11 @@ have for that block**, after its own verbs (see below).
   comes back as a note — of whichever kind its markers now say — or, if it no longer is
   one, as the text you typed. A source block's **Edit source** opens its Markdown in the
   block itself, as before (below).
+- **A box in the text has the bars to itself.** While a source block's box or a property's
+  field has the focus, what is selected in the text is not what you are editing: the
+  block's bar offers only **Show in text editor** and **Delete block**, no other bar shows,
+  and the formatting row is off, its tooltips saying why. Apply or cancel (`Ctrl+Enter`,
+  `Esc`), or click into the text, and they are back.
 - The note buttons in the Annotation menu and the bubble still remove a note too: inside
   one they show as active, and choosing one removes it, text kept.
 
@@ -750,7 +755,10 @@ field before you point at it; the read-only id has none. Pointing at a row, or t
 shows a small `×` right after its value that removes the key — `Shift+Delete` in the row does
 the same — announced as *Removed key — Ctrl+Z*; `Ctrl+Z` in the panel is the editor's undo, so the key
 comes back. **Edit as source** and a nested row's link open the YAML between the `---`
-lines in a box (`Ctrl+Enter` or clicking away applies, `Esc` cancels). A document without
+lines in a box (`Ctrl+Enter` or clicking away applies, `Esc` cancels). While a row, the box
+or the header's buttons have the focus, the formatting row is off and no bar shows for what
+is selected in the text; `Esc` until the caret is back in the text, or a click into it,
+brings them back. A document without
 front matter has no panel; **Insert → Properties** adds one at the top and asks for the
 first key.
 
@@ -780,7 +788,8 @@ place — each for a reason:
   or admonition nested more than one level deep, or closed by its parent's fence rather
   than its own. Hover or
   select one and choose **Edit source** in its bar — or double-click it — to edit its
-  Markdown in place: `Ctrl+Enter` or clicking away applies it, `Esc` cancels. Or choose
+  Markdown in place: `Ctrl+Enter` or clicking away applies it, `Esc` cancels; while the box
+  is open, its bar is the only one, and the formatting row waits. Or choose
   **Show in text editor** to jump to it. A source block that you edit back into plain Markdown (the
   inline HTML removed, say) becomes an ordinary paragraph again once applied.
   Checkboxes and other controls in a rendered block are shown, not clicked: the file is

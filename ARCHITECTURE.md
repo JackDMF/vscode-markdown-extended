@@ -999,7 +999,10 @@ in the text, so while one has the focus the page reports the caret as none (`inP
 in `main.ts`, and a `focusin`/`focusout` listener that reports again) and
 `visualEditor.active()` answers `caret: undefined`. The object toolbar draws no bar for the
 front matter's label alone (`barless`, which a heading shares): its verbs are the panel's
-header, and the bar carries only other extensions' code actions, when there are some.
+header, and the bar carries only other extensions' code actions, when there are some. While
+a field, the source box or a header button has the focus, the selection hidden behind the
+panel gets no bar and the formatting row is refused: the panel's controls are `control` in
+`focusPlace.ts` (below, "The object toolbar").
 
 **Insert → Properties** (`insert-properties`, `insertPropertiesTransaction`) inserts a
 `front_matter` node holding `---` twice, in the document's line ending, as the first node,
@@ -1446,8 +1449,10 @@ The layers:
   pipe table (above, "Tables"). `wrap-source` and `insert-source` are for what the core does
   not edit — the footnote and the other block constructs (below).
 - **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
-  active and disabled states per action, the block-type face (the current type's name,
-  locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
+  active and disabled states per action — every one refused with `CONTROL_LOCK` while a
+  node view's control has the focus (`focusPlace.ts`), read again on every `focusin` and
+  `focusout`, since a box taking the focus changes no state — the block-type face (the
+  current type's name, locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
   `Enter`, `Esc`), the card, the bubble (placed from `coordsAtPos` inside `.mep-editor`,
   above the selection where that covers no content and is clear of the fixed row, else
   beside the block — just right of its box, on the selection's line, where the block is
@@ -1557,7 +1562,20 @@ jump from word to word. There are two bar instances, one following the selection
 the pointer, so the two triggers never fight over one element: typing in a note with the
 pointer resting on a table shows both, and the pointer's bar hides while it would show
 what the selection's already shows. The selection's bar shows only while the focus is in
-the editor or in a bar. `Alt+Enter` (a `handleKeyDown` prop, which no other keymap
+the editor or in its chrome — the formatting row, the bubble, a menu, a bar. *Where the
+focus is* has one answer, `webview/focusPlace.ts`, which every bar reads and nothing
+writes: `text` (the editable root), `chrome` (inside the editor's mount, outside the text's
+element), `control` (inside the text's element but not the root: a source box, a property's
+field, the properties' header buttons — with the block that owns it, found by the element
+ProseMirror drew for it), `away`. While a `control` has the focus the selection is still
+there, hidden behind it, so no bar may act on it: the selection's bar is the owning block's
+(a source block's without **Edit source**, its box being the edit; the front matter's,
+barless), the pointer's bar is hidden, and the formatting row refuses everything with the
+reason (`CONTROL_LOCK`). It is the focus, not an open box: after `Esc` out of the YAML box
+the focus is on the header's **Edit as source**, and the bars wait for the next `Esc` or a
+click into the text (Daniel, 2026-10-12). Four surfaces used to answer the question with
+four predicates, and the row's Bold applied to the hidden selection behind an open box.
+`Alt+Enter` (a `handleKeyDown` prop, which no other keymap
 binds) skips the delay and focuses the first verb; the arrow keys move between verbs
 (wrapping), `Enter` chooses, `Esc` returns the focus to the text.
 
