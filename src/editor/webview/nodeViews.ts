@@ -1,5 +1,6 @@
 import { DOMOutputSpec, DOMSerializer, Node } from 'prosemirror-model';
 import { EditorView, NodeView, ViewMutationRecord } from 'prosemirror-view';
+import type { DeclaredControl } from './focusPlace';
 import { followLinksIn } from './links';
 
 /** What the node views need from the page around them. */
@@ -288,13 +289,13 @@ const rawBlockViews = new WeakMap<globalThis.Node, RawBlockView>();
 
 /**
  * The control a raw block declares for `el` (`focusPlace.ts`): its open
- * source box, a field, when `el` is in it; `null` for anything else — a link
- * or a `<summary>` in its rendering is not its control.
+ * source box, when `el` is in it; `null` for anything else — a link or a
+ * `<summary>` in its rendering is not its control.
  */
-export function rawBlockControl(el: Element): { pos: number | undefined; field: boolean } | null {
+export function rawBlockControl(el: Element): DeclaredControl | null {
     const atom = el.closest('.mep-raw-block');
     const rawView = atom ? rawBlockViews.get(atom) : undefined;
-    return rawView?.holdsFocusOf(el) ? { pos: rawView.position(), field: true } : null;
+    return rawView?.holdsFocusOf(el) ? { pos: rawView.position(), role: 'source' } : null;
 }
 
 /** Open the **Edit source** box of the raw block at `pos`. False when there is no raw block there. */

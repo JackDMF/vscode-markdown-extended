@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot, MOD, SHOTS_DIR, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { LOCK_FIELD, assertRowFree, assertRowLocked } from './rowLock';
+import { LOCK_SOURCE, MOD_NAME, assertRowFree, assertRowLocked } from './rowLock';
 import { DARK_MODERN, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 const TABLE = '| a | b |\n| = | = |\n| 1 | 2 |\n';
@@ -20,7 +20,12 @@ const SOURCE = [
     '',
 ].join('\n');
 
-/** An editable table, words, and a source block (a multimd table, for its caption and span); words between, or multimd reads one table with two bodies. */
+/**
+ * An editable table with a source block right after it — where an emptied
+ * box's block, once removed, would leave the next one standing — words, and a
+ * source block (a multimd table, for its caption and span); words between, or
+ * multimd reads one table with two bodies.
+ */
 const BOXES = [
     'Alpha beta gamma.',
     '',
@@ -28,6 +33,8 @@ const BOXES = [
     '| ---- | ----: |',
     '| first | 1 |',
     '| second | 2 |',
+    '',
+    '<div>after block</div>',
     '',
     'Between the tables.',
     '',
@@ -338,7 +345,7 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await openEditableTableSource();
         assert.strictEqual((await area()).focused, true);
         assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block']);
-        await assertRowLocked(page, 'the box open', LOCK_FIELD);
+        await assertRowLocked(page, 'the box open', LOCK_SOURCE);
 
         await page.mouse.move(...Object.values(await centre('.mep-raw-editor')) as [number, number]);
         await delay(300);
@@ -380,11 +387,12 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await clickVerb('delete-block');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Intro.\n\n<div>second block</div>\n\nOutro.\n', 'the second block stays');
+        assert.deepStrictEqual(await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden })), { text: `Block deleted — ${MOD_NAME}+Z`, shown: true }, 'the deletion says so');
         await undoOnce();
         assert.strictEqual((await lastEdit())?.text, two, 'one undo');
     });
 
-    test('the same for the editable table\'s box: emptied, then Delete block, the next block stays', async function () {
+    test('the same for the editable table\'s box: emptied, then Delete block, the source block after it stays', async function () {
         this.timeout(15000);
         await showBoxes();
         await openEditableTableSource();
@@ -393,6 +401,8 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await settle();
         const edit = await lastEdit();
         assert.strictEqual(edit?.text, BOXES.replace('| Kind | Count |\n| ---- | ----: |\n| first | 1 |\n| second | 2 |\n\n', ''), 'the table goes, nothing else');
+        assert.ok(edit.text.includes('<div>after block</div>'), 'the block after it stays');
+        assert.strictEqual(await page.$eval('.mep-hint', el => el.textContent), `Block deleted — ${MOD_NAME}+Z`);
     });
 
     test('a source block\'s Edit source: its bar without Edit source, labelled as before; no other bar; the row refused', async function () {
@@ -404,7 +414,7 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await page.mouse.move(...Object.values(await centre('.mep-raw-editor')) as [number, number]);
         await delay(300);
         assert.strictEqual(await page.$(HOVER_BAR), null);
-        await assertRowLocked(page, 'the box open', LOCK_FIELD);
+        await assertRowLocked(page, 'the box open', LOCK_SOURCE);
         await page.keyboard.press('Escape');
         await delay(80);
         assert.strictEqual(await page.$(SELECTION_BAR), null, 'no bar after Esc');
@@ -414,12 +424,13 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         this.timeout(15000);
         await showBoxes();
         // An action lens: a verb of the block's bar, not a row above it.
-        await (editor as EditorPage).send({ type: 'lenses', version, blocks: 5, rows: [{ blockIndex: 3, items: [{ id: 'l.0', title: 'A lens', surface: 'action', artifact: 'FRS-TST-001' }] }] });
+        await (editor as EditorPage).send({ type: 'lenses', version, blocks: 6, rows: [{ blockIndex: 4, items: [{ id: 'l.0', title: 'A lens', surface: 'action', artifact: 'FRS-TST-001' }] }] });
         await delay(100);
         await page.mouse.move(...Object.values(await centre('.mep-raw-block .mep-atom-content table')) as [number, number]);
         await clickAt(await centre('.mep-raw-block .mep-atom-content table'));
         await page.waitForSelector(SELECTED_BLOCK_BAR);
         assert.ok((await verbsOf(SELECTED_BLOCK_BAR)).includes('lens:l.0'), 'the lens is a verb while the box is closed');
+        assert.match(await page.$eval(`${SELECTED_BLOCK_BAR} [data-verb="edit-source"]`, el => (el as HTMLElement).title), new RegExp(`\\(${MOD_NAME}\\+Enter to apply, Esc to cancel\\)`), 'Edit source names the platform\'s key');
         await clickVerb('edit-source');
         await page.waitForSelector('.mep-raw-editor');
         await delay(80);
@@ -462,22 +473,26 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         assert.ok((await lastEdit())?.text.includes('| South | 5 | 6 |'), 'the typing is in the document');
     });
 
-    test('a source box\'s bar, shot in light and dark', async function () {
+    test('a source box\'s bar, shot in light and dark at full width, ~600 and ~400 px', async function () {
         if (!SHOTS_DIR) {
             return;
         }
-        this.timeout(60000);
+        this.timeout(90000);
         const themes: [Theme, string][] = [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']];
         try {
             for (const [theme, name] of themes) {
                 await applyTheme(page, theme);
-                await showBoxes();
-                await openEditableTableSource();
-                assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block']);
-                await shot(page, `B1-${name}-after-open.png`);
-                await page.keyboard.press('Escape');
+                for (const width of [1200, 600, 400]) {
+                    await page.setViewport({ width, height: 900 });
+                    await showBoxes();
+                    await openEditableTableSource();
+                    assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block']);
+                    await shot(page, `B1-${name}-${width}-after-open.png`);
+                    await page.keyboard.press('Escape');
+                }
             }
         } finally {
+            await page.setViewport({ width: 1200, height: 900 });
             await applyTheme(page, LIGHT_MODERN);
         }
     });

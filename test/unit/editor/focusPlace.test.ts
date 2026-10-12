@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { DeclaredControl, placeOf } from '../../../src/editor/webview/focusPlace';
+import { DeclaredControl, panelRole, placeOf } from '../../../src/editor/webview/focusPlace';
 
 /** An element as `placeOf` reads one: its parent, and `contains` as the DOM answers it (an element contains itself). */
 class FakeElement {
@@ -40,9 +40,9 @@ suite('Editor focus place', () => {
     const elsewhere = new FakeElement(body);
 
     const declared = new Map<FakeElement, DeclaredControl>([
-        [box, { pos: 7, field: true }],
-        [panelField, { pos: 0, field: true }],
-        [panelButton, { pos: 0, field: false }],
+        [box, { pos: 7, role: 'source' }],
+        [panelField, { pos: 0, role: 'property' }],
+        [panelButton, { pos: 0, role: 'button' }],
     ]);
     const read = {
         control: (el: FakeElement) => declared.get(el) ?? null,
@@ -54,10 +54,10 @@ suite('Editor focus place', () => {
         assert.deepStrictEqual(at(root), { kind: 'text' });
     });
 
-    test('a control a node view declares is a control, a field or a button, with the position of its block', () => {
-        assert.deepStrictEqual(at(box), { kind: 'control', control: { pos: 7, field: true } });
-        assert.deepStrictEqual(at(panelField), { kind: 'control', control: { pos: 0, field: true } });
-        assert.deepStrictEqual(at(panelButton), { kind: 'control', control: { pos: 0, field: false } });
+    test('a control a node view declares is a control — a source box, a property\'s field or a button — with the position of its block', () => {
+        assert.deepStrictEqual(at(box), { kind: 'control', control: { pos: 7, role: 'source' } });
+        assert.deepStrictEqual(at(panelField), { kind: 'control', control: { pos: 0, role: 'property' } });
+        assert.deepStrictEqual(at(panelButton), { kind: 'control', control: { pos: 0, role: 'button' } });
     });
 
     test('anything else inside the root — a lens, a link in a rendering, the atom itself — is content, not a control', () => {
@@ -77,5 +77,15 @@ suite('Editor focus place', () => {
         assert.deepStrictEqual(at(elsewhere), { kind: 'away' });
         assert.deepStrictEqual(at(null), { kind: 'away' });
         assert.deepStrictEqual(at(mount, null), { kind: 'away' }, 'no mount: nothing is chrome');
+    });
+
+    test('in the properties panel: the YAML box is a source box, any other text a property\'s field, the native date input too, the rest a button', () => {
+        assert.strictEqual(panelRole({ tag: 'TEXTAREA', sourceBox: true }), 'source');
+        assert.strictEqual(panelRole({ tag: 'INPUT', type: 'text', sourceBox: false }), 'property');
+        assert.strictEqual(panelRole({ tag: 'INPUT', type: 'date', sourceBox: false }), 'property');
+        assert.strictEqual(panelRole({ tag: 'TEXTAREA', sourceBox: false }), 'property');
+        assert.strictEqual(panelRole({ tag: 'INPUT', type: 'checkbox', sourceBox: false }), 'button');
+        assert.strictEqual(panelRole({ tag: 'BUTTON', sourceBox: false }), 'button');
+        assert.strictEqual(panelRole({ tag: 'SPAN', sourceBox: false }), 'button', 'a chip or a copyable id: pressed, not typed in');
     });
 });

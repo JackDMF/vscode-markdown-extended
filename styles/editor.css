@@ -1285,23 +1285,37 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 
 /*
  * Why the row is refused while a source box or the properties panel has the
- * focus, and the way back (`toolbar.ts`, `showLock`): text, not grey alone. A
- * press on a refused tool points at it for a moment (`-flash`).
+ * focus, and the way back (`toolbar.ts`, `showLock`): text, not grey alone —
+ * a pale note on the info tint, as sketched. It takes the room the tools leave
+ * before the count, and is not pinned: where the row is too narrow it is cut
+ * with an ellipsis, down to nothing, rather than covering a tool; the whole
+ * text stays the row's description and each tool's tooltip. The tint is on
+ * the text inside, so a reason cut to nothing leaves no sliver. A press on a
+ * refused tool points at it for a moment (`-flash`) in the refusal's amber, as
+ * the caret hint's refusal is marked (`.mep-hint[data-tone="refusal"]`).
  */
 .mep-row-lock {
-    box-sizing: border-box;
-    padding: 1px 8px;
-    margin-right: 6px;
-    border-radius: 3px;
-    font-size: 12px;
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
     white-space: nowrap;
-    color: var(--vscode-descriptionForeground, #717171);
-    outline: 1px solid transparent;
+    text-overflow: ellipsis;
+    font-size: 12px;
 }
 .mep-row-lock[hidden] { display: none; }
-.mep-row-lock.mep-row-lock-flash {
+.mep-row-lock:not([hidden]) + .mep-row-status { margin-left: 0; }
+.mep-row-lock-text {
+    padding: 1px 8px;
+    border-radius: 3px;
     color: var(--vscode-foreground, CanvasText);
-    outline-color: var(--vscode-focusBorder, #0078d4);
+    background: var(--vscode-inputValidation-infoBackground, #d6ecf2);
+    outline: 1px solid var(--vscode-contrastBorder, transparent);
+    outline-offset: -1px;
+}
+.mep-row-lock.mep-row-lock-flash > .mep-row-lock-text {
+    outline: 1px solid var(--vscode-editorWarning-foreground, #bf8803);
+    box-shadow: inset 3px 0 0 var(--vscode-editorWarning-foreground, #bf8803);
 }
 
 .mep-diag-count {

@@ -485,9 +485,11 @@ have for that block**, after its own verbs (see below).
 - **A box in the text has the bars to itself.** While a source block's box or the
   properties panel has the focus, what is selected in the text is not what you are
   editing: the block's bar offers only **Show in text editor** and **Delete block**, no
-  other bar shows, and the formatting row is off, saying why at its right end —
-  *Editing source · Ctrl+Enter apply · Esc cancel* (`Cmd` on macOS) — and pointing at that
-  when you press one of its buttons. A source block's box gives the focus up when it
+  other bar shows, and the formatting row is off, saying why at its right end — in a
+  source box *Editing source · Ctrl+Enter apply · Esc cancel* (`Cmd` on macOS), in a
+  property's field *Editing a property · Enter apply · Esc cancel* — and pointing at that
+  when you press one of its buttons. Where the row is too narrow the reason is cut short
+  rather than covering a button; its tooltips still say it. A source block's box gives the focus up when it
   closes (`Ctrl+Enter`, `Esc`): click into the text, and the bars are back there. A lens,
   a status badge or a link in a rendered block takes the focus without any of this.
 - The note buttons in the Annotation menu and the bubble still remove a note too: inside

@@ -1451,10 +1451,13 @@ The layers:
   not edit — the footnote and the other block constructs (below).
 - **`toolbar.ts`** — the DOM, as a ProseMirror plugin view, so it follows every state:
   active and disabled states per action — every one refused while a node view's control
-  has the focus (`focusPlace.ts`), the reason (`controlLock`: a field's *Editing source ·
-  Ctrl+Enter apply · Esc cancel*, a button's *Focus is outside the text · Esc or click into
-  the text*) shown at the row's right end, as its `aria-description` and in each tooltip,
-  and pointed at when a refused tool is pressed; read again once per focus move, since a
+  has the focus (`focusPlace.ts`), the reason (`controlLock`, by the control's `role`: a
+  source box's *Editing source · Ctrl+Enter apply · Esc cancel*, a property's field's
+  *Editing a property · Enter apply · Esc cancel*, a button's *Focus is outside the text ·
+  Esc or click into the text*) shown in the room the tools leave before the status — not
+  pinned, so a narrow row cuts it with an ellipsis, down to nothing, rather than covering a
+  tool — as its `aria-description` and in each tooltip, and pointed at in the refusal's
+  amber when a refused tool is pressed; read again once per focus move, since a
   box taking the focus changes no state — the block-type face (the
   current type's name, locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
   `Enter`, `Esc`), the card, the bubble (placed from `coordsAtPos` inside `.mep-editor`,
@@ -1573,7 +1576,8 @@ element — `field` when it is an inline field: the row's own **Insert → Link�
 then the one bar, and the selection's is not shown beside it); `control`, only what a node
 view *declares* its control — a raw block's open source box (`rawBlockControl`), anything
 in the properties panel (`panelControl`), each found from the focused element through the
-view's own `WeakMap` with the block's `getPos`, and each a `field` or a button; `content`
+view's own `WeakMap` with the block's `getPos`, each with its `role` — a source box, a
+property's field (the native date input included), or a button (`panelRole`); `content`
 (anything else in the text's element that takes the focus — another extension's lens, a
 status badge, a summary table's cell, a link or `<summary>` in a rendering: the bars read
 the selection as for the text, the row stays offered, but there is no bubble); `away`.

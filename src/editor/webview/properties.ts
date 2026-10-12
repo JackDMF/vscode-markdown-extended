@@ -32,6 +32,7 @@ import {
     removeItem, removeProperty, setBoolean, setText, splitFrontMatter,
 } from '../frontMatter';
 import { CompletionListView } from './completionList';
+import { DeclaredControl, panelRole } from './focusPlace';
 import { undoKey } from './hint';
 import { EditorPort, SourceEditor, element, isUndoRedo } from './nodeViews';
 
@@ -53,17 +54,17 @@ const panels = new WeakMap<globalThis.Node, PropertiesView>();
 
 /**
  * The control the panel declares for `el` (`focusPlace.ts`): anything in it —
- * a field (the source box, a row's text) or a button (the header's, a row's ×,
- * a checkbox) — `null` outside every panel.
+ * its YAML box, a property's field, a button (the header's, a row's ×, a
+ * checkbox), as `panelRole` tells them apart — `null` outside every panel.
  */
-export function panelControl(el: Element): { pos: number | undefined; field: boolean } | null {
+export function panelControl(el: Element): DeclaredControl | null {
     const dom = el.closest('.mep-properties');
     const panel = dom ? panels.get(dom) : undefined;
     if (!panel) {
         return null;
     }
-    const field = el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !/^(checkbox|radio|button|submit|reset|color|file|range)$/.test(el.type));
-    return { pos: panel.position(), field };
+    const type = el instanceof HTMLInputElement ? el.type : undefined;
+    return { pos: panel.position(), role: panelRole({ tag: el.tagName, type, sourceBox: el.classList.contains('mep-props-editor') }) };
 }
 
 /** Open the panel at `pos` and start adding a property. False when there is no panel there. */

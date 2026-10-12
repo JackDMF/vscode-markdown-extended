@@ -2,9 +2,9 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, MOD, SHOTS_DIR, editCommand } from './pageHarness';
+import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, showDiagnostics, MOD, SHOTS_DIR, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { LOCK_BUTTON, LOCK_FIELD, assertRowFree, assertRowLocked } from './rowLock';
+import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, assertReasonFits, assertRowFree, assertRowLocked } from './rowLock';
 import { DARK_MODERN, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 /** A Req Explorer workshop note's front matter, as that corpus writes one, shortened. */
@@ -552,7 +552,7 @@ suite('Editor properties panel (e2e)', () => {
         await delay(80);
         assert.strictEqual(await activeClass(), 'mep-raw-editor mep-props-editor');
         assert.strictEqual(await page.$(SELECTION_BAR), null, 'the table\'s bar is not offered while the box has the focus');
-        await assertRowLocked(page, 'YAML box open', LOCK_FIELD);
+        await assertRowLocked(page, 'YAML box open', LOCK_SOURCE);
 
         // Esc gives the focus to the header's Edit as source: still a control of the panel, a button now.
         await page.keyboard.press('Escape');
@@ -633,44 +633,109 @@ suite('Editor properties panel (e2e)', () => {
         await delay(80);
         assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.slot), 'value:1');
         assert.strictEqual(await page.$(SELECTION_BAR), null, 'no bar of the hidden selection');
-        await assertRowLocked(page, 'a property\'s field has the focus', LOCK_FIELD);
+        await assertRowLocked(page, 'a property\'s field has the focus', LOCK_PROPERTY);
         await clickText(page, 'second', 2);
         await page.waitForSelector(`${SELECTION_BAR}[data-object="table"]`, { timeout: 2000 });
         await assertRowFree(page, 'back in the table');
     });
 
-    test('the YAML box and the refused row, shot in light and dark: open, after Esc, after a click on Bold', async function () {
+    /** The block-type face's name, as the row shows it. */
+    const faceName = () => page.$eval('.mep-toolbar .mep-menu-face[data-menu="block-type"] .mep-face-label', el => el.textContent);
+
+    test('while the row is refused, the block-type face keeps the name it has for the same selection', async function () {
+        this.timeout(20000);
+        // A caret in a table cell: the face names no type there.
+        await showDocument(BOXES);
+        await clickText(page, 'first', 2);
+        await page.waitForSelector(`${SELECTION_BAR}[data-object="table"]`);
+        const inCell = await faceName();
+        await clickAt('.mep-properties .mep-props-source');
+        await page.waitForSelector('.mep-props-editor');
+        await delay(80);
+        assert.strictEqual(await faceName(), inCell, 'a cell\'s caret behind the box');
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await faceName(), inCell, 'and behind the header\'s button');
+
+        // Words selected in a paragraph: the face names the paragraph.
+        await showDocument(BOXES);
+        await selectWords();
+        const inWords = await faceName();
+        assert.strictEqual(inWords, 'Paragraph');
+        await clickAt('.mep-properties .mep-props-source');
+        await page.waitForSelector('.mep-props-editor');
+        await delay(80);
+        assert.strictEqual(await faceName(), inWords, 'selected words behind the box');
+        await page.keyboard.press('Escape');
+    });
+
+    /** Each of the three reasons, in turn, at the page's width now: `each` is called with the reason the row shows. */
+    const walkReasons = async (each: (reason: string, state: string) => Promise<void>) => {
+        await showDocument(BOXES);
+        await showDiagnostics(editor as EditorPage, version, [
+            { range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } }, severity: 'warning', message: 'A warning, for the count' },
+        ]);
+        // No caret in the table first: on a narrow page its bar would stand over the header's button.
+        await clickText(page, 'some words', 2);
+        await clickAt('.mep-properties .mep-props-source');
+        await page.waitForSelector('.mep-props-editor');
+        await delay(120);
+        await each(LOCK_SOURCE, 'source');
+        await page.keyboard.press('Escape');
+        await delay(120);
+        await each(LOCK_BUTTON, 'button');
+        await page.keyboard.press('Escape');
+        await delay(80);
+        await expand();
+        await clickAt(`${row('stream')} input`);
+        await delay(120);
+        await each(LOCK_PROPERTY, 'property');
+        await page.keyboard.press('Escape');
+    };
+
+    test('at narrow widths the reason is cut with an ellipsis, covers no tool, and leaves the diagnostics count whole', async function () {
+        this.timeout(40000);
+        try {
+            for (const width of [600, 400]) {
+                await page.setViewport({ width, height: 800 });
+                await walkReasons(async (reason, state) => {
+                    assert.strictEqual(await page.$eval('.mep-toolbar', el => el.getAttribute('aria-description')), reason, `${width}px, ${state}: the full reason is the row's description`);
+                    await assertReasonFits(page, `${width}px, ${state}`);
+                });
+            }
+        } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+        }
+    });
+
+    test('the refused row, shot in light and dark at full width, ~600 and ~400 px: the YAML box, after Esc, a property\'s field, the flash after a press on Bold', async function () {
         if (!SHOTS_DIR) {
             return;
         }
-        this.timeout(60000);
+        this.timeout(120000);
         const themes: [Theme, string][] = [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']];
         try {
             for (const [theme, name] of themes) {
                 await applyTheme(page, theme);
-                await showDocument(BOXES);
-                await clickText(page, 'first', 2);
-                await page.waitForSelector(`${SELECTION_BAR}[data-object="table"]`);
-                await clickAt('.mep-properties .mep-props-source');
-                await page.waitForSelector('.mep-props-editor');
-                await delay(150);
-                assert.strictEqual(await page.$(SELECTION_BAR), null);
-                await shot(page, `A1-${name}-1-after-open.png`);
-                await page.keyboard.press('Escape');
-                await delay(150);
-                assert.strictEqual(await page.$(SELECTION_BAR), null);
-                await shot(page, `A1-${name}-2-after-esc.png`);
+                for (const width of [1280, 600, 400]) {
+                    await page.setViewport({ width, height: 800 });
+                    const at = `${name}-${width}`;
+                    await walkReasons(async (_reason, state) => {
+                        await shot(page, `A1-${at}-${state}.png`);
+                    });
 
-                await showDocument(BOXES);
-                await selectWords();
-                await clickAt('.mep-properties .mep-props-source');
-                await page.waitForSelector('.mep-props-editor');
-                await clickAt('.mep-toolbar [data-action="bold"]');
-                assert.ok(await page.$('.mep-props-editor'), 'the refused click leaves the box open');
-                await shot(page, `A6-${name}-after-refused-bold.png`);
-                await page.keyboard.press('Escape');
+                    await showDocument(BOXES);
+                    await selectWords();
+                    await clickAt('.mep-properties .mep-props-source');
+                    await page.waitForSelector('.mep-props-editor');
+                    await clickAt('.mep-toolbar [data-action="bold"]');
+                    assert.ok(await page.$('.mep-props-editor'), 'the refused click leaves the box open');
+                    await shot(page, `A6-${at}-flash.png`);
+                    await page.keyboard.press('Escape');
+                }
             }
         } finally {
+            await page.setViewport({ width: 1280, height: 800 });
             await applyTheme(page, LIGHT_MODERN);
         }
     });

@@ -313,7 +313,7 @@ class ToolbarView implements PluginView {
         // selection is hidden behind it: nothing here may act on it, and the
         // row says why at its end.
         const place = focusPlace(view);
-        const lock = place.kind === 'control' ? controlLock(place.field) : null;
+        const lock = place.kind === 'control' ? controlLock(place.role) : null;
         this.showLock(lock);
         const stateOf = (action: ToolbarAction) => {
             let s = states.get(action);
@@ -343,7 +343,7 @@ class ToolbarView implements PluginView {
     /** The lock's reason at the row's end and as its description; `null` takes both away. */
     private showLock(reason: string | null): void {
         this.lockNote.hidden = reason === null;
-        this.lockNote.textContent = reason ?? '';
+        (this.lockNote.firstElementChild as HTMLElement).textContent = reason ?? '';
         if (reason === null) {
             this.row.removeAttribute('aria-description');
             this.lockNote.classList.remove(LOCK_FLASH_CLASS);
@@ -404,14 +404,15 @@ class ToolbarView implements PluginView {
             }
             row.append(box);
         }
+        // The lock's reason (`showLock`), while the row is refused: in the room
+        // the tools leave, not pinned over them, so a narrow row cuts it rather
+        // than covering a tool.
+        this.lockNote = span('mep-row-lock');
+        this.lockNote.hidden = true;
+        this.lockNote.append(span('mep-row-lock-text'));
         // The row's right end: what the page says about the document as a
         // whole (the diagnostics count, `diagnostics.ts`), not a control of the text.
-        // The lock's reason (`showLock`) stands first in it, while the row is refused.
-        const status = div('mep-row-status');
-        this.lockNote = span('mep-row-lock', '');
-        this.lockNote.hidden = true;
-        status.append(this.lockNote);
-        row.append(status);
+        row.append(this.lockNote, div('mep-row-status'));
         return row;
     }
 

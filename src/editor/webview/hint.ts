@@ -133,6 +133,11 @@ export function undoKey(): string {
     return macKeys() ? 'Cmd+Z' : 'Ctrl+Z';
 }
 
+/** The key that applies a source box, as the platform names it. */
+export function applyKey(): string {
+    return macKeys() ? 'Cmd+Enter' : 'Ctrl+Enter';
+}
+
 /** The hint's element for the view, made with the view and removed with it. */
 export function hintPlugin(): Plugin {
     return new Plugin<number | null>({

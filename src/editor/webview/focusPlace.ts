@@ -1,8 +1,29 @@
 import { Node } from 'prosemirror-model';
 import { EditorView } from 'prosemirror-view';
-import { macKeys } from './hint';
+import { applyKey } from './hint';
 import { rawBlockControl } from './nodeViews';
 import { panelControl } from './properties';
+
+/**
+ * What a declared control is, for what the row says while it has the focus:
+ * a source box (a raw block's, the properties' YAML) applied with Ctrl+Enter,
+ * a property's own field applied with Enter, or something pressed, not typed
+ * in — a button, a checkbox, a chip.
+ */
+export type ControlRole = 'source' | 'property' | 'button';
+
+/** What a node view declares about the element that has the focus: its block's position, and what kind of control it is. */
+export interface DeclaredControl {
+    pos: number | undefined;
+    role: ControlRole;
+}
+
+/** The places that need nothing from the document: the same in `placeOf`'s answer and in `FocusPlace`. */
+type PlainPlace =
+    | { kind: 'text' }
+    | { kind: 'chrome'; field: boolean }
+    | { kind: 'content' }
+    | { kind: 'away' };
 
 /**
  * Where the editing focus is: the one answer every bar reads — the object
@@ -18,35 +39,18 @@ import { panelControl } from './properties';
  * - `control`: a control a node view declares as its own — an open source box
  *   (`RawBlockView`), anything in the properties panel (`PropertiesView`).
  *   The selection is still there but hidden behind it, and nothing that acts
- *   on it may be offered; `owner` is the block that declared it, `field`
- *   whether something is being typed (a box, a property's field) rather than
- *   a button pressed.
+ *   on it may be offered; `owner` is the block that declared it, `role` what
+ *   kind of control it is (`ControlRole`).
  * - `content`: anything else inside the text's element that can take the
  *   focus — another extension's lens, a status badge, a summary table's cell,
  *   a link in a rendering. Not a control: the bars read the selection as for
  *   the text, but there is no caret to draw a bubble at.
  * - `away`: anywhere else, or nowhere.
  */
-export type FocusPlace =
-    | { kind: 'text' }
-    | { kind: 'chrome'; field: boolean }
-    | { kind: 'control'; owner: { node: Node; pos: number } | null; field: boolean }
-    | { kind: 'content' }
-    | { kind: 'away' };
+export type FocusPlace = PlainPlace | { kind: 'control'; owner: { node: Node; pos: number } | null; role: ControlRole };
 
-/** What a node view declares about the element that has the focus: its block's position, and whether it is a field. */
-export interface DeclaredControl {
-    pos: number | undefined;
-    field: boolean;
-}
-
-/** `placeOf`'s answer: the place, with a control as its node view declared it. */
-export type Place =
-    | { kind: 'text' }
-    | { kind: 'chrome'; field: boolean }
-    | { kind: 'control'; control: DeclaredControl }
-    | { kind: 'content' }
-    | { kind: 'away' };
+/** `placeOf`'s answer: the place, with a control as its node view declared it, its block not yet looked up. */
+export type Place = PlainPlace | { kind: 'control'; control: DeclaredControl };
 
 /** What `placeOf` reads of an element: whether it contains another, as `Node.contains` answers (an element contains itself). */
 interface Container {
@@ -92,17 +96,38 @@ export function placeOfElement(view: EditorView, el: Element | null): FocusPlace
     }
     const pos = place.control.pos;
     const node = pos === undefined ? null : view.state.doc.nodeAt(pos);
-    return { kind: 'control', owner: node === null || pos === undefined ? null : { node, pos }, field: place.control.field };
+    return { kind: 'control', owner: node === null || pos === undefined ? null : { node, pos }, role: place.control.role };
+}
+
+/**
+ * What an element of the properties panel is (`panelControl`): its YAML box a
+ * source box; any other field typed in — a value, a new name, the hidden
+ * native date input the calendar button opens — a property's; anything else,
+ * pressed rather than typed in, a button.
+ */
+export function panelRole(el: { tag: string; type?: string; sourceBox: boolean }): ControlRole {
+    if (el.sourceBox) {
+        return 'source';
+    }
+    if (el.tag === 'TEXTAREA' || (el.tag === 'INPUT' && !/^(checkbox|radio|button|submit|reset|color|file|range|image)$/.test(el.type ?? 'text'))) {
+        return 'property';
+    }
+    return 'button';
 }
 
 /**
  * Why the formatting row refuses everything while a control has the focus,
  * and how to get it back: shown at the row's end, read as its description, and
- * each refused tool's tooltip. A field has something to apply or cancel; a
- * button of the panel has not.
+ * each refused tool's tooltip. A source box applies with Ctrl+Enter, a
+ * property's field with Enter; a button has nothing to apply.
  */
-export function controlLock(field: boolean): string {
-    return field
-        ? `Editing source · ${macKeys() ? 'Cmd' : 'Ctrl'}+Enter apply · Esc cancel`
-        : 'Focus is outside the text · Esc or click into the text';
+export function controlLock(role: ControlRole): string {
+    switch (role) {
+        case 'source':
+            return `Editing source · ${applyKey()} apply · Esc cancel`;
+        case 'property':
+            return 'Editing a property · Enter apply · Esc cancel';
+        case 'button':
+            return 'Focus is outside the text · Esc or click into the text';
+    }
 }

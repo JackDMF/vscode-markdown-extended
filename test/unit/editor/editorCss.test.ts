@@ -197,4 +197,21 @@ suite('Editor stylesheet colours', () => {
             assert.ok(css.includes(`var(${variable}`), `editor.css reads ${variable}`);
         }
     });
+
+    test('the refused row\'s reason is a pale note on the info tint, and its flash after a refused press the refusal\'s amber', () => {
+        const rule = (selector: string) => {
+            const at = css.indexOf(`${selector} {`);
+            assert.ok(at >= 0, `editor.css has ${selector}`);
+            return css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at)).trim().split(/\s*;\s*/).filter(d => d !== '');
+        };
+        const lock = rule('.mep-row-lock');
+        assert.ok(lock.includes('text-overflow: ellipsis') && lock.includes('overflow: hidden') && lock.includes('min-width: 0'), 'cut, not covering the row');
+        const note = rule('.mep-row-lock-text');
+        assert.ok(note.some(d => /^background: var\(--vscode-inputValidation-infoBackground,/.test(d)), note.join('; '));
+        assert.ok(note.includes('border-radius: 3px'));
+        const flash = rule('.mep-row-lock.mep-row-lock-flash > .mep-row-lock-text');
+        // The caret hint's refusal tone (`.mep-hint[data-tone="refusal"]`), not the focus blue.
+        assert.ok(flash.some(d => d.includes('var(--vscode-editorWarning-foreground, #bf8803)')), flash.join('; '));
+        assert.ok(!flash.some(d => d.includes('focusBorder')), flash.join('; '));
+    });
 });

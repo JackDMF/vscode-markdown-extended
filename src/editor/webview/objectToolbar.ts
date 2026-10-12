@@ -39,7 +39,7 @@ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
-import { HintTone, showChangeHint, showHint, undoKey } from './hint';
+import { HintTone, applyKey, showChangeHint, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
@@ -903,6 +903,12 @@ class ObjectToolbarView implements PluginView {
         this.listeners.push([target, type, listener, capture]);
     }
 
+    /** Whether the control that has the focus is `object`'s own (`focusPlace.ts`): its source box, its panel. */
+    private holdsFocusedControl(object: EditorObject): boolean {
+        const place = focusPlace(this.view);
+        return place.kind === 'control' && place.owner?.pos === object.from;
+    }
+
     /**
      * The object the selection's bar is for, by where the focus is
      * (`focusPlace.ts`): the selection's while the text, what else in it can
@@ -914,12 +920,6 @@ class ObjectToolbarView implements PluginView {
      * bars' however the focus left: it keeps itself open while the window is
      * away (`InlineField`).
      */
-    /** Whether the control that has the focus is `object`'s own (`focusPlace.ts`): its source box, its panel. */
-    private holdsFocusedControl(object: EditorObject): boolean {
-        const place = focusPlace(this.view);
-        return place.kind === 'control' && place.owner?.pos === object.from;
-    }
-
     private selectionObject(): EditorObject | null {
         const place: FocusPlace = this.selectionBar.editing || this.hoverBar.editing ? { kind: 'chrome', field: false } : focusPlace(this.view);
         switch (place.kind) {
@@ -1263,11 +1263,12 @@ class ObjectToolbarView implements PluginView {
      * has said why beside the caret — the success hint would cover that, and
      * be untrue.
      */
-    private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string): void {
+    private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string, removes = false): void {
         // What the verb was offered for, read before the focus moves: leaving a
         // source box commits it, which rewrites its block or — emptied — removes
         // it, and the next block would then stand where it stood. The block is
-        // followed through the commit; one the commit removed is done with.
+        // followed through the commit; one the commit removed is done with — and
+        // for a verb that removes (`removes`), done as asked, so it says so.
         const offered = currentObject(this.view.state, object);
         const moved = new Mapping();
         this.focusMoves = moved;
@@ -1282,6 +1283,9 @@ class ObjectToolbarView implements PluginView {
         const from = moved.map(offered.from, 1);
         const to = moved.map(offered.to, -1);
         if (to <= from) {
+            if (removes && hint !== undefined) {
+                showChangeHint(this.view, `${hint} — ${undoKey()}`);
+            }
             return;
         }
         const before = this.view.state;
@@ -1662,7 +1666,7 @@ class ObjectToolbarView implements PluginView {
                 const editSource: Verb = {
                     id: 'edit-source',
                     label: 'Edit source',
-                    title: 'Edit this block as Markdown (Ctrl+Enter to apply, Esc to cancel).',
+                    title: `Edit this block as Markdown (${applyKey()} to apply, Esc to cancel).`,
                     run: () => {
                         if (currentObject(view.state, object)) {
                             editRawSourceAt(view, object.from);
@@ -1794,7 +1798,7 @@ class ObjectToolbarView implements PluginView {
                 {
                     id: 'edit-source',
                     label: 'Edit source',
-                    title: 'Edit this table as Markdown (Ctrl+Enter to apply, Esc to cancel).',
+                    title: `Edit this table as Markdown (${applyKey()} to apply, Esc to cancel).`,
                     run: () => this.editTableSource(object),
                 },
                 { id: 'delete-table', label: 'Delete table', title: 'The table goes from the file.', run: () => this.remove(object, 'Table deleted') },
@@ -1869,7 +1873,7 @@ class ObjectToolbarView implements PluginView {
         this.act(object, current => {
             this.view.dispatch(deleteObjectTransaction(this.view.state, current));
             return true;
-        }, hint);
+        }, hint, true);
     }
 
     /**

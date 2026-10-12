@@ -9,10 +9,12 @@
 - An open box shows no bar for the text selected behind it, nor for blocks under the pointer.
 - A source block's bar offers only Show in text editor and Delete block while its own box is open.
 - Delete block after emptying a source box no longer deletes the block after it too.
+- Edit source tooltips name Cmd+Enter on macOS.
 
 ### ⚠️ Limits
 
 - After Esc from the YAML box, the row says "Focus is outside the text" until a second Esc or a click.
+- In a narrow editor the row's reason is cut short or hidden; its buttons' tooltips still say it.
 
 ## v4.3.0 — Notes That Know Their Letter
 
