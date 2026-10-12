@@ -34,16 +34,18 @@
  */
 import { EditorState, Plugin, PluginKey, PluginView, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection, isInTable, selectedRect } from 'prosemirror-tables';
+import { Mapping } from 'prosemirror-transform';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
-import { HintTone, showChangeHint, showHint, undoKey } from './hint';
+import { HintTone, applyKey, showChangeHint, showHint, undoKey } from './hint';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
 import { clearPendingRange, showPendingRange } from './pendingRange';
+import { FocusPlace, focusPlace } from './focusPlace';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
@@ -51,7 +53,7 @@ import {
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
 } from './objects';
 import { attributesStep } from './attributes';
-import { Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
+import { CHROME_MOVED, Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { followPointer, selectionBubbleShown } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
@@ -802,6 +804,8 @@ class ObjectToolbarView implements PluginView {
     private hovered: HTMLElement | null = null;
     private hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private destroyed = false;
+    /** While `act` moves the focus: what the transactions dispatched meanwhile (a source box's commit) did to positions. */
+    private focusMoves: Mapping | null = null;
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -835,6 +839,8 @@ class ObjectToolbarView implements PluginView {
         // A scroll fires many times a frame, and placing probes the layout: once per frame.
         this.listen(window, 'scroll', () => this.placeAllInFrame(), true);
         this.listen(window, 'resize', () => this.placeAllInFrame());
+        // The lock's line came under the formatting row or went, or the page moved for it: a bar keeps clear of the chrome.
+        this.listen(this.mount, CHROME_MOVED, () => this.placeAllInFrame());
         this.refresh();
     }
 
@@ -854,6 +860,13 @@ class ObjectToolbarView implements PluginView {
 
     update(): void {
         this.refresh();
+    }
+
+    /** The view applied `transactions` (`appendTransaction`): followed while `act` moves the focus. */
+    applied(transactions: readonly Transaction[]): void {
+        for (const tr of transactions) {
+            this.focusMoves?.appendMapping(tr.mapping);
+        }
     }
 
     destroy(): void {
@@ -892,13 +905,36 @@ class ObjectToolbarView implements PluginView {
         this.listeners.push([target, type, listener, capture]);
     }
 
-    /** The focus is in the editor or a bar — or a bar's field is open: it keeps itself open while the window is away (`InlineField`). */
-    private focusInside(): boolean {
-        if (this.selectionBar.editing) {
-            return true;
+    /** Whether the control that has the focus is `object`'s own (`focusPlace.ts`): its source box, its panel. */
+    private holdsFocusedControl(object: EditorObject): boolean {
+        const place = focusPlace(this.view);
+        return place.kind === 'control' && place.owner?.pos === object.from;
+    }
+
+    /**
+     * The object the selection's bar is for, by where the focus is
+     * (`focusPlace.ts`): the selection's while the text, what else in it can
+     * take the focus, or the editor's own controls have it — but not another
+     * inline field than the bars' own: the row's **Insert → Link…** field is
+     * the one bar then; while a node view's control has it — a source box, the
+     * properties panel — the selection is hidden behind it, and the bar is the
+     * control's block's; elsewhere, none. A bar's open field counts as the
+     * bars' however the focus left: it keeps itself open while the window is
+     * away (`InlineField`).
+     */
+    private selectionObject(): EditorObject | null {
+        const place: FocusPlace = this.selectionBar.editing || this.hoverBar.editing ? { kind: 'chrome', field: false } : focusPlace(this.view);
+        switch (place.kind) {
+            case 'text':
+            case 'content':
+                return objectAtSelection(this.view.state);
+            case 'chrome':
+                return place.field ? null : objectAtSelection(this.view.state);
+            case 'control':
+                return place.owner === null ? null : objectOfNode(place.owner.node, place.owner.pos);
+            case 'away':
+                return null;
         }
-        const active = document.activeElement;
-        return active !== null && (this.view.dom.contains(active) || this.selectionBar.el.contains(active) || this.hoverBar.el.contains(active));
     }
 
     private cancelPending(): void {
@@ -914,7 +950,7 @@ class ObjectToolbarView implements PluginView {
         if (this.destroyed) {
             return;
         }
-        const object = this.focusInside() ? objectAtSelection(this.view.state) : null;
+        const object = this.selectionObject();
         if (object === null) {
             this.cancelPending();
             this.matured = null;
@@ -1034,7 +1070,9 @@ class ObjectToolbarView implements PluginView {
     private refreshHover(): void {
         const object = this.hoveredObject();
         // The cheap reasons first: the presentation asks for code actions and lenses.
+        // While a node view's control has the focus nothing else is offered: the control is the edit.
         const presentation = object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object)) || selectionBubbleShown(this.view)
+            || focusPlace(this.view).kind === 'control'
             ? null
             : this.present(object);
         if (object === null || presentation === null || barless(object, presentation)) {
@@ -1227,10 +1265,33 @@ class ObjectToolbarView implements PluginView {
      * has said why beside the caret — the success hint would cover that, and
      * be untrue.
      */
-    private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string): void {
-        this.view.focus();
+    private act(object: EditorObject, make: (current: EditorObject) => boolean, hint?: string, removes = false): void {
+        // What the verb was offered for, read before the focus moves: leaving a
+        // source box commits it, which rewrites its block or — emptied — removes
+        // it, and the next block would then stand where it stood. The block is
+        // followed through the commit; one the commit removed is done with — and
+        // for a verb that removes (`removes`), done as asked, so it says so.
+        const offered = currentObject(this.view.state, object);
+        const moved = new Mapping();
+        this.focusMoves = moved;
+        try {
+            this.view.focus();
+        } finally {
+            this.focusMoves = null;
+        }
+        if (offered === null) {
+            return;
+        }
+        const from = moved.map(offered.from, 1);
+        const to = moved.map(offered.to, -1);
+        if (to <= from) {
+            if (removes && hint !== undefined) {
+                showChangeHint(this.view, `${hint} — ${undoKey()}`);
+            }
+            return;
+        }
         const before = this.view.state;
-        const current = currentObject(before, object);
+        const current = currentObject(before, { ...offered, from, to });
         if (current !== null && make(current) && this.view.state !== before && hint !== undefined) {
             showChangeHint(this.view, `${hint} — ${undoKey()}`);
         }
@@ -1244,11 +1305,14 @@ class ObjectToolbarView implements PluginView {
      * The object's own verbs, then — for a whole top-level block — the lenses
      * other extensions put on it as verbs (`lenses.ts`), then the code actions
      * they offer for its lines, as the text editor's light bulb would offer
-     * them there; each group after a separator.
+     * them there; each group after a separator. While the block's own control
+     * has the focus — its source box, the properties panel — only its own
+     * verbs: the control is the edit, and another extension's command would
+     * run on what the box has not applied yet.
      */
     private present(object: EditorObject): Presentation {
         const own = this.ownPresentation(object);
-        if (!isTopLevelBlock(this.view.state, object)) {
+        if (!isTopLevelBlock(this.view.state, object) || this.holdsFocusedControl(object)) {
             return own;
         }
         const lenses = this.lensVerbs(this.host.lensesAt(object.from), own.verbs.length > 0);
@@ -1598,24 +1662,28 @@ class ObjectToolbarView implements PluginView {
                     verbs: [],
                 };
             }
-            case 'raw_block':
+            case 'raw_block': {
+                // While its own source box has the focus, the box is the edit: no Edit source to offer.
+                const editing = this.holdsFocusedControl(object);
+                const editSource: Verb = {
+                    id: 'edit-source',
+                    label: 'Edit source',
+                    title: `Edit this block as Markdown (${applyKey()} to apply, Esc to cancel).`,
+                    run: () => {
+                        if (currentObject(view.state, object)) {
+                            editRawSourceAt(view, object.from);
+                        }
+                    },
+                };
                 return {
                     ...rawBlockLabel(object.node.attrs.construct as string | null),
                     verbs: [
-                        {
-                            id: 'edit-source',
-                            label: 'Edit source',
-                            title: 'Edit this block as Markdown (Ctrl+Enter to apply, Esc to cancel).',
-                            run: () => {
-                                if (currentObject(view.state, object)) {
-                                    editRawSourceAt(view, object.from);
-                                }
-                            },
-                        },
+                        ...(editing ? [] : [editSource]),
                         this.showInTextEditor(object),
                         { id: 'delete-block', label: 'Delete block', title: 'The block goes from the file.', run: () => this.remove(object, 'Block deleted') },
                     ],
                 };
+            }
             case 'injected_block': {
                 const kind = object.node.attrs.kind as string;
                 const mark = object.node.attrs.mark as { snippet?: unknown; path?: unknown; missing?: unknown } | null;
@@ -1732,7 +1800,7 @@ class ObjectToolbarView implements PluginView {
                 {
                     id: 'edit-source',
                     label: 'Edit source',
-                    title: 'Edit this table as Markdown (Ctrl+Enter to apply, Esc to cancel).',
+                    title: `Edit this table as Markdown (${applyKey()} to apply, Esc to cancel).`,
                     run: () => this.editTableSource(object),
                 },
                 { id: 'delete-table', label: 'Delete table', title: 'The table goes from the file.', run: () => this.remove(object, 'Table deleted') },
@@ -1807,7 +1875,7 @@ class ObjectToolbarView implements PluginView {
         this.act(object, current => {
             this.view.dispatch(deleteObjectTransaction(this.view.state, current));
             return true;
-        }, hint);
+        }, hint, true);
     }
 
     /**
@@ -1839,6 +1907,7 @@ const toolbarViews = new WeakMap<EditorView, ObjectToolbarView>();
 
 /** The object toolbar, as a plugin: its view follows every state, and `Alt+Enter` opens it from the keyboard. */
 export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
+    let toolbar: ObjectToolbarView | null = null;
     return new Plugin<BarDecor>({
         key: decorKey,
         state: {
@@ -1855,9 +1924,13 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
             },
         },
         view(editorView) {
-            const toolbar = new ObjectToolbarView(editorView, host);
+            toolbar = new ObjectToolbarView(editorView, host);
             toolbarViews.set(editorView, toolbar);
             return toolbar;
+        },
+        appendTransaction(transactions) {
+            toolbar?.applied(transactions);
+            return null;
         },
         props: {
             decorations(state) {

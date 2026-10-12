@@ -28,11 +28,12 @@ import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'p
 import { EditorView } from 'prosemirror-view';
 import type { LinkChoice, LinkedFile } from '../../protocol';
 import { editorSchema } from '../../schema';
-import { firstFree } from '../clearance';
+import { CHROME_MOVED, LOCK_ROOM_PROPERTY, firstFree } from '../clearance';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading, fieldKeys } from '../inlineField';
 import { chevronNode } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
+import { controlLock, focusPlace, placeOfElement } from '../focusPlace';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
@@ -70,6 +71,13 @@ export interface ToolbarHost {
 
 /** How long the pointer or the focus rests on an entry before its preview card shows. */
 const PREVIEW_DELAY_MS = 300;
+
+/** The class that points at the lock's reason after a refused press (`editor.css`), and how long it stays. */
+const LOCK_FLASH_CLASS = 'mep-row-lock-flash';
+const LOCK_FLASH_MS = 900;
+
+/** On the row while the lock's reason does not fit beside the tools: it stands on a line of its own under them (`editor.css`). */
+const LOCK_BELOW_CLASS = 'mep-row-lock-below';
 
 /** Draw a sample: the element the parser makes, with its classes, attributes and content. */
 export function renderSample(spec: SampleSpec): HTMLElement {
@@ -230,6 +238,18 @@ class ToolbarView implements PluginView {
     private cardTimer: ReturnType<typeof setTimeout> | undefined;
     /** The field an action asked for a value in (a span's literal, a link's address, an image's alt text), while it is open. */
     private fieldBar: { bar: HTMLElement; field: InlineField } | null = null;
+    private destroyed = false;
+    /** The row's reason while it is locked (`showLock`), at its right end. */
+    private lockNote!: HTMLElement;
+    private flashTimer: ReturnType<typeof setTimeout> | undefined;
+    /** A pointer button is down: the page does not move under it (`settleRoom`). */
+    private pointerHeld = false;
+    /** The height the page keeps free under the row for the reason's line (`settleRoom`). */
+    private room = 0;
+    /** Watches the row and its status for a size that changes where the reason fits (`placeLock`). */
+    private rowSize: ResizeObserver | undefined;
+    /** The update a focus move asked for, while it waits. */
+    private focusTimer: ReturnType<typeof setTimeout> | undefined;
 
     constructor(private readonly view: EditorView, private readonly host: ToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -250,6 +270,22 @@ class ToolbarView implements PluginView {
         this.listen(view.dom, 'focusin', () => this.placeBubble());
         this.listen(view.dom, 'focusout', e => this.focusLeft(e as FocusEvent));
         this.listen(this.bubble, 'focusout', e => this.focusLeft(e as FocusEvent));
+        // A source box or a property's field taking the focus, or giving it
+        // back, changes no state: the row is read again once the focus has
+        // moved (`focusPlace.ts`) — once per move: a move fires a focusout and a focusin.
+        const later = () => {
+            if (this.focusTimer !== undefined) {
+                return;
+            }
+            this.focusTimer = setTimeout(() => {
+                this.focusTimer = undefined;
+                if (!this.destroyed) {
+                    this.update(this.view);
+                }
+            }, 0);
+        };
+        this.listen(document, 'focusin', later);
+        this.listen(document, 'focusout', later);
         this.listen(document, 'mousedown', e => {
             const target = e.target as Node;
             if (!this.row.contains(target) && !this.layer.contains(target)) {
@@ -264,6 +300,42 @@ class ToolbarView implements PluginView {
             }
         }, true);
         this.listen(window, 'resize', () => this.closeAll());
+        // Whether the reason fits beside the tools changes with the row's width
+        // and with the count beside it: measured again when either changes.
+        // The main button held: the room under the row waits for its release
+        // (`settleRoom`), and is settled after the click the release makes. Only
+        // the main button — a right press opens a menu that may take its release.
+        this.listen(document, 'pointerdown', e => {
+            if ((e as PointerEvent).button === 0) {
+                this.pointerHeld = true;
+            }
+        }, true);
+        const released = () => {
+            this.pointerHeld = false;
+            setTimeout(() => this.settleRoom(), 0);
+        };
+        this.listen(document, 'pointerup', released, true);
+        this.listen(document, 'pointercancel', released, true);
+        // A release that never reaches the page — the window left while the
+        // button was down (Alt-Tab), a menu took it — would hold the room back
+        // for good: a blur, or a move with no button down, says the press is over.
+        const lost = () => {
+            if (this.pointerHeld) {
+                this.pointerHeld = false;
+                this.settleRoom();
+            }
+        };
+        this.listen(window, 'blur', lost);
+        this.listen(document, 'pointermove', e => {
+            if ((e as PointerEvent).buttons === 0) {
+                lost();
+            }
+        }, true);
+        if (typeof ResizeObserver !== 'undefined') {
+            this.rowSize = new ResizeObserver(() => this.placeLock());
+            this.rowSize.observe(this.row);
+            this.rowSize.observe(this.row.querySelector('.mep-row-status') as Element);
+        }
         // The row draws no scrollbar (it would take the controls' height): a
         // narrow row scrolls sideways by the wheel, a vertical wheel included.
         this.listen(this.row, 'wheel', e => {
@@ -282,10 +354,15 @@ class ToolbarView implements PluginView {
         const state = view.state;
         const states = new Map<ToolbarAction, ActionState>();
         const includes = this.host.includesOffered();
+        // While a source box or the properties panel has the focus, the
+        // selection is hidden behind it: nothing here may act on it, and the
+        // row says why at its end.
+        const place = focusPlace(view);
+        const lock = place.kind === 'control' ? controlLock(place.role) : null;
         const stateOf = (action: ToolbarAction) => {
             let s = states.get(action);
             if (!s) {
-                s = evaluate(action, state, includes);
+                s = lock !== null ? { enabled: false, active: false, reason: lock } : evaluate(action, state, includes);
                 states.set(action, s);
             }
             return s;
@@ -301,14 +378,104 @@ class ToolbarView implements PluginView {
                 setState(menu.opener, enabled, false);
             }
             if (menu.face) {
-                this.updateFace(menu, stateOf);
+                this.updateFace(menu, stateOf, lock);
             }
         }
+        // After the faces: a face relabelled ("Paragraph", "Heading 2") changes the room the reason has beside them.
+        this.showLock(lock);
         this.placeBubble();
     }
 
+    /** The lock's reason at the row's end and as its description; `null` takes both away. */
+    private showLock(reason: string | null): void {
+        this.lockNote.hidden = reason === null;
+        (this.lockNote.firstElementChild as HTMLElement).textContent = reason ?? '';
+        if (reason === null) {
+            this.row.removeAttribute('aria-description');
+            this.lockNote.classList.remove(LOCK_FLASH_CLASS);
+            clearTimeout(this.flashTimer);
+        } else {
+            this.row.setAttribute('aria-description', reason);
+        }
+        this.placeLock();
+    }
+
+    /**
+     * The reason beside the tools where it fits there whole, else on its own
+     * line under the row (`LOCK_BELOW_CLASS`): measured, not set by a width,
+     * so it holds for any tool set and font. The tools and the count never
+     * move; the line goes with the lock. The page makes room for the line
+     * (`settleRoom`) — and the bars, which keep clear of the chrome, are
+     * placed again — when it comes or goes.
+     */
+    private placeLock(): void {
+        const was = this.row.classList.contains(LOCK_BELOW_CLASS);
+        this.row.classList.remove(LOCK_BELOW_CLASS);
+        const note = this.lockNote;
+        const below = !note.hidden && note.scrollWidth > note.clientWidth + 1;
+        this.row.classList.toggle(LOCK_BELOW_CLASS, below);
+        if (below !== was) {
+            this.chromeMoved();
+        }
+        this.settleRoom();
+    }
+
+    /**
+     * The page keeps the line's height free under the row (`--mep-lock-room`)
+     * while the line stands there, so it covers nothing — but never while a
+     * button is held: a page that moved between the press and the release
+     * would take the click from what was pressed (the header's toggle, Edit as
+     * source) or drag a selection. It is settled once the pointer is up
+     * (`pointerup`, after the click), or at once for a key. The scroll
+     * position is kept as it was: what stood just under the chrome stands just
+     * under it still — under the line when it comes, under the row when it
+     * goes — and the browser's scroll anchoring, which would scroll the content
+     * back under the line, is overruled.
+     */
+    private settleRoom(): void {
+        if (this.destroyed || this.pointerHeld) {
+            return;
+        }
+        const want = this.row.classList.contains(LOCK_BELOW_CLASS) ? this.lockNote.getBoundingClientRect().height : 0;
+        if (Math.abs(want - this.room) < 0.5) {
+            return;
+        }
+        const scroller = document.scrollingElement;
+        const top = scroller?.scrollTop ?? 0;
+        this.room = want;
+        this.mount.style.setProperty(LOCK_ROOM_PROPERTY, `${want}px`);
+        if (scroller) {
+            scroller.scrollTop = top;
+        }
+        this.chromeMoved();
+    }
+
+    /** The chrome over the page grew or shrank, or the page moved under it: what is placed against it is placed again. */
+    private chromeMoved(): void {
+        this.mount.dispatchEvent(new Event(CHROME_MOVED));
+        this.placeBubble();
+    }
+
+    /** A refused tool was pressed while the row is locked: its reason is pointed at for a moment, not a silent nothing. */
+    private flashLock(): void {
+        if (this.lockNote.hidden) {
+            return;
+        }
+        this.lockNote.classList.remove(LOCK_FLASH_CLASS);
+        // Read the layout so the animation starts again on a second press.
+        void this.lockNote.offsetWidth;
+        this.lockNote.classList.add(LOCK_FLASH_CLASS);
+        clearTimeout(this.flashTimer);
+        this.flashTimer = setTimeout(() => this.lockNote.classList.remove(LOCK_FLASH_CLASS), LOCK_FLASH_MS);
+    }
+
     destroy(): void {
+        this.destroyed = true;
+        this.rowSize?.disconnect();
+        this.mount.style.removeProperty(LOCK_ROOM_PROPERTY);
         clearTimeout(this.cardTimer);
+        clearTimeout(this.flashTimer);
+        clearTimeout(this.focusTimer);
         this.closeFieldBar();
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
@@ -342,9 +509,15 @@ class ToolbarView implements PluginView {
             }
             row.append(box);
         }
+        // The lock's reason (`showLock`), while the row is refused: in the room
+        // the tools leave, not pinned over them, so a narrow row cuts it rather
+        // than covering a tool.
+        this.lockNote = span('mep-row-lock');
+        this.lockNote.hidden = true;
+        this.lockNote.append(span('mep-row-lock-text'));
         // The row's right end: what the page says about the document as a
         // whole (the diagnostics count, `diagnostics.ts`), not a control of the text.
-        row.append(div('mep-row-status'));
+        row.append(this.lockNote, div('mep-row-status'));
         return row;
     }
 
@@ -414,8 +587,9 @@ class ToolbarView implements PluginView {
     /**
      * A block-type face names the type the selection is in, as text; a locked
      * one says why. Any other face is disabled when none of its entries applies.
+     * `lock`: a node view's control has the focus, and why the row is refused (`controlLock`).
      */
-    private updateFace(menu: Menu, stateOf: (a: ToolbarAction) => ActionState): void {
+    private updateFace(menu: Menu, stateOf: (a: ToolbarAction) => ActionState, lock: string | null): void {
         const face = menu.face as HTMLElement;
         const all = [...menu.tools, ...menu.children.flatMap(c => c.tools)];
         let label = MENU_LABELS[menu.id];
@@ -427,7 +601,7 @@ class ToolbarView implements PluginView {
             const active = menu.tools.map(t => t.action).find(a => a.apply.kind === 'block' && isCurrent(current, a.apply.node, a.apply.level));
             face.dataset.shows = active?.id ?? '';
             label = active?.label ?? label;
-            reason = blockLockReason(this.view.state);
+            reason = lock ?? blockLockReason(this.view.state);
             enabled = reason === null;
         } else {
             enabled = all.some(t => stateOf(t.action).enabled);
@@ -590,6 +764,7 @@ class ToolbarView implements PluginView {
 
     private openMenu(menu: Menu, focusFirst: boolean): void {
         if (menu.face && isDisabled(menu.face)) {
+            this.flashLock();
             return;
         }
         if (menu.parent) {
@@ -746,6 +921,7 @@ class ToolbarView implements PluginView {
 
     private activate(tool: Tool): void {
         if (isDisabled(tool.el)) {
+            this.flashLock();
             return;
         }
         this.closeAll();
@@ -1068,8 +1244,8 @@ class ToolbarView implements PluginView {
     // -- the bubble ------------------------------------------------------------
 
     private focusLeft(e: FocusEvent): void {
-        const to = e.relatedTarget as Node | null;
-        if (to && (this.bubble.contains(to) || this.view.dom.contains(to))) {
+        const to = e.relatedTarget as Element | null;
+        if (to && (this.bubble.contains(to) || placeOfElement(this.view, to).kind === 'text')) {
             return;
         }
         this.bubble.hidden = true;
@@ -1091,7 +1267,7 @@ class ToolbarView implements PluginView {
     private placeBubble(): void {
         const view = this.view;
         const sel = view.state.selection;
-        const focused = view.hasFocus() || this.bubble.contains(document.activeElement);
+        const focused = focusPlace(view).kind === 'text' || this.bubble.contains(document.activeElement);
         const inText = sel instanceof TextSelection && !sel.empty
             && sel.$from.parent.inlineContent && sel.$to.parent.inlineContent && !sel.$from.parent.type.spec.code;
         if (!focused || !inText) {

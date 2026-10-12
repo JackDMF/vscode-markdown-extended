@@ -200,6 +200,8 @@ img.mep-pending-range {
     --mep-row-height: 27px;
     /* The space between the row's edge and the document's first block. */
     --mep-row-gap: 8px;
+    /* The room kept for the lock's line under the row while it stands there (`toolbar.ts`, `settleRoom`). */
+    --mep-lock-room: 0px;
     /* The row's bottom edge, as the workbench draws the edge under its tabs. */
     --mep-chrome-border: var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-editorGroupHeader-border, var(--vscode-widget-border, transparent)));
     /*
@@ -216,7 +218,7 @@ img.mep-pending-range {
  * document that begins with a table, a fence or a container does not sit
  * against the row's edge: the row stands over the page, not in it.
  */
-.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-row-gap)); }
+.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-lock-room) + var(--mep-row-gap)); }
 
 /*
  * The row: full width, fixed at the top of the editor as the workbench's rows
@@ -1196,7 +1198,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 
 /* A block brought into view (a followed link's fragment) stands below the formatting row, not under it; so does an element inside one found by its id. */
 .mep-editor .ProseMirror > *,
-.mep-editor .ProseMirror [id] { scroll-margin-top: 64px; }
+.mep-editor .ProseMirror [id] { scroll-margin-top: calc(64px + var(--mep-lock-room)); }
 
 /* ------------------------------------------------------------------------- */
 /* The document cannot be shown without loss                                 */
@@ -1280,7 +1282,59 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     padding: 0 0 0 8px;
     background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
 }
-.mep-row-status:empty { display: none; }
+.mep-row-status:empty,
+.mep-row-status:not(:has(> :not([hidden]))) { display: none; }
+
+/*
+ * Why the row is refused while a source box or the properties panel has the
+ * focus, and the way back (`toolbar.ts`, `showLock`): text, not grey alone —
+ * a pale note on the info tint, as sketched. It takes the room the tools leave
+ * before the count, never pinned over them. Where it does not fit there whole
+ * — measured (`placeLock`), not a width set here — it stands on a thin line
+ * of its own right under the row (`-below`), whole, and is cut with an
+ * ellipsis only where even that line is too narrow; the tools and the count
+ * stay where they are, and the line goes with the lock. The whole text is the
+ * row's description and each tool's tooltip too. A press on a refused tool
+ * points at it for a moment (`-flash`) in the refusal's amber, as the caret
+ * hint's refusal is marked (`.mep-hint[data-tone="refusal"]`).
+ */
+.mep-row-lock {
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12px;
+}
+.mep-row-lock[hidden] { display: none; }
+.mep-toolbar:not(.mep-row-lock-below) > .mep-row-lock:not([hidden]) + .mep-row-status { margin-left: 0; }
+.mep-toolbar.mep-row-lock-below > .mep-row-lock {
+    position: fixed;
+    top: var(--mep-row-height);
+    left: 0;
+    right: 0;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 2px 8px 3px;
+    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
+    border-bottom: 1px solid var(--mep-chrome-border);
+}
+.mep-row-lock-text {
+    padding: 1px 8px;
+    border-radius: 3px;
+    color: var(--vscode-foreground, CanvasText);
+    background: var(--vscode-inputValidation-infoBackground, #d6ecf2);
+    outline: 1px solid var(--vscode-contrastBorder, transparent);
+    outline-offset: -1px;
+}
+/* Two pixels, the amber drawn a third towards the text colour: Light Modern's own amber stands at 2.5:1 on the tint, this at 3.6:1 (5.8 dark, 16 high contrast). */
+.mep-row-lock.mep-row-lock-flash > .mep-row-lock-text {
+    outline: 2px solid color-mix(in srgb, var(--vscode-editorWarning-foreground, #bf8803) 70%, var(--vscode-foreground, CanvasText));
+    /* Inside the note: the reason's box clips what stands out of it. */
+    outline-offset: -2px;
+    box-shadow: inset 4px 0 0 color-mix(in srgb, var(--vscode-editorWarning-foreground, #bf8803) 70%, var(--vscode-foreground, CanvasText));
+}
 
 .mep-diag-count {
     display: inline-flex;

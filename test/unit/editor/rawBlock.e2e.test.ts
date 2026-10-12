@@ -2,8 +2,10 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, MOD, editCommand } from './pageHarness';
+import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot, MOD, SHOTS_DIR, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { LOCK_SOURCE, MOD_NAME, assertRowFree, assertRowLocked } from './rowLock';
+import { DARK_MODERN, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 const TABLE = '| a | b |\n| = | = |\n| 1 | 2 |\n';
 const SOURCE = [
@@ -18,8 +20,38 @@ const SOURCE = [
     '',
 ].join('\n');
 
+/**
+ * An editable table with a source block right after it — where an emptied
+ * box's block, once removed, would leave the next one standing — words, and a
+ * source block (a multimd table, for its caption and span); words between, or
+ * multimd reads one table with two bodies.
+ */
+const BOXES = [
+    'Alpha beta gamma.',
+    '',
+    '| Kind | Count |',
+    '| ---- | ----: |',
+    '| first | 1 |',
+    '| second | 2 |',
+    '',
+    '<div>after block</div>',
+    '',
+    'Between the tables.',
+    '',
+    '| Region | Q1 | Q2 |',
+    '| ------ | -- | -- |',
+    '| North  | 1  | 2  |',
+    '| ^^     | 3  | 4  |',
+    '[Figures by region]',
+    '',
+    'Last paragraph.',
+    '',
+].join('\n');
+
 /** The object toolbar showing the selected source block's verbs. */
 const SELECTED_BLOCK_BAR = '.mep-object-toolbar[data-trigger="selection"][data-object="raw_block"]:not([hidden])';
+const SELECTION_BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
+const HOVER_BAR = '.mep-object-toolbar[data-trigger="hover"]:not([hidden])';
 
 /**
  * The atoms — a raw block with its source editor, the front matter — driven
@@ -257,5 +289,277 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await page.keyboard.type('!');
         assert.ok((await area()).value.endsWith('| 3 | 4 |!'));
         await page.keyboard.press('Escape');
+    });
+
+    // -- the bars while a source box holds the focus ------------------------------------
+
+    /** The verbs of the bar `selector`, in order. */
+    const verbsOf = (selector: string) => page.$eval(selector, el => Array.from(el.querySelectorAll('[data-verb]')).map(v => (v as HTMLElement).dataset.verb));
+
+    /** Post `text` with no box left open by a test before: an open box outlives a re-post. */
+    const showFresh = async (text: string) => {
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await showDocument(text);
+    };
+
+    const showBoxes = () => showFresh(BOXES);
+
+    /** The editable table's Edit source: the table becomes a source block, its box open. */
+    const openEditableTableSource = async () => {
+        await clickText(page, 'first', 2);
+        const button = await page.waitForSelector(`${SELECTION_BAR}[data-object="table"] [data-verb="edit-source"]`, { visible: true });
+        const box = await button?.boundingBox();
+        assert.ok(box);
+        await clickAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+        await page.waitForSelector('.mep-raw-editor');
+        await delay(80);
+    };
+
+    /** Click the verb `verb` of the selected source block's bar. */
+    const clickVerb = async (verb: string) => {
+        const button = await page.waitForSelector(`${SELECTED_BLOCK_BAR} [data-verb="${verb}"]`, { visible: true });
+        const box = await button?.boundingBox();
+        assert.ok(box);
+        await clickAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    };
+
+    /** Everything in the open box selected and deleted, as a person empties it. */
+    const emptyTheBox = async () => {
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a', editCommand('a'));
+        await page.keyboard.up(MOD);
+        await page.keyboard.press('Backspace');
+        assert.strictEqual((await area()).value, '');
+    };
+
+    const undoOnce = async () => {
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('z');
+        await page.keyboard.up(MOD);
+        await settle();
+    };
+
+    test('a table\'s Edit source: its bar offers what still applies — not Edit source — no other block has a bar, the row is refused; Esc, no bar', async function () {
+        this.timeout(15000);
+        await showBoxes();
+        await openEditableTableSource();
+        assert.strictEqual((await area()).focused, true);
+        assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block']);
+        await assertRowLocked(page, 'the box open', LOCK_SOURCE);
+
+        await page.mouse.move(...Object.values(await centre('.mep-raw-editor')) as [number, number]);
+        await delay(300);
+        assert.strictEqual(await page.$(HOVER_BAR), null, 'no bar for the box under the pointer');
+        await page.mouse.move(...Object.values(await centre('.mep-raw-block:not(.mep-editing) .mep-atom-content table')) as [number, number]);
+        await delay(300);
+        assert.strictEqual(await page.$(HOVER_BAR), null, 'nor for another block');
+        assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block'], 'the box\'s own bar stays');
+
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await page.$('.mep-raw-editor'), null);
+        assert.strictEqual(await page.$(SELECTION_BAR), null, 'no bar after Esc');
+    });
+
+    test('Delete block with the box open removes that block only, and one undo brings it back', async function () {
+        this.timeout(15000);
+        await showBoxes();
+        await openEditableTableSource();
+        await clickVerb('delete-block');
+        await settle();
+        assert.strictEqual(await page.$('.mep-raw-editor'), null);
+        const edit = await lastEdit();
+        assert.strictEqual(edit?.text, BOXES.replace('| Kind | Count |\n| ---- | ----: |\n| first | 1 |\n| second | 2 |\n\n', ''));
+        await undoOnce();
+        assert.strictEqual((await lastEdit())?.text, BOXES, 'one undo');
+    });
+
+    test('Delete block after emptying the box deletes that block, not the next one; one undo brings it back', async function () {
+        this.timeout(15000);
+        const two = 'Intro.\n\n<div>first block</div>\n\n<div>second block</div>\n\nOutro.\n';
+        await showFresh(two);
+        await page.waitForSelector('.mep-raw-block');
+        await clickAt(await centre('.ProseMirror > .mep-raw-block .mep-atom-content'));
+        await clickVerb('edit-source');
+        await page.waitForSelector('.mep-raw-editor');
+        assert.strictEqual((await area()).value, '<div>first block</div>');
+        await emptyTheBox();
+        await clickVerb('delete-block');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Intro.\n\n<div>second block</div>\n\nOutro.\n', 'the second block stays');
+        assert.deepStrictEqual(await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden })), { text: `Block deleted — ${MOD_NAME}+Z`, shown: true }, 'the deletion says so');
+        await undoOnce();
+        assert.strictEqual((await lastEdit())?.text, two, 'one undo');
+    });
+
+    test('the same for the editable table\'s box: emptied, then Delete block, the source block after it stays', async function () {
+        this.timeout(15000);
+        await showBoxes();
+        await openEditableTableSource();
+        await emptyTheBox();
+        await clickVerb('delete-block');
+        await settle();
+        const edit = await lastEdit();
+        assert.strictEqual(edit?.text, BOXES.replace('| Kind | Count |\n| ---- | ----: |\n| first | 1 |\n| second | 2 |\n\n', ''), 'the table goes, nothing else');
+        assert.ok(edit.text.includes('<div>after block</div>'), 'the block after it stays');
+        assert.strictEqual(await page.$eval('.mep-hint', el => el.textContent), `Block deleted — ${MOD_NAME}+Z`);
+    });
+
+    test('a source block\'s Edit source: its bar without Edit source, labelled as before; no other bar; the row refused', async function () {
+        this.timeout(15000);
+        await showBoxes();
+        await openTableSource();
+        assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block']);
+        assert.strictEqual(await page.$eval(`${SELECTED_BLOCK_BAR} .mep-object-label`, el => el.textContent), 'Source · multimd table');
+        await page.mouse.move(...Object.values(await centre('.mep-raw-editor')) as [number, number]);
+        await delay(300);
+        assert.strictEqual(await page.$(HOVER_BAR), null);
+        await assertRowLocked(page, 'the box open', LOCK_SOURCE);
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await page.$(SELECTION_BAR), null, 'no bar after Esc');
+    });
+
+    test('while its box has the focus, a block\'s bar carries no other extension\'s lenses', async function () {
+        this.timeout(15000);
+        await showBoxes();
+        // An action lens: a verb of the block's bar, not a row above it.
+        await (editor as EditorPage).send({ type: 'lenses', version, blocks: 6, rows: [{ blockIndex: 4, items: [{ id: 'l.0', title: 'A lens', surface: 'action', artifact: 'FRS-TST-001' }] }] });
+        await delay(100);
+        await page.mouse.move(...Object.values(await centre('.mep-raw-block .mep-atom-content table')) as [number, number]);
+        await clickAt(await centre('.mep-raw-block .mep-atom-content table'));
+        await page.waitForSelector(SELECTED_BLOCK_BAR);
+        assert.ok((await verbsOf(SELECTED_BLOCK_BAR)).includes('lens:l.0'), 'the lens is a verb while the box is closed');
+        assert.match(await page.$eval(`${SELECTED_BLOCK_BAR} [data-verb="edit-source"]`, el => (el as HTMLElement).title), new RegExp(`\\(${MOD_NAME}\\+Enter to apply, Esc to cancel\\)`), 'Edit source names the platform\'s key');
+        await clickVerb('edit-source');
+        await page.waitForSelector('.mep-raw-editor');
+        await delay(80);
+        assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block']);
+        await page.keyboard.press('Escape');
+    });
+
+    test('while a source box has the focus, the page reports no caret', async function () {
+        this.timeout(15000);
+        await showBoxes();
+        await clickText(page, 'Between', 2);
+        await delay(300);
+        const caret = async () => (await (editor as EditorPage).posted()).filter(m => m.type === 'caret').pop();
+        const inText = await caret();
+        assert.ok(inText && inText.type === 'caret' && inText.position !== null, 'a caret in the text');
+        // From the pointer's bar, so the caret stays in the text while the box opens.
+        await page.mouse.move(...Object.values(await centre('.mep-raw-block .mep-atom-content table')) as [number, number]);
+        const button = await page.waitForSelector(`${HOVER_BAR} [data-verb="edit-source"]`, { visible: true });
+        const box = await button?.boundingBox();
+        assert.ok(box);
+        await clickAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+        await page.waitForSelector('.mep-raw-editor');
+        await delay(300);
+        const inBox = await caret();
+        assert.ok(inBox && inBox.type === 'caret');
+        assert.strictEqual(inBox.position, null, 'a source box is no place in the text');
+        await page.keyboard.press('Escape');
+    });
+
+    test('a click into the text closes the box with what was typed: no bar there, the row offered again', async function () {
+        this.timeout(15000);
+        await showBoxes();
+        await openTableSource();
+        await page.keyboard.type('\n| South | 5 | 6 |');
+        await clickText(page, 'Last paragraph', 3);
+        await settle();
+        assert.strictEqual(await page.$('.mep-raw-editor'), null);
+        assert.strictEqual(await page.$(SELECTION_BAR), null, 'a paragraph has no bar');
+        await assertRowFree(page, 'after the click');
+        assert.ok((await lastEdit())?.text.includes('| South | 5 | 6 |'), 'the typing is in the document');
+    });
+
+    /** The bottom of the chrome over the page: the row, and the line under it while the reason stands there. */
+    const chromeBottom = () => page.evaluate(() => {
+        const line = document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+        return (line ?? document.querySelector('.mep-toolbar') as Element).getBoundingClientRect().bottom;
+    });
+
+    const FILLER = Array.from({ length: 40 }, (_, i) => `Filler paragraph ${i}.`).join('\n\n');
+    const SCROLLED = `${FILLER}\n\n<div>target block<br>second line<br>third line</div>\n\n${FILLER}\n`;
+
+    /** SCROLLED with the source block's top just under the row; the room under the row is what the page keeps there. */
+    const scrollBlockUnderRow = async () => {
+        await showFresh(SCROLLED);
+        await page.waitForSelector('.mep-raw-block');
+        await page.evaluate(() => {
+            const block = document.querySelector('.ProseMirror > .mep-raw-block') as HTMLElement;
+            const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect().bottom;
+            document.scrollingElement!.scrollTop += block.getBoundingClientRect().top - row - 6;
+        });
+        await delay(100);
+    };
+
+    test('on a narrow page a source box scrolled just under the row keeps its first line in view, and closing it gives the room back without a jump', async function () {
+        this.timeout(20000);
+        try {
+            await page.setViewport({ width: 480, height: 700 });
+            await scrollBlockUnderRow();
+            const block = await (await page.$('.ProseMirror > .mep-raw-block'))?.boundingBox();
+            assert.ok(block);
+            await page.mouse.click(block.x + block.width / 2, block.y + block.height / 2, { clickCount: 2, delay: 40 });
+            await page.waitForSelector('.mep-raw-editor');
+            await delay(200);
+            const opened = await page.evaluate(() => (document.querySelector('.mep-raw-editor') as HTMLElement).getBoundingClientRect().top);
+            const chrome = await chromeBottom();
+            assert.ok(opened >= chrome - 0.5, `the box's first line is below the line (${opened} < ${chrome})`);
+            const gapOpen = opened - chrome;
+
+            await page.keyboard.press('Escape');
+            await delay(200);
+            const closed = await page.evaluate(() => (document.querySelector('.ProseMirror > .mep-raw-block') as HTMLElement).getBoundingClientRect().top);
+            assert.ok(Math.abs(closed - (await chromeBottom()) - gapOpen) < 1.5, `the block keeps its place under the chrome (${gapOpen} -> ${closed - await chromeBottom()})`);
+        } finally {
+            await page.setViewport({ width: 1200, height: 900 });
+        }
+    });
+
+    test('the window narrowed with a box open: the line comes under the row and the box\'s bar is placed below it', async function () {
+        this.timeout(20000);
+        try {
+            await page.setViewport({ width: 1200, height: 700 });
+            await scrollBlockUnderRow();
+            await clickAt(await centre('.ProseMirror > .mep-raw-block .mep-atom-content'));
+            await clickVerb('edit-source');
+            await page.waitForSelector('.mep-raw-editor');
+            await delay(200);
+            await page.setViewport({ width: 480, height: 700 });
+            await delay(400);
+            const bar = await page.$eval(SELECTED_BLOCK_BAR, el => el.getBoundingClientRect().top);
+            const chrome = await chromeBottom();
+            assert.ok(await page.$('.mep-toolbar.mep-row-lock-below'), 'the reason went under the row');
+            assert.ok(bar >= chrome - 0.5, `the bar stands below the line (${bar} < ${chrome})`);
+            await page.keyboard.press('Escape');
+        } finally {
+            await page.setViewport({ width: 1200, height: 900 });
+        }
+    });
+
+    test('a source box\'s bar, shot in light and dark at full width, ~600 and ~400 px', async function () {
+        if (!SHOTS_DIR) {
+            return;
+        }
+        this.timeout(90000);
+        const themes: [Theme, string][] = [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']];
+        try {
+            for (const [theme, name] of themes) {
+                await applyTheme(page, theme);
+                for (const width of [1200, 600, 400]) {
+                    await page.setViewport({ width, height: 900 });
+                    await showBoxes();
+                    await openEditableTableSource();
+                    assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block']);
+                    await shot(page, `B1-${name}-${width}-after-open.png`);
+                    await page.keyboard.press('Escape');
+                }
+            }
+        } finally {
+            await page.setViewport({ width: 1200, height: 900 });
+            await applyTheme(page, LIGHT_MODERN);
+        }
     });
 });

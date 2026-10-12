@@ -123,9 +123,19 @@ export function showParagraphHint(view: EditorView, text: string): void {
     hints.get(view)?.show(text, 'neutral', undefined, 'paragraph');
 }
 
+/** Whether the platform names the editing modifier Cmd (macOS), not Ctrl. */
+export function macKeys(): boolean {
+    return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+}
+
 /** The key that undoes, as the platform names it, for a hint that offers the undo. */
 export function undoKey(): string {
-    return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? 'Cmd+Z' : 'Ctrl+Z';
+    return macKeys() ? 'Cmd+Z' : 'Ctrl+Z';
+}
+
+/** The key that applies a source box, as the platform names it. */
+export function applyKey(): string {
+    return macKeys() ? 'Cmd+Enter' : 'Ctrl+Enter';
 }
 
 /** The hint's element for the view, made with the view and removed with it. */

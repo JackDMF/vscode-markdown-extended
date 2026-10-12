@@ -24,7 +24,9 @@ import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
+import { lockLineHeight } from './clearance';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
+import { focusPlace } from './focusPlace';
 import { showChangeHint, showHint } from './hint';
 import { hoverDocumentShown, hoverMessage, hoverPlugin } from './hover';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
@@ -114,16 +116,15 @@ const caretReporter = new CaretReporter({
             return undefined;
         }
         const map = pageMap(view.state.doc);
-        // A property's field is not a place in the text: no caret while one has the focus.
-        return { text: map.text, caret: inPropertiesPanel() ? null : caretOf(view.state.selection, map) };
+        // A source box or a property's field is not a place in the text: no caret while one has the focus.
+        return { text: map.text, caret: inControl() ? null : caretOf(view.state.selection, map) };
     },
     post,
 });
 
-/** Whether the focus is in the front matter's properties panel (`properties.ts`), whose fields are no source caret. */
-function inPropertiesPanel(): boolean {
-    const active = document.activeElement;
-    return active !== null && active.closest('.mep-properties') !== null;
+/** Whether a node view's control has the focus — an open source box, the properties panel (`focusPlace.ts`) — which is no source caret. */
+function inControl(): boolean {
+    return view !== undefined && focusPlace(view).kind === 'control';
 }
 
 /** The document's uri, as the host wrote it on the page (`html.ts`): what the panel remembers its open state under. */
@@ -782,8 +783,19 @@ const plugins = [
     }, placeDrop),
 ];
 
-/** Room above the caret for the formatting row fixed at the top when ProseMirror scrolls the selection into view. */
-const SCROLL_MARGIN = { top: 64, bottom: 8, left: 8, right: 8 };
+/**
+ * Room above the caret for the formatting row fixed at the top when ProseMirror
+ * scrolls the selection into view — and for the lock's line under it while it
+ * stands there (`lockLineHeight`): read each time ProseMirror scrolls.
+ */
+const SCROLL_MARGIN = {
+    get top(): number {
+        return 64 + lockLineHeight(mount);
+    },
+    bottom: 8,
+    left: 8,
+    right: 8,
+};
 
 function dispatchTransaction(this: EditorView, tr: Transaction): void {
     this.updateState(this.state.apply(tr));

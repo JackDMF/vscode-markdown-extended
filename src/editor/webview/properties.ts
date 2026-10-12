@@ -31,7 +31,9 @@ import {
     FrontMatterParts, KeyRef, Property, PropertiesRead, addItem, addProperty, eolOf, isDate, joinFrontMatter, readProperties,
     removeItem, removeProperty, setBoolean, setText, splitFrontMatter,
 } from '../frontMatter';
+import { lockLineHeight } from './clearance';
 import { CompletionListView } from './completionList';
+import { DeclaredControl, panelRole } from './focusPlace';
 import { undoKey } from './hint';
 import { EditorPort, SourceEditor, element, isUndoRedo } from './nodeViews';
 
@@ -50,6 +52,21 @@ const STORAGE_PREFIX = 'markdownExtended.properties.expanded:';
 
 /** Each panel by its DOM, so the toolbar's **Insert → Properties** can reach the view ProseMirror made. */
 const panels = new WeakMap<globalThis.Node, PropertiesView>();
+
+/**
+ * The control the panel declares for `el` (`focusPlace.ts`): anything in it —
+ * its YAML box, a property's field, a button (the header's, a row's ×, a
+ * checkbox), as `panelRole` tells them apart — `null` outside every panel.
+ */
+export function panelControl(el: Element): DeclaredControl | null {
+    const dom = el.closest('.mep-properties');
+    const panel = dom ? panels.get(dom) : undefined;
+    if (!panel) {
+        return null;
+    }
+    const type = el instanceof HTMLInputElement ? el.type : undefined;
+    return { pos: panel.position(), role: panelRole({ tag: el.tagName, type, sourceBox: el.classList.contains('mep-props-editor') }) };
+}
 
 /** Open the panel at `pos` and start adding a property. False when there is no panel there. */
 export function addPropertyAt(dom: globalThis.Node | null): boolean {
@@ -197,6 +214,10 @@ export class PropertiesView implements NodeView, SourceEditor {
         this.untrackDirty?.();
         this.untrackArea = null;
         this.untrackDirty = null;
+    }
+
+    position(): number | undefined {
+        return this.getPos();
     }
 
     /** A save: every row's typing and the open source box go into the document now. */
@@ -752,10 +773,12 @@ export class PropertiesView implements NodeView, SourceEditor {
         const style = getComputedStyle(area);
         const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4 || 18;
         const top = area.getBoundingClientRect().top + (parseFloat(style.paddingTop) || 0) + line * lineHeight;
-        // Clear of the formatting row fixed at the top, with the margin the page keeps above a
-        // caret it scrolls to (main.ts, SCROLL_MARGIN: 64px).
-        if (property !== null || top < 64 || top > window.innerHeight - lineHeight) {
-            window.scrollBy(0, top - 80);
+        // Clear of the formatting row fixed at the top — and of the lock's line under it, while
+        // it stands there — with the margin the page keeps above a caret it scrolls to
+        // (main.ts, SCROLL_MARGIN.top: 64px and the line's height).
+        const lockLine = lockLineHeight(this.dom.closest('.mep-editor'));
+        if (property !== null || top < 64 + lockLine || top > window.innerHeight - lineHeight) {
+            window.scrollBy(0, top - 80 - lockLine);
         }
     }
 
