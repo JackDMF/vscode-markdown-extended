@@ -25,6 +25,7 @@ import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
+import { focusPlace } from './focusPlace';
 import { showChangeHint, showHint } from './hint';
 import { hoverDocumentShown, hoverMessage, hoverPlugin } from './hover';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
@@ -120,10 +121,13 @@ const caretReporter = new CaretReporter({
     post,
 });
 
-/** Whether the focus is in the front matter's properties panel (`properties.ts`), whose fields are no source caret. */
+/** Whether the focus is in the front matter's properties panel (`properties.ts`), whose fields are no source caret: a control the front matter owns (`focusPlace.ts`). */
 function inPropertiesPanel(): boolean {
-    const active = document.activeElement;
-    return active !== null && active.closest('.mep-properties') !== null;
+    if (!view) {
+        return false;
+    }
+    const place = focusPlace(view);
+    return place.kind === 'control' && place.owner?.node.type === editorSchema.nodes.front_matter;
 }
 
 /** The document's uri, as the host wrote it on the page (`html.ts`): what the panel remembers its open state under. */

@@ -996,7 +996,7 @@ setext heading on the next parse. An emptied box leaves `---` twice.
 *The caret, positions and the bar.* The node is still an atom for `positions.ts`: the
 position before it is its slice's start, one inside it maps before it. A field is not a place
 in the text, so while one has the focus the page reports the caret as none (`inPropertiesPanel`
-in `main.ts`, and a `focusin`/`focusout` listener that reports again) and
+in `main.ts`, a `control` the front matter owns in `focusPlace.ts`, and a `focusin`/`focusout` listener that reports again) and
 `visualEditor.active()` answers `caret: undefined`. The object toolbar draws no bar for the
 front matter's label alone (`barless`, which a heading shares): its verbs are the panel's
 header, and the bar carries only other extensions' code actions, when there are some. While
