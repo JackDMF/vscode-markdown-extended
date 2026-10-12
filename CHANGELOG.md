@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.4.0 — Attributes on Links and Emphasis
 
 ### ✨ Features
 
