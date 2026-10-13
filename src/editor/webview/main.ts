@@ -696,29 +696,29 @@ let exporting = false;
  * busy until the host's `exportDone`.
  */
 function exportDocument(format: ExportFormatName): void {
-    if (!view || !current || exporting) {
+    if (!view || exporting) {
         return;
     }
     commitForSending();
     flush();
-    post({ type: 'export', format, baseVersion: current.version });
+    post({ type: 'export', format });
     setExporting(true);
 }
 
 /**
  * The host's `exportDone`. `busy`: another export runs, and Export keeps
- * showing it. Otherwise Export is offered again; with `dropped` nothing was
- * exported — the page was out of step with the file — and the page says so
- * where the caret is.
+ * showing it. Otherwise Export is offered again; with `refused` nothing was
+ * exported — the host knows no such format — and the page says so where the
+ * caret is.
  */
-function exportFinished(outcome: 'settled' | 'dropped' | 'busy'): void {
+function exportFinished(outcome: 'settled' | 'refused' | 'busy'): void {
     if (outcome === 'busy') {
         setExporting(true);
         return;
     }
     setExporting(false);
-    if (outcome === 'dropped' && view) {
-        showHint(view, 'Not exported: the editor was out of step with the file — export again.', 'refusal');
+    if (outcome === 'refused' && view) {
+        showHint(view, 'Not exported: this format is not offered.', 'refusal');
     }
 }
 
@@ -1034,11 +1034,10 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     switch (msg.type) {
         case 'document':
             showDocument(msg.json, msg.version, msg.defaultWrap, msg.includes, msg.inline);
-            // Only ever sets it: a page loaded again during an export learns it here, and
-            // a document posted before the host took this page's request does not clear it.
-            if (msg.exporting) {
-                setExporting(true);
-            }
+            // The host's word on whether an export runs: a page loaded again during one
+            // learns it here, and an `exportDone` lost on the way cannot keep the face busy
+            // past the next document.
+            setExporting(msg.exporting === true);
             break;
         case 'rendered':
             applyRendered(msg.requestId, msg.html);

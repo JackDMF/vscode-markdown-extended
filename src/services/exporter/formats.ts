@@ -3,7 +3,7 @@
  * (`pickFormat`) and the Visual Editor's Export menu (`toolbar.ts`) both list
  * it, so a format, its name and how it is made read the same on both, and the
  * page and the host accept the same set. Every member of the enum has its row
- * (`exportCurrent.test.ts` holds them together).
+ * (`ROWS`, checked when compiled).
  *
  * No `vscode` import: the page's bundle reads this module too.
  */
@@ -21,13 +21,16 @@ export interface ExportFormatEntry {
     detail: string;
 }
 
-export const EXPORT_FORMATS: readonly ExportFormatEntry[] = [
-    { format: ExportFormat.HTML, label: 'HTML', detail: 'self-contained' },
-    { format: ExportFormat.PDF, label: 'PDF', detail: 'via Chromium' },
-    { format: ExportFormat.PNG, label: 'PNG image', detail: 'via Chromium' },
+/** Each format's row, keyed by the enum: a member without one, or a row for none, does not compile. Listed in this order. */
+const ROWS = {
+    [ExportFormat.HTML]: { label: 'HTML', detail: 'self-contained' },
+    [ExportFormat.PDF]: { label: 'PDF', detail: 'via Chromium' },
+    [ExportFormat.PNG]: { label: 'PNG image', detail: 'via Chromium' },
     // The file's extension stays `.jpg`; the format is named as it is spelled elsewhere.
-    { format: ExportFormat.JPG, label: 'JPEG image', detail: 'via Chromium' },
-];
+    [ExportFormat.JPG]: { label: 'JPEG image', detail: 'via Chromium' },
+} satisfies Record<ExportFormat, Omit<ExportFormatEntry, 'format'>>;
+
+export const EXPORT_FORMATS: readonly ExportFormatEntry[] = (Object.keys(ROWS) as ExportFormat[]).map(format => ({ format, ...ROWS[format] }));
 
 /** A format's name as a message carries it: the enum's value, the file's extension. */
 export type ExportFormatName = `${ExportFormat}`;

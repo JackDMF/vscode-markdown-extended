@@ -709,12 +709,12 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   value you are editing is applied first, as a save applies it. VS Code then asks only which
   exporter, where two can make the format. It is about the document, not the selection,
   so it stays on while the rest of the row is off. While an export runs, the face reads
-  *Exporting…* and another cannot start. If the editor was out of step with the file —
-  it changed outside the editor just before — nothing is exported and the editor says so:
-  export again.
+  *Exporting…* and another cannot start.
 
   *Limits:* a new property not yet added with `Enter` is left out, as a save leaves it out;
   and typing during the first moments of an export may still reach the exported file.
+  If the file changes outside the editor at the moment you export, the export takes the
+  file's text without your last edit, as **Export to File** from the command palette does.
 
 In the card, notes and sidebars are shown stacked, as they render below the margin
 layout's 1280px breakpoint, however wide the window: a card is too narrow for a margin,

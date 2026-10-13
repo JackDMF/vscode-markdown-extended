@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import { ExportFormat } from './formats';
+import type { ExportFormat } from './formats';
 
 // Declared with the format table, which the page's bundle reads too; exported here for the callers that always read it here.
-export { ExportFormat };
+export { ExportFormat } from './formats';
 
 export type Progress = vscode.Progress<{ message?: string; increment?: number }>;
 

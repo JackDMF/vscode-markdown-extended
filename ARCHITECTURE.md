@@ -1155,8 +1155,8 @@ text the other — never a diff:
 | page → host | `runHoverCommand { id }` | Run a command link of the last `hoverResult` |
 | page → host | `showHoverInEditor { requestId }` | **Show more**: VS Code's hover in the text editor, at that hover's position |
 | page → host | `showProblems` | The toolbar's count was clicked: the Problems view |
-| page → host | `export { format, baseVersion }` | **Export** in the toolbar: `exportUri` in a format of the table (`formats.ts`), no format pick; the page commits its open boxes and flushes first, and the host starts it in its queue behind that edit, without waiting for it there — only while the page is in step (below) and no other export runs |
-| host → page | `exportDone { outcome }` | The answer to every `export`: `settled` (done, cancelled, failed) and `dropped` (not run, the page out of step; the page says so) offer Export again; `busy` (another runs) leaves the page showing that one |
+| page → host | `export { format }` | **Export** in the toolbar: `exportUri` in a format of the table (`formats.ts`), no format pick; the page commits its open boxes and flushes first, and the host starts it in its queue behind that edit, without waiting for it there, unless another export runs |
+| host → page | `exportDone { outcome }` | The answer to every `export`: `settled` (done, cancelled, failed) and `refused` (a format the export does not make; the page says so) offer Export again; `busy` (another runs) leaves the page showing that one |
 | page → host | `exportSettings` | **Export → Export settings…**: Settings filtered to `markdownExtended.export` |
 
 A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
@@ -2158,16 +2158,14 @@ pick, the exporter pick, progress and report as the command has them. The format
 table (`services/exporter/formats.ts`, which also declares the `ExportFormat` enum the table
 holds), read by the menu and by `pickFormat`. One export runs at a time: the page shows
 *Exporting…* and refuses its formats until the host's `exportDone`; the host answers a second
-request `busy`, and tells a page loaded meanwhile (`document`'s `exporting`). The host starts
-the export without waiting for it in its queue — a browser's launch would hold up typing — so
-edits typed just after the press may reach it. It runs only while the page is in step, by the
-test `takeCaret` and `mapped` make: the `export`'s `baseVersion` is the document last posted
-and the document holds the page's text. A dropped edit (stale, another writer's change,
-refused) or one whose write threw (the host then forgets the page's text, and its next edit
-brings a repost) leaves it out of step, and the page says *Not exported: the editor was out
-of step with the file — export again*; once the page has the repost, Export runs. *Limit:* an
-export that never settles — a browser launch that hangs — has no timeout: Export stays busy
-while VS Code's progress notification shows it running. The Visual Editor is
+request `busy`; every `document` says whether one runs (`exporting`), so a page loaded
+meanwhile shows it and a lost `exportDone` keeps the face busy no longer than the next
+document. The host starts the export without waiting for it in its queue — a browser's launch
+would hold up typing — so edits typed just after the press may reach it. *Limits:* an export
+right after the host dropped the page's edit (the file changed outside the editor at that
+moment) exports the file's text without that edit, as the command palette's export does; and
+an export that never settles — a browser launch that hangs — has no timeout: Export stays
+busy while VS Code's progress notification shows it running. The Visual Editor is
 desktop-only (`extension.web.ts` registers none), so no page offers Export where it cannot run.
 
 **Hover and the card** (sketch 7). After the pointer rests `HOVER_DELAY_MS` (500 ms) on a

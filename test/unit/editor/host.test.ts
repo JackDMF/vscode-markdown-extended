@@ -2,7 +2,6 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { EditorEngineHost, buildEditorEngine } from '../../../src/editor/host/engineHost';
@@ -1368,8 +1367,6 @@ suite('Editor host: Export from the toolbar', () => {
             source, doc, webview, session, exported, commands, first,
             finish: () => finish?.(),
             done: () => webview.posted.filter((m): m is ExportDone => m.type === 'exportDone').map(m => m.outcome),
-            /** The version of the last document the host posted: the page's base once it has it. */
-            shown: () => webview.documents().pop()?.version ?? -1,
             dispose: () => {
                 session.dispose();
                 engineChanged.dispose();
@@ -1379,24 +1376,24 @@ suite('Editor host: Export from the toolbar', () => {
         };
     };
 
-    test('export runs behind the edit the page sent before it, in the format the page names, and is answered once it settled; an unknown format is answered and not run; Export settings opens the export\'s settings', async function () {
+    test('export runs behind the edit the page sent before it, in the format the page names, and is answered once it settled; an unknown format is refused and not run; Export settings opens the export\'s settings', async function () {
         this.timeout(10000);
         const s = await exportSession();
         try {
             const typed = SOURCE.replace('stays', 'was typed');
-            s.webview.send({ type: 'export', format: 'docx' as 'pdf', baseVersion: s.first.version });
+            s.webview.send({ type: 'export', format: 'docx' as 'pdf' });
             await until(() => s.done()[0], 2000);
-            assert.deepStrictEqual(s.done(), ['settled'], 'an unknown format: answered, nothing run');
+            assert.deepStrictEqual(s.done(), ['refused'], 'an unknown format: refused, nothing run');
             // The page flushed its pending edit before asking: both arrive back to back.
             s.webview.send({ type: 'edit', text: typed, baseVersion: s.first.version });
-            s.webview.send({ type: 'export', format: 'pdf', baseVersion: s.first.version });
+            s.webview.send({ type: 'export', format: 'pdf' });
             await s.session.settled();
             await until(() => s.exported[0], 2000);
             assert.deepStrictEqual(s.exported, [{ uri: s.source.toString(), format: 'pdf', text: typed }], 'exported once, after the edit landed');
-            assert.deepStrictEqual(s.done(), ['settled'], 'not answered while it runs');
+            assert.deepStrictEqual(s.done(), ['refused'], 'not answered while it runs');
             s.finish();
             await until(() => s.done()[1], 2000);
-            assert.deepStrictEqual(s.done(), ['settled', 'settled'], 'answered once it settled');
+            assert.deepStrictEqual(s.done(), ['refused', 'settled'], 'answered once it settled');
             assert.deepStrictEqual(s.commands.filter(c => c[0] === 'workbench.action.openSettings'), []);
             s.webview.send({ type: 'exportSettings' });
             await until(() => s.commands.find(c => c[0] === 'workbench.action.openSettings'), 2000);
@@ -1406,14 +1403,33 @@ suite('Editor host: Export from the toolbar', () => {
         }
     });
 
+    test('an export behind a source box\'s commit — an edit with reparse, which the host answers with a fresh document — runs with the edit\'s text', async function () {
+        this.timeout(10000);
+        const s = await exportSession();
+        try {
+            const committed = SOURCE.replace('stays', 'committed from the box');
+            s.webview.send({ type: 'edit', text: committed, baseVersion: s.first.version, reparse: true });
+            s.webview.send({ type: 'export', format: 'html' });
+            await s.session.settled();
+            await until(() => s.exported[0], 2000);
+            assert.ok((s.webview.documents().pop()?.version ?? -1) > s.first.version, 'the host posted the document parsed afresh');
+            assert.deepStrictEqual(s.exported.map(e => [e.format, e.text]), [['html', committed]]);
+            s.finish();
+            await until(() => s.done()[0], 2000);
+            assert.deepStrictEqual(s.done(), ['settled']);
+        } finally {
+            s.dispose();
+        }
+    });
+
     test('one export at a time: a request while one runs is answered busy and not run; the queue does not wait for the running one; a page loaded meanwhile is told', async function () {
         this.timeout(10000);
         const s = await exportSession();
         try {
-            s.webview.send({ type: 'export', format: 'pdf', baseVersion: s.first.version });
+            s.webview.send({ type: 'export', format: 'pdf' });
             await s.session.settled();
             await until(() => s.exported[0], 2000);
-            s.webview.send({ type: 'export', format: 'png', baseVersion: s.first.version });
+            s.webview.send({ type: 'export', format: 'png' });
             await until(() => s.done()[0], 2000);
             assert.deepStrictEqual(s.done(), ['busy']);
             // An edit behind the running export is applied while it runs.
@@ -1432,73 +1448,12 @@ suite('Editor host: Export from the toolbar', () => {
             s.webview.send({ type: 'ready' });
             await s.session.settled();
             assert.strictEqual(s.webview.documents().pop()?.exporting, undefined, 'and, once it settled, that none does');
-            s.webview.send({ type: 'export', format: 'png', baseVersion: s.shown() });
+            s.webview.send({ type: 'export', format: 'png' });
             await s.session.settled();
             await until(() => s.exported[1], 2000);
             assert.deepStrictEqual(s.exported.map(e => e.format), ['pdf', 'png'], 'once it settled, the next one runs');
             s.finish();
         } finally {
-            s.dispose();
-        }
-    });
-
-    test('an edit dropped because the file changed outside the editor: the export behind it is not run; after the host\'s repost, an export with nothing pending runs', async function () {
-        this.timeout(10000);
-        const s = await exportSession();
-        try {
-            // Another writer changes the file; the page's edit and export were on their way, computed against the text before.
-            const outside = new vscode.WorkspaceEdit();
-            outside.insert(s.source, new vscode.Position(0, 0), '<!-- outside -->\n');
-            await vscode.workspace.applyEdit(outside);
-            s.webview.send({ type: 'edit', text: SOURCE.replace('stays', 'typed'), baseVersion: s.first.version });
-            s.webview.send({ type: 'export', format: 'html', baseVersion: s.first.version });
-            await s.session.settled();
-            await until(() => s.done()[0], 2000);
-            assert.deepStrictEqual(s.done(), ['dropped']);
-            assert.deepStrictEqual(s.exported, [], 'nothing exported');
-            assert.ok(s.shown() > s.first.version, 'the host posted the document afresh');
-            // The page took the repost and has nothing pending: Export runs.
-            s.webview.send({ type: 'export', format: 'html', baseVersion: s.shown() });
-            await s.session.settled();
-            await until(() => s.exported[0], 2000);
-            assert.deepStrictEqual(s.exported.map(e => [e.format, e.text.startsWith('<!-- outside -->')]), [['html', true]]);
-            s.finish();
-        } finally {
-            s.dispose();
-        }
-    });
-
-    test('a stale base with no change outside: dropped, the document untouched', async function () {
-        this.timeout(10000);
-        const s = await exportSession();
-        try {
-            const stale = s.first.version - 1;
-            s.webview.send({ type: 'edit', text: SOURCE.replace('stays', 'stale'), baseVersion: stale });
-            s.webview.send({ type: 'export', format: 'html', baseVersion: stale });
-            await s.session.settled();
-            await until(() => s.done()[0], 2000);
-            assert.deepStrictEqual(s.done(), ['dropped']);
-            assert.deepStrictEqual(s.exported, []);
-            assert.strictEqual(s.doc.getText(), SOURCE, 'the stale edit was not written');
-        } finally {
-            s.dispose();
-        }
-    });
-
-    test('an edit whose write throws: the export behind it is not run on the text before it', async function () {
-        this.timeout(10000);
-        const s = await exportSession();
-        const stub = sinon.stub(vscode.workspace, 'applyEdit').rejects(new Error('the write failed'));
-        try {
-            s.webview.send({ type: 'edit', text: SOURCE.replace('stays', 'lost'), baseVersion: s.first.version });
-            s.webview.send({ type: 'export', format: 'pdf', baseVersion: s.first.version });
-            await s.session.settled();
-            await until(() => s.done()[0], 2000);
-            assert.strictEqual(stub.callCount, 1, 'the write was tried');
-            assert.deepStrictEqual(s.done(), ['dropped']);
-            assert.deepStrictEqual(s.exported, [], 'nothing exported from the text before the edit');
-        } finally {
-            stub.restore();
             s.dispose();
         }
     });

@@ -352,13 +352,7 @@ export class VisualEditorSession implements vscode.Disposable {
                 this.enqueue(() => this.post());
                 break;
             case 'edit':
-                this.enqueue(() => this.applyEdit(msg.text, msg.baseVersion, msg.reparse === true).catch(error => {
-                    // Whether the text went in is unknown: the page counts as
-                    // out of step (an export behind it is not run), and its
-                    // next edit makes the host post the document afresh.
-                    this.webviewText = undefined;
-                    throw error;
-                }));
+                this.enqueue(() => this.applyEdit(msg.text, msg.baseVersion, msg.reparse === true));
                 if (msg.save) {
                     // After the edit, but outside the queue: the save runs the
                     // will-save listener, which waits on the queue, and a save
@@ -449,25 +443,20 @@ export class VisualEditorSession implements vscode.Disposable {
                 // A message names anything: only a format of the table (`formats.ts`) is run.
                 const format = formatNamed(msg.format);
                 if (format === undefined) {
-                    void this.postQuietly({ type: 'exportDone', outcome: 'settled' });
+                    void this.postQuietly({ type: 'exportDone', outcome: 'refused' });
                     break;
                 }
                 this.exporting = true;
-                // In the queue, behind the edit the page flushed before asking.
-                // Run only while the page is in step with the document — the
-                // test `takeCaret` and `mapped` make: the page's base is the
-                // document last posted, and the document holds the page's text.
-                // An edit dropped (stale, another writer's change, refused, or
-                // one that failed) leaves it out of step, and nothing is
-                // exported. Started there, not waited for: it asks for an
-                // exporter where two could make the format and launches a
-                // browser, and the edits behind it must not wait for either.
+                // In the queue, behind the edit the page flushed before asking,
+                // so the export reads at least the text the page showed at the
+                // press — unless that edit was dropped (the file changed
+                // outside the editor at the same moment): then it exports the
+                // file's text, as the command palette's export does. Started
+                // there, not waited for: it asks for an exporter where two
+                // could make the format and launches a browser, and the edits
+                // behind it must not wait for either.
                 this.enqueue(async () => {
-                    if (this.broken || msg.baseVersion !== this.postedVersion || this.document.getText() !== this.webviewText) {
-                        this.exportFinished('dropped');
-                        return;
-                    }
-                    void this.exportAs(format).finally(() => this.exportFinished('settled'));
+                    void this.exportAs(format).finally(() => this.exportFinished());
                 });
                 break;
             }
@@ -494,10 +483,10 @@ export class VisualEditorSession implements vscode.Disposable {
         }
     }
 
-    /** The export the page asked for settled — exported, cancelled, failed — or was not run (`dropped`): the page may ask again. */
-    private exportFinished(outcome: 'settled' | 'dropped'): void {
+    /** The export the page asked for settled — exported, cancelled, failed: the page may ask again. */
+    private exportFinished(): void {
         this.exporting = false;
-        void this.postQuietly({ type: 'exportDone', outcome });
+        void this.postQuietly({ type: 'exportDone', outcome: 'settled' });
     }
 
     /**
