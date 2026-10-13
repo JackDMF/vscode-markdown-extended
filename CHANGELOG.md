@@ -1,5 +1,11 @@
 # Change Log
 
+## Unreleased
+
+### ✨ Features
+
+- The Visual Editor's toolbar has an Export menu: HTML, PDF, PNG or JPEG of the page, unsaved changes included.
+
 ## v4.4.0 — Attributes on Links and Emphasis
 
 ### ✨ Features

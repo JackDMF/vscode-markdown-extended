@@ -415,7 +415,20 @@ export type WebviewMessage =
     /** **Show more** on a clipped hover: open the text editor at the hover's position and show VS Code's own hover there. */
     | { type: 'showHoverInEditor'; requestId: number }
     /** The diagnostics count in the toolbar was clicked: show VS Code's Problems view. */
-    | { type: 'showProblems' };
+    | { type: 'showProblems' }
+    /**
+     * **Export** in the toolbar: run the extension's export (`exportUri`) on
+     * this document in `format`, which the person chose on the page, so VS
+     * Code asks for no format. Sent after the page committed its open source
+     * boxes and flushed its pending edit; the host runs it in its queue,
+     * behind that edit, so the export reads the text the page shows.
+     */
+    | { type: 'export'; format: ExportFormatName }
+    /** **Export → Export settings…**: VS Code's Settings, filtered to `markdownExtended.export`. */
+    | { type: 'exportSettings' };
+
+/** The formats the toolbar's Export menu offers: the values of the exporter's `ExportFormat`. */
+export type ExportFormatName = 'html' | 'pdf' | 'png' | 'jpg';
 
 /**
  * What an extension offering includes exports beside `extendMarkdownIt`

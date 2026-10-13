@@ -116,10 +116,28 @@ export function panelRole(el: { tag: string; type?: string; sourceBox: boolean }
 }
 
 /**
- * Why the formatting row refuses everything while a control has the focus,
- * and how to get it back: shown at the row's end, read as its description, and
- * each refused tool's tooltip. A source box applies with Ctrl+Enter, a
- * property's field with Enter; a button has nothing to apply.
+ * What a control of the formatting row acts on, which decides whether the
+ * focus in a node view's control refuses it (`rowLock`):
+ *
+ * - `selection`: the text at the selection — every mark, menu and verb of the
+ *   row. The selection is hidden behind an open source box or the properties
+ *   panel, so these are refused while one has the focus.
+ * - `document`: the document as a whole — **Export**. Nothing it acts on is
+ *   hidden by the focus: it commits what the open boxes hold, as a save does,
+ *   and so is offered wherever the focus is.
+ */
+export type RowScope = 'selection' | 'document';
+
+/** Why a row control acting on `scope` is refused at `place`, `null` when it is not: the one answer the row reads for each of its controls. */
+export function rowLock(place: FocusPlace, scope: RowScope): string | null {
+    return scope === 'selection' && place.kind === 'control' ? controlLock(place.role) : null;
+}
+
+/**
+ * Why the formatting row refuses what acts on the selection while a control
+ * has the focus, and how to get it back: shown at the row's end, read as its
+ * description, and each refused tool's tooltip. A source box applies with
+ * Ctrl+Enter, a property's field with Enter; a button has nothing to apply.
  */
 export function controlLock(role: ControlRole): string {
     switch (role) {

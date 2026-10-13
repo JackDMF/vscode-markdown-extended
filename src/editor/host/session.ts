@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { Environment, MarkdownIt } from '../../@types/markdown-it';
+import { exportUri } from '../../commands/exportUri';
 import { Config } from '../../services/common/config';
+import { ErrorHandler, ErrorSeverity } from '../../services/common/errorHandler';
+import { ExportFormat } from '../../services/exporter/interfaces';
 import { escapeHtml } from '../../services/exporter/shared';
 import { inlineEngineDefinition } from '../inlineEngine';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
@@ -48,7 +51,12 @@ export interface SessionHost {
     diagnostics?(uri: vscode.Uri): readonly vscode.Diagnostic[];
     /** `vscode.languages.onDidChangeDiagnostics` (the default). */
     onDidChangeDiagnostics?: vscode.Event<vscode.DiagnosticChangeEvent>;
+    /** The extension's export of a document in a format chosen already (`exportUri`, the default); a test records what it was asked. */
+    exportDocument?(uri: vscode.Uri, format: ExportFormat): Thenable<unknown>;
 }
+
+/** The formats a page's `export` may name, as the exporter spells them; anything else is dropped. */
+const EXPORT_FORMATS: ReadonlyMap<string, ExportFormat> = new Map(Object.values(ExportFormat).map(f => [f as string, f]));
 
 /** The part of a `vscode.Webview` a session talks to. */
 export interface SessionWebview {
@@ -421,7 +429,47 @@ export class VisualEditorSession implements vscode.Disposable {
                     void this.includes.answer(msg.requestId, msg.replace !== undefined);
                 });
                 break;
+            case 'export': {
+                const format = EXPORT_FORMATS.get(msg.format);
+                if (format === undefined) {
+                    break;
+                }
+                // In the queue, behind the edit the page flushed before asking,
+                // so the export reads the text the page shows. Started there,
+                // not waited for: it asks for an exporter where two could make
+                // the format, and runs behind a progress notification, and the
+                // edits behind it must not wait for either.
+                this.enqueue(async () => {
+                    void this.exportAs(format);
+                });
+                break;
+            }
+            case 'exportSettings':
+                void Promise.resolve(this.execute('workbench.action.openSettings', 'markdownExtended.export')).catch(error => {
+                    this.host.log(`[WARN] Visual Editor: the export settings could not be shown: ${message(error)}`);
+                });
+                break;
         }
+    }
+
+    /**
+     * This document exported in `format` (`exportUri`), as `markdownExtended.export`
+     * exports it once the format is chosen — a failure reported as the command reports one.
+     */
+    private async exportAs(format: ExportFormat): Promise<void> {
+        try {
+            await (this.host.exportDocument ? this.host.exportDocument(this.document.uri, format) : exportUri(this.document.uri, format));
+        } catch (error) {
+            ErrorHandler.handle(error, {
+                operation: 'Command: markdownExtended.export',
+                details: { commandId: 'markdownExtended.export', format },
+            }, ErrorSeverity.Error);
+        }
+    }
+
+    /** `vscode.commands.executeCommand`, or the test's stand-in for it. */
+    private execute<T>(command: string, ...args: unknown[]): Thenable<T> {
+        return this.host.executeCommand ? this.host.executeCommand<T>(command, ...args) : vscode.commands.executeCommand<T>(command, ...args);
     }
 
     /**

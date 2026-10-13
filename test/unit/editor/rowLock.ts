@@ -28,6 +28,8 @@ export function rowState(page: puppeteer.Page) {
             id: (el as HTMLElement).dataset.action ?? (el as HTMLElement).dataset.menu ?? el.className,
             disabled: el.getAttribute('aria-disabled') === 'true',
             title: (el as HTMLElement).title,
+            // What it acts on (`RowScope`): only Export says, the whole document.
+            document: (el as HTMLElement).dataset.scope === 'document',
         })),
         reason: (() => {
             const lock = row.querySelector('.mep-row-lock') as HTMLElement | null;
@@ -37,11 +39,19 @@ export function rowState(page: puppeteer.Page) {
     }));
 }
 
-/** Every control of the row refused, each saying `reason`, and the row showing it at its end. */
+/**
+ * Every control of the row that acts on the selection refused, each saying
+ * `reason`, and the row showing it at its end; Export, which acts on the whole
+ * document, offered still.
+ */
 export async function assertRowLocked(page: puppeteer.Page, when: string, reason: string): Promise<void> {
     const state = await rowState(page);
-    assert.ok(state.tools.length > 0, 'the row has controls');
-    assert.deepStrictEqual(state.tools.filter(s => !s.disabled || !s.title.endsWith(`\n${reason}`)), [], `${when}: every control of the row refused with the reason`);
+    const selection = state.tools.filter(s => !s.document);
+    assert.ok(selection.length > 0, 'the row has controls');
+    assert.deepStrictEqual(selection.filter(s => !s.disabled || !s.title.endsWith(`\n${reason}`)), [], `${when}: every control of the row refused with the reason`);
+    assert.deepStrictEqual(state.tools.filter(s => s.document).map(s => ({ id: s.id, disabled: s.disabled, title: s.title })), [
+        { id: 'export', disabled: false, title: 'Export' },
+    ], `${when}: Export is offered`);
     assert.strictEqual(state.reason, reason, `${when}: the row shows the reason`);
     assert.strictEqual(state.description, reason, `${when}: and describes itself with it`);
 }

@@ -1332,6 +1332,53 @@ suite('Editor host: includes', () => {
     });
 });
 
+suite('Editor host: Export from the toolbar', () => {
+    test('export runs behind the edit the page sent before it, in the format the page names; an unknown format is dropped; Export settings opens the export\'s settings', async function () {
+        this.timeout(10000);
+        const source = tempMarkdown(SOURCE);
+        const doc = await vscode.workspace.openTextDocument(source);
+        const engineChanged = new vscode.EventEmitter<void>();
+        const webview = new FakeWebview();
+        const exported: { uri: string; format: string; text: string }[] = [];
+        const commands: unknown[][] = [];
+        const session = new VisualEditorSession(doc, webview, {
+            engine: () => buildEditorEngine(EXTENSION_ID, () => undefined),
+            onDidChangeEngine: engineChanged.event,
+            log: () => undefined,
+            exportDocument: async (uri, format) => {
+                exported.push({ uri: uri.toString(), format, text: doc.getText() });
+            },
+            executeCommand: async <T>(command: string, ...args: unknown[]) => {
+                commands.push([command, ...args]);
+                return undefined as T;
+            },
+        });
+        try {
+            webview.send({ type: 'ready' });
+            await session.settled();
+            const [first] = webview.documents();
+            assert.ok(first);
+            const typed = SOURCE.replace('stays', 'was typed');
+            // The page flushed its pending edit before asking: both arrive back to back.
+            webview.send({ type: 'edit', text: typed, baseVersion: first.version });
+            webview.send({ type: 'export', format: 'pdf' });
+            webview.send({ type: 'export', format: 'docx' as 'pdf' });
+            await session.settled();
+            await until(() => exported[0], 2000);
+            assert.deepStrictEqual(exported, [{ uri: source.toString(), format: 'pdf', text: typed }], 'exported once, after the edit landed');
+            assert.deepStrictEqual(commands.filter(c => c[0] === 'workbench.action.openSettings'), []);
+            webview.send({ type: 'exportSettings' });
+            await until(() => commands.find(c => c[0] === 'workbench.action.openSettings'), 2000);
+            assert.deepStrictEqual(commands.filter(c => c[0] === 'workbench.action.openSettings'), [['workbench.action.openSettings', 'markdownExtended.export']]);
+        } finally {
+            session.dispose();
+            engineChanged.dispose();
+            // Not saved first: a save's local-history copy races the removal.
+            fs.rmSync(source.fsPath, { force: true });
+        }
+    });
+});
+
 type MapMessage = Extract<HostMessage, { type: 'map' }>;
 
 /** How long the suite's session waits for a `mapped` answer. */

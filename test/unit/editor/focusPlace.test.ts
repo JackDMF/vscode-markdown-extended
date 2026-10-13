@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { DeclaredControl, panelRole, placeOf } from '../../../src/editor/webview/focusPlace';
+import { DeclaredControl, FocusPlace, controlLock, panelRole, placeOf, rowLock } from '../../../src/editor/webview/focusPlace';
 
 /** An element as `placeOf` reads one: its parent, and `contains` as the DOM answers it (an element contains itself). */
 class FakeElement {
@@ -87,5 +87,16 @@ suite('Editor focus place', () => {
         assert.strictEqual(panelRole({ tag: 'INPUT', type: 'checkbox', sourceBox: false }), 'button');
         assert.strictEqual(panelRole({ tag: 'BUTTON', sourceBox: false }), 'button');
         assert.strictEqual(panelRole({ tag: 'SPAN', sourceBox: false }), 'button', 'a chip or a copyable id: pressed, not typed in');
+    });
+
+    test('a control in the text refuses what acts on the selection, with its reason, and never what acts on the whole document (Export)', () => {
+        const places: FocusPlace[] = [
+            { kind: 'text' }, { kind: 'chrome', field: false }, { kind: 'content' }, { kind: 'away' },
+            { kind: 'control', owner: null, role: 'source' }, { kind: 'control', owner: null, role: 'property' }, { kind: 'control', owner: null, role: 'button' },
+        ];
+        assert.deepStrictEqual(places.map(p => rowLock(p, 'selection')), [
+            null, null, null, null, controlLock('source'), controlLock('property'), controlLock('button'),
+        ]);
+        assert.deepStrictEqual(places.map(p => rowLock(p, 'document')), places.map(() => null));
     });
 });

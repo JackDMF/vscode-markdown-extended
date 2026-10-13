@@ -18,7 +18,7 @@ import { EditorState, NodeSelection, Selection, TextSelection, Transaction } fro
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap } from '../positions';
-import type { CodeActionItem, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import type { CodeActionItem, ExportFormatName, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
@@ -671,6 +671,34 @@ function commitOpenSources(): void {
     }
 }
 
+/**
+ * Commit the open source boxes as a save does (`onSaveKeydown`): their text
+ * goes into the document, and the edit that carries it is the one the caller
+ * sends next, not one of their own.
+ */
+function commitForSending(): void {
+    committingForSave = true;
+    try {
+        commitOpenSources();
+    } finally {
+        committingForSave = false;
+    }
+}
+
+/**
+ * **Export** in the toolbar: what the open boxes hold committed and the
+ * pending edit sent, as before a save, then the request — which the host runs
+ * behind that edit, so the export shows what the page shows.
+ */
+function exportDocument(format: ExportFormatName): void {
+    if (!view) {
+        return;
+    }
+    commitForSending();
+    flush();
+    post({ type: 'export', format });
+}
+
 /** Put a rendering on every raw block that still has the source it was made from. */
 function applyRendered(requestId: number, html: string): void {
     const src = pendingRenders.get(requestId);
@@ -749,6 +777,8 @@ const plugins = [
         pickInclude: () => pickInclude(null),
         linkChoices,
         pickImage: chosen => askFiles({ type: 'pickImage' }, chosen),
+        exportDocument,
+        exportSettings: () => post({ type: 'exportSettings' }),
     }),
     objectToolbarPlugin({
         openSourceAt: pos => post({ type: 'openSource', line: lineAt(pos) }),
@@ -889,12 +919,7 @@ function onSaveKeydown(e: KeyboardEvent): void {
     if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's' || !view) {
         return;
     }
-    committingForSave = true;
-    try {
-        commitOpenSources();
-    } finally {
-        committingForSave = false;
-    }
+    commitForSending();
     if (e.altKey || e.shiftKey) {
         // Save As and the like stay VS Code's; the pending edit is sent first.
         flush();

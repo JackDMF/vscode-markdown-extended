@@ -42,6 +42,9 @@ Find commands in the command palette or right-click on an editor / workspace fol
 - `Markdown: Export to File`
 - `Markdown: Export Markdown to File`
 
+In the Visual Editor, **Export** at the right end of the toolbar exports the document in the
+format you pick there (see *Toolbar* below).
+
 Export files are organized in the `out` directory in the workspace root by default.
 
 ### Editing Helpers
@@ -648,9 +651,10 @@ workspace, while the file keeps the path as you wrote it.
 
 A toolbar stays at the top of the editor, one line of controls across its full width:
 
-`Block type` | `i` `em` `b` `strong` `code` | `Formatting` `Annotation` `Insert`
+`Block type` | `i` `em` `b` `strong` `code` | `Formatting` `Annotation` `Insert` … problems | `Export`
 
-Each menu is its name followed by VS Code's own dropdown chevron.
+Each menu is its name followed by VS Code's own dropdown chevron. The problem count and
+**Export** stay pinned at the right end while the row scrolls.
 
 It is drawn as part of VS Code rather than of the page: the colours of the tab strip above
 it, the workbench's font, its menus drawn as VS Code's context menus and each object's bar
@@ -700,6 +704,11 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   and table of contents, from the same templates as this extension's snippets where one
   exists; **Include…** (below). An admonition (titled with its type's name) and a container
   (`::: container`) go in as rich text with the caret in their body: type, and it is the body.
+- **Export** — HTML, PDF, PNG image or JPEG image, then **Export settings…**. It exports
+  the document as the page shows it, unsaved changes included: a source box or property
+  you are editing is applied first, as a save applies it. VS Code then asks only which
+  exporter, where two can make the format. It is about the document, not the selection,
+  so it stays on while the rest of the row is off.
 
 In the card, notes and sidebars are shown stacked, as they render below the margin
 layout's 1280px breakpoint, however wide the window: a card is too narrow for a margin,

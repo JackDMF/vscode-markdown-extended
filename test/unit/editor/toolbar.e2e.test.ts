@@ -106,7 +106,7 @@ suite('Editor toolbar (e2e)', () => {
         await page.mouse.click(WIDE - 20, 880);
     });
 
-    test('the row is one line: block type, the five marks, three menus, every control the same height', async () => {
+    test('the row is one line: block type, the five marks, three menus, Export at its end, every control the same height', async () => {
         await selectText('Second');
         const row = await page.evaluate(() => {
             const bar = document.querySelector('.mep-toolbar') as HTMLElement;
@@ -128,6 +128,7 @@ suite('Editor toolbar (e2e)', () => {
         assert.strictEqual(row.tops.length, 1, 'one line');
         assert.deepStrictEqual(row.faces, [
             { text: 'Paragraph', samples: 0, chevron: true }, { text: 'Formatting', samples: 0, chevron: true }, { text: 'Annotation', samples: 0, chevron: true }, { text: 'Insert', samples: 0, chevron: true },
+            { text: 'Export', samples: 0, chevron: true },
         ]);
         assert.strictEqual(row.fixed, true, 'the row stands fixed at the top of the editor, before the text');
 
@@ -144,7 +145,8 @@ suite('Editor toolbar (e2e)', () => {
                 const bar = document.querySelector('.mep-toolbar') as HTMLElement;
                 const row = bar.getBoundingClientRect();
                 const tools = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool'));
-                const tops = tools.map(c => Math.round(c.offsetTop));
+                // From the window, not `offsetTop`: Export's is measured from the sticky end it stands in.
+                const tops = tools.map(c => Math.round(c.getBoundingClientRect().top));
                 // Inside the row's box above its edge: no scrollbar laid out under them takes their height.
                 const inside = tools.every(c => {
                     const r = c.getBoundingClientRect();
