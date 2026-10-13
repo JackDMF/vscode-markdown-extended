@@ -355,7 +355,7 @@ const formatting: ToolbarAction[] = [
     {
         // markdown-it-attrs on the inline element at the caret: written right after it. Named
         // by the element (`Attributes of Link…`); the label here is its resting form.
-        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Code…', syntax: `\`code\`${CLASS_LITERAL}`,
+        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Element…', syntax: `…${CLASS_LITERAL}`,
         sample: el('code.x', 'Attributes…'), apply: { kind: 'inline-attrs' }, example: `\`Attributes…\`${BLOCK_LITERAL_EXAMPLE}`,
         preview: {
             markdown: 'Run `--flag`{.k} to skip the cache.',

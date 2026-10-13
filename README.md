@@ -459,7 +459,7 @@ are typing on, and never moves the page.
 | Left or right sidebar | while the caret is inside, after a moment | **Remove sidebar, keep text** · **Move to right** / **Move to left** · **Edit source** |
 | Link | while the caret is in its text, after a moment | **Open** · **Edit link…** · **Attributes…** (its `{…}`; `{}` or empty removes it) · **Remove link** |
 | Span (`[text]{…}`) | while the caret is in its text, after a moment | **Attributes…** · **Remove attributes, keep text** |
-| Emphasis, strikethrough, highlight, inline code, superscript, subscript or a key with attributes (`_x_{…}`, `` `x`{…} ``) | while the caret is in its text, after a moment; named *Emphasis*, *Code*, *Key* … | **Attributes…** · **Remove attributes, keep formatting** |
+| Emphasis, strikethrough, highlight, inline code, superscript, subscript or a key with attributes (`_x_{…}`, `` `x`{…} ``) | while the caret is in its text, after a moment; named as the row names it — *Bold*, *Italic*, *Strong*, *Emphasis*, *Code*, *Key* … — with its `{…}` | **Attributes…** · **Remove attributes, keep formatting** |
 | The same without attributes | only on `Alt+Enter`, never on a caret rest | **Attributes…** (gives it its first `{…}`) |
 | Image | when you click it, after a moment; its label and tooltip show its `{…}` | **Edit image…** (its alt text, then its path) · **Attributes…** (its `{…}`, written after its `(…)`; `{}` or empty removes it) · **Open file** · **Remove image** |
 | Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Attributes…** (disabled: the plugin gives a `{…}` to the title bar) · **Remove admonition, keep content** |
@@ -674,8 +674,9 @@ element (the italic, emphasis, bold, strong and code your stylesheets draw) as t
 glyph; everything else is in a menu. Above any text you select, a small bubble offers the
 same five marks, the extension's five (highlight, superscript, subscript, strikethrough,
 key), the two notes and **`{…}`**: within one element — code, a link, emphasis … — the
-attributes of that element, the whole of it, as **Attributes of Code…** (its tooltip
-names it); across plain text, **Span with class**.
+attributes of that element, the whole of it, as **Attributes of Code…** — marked while it
+targets one, its tooltip and its accessible name saying which; across plain text, **Span
+with class**.
 
 In a menu, each entry **is** the construct it makes — the very element the preview renders
 from that syntax, drawn by the same stylesheets and scaled to one entry height — with its
@@ -694,9 +695,11 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   and **Span with class**, which asks for the attributes in a field under the selection —
   filled in as `{.}` with the caret after the dot, so you type the class name and `Enter` —
   and makes the selection `[text]{.class}`; **Attributes of Code…**, named by the element
-  the caret is in — code, a key, a link, emphasis, superscript, subscript, a highlight, a
-  span, a selected image — which asks the same way for that element's `{…}`, written right
-  after it, and is disabled, saying where to put the caret, where there is none. Which
+  the caret is in as the row names it — *Bold*, *Italic*, *Strong*, *Emphasis*, *Code*, a
+  key, a link, superscript, subscript, a highlight, a span, a selected image — and drawn
+  as that element, its syntax written as it, which asks the same way for that element's
+  `{…}`, written right after it; where there is none it rests as *Attributes of
+  Element…*, disabled, saying where to put the caret. Which
   element that is: a link or a span, else the innermost — code, subscript, superscript, a
   key, a highlight, strikethrough, strong, emphasis; between two runs of one kind at the
   caret, the one after it. And **Attributes of Paragraph…**, named by the block the caret

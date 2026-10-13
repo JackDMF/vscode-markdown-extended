@@ -389,7 +389,7 @@ suite('Editor object toolbar (e2e)', () => {
         await showDocument('Run `--flag`{.k} to skip the cache.\n', 'Run');
         await clickBefore('flag', 2);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'styled', label: 'Code', verbs: ['edit-attributes', 'remove-attributes'] });
+        assert.deepStrictEqual(await barState(), { object: 'styled', label: 'Code {.k}', verbs: ['edit-attributes', 'remove-attributes'] });
         assert.strictEqual(await page.$eval(`${BAR} [data-verb="edit-attributes"]`, el => el.textContent), 'Attributes…');
         await clickVerb('edit-attributes');
         await page.keyboard.type('{.k .big}');
@@ -877,9 +877,9 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         const state = await barState();
         assert.strictEqual(state.object, 'table');
         assert.deepStrictEqual(state.verbs.slice(-2), ['delete-table', 'inline-attributes']);
-        assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Strong…');
+        assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Bold…', 'named as the row names **');
         await clickVerb('inline-attributes');
-        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Table · Attributes of Strong');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Table · Attributes of Bold');
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-pending-range', els => els.map(el => el.textContent).join('')), 'bold', 'the bold the field edits is drawn, not the table');
         await page.keyboard.type('b');
         await page.keyboard.press('Enter');
@@ -936,7 +936,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual((await lastEdit())?.text, 'Run `x`{.k} to skip the cache.\n');
         assert.strictEqual(await page.$eval(BAR, el => (el as HTMLElement).dataset.object), 'styled', 'the same bar, now the styled run\'s');
         assert.deepStrictEqual(await page.evaluate(() => (window as unknown as { holderHidden: boolean[] }).holderHidden.filter(h => h)), [], 'never hidden on the way');
-        assert.strictEqual((await barState()).label, 'Code');
+        assert.strictEqual((await barState()).label, 'Code {.k}');
     });
 
     test('the caret in an admonition: Change type from the menu of types, Edit title; the page and the file say both', async function () {

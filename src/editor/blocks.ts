@@ -1,7 +1,7 @@
 import { Token } from '../@types/markdown-it';
 import { AttrPair, NOTE_SYNTAX_CHARS, attrsReadAt, endLiteralOf, fenceHolder, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, readsBackAs, sameAttrs } from './attrs';
 import { InlineEngineDefinition } from './inlineEngine';
-import { INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderOfToken } from './inlineLiterals';
+import { INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderOfToken, namesOf } from './inlineLiterals';
 import { textBeforeAttrs } from '../plugin/markdownItAttrs';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 
@@ -1005,7 +1005,9 @@ function recoverInlineLiterals(tokens: readonly Token[], group: TokenGroup, line
     const found = new Map<Token, string>();
     let from = 0;
     for (const { token, after, inNote } of closed) {
-        const { holder, noun } = holderOfToken(token.type) as InlineLiteralHolder;
+        const kind = holderOfToken(token.type) as InlineLiteralHolder;
+        const holder = kind.holder;
+        const noun = namesOf(kind, token.markup).noun;
         const wanted = literalAttrs(token);
         let literal: string | null = null;
         for (let at = src.indexOf('{', from); at >= 0 && literal === null; at = src.indexOf('{', at + 1)) {

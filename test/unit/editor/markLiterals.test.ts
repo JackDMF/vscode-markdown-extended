@@ -355,7 +355,8 @@ suite('Editor inline literals: inline code, an image, superscript, subscript and
         assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){alt=b} b.\n')), 'A ![a](s.png) b.\n', 'the preview takes the alt from the text');
         assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){title=t} b.\n')), 'A ![a](s.png "t") b.\n');
         for (const literal of ['{src=x.png}', '{alt=x}', '{title=x}', '{.c title=x}']) {
-            assert.ok(literalRefusal(literal, 'image')?.includes('src, alt or title'), literal);
+            const key = /\{\.?c? ?(\w+)=/.exec(literal)?.[1] as string;
+            assert.strictEqual(literalRefusal(literal, 'image'), `${key} is the image's own: change it with Edit image…. Here, give it a class, an id or another attribute.`, literal);
         }
         assert.strictEqual(literalRefusal('{.hero width=300}', 'image'), null);
     });

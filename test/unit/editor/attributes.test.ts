@@ -432,10 +432,10 @@ suite('Editor Attributes…: where the engine reads no attributes, nothing offer
 });
 
 suite('Editor fields: a refused commit keeps the field', () => {
-    test('refusedStep is the same step with what was typed, selected, and the reason', () => {
+    test('refusedStep is the same step with what was typed, the caret at its end, and the reason', () => {
         const step: FieldStep = { value: '{.}', caret: 2, label: 'Attributes', keys: 'keys', commit: () => undefined };
         const refused = refusedStep(step, '{.a', 'It is not closed.');
-        assert.deepStrictEqual({ ...refused, commit: null }, { value: '{.a', caret: undefined, label: 'Attributes', keys: 'keys', refusal: 'It is not closed.', commit: null });
+        assert.deepStrictEqual({ ...refused, commit: null }, { value: '{.a', caret: 3, label: 'Attributes', keys: 'keys', refusal: 'It is not closed.', commit: null });
         assert.strictEqual(refused.commit, step.commit, 'it commits as the step does');
     });
 });

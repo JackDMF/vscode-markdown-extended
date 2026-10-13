@@ -11,7 +11,7 @@ import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { parseDocument } from './parse';
 import { NOTE_CLOSE_TOKENS, NOTE_OPEN_TOKENS } from './blocks';
-import { INLINE_LITERAL_HOLDERS, holderOfCarrier } from './inlineLiterals';
+import { INLINE_LITERAL_HOLDERS, holderOfCarrier, namesOf } from './inlineLiterals';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
@@ -562,13 +562,15 @@ const NODE_LITERAL_TOKENS: Readonly<Record<string, string>> = Object.fromEntries
 const LITERAL_OPEN_TOKENS: ReadonlySet<string> = new Set(INLINE_LITERAL_HOLDERS.map(h => h.token));
 
 /** What the mark or node `carrier` carrying a literal is called in a reason (`noun`). */
-function literalNoun(carrier: string): string {
-    return holderOfCarrier(carrier)?.noun ?? carrier;
+function literalNoun(carrier: Mark | Node): string {
+    const holder = holderOfCarrier(carrier.type.name);
+    return holder === undefined ? carrier.type.name : namesOf(holder, carrier.attrs.markup).noun;
 }
 
 /** What the mark or node `carrier` carrying a literal is called at the start of a refusal (`subject`). */
-function literalSubject(carrier: string): string {
-    return holderOfCarrier(carrier)?.subject ?? carrier;
+function literalSubject(carrier: Mark | Node): string {
+    const holder = holderOfCarrier(carrier.type.name);
+    return holder === undefined ? carrier.type.name : namesOf(holder, carrier.attrs.markup).subject;
 }
 
 /**
@@ -1251,7 +1253,7 @@ function noteUnwritable(note: Node): string | null {
         let reason: string | null = null;
         part.forEach(child => {
             if (reason === null && holderOfCarrier(child.type.name) !== undefined && NOTE_SYNTAX_CHARS.test(markLiteralOf(child) ?? '')) {
-                reason = `${literalSubject(child.type.name)} in a note cannot hold ${markLiteralOf(child) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+                reason = `${literalSubject(child)} in a note cannot hold ${markLiteralOf(child) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
             }
             if (reason !== null || !child.isText) {
                 return;
@@ -1261,7 +1263,7 @@ function noteUnwritable(note: Node): string | null {
             const raw = child.marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
             const span = child.marks.find(m => NOTE_SYNTAX_CHARS.test(markLiteralOf(m) ?? ''));
             if (span !== undefined) {
-                reason = `${literalSubject(span.type.name)} in a note cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+                reason = `${literalSubject(span)} in a note cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
             } else if (raw && terminator !== undefined && text.includes(terminator)) {
                 reason = `Inline code, superscript and subscript in this part of a note cannot hold "${terminator}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
             } else if (code && marker !== null && text.includes(marker)) {
@@ -2267,7 +2269,7 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
             } else {
                 const span = [child, ...child.marks].find(c => holderOfCarrier(c.type.name) !== undefined && /[|`]/.test(markLiteralOf(c) ?? ''));
                 if (span !== undefined) {
-                    reason = `${literalSubject(span.type.name)} in a table cell cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
+                    reason = `${literalSubject(span)} in a table cell cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
                 }
             }
             return true;
@@ -2862,14 +2864,14 @@ function withBlockSuffix(node: Node, text: string): string {
  * per run of one mark and one per image, so the instances of one kind stand
  * in the order the parser opens their tokens in.
  */
-function markInstancesIn(node: Node): { token: string; literal: string | null; carrier: string; blank: boolean; adjacent: boolean }[] {
-    const out: { token: string; literal: string | null; carrier: string; blank: boolean; adjacent: boolean }[] = [];
+function markInstancesIn(node: Node): { token: string; literal: string | null; carrier: Mark | Node; blank: boolean; adjacent: boolean }[] {
+    const out: { token: string; literal: string | null; carrier: Mark | Node; blank: boolean; adjacent: boolean }[] = [];
     const walk = (parent: Node) => {
         const open = new Map<string, { mark: Mark; instance: (typeof out)[number] }>();
         parent.forEach(child => {
             const own = NODE_LITERAL_TOKENS[child.type.name];
             if (own !== undefined) {
-                out.push({ token: own, literal: markLiteralOf(child), carrier: child.type.name, blank: false, adjacent: false });
+                out.push({ token: own, literal: markLiteralOf(child), carrier: child, blank: false, adjacent: false });
             }
             // A run of nothing but white space is no run in the file: the writer moves the space out of it.
             const blank = child.isText ? !/\S/.test(child.text ?? '') : false;
@@ -2877,7 +2879,7 @@ function markInstancesIn(node: Node): { token: string; literal: string | null; c
                 const mark = child.marks.find(m => m.type.name === name);
                 const before = open.get(name);
                 if (mark !== undefined && (before === undefined || !mark.eq(before.mark))) {
-                    const instance = { token, literal: markLiteralOf(mark), carrier: name, blank, adjacent: before !== undefined };
+                    const instance = { token, literal: markLiteralOf(mark), carrier: mark, blank, adjacent: before !== undefined };
                     out.push(instance);
                     open.set(name, { mark, instance });
                 } else if (mark !== undefined && before !== undefined) {
@@ -3540,11 +3542,11 @@ function textblockOfInline(unit: WrittenUnit, read: UnitRead, index?: number): N
  * differ (a run the save writes in two, a bare address the parser links),
  * the literals are matched in order to the tokens given attributes.
  */
-function markLiteralVerdict(unit: WrittenUnit, read: UnitRead): { missing?: { literal: string; at: Node }; extra?: { inline: number }; merged?: { carrier: string; literal: string | null; at: Node } } {
+function markLiteralVerdict(unit: WrittenUnit, read: UnitRead): { missing?: { literal: string; at: Node }; extra?: { inline: number }; merged?: { carrier: Mark | Node; literal: string | null; at: Node } } {
     const instances = unit.textblocks.flatMap(({ node }) => markInstancesIn(node).map(instance => ({ ...instance, key: attrsKey(literalPairs(instance.literal)), at: node })));
     let missing: { literal: string; at: Node } | undefined;
     let extra: { inline: number } | undefined;
-    let merged: { carrier: string; literal: string | null; at: Node } | undefined;
+    let merged: { carrier: Mark | Node; literal: string | null; at: Node } | undefined;
     for (const token of LITERAL_OPEN_TOKENS) {
         const wanted = instances.filter(w => w.token === token);
         const found = read.marks.filter(f => f.type === token);

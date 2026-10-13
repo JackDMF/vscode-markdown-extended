@@ -40,6 +40,28 @@ export interface InlineLiteralHolder {
     label: string;
     /** A run carrying a literal is a `styled` object; a link, a span and an image have bars of their own. */
     styled: boolean;
+    /**
+     * The names by the delimiter it is written with, where that changes what it is called
+     * (`**` Bold, `__` Strong, `*` Italic, `_` Emphasis — as the row's buttons are named);
+     * `noun`, `subject` and `label` otherwise.
+     */
+    markups?: Readonly<Record<string, HolderNames>>;
+    /** `text` written as this element with `literal` after it (`markup` its delimiter, where it has a choice): what the menu's syntax column and card show. */
+    example: (text: string, literal: string, markup?: string) => string;
+    /** The element the engine renders it as (`markup` its delimiter); none for an image, which has no text to show. */
+    tag?: (markup?: string) => string;
+}
+
+/** What a holder is called: in a reason, at the start of a refusal, and on its bar, the menu and a field. */
+export interface HolderNames {
+    noun: string;
+    subject: string;
+    label: string;
+}
+
+/** What `holder` written with `markup` (a mark's `markup` attribute, a token's) is called (`markups`). */
+export function namesOf(holder: InlineLiteralHolder, markup?: unknown): HolderNames {
+    return (typeof markup === 'string' ? holder.markups?.[markup] : undefined) ?? holder;
 }
 
 /**
@@ -51,49 +73,62 @@ export const INLINE_LITERAL_HOLDERS: readonly InlineLiteralHolder[] = [
     {
         holder: 'link', carrier: { mark: 'link' }, token: 'link_open', closing: ')>]', source: l => `[x](u)${l}`,
         own: ['href', 'title'], noun: 'link', subject: 'A link', label: 'Link', styled: false,
+        example: (t, l) => `[${t}](u)${l}`, tag: () => 'a',
     },
     {
         holder: 'span', carrier: { mark: 'attr_span' }, token: 'span_open', closing: ']', source: l => `[x]${l}`,
         own: [], noun: 'attribute span', subject: 'An attribute span', label: 'Span', styled: false,
+        example: (t, l) => `[${t}]${l}`, tag: () => 'span',
     },
     {
         // A nesting-0 token: the plugin gives the `{…}` after the closing backtick run to the code itself.
         holder: 'code', carrier: { mark: 'code' }, token: 'code_inline', closing: 'markup', source: l => `\`x\`${l}`,
         own: [], noun: 'inline code', subject: 'Inline code', label: 'Code', styled: true,
+        example: (t, l) => `\`${t}\`${l}`, tag: () => 'code',
     },
     {
         holder: 'sub', carrier: { mark: 'sub' }, token: 'sub_open', closing: 'markup', source: l => `~x~${l}`,
         own: [], noun: 'subscript', subject: 'Subscript', label: 'Subscript', styled: true,
+        example: (t, l) => `~${t}~${l}`, tag: () => 'sub',
     },
     {
         holder: 'sup', carrier: { mark: 'sup' }, token: 'sup_open', closing: 'markup', source: l => `^x^${l}`,
         own: [], noun: 'superscript', subject: 'Superscript', label: 'Superscript', styled: true,
+        example: (t, l) => `^${t}^${l}`, tag: () => 'sup',
     },
     {
         holder: 'kbd', carrier: { mark: 'kbd' }, token: 'kbd_open', closing: ']', source: l => `[[x]]${l}`,
         own: [], noun: 'key', subject: 'A key', label: 'Key', styled: true,
+        example: (t, l) => `[[${t}]]${l}`, tag: () => 'kbd',
     },
     {
         holder: 'mark', carrier: { mark: 'mark' }, token: 'mark_open', closing: 'markup', source: l => `==x==${l}`,
         own: [], noun: 'highlight', subject: 'A highlight', label: 'Highlight', styled: true,
+        example: (t, l) => `==${t}==${l}`, tag: () => 'mark',
     },
     {
         holder: 'strike', carrier: { mark: 'strike' }, token: 's_open', closing: 'markup', source: l => `~~x~~${l}`,
         own: [], noun: 'strikethrough', subject: 'Strikethrough', label: 'Strikethrough', styled: true,
+        example: (t, l) => `~~${t}~~${l}`, tag: () => 's',
     },
     {
         holder: 'strong', carrier: { mark: 'strong' }, token: 'strong_open', closing: 'markup', source: l => `**x**${l}`,
         own: [], noun: 'strong emphasis', subject: 'Strong emphasis', label: 'Strong', styled: true,
+        example: (t, l, m = '**') => `${m}${t}${m}${l}`, tag: m => (m === '__' ? 'strong' : 'b'),
+        markups: { '**': { noun: 'bold text', subject: 'Bold text', label: 'Bold' }, '__': { noun: 'strong emphasis', subject: 'Strong emphasis', label: 'Strong' } },
     },
     {
         holder: 'em', carrier: { mark: 'em' }, token: 'em_open', closing: 'markup', source: l => `*x*${l}`,
         own: [], noun: 'emphasis', subject: 'Emphasis', label: 'Emphasis', styled: true,
+        example: (t, l, m = '*') => `${m}${t}${m}${l}`, tag: m => (m === '_' ? 'em' : 'i'),
+        markups: { '*': { noun: 'italic text', subject: 'Italic text', label: 'Italic' }, '_': { noun: 'emphasis', subject: 'Emphasis', label: 'Emphasis' } },
     },
     {
         // A node, and a nesting-0 token: `![a](s)` and `![a][r]` close with `)` or `]`. Its
         // `src`, `alt` and `title` are written in its `(…)`; the renderer takes `alt` from the text.
         holder: 'image', carrier: { node: 'image' }, token: 'image', closing: ')]', source: l => `![x](u)${l}`,
         own: ['src', 'alt', 'title'], noun: 'image', subject: 'An image', label: 'Image', styled: false,
+        example: (t, l) => `![${t}](u)${l}`,
     },
 ];
 

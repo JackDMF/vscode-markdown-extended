@@ -41,14 +41,14 @@ import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
-    applySpanTransaction, attributeHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction,
-    insertLockReason, LINK_LOCK, literalOfObject, NO_ATTRS_REFUSAL, objectAtSelection, spanLiteralRefusal, spanLockReason,
+    applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction,
+    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLiteralRefusal, spanLockReason,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    CLASS_LITERAL, INLINE_ATTRS_LOCK, MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS,
+    ActionPreview, CLASS_LITERAL, INLINE_ATTRS_LOCK, MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS,
     ToolbarAction, ToolbarMenu, ToolbarSubmenu, elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
@@ -164,15 +164,44 @@ export function followPointer(panel: HTMLElement, item: HTMLElement): void {
 }
 
 /**
- * An entry's sample relabelled with what the selection names the action
- * (`ActionState.label`): the text of the element it draws, so the entry reads
- * `Attributes of Paragraph…` in the paragraph's own element.
+ * What the inline holder at the selection makes the Formatting entry and the
+ * bubble's `{…}` say: its name by its delimiter (`Attributes of Bold…`,
+ * `holderNames`), its sample the element the engine renders it as with that
+ * name — plain text for an image, which has none to show — and its syntax and
+ * card written as it (`example`, `tag` in `inlineLiterals.ts`).
  */
-function relabelSample(item: HTMLElement, label: string): void {
-    const sample = item.querySelector('.mep-sample > *');
-    const text = sample === null ? null : Array.from(sample.childNodes).find(n => n.nodeType === 3);
-    if (text && text.textContent !== label) {
-        text.textContent = label;
+function inlineEntry(inline: InlineHolderAt): { label: string; sample: SampleSpec; syntax: string; preview: ActionPreview } {
+    const label = `Attributes of ${holderNames(inline).label}…`;
+    const markup = holderMarkup(inline);
+    const holder = inline.holder;
+    const tag = holder.tag?.(markup);
+    const text = holder.holder === 'code' ? 'code' : holder.holder === 'image' ? 'alt' : 'text';
+    return {
+        label,
+        sample: tag === undefined ? { tag: 'span', children: [label] } : { tag, className: 'x', children: [label] },
+        syntax: holder.example(text, CLASS_LITERAL, markup),
+        preview: {
+            markdown: `Run ${holder.example('--flag', '{.k}', markup)} now.`,
+            nodes: tag === undefined ? [] : [{ tag: 'p', children: ['Run ', { tag, className: 'k', children: ['--flag'] }, ' now.'] }],
+        },
+    };
+}
+
+/** The sample an entry draws, replaced when what the selection makes it draw changed (`ActionState.sample`). */
+function resample(item: HTMLElement, spec: SampleSpec): void {
+    const holder = item.querySelector<HTMLElement>('.mep-sample');
+    const key = JSON.stringify(spec);
+    if (holder !== null && holder.dataset.drawn !== key) {
+        holder.dataset.drawn = key;
+        holder.replaceChildren(renderSample(spec));
+    }
+}
+
+/** The syntax column an entry shows, where the selection decides it. */
+function resyntax(item: HTMLElement, syntax: string): void {
+    const column = item.querySelector('.mep-entry-syntax');
+    if (column !== null && column.textContent !== syntax) {
+        column.textContent = syntax;
     }
 }
 
@@ -197,6 +226,12 @@ export interface ActionState {
     label?: string;
     /** The whole tooltip, where the selection decides what the action does (the bubble's `{…}`). */
     tooltip?: string;
+    /** What a named entry draws as its sample, its syntax column and its card, where the selection decides it (`Attributes of Bold…` as `**text**{.class}`). */
+    sample?: SampleSpec;
+    syntax?: string;
+    preview?: ActionPreview;
+    /** The button's accessible name, where the selection decides what it does (the bubble's `{…}`). */
+    ariaLabel?: string;
 }
 
 /** Whether each action applies at the selection, and whether it is what the selection already has. */
@@ -252,22 +287,24 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
                 : { enabled: true, active: false, reason: null, label: `Attributes of ${target.name}…` };
         }
         case 'inline-attrs': {
-            // Named by the inline element it acts on, the one its bar and the bubble name (`attributeHolderAt`).
+            // Named by the inline element it acts on, the one its bar and the bubble name (`attributeHolderAt`),
+            // and drawn as that element, its syntax and card written as it (`inlineEntry`).
             const inline = currentReadsAttrs() ? attributeHolderAt(state).inline : null;
             return inline === null
                 ? { enabled: false, active: false, reason: currentReadsAttrs() ? INLINE_ATTRS_LOCK : NO_ATTRS_REFUSAL, label: action.label }
-                : { enabled: true, active: false, reason: null, label: `Attributes of ${inline.holder.label}…` };
+                : { enabled: true, active: false, reason: null, ...inlineEntry(inline) };
         }
         case 'attrs-bubble': {
             // Within one element's run, its attributes — the one the menu and its bar name
             // (`attributeHolderAt`) — else an attribute span made of the selection.
             const inline = currentReadsAttrs() && !state.selection.empty ? attributeHolderAt(state).inline : null;
             if (inline !== null) {
-                const name = `Attributes of ${inline.holder.label}…`;
-                return { enabled: true, active: literalOfObject(inline.object) !== null, reason: null, tooltip: `${name} — ${inline.holder.source(CLASS_LITERAL)}` };
+                // Marked while it targets an element, so what it does is seen without the tooltip.
+                const entry = inlineEntry(inline);
+                return { enabled: true, active: true, reason: null, tooltip: `${entry.label} — ${entry.syntax}`, ariaLabel: entry.label };
             }
             const reason = spanLockReason(state);
-            return { enabled: reason === null, active: false, reason, tooltip: `Span with class — [text]${CLASS_LITERAL}` };
+            return { enabled: reason === null, active: false, reason, tooltip: `Span with class — [text]${CLASS_LITERAL}`, ariaLabel: 'Span with class' };
         }
         case 'insert-link': {
             const reason = objectAtSelection(state)?.kind === 'link' ? null : insertLockReason(state, LINK_LOCK);
@@ -466,10 +503,15 @@ class ToolbarView implements PluginView {
             setState(tool.el, s.enabled, s.active);
             // A named entry's sample and tooltip say one name: the selection's, or — the row locked — its resting one.
             const label = s.label ?? (tool.action.named ? tool.action.label : undefined);
-            const tooltip = s.tooltip ?? tooltipOf(tool.action, label);
+            const tooltip = s.tooltip ?? (s.syntax === undefined ? tooltipOf(tool.action, label) : `${label as string}: ${s.syntax}`);
             tool.el.title = s.enabled || !s.reason ? tooltip : `${tooltip}\n${s.reason}`;
-            if (label !== undefined) {
-                relabelSample(tool.el, label);
+            if (tool.action.named && label !== undefined) {
+                // Its resting form is plain text for the inline entry (no element to draw), the block's own element for the block's.
+                resample(tool.el, s.sample ?? (tool.action.apply.kind === 'inline-attrs' ? { tag: 'span', children: [label] } : { ...tool.action.sample, children: [label] }));
+                resyntax(tool.el, s.syntax ?? tool.action.syntax.split('\n')[0]);
+            }
+            if (s.ariaLabel !== undefined) {
+                tool.el.setAttribute('aria-label', s.ariaLabel);
             }
         }
         for (const menu of this.menus) {
@@ -1056,7 +1098,8 @@ class ToolbarView implements PluginView {
      * at any window width instead of floating out of it.
      */
     private showCard(action: ToolbarAction, item: HTMLElement, menu: Menu): void {
-        const preview = action.preview;
+        const now = evaluate(action, this.view.state, this.host.includesOffered());
+        const preview = now.preview ?? action.preview;
         if (!preview || menu.panel.hidden) {
             return;
         }
@@ -1068,7 +1111,6 @@ class ToolbarView implements PluginView {
         syntax.textContent = elideDataUris(preview.markdown);
         this.card.replaceChildren(body, syntax);
         // A disabled entry says why where the eye already is, not only in its tooltip.
-        const now = evaluate(action, this.view.state, this.host.includesOffered());
         if (!now.enabled && now.reason) {
             const why = div('mep-preview-refusal');
             why.textContent = now.reason;
@@ -1278,7 +1320,7 @@ class ToolbarView implements PluginView {
             showHint(this.view, currentReadsAttrs() ? INLINE_ATTRS_LOCK : NO_ATTRS_REFUSAL, 'refusal');
             return;
         }
-        this.openFieldBar(at.holder.holder, at.holder.label, 'inline-attributes', holderAttributesStep(this.view, at), { from: at.object.from, to: at.object.to });
+        this.openFieldBar(at.holder.holder, holderNames(at).label, 'inline-attributes', holderAttributesStep(this.view, at), { from: at.object.from, to: at.object.to });
     }
 
     // -- links and images ------------------------------------------------------

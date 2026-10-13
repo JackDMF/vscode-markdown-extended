@@ -488,3 +488,17 @@ suite('Editor inline literal holders: the registry says what the engine does', (
         });
     }
 });
+
+suite('Editor inline literal holders: each one\'s example renders as its tag, by delimiter', () => {
+    const md = hostEngine();
+
+    for (const h of INLINE_LITERAL_HOLDERS) {
+        for (const markup of [undefined, ...Object.keys(h.markups ?? {})]) {
+            test(`${h.holder}${markup === undefined ? '' : ` ${markup}`}: ${h.example('text', '{.c}', markup)}`, () => {
+                const html = md.renderInline(h.example('text', '{.c}', markup));
+                const tag = h.tag?.(markup) ?? 'img';
+                assert.ok(new RegExp(`<${tag}[^>]*class="c"`).test(html), html);
+            });
+        }
+    }
+});

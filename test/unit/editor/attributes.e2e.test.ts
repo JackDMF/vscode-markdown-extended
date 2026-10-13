@@ -287,7 +287,7 @@ suite('Editor Attributes… (e2e)', () => {
         await openFormatting();
         const plain = await page.$eval(INLINE, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title, label: el.querySelector('.mep-sample')?.textContent }));
         assert.strictEqual(plain.disabled, 'true');
-        assert.strictEqual(plain.label, 'Attributes of Code…', 'its resting name');
+        assert.strictEqual(plain.label, 'Attributes of Element…', 'its resting name');
         assert.ok(plain.title.includes(INLINE_ATTRS_LOCK), plain.title);
         await shot('07-formatting-inline-disabled.png');
         await page.keyboard.press('Escape');
@@ -333,7 +333,7 @@ suite('Editor Attributes… (e2e)', () => {
                 refusal: refusal?.textContent ?? null,
             };
         }, FIELD_BAR);
-        assert.deepStrictEqual({ ...kept, refusal: null }, { value: '{.a', focused: true, selected: [0, 3], role: 'alert', keys: false, refusal: null });
+        assert.deepStrictEqual({ ...kept, refusal: null }, { value: '{.a', focused: true, selected: [3, 3], role: 'alert', keys: false, refusal: null });
         assert.ok(kept.refusal?.includes('is not closed'), kept.refusal ?? 'none');
         await shot('06-refusal-kept-open.png');
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');

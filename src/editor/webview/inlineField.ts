@@ -50,9 +50,13 @@ export interface FieldStep {
     commit(value: string): FieldStep | void;
 }
 
-/** The same step shown again with what was typed and why it was refused: a commit's answer to a refusal. The value is selected, so a retype replaces it. */
+/**
+ * The same step shown again with what was typed and why it was refused: a
+ * commit's answer to a refusal. The caret at its end, so what was typed is
+ * corrected, not lost to the next key (a prefilled value is selected instead).
+ */
 export function refusedStep(step: FieldStep, typed: string, refusal: string): FieldStep {
-    return { ...step, value: typed, caret: undefined, refusal };
+    return { ...step, value: typed, caret: typed.length, refusal };
 }
 
 export interface InlineFieldOptions {

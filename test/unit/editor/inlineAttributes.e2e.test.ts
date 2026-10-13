@@ -116,7 +116,7 @@ suite('Editor inline attributes (e2e)', () => {
             refusal: document.querySelector(`${sel} .mep-field-refusal`)?.textContent ?? null,
         }), BAR);
         assert.strictEqual(refused.value, '{.hero src=other.png}');
-        assert.ok(refused.refusal?.includes('src, alt or title'), refused.refusal ?? 'none');
+        assert.strictEqual(refused.refusal, 'src is the image\'s own: change it with Edit image…. Here, give it a class, an id or another attribute.');
         await shot(page, 'inline-attrs-04-image-field-refused.png');
     });
 
@@ -126,7 +126,7 @@ suite('Editor inline attributes (e2e)', () => {
         await clickText(page, 'flag', 2);
         await page.waitForSelector(`${BAR}[data-object="styled"]`, { timeout: 2000 });
         assert.deepStrictEqual(await verbs(), [['edit-attributes', 'Attributes…'], ['remove-attributes', 'Remove attributes, keep formatting']]);
-        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Code');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Code {.k}', 'its literal with its name, as an image\'s');
         await shot(page, 'inline-attrs-05-code-bar.png');
     });
 
@@ -143,13 +143,17 @@ suite('Editor inline attributes (e2e)', () => {
         await clickText(page, 'flag', 2);
         await open();
         assert.deepStrictEqual(await entries(), [['span-class', 'span', 'true'], ['inline-attributes', 'Attributes of Code…', 'false'], ['block-attributes', 'Attributes of Paragraph…', 'false']]);
+        // The sample keeps its weight and its width when the entry is chosen: no twitch.
+        const sampleBox = () => page.$eval('.mep-menu [data-action="inline-attributes"] .mep-sample > *', el => ({ weight: getComputedStyle(el).fontWeight, width: el.getBoundingClientRect().width }));
+        const resting = await sampleBox();
         await page.hover('.mep-menu [data-action="inline-attributes"]');
         await delay(700);
+        assert.deepStrictEqual(await sampleBox(), resting);
         await shot(page, 'inline-attrs-06-menu-enabled.png');
         await page.keyboard.press('Escape');
         await clickText(page, 'plain', 2);
         await open();
-        assert.deepStrictEqual((await entries())[1], ['inline-attributes', 'Attributes of Code…', 'true']);
+        assert.deepStrictEqual((await entries())[1], ['inline-attributes', 'Attributes of Element…', 'true']);
         await page.hover('.mep-menu [data-action="inline-attributes"]');
         await delay(700);
         await shot(page, 'inline-attrs-07-menu-disabled.png');
@@ -167,13 +171,13 @@ suite('Editor inline attributes (e2e)', () => {
         await shot(page, 'inline-attrs-08-alt-enter-bare-bar.png');
     });
 
-    test('a table\'s bar with the separated Attributes of Strong…', async function () {
+    test('a table\'s bar with the separated Attributes of Bold…', async function () {
         this.timeout(20000);
         await showDocument('| Name | Kind |\n| ---- | ---- |\n| **Alpha** | first |\n\nAfter it.\n', 'Alpha');
         await clickText(page, 'Alpha', 2);
         await pressAlt('Enter');
         const shown = await verbs();
-        assert.deepStrictEqual(shown[shown.length - 1], ['inline-attributes', 'Attributes of Strong…']);
+        assert.deepStrictEqual(shown[shown.length - 1], ['inline-attributes', 'Attributes of Bold…']);
         assert.ok(await page.$(`${BAR} .mep-object-separator + [data-verb="inline-attributes"]`), 'after a separator');
         await shot(page, 'inline-attrs-09-table-bar-strong.png');
     });
@@ -209,5 +213,53 @@ suite('Editor inline attributes (e2e)', () => {
         await page.keyboard.press('Enter');
         await settle();
         assert.ok((await lastEdit())?.text.includes('{.s}'), (await lastEdit())?.text);
+    });
+    test('named by what the caret is in: a link, bold (**), superscript — the menu entry and the bubble; a bold run with {.a} in its bar', async function () {
+        this.timeout(30000);
+        const open = async () => {
+            await page.click('.mep-toolbar .mep-menu-face[data-menu="formatting"]');
+            await page.waitForSelector('.mep-menu[data-menu="formatting"]:not([hidden])');
+        };
+        const entry = () => page.$eval('.mep-menu [data-action="inline-attributes"]', e => [e.querySelector('.mep-sample > *')?.tagName.toLowerCase(), e.querySelector('.mep-sample')?.textContent, e.querySelector('.mep-entry-syntax')?.textContent]);
+        const selectIn = (needle: string) => page.evaluate(n => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const at = (node.textContent ?? '').indexOf(n);
+                if (at >= 0) {
+                    (document.getSelection() as Selection).setBaseAndExtent(node, at + 1, node, at + n.length - 1);
+                    return;
+                }
+            }
+        }, needle);
+        await showDocument('See [the guide](guide.md), a **bold** word, x^2^ squared, and **marked**{.a} text.\n\nAfter it.\n', 'See');
+        for (const [needle, tag, label, syntax, name] of [
+            ['guide', 'a', 'Attributes of Link…', '[text](u){.class}', 'link'],
+            ['bold', 'b', 'Attributes of Bold…', '**text**{.class}', 'bold'],
+            ['2', 'sup', 'Attributes of Superscript…', '^text^{.class}', 'sup'],
+        ] as const) {
+            await clickText(page, needle, needle.length === 1 ? 0 : 2);
+            await open();
+            assert.deepStrictEqual(await entry(), [tag, label, syntax], needle);
+            await page.hover('.mep-menu [data-action="inline-attributes"]');
+            await delay(700);
+            await shot(page, `inline-attrs-12-menu-${name}.png`);
+            await page.keyboard.press('Escape');
+            await page.focus('.ProseMirror');
+            await selectIn(needle.length === 1 ? 'x^2' : needle);
+            if (needle.length === 1) {
+                await clickText(page, '2', 0);
+                await page.keyboard.down('Shift');
+                await page.keyboard.press('ArrowRight');
+                await page.keyboard.up('Shift');
+            }
+            await delay(250);
+            assert.deepStrictEqual(await page.$eval(BUBBLE_TOOL, el => [el.getAttribute('aria-label'), el.classList.contains('mep-active')]), [label, true], needle);
+            await shot(page, `inline-attrs-13-bubble-${name}.png`);
+        }
+        await clickText(page, 'marked', 2);
+        await page.waitForSelector(`${BAR}[data-object="styled"]`, { timeout: 2000 });
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Bold {.a}');
+        await shot(page, 'inline-attrs-14-bold-bar.png');
     });
 });

@@ -122,9 +122,20 @@ suite('Editor attribute holder: one rule for what at the selection carries a {�
         assert.strictEqual(block(at(stateOf('| a |\n| - |\n| cell |\n'), 'cell')).label, 'Attributes of Table…');
         const contained = block(at(stateOf('::: box\nInside.\n:::\n'), 'Inside'));
         assert.deepStrictEqual(contained, { enabled: false, active: false, reason: CONTAINER_ATTRS_REFUSAL, label: 'Attributes of Block…' });
-        assert.deepStrictEqual(inline(at(stateOf('A `code` b.\n'), 'code', 1)), { enabled: true, active: false, reason: null, label: 'Attributes of Code…' });
+        const code = inline(at(stateOf('A `code` b.\n'), 'code', 1));
+        assert.deepStrictEqual({ ...code, preview: undefined }, {
+            enabled: true, active: false, reason: null, label: 'Attributes of Code…', preview: undefined,
+            sample: { tag: 'code', className: 'x', children: ['Attributes of Code…'] }, syntax: '`code`{.class}',
+        });
+        // Named, drawn and written by the delimiter, as the row names its buttons.
+        const bold = inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'b', 0));
+        assert.deepStrictEqual([bold.label, bold.sample?.tag, bold.syntax], ['Attributes of Bold…', 'b', '**text**{.class}']);
+        assert.strictEqual(inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 's', 0)).label, 'Attributes of Strong…');
+        assert.strictEqual(inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'i', 0)).label, 'Attributes of Italic…');
+        assert.deepStrictEqual([inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'e', 0)).label, inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'e', 0)).sample?.tag], ['Attributes of Emphasis…', 'em']);
+        assert.strictEqual(inline(at(stateOf('A x^2^ b.\n'), '2', 0)).syntax, '^text^{.class}');
         assert.strictEqual(inline(at(stateOf('See [a link](u).\n'), 'link', 1)).label, 'Attributes of Link…');
-        assert.deepStrictEqual(inline(at(stateOf('Plain text.\n'), 'text', 1)), { enabled: false, active: false, reason: INLINE_ATTRS_LOCK, label: 'Attributes of Code…' });
+        assert.deepStrictEqual(inline(at(stateOf('Plain text.\n'), 'text', 1)), { enabled: false, active: false, reason: INLINE_ATTRS_LOCK, label: 'Attributes of Element…' });
     });
 });
 
@@ -133,10 +144,10 @@ suite('Editor attribute holder: the bubble\'s {…}', () => {
 
     test('within one element\'s run it names that element; across runs, a span; in a source block, why not', () => {
         const inCode = evaluate(bubble, at(stateOf('A `xy` b.\n'), 'xy', 0, 1), false);
-        assert.deepStrictEqual(inCode, { enabled: true, active: false, reason: null, tooltip: 'Attributes of Code… — `x`{.class}' });
-        assert.strictEqual(evaluate(bubble, at(stateOf('A `xy`{.k} b.\n'), 'xy', 0, 1), false).active, true, 'marked while the element has a {…}');
+        assert.deepStrictEqual(inCode, { enabled: true, active: true, reason: null, tooltip: 'Attributes of Code… — `code`{.class}', ariaLabel: 'Attributes of Code…' });
+        assert.strictEqual(evaluate(bubble, at(stateOf('A **xy** b.\n'), 'xy', 0, 1), false).ariaLabel, 'Attributes of Bold…');
         const across = evaluate(bubble, at(stateOf('A *b* c.\n'), 'b', 0, 3), false);
-        assert.deepStrictEqual(across, { enabled: true, active: false, reason: null, tooltip: 'Span with class — [text]{.class}' });
+        assert.deepStrictEqual(across, { enabled: true, active: false, reason: null, tooltip: 'Span with class — [text]{.class}', ariaLabel: 'Span with class' });
         const raw = stateOf('<div>raw</div>\n\nText.\n');
         const locked = evaluate(bubble, raw.apply(raw.tr.setSelection(NodeSelection.create(raw.doc, 0))), false);
         assert.strictEqual(locked.enabled, false);

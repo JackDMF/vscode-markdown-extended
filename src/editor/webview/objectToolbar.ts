@@ -37,7 +37,6 @@ import { CellSelection, isInTable, selectedRect } from 'prosemirror-tables';
 import { Mapping } from 'prosemirror-transform';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
-import { holderOfCarrier } from '../inlineLiterals';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, applyKey, showChangeHint, showHint, undoKey } from './hint';
@@ -52,7 +51,7 @@ import {
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
-    changeInlineLiteralRefusal, changeInlineLiteralTransaction, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
+    changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
 import { ATTRIBUTES_REMOVED_HINT, attributesStep, holderAttributesStep } from './attributes';
 import { currentReadsAttrs } from '../inlineEngine';
@@ -502,6 +501,7 @@ class ObjectBar {
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
+        this.el.dataset.name = presentation.label;
         if (presentation.code !== undefined) {
             const code = document.createElement('span');
             code.className = 'mep-object-label-code';
@@ -733,7 +733,8 @@ class ObjectBar {
         this.field = field;
         if (label) {
             // A prefilled field shows no placeholder: the label says what the value is.
-            label.textContent = fieldHeading(this.el.getAttribute('aria-label') ?? '', spec.label);
+            // The object's name alone: what the field holds (a literal) is not said twice (`Image · Attributes`).
+            label.textContent = fieldHeading(this.el.dataset.name ?? '', spec.label);
         }
         const aside = 'options' in spec ? [] : fieldAside(spec);
         this.el.replaceChildren(...(label ? [label] : []), field.el, ...aside);
@@ -1374,13 +1375,14 @@ class ObjectToolbarView implements PluginView {
         if (inside === null) {
             return own;
         }
-        const name = `Attributes of ${inside.holder.label}`;
+        const names = holderNames(inside);
+        const name = `Attributes of ${names.label}`;
         // Headed by the element, not by the object whose bar it is on (`Table · Attributes of Strong`).
         const step = holderAttributesStep(this.view, inside, name);
         const verb: Verb = {
             id: 'inline-attributes',
             label: `${name}…`,
-            title: `The ${inside.holder.noun}'s {…}, written right after it: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).`,
+            title: `The ${names.noun}'s {…}, written right after it: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).`,
             separated: true,
             field: step,
             target: { from: inside.object.from, to: inside.object.to },
@@ -1602,20 +1604,21 @@ class ObjectToolbarView implements PluginView {
             }
             case 'holder': {
                 // Only `Alt+Enter` opens it: formatting has no bar of its own on a caret rest.
-                const holder = holderOfCarrier(object.mark.type.name);
-                const label = holder?.label ?? object.mark.type.name;
+                const names = holderNames(inlineHolderOf(object));
                 const text = view.state.doc.textBetween(object.from, object.to, ' ', ' ');
                 return {
-                    label,
-                    title: `\`${text}\`: ${holder?.noun ?? label} — Attributes… gives it a {…}`,
-                    verbs: [this.markAttributesVerb(object, 'edit-attributes', 'Attributes…', `Give the ${(holder?.noun ?? label)} a {…}, written right after it: {.class}, {#id}, {key=value} (Enter to apply, Esc to cancel).`)],
+                    label: names.label,
+                    title: `\`${text}\`: ${names.noun} — Attributes… gives it a {…}`,
+                    verbs: [this.markAttributesVerb(object, 'edit-attributes', 'Attributes…', `Give the ${names.noun} a {…}, written right after it: {.class}, {#id}, {key=value} (Enter to apply, Esc to cancel).`)],
                 };
             }
             case 'styled': {
                 const literal = object.mark.attrs.literal as string;
-                const name = holderOfCarrier(object.mark.type.name)?.label ?? object.mark.type.name;
+                const name = holderNames(inlineHolderOf(object)).label;
                 return {
                     label: name,
+                    // The literal is read with the label, as an image's is (`Code {.k}`).
+                    code: literal,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
                     verbs: [
                         this.markAttributesVerb(object, 'edit-attributes', 'Attributes…', `Change the ${name.toLowerCase()}'s {…}; {} removes it (Enter to apply, Esc to cancel).`),

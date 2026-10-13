@@ -42,7 +42,7 @@ import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
-import { INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier } from '../inlineLiterals';
+import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalNotReadBack, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
@@ -631,9 +631,13 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph
         return `${value} holds a } inside a value: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
     }
     const holder = holderNamed(place);
-    if (holder !== undefined && holder.own.length > 0 && (parseAttrsLiteral(value) ?? []).some(([name]) => holder.own.includes(name))) {
-        const own = holder.own.length === 1 ? holder.own[0] : `${holder.own.slice(0, -1).join(', ')} or ${holder.own[holder.own.length - 1]}`;
-        return `${value} sets the ${holder.noun}'s ${own}, which the ${holder.noun} writes in its (…): give it a class, an id or another attribute.`;
+    const own = holder === undefined ? undefined : (parseAttrsLiteral(value) ?? []).find(([name]) => holder.own.includes(name))?.[0];
+    if (place === 'link' && own !== undefined) {
+        return `${value} sets the link's href or title, which the link writes in its (…): give it a class, an id or another attribute.`;
+    }
+    if (holder !== undefined && own !== undefined) {
+        // The one key at fault, and where it is changed instead.
+        return `${own} is the ${holder.noun}'s own: change it with Edit ${holder.noun}…. Here, give it a class, an id or another attribute.`;
     }
     if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(value)) {
         return `${value} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
@@ -721,6 +725,17 @@ function carrierOf(object: LiteralObject): Mark | Node {
 /** `object` with the holder of its literal (`inlineLiterals.ts`). */
 export function inlineHolderOf(object: LiteralObject): InlineHolderAt {
     return { holder: holderOfCarrier(carrierOf(object).type.name) as InlineLiteralHolder, object };
+}
+
+/** What the holder at `at` is called, by the delimiter its run is written with (`namesOf`: `**` Bold, `_` Emphasis …). */
+export function holderNames(at: InlineHolderAt): HolderNames {
+    return namesOf(at.holder, carrierOf(at.object).attrs.markup);
+}
+
+/** The delimiter `at`'s run is written with, where its mark has a choice of one (`**`, `_`); else none. */
+export function holderMarkup(at: InlineHolderAt): string | undefined {
+    const markup = carrierOf(at.object).attrs.markup;
+    return typeof markup === 'string' ? markup : undefined;
 }
 
 /** The literal `object` carries now, or `null`. */
@@ -821,7 +836,7 @@ export function spanLockReason(state: EditorState): string | null {
     const sel = state.selection;
     const ok = sel instanceof TextSelection && !sel.empty && sel.$from.sameParent(sel.$to)
         && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code;
-    return ok ? null : 'Select text within one paragraph, heading or list item (not code) to give it attributes.';
+    return ok ? null : 'Select text within one paragraph, heading or list item (not in a code block) to give it attributes.';
 }
 
 /**
