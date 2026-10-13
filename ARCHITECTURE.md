@@ -1155,7 +1155,8 @@ text the other — never a diff:
 | page → host | `runHoverCommand { id }` | Run a command link of the last `hoverResult` |
 | page → host | `showHoverInEditor { requestId }` | **Show more**: VS Code's hover in the text editor, at that hover's position |
 | page → host | `showProblems` | The toolbar's count was clicked: the Problems view |
-| page → host | `export { format }` | **Export** in the toolbar: `exportUri` in that format (`html`, `pdf`, `png`, `jpg`), no format pick; the page commits its open boxes and flushes first, and the host runs it in its queue behind that edit |
+| page → host | `export { format }` | **Export** in the toolbar: `exportUri` in a format of the table (`formats.ts`), no format pick; the page commits its open boxes and flushes first, and the host starts it in its queue behind that edit, without waiting for it there. Not run after a dropped edit, nor while one runs |
+| host → page | `exportDone { dropped? }` | The export settled (done, cancelled, failed): Export is offered again; with `dropped` it was not run, the edit before it having been dropped, and the page says so |
 | page → host | `exportSettings` | **Export → Export settings…**: Settings filtered to `markdownExtended.export` |
 
 A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
@@ -1639,7 +1640,7 @@ without **Edit source**, its box being the edit, and without other extensions' l
 code actions; the front matter's, barless), the pointer's bar is hidden, and the
 formatting row refuses everything that acts on the selection, saying why at its end
 (`controlLock`, read through `rowLock` with the control's `RowScope`). **Export**, whose
-scope is the document, is not refused: it commits the open boxes as a save does. It is the focus,
+scope is the document, is not refused (`RowLock.refusal`); its tooltip carries the lock model's `note` instead — the open box applied first, as a save does. It is the focus,
 not an open box: after `Esc` out of the YAML box the focus is on the header's **Edit as
 source**, and the bars wait for the next `Esc` or a click into the text (Daniel,
 2026-10-12); a raw block's box, closing, leaves the focus nowhere (`away`). A verb run from
@@ -2148,12 +2149,18 @@ not reachable from a webview, so the toolbar's end is the place. It is a button 
 `showProblems`, and the host runs `workbench.actions.view.problems`.
 
 **Export** follows the count in the same slot (`.mep-row-said` holds the count, then
-`.mep-row-export`, a divider between them while the count shows), so it is pinned with it
-and keeps the slot shown without one. Its menu is built by the toolbar's menu machinery but
+`.mep-row-export`, a divider before Export whenever the count or the lock's reason beside the
+tools stands before it), so it is pinned with it and keeps the slot shown without one. Its menu is built by the toolbar's menu machinery but
 holds commands, not actions of the table (`EXPORT_ENTRIES`): a format posts `export` after
 the page commits its open boxes and flushes (`exportDocument` in `main.ts`, the save's
 `commitForSending`), and the host runs `exportUri(uri, format)` behind that edit — no format
-pick, the exporter pick, progress and report as the command has them. The Visual Editor is
+pick, the exporter pick, progress and report as the command has them. The formats are one
+table (`services/exporter/formats.ts`), read by the menu and by `pickFormat`, with the
+`ExportFormat` enum held to it at compile time. One export runs at a time: the page shows
+*Exporting…* and refuses its formats until the host's `exportDone`, and the host drops a
+second request. The host starts the export without waiting for it in its queue — a browser's
+launch would hold up typing — so edits typed just after the press may reach it; an export
+after an edit the host dropped (`applyEdit` false) is not run, and the page says so. The Visual Editor is
 desktop-only (`extension.web.ts` registers none), so no page offers Export where it cannot run.
 
 **Hover and the card** (sketch 7). After the pointer rests `HOVER_DELAY_MS` (500 ms) on a

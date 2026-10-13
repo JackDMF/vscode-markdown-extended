@@ -685,18 +685,43 @@ function commitForSending(): void {
     }
 }
 
+/** An export the page asked for runs: from the press until the host's `exportDone`. One at a time. */
+let exporting = false;
+
 /**
  * **Export** in the toolbar: what the open boxes hold committed and the
- * pending edit sent, as before a save, then the request — which the host runs
- * behind that edit, so the export shows what the page shows.
+ * pending edit sent, as before a save, then the request — which the host
+ * starts behind that edit, so the export holds at least what the page showed
+ * at the press (the `export` message says what more it may hold). Export is
+ * busy until the host's `exportDone`.
  */
 function exportDocument(format: ExportFormatName): void {
-    if (!view) {
+    if (!view || exporting) {
         return;
     }
     commitForSending();
     flush();
     post({ type: 'export', format });
+    exporting = true;
+    redrawToolbar();
+}
+
+/**
+ * The host's `exportDone`: Export is offered again. With `dropped`, nothing
+ * was exported — the page's last edit had been dropped, the file having
+ * changed outside the editor — and the page says so where the caret is.
+ */
+function exportFinished(dropped: boolean): void {
+    exporting = false;
+    redrawToolbar();
+    if (dropped && view) {
+        showHint(view, 'Not exported: the file changed outside the editor — export again', 'refusal');
+    }
+}
+
+/** Have the toolbar read the page's state again (Export busy or not): a transaction that changes nothing. */
+function redrawToolbar(): void {
+    view?.dispatch(view.state.tr.setMeta('addToHistory', false));
 }
 
 /** Put a rendering on every raw block that still has the source it was made from. */
@@ -779,6 +804,7 @@ const plugins = [
         pickImage: chosen => askFiles({ type: 'pickImage' }, chosen),
         exportDocument,
         exportSettings: () => post({ type: 'exportSettings' }),
+        exportBusy: () => exporting,
     }),
     objectToolbarPlugin({
         openSourceAt: pos => post({ type: 'openSource', line: lineAt(pos) }),
@@ -1053,6 +1079,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             if (view) {
                 hoverMessage(view, msg);
             }
+            break;
+        case 'exportDone':
+            exportFinished(msg.dropped === true);
             break;
     }
 });

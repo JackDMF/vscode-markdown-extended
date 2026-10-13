@@ -465,7 +465,7 @@ img.mep-pending-range {
 .mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail) { color: inherit; opacity: 0.8; }
 
 /* A command's entry (Export's): its name in plain text, and how it is made beside it, right and dim. */
-.mep-menu-item > .mep-entry-label { flex: none; white-space: nowrap; }
+.mep-menu[data-menu="export"] > .mep-menu-item > .mep-entry-label { flex: none; white-space: nowrap; }
 .mep-entry-detail {
     flex: 1;
     min-width: 0;
@@ -1291,8 +1291,9 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 /*
  * The formatting row's right end: what is about the document as a whole —
  * what the page says of it (the diagnostics count, in `-said`), then Export,
- * with the row's divider between them while something is said. Pinned to the
- * right while the row scrolls sideways; Export keeps it shown without a count.
+ * with the row's divider before Export whenever anything stands before it:
+ * the count, or the lock's reason beside the tools. Pinned to the right while
+ * the row scrolls sideways; Export keeps it shown without a count.
  */
 .mep-row-status {
     position: sticky;
@@ -1306,8 +1307,6 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     /* Over the row's right padding too: a narrow row's tools scroll under it and would show there. */
     box-shadow: 8px 0 0 var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
 }
-.mep-row-status:empty,
-.mep-row-status:not(:has(> :not([hidden]))) { display: none; }
 .mep-row-said,
 .mep-row-export {
     display: flex;
@@ -1315,8 +1314,9 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     align-items: center;
 }
 .mep-row-said:not(:has(> :not([hidden]))) { display: none; }
-/* The divider of `.mep-row-group + .mep-row-group`, between the count and Export. */
-.mep-row-said:has(> :not([hidden])) + .mep-row-export::before {
+/* The divider of `.mep-row-group + .mep-row-group`, after the count or the lock's reason beside it. */
+.mep-row-said:has(> :not([hidden])) + .mep-row-export::before,
+.mep-toolbar:not(.mep-row-lock-below) > .mep-row-lock:not([hidden]) + .mep-row-status > .mep-row-export::before {
     content: "";
     flex: none;
     width: 1px;

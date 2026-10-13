@@ -3,7 +3,8 @@ import { Environment, MarkdownIt } from '../../@types/markdown-it';
 import { exportUri } from '../../commands/exportUri';
 import { Config } from '../../services/common/config';
 import { ErrorHandler, ErrorSeverity } from '../../services/common/errorHandler';
-import { ExportFormat } from '../../services/exporter/interfaces';
+import { isExportFormatName } from '../../services/exporter/formats';
+import { ExportFormat, exportFormatOf } from '../../services/exporter/interfaces';
 import { escapeHtml } from '../../services/exporter/shared';
 import { inlineEngineDefinition } from '../inlineEngine';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
@@ -54,9 +55,6 @@ export interface SessionHost {
     /** The extension's export of a document in a format chosen already (`exportUri`, the default); a test records what it was asked. */
     exportDocument?(uri: vscode.Uri, format: ExportFormat): Thenable<unknown>;
 }
-
-/** The formats a page's `export` may name, as the exporter spells them; anything else is dropped. */
-const EXPORT_FORMATS: ReadonlyMap<string, ExportFormat> = new Map(Object.values(ExportFormat).map(f => [f as string, f]));
 
 /** The part of a `vscode.Webview` a session talks to. */
 export interface SessionWebview {
@@ -151,6 +149,12 @@ export class VisualEditorSession implements vscode.Disposable {
     /** The `map` requests waiting for the page's `mapped`, by id. */
     private readonly pendingMaps = new Map<number, (answer: MappedMessage | undefined) => void>();
     private mapSeq = 0;
+    /** `vscode.commands.executeCommand`, or the test's stand-in for it (`SessionHost.executeCommand`). */
+    private readonly execute: <T>(command: string, ...args: unknown[]) => Thenable<T>;
+    /** Whether the last edit the page sent left the document holding its text (`applyEdit`): an export after a dropped one is not run. */
+    private lastEditApplied = true;
+    /** An export the page asked for is running, from its request until `exportDone`; another is dropped meanwhile. */
+    private exporting = false;
 
     constructor(
         private readonly document: vscode.TextDocument,
@@ -168,6 +172,7 @@ export class VisualEditorSession implements vscode.Disposable {
         const execute = <T>(command: string, ...args: unknown[]): Thenable<T> => (host.executeCommand
             ? host.executeCommand<T>(command, ...args)
             : vscode.commands.executeCommand<T>(command, ...args));
+        this.execute = execute;
         this.codeActions = new CodeActionController(port, execute);
         this.language = new LanguageFeatures({
             port,
@@ -350,7 +355,9 @@ export class VisualEditorSession implements vscode.Disposable {
                 this.enqueue(() => this.post());
                 break;
             case 'edit':
-                this.enqueue(() => this.applyEdit(msg.text, msg.baseVersion, msg.reparse === true));
+                this.enqueue(async () => {
+                    this.lastEditApplied = await this.applyEdit(msg.text, msg.baseVersion, msg.reparse === true);
+                });
                 if (msg.save) {
                     // After the edit, but outside the queue: the save runs the
                     // will-save listener, which waits on the queue, and a save
@@ -430,17 +437,32 @@ export class VisualEditorSession implements vscode.Disposable {
                 });
                 break;
             case 'export': {
-                const format = EXPORT_FORMATS.get(msg.format);
-                if (format === undefined) {
+                // A message names anything: only a format of the table (`formats.ts`) is run.
+                if (!isExportFormatName(msg.format)) {
                     break;
                 }
+                const format = exportFormatOf(msg.format);
+                // One at a time: the page shows the running one until
+                // `exportDone`, and a second request meanwhile is dropped.
+                if (this.exporting) {
+                    this.host.log('[INFO] Visual Editor: an export is running; the request for another was dropped.');
+                    break;
+                }
+                this.exporting = true;
                 // In the queue, behind the edit the page flushed before asking,
-                // so the export reads the text the page shows. Started there,
-                // not waited for: it asks for an exporter where two could make
-                // the format, and runs behind a progress notification, and the
-                // edits behind it must not wait for either.
+                // so the export reads at least the text the page showed at the
+                // press. Started there, not waited for: it asks for an exporter
+                // where two could make the format and launches a browser, and
+                // the edits behind it must not wait for either.
                 this.enqueue(async () => {
-                    void this.exportAs(format);
+                    if (!this.lastEditApplied) {
+                        // The page's last edit was dropped — the file changed
+                        // outside the editor — so the document does not hold
+                        // what the page showed: nothing is exported.
+                        this.exportFinished(true);
+                        return;
+                    }
+                    void this.exportAs(format).finally(() => this.exportFinished(false));
                 });
                 break;
             }
@@ -467,9 +489,10 @@ export class VisualEditorSession implements vscode.Disposable {
         }
     }
 
-    /** `vscode.commands.executeCommand`, or the test's stand-in for it. */
-    private execute<T>(command: string, ...args: unknown[]): Thenable<T> {
-        return this.host.executeCommand ? this.host.executeCommand<T>(command, ...args) : vscode.commands.executeCommand<T>(command, ...args);
+    /** The export the page asked for settled — exported, cancelled, failed, or (`dropped`) not run: the page may ask again. */
+    private exportFinished(dropped: boolean): void {
+        this.exporting = false;
+        void this.postQuietly(dropped ? { type: 'exportDone', dropped: true } : { type: 'exportDone' });
     }
 
     /**
@@ -678,24 +701,28 @@ export class VisualEditorSession implements vscode.Disposable {
      * has classified and rendered it — so the document is posted after the edit
      * lands, although it equals what the page holds. A stale edit is dropped with
      * or without it: the document on its way is parsed afresh anyway.
+     *
+     * True when the document holds the page's text afterwards — written, or
+     * equal already; false when the edit was dropped (stale, broken, the
+     * document changed by another writer, refused by VS Code).
      */
-    private async applyEdit(text: string, baseVersion: number, reparse = false): Promise<void> {
+    private async applyEdit(text: string, baseVersion: number, reparse = false): Promise<boolean> {
         if (this.broken || baseVersion !== this.postedVersion) {
             // Broken: never write. Stale base: a newer document is on its way,
             // and the webview rebuilds from it.
-            return;
+            return false;
         }
         const current = this.document.getText();
         if (current !== this.webviewText) {
             await this.post();
-            return;
+            return false;
         }
         const replacement = minimalReplacement(current, text);
         if (replacement === null) {
             if (reparse) {
                 await this.post();
             }
-            return;
+            return true;
         }
         // Set before applying: the change event fires while the edit applies,
         // and must see its own text.
@@ -715,13 +742,14 @@ export class VisualEditorSession implements vscode.Disposable {
             // Refused, or VS Code normalized the inserted line endings: show the
             // person what the document now holds. Or the page asked to see it.
             await this.post();
-            return;
+            return applied;
         }
         // The lenses of the text the page now holds: a provider's lines moved with the edit.
         this.lenses.schedule();
         // And its code actions: those of a block the edit did not touch are
         // registered for the previous version, and may no longer be offered.
         this.codeActions.invalidate();
+        return true;
     }
 
     /**

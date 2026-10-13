@@ -1,31 +1,16 @@
 import * as vscode from 'vscode';
-import { ExporterQuickPickItem, MarkdownExporter, ExportFormat, FormatQuickPickItem } from './interfaces';
+import { ExporterQuickPickItem, MarkdownExporter, ExportFormat, FormatQuickPickItem, exportFormatOf } from './interfaces';
+import { EXPORT_FORMATS } from './formats';
 import { HtmlExporter } from './html';
 import { PuppeteerExporter } from './puppeteer';
 
+/** The formats of the table (`formats.ts`), named as the Visual Editor's Export menu names them. */
+export function formatPickItems(): FormatQuickPickItem[] {
+    return EXPORT_FORMATS.map(f => <FormatQuickPickItem>{ label: f.label, description: f.detail, format: exportFormatOf(f.format) });
+}
+
 export async function pickFormat(): Promise<ExportFormat | undefined> {
-    const items = [
-        <FormatQuickPickItem>{
-            label: "Self-contained HTML",
-            // description: "Export to self-contained HTML.",
-            format:ExportFormat.HTML,
-        },
-        <FormatQuickPickItem>{
-            label: "PDF File",
-            // description: "Export to PDF.",
-            format:ExportFormat.PDF,
-        },
-        <FormatQuickPickItem>{
-            label: "PNG Image",
-            // description: "Export to PNG image.",
-            format:ExportFormat.PNG,
-        },
-        <FormatQuickPickItem>{
-            label: "JPG Image",
-            // description: "Export to jpg image.",
-            format:ExportFormat.JPG,
-        }
-    ];
+    const items = formatPickItems();
     const pick = await vscode.window.showQuickPick<FormatQuickPickItem>(
         items,
         <vscode.QuickPickOptions>{ placeHolder: `Select export format...` }

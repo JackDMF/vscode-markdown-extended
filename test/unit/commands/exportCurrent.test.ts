@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import * as exportUriModule from '../../../src/commands/exportUri';
 import { CommandExportCurrent } from '../../../src/commands/exportCurrent';
 import * as exportersModule from '../../../src/services/exporter/exporters';
+import { EXPORT_FORMATS } from '../../../src/services/exporter/formats';
 import { ExportFormat } from '../../../src/services/exporter/interfaces';
 import * as sharedModule from '../../../src/services/exporter/shared';
 
@@ -96,5 +97,12 @@ suite('Export a uri: a preset format', () => {
     test('without one, the format is asked first, as the command asks it', async () => {
         await exportUriModule.exportUri(vscode.Uri.file('/somewhere/doc.md'));
         assert.deepStrictEqual(asked, ['format', 'exporter:html']);
+    });
+
+    test('the format pick lists the one table the Visual Editor\'s menu lists: the same names, how each is made, every enum member once', () => {
+        const items = exportersModule.formatPickItems();
+        assert.deepStrictEqual(items.map(i => [i.label, i.description, i.format]), EXPORT_FORMATS.map(f => [f.label, f.detail, f.format]));
+        assert.deepStrictEqual(items.map(i => i.label), ['HTML', 'PDF', 'PNG image', 'JPEG image']);
+        assert.deepStrictEqual(items.map(i => i.format).sort(), Object.values(ExportFormat).sort());
     });
 });

@@ -29,6 +29,7 @@
 import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
+import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { CHROME_MOVED, LOCK_ROOM_PROPERTY, firstFree } from '../clearance';
 import { showHint } from '../hint';
@@ -73,26 +74,40 @@ export interface ToolbarHost {
     exportDocument(format: ExportFormatName): void;
     /** Open VS Code's Settings at the export's settings. */
     exportSettings(): void;
+    /** Whether an export the page asked for runs still: from the press until the host's `exportDone`. */
+    exportBusy(): boolean;
+}
+
+interface ExportEntry {
+    id: string;
+    label: string;
+    detail?: string;
+    /** An export: refused while another runs. */
+    exports: boolean;
+    separated?: true;
+    run: (host: ToolbarHost) => void;
 }
 
 /**
- * The entries of the Export menu at the row's right end. Not in the action
- * table (`actions.ts`): an action there edits the text at the selection, and
- * carries the element it makes and the syntax it writes, checked against the
- * parser; these act on the document as a whole and make a file, so they have
- * neither, and the row's lock does not refuse them (`RowScope`). Plain text,
- * the format and how it is made.
+ * The entries of the Export menu at the row's right end: the export's formats
+ * from their one table (`formats.ts`, which the format quick pick lists too),
+ * then the settings. Not in the action table (`actions.ts`): an action there
+ * edits the text at the selection, and carries the element it makes and the
+ * syntax it writes, checked against the parser; these act on the document as
+ * a whole and make a file, so they have neither, and the row's lock does not
+ * refuse them (`RowScope`). Plain text, the format and how it is made.
  */
-const EXPORT_ENTRIES: readonly { id: string; label: string; detail?: string; separated?: true; run: (host: ToolbarHost) => void }[] = [
-    { id: 'html', label: 'HTML', detail: 'self-contained', run: host => host.exportDocument('html') },
-    { id: 'pdf', label: 'PDF', detail: 'via Chromium', run: host => host.exportDocument('pdf') },
-    { id: 'png', label: 'PNG image', detail: 'via Chromium', run: host => host.exportDocument('png') },
-    { id: 'jpg', label: 'JPEG image', detail: 'via Chromium', run: host => host.exportDocument('jpg') },
-    { id: 'settings', label: 'Export settings…', separated: true, run: host => host.exportSettings() },
+const EXPORT_ENTRIES: readonly ExportEntry[] = [
+    ...EXPORT_FORMATS.map((f): ExportEntry => ({ id: f.format, label: f.label, detail: f.detail, exports: true, run: host => host.exportDocument(f.format) })),
+    { id: 'settings', label: 'Export settings…', exports: false, separated: true, run: host => host.exportSettings() },
 ];
 
-/** The Export menu's face: its label, and the codicon before it. */
+/** The Export menu's face: its label, and the codicon before it; and the label while an export runs. */
 const EXPORT_LABEL = 'Export';
+const EXPORT_BUSY_LABEL = 'Exporting…';
+
+/** Why a format is refused while an export runs. */
+export const EXPORT_BUSY_REFUSAL = 'An export is running — wait for it to finish';
 
 /** How long the pointer or the focus rests on an entry before its preview card shows. */
 const PREVIEW_DELAY_MS = 300;
@@ -265,6 +280,8 @@ class ToolbarView implements PluginView {
     private readonly card: HTMLElement;
     private readonly tools: Tool[] = [];
     private readonly menus: Menu[] = [];
+    /** The Export menu's format entries: refused while an export runs. */
+    private readonly formatItems: HTMLElement[] = [];
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
     private cardTimer: ReturnType<typeof setTimeout> | undefined;
     /** The field an action asked for a value in (a span's literal, a link's address, an image's alt text), while it is open. */
@@ -390,7 +407,7 @@ class ToolbarView implements PluginView {
         // row says why at its end. What acts on the whole document is not
         // refused (`RowScope`).
         const place = focusPlace(view);
-        const lock = rowLock(place, 'selection');
+        const lock = rowLock(place, 'selection').refusal;
         const stateOf = (action: ToolbarAction) => {
             let s = states.get(action);
             if (!s) {
@@ -580,6 +597,9 @@ class ToolbarView implements PluginView {
             if (entry.detail) {
                 item.append(span('mep-entry-detail', entry.detail));
             }
+            if (entry.exports) {
+                this.formatItems.push(item);
+            }
             menu.commands.set(item, () => entry.run(this.host));
             item.addEventListener('click', e => {
                 e.preventDefault();
@@ -697,17 +717,22 @@ class ToolbarView implements PluginView {
     }
 
     /**
-     * The face of a menu about the whole document (Export): refused only
-     * where the lock model says a control of its scope is (`rowLock`) — which
-     * no focus does today, so it is offered beside a locked row.
+     * Export's face, read from the lock model (`rowLock` for its scope, the
+     * document): offered beside a locked row, its tooltip saying what the
+     * focus changes (an open box applied first). While an export runs it says
+     * so — `Exporting…`, busy — and its formats are refused, the settings not.
      */
     private updateDocumentFace(menu: Menu, place: FocusPlace): void {
         const face = menu.face as HTMLElement;
-        const reason = rowLock(place, menu.scope);
-        setState(face, reason === null, false);
-        face.title = reason === null ? EXPORT_LABEL : `${EXPORT_LABEL}\n${reason}`;
-        if (reason !== null && !menu.panel.hidden) {
-            this.closeAll();
+        const { refusal, note } = rowLock(place, menu.scope);
+        const busy = this.host.exportBusy();
+        setState(face, refusal === null, false);
+        (face.querySelector('.mep-face-label') as HTMLElement).textContent = busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL;
+        face.setAttribute('aria-busy', String(busy));
+        face.title = [busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL, refusal ?? (busy ? EXPORT_BUSY_REFUSAL : note)].filter(Boolean).join('\n');
+        for (const item of this.formatItems) {
+            setState(item, !busy, false);
+            item.title = busy ? EXPORT_BUSY_REFUSAL : '';
         }
     }
 

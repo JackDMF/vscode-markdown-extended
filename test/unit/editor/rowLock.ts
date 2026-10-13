@@ -21,6 +21,13 @@ export const LOCK_BUTTON = 'Focus is outside the text · Esc or click into the t
 
 const REASONS = [LOCK_SOURCE, LOCK_PROPERTY, LOCK_BUTTON];
 
+/** Export's tooltip under each lock: what pressing it then takes of the open control, as a save does. */
+const EXPORT_TITLE: Record<string, string> = {
+    [LOCK_SOURCE]: 'Export\nApplies the open source box first',
+    [LOCK_PROPERTY]: 'Export\nApplies the values typed first; a property not yet added with Enter is left out',
+    [LOCK_BUTTON]: 'Export',
+};
+
 /** Each control of the formatting row: whether it is refused, and its tooltip; the reason shown, and the row's description. */
 export function rowState(page: puppeteer.Page) {
     return page.$eval('.mep-toolbar', row => ({
@@ -42,7 +49,7 @@ export function rowState(page: puppeteer.Page) {
 /**
  * Every control of the row that acts on the selection refused, each saying
  * `reason`, and the row showing it at its end; Export, which acts on the whole
- * document, offered still.
+ * document, offered still, its tooltip noting what it takes of the open control.
  */
 export async function assertRowLocked(page: puppeteer.Page, when: string, reason: string): Promise<void> {
     const state = await rowState(page);
@@ -50,8 +57,8 @@ export async function assertRowLocked(page: puppeteer.Page, when: string, reason
     assert.ok(selection.length > 0, 'the row has controls');
     assert.deepStrictEqual(selection.filter(s => !s.disabled || !s.title.endsWith(`\n${reason}`)), [], `${when}: every control of the row refused with the reason`);
     assert.deepStrictEqual(state.tools.filter(s => s.document).map(s => ({ id: s.id, disabled: s.disabled, title: s.title })), [
-        { id: 'export', disabled: false, title: 'Export' },
-    ], `${when}: Export is offered`);
+        { id: 'export', disabled: false, title: EXPORT_TITLE[reason] },
+    ], `${when}: Export is offered, saying what it takes of the open control`);
     assert.strictEqual(state.reason, reason, `${when}: the row shows the reason`);
     assert.strictEqual(state.description, reason, `${when}: and describes itself with it`);
 }

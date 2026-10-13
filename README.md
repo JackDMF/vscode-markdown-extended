@@ -705,10 +705,15 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   exists; **Include…** (below). An admonition (titled with its type's name) and a container
   (`::: container`) go in as rich text with the caret in their body: type, and it is the body.
 - **Export** — HTML, PDF, PNG image or JPEG image, then **Export settings…**. It exports
-  the document as the page shows it, unsaved changes included: a source box or property
-  you are editing is applied first, as a save applies it. VS Code then asks only which
+  the document as the page shows it, unsaved changes included: a source box or a property
+  value you are editing is applied first, as a save applies it. VS Code then asks only which
   exporter, where two can make the format. It is about the document, not the selection,
-  so it stays on while the rest of the row is off.
+  so it stays on while the rest of the row is off. While an export runs, the face reads
+  *Exporting…* and another cannot start. If the file changed outside the editor just
+  before, nothing is exported and the editor says so: export again.
+
+  *Limits:* a new property not yet added with `Enter` is left out, as a save leaves it out;
+  and typing during the first moments of an export may still reach the exported file.
 
 In the card, notes and sidebars are shown stacked, as they render below the margin
 layout's 1280px breakpoint, however wide the window: a card is too narrow for a margin,

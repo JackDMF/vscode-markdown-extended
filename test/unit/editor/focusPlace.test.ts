@@ -89,14 +89,21 @@ suite('Editor focus place', () => {
         assert.strictEqual(panelRole({ tag: 'SPAN', sourceBox: false }), 'button', 'a chip or a copyable id: pressed, not typed in');
     });
 
-    test('a control in the text refuses what acts on the selection, with its reason, and never what acts on the whole document (Export)', () => {
+    test('a control in the text refuses what acts on the selection, with its reason; what acts on the whole document (Export) is offered, with a note of what the save-like commit takes', () => {
         const places: FocusPlace[] = [
             { kind: 'text' }, { kind: 'chrome', field: false }, { kind: 'content' }, { kind: 'away' },
             { kind: 'control', owner: null, role: 'source' }, { kind: 'control', owner: null, role: 'property' }, { kind: 'control', owner: null, role: 'button' },
         ];
+        const free = { refusal: null, note: null };
         assert.deepStrictEqual(places.map(p => rowLock(p, 'selection')), [
-            null, null, null, null, controlLock('source'), controlLock('property'), controlLock('button'),
+            free, free, free, free,
+            { refusal: controlLock('source'), note: null }, { refusal: controlLock('property'), note: null }, { refusal: controlLock('button'), note: null },
         ]);
-        assert.deepStrictEqual(places.map(p => rowLock(p, 'document')), places.map(() => null));
+        assert.deepStrictEqual(places.map(p => rowLock(p, 'document')), [
+            free, free, free, free,
+            { refusal: null, note: 'Applies the open source box first' },
+            { refusal: null, note: 'Applies the values typed first; a property not yet added with Enter is left out' },
+            free,
+        ]);
     });
 });

@@ -1,3 +1,4 @@
+import type { ExportFormatName } from '../services/exporter/formats';
 import type { InlineEngineDefinition } from './inlineEngine';
 import type { ParsedDocumentJSON } from './parse';
 import type { MappedPagePosition, MappedSourcePosition, SourcePosition, SourceRange } from './positions';
@@ -254,7 +255,15 @@ export type HostMessage =
      * registry, every other `command:` link stripped to its text — and the
      * source range the hover is about. `html` is empty when there is none.
      */
-    | { type: 'hoverResult'; requestId: number; html: string; range?: SourceRange };
+    | { type: 'hoverResult'; requestId: number; html: string; range?: SourceRange }
+    /**
+     * The answer to `export`, once it settled — exported, cancelled at the
+     * exporter pick, or failed (VS Code reported it): the page's Export is
+     * offered again. With `dropped`, it was not run: the page's last edit was
+     * dropped, the file having changed outside the editor, so the document
+     * did not hold what the page showed; the page says so.
+     */
+    | { type: 'exportDone'; dropped?: true };
 
 /**
  * One completion of a link's field: `value` is what the field then holds — a
@@ -420,15 +429,21 @@ export type WebviewMessage =
      * **Export** in the toolbar: run the extension's export (`exportUri`) on
      * this document in `format`, which the person chose on the page, so VS
      * Code asks for no format. Sent after the page committed its open source
-     * boxes and flushed its pending edit; the host runs it in its queue,
-     * behind that edit, so the export reads the text the page shows.
+     * boxes (not a property's field left unapplied, as for a save) and flushed
+     * its pending edit; the host starts it in its queue, behind that edit, and
+     * does not wait for it there. So the export holds at least the text the
+     * page showed at the press — and may hold edits typed after it too, since
+     * the exporter reads the document once it has started (the exporter pick,
+     * the browser's launch). Not run when that edit was dropped (the file
+     * changed outside the editor), nor while another export runs; answered
+     * with `exportDone` either way.
      */
     | { type: 'export'; format: ExportFormatName }
     /** **Export → Export settings…**: VS Code's Settings, filtered to `markdownExtended.export`. */
     | { type: 'exportSettings' };
 
-/** The formats the toolbar's Export menu offers: the values of the exporter's `ExportFormat`. */
-export type ExportFormatName = 'html' | 'pdf' | 'png' | 'jpg';
+/** The format names of the export's table (`formats.ts`), which the page and the host both read. */
+export type { ExportFormatName };
 
 /**
  * What an extension offering includes exports beside `extendMarkdownIt`

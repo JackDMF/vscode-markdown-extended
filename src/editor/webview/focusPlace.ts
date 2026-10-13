@@ -122,15 +122,43 @@ export function panelRole(el: { tag: string; type?: string; sourceBox: boolean }
  * - `selection`: the text at the selection — every mark, menu and verb of the
  *   row. The selection is hidden behind an open source box or the properties
  *   panel, so these are refused while one has the focus.
- * - `document`: the document as a whole — **Export**. Nothing it acts on is
- *   hidden by the focus: it commits what the open boxes hold, as a save does,
- *   and so is offered wherever the focus is.
+ * - `document`: the document as a whole — **Export**. It is offered wherever
+ *   the focus is, and takes the document as a save does (`commitSource`): an
+ *   open source box (a raw block's, the properties' YAML) and a value typed
+ *   into a property's row are applied first; a new property (**+ Add
+ *   property**) not yet added with Enter is left out. Its note says so while
+ *   the focus is in one (`RowLock.note`).
  */
 export type RowScope = 'selection' | 'document';
 
-/** Why a row control acting on `scope` is refused at `place`, `null` when it is not: the one answer the row reads for each of its controls. */
-export function rowLock(place: FocusPlace, scope: RowScope): string | null {
-    return scope === 'selection' && place.kind === 'control' ? controlLock(place.role) : null;
+/** What the focus means for a row control: why it is refused, and what to know when it is pressed now. */
+export interface RowLock {
+    /** Why it is refused, `null` when it is offered. */
+    refusal: string | null;
+    /** For an offered control, what the focus changes about what it does; `null` when nothing. */
+    note: string | null;
+}
+
+/** The note of a document-wide control while the focus is in a node view's control of `role`: what a save would take of it. */
+function documentNote(role: ControlRole): string | null {
+    switch (role) {
+        case 'source':
+            return 'Applies the open source box first';
+        case 'property':
+            return 'Applies the values typed first; a property not yet added with Enter is left out';
+        case 'button':
+            return null;
+    }
+}
+
+/** What the focus at `place` means for a row control acting on `scope`: the one answer the row reads for each of its controls. */
+export function rowLock(place: FocusPlace, scope: RowScope): RowLock {
+    if (place.kind !== 'control') {
+        return { refusal: null, note: null };
+    }
+    return scope === 'selection'
+        ? { refusal: controlLock(place.role), note: null }
+        : { refusal: null, note: documentNote(place.role) };
 }
 
 /**

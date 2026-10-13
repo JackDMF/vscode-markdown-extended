@@ -105,6 +105,8 @@ suite('Editor toolbar: Export (e2e)', () => {
     });
 
     teardown(async () => {
+        // The host's answer to any export a test asked for: Export is offered again.
+        await (editor as EditorPage).send({ type: 'exportDone' });
         await page.keyboard.press('Escape');
         await page.mouse.click(WIDTH - 20, 880);
         await page.setViewport({ width: WIDTH, height: 900 });
@@ -240,7 +242,19 @@ suite('Editor toolbar: Export (e2e)', () => {
         await delay(80);
         assert.strictEqual(await page.$eval('.mep-raw-editor', el => document.activeElement === el && (el as HTMLTextAreaElement).value), '<div>first block</div>X', 'the box holds unapplied text');
         await assertRowLocked(page, 'the box open', LOCK_SOURCE);
+        assert.strictEqual((await rightEnd()).divider, true, 'a divider between the lock\'s reason and Export');
         await shot(page, 'export-3-locked-source-box-light.png');
+        await showDiagnostics(editor as EditorPage, version, [
+            { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } }, severity: 'warning', message: 'A warning' },
+        ]);
+        const counted = await rightEnd();
+        assert.ok(counted.count && counted.face && counted.divider, 'the count, the divider, Export');
+        await assertRowLocked(page, 'the box open, with a count', LOCK_SOURCE);
+        await shot(page, 'export-3-locked-diagnostics-light.png');
+        await applyTheme(page, DARK_MODERN);
+        await delay(50);
+        await shot(page, 'export-3-locked-diagnostics-dark.png');
+        await applyTheme(page, LIGHT_MODERN);
 
         const before = (await posted()).length;
         await page.click(FACE);
@@ -253,5 +267,56 @@ suite('Editor toolbar: Export (e2e)', () => {
         assert.strictEqual(edit.text, SOURCE.replace('</div>', '</div>X'), 'the edit carries the box\'s text');
         assert.deepStrictEqual(sent[1], { type: 'export', format: 'pdf' });
         await page.keyboard.press('Escape');
+        await showDiagnostics(editor as EditorPage, version, []);
+    });
+
+    test('one export at a time: from the press until the host answers, the face reads Exporting… and the formats are refused with the reason; the settings are not', async function () {
+        this.timeout(20000);
+        await showDocument(SOURCE);
+        const face = () => page.$eval(FACE, el => ({
+            label: (el.querySelector('.mep-face-label') as HTMLElement).textContent,
+            busy: el.getAttribute('aria-busy'),
+            disabled: el.getAttribute('aria-disabled'),
+            title: (el as HTMLElement).title,
+        }));
+        const entries = () => page.$$eval(`${PANEL} [data-export]`, els => els.map(el => ({
+            id: (el as HTMLElement).dataset.export,
+            disabled: el.getAttribute('aria-disabled'),
+            title: (el as HTMLElement).title,
+        })));
+        const before = (await posted()).length;
+        await page.click(FACE);
+        await page.click(`${PANEL} [data-export="html"]`);
+        await delay(80);
+        const reason = 'An export is running — wait for it to finish';
+        assert.deepStrictEqual(await face(), { label: 'Exporting…', busy: 'true', disabled: 'false', title: `Exporting…\n${reason}` });
+        await page.click(FACE);
+        await page.waitForSelector(`${PANEL}:not([hidden])`);
+        assert.deepStrictEqual(await entries(), [
+            ...['html', 'pdf', 'png', 'jpg'].map(id => ({ id, disabled: 'true', title: reason })),
+            { id: 'settings', disabled: null, title: '' },
+        ]);
+        await shot(page, 'export-5-busy-light.png');
+        await page.click(`${PANEL} [data-export="pdf"]`);
+        await delay(80);
+        assert.deepStrictEqual((await posted()).slice(before).filter(m => m.type === 'export'), [{ type: 'export', format: 'html' }], 'a second export is not asked for');
+
+        await (editor as EditorPage).send({ type: 'exportDone' });
+        await delay(80);
+        assert.deepStrictEqual(await face(), { label: 'Export', busy: 'false', disabled: 'false', title: 'Export' });
+        await page.keyboard.press('Escape');
+    });
+
+    test('an export the host did not run — the edit before it was dropped — is said on the page, and Export is offered again', async function () {
+        this.timeout(20000);
+        await showDocument(SOURCE);
+        await page.click(FACE);
+        await page.click(`${PANEL} [data-export="pdf"]`);
+        await delay(80);
+        await (editor as EditorPage).send({ type: 'exportDone', dropped: true });
+        await delay(80);
+        assert.deepStrictEqual(await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden })),
+            { text: 'Not exported: the file changed outside the editor — export again', shown: true });
+        assert.strictEqual(await page.$eval(`${FACE} .mep-face-label`, el => el.textContent), 'Export');
     });
 });
