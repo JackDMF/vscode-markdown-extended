@@ -127,8 +127,20 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                 // The block the example parses into carries the literal, and draws
                 // the element and class the engine renders the example as.
                 const block = parseDocument(md, action.example, {}).doc.child(0);
-                assert.strictEqual(block.attrs.attrsSuffix, action.syntax, `${action.example} carries ${action.syntax}`);
+                assert.ok(action.example.endsWith(` ${block.attrs.attrsSuffix as string}`), `${action.example} carries its literal`);
                 const [tag, attrs] = block.type.spec.toDOM?.(block) as unknown as [string, { class?: string }];
+                assert.strictEqual(tag, action.sample.tag);
+                assert.strictEqual(attrs.class, action.sample.className);
+            }
+            if (action.apply.kind === 'inline-attrs') {
+                // The example parses into code carrying the literal, drawn as the
+                // element and class the engine renders the example as.
+                const marks: Mark[] = [];
+                parseDocument(md, action.example, {}).doc.descendants(n => {
+                    marks.push(...n.marks.filter(m => m.type.name === 'code'));
+                });
+                assert.strictEqual(marks[0]?.attrs.literal, '{.x}', `${action.example} parses as code carrying {.x}`);
+                const [tag, attrs] = marks[0].type.spec.toDOM?.(marks[0], true) as unknown as [string, { class?: string }];
                 assert.strictEqual(tag, action.sample.tag);
                 assert.strictEqual(attrs.class, action.sample.className);
             }
@@ -169,7 +181,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         }
         assert.deepStrictEqual(ROW_LAYOUT, [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']]);
         const byMenu = (menu: string) => TOOLBAR_ACTIONS.filter(a => menuOf(a) === menu && submenuOf(a) === null).map(a => a.id);
-        assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class', 'block-attributes']);
+        assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class', 'inline-attributes', 'block-attributes']);
         assert.deepStrictEqual(byMenu('annotation'), ['sidenote', 'marginal-note', 'left-sidebar', 'right-sidebar', 'footnote-reference']);
         assert.deepStrictEqual(byMenu('insert'),
             ['link', 'image', 'horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents', 'include', 'properties']);

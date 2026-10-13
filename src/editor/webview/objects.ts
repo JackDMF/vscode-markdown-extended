@@ -42,7 +42,7 @@ import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
-import { INLINE_LITERAL_HOLDERS, carrierName, holderNamed, holderOfCarrier } from '../inlineLiterals';
+import { INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalNotReadBack, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
@@ -51,27 +51,26 @@ const nodes = editorSchema.nodes;
 
 export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
 
-/** The objects that are a mark's run in its textblock rather than a node. */
-export type MarkObjectKind = 'link' | 'span' | 'styled';
+/**
+ * The objects that are a mark's run in its textblock rather than a node. A
+ * `holder` is the run of a styled mark carrying no literal yet (`**x**`,
+ * `` `x` ``): never what `objectAtSelection` finds — formatting has no bar of
+ * its own on a caret rest — only what `attributeHolderAt` names, so its
+ * attributes can be given from the menu, the bubble and `Alt+Enter`.
+ */
+export type MarkObjectKind = 'link' | 'span' | 'styled' | 'holder';
 
 export type EditorObject =
     | { kind: 'link'; from: number; to: number; mark: Mark }
     | { kind: 'span'; from: number; to: number; mark: Mark }
     | { kind: 'styled'; from: number; to: number; mark: Mark }
+    | { kind: 'holder'; from: number; to: number; mark: Mark }
     | { kind: NodeObjectKind; from: number; to: number; node: Node };
 
-/** Whether the object is a mark's run (`MarkObjectKind`): a link, an attribute span, emphasis with a literal. */
+/** Whether the object is a mark's run (`MarkObjectKind`): a link, an attribute span, emphasis with a literal, a bare holder. */
 export function isMarkObject(object: EditorObject): object is Extract<EditorObject, { mark: Mark }> {
-    return object.kind === 'link' || object.kind === 'span' || object.kind === 'styled';
+    return object.kind === 'link' || object.kind === 'span' || object.kind === 'styled' || object.kind === 'holder';
 }
-
-/**
- * The marks whose run is a `styled` object when it carries a literal
- * (`_x_{.a}`, `~~x~~{.a}`): its bar shows and edits the literal, as a span's
- * does; without one such a run is formatting, with no bar of its own
- * (`styled` holders, `inlineLiterals.ts`).
- */
-export const STYLED_MARKS: readonly string[] = INLINE_LITERAL_HOLDERS.filter(h => h.styled && 'mark' in h.carrier).map(carrierName);
 
 /** The objects the pointer resting on them shows the toolbar for; the others show it for the caret. */
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
@@ -164,28 +163,80 @@ function markRunAt($pos: ResolvedPos, mark: Mark): { from: number; to: number } 
     return null;
 }
 
+/** What an inline holder at the selection is: the holder, and the object its run or its image is. */
+export interface InlineHolderAt {
+    holder: InlineLiteralHolder;
+    object: LiteralObject;
+}
+
+/** The object a run of `mark` (`holder`'s) is: a link, a span, a styled run carrying a literal, else a bare holder. */
+function runObject(holder: InlineLiteralHolder, mark: Mark, from: number, to: number): LiteralObject {
+    const kind = holder.holder === 'link' ? 'link' : holder.holder === 'span' ? 'span' : mark.attrs.literal !== null ? 'styled' : 'holder';
+    return { kind, from, to, mark };
+}
+
 /**
- * The run of the mark the selection is in — a link, an attribute span,
- * emphasis carrying a literal (`styled`): a caret inside its text or at either
- * of its ends, or a selection both of whose ends are within it.
+ * The one rule for "the inline element at the selection that carries, or can
+ * carry, a `{…}`", read by the bars (`objectAtSelection`, `withLiteral`) and
+ * by the menu, the bubble and `Alt+Enter` (`attributeHolderAt`), so no two of
+ * them name different elements: a selected image; else, with both ends of the
+ * selection in one textblock, the first of `holders` — in the registry's
+ * order, a link, a span, then the styled ones innermost first
+ * (`inlineLiterals.ts`) — whose mark is on the node after the caret, or else
+ * on the node before it, and whose run holds the selection's other end. At a
+ * seam between two runs of one kind the one after the caret is meant; over
+ * exactly the same text, the innermost. With `withLiteral`, a styled mark
+ * counts only while it carries a literal: formatting has no bar of its own.
  */
-function markObjectAt(state: EditorState, kind: MarkObjectKind): EditorObject | null {
-    const { $from, $to } = state.selection;
+function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[], withLiteral: boolean): InlineHolderAt | null {
+    const sel = state.selection;
+    if (sel instanceof NodeSelection) {
+        const holder = holderOfCarrier(sel.node.type.name);
+        return holder !== undefined && holders.includes(holder) && 'node' in holder.carrier
+            ? { holder, object: { kind: 'image', from: sel.from, to: sel.to, node: sel.node } }
+            : null;
+    }
+    const { $from, $to } = sel;
     if (!$from.parent.inlineContent || !$from.sameParent($to)) {
         return null;
     }
-    const types = kind === 'link' ? [editorSchema.marks.link] : kind === 'span' ? [editorSchema.marks.attr_span] : STYLED_MARKS.map(name => editorSchema.marks[name]);
-    for (const neighbour of [$from.nodeAfter, $from.nodeBefore]) {
-        const mark = neighbour?.marks.find(m => types.includes(m.type) && (kind !== 'styled' || m.attrs.literal !== null));
-        if (!mark) {
+    for (const holder of holders) {
+        if (!('mark' in holder.carrier)) {
             continue;
         }
-        const run = markRunAt($from, mark);
-        if (run !== null && $to.pos <= run.to) {
-            return { kind, from: run.from, to: run.to, mark } as EditorObject;
+        const type = editorSchema.marks[holder.carrier.mark];
+        for (const neighbour of [$from.nodeAfter, $from.nodeBefore]) {
+            const mark = neighbour?.marks.find(m => m.type === type && (!withLiteral || !holder.styled || m.attrs.literal !== null));
+            const run = mark === undefined ? null : markRunAt($from, mark);
+            if (mark !== undefined && run !== null && $to.pos <= run.to) {
+                return { holder, object: runObject(holder, mark, run.from, run.to) };
+            }
         }
     }
     return null;
+}
+
+/**
+ * What at the selection can carry a `{…}`: the inline holder there — a
+ * selected image, or the run of a link, a span or a styled mark, with a
+ * literal or without one (`holderRunAt`) — and the block **Attributes…** acts
+ * on (`attributesTargetAt`) or why there is none. Where the bars show a mark's
+ * object or an image, `inline` is that same object.
+ */
+export function attributeHolderAt(state: EditorState): { inline: InlineHolderAt | null; block: AttributesTarget | { refusal: string } } {
+    return { inline: holderRunAt(state, INLINE_LITERAL_HOLDERS, false), block: attributesTargetAt(state) };
+}
+
+/**
+ * The inline holder inside `object` the selection is in, other than `object`
+ * itself — bold in a table cell, code in a link — whose attributes the
+ * object's bar offers as a verb of its own: the same search, `object`'s own
+ * holder left out, the run within `object`'s range. `null` where there is none.
+ */
+export function holderInside(state: EditorState, object: EditorObject): InlineHolderAt | null {
+    const own = isMarkObject(object) ? holderOfCarrier(object.mark.type.name) : undefined;
+    const found = holderRunAt(state, INLINE_LITERAL_HOLDERS.filter(h => h !== own && 'mark' in h.carrier), false);
+    return found !== null && found.object.from >= object.from && found.object.to <= object.to && !sameObject(found.object, object) ? found : null;
 }
 
 /** The innermost container or admonition holding both ends of the selection. */
@@ -247,7 +298,7 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     if (!(sel instanceof TextSelection)) {
         return null;
     }
-    const mark = markObjectAt(state, 'link') ?? markObjectAt(state, 'span') ?? markObjectAt(state, 'styled');
+    const mark = holderRunAt(state, INLINE_LITERAL_HOLDERS, true)?.object ?? null;
     if (mark !== null) {
         return mark;
     }
@@ -259,11 +310,21 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     return wrapperAt(state) ?? tableObjectAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
 }
 
-/** The object at the same place in `state`, if it is still there and still the same kind; verbs act on this, never on a stale one. */
+/**
+ * The object at the same place in `state`, if it is still there and still the
+ * same kind; verbs act on this, never on a stale one. A mark's run is the
+ * selection's object again, or — a run inside another object's, a bare
+ * holder — the run of the same mark the selection is in (`holderRunAt`).
+ */
 export function currentObject(state: EditorState, object: EditorObject): EditorObject | null {
     if (isMarkObject(object)) {
         const found = objectAtSelection(state);
-        return sameObject(found, object) ? found : null;
+        if (sameObject(found, object)) {
+            return found;
+        }
+        const holder = holderOfCarrier(object.mark.type.name);
+        const again = holder === undefined ? null : holderRunAt(state, [holder], false)?.object ?? null;
+        return sameObject(again, object) ? again : null;
     }
     if (object.from < 0 || object.from >= state.doc.content.size) {
         return null;
@@ -639,6 +700,11 @@ export function literalObjectOf(object: EditorObject | null): LiteralObject | nu
 /** The mark or the node of `object` that carries its literal. */
 function carrierOf(object: LiteralObject): Mark | Node {
     return 'mark' in object ? object.mark : object.node;
+}
+
+/** `object` with the holder of its literal (`inlineLiterals.ts`). */
+export function inlineHolderOf(object: LiteralObject): InlineHolderAt {
+    return { holder: holderOfCarrier(carrierOf(object).type.name) as InlineLiteralHolder, object };
 }
 
 /** The literal `object` carries now, or `null`. */

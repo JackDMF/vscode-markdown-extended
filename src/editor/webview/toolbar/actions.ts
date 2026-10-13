@@ -94,6 +94,14 @@ export type ActionApply =
      */
     | { kind: 'block-attrs' }
     /**
+     * The `{…}` literal of the inline element at the caret that carries or can
+     * carry one (`attributeHolderAt`): inline code, a key, a link, emphasis,
+     * superscript, subscript, a highlight, a span, a selected image. The entry
+     * is named after it (**Attributes of Code…**), and the inline field asks
+     * for the literal as the element's bar does (`holderAttributesStep`).
+     */
+    | { kind: 'inline-attrs' }
+    /**
      * A new container or admonition after the current block, edited in place,
      * the caret in its body (an empty paragraph): `name` is the container's
      * first class, `type` and `title` the admonition's.
@@ -196,12 +204,16 @@ export function elideDataUris(markdown: string): string {
     return markdown.replace(/\(data:([^,)\s]*),[^)\s]*\)/g, '(data:$1,…)');
 }
 
-/** The action's tooltip: its name, the syntax it writes, and the source footnote where it applies. */
-export function tooltipOf(action: ToolbarAction): string {
+/**
+ * The action's tooltip: its name — `label` where the selection names it
+ * (`Attributes of Paragraph…`), its own otherwise — the syntax it writes, and
+ * the source footnote where it applies.
+ */
+export function tooltipOf(action: ToolbarAction, label = action.label): string {
     const source = isSourceAction(action);
     const renders = action.apply.kind === 'mark' ? ` — rendered as <${action.sample.tag}>` : '';
     const syntax = action.syntax.includes('\n') ? `\n${action.syntax}` : ` ${action.syntax}`;
-    return `${action.label}${source ? '¹' : ''}:${syntax}${renders}${source ? `\n${SOURCE_FOOTNOTE}` : ''}`;
+    return `${label}${source ? '¹' : ''}:${syntax}${renders}${source ? `\n${SOURCE_FOOTNOTE}` : ''}`;
 }
 
 /** An element: `el('p', 'text', el('b', 'bold'), 'more')`; a class goes in the tag as `tag.class1.class2`. */
@@ -302,8 +314,14 @@ const SPAN_LITERAL_EXAMPLE = '{.class}';
 /** What the span action's field starts with, and where its caret goes: after the dot, to type the class. */
 export const SPAN_FIELD_PREFILL = { value: '{.}', caret: 2 } as const;
 
-/** The literal the block-attributes entry names as its syntax. */
+/** The literal the block-attributes entry's example is written with. */
 const BLOCK_LITERAL_EXAMPLE = '{.x}';
+
+/** The literal the attribute entries name in their syntax column, as Span with class does. */
+const CLASS_LITERAL = '{.class}';
+
+/** Why Attributes of Code… is disabled: nothing inline at the caret carries a {…}. */
+export const INLINE_ATTRS_LOCK = 'Put the caret in code, a key, a link, emphasis, superscript, subscript, a highlight or a span, or select an image. Alt+Enter opens its bar.';
 
 const formatting: ToolbarAction[] = [
     formatAction('mark', 'Highlight', 'mark', M.mark, M.mark, el('mark', 'mark'),
@@ -323,8 +341,19 @@ const formatting: ToolbarAction[] = [
         preview: { markdown: 'A [styled phrase]{.lead} in a sentence.', nodes: [el('p', 'A ', el('span.lead', 'styled phrase'), ' in a sentence.')] },
     },
     {
+        // markdown-it-attrs on the inline element at the caret: written right after it. Named
+        // by the element (`Attributes of Link…`); the label here is its resting form.
+        id: 'inline-attributes', place: { menu: 'formatting' }, label: 'Attributes of Code…', syntax: `\`code\`${CLASS_LITERAL}`,
+        sample: el('code.x', 'Attributes…'), apply: { kind: 'inline-attrs' }, example: `\`Attributes…\`${BLOCK_LITERAL_EXAMPLE}`,
+        preview: {
+            markdown: 'Run `--flag`{.k} to skip the cache.',
+            nodes: [el('p', 'Run ', el('code.k', '--flag'), ' to skip the cache.')],
+        },
+    },
+    {
         // markdown-it-attrs on the block at the caret: written where the plugin reads it for that block.
-        id: 'block-attributes', place: { menu: 'formatting' }, label: 'Attributes…', syntax: BLOCK_LITERAL_EXAMPLE,
+        // Named by the block (`Attributes of Paragraph…`); refused, `Attributes of Block…`.
+        id: 'block-attributes', place: { menu: 'formatting' }, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`,
         sample: el('p.x', 'Attributes…'), apply: { kind: 'block-attrs' }, example: `Attributes… ${BLOCK_LITERAL_EXAMPLE}`,
         preview: {
             markdown: 'A paragraph with a class of its own. {.lead}',

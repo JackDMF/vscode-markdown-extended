@@ -41,14 +41,15 @@ import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
-    applySpanTransaction, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
-    LINK_LOCK, objectAtSelection, spanLiteralRefusal, spanLockReason,
+    applySpanTransaction, attributeHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction,
+    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLiteralRefusal, spanLockReason,
 } from '../objects';
-import { ATTRIBUTES_FIELD_KEYS, attributesStep } from '../attributes';
+import { currentReadsAttrs } from '../../inlineEngine';
+import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
-    elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
+    INLINE_ATTRS_LOCK, MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS,
+    ToolbarAction, ToolbarMenu, ToolbarSubmenu, elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertPropertiesTransaction, insertSourceTransaction, insertWrapperTransaction, isCurrent,
@@ -162,21 +163,39 @@ export function followPointer(panel: HTMLElement, item: HTMLElement): void {
     }
 }
 
+/**
+ * An entry's sample relabelled with what the selection names the action
+ * (`ActionState.label`): the text of the element it draws, so the entry reads
+ * `Attributes of Paragraph…` in the paragraph's own element.
+ */
+function relabelSample(item: HTMLElement, label: string): void {
+    const sample = item.querySelector('.mep-sample > *');
+    const text = sample === null ? null : Array.from(sample.childNodes).find(n => n.nodeType === 3);
+    if (text && text.textContent !== label) {
+        text.textContent = label;
+    }
+}
+
 function div(className: string): HTMLElement {
     const node = document.createElement('div');
     node.className = className;
     return node;
 }
 
-interface ActionState {
+export interface ActionState {
     enabled: boolean;
     active: boolean;
     /** Why a disabled action is disabled, when there is something to say. */
     reason: string | null;
+    /**
+     * What the selection names the action (`Attributes of Paragraph…`, `Attributes of Code…`):
+     * its sample's text and its tooltip's name, where the action's own label is only the resting form.
+     */
+    label?: string;
 }
 
 /** Whether each action applies at the selection, and whether it is what the selection already has. */
-function evaluate(action: ToolbarAction, state: EditorState, includes: boolean): ActionState {
+export function evaluate(action: ToolbarAction, state: EditorState, includes: boolean): ActionState {
     const apply = action.apply;
     switch (apply.kind) {
         case 'mark': {
@@ -221,8 +240,18 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
             return { enabled: reason === null, active: false, reason };
         }
         case 'block-attrs': {
-            const target = attributesTargetAt(state);
-            return 'refusal' in target ? { enabled: false, active: false, reason: target.refusal } : { enabled: true, active: false, reason: null };
+            // Named by the block it acts on (`attributeHolderAt`'s block half), the refused form by none.
+            const target = attributeHolderAt(state).block;
+            return 'refusal' in target
+                ? { enabled: false, active: false, reason: target.refusal, label: 'Attributes of Block…' }
+                : { enabled: true, active: false, reason: null, label: `Attributes of ${target.name}…` };
+        }
+        case 'inline-attrs': {
+            // Named by the inline element it acts on, the one its bar and the bubble name (`attributeHolderAt`).
+            const inline = currentReadsAttrs() ? attributeHolderAt(state).inline : null;
+            return inline === null
+                ? { enabled: false, active: false, reason: currentReadsAttrs() ? INLINE_ATTRS_LOCK : NO_ATTRS_REFUSAL, label: action.label }
+                : { enabled: true, active: false, reason: null, label: `Attributes of ${inline.holder.label}…` };
         }
         case 'insert-link': {
             const reason = objectAtSelection(state)?.kind === 'link' ? null : insertLockReason(state, LINK_LOCK);
@@ -419,7 +448,11 @@ class ToolbarView implements PluginView {
         for (const tool of this.tools) {
             const s = stateOf(tool.action);
             setState(tool.el, s.enabled, s.active);
-            tool.el.title = s.enabled || !s.reason ? tooltipOf(tool.action) : `${tooltipOf(tool.action)}\n${s.reason}`;
+            const tooltip = tooltipOf(tool.action, s.label);
+            tool.el.title = s.enabled || !s.reason ? tooltip : `${tooltip}\n${s.reason}`;
+            if (s.label !== undefined) {
+                relabelSample(tool.el, s.label);
+            }
         }
         for (const menu of this.menus) {
             if (menu.opener) {
@@ -1141,6 +1174,9 @@ class ToolbarView implements PluginView {
             case 'block-attrs':
                 this.askBlockAttributes();
                 return;
+            case 'inline-attrs':
+                this.askInlineAttributes();
+                return;
             case 'insert-link':
                 this.askLink();
                 return;
@@ -1199,6 +1235,22 @@ class ToolbarView implements PluginView {
             return;
         }
         this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target));
+    }
+
+    /**
+     * **Attributes of Code…** (and of a key, a link, emphasis, an image …):
+     * the inline field, in a bar at the element the caret is in, labelled with
+     * its name (`Code · Attributes`), prefilled as the element's own bar
+     * prefills it — the one step every route shares (`holderAttributesStep`).
+     * The element's run stays drawn while the field is open.
+     */
+    private askInlineAttributes(): void {
+        const at = currentReadsAttrs() ? attributeHolderAt(this.view.state).inline : null;
+        if (at === null) {
+            showHint(this.view, currentReadsAttrs() ? INLINE_ATTRS_LOCK : NO_ATTRS_REFUSAL, 'refusal');
+            return;
+        }
+        this.openFieldBar(at.holder.holder, at.holder.label, 'inline-attributes', holderAttributesStep(this.view, at), { from: at.object.from, to: at.object.to });
     }
 
     // -- links and images ------------------------------------------------------

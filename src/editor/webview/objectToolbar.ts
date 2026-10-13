@@ -52,10 +52,9 @@ import {
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
-    changeInlineLiteralRefusal, changeInlineLiteralTransaction, isMarkObject, LiteralObject, literalObjectOf, literalOfObject,
+    changeInlineLiteralRefusal, changeInlineLiteralTransaction, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf,
 } from './objects';
-import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_FIELD_LABEL, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT, attributesStep } from './attributes';
-import { SPAN_FIELD_PREFILL } from './toolbar/actions';
+import { ATTRIBUTES_REMOVED_HINT, attributesStep, holderAttributesStep } from './attributes';
 import { CHROME_MOVED, Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { followPointer, selectionBubbleShown } from './toolbar/toolbar';
@@ -1854,40 +1853,12 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * The field that sets the literal of a link, of a styled run (`_x_{…}`,
-     * `` `x`{…} ``) or of an image: prefilled with the literal — or `{.}` with
-     * the caret after the dot when there is none — and committed through
-     * `changeInlineLiteralTransaction`; a refusal keeps the field open with
-     * what was typed and the reason beside it (`refusedStep`); `{}` or an
-     * empty field removes it.
+     * The verb that opens the attributes field of a link, a styled run
+     * (`_x_{…}`, `` `x`{…} ``), an image or a bare holder: the one step every
+     * route shares (`holderAttributesStep`).
      */
     private markAttributesVerb(object: LiteralObject, id: string, label: string, title: string): Verb {
-        const view = this.view;
-        const literal = literalOfObject(object);
-        const step: FieldStep = {
-            value: literal ?? SPAN_FIELD_PREFILL.value,
-            caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
-            label: ATTRIBUTES_FIELD_LABEL,
-            keys: ATTRIBUTES_FIELD_KEYS,
-            commit: value => {
-                const current = literalObjectOf(currentObject(view.state, object));
-                if (current === null || current.kind !== object.kind) {
-                    view.focus();
-                    return;
-                }
-                const refusal = changeInlineLiteralRefusal(view.state, current, value);
-                if (refusal !== null) {
-                    return refusedStep(step, value, refusal);
-                }
-                view.focus();
-                const removed = value.trim() === '' || value.trim() === '{}';
-                this.apply(current, now => {
-                    const found = literalObjectOf(now);
-                    return found !== null && found.kind === current.kind ? changeInlineLiteralTransaction(view.state, found, value) : null;
-                }, removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT);
-            },
-        };
-        return { id, label, title, field: step };
+        return { id, label, title, field: holderAttributesStep(this.view, inlineHolderOf(object)) };
     }
 
     /** A table's **Edit source**: the table becomes a source block holding its text, the source box open (`tableSourceTransaction`). */

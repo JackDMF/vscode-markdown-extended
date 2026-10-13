@@ -42,7 +42,10 @@
 import { EditorView } from 'prosemirror-view';
 import { showChangeHint, undoKey } from './hint';
 import { FieldStep, refusedStep } from './inlineField';
-import { AttributesTarget, commitAttributes, literalOf } from './objects';
+import {
+    AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, literalObjectOf, literalOf,
+    literalOfObject,
+} from './objects';
 import { SPAN_FIELD_PREFILL } from './toolbar/actions';
 
 /** The field's own label; its heading is the block's name before it (`Paragraph · Attributes`). */
@@ -88,6 +91,51 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
             view.dispatch(made.tr);
             if (view.state !== before) {
                 showChangeHint(view, `${made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT} — ${undoKey()}`);
+            }
+        },
+    };
+    return step;
+}
+
+/**
+ * The field step for an inline holder (`attributeHolderAt`): a link's, a
+ * styled run's, an image's, a bare run of formatting's — the one step the
+ * bars' **Attributes…**, the Formatting menu's **Attributes of Code…**,
+ * `Alt+Enter`'s bar and the bubble's `{…}` open. Prefilled as a block's: the
+ * literal, selected, or `{.}` with the caret after the dot. `Enter` sets it
+ * through `changeInlineLiteralTransaction` — on a bare run the same mark is
+ * given the literal over its run — `{}` or nothing removes it; a refusal keeps
+ * the field open with what was typed and the reason (`refusedStep`).
+ */
+export function holderAttributesStep(view: EditorView, at: InlineHolderAt): FieldStep {
+    const literal = literalOfObject(at.object);
+    const step: FieldStep = {
+        value: literal ?? SPAN_FIELD_PREFILL.value,
+        caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
+        label: ATTRIBUTES_FIELD_LABEL,
+        keys: ATTRIBUTES_FIELD_KEYS,
+        commit: value => {
+            const current = literalObjectOf(currentObject(view.state, at.object));
+            if (current === null) {
+                view.focus();
+                return;
+            }
+            const refusal = changeInlineLiteralRefusal(view.state, current, value);
+            if (refusal !== null) {
+                return refusedStep(step, value, refusal);
+            }
+            // The focus first, as the bars' verbs do: what it moves (a source box's commit) is followed.
+            view.focus();
+            const now = literalObjectOf(currentObject(view.state, current));
+            const tr = now === null ? null : changeInlineLiteralTransaction(view.state, now, value);
+            if (tr === null) {
+                return;
+            }
+            const removed = value.trim() === '' || value.trim() === '{}';
+            const before = view.state;
+            view.dispatch(tr);
+            if (view.state !== before) {
+                showChangeHint(view, `${removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT} — ${undoKey()}`);
             }
         },
     };
