@@ -4,7 +4,9 @@
  * (`actions.ts`) and applied through `commands.ts`.
  *
  * - **The row** is one line of uniform controls: the block-type menu, the five
- *   native marks, the Formatting, Annotation and Insert menus. It never wraps;
+ *   native marks, the Formatting, Annotation and Insert menus — and, pinned at
+ *   its right end with the diagnostics count, the Export menu, which acts on
+ *   the document rather than the selection. It never wraps;
  *   narrow, it scrolls sideways, so every control keeps its place. A mark's
  *   glyph is its real element (`<i>`, `<em>`, …) held to the button's size.
  * - **A menu** lists its entries as real samples — the element the parser makes,
@@ -26,14 +28,15 @@
  */
 import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import type { LinkChoice, LinkedFile } from '../../protocol';
+import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
+import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { CHROME_MOVED, LOCK_ROOM_PROPERTY, firstFree } from '../clearance';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading, fieldKeys } from '../inlineField';
-import { chevronNode } from '../lenses';
+import { chevronNode, lensLabelNodes } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
-import { controlLock, focusPlace, placeOfElement } from '../focusPlace';
+import { FocusPlace, RowScope, focusPlace, placeOfElement, rowLock } from '../focusPlace';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
@@ -67,7 +70,44 @@ export interface ToolbarHost {
     linkChoices(query: string, images: boolean): Promise<LinkChoice[]>;
     /** Ask the host for an image file (VS Code's open dialog); `chosen` gets it, as the page inserts it, unless the page moved on. */
     pickImage(chosen: (files: LinkedFile[]) => void): void;
+    /** Export the document in `format`: what the open source boxes hold committed and the pending edit sent first, as before a save (`main.ts`). */
+    exportDocument(format: ExportFormatName): void;
+    /** Open VS Code's Settings at the export's settings. */
+    exportSettings(): void;
+    /** Whether an export the page asked for runs still: from the press until the host's `exportDone`. */
+    exportBusy(): boolean;
 }
+
+interface ExportEntry {
+    id: string;
+    label: string;
+    detail?: string;
+    /** An export: refused while another runs. */
+    exports: boolean;
+    separated?: true;
+    run: (host: ToolbarHost) => void;
+}
+
+/**
+ * The entries of the Export menu at the row's right end: the export's formats
+ * from their one table (`formats.ts`, which the format quick pick lists too),
+ * then the settings. Not in the action table (`actions.ts`): an action there
+ * edits the text at the selection, and carries the element it makes and the
+ * syntax it writes, checked against the parser; these act on the document as
+ * a whole and make a file, so they have neither, and the row's lock does not
+ * refuse them (`RowScope`). Plain text, the format and how it is made.
+ */
+const EXPORT_ENTRIES: readonly ExportEntry[] = [
+    ...EXPORT_FORMATS.map((f): ExportEntry => ({ id: f.format, label: f.label, detail: f.detail, exports: true, run: host => host.exportDocument(f.format) })),
+    { id: 'settings', label: 'Export settings…', exports: false, separated: true, run: host => host.exportSettings() },
+];
+
+/** The Export menu's face: its label, and the codicon before it; and the label while an export runs. */
+const EXPORT_LABEL = 'Export';
+const EXPORT_BUSY_LABEL = 'Exporting…';
+
+/** Why a format is refused while an export runs. */
+export const EXPORT_BUSY_REFUSAL = 'An export is running — wait for it to finish';
 
 /** How long the pointer or the focus rests on an entry before its preview card shows. */
 const PREVIEW_DELAY_MS = 300;
@@ -202,13 +242,19 @@ interface Tool {
 }
 
 interface Menu {
-    id: ToolbarMenu | ToolbarSubmenu;
+    id: ToolbarMenu | ToolbarSubmenu | 'export';
     panel: HTMLElement;
     /** Its entries in order, the submenu's opener included; the arrow keys move between them. */
     items: HTMLElement[];
     tools: Tool[];
+    /** Entries that are no action of the table — the Export menu's — and what each does. */
+    commands: Map<HTMLElement, () => void>;
+    /** What the menu acts on, so whether the row's lock refuses it (`rowLock`). */
+    scope: RowScope;
     /** A top-level menu's face in the row. */
     face?: HTMLElement;
+    /** Hung from its face's right edge, not its left: the row's last control, at the window's edge. */
+    alignEnd?: true;
     /** A submenu's entry in its parent, and the parent. */
     opener?: HTMLElement;
     parent?: Menu;
@@ -234,6 +280,8 @@ class ToolbarView implements PluginView {
     private readonly card: HTMLElement;
     private readonly tools: Tool[] = [];
     private readonly menus: Menu[] = [];
+    /** The Export menu's format entries: refused while an export runs. */
+    private readonly formatItems: HTMLElement[] = [];
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
     private cardTimer: ReturnType<typeof setTimeout> | undefined;
     /** The field an action asked for a value in (a span's literal, a link's address, an image's alt text), while it is open. */
@@ -356,9 +404,10 @@ class ToolbarView implements PluginView {
         const includes = this.host.includesOffered();
         // While a source box or the properties panel has the focus, the
         // selection is hidden behind it: nothing here may act on it, and the
-        // row says why at its end.
+        // row says why at its end. What acts on the whole document is not
+        // refused (`RowScope`).
         const place = focusPlace(view);
-        const lock = place.kind === 'control' ? controlLock(place.role) : null;
+        const lock = rowLock(place, 'selection').refusal;
         const stateOf = (action: ToolbarAction) => {
             let s = states.get(action);
             if (!s) {
@@ -377,7 +426,9 @@ class ToolbarView implements PluginView {
                 const enabled = menu.tools.some(t => stateOf(t.action).enabled);
                 setState(menu.opener, enabled, false);
             }
-            if (menu.face) {
+            if (menu.face && menu.scope === 'document') {
+                this.updateDocumentFace(menu, place);
+            } else if (menu.face) {
                 this.updateFace(menu, stateOf, lock);
             }
         }
@@ -515,10 +566,55 @@ class ToolbarView implements PluginView {
         this.lockNote = span('mep-row-lock');
         this.lockNote.hidden = true;
         this.lockNote.append(span('mep-row-lock-text'));
-        // The row's right end: what the page says about the document as a
-        // whole (the diagnostics count, `diagnostics.ts`), not a control of the text.
-        row.append(this.lockNote, div('mep-row-status'));
+        // The row's right end: what is about the document as a whole, not the
+        // text at the selection — what the page says of it (the diagnostics
+        // count, `diagnostics.ts`, in its slot), then Export.
+        const status = div('mep-row-status');
+        const exportGroup = div('mep-row-export');
+        exportGroup.append(this.exportFace());
+        status.append(div('mep-row-said'), exportGroup);
+        row.append(this.lockNote, status);
         return row;
+    }
+
+    /**
+     * **Export ▾**: a menu face as the others are, the `export` codicon
+     * before its label; its menu lists the formats as plain text, then the
+     * export's settings. Each entry is the host's (`ToolbarHost.exportDocument`).
+     */
+    private exportFace(): HTMLElement {
+        const menu = this.newMenu('export', EXPORT_LABEL, 'document');
+        menu.alignEnd = true;
+        for (const entry of EXPORT_ENTRIES) {
+            if (entry.separated) {
+                const rule = div('mep-menu-separator');
+                rule.setAttribute('role', 'separator');
+                menu.panel.append(rule);
+            }
+            const item = this.entry(menu);
+            item.dataset.export = entry.id;
+            item.append(span('mep-entry-label', entry.label));
+            if (entry.detail) {
+                item.append(span('mep-entry-detail', entry.detail));
+            }
+            if (entry.exports) {
+                this.formatItems.push(item);
+            }
+            menu.commands.set(item, () => entry.run(this.host));
+            item.addEventListener('click', e => {
+                e.preventDefault();
+                this.runCommand(menu, item);
+            });
+            item.addEventListener('mouseenter', () => followPointer(menu.panel, item));
+            menu.panel.append(item);
+        }
+        const face = this.faceFor(menu, EXPORT_LABEL);
+        const icon = span('mep-face-icon');
+        icon.setAttribute('aria-hidden', 'true');
+        icon.append(...lensLabelNodes('$(export)'));
+        face.prepend(icon);
+        face.dataset.scope = menu.scope;
+        return face;
     }
 
     private buildBubble(): HTMLElement {
@@ -555,14 +651,18 @@ class ToolbarView implements PluginView {
     }
 
     private menuFace(id: ToolbarMenu): HTMLElement {
-        const menu = this.buildMenu(id, TOOLBAR_ACTIONS.filter(a => menuOf(a) === id));
+        return this.faceFor(this.buildMenu(id, TOOLBAR_ACTIONS.filter(a => menuOf(a) === id)), MENU_LABELS[id]);
+    }
+
+    /** A top-level menu's face in the row: `label` and a chevron; it opens the menu on a press, Enter, Space or the down arrow. */
+    private faceFor(menu: Menu, label: string): HTMLElement {
         const face = div('mep-tool mep-menu-face');
-        face.dataset.menu = id;
+        face.dataset.menu = menu.id;
         face.setAttribute('role', 'button');
         face.setAttribute('aria-haspopup', 'menu');
         face.setAttribute('aria-expanded', 'false');
         face.tabIndex = 0;
-        face.append(span('mep-face-label', MENU_LABELS[id]), chevronNode());
+        face.append(span('mep-face-label', label), chevronNode());
         menu.face = face;
         face.addEventListener('click', e => {
             e.preventDefault();
@@ -616,17 +716,45 @@ class ToolbarView implements PluginView {
         }
     }
 
+    /**
+     * Export's face, read from the lock model (`rowLock` for its scope, the
+     * document): offered beside a locked row, its tooltip saying what the
+     * focus changes (an open box applied first). While an export runs it says
+     * so — `Exporting…`, busy — and its formats are refused, the settings not.
+     */
+    private updateDocumentFace(menu: Menu, place: FocusPlace): void {
+        const face = menu.face as HTMLElement;
+        const { refusal, note } = rowLock(place, menu.scope);
+        const busy = this.host.exportBusy();
+        setState(face, refusal === null, false);
+        (face.querySelector('.mep-face-label') as HTMLElement).textContent = busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL;
+        face.setAttribute('aria-busy', String(busy));
+        face.title = [busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL, refusal ?? (busy ? EXPORT_BUSY_REFUSAL : note)].filter(Boolean).join('\n');
+        for (const item of this.formatItems) {
+            setState(item, !busy, false);
+            item.title = busy ? EXPORT_BUSY_REFUSAL : '';
+        }
+    }
+
     // -- menus -----------------------------------------------------------------
 
-    private buildMenu(id: ToolbarMenu | ToolbarSubmenu, actions: readonly ToolbarAction[], parent?: Menu): Menu {
+    /** An empty menu's panel in the layer, hidden, named `label`. */
+    private newMenu(id: Menu['id'], label: string, scope: RowScope, parent?: Menu): Menu {
         const panel = div('mep-menu');
         panel.dataset.menu = id;
         panel.setAttribute('role', 'menu');
-        panel.setAttribute('aria-label', MENU_LABELS[id]);
+        panel.setAttribute('aria-label', label);
         panel.hidden = true;
         this.layer.append(panel);
-        const menu: Menu = { id, panel, items: [], tools: [], parent, children: [] };
+        const menu: Menu = { id, panel, items: [], tools: [], commands: new Map(), scope, parent, children: [] };
         this.menus.push(menu);
+        panel.addEventListener('keydown', e => this.menuKey(menu, e));
+        return menu;
+    }
+
+    private buildMenu(id: ToolbarMenu | ToolbarSubmenu, actions: readonly ToolbarAction[], parent?: Menu): Menu {
+        const menu = this.newMenu(id, MENU_LABELS[id], 'selection', parent);
+        const panel = menu.panel;
 
         for (const action of actions) {
             const sub = parent ? null : submenuOf(action);
@@ -640,7 +768,6 @@ class ToolbarView implements PluginView {
             }
             panel.append(this.menuEntry(menu, action));
         }
-        panel.addEventListener('keydown', e => this.menuKey(menu, e));
         return menu;
     }
 
@@ -734,6 +861,8 @@ class ToolbarView implements PluginView {
                 stop();
                 if (child) {
                     this.openMenu(child, true);
+                } else if (focused && menu.commands.has(focused)) {
+                    this.runCommand(menu, focused);
                 } else {
                     const tool = menu.tools.find(t => t.el === focused);
                     if (tool) {
@@ -818,7 +947,7 @@ class ToolbarView implements PluginView {
         let top: number;
         if (menu.face) {
             const r = menu.face.getBoundingClientRect();
-            left = r.left;
+            left = menu.alignEnd ? r.right - width : r.left;
             top = r.bottom + 2;
         } else {
             const r = (menu.opener as HTMLElement).getBoundingClientRect();
@@ -926,6 +1055,23 @@ class ToolbarView implements PluginView {
         }
         this.closeAll();
         this.run(tool.action);
+    }
+
+    /**
+     * An entry of a menu of commands (Export's): the menu closes, the focus it
+     * held — opened from the keyboard — goes back to its face, and the host runs it.
+     */
+    private runCommand(menu: Menu, item: HTMLElement): void {
+        const command = menu.commands.get(item);
+        if (!command || isDisabled(item)) {
+            return;
+        }
+        const held = menu.panel.contains(document.activeElement);
+        this.closeAll();
+        if (held) {
+            menu.face?.focus({ preventScroll: true });
+        }
+        command();
     }
 
     private run(action: ToolbarAction): void {
@@ -1310,14 +1456,19 @@ class ToolbarView implements PluginView {
 
 const toolbarViews = new WeakMap<EditorView, ToolbarView>();
 
-/** The status slot at the right end of the view's formatting row; `null` without a toolbar. */
+/** The status slot at the right end of the view's formatting row, before Export; `null` without a toolbar. */
 export function toolbarStatusSlot(view: EditorView): HTMLElement | null {
-    return view.dom.parentElement?.querySelector<HTMLElement>(':scope > .mep-toolbar > .mep-row-status') ?? null;
+    return view.dom.parentElement?.querySelector<HTMLElement>(':scope > .mep-toolbar > .mep-row-status > .mep-row-said') ?? null;
 }
 
 /** Whether the selection bubble of `view` is shown: the object toolbar hides every block's bar meanwhile. */
 export function selectionBubbleShown(view: EditorView): boolean {
     return toolbarViews.get(view)?.bubbleShown ?? false;
+}
+
+/** Have the toolbar of `view` read the page's state again (Export busy or not), without a transaction through every plugin. */
+export function refreshToolbar(view: EditorView): void {
+    toolbarViews.get(view)?.update(view);
 }
 
 /**

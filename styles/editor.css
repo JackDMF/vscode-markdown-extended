@@ -462,7 +462,27 @@ img.mep-pending-range {
     font-size: 12px;
     color: var(--vscode-descriptionForeground, GrayText);
 }
-.mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret) { color: inherit; opacity: 0.8; }
+.mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail) { color: inherit; opacity: 0.8; }
+
+/* A command's entry (Export's): its name in plain text, and how it is made beside it, right and dim. */
+.mep-menu[data-menu="export"] > .mep-menu-item > .mep-entry-label { flex: none; white-space: nowrap; }
+.mep-entry-detail {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
+
+/* Between groups of a menu's entries, as the workbench's menus divide them. */
+.mep-menu-separator {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--vscode-menu-separatorBackground, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+}
 
 /*
  * The preview card: the construct at its natural size, from the cascade.
@@ -1269,8 +1289,11 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 .mep-diag-marker-hint { color: var(--vscode-editorInfo-foreground, #1a85ff); }
 
 /*
- * The formatting row's right end: what the page says about the document as a
- * whole. Pinned to the right while the row scrolls sideways.
+ * The formatting row's right end: what is about the document as a whole —
+ * what the page says of it (the diagnostics count, in `-said`), then Export,
+ * with the row's divider before Export whenever anything stands before it:
+ * the count, or the lock's reason beside the tools. Pinned to the right while
+ * the row scrolls sideways; Export keeps it shown without a count.
  */
 .mep-row-status {
     position: sticky;
@@ -1281,9 +1304,35 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     margin-left: auto;
     padding: 0 0 0 8px;
     background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
+    /* Over the row's right padding too: a narrow row's tools scroll under it and would show there. */
+    box-shadow: 8px 0 0 var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
 }
-.mep-row-status:empty,
-.mep-row-status:not(:has(> :not([hidden]))) { display: none; }
+.mep-row-said,
+.mep-row-export {
+    display: flex;
+    flex: none;
+    align-items: center;
+}
+.mep-row-said:not(:has(> :not([hidden]))) { display: none; }
+/* The divider of `.mep-row-group + .mep-row-group`, after the count or the lock's reason beside it. */
+.mep-row-said:has(> :not([hidden])) + .mep-row-export::before,
+.mep-toolbar:not(.mep-row-lock-below) > .mep-row-lock:not([hidden]) + .mep-row-status > .mep-row-export::before {
+    content: "";
+    flex: none;
+    width: 1px;
+    height: 14px;
+    margin: 0 5px;
+    background: var(--mep-chrome-separator);
+}
+
+/* A face's codicon before its label (Export's), drawn as the chevron is. */
+.mep-face-icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    margin-right: 2px;
+}
+.mep-face-icon > .codicon { font-size: 14px; line-height: 1; }
 
 /*
  * Why the row is refused while a source box or the properties panel has the

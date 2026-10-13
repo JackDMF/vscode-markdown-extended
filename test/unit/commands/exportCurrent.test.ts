@@ -2,6 +2,10 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as exportUriModule from '../../../src/commands/exportUri';
 import { CommandExportCurrent } from '../../../src/commands/exportCurrent';
+import * as exportersModule from '../../../src/services/exporter/exporters';
+import { EXPORT_FORMATS } from '../../../src/services/exporter/formats';
+import { ExportFormat } from '../../../src/services/exporter/interfaces';
+import * as sharedModule from '../../../src/services/exporter/shared';
 
 /**
  * `markdownExtended.export` takes the document from its argument, then from the active tab
@@ -52,5 +56,53 @@ suite('Export current: which document', () => {
             else { delete (vscode.window as any).tabGroups; }
         }
         assert.deepStrictEqual(exported.map(u => u.toString()), [uri.toString()]);
+    });
+});
+
+/**
+ * `exportUri` with a format already chosen — the Visual Editor's Export menu —
+ * asks for no format; without one it asks, as the command always did. Which
+ * exporter is asked either way (`pickExporter`, which asks only when two fit).
+ * Both pickers answer here and the export stops at the exporter's question.
+ */
+suite('Export a uri: a preset format', () => {
+    const pickers = exportersModule as { pickFormat: () => Promise<ExportFormat | undefined>; pickExporter: (format: ExportFormat) => Promise<unknown> };
+    const shared = sharedModule as { ensureMarkdownEngine: () => Promise<void> };
+    const originals = { pickFormat: pickers.pickFormat, pickExporter: pickers.pickExporter, ensure: shared.ensureMarkdownEngine };
+    let asked: string[];
+
+    setup(() => {
+        asked = [];
+        pickers.pickFormat = async () => {
+            asked.push('format');
+            return ExportFormat.HTML;
+        };
+        pickers.pickExporter = async (format: ExportFormat) => {
+            asked.push(`exporter:${format}`);
+            return undefined;
+        };
+        shared.ensureMarkdownEngine = async () => undefined;
+    });
+    teardown(() => {
+        pickers.pickFormat = originals.pickFormat;
+        pickers.pickExporter = originals.pickExporter;
+        shared.ensureMarkdownEngine = originals.ensure;
+    });
+
+    test('a preset format is exported without asking for one', async () => {
+        await exportUriModule.exportUri(vscode.Uri.file('/somewhere/doc.md'), ExportFormat.PDF);
+        assert.deepStrictEqual(asked, ['exporter:pdf']);
+    });
+
+    test('without one, the format is asked first, as the command asks it', async () => {
+        await exportUriModule.exportUri(vscode.Uri.file('/somewhere/doc.md'));
+        assert.deepStrictEqual(asked, ['format', 'exporter:html']);
+    });
+
+    test('the format pick lists the one table the Visual Editor\'s menu lists: the same names, how each is made, every enum member once', () => {
+        const items = exportersModule.formatPickItems();
+        assert.deepStrictEqual(items.map(i => [i.label, i.description, i.format]), EXPORT_FORMATS.map(f => [f.label, f.detail, f.format]));
+        assert.deepStrictEqual(items.map(i => i.label), ['HTML', 'PDF', 'PNG image', 'JPEG image']);
+        assert.deepStrictEqual(items.map(i => i.format).sort(), Object.values(ExportFormat).sort());
     });
 });

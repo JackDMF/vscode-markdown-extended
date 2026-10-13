@@ -1155,6 +1155,9 @@ text the other — never a diff:
 | page → host | `runHoverCommand { id }` | Run a command link of the last `hoverResult` |
 | page → host | `showHoverInEditor { requestId }` | **Show more**: VS Code's hover in the text editor, at that hover's position |
 | page → host | `showProblems` | The toolbar's count was clicked: the Problems view |
+| page → host | `export { format }` | **Export** in the toolbar: `exportUri` in a format of the table (`formats.ts`), no format pick; the page commits its open boxes and flushes first, and the host starts it in its queue behind that edit, without waiting for it there, unless another export runs |
+| host → page | `exportDone { outcome }` | The answer to every `export`: `settled` (done, cancelled, failed) and `refused` (a format the export does not make; the page says so) offer Export again; `busy` (another runs) leaves the page showing that one |
+| page → host | `exportSettings` | **Export → Export settings…**: Settings filtered to `markdownExtended.export` |
 
 A raw block's source commit sends its `edit` with `reparse` too, at once (or inside the
 save's own edit when Ctrl+S commits it): what the source now says may no longer be a
@@ -1635,7 +1638,9 @@ While a `control` has the focus the selection is still there, hidden behind it, 
 may act on it: the selection's bar is the owning block's own verbs only (a source block's
 without **Edit source**, its box being the edit, and without other extensions' lenses and
 code actions; the front matter's, barless), the pointer's bar is hidden, and the
-formatting row refuses everything, saying why at its end (`controlLock`). It is the focus,
+formatting row refuses everything that acts on the selection, saying why at its end
+(`controlLock`, read through `rowLock` with the control's `RowScope`). **Export**, whose
+scope is the document, is not refused (`RowLock.refusal`); its tooltip carries the lock model's `note` instead — the open box applied first, as a save does. It is the focus,
 not an open box: after `Esc` out of the YAML box the focus is on the header's **Edit as
 source**, and the bars wait for the next `Esc` or a click into the text (Daniel,
 2026-10-12); a raw block's box, closing, leaves the focus nowhere (`away`). A verb run from
@@ -2142,6 +2147,26 @@ slot for what the page says about the document as a whole): `$(error) 1 $(warnin
 not reachable from a webview, so the toolbar's end is the place. It is a button and says so:
 `title="Open Problems"`, a pointer, its numbers underlined on hover; a click posts
 `showProblems`, and the host runs `workbench.actions.view.problems`.
+
+**Export** follows the count in the same slot (`.mep-row-said` holds the count, then
+`.mep-row-export`, a divider before Export whenever the count or the lock's reason beside the
+tools stands before it), so it is pinned with it and keeps the slot shown without one. Its menu is built by the toolbar's menu machinery but
+holds commands, not actions of the table (`EXPORT_ENTRIES`): a format posts `export` after
+the page commits its open boxes and flushes (`exportDocument` in `main.ts`, the save's
+`commitForSending`), and the host runs `exportUri(uri, format)` behind that edit — no format
+pick, the exporter pick, progress and report as the command has them. The formats are one
+table (`services/exporter/formats.ts`, which also declares the `ExportFormat` enum the table
+holds), read by the menu and by `pickFormat`. One export runs at a time: the page shows
+*Exporting…* and refuses its formats until the host's `exportDone`; the host answers a second
+request `busy`; every `document` says whether one runs (`exporting`), so a page loaded
+meanwhile shows it and a lost `exportDone` keeps the face busy no longer than the next
+document. The host starts the export without waiting for it in its queue — a browser's launch
+would hold up typing — so edits typed just after the press may reach it. *Limits:* an export
+right after the host dropped the page's edit (the file changed outside the editor at that
+moment) exports the file's text without that edit, as the command palette's export does; and
+an export that never settles — a browser launch that hangs — has no timeout: Export stays
+busy while VS Code's progress notification shows it running. The Visual Editor is
+desktop-only (`extension.web.ts` registers none), so no page offers Export where it cannot run.
 
 **Hover and the card** (sketch 7). After the pointer rests `HOVER_DELAY_MS` (500 ms) on a
 character of text (within 12 px of a character boundary; not a lens row, a marker, a bar),

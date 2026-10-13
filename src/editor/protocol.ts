@@ -1,3 +1,4 @@
+import type { ExportFormatName } from '../services/exporter/formats';
 import type { InlineEngineDefinition } from './inlineEngine';
 import type { ParsedDocumentJSON } from './parse';
 import type { MappedPagePosition, MappedSourcePosition, SourcePosition, SourceRange } from './positions';
@@ -142,8 +143,12 @@ export type HostMessage =
      * engine built from it, so that it refuses an edit after which a sidebar
      * would not read back as it is shown — VS Code's math, when it runs, as
      * a stand-in for its tokenizer, so a left sidebar the math reads is none.
+     * `exporting` says an export the page asked for runs still, and its
+     * absence that none does: the page's Export shows exactly that — a page
+     * loaded again meanwhile shows it running until its `exportDone`, and an
+     * `exportDone` lost on the way keeps it busy no longer than this message.
      */
-    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; inline: InlineEngineDefinition }
+    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; inline: InlineEngineDefinition; exporting?: true }
     /** The answer to a `render` request: the raw block's source rendered by the host's engine. */
     | { type: 'rendered'; requestId: number; html: string }
     /** The document cannot be shown without losing a byte; the webview offers the text editor instead. */
@@ -254,7 +259,16 @@ export type HostMessage =
      * registry, every other `command:` link stripped to its text — and the
      * source range the hover is about. `html` is empty when there is none.
      */
-    | { type: 'hoverResult'; requestId: number; html: string; range?: SourceRange };
+    | { type: 'hoverResult'; requestId: number; html: string; range?: SourceRange }
+    /**
+     * The answer to every `export`. `settled`: it ran and ended — exported,
+     * cancelled at the exporter pick, or failed (VS Code reported it) — and
+     * the page's Export is offered again. `refused`: it named no format the
+     * export makes, and was not run; Export is offered again and the page
+     * says so. `busy`: another export runs; the page keeps showing that one
+     * until its own answer.
+     */
+    | { type: 'exportDone'; outcome: 'settled' | 'refused' | 'busy' };
 
 /**
  * One completion of a link's field: `value` is what the field then holds — a
@@ -415,7 +429,27 @@ export type WebviewMessage =
     /** **Show more** on a clipped hover: open the text editor at the hover's position and show VS Code's own hover there. */
     | { type: 'showHoverInEditor'; requestId: number }
     /** The diagnostics count in the toolbar was clicked: show VS Code's Problems view. */
-    | { type: 'showProblems' };
+    | { type: 'showProblems' }
+    /**
+     * **Export** in the toolbar: run the extension's export (`exportUri`) on
+     * this document in `format`, which the person chose on the page, so VS
+     * Code asks for no format. Sent after the page committed its open source
+     * boxes (not a new property left unadded, as for a save) and flushed its
+     * pending edit. The host starts it in its queue, behind that edit, and does
+     * not wait for it there. So the export holds at least the text the page
+     * showed at the press — and may hold edits typed after it too, since the
+     * exporter reads the document once it has started (the exporter pick, the
+     * browser's launch). Limit: when the host dropped that edit (the file
+     * changed outside the editor at the same moment), it exports the file's
+     * text without it, as the command palette's export does. Answered with
+     * `exportDone` in every case.
+     */
+    | { type: 'export'; format: ExportFormatName }
+    /** **Export → Export settings…**: VS Code's Settings, filtered to `markdownExtended.export`. */
+    | { type: 'exportSettings' };
+
+/** The format names of the export's table (`formats.ts`), which the page and the host both read. */
+export type { ExportFormatName };
 
 /**
  * What an extension offering includes exports beside `extendMarkdownIt`

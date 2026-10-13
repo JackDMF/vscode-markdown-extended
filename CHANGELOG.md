@@ -1,5 +1,19 @@
 # Change Log
 
+## Unreleased
+
+### ✨ Features
+
+- The Visual Editor's toolbar has an Export menu: HTML, PDF, PNG or JPEG of the page, unsaved changes included.
+- Export works while a source box is open; the box's text is applied first, as before a save.
+- The command palette's export names its formats as the menu does: HTML, PDF, PNG image, JPEG image.
+
+### ⚠️ Limits
+
+- One export at a time; a hung Chromium launch keeps the menu on "Exporting…" until the editor is reopened.
+- An export at the moment the file changes outside the editor can miss the last edit, as the palette's export does.
+- A property still being added with **+ Add property** is not exported until Enter.
+
 ## v4.4.0 — Attributes on Links and Emphasis
 
 ### ✨ Features

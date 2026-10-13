@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { Environment, MarkdownIt } from '../../@types/markdown-it';
+import { exportUri } from '../../commands/exportUri';
 import { Config } from '../../services/common/config';
+import { ErrorHandler, ErrorSeverity } from '../../services/common/errorHandler';
+import { ExportFormat, formatNamed } from '../../services/exporter/formats';
 import { escapeHtml } from '../../services/exporter/shared';
 import { inlineEngineDefinition } from '../inlineEngine';
 import { blockLineRanges, parseDocument, parsedDocumentToJSON } from '../parse';
@@ -48,6 +51,8 @@ export interface SessionHost {
     diagnostics?(uri: vscode.Uri): readonly vscode.Diagnostic[];
     /** `vscode.languages.onDidChangeDiagnostics` (the default). */
     onDidChangeDiagnostics?: vscode.Event<vscode.DiagnosticChangeEvent>;
+    /** The extension's export of a document in a format chosen already (`exportUri`, the default); a test records what it was asked. */
+    exportDocument?(uri: vscode.Uri, format: ExportFormat): Thenable<unknown>;
 }
 
 /** The part of a `vscode.Webview` a session talks to. */
@@ -143,6 +148,10 @@ export class VisualEditorSession implements vscode.Disposable {
     /** The `map` requests waiting for the page's `mapped`, by id. */
     private readonly pendingMaps = new Map<number, (answer: MappedMessage | undefined) => void>();
     private mapSeq = 0;
+    /** `vscode.commands.executeCommand`, or the test's stand-in for it (`SessionHost.executeCommand`). */
+    private readonly execute: <T>(command: string, ...args: unknown[]) => Thenable<T>;
+    /** An export the page asked for is running, from its request until `exportDone`; another is dropped meanwhile. */
+    private exporting = false;
 
     constructor(
         private readonly document: vscode.TextDocument,
@@ -160,6 +169,7 @@ export class VisualEditorSession implements vscode.Disposable {
         const execute = <T>(command: string, ...args: unknown[]): Thenable<T> => (host.executeCommand
             ? host.executeCommand<T>(command, ...args)
             : vscode.commands.executeCommand<T>(command, ...args));
+        this.execute = execute;
         this.codeActions = new CodeActionController(port, execute);
         this.language = new LanguageFeatures({
             port,
@@ -421,7 +431,62 @@ export class VisualEditorSession implements vscode.Disposable {
                     void this.includes.answer(msg.requestId, msg.replace !== undefined);
                 });
                 break;
+            case 'export': {
+                // One at a time: the page shows the running one until its
+                // `exportDone`, and a request meanwhile is answered `busy` —
+                // the page keeps showing the one that runs.
+                if (this.exporting) {
+                    this.host.log('[INFO] Visual Editor: an export is running; the request for another was dropped.');
+                    void this.postQuietly({ type: 'exportDone', outcome: 'busy' });
+                    break;
+                }
+                // A message names anything: only a format of the table (`formats.ts`) is run.
+                const format = formatNamed(msg.format);
+                if (format === undefined) {
+                    void this.postQuietly({ type: 'exportDone', outcome: 'refused' });
+                    break;
+                }
+                this.exporting = true;
+                // In the queue, behind the edit the page flushed before asking,
+                // so the export reads at least the text the page showed at the
+                // press — unless that edit was dropped (the file changed
+                // outside the editor at the same moment): then it exports the
+                // file's text, as the command palette's export does. Started
+                // there, not waited for: it asks for an exporter where two
+                // could make the format and launches a browser, and the edits
+                // behind it must not wait for either.
+                this.enqueue(async () => {
+                    void this.exportAs(format).finally(() => this.exportFinished());
+                });
+                break;
+            }
+            case 'exportSettings':
+                void Promise.resolve(this.execute('workbench.action.openSettings', 'markdownExtended.export')).catch(error => {
+                    this.host.log(`[WARN] Visual Editor: the export settings could not be shown: ${message(error)}`);
+                });
+                break;
         }
+    }
+
+    /**
+     * This document exported in `format` (`exportUri`), as `markdownExtended.export`
+     * exports it once the format is chosen — a failure reported as the command reports one.
+     */
+    private async exportAs(format: ExportFormat): Promise<void> {
+        try {
+            await (this.host.exportDocument ? this.host.exportDocument(this.document.uri, format) : exportUri(this.document.uri, format));
+        } catch (error) {
+            ErrorHandler.handle(error, {
+                operation: 'Command: markdownExtended.export',
+                details: { commandId: 'markdownExtended.export', format },
+            }, ErrorSeverity.Error);
+        }
+    }
+
+    /** The export the page asked for settled — exported, cancelled, failed: the page may ask again. */
+    private exportFinished(): void {
+        this.exporting = false;
+        void this.postQuietly({ type: 'exportDone', outcome: 'settled' });
     }
 
     /**
@@ -600,6 +665,8 @@ export class VisualEditorSession implements vscode.Disposable {
             defaultWrap: Config.instance.editorWrapColumn(this.document.uri),
             includes,
             inline,
+            // A page loaded again while an export runs shows it running, until its `exportDone`.
+            ...(this.exporting ? { exporting: true as const } : {}),
         });
         // A link followed here before the page had the document lands now.
         await this.postReveal();

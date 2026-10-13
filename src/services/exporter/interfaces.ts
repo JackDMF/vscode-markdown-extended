@@ -1,13 +1,10 @@
 import * as vscode from 'vscode';
+import type { ExportFormat } from './formats';
+
+// Declared with the format table, which the page's bundle reads too; exported here for the callers that always read it here.
+export { ExportFormat } from './formats';
 
 export type Progress = vscode.Progress<{ message?: string; increment?: number }>;
-
-export enum ExportFormat {
-    PDF = "pdf",
-    HTML = "html",
-    JPG = "jpg",
-    PNG = "png",
-}
 
 export interface FormatQuickPickItem extends vscode.QuickPickItem {
     format: ExportFormat;

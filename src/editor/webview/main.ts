@@ -18,7 +18,7 @@ import { EditorState, NodeSelection, Selection, TextSelection, Transaction } fro
 import { EditorView, NodeViewConstructor } from 'prosemirror-view';
 import type { ParsedDocumentJSON } from '../parse';
 import { PositionMap, SourcePosition, caretOf, createPositionMap } from '../positions';
-import type { CodeActionItem, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
+import type { CodeActionItem, ExportFormatName, HostMessage, LensRow, LinkChoice, LinkedFile, WebviewMessage } from '../protocol';
 import { editorSchema } from '../schema';
 import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
@@ -40,7 +40,7 @@ import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
 import { resyncTransaction } from './resync';
 import { changeIncludeTransaction, insertLineTransaction } from './toolbar/commands';
-import { toolbarPlugin, toolbarStatusSlot } from './toolbar/toolbar';
+import { refreshToolbar, toolbarPlugin, toolbarStatusSlot } from './toolbar/toolbar';
 
 interface VsCodeApi {
     postMessage(message: WebviewMessage): void;
@@ -671,6 +671,65 @@ function commitOpenSources(): void {
     }
 }
 
+/**
+ * Commit the open source boxes as a save does (`onSaveKeydown`): their text
+ * goes into the document, and the edit that carries it is the one the caller
+ * sends next, not one of their own.
+ */
+function commitForSending(): void {
+    committingForSave = true;
+    try {
+        commitOpenSources();
+    } finally {
+        committingForSave = false;
+    }
+}
+
+/** An export the page asked for runs: from the press until the host's `exportDone`. One at a time. */
+let exporting = false;
+
+/**
+ * **Export** in the toolbar: what the open boxes hold committed and the
+ * pending edit sent, as before a save, then the request — which the host
+ * starts behind that edit, so the export holds at least what the page showed
+ * at the press (the `export` message says what more it may hold). Export is
+ * busy until the host's `exportDone`.
+ */
+function exportDocument(format: ExportFormatName): void {
+    if (!view || exporting) {
+        return;
+    }
+    commitForSending();
+    flush();
+    post({ type: 'export', format });
+    setExporting(true);
+}
+
+/**
+ * The host's `exportDone`. `busy`: another export runs, and Export keeps
+ * showing it. Otherwise Export is offered again; with `refused` nothing was
+ * exported — the host knows no such format — and the page says so where the
+ * caret is.
+ */
+function exportFinished(outcome: 'settled' | 'refused' | 'busy'): void {
+    if (outcome === 'busy') {
+        setExporting(true);
+        return;
+    }
+    setExporting(false);
+    if (outcome === 'refused' && view) {
+        showHint(view, 'Not exported: this format is not offered.', 'refusal');
+    }
+}
+
+/** Whether an export runs, and the toolbar's Export face drawn for it. */
+function setExporting(running: boolean): void {
+    exporting = running;
+    if (view) {
+        refreshToolbar(view);
+    }
+}
+
 /** Put a rendering on every raw block that still has the source it was made from. */
 function applyRendered(requestId: number, html: string): void {
     const src = pendingRenders.get(requestId);
@@ -749,6 +808,9 @@ const plugins = [
         pickInclude: () => pickInclude(null),
         linkChoices,
         pickImage: chosen => askFiles({ type: 'pickImage' }, chosen),
+        exportDocument,
+        exportSettings: () => post({ type: 'exportSettings' }),
+        exportBusy: () => exporting,
     }),
     objectToolbarPlugin({
         openSourceAt: pos => post({ type: 'openSource', line: lineAt(pos) }),
@@ -889,12 +951,7 @@ function onSaveKeydown(e: KeyboardEvent): void {
     if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's' || !view) {
         return;
     }
-    committingForSave = true;
-    try {
-        commitOpenSources();
-    } finally {
-        committingForSave = false;
-    }
+    commitForSending();
     if (e.altKey || e.shiftKey) {
         // Save As and the like stay VS Code's; the pending edit is sent first.
         flush();
@@ -977,6 +1034,10 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     switch (msg.type) {
         case 'document':
             showDocument(msg.json, msg.version, msg.defaultWrap, msg.includes, msg.inline);
+            // The host's word on whether an export runs: a page loaded again during one
+            // learns it here, and an `exportDone` lost on the way cannot keep the face busy
+            // past the next document.
+            setExporting(msg.exporting === true);
             break;
         case 'rendered':
             applyRendered(msg.requestId, msg.html);
@@ -1028,6 +1089,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             if (view) {
                 hoverMessage(view, msg);
             }
+            break;
+        case 'exportDone':
+            exportFinished(msg.outcome);
             break;
     }
 });
