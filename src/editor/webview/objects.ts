@@ -97,10 +97,16 @@ export function isTopLevelBlock(state: EditorState, object: EditorObject): boole
         && state.doc.resolve(object.from).depth === 0 && state.doc.nodeAt(object.from) === object.node;
 }
 
-/** Whether two objects are the same one: the same kind at the same place. */
+/**
+ * Whether two objects are the same one: the same kind at the same place — a
+ * bare holder and the styled run it becomes once it has a literal count as one.
+ */
 export function sameObject(a: EditorObject | null, b: EditorObject | null): boolean {
-    return a !== null && b !== null && a.kind === b.kind && a.from === b.from;
+    return a !== null && b !== null && a.from === b.from && (a.kind === b.kind || (RUN_KINDS.has(a.kind) && RUN_KINDS.has(b.kind)));
 }
+
+/** A run of formatting, bare or with a literal: one object as it gains or loses one. */
+const RUN_KINDS: ReadonlySet<string> = new Set(['holder', 'styled']);
 
 const NODE_KINDS: Readonly<Record<string, NodeObjectKind>> = {
     sidenote: 'note',
@@ -188,7 +194,7 @@ function runObject(holder: InlineLiteralHolder, mark: Mark, from: number, to: nu
  * exactly the same text, the innermost. With `withLiteral`, a styled mark
  * counts only while it carries a literal: formatting has no bar of its own.
  */
-function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[], withLiteral: boolean): InlineHolderAt | null {
+function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[], withLiteral: boolean, accept: (object: LiteralObject) => boolean = () => true): InlineHolderAt | null {
     const sel = state.selection;
     if (sel instanceof NodeSelection) {
         const holder = holderOfCarrier(sel.node.type.name);
@@ -208,8 +214,9 @@ function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[]
         for (const neighbour of [$from.nodeAfter, $from.nodeBefore]) {
             const mark = neighbour?.marks.find(m => m.type === type && (!withLiteral || !holder.styled || m.attrs.literal !== null));
             const run = mark === undefined ? null : markRunAt($from, mark);
-            if (mark !== undefined && run !== null && $to.pos <= run.to) {
-                return { holder, object: runObject(holder, mark, run.from, run.to) };
+            const object = mark === undefined || run === null || $to.pos > run.to ? null : runObject(holder, mark, run.from, run.to);
+            if (object !== null && accept(object)) {
+                return { holder, object };
             }
         }
     }
@@ -224,8 +231,16 @@ function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[]
  * object or an image, `inline` is that same object.
  */
 export function attributeHolderAt(state: EditorState): { inline: InlineHolderAt | null; block: AttributesTarget | { refusal: string } } {
-    return { inline: holderRunAt(state, INLINE_LITERAL_HOLDERS, false), block: attributesTargetAt(state) };
+    // Asked by every surface on every update: once per state.
+    let known = holderCache.get(state);
+    if (known === undefined) {
+        known = { inline: holderRunAt(state, INLINE_LITERAL_HOLDERS, false), block: attributesTargetAt(state) };
+        holderCache.set(state, known);
+    }
+    return known;
 }
+
+const holderCache = new WeakMap<EditorState, ReturnType<typeof attributeHolderAt>>();
 
 /**
  * The inline holder inside `object` the selection is in, other than `object`
@@ -235,8 +250,9 @@ export function attributeHolderAt(state: EditorState): { inline: InlineHolderAt 
  */
 export function holderInside(state: EditorState, object: EditorObject): InlineHolderAt | null {
     const own = isMarkObject(object) ? holderOfCarrier(object.mark.type.name) : undefined;
-    const found = holderRunAt(state, INLINE_LITERAL_HOLDERS.filter(h => h !== own && 'mark' in h.carrier), false);
-    return found !== null && found.object.from >= object.from && found.object.to <= object.to && !sameObject(found.object, object) ? found : null;
+    // Within `object` is part of the search: a holder around it (a span around a link) is passed over, not the end of it.
+    return holderRunAt(state, INLINE_LITERAL_HOLDERS.filter(h => h !== own && 'mark' in h.carrier), false,
+        found => found.from >= object.from && found.to <= object.to && !sameObject(found, object));
 }
 
 /** The innermost container or admonition holding both ends of the selection. */

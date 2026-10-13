@@ -164,7 +164,7 @@ const markLiteral = { literal: { default: null as string | null } };
  * itself in `data-mep-attrs`, by which a copy of it in the page pastes with
  * it — as an attribute span's is (`attr_span`).
  */
-function literalDOM(carrier: Mark | Node): Record<string, string> {
+export function literalDOM(carrier: Mark | Node): Record<string, string> {
     const literal = carrier.attrs.literal as string;
     return { ...domAttrsOf(literal), 'data-mep-attrs': literal };
 }

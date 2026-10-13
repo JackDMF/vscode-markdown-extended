@@ -175,6 +175,12 @@ export interface ToolbarAction {
     preview?: ActionPreview;
     /** Offered in the selection bubble too. */
     bubble?: true;
+    /**
+     * Named by what the selection holds (`Attributes of Paragraph…`): its sample's text and
+     * its tooltip's name follow the selection, `label` being the resting form — the one
+     * shown while the row is locked, sample and tooltip alike.
+     */
+    named?: true;
 }
 
 /** What a source action's tooltip says: the construct is edited as Markdown in a source block, not as rich text. */
@@ -316,8 +322,8 @@ function formatAction(id: string, label: string, mark: MarkTarget, open: string,
 
 const M = INLINE_MARKERS;
 
-/** The literal the span action's example is written with. */
-const SPAN_LITERAL_EXAMPLE = '{.class}';
+/** The literal the attribute entries, the bubble's `{…}` and their tooltips write a class with. */
+export const CLASS_LITERAL = '{.class}';
 
 /** What the span action's field starts with, and where its caret goes: after the dot, to type the class. */
 export const SPAN_FIELD_PREFILL = { value: '{.}', caret: 2 } as const;
@@ -325,8 +331,6 @@ export const SPAN_FIELD_PREFILL = { value: '{.}', caret: 2 } as const;
 /** The literal the block-attributes entry's example is written with. */
 const BLOCK_LITERAL_EXAMPLE = '{.x}';
 
-/** The literal the attribute entries name in their syntax column, as Span with class does. */
-const CLASS_LITERAL = '{.class}';
 
 /** Why Attributes of Code… is disabled: nothing inline at the caret carries a {…}. */
 export const INLINE_ATTRS_LOCK = 'Put the caret in code, a key, a link, emphasis, superscript, subscript, a highlight or a span, or select an image. Alt+Enter opens its bar.';
@@ -344,14 +348,14 @@ const formatting: ToolbarAction[] = [
         { markdown: `Press ${KBD_MARKERS.open}Ctrl+S${KBD_MARKERS.close} to save.`, nodes: [el('p', 'Press ', el('kbd', 'Ctrl+S'), ' to save.')] }),
     {
         // markdown-it-bracketed-spans with markdown-it-attrs: the class a stylesheet names.
-        id: 'span-class', place: { menu: 'formatting' }, label: 'Span with class', syntax: `[text]${SPAN_LITERAL_EXAMPLE}`,
-        sample: el('span.class', 'span'), apply: { kind: 'attr-span' }, example: `[span]${SPAN_LITERAL_EXAMPLE}`,
+        id: 'span-class', place: { menu: 'formatting' }, label: 'Span with class', syntax: `[text]${CLASS_LITERAL}`,
+        sample: el('span.class', 'span'), apply: { kind: 'attr-span' }, example: `[span]${CLASS_LITERAL}`,
         preview: { markdown: 'A [styled phrase]{.lead} in a sentence.', nodes: [el('p', 'A ', el('span.lead', 'styled phrase'), ' in a sentence.')] },
     },
     {
         // markdown-it-attrs on the inline element at the caret: written right after it. Named
         // by the element (`Attributes of Link…`); the label here is its resting form.
-        id: 'inline-attributes', place: { menu: 'formatting' }, label: 'Attributes of Code…', syntax: `\`code\`${CLASS_LITERAL}`,
+        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Code…', syntax: `\`code\`${CLASS_LITERAL}`,
         sample: el('code.x', 'Attributes…'), apply: { kind: 'inline-attrs' }, example: `\`Attributes…\`${BLOCK_LITERAL_EXAMPLE}`,
         preview: {
             markdown: 'Run `--flag`{.k} to skip the cache.',
@@ -361,7 +365,7 @@ const formatting: ToolbarAction[] = [
     {
         // markdown-it-attrs on the block at the caret: written where the plugin reads it for that block.
         // Named by the block (`Attributes of Paragraph…`); refused, `Attributes of Block…`.
-        id: 'block-attributes', place: { menu: 'formatting' }, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`,
+        id: 'block-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`,
         sample: el('p.x', 'Attributes…'), apply: { kind: 'block-attrs' }, example: `Attributes… ${BLOCK_LITERAL_EXAMPLE}`,
         preview: {
             markdown: 'A paragraph with a class of its own. {.lead}',

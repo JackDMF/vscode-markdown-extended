@@ -78,11 +78,14 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
         label: ATTRIBUTES_FIELD_LABEL,
         keys: ATTRIBUTES_FIELD_KEYS,
         commit: value => {
-            const made = commitAttributes(view.state, target, value);
-            if (made !== null && 'refusal' in made) {
-                return refusedStep(step, value, made.refusal);
+            // Asked first, so a refusal keeps the field open with what was typed; the
+            // transaction is built after the focus is back, which may commit a source box.
+            const asked = commitAttributes(view.state, target, value);
+            if (asked !== null && 'refusal' in asked) {
+                return refusedStep(step, value, asked.refusal);
             }
             view.focus();
+            const made = asked === null ? null : commitAttributes(view.state, target, value);
             if (made === null || 'refusal' in made) {
                 return;
             }

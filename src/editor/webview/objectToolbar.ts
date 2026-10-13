@@ -150,6 +150,8 @@ export interface Verb {
     menu?: readonly MenuEntry[];
     /** Drawn after a separator: the first of another extension's lenses, or of its code actions, or a group of the object's own. */
     separated?: boolean;
+    /** What its field edits, when it is not the bar's object: the element inside it (`withInlineAttributes`), drawn while the field is open. */
+    target?: { from: number; to: number };
 }
 
 /** One entry of a set-verb's menu. */
@@ -406,8 +408,8 @@ export function emojiVerbs(state: EditorState, object: EditorObject, actions: Em
 /** What a bar tells the view about its field. */
 interface BarEvents {
     escape(): void;
-    /** A field opened for `object`: what it acts on is drawn (`pendingRange.ts`). */
-    fieldOpened(object: EditorObject): void;
+    /** A field opened for `object`, editing `target` within it when given: what it acts on is drawn (`pendingRange.ts`). */
+    fieldOpened(object: EditorObject, target?: { from: number; to: number }): void;
     fieldClosed(committed: boolean): void;
     /** The bar went with its field open: the view hides it from inside an update, so the drawing goes after it. */
     fieldDropped(): void;
@@ -737,7 +739,7 @@ class ObjectBar {
         this.el.replaceChildren(...(label ? [label] : []), field.el, ...aside);
         field.focus();
         if (this.object) {
-            this.events.fieldOpened(this.object);
+            this.events.fieldOpened(this.object, verb.target);
         }
     }
 
@@ -819,8 +821,10 @@ class ObjectToolbarView implements PluginView {
         this.mount = view.dom.parentElement as HTMLElement;
         const events: BarEvents = {
             escape: () => this.view.focus(),
-            fieldOpened: object => {
-                if (PENDING_OBJECTS.has(object.kind)) {
+            fieldOpened: (object, target) => {
+                if (target !== undefined) {
+                    showPendingRange(this.view, target.from, target.to);
+                } else if (PENDING_OBJECTS.has(object.kind)) {
                     showPendingRange(this.view, object.from, object.to);
                 }
             },
@@ -1379,6 +1383,7 @@ class ObjectToolbarView implements PluginView {
             title: `The ${inside.holder.noun}'s {…}, written right after it: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).`,
             separated: true,
             field: step,
+            target: { from: inside.object.from, to: inside.object.to },
         };
         return { ...own, verbs: [...own.verbs, verb] };
     }

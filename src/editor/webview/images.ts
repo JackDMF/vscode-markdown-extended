@@ -22,7 +22,7 @@
 import { Plugin } from 'prosemirror-state';
 import { EditorView, NodeView } from 'prosemirror-view';
 import { Node } from 'prosemirror-model';
-import { domAttrsOf } from '../attrs';
+import { literalDOM } from '../schema';
 import { schemeOf } from '../paths';
 import { showHint } from './hint';
 import { DROP_LOCK, IMAGE_LOCK, insertLockReason } from './objects';
@@ -134,7 +134,7 @@ export function showImagesIn(container: HTMLElement, sources: ImageSources): voi
 /**
  * An image node as the page draws it: the schema's `<img>` (its alt text and
  * title, and what a `{…}` after it gives — a class, a width — with the literal
- * in `data-mep-attrs`, read as the schema's `toDOM` reads it: `domAttrsOf`),
+ * in `data-mep-attrs`, as the schema's `toDOM` draws it: `literalDOM`),
  * its written `src` in `data-mep-src` and the address it is loaded from in
  * `src`. The schema's `toDOM` stays the written form — copy and paste carry
  * the file's `src`, never a webview address.
@@ -162,7 +162,7 @@ export class ImageView implements NodeView {
 
     private render(): void {
         const { src, alt, title, literal } = this.node.attrs as { src: string; alt: string | null; title: string | null; literal: string | null };
-        const { class: className, ...given }: Record<string, string> = literal ? { ...domAttrsOf(literal), 'data-mep-attrs': literal } : {};
+        const { class: className, ...given }: Record<string, string> = literal ? literalDOM(this.node) : {};
         for (const name of this.applied) {
             if (!(name in given)) {
                 this.dom.removeAttribute(name);

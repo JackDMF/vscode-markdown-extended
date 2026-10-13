@@ -232,15 +232,17 @@ function inlineLinkEnd(line: string, i: number): number {
 export function hasBreakOpportunity(content: string): boolean {
     const line = content.trim();
     let i = 0;
+    /** Where the last element this scan skipped whole ended — a code span, a link, an autolink, a held run: a `{…}` there is its literal. */
+    let closedAt = -1;
     while (i < line.length) {
         const ch = line[i];
         if (ch === '\\') {
             i += 2;
             continue;
         }
-        // A `{…}` right after a closing delimiter (`` `x`{.a b} ``, `![a](s){width=1 .c}`,
-        // `*x*{.a b}`) is an element's literal, which the serializer holds with it.
-        const literal = ch === '{' && i > 0 && '`)>]^~*_='.includes(line[i - 1]) && !isTextBrace(line, i) ? findRightDelimiter(line, i + 1) : -1;
+        // A `{…}` right after such an element's closing delimiter (`` `x`{.a b} ``,
+        // `![a](s){width=1 .c}`, `^x^{.a b}`) is its literal, which the serializer holds with it.
+        const literal = ch === '{' && i === closedAt && !isTextBrace(line, i) ? findRightDelimiter(line, i + 1) : -1;
         if (literal > i) {
             i = literal + 1;
             continue;
@@ -249,6 +251,7 @@ export function hasBreakOpportunity(content: string): boolean {
             const run = /^`+/.exec(line.slice(i))?.[0] ?? '`';
             const close = line.indexOf(run, i + run.length);
             i = close === -1 ? i + run.length : close + run.length;
+            closedAt = close === -1 ? closedAt : i;
             continue;
         }
         if (line.startsWith('](', i)) {
@@ -264,11 +267,13 @@ export function hasBreakOpportunity(content: string): boolean {
                 }
             }
             i = j + 1;
+            closedAt = j < line.length ? i : closedAt;
             continue;
         }
         const autolink = ch === '<' ? /^<[A-Za-z][A-Za-z0-9+.-]*:[^\s<>]*>/.exec(line.slice(i)) : null;
         if (autolink) {
             i += autolink[0].length;
+            closedAt = i;
             continue;
         }
         // Superscript, subscript and a key hold no line break either (the
@@ -277,6 +282,7 @@ export function hasBreakOpportunity(content: string): boolean {
             ? heldRunEnd(line, i) : -1;
         if (held > i) {
             i = held;
+            closedAt = i;
             continue;
         }
         // A whole inline link, text included, as the serializer holds it. A
@@ -284,6 +290,7 @@ export function hasBreakOpportunity(content: string): boolean {
         const link = ch === '[' || line.startsWith('![', i) ? inlineLinkEnd(line, ch === '[' ? i : i + 1) : -1;
         if (link > i) {
             i = link;
+            closedAt = i;
             continue;
         }
         if (ch === ' ') {

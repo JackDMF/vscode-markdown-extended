@@ -143,3 +143,24 @@ suite('Editor attribute holder: the bubble\'s {…}', () => {
         assert.ok(locked.reason, 'says why');
     });
 });
+
+suite('Editor attribute holder: the holder inside an object is searched within it', () => {
+    test('an enclosing holder before it in the order does not hide the inner one', () => {
+        const spanned = at(stateOf('A [see [`cmd`](u) here]{.s} b.\n'), 'cmd', 1);
+        const link = objectAtSelection(spanned) as EditorObject;
+        assert.strictEqual(link.kind, 'link');
+        assert.strictEqual(holderInside(spanned, link)?.holder.label, 'Code', 'the span around the link is passed over');
+        const bold = at(stateOf('A **b [*a*](u)** c.\n'), 'a', 0);
+        const inBold = objectAtSelection(bold) as EditorObject;
+        assert.strictEqual(inBold.kind, 'link');
+        assert.strictEqual(holderInside(bold, inBold)?.holder.label, 'Emphasis', 'the strong around the link is passed over');
+    });
+
+    test('a bare holder and the styled run it becomes are one object', () => {
+        const state = at(stateOf('A `x` b.\n'), 'x', 0);
+        const bare = attributeHolderAt(state).inline?.object as EditorObject;
+        assert.strictEqual(bare.kind, 'holder');
+        assert.ok(sameObject(bare, { ...bare, kind: 'styled' } as EditorObject));
+        assert.ok(!sameObject(bare, { ...bare, kind: 'link' } as EditorObject));
+    });
+});

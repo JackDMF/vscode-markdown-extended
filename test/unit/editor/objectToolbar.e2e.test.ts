@@ -880,6 +880,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Strong…');
         await clickVerb('inline-attributes');
         assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Table · Attributes of Strong');
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-pending-range', els => els.map(el => el.textContent).join('')), 'bold', 'the bold the field edits is drawn, not the table');
         await page.keyboard.type('b');
         await page.keyboard.press('Enter');
         await settle();
@@ -923,11 +924,18 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => (el as HTMLElement).title), '`x`: inline code — Attributes… gives it a {…}');
         await page.keyboard.press('Enter');
         assert.strictEqual((await active()).field, true);
+        await page.evaluate(() => {
+            const bar = document.querySelector('.mep-object-toolbar[data-trigger="selection"]') as HTMLElement;
+            const w = window as unknown as { holderHidden: boolean[] };
+            w.holderHidden = [];
+            new MutationObserver(() => w.holderHidden.push(bar.hidden)).observe(bar, { attributes: true, attributeFilter: ['hidden'] });
+        });
         await page.keyboard.type('k');
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Run `x`{.k} to skip the cache.\n');
-        await page.waitForSelector(`${BAR}[data-object="styled"]`, { timeout: 2000 });
+        assert.strictEqual(await page.$eval(BAR, el => (el as HTMLElement).dataset.object), 'styled', 'the same bar, now the styled run\'s');
+        assert.deepStrictEqual(await page.evaluate(() => (window as unknown as { holderHidden: boolean[] }).holderHidden.filter(h => h)), [], 'never hidden on the way');
         assert.strictEqual((await barState()).label, 'Code');
     });
 

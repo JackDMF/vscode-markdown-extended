@@ -48,7 +48,7 @@ import { currentReadsAttrs } from '../../inlineEngine';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    INLINE_ATTRS_LOCK, MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS,
+    CLASS_LITERAL, INLINE_ATTRS_LOCK, MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS,
     ToolbarAction, ToolbarMenu, ToolbarSubmenu, elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
@@ -176,8 +176,8 @@ function relabelSample(item: HTMLElement, label: string): void {
     }
 }
 
-/** The literal a tooltip writes an element's attributes with. */
-const CLASS_EXAMPLE = '{.class}';
+/** Why Span with class makes no span where its literal alone is fine: the note around it, or the block read whole, would not hold it. */
+const SPAN_REFUSED = 'These attributes cannot be given to this text here.';
 
 function div(className: string): HTMLElement {
     const node = document.createElement('div');
@@ -264,10 +264,10 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
             const inline = currentReadsAttrs() && !state.selection.empty ? attributeHolderAt(state).inline : null;
             if (inline !== null) {
                 const name = `Attributes of ${inline.holder.label}…`;
-                return { enabled: true, active: literalOfObject(inline.object) !== null, reason: null, tooltip: `${name} — ${inline.holder.source(CLASS_EXAMPLE)}` };
+                return { enabled: true, active: literalOfObject(inline.object) !== null, reason: null, tooltip: `${name} — ${inline.holder.source(CLASS_LITERAL)}` };
             }
             const reason = spanLockReason(state);
-            return { enabled: reason === null, active: false, reason, tooltip: `Span with class — [text]${CLASS_EXAMPLE}` };
+            return { enabled: reason === null, active: false, reason, tooltip: `Span with class — [text]${CLASS_LITERAL}` };
         }
         case 'insert-link': {
             const reason = objectAtSelection(state)?.kind === 'link' ? null : insertLockReason(state, LINK_LOCK);
@@ -464,10 +464,12 @@ class ToolbarView implements PluginView {
         for (const tool of this.tools) {
             const s = stateOf(tool.action);
             setState(tool.el, s.enabled, s.active);
-            const tooltip = s.tooltip ?? tooltipOf(tool.action, s.label);
+            // A named entry's sample and tooltip say one name: the selection's, or — the row locked — its resting one.
+            const label = s.label ?? (tool.action.named ? tool.action.label : undefined);
+            const tooltip = s.tooltip ?? tooltipOf(tool.action, label);
             tool.el.title = s.enabled || !s.reason ? tooltip : `${tooltip}\n${s.reason}`;
-            if (s.label !== undefined) {
-                relabelSample(tool.el, s.label);
+            if (label !== undefined) {
+                relabelSample(tool.el, label);
             }
         }
         for (const menu of this.menus) {
@@ -1233,13 +1235,16 @@ class ToolbarView implements PluginView {
             keys: ATTRIBUTES_FIELD_KEYS,
             commit: value => {
                 // Asked before the focus goes back: a refusal keeps the field open with what was typed.
-                const refusal = spanLiteralRefusal(view.state, value);
-                const tr = refusal === null ? applySpanTransaction(view.state, value) : null;
-                if (tr === null) {
-                    return refusedStep(step, value, refusal ?? 'These attributes cannot be given to this text here.');
+                // The transaction is built after it is back, which may commit a source box.
+                const refusal = spanLiteralRefusal(view.state, value) ?? (applySpanTransaction(view.state, value) === null ? SPAN_REFUSED : null);
+                if (refusal !== null) {
+                    return refusedStep(step, value, refusal);
                 }
                 view.focus();
-                view.dispatch(tr);
+                const tr = applySpanTransaction(view.state, value);
+                if (tr !== null) {
+                    view.dispatch(tr);
+                }
             },
         };
         this.openFieldBar('span', 'Span attributes', 'span-attributes', step);
