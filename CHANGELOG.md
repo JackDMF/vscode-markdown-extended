@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.5.0 — Export From the Editor
 
 ### ✨ Features
 
