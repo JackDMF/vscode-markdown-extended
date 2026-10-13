@@ -172,10 +172,13 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         });
     }
 
-    test('the row holds the five native marks; every other action is a menu entry with a preview', () => {
+    test('the row holds the five native marks; every other action is a menu entry with a preview, but the bubble\'s own {…}', () => {
         assert.deepStrictEqual(TOOLBAR_ACTIONS.filter(inRow).map(a => a.id), ['italic', 'emphasis', 'bold', 'strong', 'code']);
         assert.ok(TOOLBAR_ACTIONS.filter(inRow).every(a => a.apply.kind === 'mark'));
-        for (const action of TOOLBAR_ACTIONS.filter(a => !inRow(a))) {
+        const bubbleOnly = TOOLBAR_ACTIONS.filter(a => 'bubble' in a.place);
+        assert.deepStrictEqual(bubbleOnly.map(a => [a.id, inBubble(a), menuOf(a)]), [['attrs-bubble', true, null]]);
+        assert.strictEqual(TOOLBAR_ACTIONS.filter(inBubble).pop()?.id, 'attrs-bubble', 'last in the bubble');
+        for (const action of TOOLBAR_ACTIONS.filter(a => !inRow(a) && !bubbleOnly.includes(a))) {
             assert.ok(menuOf(action) !== null, action.id);
             assert.ok(action.preview && action.preview.nodes.length > 0, `${action.id} has a preview`);
         }

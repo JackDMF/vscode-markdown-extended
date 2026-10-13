@@ -127,3 +127,19 @@ suite('Editor attribute holder: one rule for what at the selection carries a {�
         assert.deepStrictEqual(inline(at(stateOf('Plain text.\n'), 'text', 1)), { enabled: false, active: false, reason: INLINE_ATTRS_LOCK, label: 'Attributes of Code…' });
     });
 });
+
+suite('Editor attribute holder: the bubble\'s {…}', () => {
+    const bubble = TOOLBAR_ACTIONS.find(a => a.id === 'attrs-bubble') as (typeof TOOLBAR_ACTIONS)[number];
+
+    test('within one element\'s run it names that element; across runs, a span; in a source block, why not', () => {
+        const inCode = evaluate(bubble, at(stateOf('A `xy` b.\n'), 'xy', 0, 1), false);
+        assert.deepStrictEqual(inCode, { enabled: true, active: false, reason: null, tooltip: 'Attributes of Code… — `x`{.class}' });
+        assert.strictEqual(evaluate(bubble, at(stateOf('A `xy`{.k} b.\n'), 'xy', 0, 1), false).active, true, 'marked while the element has a {…}');
+        const across = evaluate(bubble, at(stateOf('A *b* c.\n'), 'b', 0, 3), false);
+        assert.deepStrictEqual(across, { enabled: true, active: false, reason: null, tooltip: 'Span with class — [text]{.class}' });
+        const raw = stateOf('<div>raw</div>\n\nText.\n');
+        const locked = evaluate(bubble, raw.apply(raw.tr.setSelection(NodeSelection.create(raw.doc, 0))), false);
+        assert.strictEqual(locked.enabled, false);
+        assert.ok(locked.reason, 'says why');
+    });
+});

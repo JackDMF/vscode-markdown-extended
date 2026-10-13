@@ -51,7 +51,9 @@ export type ToolbarSubmenu = 'admonition';
 
 export type ActionPlace =
     | { row: true }
-    | { menu: ToolbarMenu; submenu?: ToolbarSubmenu };
+    | { menu: ToolbarMenu; submenu?: ToolbarSubmenu }
+    /** The selection bubble only: a tool that acts on a selection and has no place in the row or a menu. */
+    | { bubble: true };
 
 /** An element to draw: a tag, its classes and attributes, and its content (text or elements, in order). */
 export interface SampleSpec {
@@ -101,6 +103,12 @@ export type ActionApply =
      * for the literal as the element's bar does (`holderAttributesStep`).
      */
     | { kind: 'inline-attrs' }
+    /**
+     * The bubble's `{…}`: over a selection within one inline holder's run,
+     * that element's attributes (`inline-attrs`, the whole run); over any
+     * other selection, an attribute span made of it (`attr-span`).
+     */
+    | { kind: 'attrs-bubble' }
     /**
      * A new container or admonition after the current block, edited in place,
      * the caret in its body (an empty paragraph): `name` is the container's
@@ -181,9 +189,9 @@ export function inRow(action: ToolbarAction): boolean {
     return 'row' in action.place;
 }
 
-/** The bubble: the row's marks, then the entries marked for it, in the table's order. */
+/** The bubble: the row's marks, then the entries marked for it, in the table's order, then its own. */
 export function inBubble(action: ToolbarAction): boolean {
-    return inRow(action) || action.bubble === true;
+    return inRow(action) || action.bubble === true || 'bubble' in action.place;
 }
 
 export function menuOf(action: ToolbarAction): ToolbarMenu | null {
@@ -586,7 +594,19 @@ const insert: ToolbarAction[] = [
 ];
 
 /** Every action: the row's marks, then each menu's entries in their order. */
-export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, ...formatting, ...annotations, ...insert];
+/**
+ * The bubble's own tools, after the marks and the notes: `{…}`, one button for
+ * every element's attributes, always there so the bubble keeps its width. Its
+ * glyph is text, not an element's sample: it stands for every holder.
+ */
+const bubbleOnly: ToolbarAction[] = [
+    {
+        id: 'attrs-bubble', place: { bubble: true }, label: 'Attributes', syntax: `[text]${CLASS_LITERAL}`,
+        sample: el('span.x', '{…}'), apply: { kind: 'attrs-bubble' }, example: `[span]${BLOCK_LITERAL_EXAMPLE}`,
+    },
+];
+
+export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, ...formatting, ...annotations, ...insert, ...bubbleOnly];
 
 /** The row, left to right; hairlines between the groups. */
 export const ROW_LAYOUT: readonly (readonly ('marks' | ToolbarMenu)[])[] = [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']];

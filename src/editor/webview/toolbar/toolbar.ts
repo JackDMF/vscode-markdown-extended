@@ -42,7 +42,7 @@ import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
     applySpanTransaction, attributeHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction,
-    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLiteralRefusal, spanLockReason,
+    insertLockReason, LINK_LOCK, literalOfObject, NO_ATTRS_REFUSAL, objectAtSelection, spanLiteralRefusal, spanLockReason,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
@@ -176,6 +176,9 @@ function relabelSample(item: HTMLElement, label: string): void {
     }
 }
 
+/** The literal a tooltip writes an element's attributes with. */
+const CLASS_EXAMPLE = '{.class}';
+
 function div(className: string): HTMLElement {
     const node = document.createElement('div');
     node.className = className;
@@ -192,6 +195,8 @@ export interface ActionState {
      * its sample's text and its tooltip's name, where the action's own label is only the resting form.
      */
     label?: string;
+    /** The whole tooltip, where the selection decides what the action does (the bubble's `{…}`). */
+    tooltip?: string;
 }
 
 /** Whether each action applies at the selection, and whether it is what the selection already has. */
@@ -252,6 +257,17 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
             return inline === null
                 ? { enabled: false, active: false, reason: currentReadsAttrs() ? INLINE_ATTRS_LOCK : NO_ATTRS_REFUSAL, label: action.label }
                 : { enabled: true, active: false, reason: null, label: `Attributes of ${inline.holder.label}…` };
+        }
+        case 'attrs-bubble': {
+            // Within one element's run, its attributes — the one the menu and its bar name
+            // (`attributeHolderAt`) — else an attribute span made of the selection.
+            const inline = currentReadsAttrs() && !state.selection.empty ? attributeHolderAt(state).inline : null;
+            if (inline !== null) {
+                const name = `Attributes of ${inline.holder.label}…`;
+                return { enabled: true, active: literalOfObject(inline.object) !== null, reason: null, tooltip: `${name} — ${inline.holder.source(CLASS_EXAMPLE)}` };
+            }
+            const reason = spanLockReason(state);
+            return { enabled: reason === null, active: false, reason, tooltip: `Span with class — [text]${CLASS_EXAMPLE}` };
         }
         case 'insert-link': {
             const reason = objectAtSelection(state)?.kind === 'link' ? null : insertLockReason(state, LINK_LOCK);
@@ -448,7 +464,7 @@ class ToolbarView implements PluginView {
         for (const tool of this.tools) {
             const s = stateOf(tool.action);
             setState(tool.el, s.enabled, s.active);
-            const tooltip = tooltipOf(tool.action, s.label);
+            const tooltip = s.tooltip ?? tooltipOf(tool.action, s.label);
             tool.el.title = s.enabled || !s.reason ? tooltip : `${tooltip}\n${s.reason}`;
             if (s.label !== undefined) {
                 relabelSample(tool.el, s.label);
@@ -1176,6 +1192,13 @@ class ToolbarView implements PluginView {
                 return;
             case 'inline-attrs':
                 this.askInlineAttributes();
+                return;
+            case 'attrs-bubble':
+                if (!view.state.selection.empty && currentReadsAttrs() && attributeHolderAt(view.state).inline !== null) {
+                    this.askInlineAttributes();
+                } else {
+                    this.askSpanLiteral();
+                }
                 return;
             case 'insert-link':
                 this.askLink();
