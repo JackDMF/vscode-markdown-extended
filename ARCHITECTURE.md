@@ -604,42 +604,83 @@ every attribute (`readsAsRuleLiteral`). A span in an admonition's title is part 
 title's string, not a mark: recovery skips the title's lines, as the parse skips its tokens,
 and the title's inline content is held to the same editability rules as any other.
 
-**Emphasis and a link carry theirs as a span does** (`_x_{.a}`, `**x**{.a}`, `~~x~~{.a}`,
-`==x=={.a}`, `[x](u){.a}`, `<u>{.a}`). markdown-it-attrs' "inline attributes" rule gives a
-`{…}` that starts the text right after a closing tag to the element that tag closes, so
-the literal belongs to that mark instance and stands right after its closing delimiter.
-The marks `em`, `strong`, `strike`, `mark` and `link` have a `literal` attribute (`null`
-for none); two runs with different literals are two marks, as two spans are. Recovery
-is the span's, generalised (`recoverInlineLiterals`, `INLINE_LITERAL_HOLDERS` in
-`blocks.ts`): the literals are matched in the order the marks *close* — a link's after the
-emphasis inside it — to the next `{…}` that follows such a mark's closing character (`]`,
-`)`, `>`, the delimiter's last character) and reads on that mark as exactly its token's
-attributes (`readsBackAs`, holders `em`, `strong`, `strike`, `mark`, `link` in
-`READ_BACK`), and handed to the opening tokens in order (`SourceBlock.inlineLiterals`).
-Where none matches — a second literal the plugin merged in (`_x_{.a}{.b}`), a bare
-address — the normalized form is written. A link's `href` and `title` are the link's, so
-a literal that sets either is none. The element is drawn with the literal's attributes
-and `data-mep-attrs` (`literalDOM` in `schema.ts`), so `em.colorize` and `a.source`
-apply in the page and a copy in the page pastes with its literal. The serializer writes
-the literal held right after the closing delimiter (`withMarkLiteral`); a link with one is
-never written bare, and a `_` closer followed by a letter keeps its `_`, since the literal
-stands between. Superscript, subscript, a key, inline code and an image keep their block a
-source block when they carry a literal.
+**Every inline element that takes a `{…}` carries it as a span does** (`_x_{.a}`,
+`**x**{.a}`, `~~x~~{.a}`, `==x=={.a}`, `[x](u){.a}`, `<u>{.a}`, `` `x`{.a} ``,
+`![a](s){.a}`, `^x^{.a}`, `~x~{.a}`, `[[x]]{.a}`). markdown-it-attrs' "inline attributes"
+rule gives a `{…}` that starts the text right after a closing tag — or right after a
+nesting-0 token, inline code or an image — to that element, so the literal belongs to that
+element and stands right after its closing delimiter. Which elements those are, what
+carries the literal, which token the plugin gives it to, which characters it follows and the
+smallest source the plugin reads one in is written once, in `inlineLiterals.ts`
+(`INLINE_LITERAL_HOLDERS`), and everything else is derived from it: the read-back's
+holders (`READ_BACK`), the attributes that are a token's own (a link's `href` and `title`, an
+image's `src`, `alt` and `title` — a literal that sets one is none), the recovery's closing
+characters and nouns, the serializer's tokens, the objects' styled marks and the bars'
+names; `attrs.test.ts` holds each entry to the engine. The marks `em`, `strong`, `strike`,
+`mark`, `link`, `code`, `sup`, `sub` and `kbd` have a `literal` attribute (`null` for none),
+and so has the `image` node; two runs with different literals are two marks, as two spans
+are. Recovery is the span's, generalised (`recoverInlineLiterals` in `blocks.ts`): the
+literals are matched in the order the elements *close* — a link's after the emphasis inside
+it; inline code and an image are one token each, which opens and closes where it stands — to
+the next `{…}` that follows such an element's closing character (`]`, `)`, `>`, the
+delimiter's last character, a backtick) and reads on it as exactly its token's attributes
+(`readsBackAs`), and handed to the opening tokens in order (`SourceBlock.inlineLiterals`).
+Where none matches — a second literal the plugin merged in (`_x_{.a}{.b}`), a bare address,
+a reference image (`![a][r]{.c}`, written inline) — the normalized form is written. The
+element is drawn with the literal's attributes and `data-mep-attrs` (`literalDOM` in
+`schema.ts`; the image's node view applies the same `domAttrsOf`, removing what a removed
+literal gave), so `em.colorize`, `a.source` and an image's `width` apply in the page and a
+copy in the page pastes with its literal. The serializer writes the literal held right after
+the closing delimiter (`withMarkLiteral`, `literalSuffix`): inside the held run of code,
+superscript, subscript, a key and an image, so no line break falls before or inside it, and
+a held literal is no evidence of a paragraph's wrap width (`hasBreakOpportunity`). A link
+with one is never written bare, and a `_` closer followed by a letter keeps its `_`, since
+the literal stands between.
 
 Two checks keep a save from reading attributes elsewhere. The read-back
-(`markLiteralVerdict`) holds every run of these marks to its own token, kind by kind,
-where the parser opens as many tokens of a kind as there are runs — so a literal read on
-the emphasis before its own counts as lost — and matches the literals in order to the
-tokens given attributes where the counts differ. And brace escaping (`literalCutsIn`)
-counts a cut that is the first after such a closing tag as the mark's own only while the
-marks hold the literals their runs carry (`ownedLiterals`): a text `{b}` the plugin joined
-to a link's `{.x}`, or a `{.y}` typed after an earlier emphasis, is escaped, never the
-literal. The toolbar's mark toggle keeps the literal of the run it extends or gives the
-other delimiter (`addKeepingLiterals` in `toolbar/commands.ts`); taking the mark off part
-of a run leaves the literal on the rest. A link's bar has **Attributes…**, and a run of
-emphasis, strikethrough or a highlight carrying a literal is an object of its own
-(`styled`), with **Edit attributes** and **Remove attributes, keep formatting**; both go
-through `changeMarkLiteralTransaction`, which `{}` or an empty field makes a removal.
+(`markLiteralVerdict`) holds every run of these marks, and every image, to its own token,
+kind by kind, where the parser opens as many tokens of a kind as there are runs — so a
+literal read on the emphasis before its own counts as lost — and matches the literals in
+order to the tokens given attributes where the counts differ. And brace escaping
+(`literalCutsIn`) counts a cut that is the first after such a closing tag (or after code or
+an image) as the element's own only while the elements hold the literals their runs carry
+(`ownedLiterals`): a text `{b}` the plugin joined to a link's `{.x}`, or a `{.y}` typed
+after an earlier emphasis, is escaped, never the literal. The toolbar's mark toggle keeps
+the literal of the run it extends or gives the other delimiter (`addKeepingLiterals` in
+`toolbar/commands.ts`); taking the mark off part of a run leaves the literal on the rest;
+*Edit image…* keeps the image's.
+
+**The attribute holder at the caret is one rule** (`attributeHolderAt` in `objects.ts`,
+Daniel, 2026-10-13): a selected image, else — both ends of the selection in one textblock —
+the first holder in the registry's order (a link, a span, then the styled marks innermost
+first: code, subscript, superscript, a key, a highlight, strikethrough, strong, emphasis)
+whose mark is on the node after the caret, else on the node before it, and whose run holds
+the selection's other end (`holderRunAt`). The bars' mark objects are the same search over
+literal-carrying runs only (`objectAtSelection`), so where a bar shows a link, a span, a
+styled run or an image, the holder is that object; a run of formatting without a literal is
+a `holder` object, which `objectAtSelection` never returns — a caret rest in bold in a table
+keeps the table's bar. Three routes read it and open the one field step
+(`holderAttributesStep` in `attributes.ts`, which the bars' **Attributes…** is too):
+**Formatting → Attributes of Code…**, named by the holder (`ActionState.label`), disabled
+with the reason where there is none; `Alt+Enter`, which opens the bar of the object at the
+caret as before — that bar adds a separated **Attributes of Strong…** for the holder inside
+it (`holderInside`: the same search, the bar's own holder left out) — and, where there is no
+object, a bar of the bare holder's own, never drawn on a caret rest and kept while the
+selection stays in its run; and the bubble's `{…}`, which gives a selection within one
+holder's run that holder's attributes and any other selection a span. The block half is
+`attributesTargetAt`, which names **Attributes of Paragraph…**. A link's bar has
+**Attributes…**, an image's has it after *Edit image…*, and a run of emphasis,
+strikethrough, a highlight, code, superscript, subscript or a key carrying a literal is an
+object of its own (`styled`), with **Attributes…** and **Remove attributes, keep
+formatting**; all go through `changeInlineLiteralTransaction`, which `{}` or an empty field
+makes a removal and which, on a bare holder, gives its mark the literal over its run.
+
+**A refused field stays open** (`FieldStep.refusal`, `refusedStep` in `inlineField.ts`):
+a commit that refuses what was typed returns the same step with the typed value and the
+reason, and both bars that show fields (`ObjectBar.openField`, `Toolbar.openFieldBar`)
+draw it again with the reason in the keys' place, announced as an alert (`fieldAside`). Every
+attributes field answers so; a caret hint for a refusal would close the field and lose what
+was typed.
 
 **A block's literal carries where it stood** (`attrsPlacement`, `AttrsPlacement` in
 `blocks.ts`): `end` — after a space at the end of the last line (a paragraph's
@@ -704,8 +745,9 @@ escaped (`escapeTrailingLiteral` in `serialize.ts`) — with a literal after it 
 one — so removing a block's literal never turns the text before it into attributes.
 
 **Attributes…** (`webview/attributes.ts`, Daniel, 2026-09-30 from a sketch) sets the
-literal of the block at the caret: **Formatting → Attributes…**, right after *Span with
-class*, and the verb of the same name on the bars of a table, a container and an
+literal of the block at the caret: **Formatting → Attributes of Paragraph…** (named by the
+block, `Attributes of Block…` where none takes one), after *Span with class* and
+*Attributes of Code…*, and the verb of the same name on the bars of a table, a container and an
 admonition (refused there), any block already carrying a literal (*Paragraph attributes*,
 *Quote attributes*, …) and a heading whose bar shows for other verbs. A bar whose one verb
 would be *Attributes…* on a block with no literal yet — every plain heading — is not drawn
@@ -720,8 +762,8 @@ caret after the dot when there is none — and takes the whole literal (`.class`
 {.class #id key=value}` (`FieldStep.keys`), and **Span with class**'s field says the same. `Enter` sets it in one transaction, so one undo step, and
 the hint says *Attributes set — Ctrl+Z*; `{}` or an empty field removes it (*Attributes
 removed — Ctrl+Z*); `Esc` changes nothing. A literal markdown-it-attrs would not read
-back whole is refused beside the caret with the reason (`literalRefusal`, the stage-3
-reader). The block is the innermost list item holding the selection, else the top-level
+back whole is refused with the reason beside the field, which stays open with it
+(`literalRefusal`, the stage-3 reader; `refusedStep`). The block is the innermost list item holding the selection, else the top-level
 block: a nested paragraph's literal is not written, so the caret in a paragraph in a quote
 gives the quote its attributes, and the field's label says which block it is.
 
@@ -1718,10 +1760,16 @@ of thing, two triggers and two places.
   the old address, which the bare form would write as the link), *Remove link* (the mark
   removed, the text kept);
 - image — *Edit image…* (two fields in turn, the alt text and then the path, which completes
-  with image files; `setNodeMarkup`, the title kept), *Open file* (`openLink` with the
-  `src`, resolved on the host as a followed link is), *Remove image*;
-- span — *Edit attributes* (the mark replaced over its run with the new literal),
+  with image files; `setNodeMarkup`, the title and the literal kept), *Attributes…* (the
+  node's `literal`, `setNodeMarkup`, still selected), *Open file* (`openLink` with the
+  `src`, resolved on the host as a followed link is), *Remove image*; its label carries the
+  literal (`Presentation.code`);
+- span — *Attributes…* (the mark replaced over its run with the new literal),
   *Remove attributes, keep text*;
+- styled run (emphasis, code, a key … with a literal) — *Attributes…*, *Remove attributes,
+  keep formatting*; a bare holder (only from `Alt+Enter`) — *Attributes…*;
+- any object holding the element the caret is in — after its own verbs, separated,
+  *Attributes of Strong…* (`holderInside`);
 - container — *Change name/info* (first word the name, the rest the info, verbatim; a
   trailing `{…}` refused, since markdown-it-attrs would take it off the info),
   *Attributes…* (refused, with the reason: the container's renderer drops a literal),

@@ -1,5 +1,29 @@
 # Change Log
 
+## Unreleased
+
+### ✨ Features
+
+- Attributes after inline code, an image, superscript, subscript or a key no longer make their block a source block.
+- The editor draws those attributes on the element; an image shows at its `{width=…}` while you edit.
+- An image's bar offers **Attributes…**; code, superscript, subscript or a key with attributes gets a bar like emphasis.
+- **Formatting → Attributes of Code…** gives the element at the caret attributes: code, a key, a link, emphasis, an image.
+- The block entry is named by its block: **Attributes of Paragraph…**, **Attributes of List item…**, **Attributes of Table…**.
+- `Alt+Enter` in code or bold without attributes opens a bar with **Attributes…**; a table's bar adds **Attributes of Strong…**.
+- The selection bubble has a `{…}` button: attributes of the element selected, else a span with class.
+- A refused attributes field stays open with what you typed and the reason beside it.
+- Every bar verb that opens the attributes field is called **Attributes…**.
+- Nested marks over the same text now offer the innermost one first; 4.4.0 offered emphasis first.
+
+### ⚠️ Limits
+
+- `{src=…}`, `{alt=…}` and `{title=…}` on an image are its own: written into `(…)`, `alt` dropped.
+- A wiki embed's `{…}` (`![[x.png]]{.c}`) stays text.
+- A video's `{…}` is kept and drawn in the editor; the preview's video ignores it.
+- Two `{…}` after one element are written as one; copying an element with `{#id}` writes the id twice.
+- Over exactly the same text (``*`x`*``) only the innermost element's attributes are offered.
+- The bar for an element without attributes shows only on `Alt+Enter`, never on its own.
+
 ## v4.5.0 — Export From the Editor
 
 ### ✨ Features

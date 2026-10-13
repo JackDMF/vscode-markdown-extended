@@ -1082,7 +1082,7 @@ export function attributesTargetOf(node: Node, pos: number): AttributesTarget | 
 
 /**
  * The block the selection gives attributes to, or why there is none — what
- * **Formatting → Attributes…** is enabled by and acts on. Innermost first: the
+ * **Formatting → Attributes of Paragraph…** is named by and acts on. Innermost first: the
  * list item holding both ends of the selection (a literal the item writes at
  * the end of its first paragraph, at any depth), else the top-level block
  * holding them — a nested paragraph's or quote's literal is not written
