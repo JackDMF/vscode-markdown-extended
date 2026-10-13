@@ -7,7 +7,7 @@ import { definitionOf } from '../../../src/editor/inlineEngine';
 import { editorSchema } from '../../../src/editor/schema';
 import { literalNotReadBack } from '../../../src/editor/serialize';
 import {
-    EditorObject, changeLinkTransaction, changeMarkLiteralRefusal, changeMarkLiteralTransaction, literalRefusal, objectAtSelection,
+    EditorObject, changeLinkTransaction, changeInlineLiteralRefusal, changeInlineLiteralTransaction, literalRefusal, objectAtSelection,
 } from '../../../src/editor/webview/objects';
 import { toggleMarkup } from '../../../src/editor/webview/toolbar/commands';
 import { hostEngine, readText, repoRoot, topChildren, touched } from './helpers';
@@ -258,20 +258,20 @@ suite('Editor mark literals: edits keep the literal with its mark', () => {
     test('Attributes… on a link and on a styled run: set, change and remove the literal, refused where it would not read back', () => {
         let state = select(stateOf('See [Quelle](https://a.example) now.\n'), 'Quelle', 2);
         let link = objectAtSelection(state) as Extract<EditorObject, { kind: 'link' }>;
-        state = state.apply(changeMarkLiteralTransaction(state, link, '{.source}') as never);
+        state = state.apply(changeInlineLiteralTransaction(state, link, '{.source}') as never);
         assert.strictEqual(text(state), 'See [Quelle](https://a.example){.source} now.\n');
         link = objectAtSelection(state) as Extract<EditorObject, { kind: 'link' }>;
-        assert.ok(changeMarkLiteralRefusal(state, link, '{title=x}') !== null);
-        state = state.apply(changeMarkLiteralTransaction(state, link, '{}') as never);
+        assert.ok(changeInlineLiteralRefusal(state, link, '{title=x}') !== null);
+        state = state.apply(changeInlineLiteralTransaction(state, link, '{}') as never);
         assert.strictEqual(text(state), 'See [Quelle](https://a.example) now.\n');
 
         let styled = select(stateOf('A _&#x2713;_{.colorize} b.\n'), '✓', 1);
         const object = objectAtSelection(styled) as Extract<EditorObject, { kind: 'styled' }>;
         assert.strictEqual(object.kind, 'styled');
-        styled = styled.apply(changeMarkLiteralTransaction(styled, object, '{.colorize .big}') as never);
+        styled = styled.apply(changeInlineLiteralTransaction(styled, object, '{.colorize .big}') as never);
         assert.strictEqual(text(styled), 'A _✓_{.colorize .big} b.\n');
         const again = objectAtSelection(styled) as Extract<EditorObject, { kind: 'styled' }>;
-        styled = styled.apply(changeMarkLiteralTransaction(styled, again, '') as never);
+        styled = styled.apply(changeInlineLiteralTransaction(styled, again, '') as never);
         assert.strictEqual(text(styled), 'A _✓_ b.\n');
         assert.strictEqual(objectAtSelection(styled), null, 'emphasis without a literal is formatting, not an object');
     });

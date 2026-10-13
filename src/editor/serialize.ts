@@ -11,6 +11,7 @@ import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { parseDocument } from './parse';
 import { NOTE_CLOSE_TOKENS, NOTE_OPEN_TOKENS } from './blocks';
+import { INLINE_LITERAL_HOLDERS, holderOfCarrier } from './inlineLiterals';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
@@ -542,28 +543,18 @@ export function markLiteralOf(mark: Mark): string | null {
     return typeof literal === 'string' ? literal : null;
 }
 
-/** The token markdown-it-attrs gives each mark's literal to: the mark's opening token. */
-const MARK_LITERAL_TOKENS: Readonly<Record<string, string>> = {
-    'attr_span': 'span_open',
-    em: 'em_open',
-    strong: 'strong_open',
-    strike: 's_open',
-    mark: 'mark_open',
-    link: 'link_open',
-};
+/** The token markdown-it-attrs gives each mark's literal to, by the mark's name (`inlineLiterals.ts`). */
+const MARK_LITERAL_TOKENS: Readonly<Record<string, string>> = Object.fromEntries(
+    INLINE_LITERAL_HOLDERS.flatMap(h => ('mark' in h.carrier ? [[h.carrier.mark, h.token]] : [])),
+);
 
-/** The opening tokens of the marks that carry a literal (`MARK_LITERAL_TOKENS`). */
-const LITERAL_OPEN_TOKENS: ReadonlySet<string> = new Set(Object.values(MARK_LITERAL_TOKENS));
+/** The tokens markdown-it-attrs gives the literal of an inline holder to (`inlineLiterals.ts`). */
+const LITERAL_OPEN_TOKENS: ReadonlySet<string> = new Set(INLINE_LITERAL_HOLDERS.map(h => h.token));
 
-/** What each mark that carries a literal is called at the start of a refusal. */
-const MARK_LITERAL_NOUNS: Readonly<Record<string, string>> = {
-    'attr_span': 'An attribute span',
-    em: 'Emphasis',
-    strong: 'Strong emphasis',
-    strike: 'Strikethrough',
-    mark: 'A highlight',
-    link: 'A link',
-};
+/** What the mark or node `carrier` carrying a literal is called at the start of a refusal (`subject`). */
+function literalSubject(carrier: string): string {
+    return holderOfCarrier(carrier)?.subject ?? carrier;
+}
 
 /**
  * A closing delimiter with the mark's literal after it, when it has one
@@ -1250,7 +1241,7 @@ function noteUnwritable(note: Node): string | null {
             const raw = child.marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
             const span = child.marks.find(m => NOTE_SYNTAX_CHARS.test(markLiteralOf(m) ?? ''));
             if (span !== undefined) {
-                reason = `${MARK_LITERAL_NOUNS[span.type.name]} in a note cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+                reason = `${literalSubject(span.type.name)} in a note cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
             } else if (raw && terminator !== undefined && text.includes(terminator)) {
                 reason = `Inline code, superscript and subscript in this part of a note cannot hold "${terminator}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
             } else if (code && marker !== null && text.includes(marker)) {
@@ -2241,7 +2232,7 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
             } else {
                 const span = child.marks.find(m => /[|`]/.test(markLiteralOf(m) ?? ''));
                 if (span !== undefined) {
-                    reason = `${MARK_LITERAL_NOUNS[span.type.name]} in a table cell cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
+                    reason = `${literalSubject(span.type.name)} in a table cell cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
                 }
             }
             return true;

@@ -37,6 +37,7 @@ import { CellSelection, isInTable, selectedRect } from 'prosemirror-tables';
 import { Mapping } from 'prosemirror-transform';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
+import { holderOfCarrier } from '../inlineLiterals';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, applyKey, showChangeHint, showHint, undoKey } from './hint';
@@ -51,7 +52,7 @@ import {
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
-    changeMarkLiteralRefusal, changeMarkLiteralTransaction, isMarkObject,
+    changeInlineLiteralRefusal, changeInlineLiteralTransaction, isMarkObject,
 } from './objects';
 import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_FIELD_LABEL, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT, attributesStep } from './attributes';
 import { SPAN_FIELD_PREFILL } from './toolbar/actions';
@@ -115,9 +116,6 @@ export const LENS_VERBS_INLINE = 4;
  * admonition's title) names its block by the bar beside it.
  */
 const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'styled', 'note', 'image']);
-
-/** What a styled run's bar calls its mark (`styled` objects: emphasis, strikethrough, a highlight with a literal). */
-const STYLED_NAMES: Readonly<Record<string, string>> = { em: 'Emphasis', strong: 'Strong', strike: 'Strikethrough', mark: 'Highlight' };
 
 /** How long the caret rests in an inline object before its toolbar shows. */
 export const INLINE_DELAY_MS = 400;
@@ -1547,7 +1545,7 @@ class ObjectToolbarView implements PluginView {
             }
             case 'styled': {
                 const literal = object.mark.attrs.literal as string;
-                const name = STYLED_NAMES[object.mark.type.name] ?? object.mark.type.name;
+                const name = holderOfCarrier(object.mark.type.name)?.label ?? object.mark.type.name;
                 return {
                     label: name,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
@@ -1557,8 +1555,8 @@ class ObjectToolbarView implements PluginView {
                             id: 'remove-attributes',
                             label: 'Remove attributes, keep formatting',
                             title: `The {…} goes; the text stays ${name.toLowerCase()}.`,
-                            refusal: refusalOnce(view.state, `remove-attributes@${object.from}:${object.to}`, () => changeMarkLiteralRefusal(view.state, object, '')),
-                            run: () => this.apply(object, current => (current.kind === 'styled' ? changeMarkLiteralTransaction(view.state, current, '') : null), ATTRIBUTES_REMOVED_HINT),
+                            refusal: refusalOnce(view.state, `remove-attributes@${object.from}:${object.to}`, () => changeInlineLiteralRefusal(view.state, object, '')),
+                            run: () => this.apply(object, current => (current.kind === 'styled' ? changeInlineLiteralTransaction(view.state, current, '') : null), ATTRIBUTES_REMOVED_HINT),
                         },
                     ],
                 };
@@ -1852,7 +1850,7 @@ class ObjectToolbarView implements PluginView {
     /**
      * The field that sets the literal of a link or of a styled run (`_x_{…}`):
      * prefilled with the literal — or `{.}` with the caret after the dot when
-     * there is none — and committed through `changeMarkLiteralTransaction`, a
+     * there is none — and committed through `changeInlineLiteralTransaction`, a
      * refusal said beside the caret; `{}` or an empty field removes it.
      */
     private markAttributesVerb(object: Extract<EditorObject, { kind: 'link' | 'styled' }>, id: string, label: string, title: string): Verb {
@@ -1873,13 +1871,13 @@ class ObjectToolbarView implements PluginView {
                     if (current === null || (current.kind !== 'link' && current.kind !== 'styled')) {
                         return;
                     }
-                    const refusal = changeMarkLiteralRefusal(view.state, current, value);
+                    const refusal = changeInlineLiteralRefusal(view.state, current, value);
                     if (refusal !== null) {
                         this.say(refusal, 'refusal');
                         return;
                     }
                     const removed = value.trim() === '' || value.trim() === '{}';
-                    this.apply(current, now => (now.kind === current.kind ? changeMarkLiteralTransaction(view.state, now, value) : null),
+                    this.apply(current, now => (now.kind === current.kind ? changeInlineLiteralTransaction(view.state, now, value) : null),
                         removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT);
                 },
             },

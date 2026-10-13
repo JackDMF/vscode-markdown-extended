@@ -42,6 +42,7 @@ import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
+import { INLINE_LITERAL_HOLDERS, carrierName, holderOfCarrier } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalNotReadBack, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
@@ -67,9 +68,10 @@ export function isMarkObject(object: EditorObject): object is Extract<EditorObje
 /**
  * The marks whose run is a `styled` object when it carries a literal
  * (`_x_{.a}`, `~~x~~{.a}`): its bar shows and edits the literal, as a span's
- * does; without one such a run is formatting, with no bar of its own.
+ * does; without one such a run is formatting, with no bar of its own
+ * (`styled` holders, `inlineLiterals.ts`).
  */
-export const STYLED_MARKS: readonly string[] = ['em', 'strong', 'strike', 'mark'];
+export const STYLED_MARKS: readonly string[] = INLINE_LITERAL_HOLDERS.filter(h => h.styled && 'mark' in h.carrier).map(carrierName);
 
 /** The objects the pointer resting on them shows the toolbar for; the others show it for the caret. */
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
@@ -611,16 +613,16 @@ export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, c
 }
 
 /**
- * The places of the literals written right after an inline mark — a span's
+ * The places of the literals written right after an inline element — a span's
  * `]`, emphasis' closing delimiter, a link's `)` — as `attrsReadAt` knows them
- * (`INLINE_LITERAL_HOLDERS` in `blocks.ts`), by the mark's name: there
- * markdown-it-attrs cuts the text after the mark at the literal's first `}`.
+ * (the holders' keys, `inlineLiterals.ts`): there markdown-it-attrs cuts the
+ * text after the element at the literal's first `}`.
  */
-const INLINE_PLACES: ReadonlySet<string> = new Set(['span', 'em', 'strong', 'strike', 'mark', 'link']);
+const INLINE_PLACES: ReadonlySet<string> = new Set(INLINE_LITERAL_HOLDERS.map(h => h.holder));
 
-/** The place (`LiteralPlace`) of the literal a mark object carries: its mark's name, a span's `span`. */
+/** The place (`LiteralPlace`) of the literal a mark object carries: its holder's key (`holderOfCarrier`), a span's `span`. */
 export function markLiteralPlace(object: Extract<EditorObject, { mark: Mark }>): LiteralPlace {
-    return object.mark.type === editorSchema.marks.attr_span ? 'span' : object.mark.type.name;
+    return holderOfCarrier(object.mark.type.name)?.holder ?? object.mark.type.name;
 }
 
 /**
@@ -646,7 +648,7 @@ function markLiteralChange(state: EditorState, object: Extract<EditorObject, { m
  * (`literalsReadBackRefusal`), then the note around it (`noteRefusal`). An
  * empty field or `{}` removes it, which only its block and a note can refuse.
  */
-export function changeMarkLiteralRefusal(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string): string | null {
+export function changeInlineLiteralRefusal(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string): string | null {
     const value = typedMarkLiteral(literal);
     const alone = value === null ? null : literalRefusal(value, markLiteralPlace(object));
     if (alone !== null) {
@@ -659,11 +661,11 @@ export function changeMarkLiteralRefusal(state: EditorState, object: Extract<Edi
 /**
  * The link's or the styled run's literal set to `literal` — removed for an
  * empty field or `{}` — in one transaction. `null` when it is unchanged or
- * refused (`changeMarkLiteralRefusal`).
+ * refused (`changeInlineLiteralRefusal`).
  */
-export function changeMarkLiteralTransaction(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string): Transaction | null {
+export function changeInlineLiteralTransaction(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string): Transaction | null {
     const value = typedMarkLiteral(literal);
-    if (value === object.mark.attrs.literal || changeMarkLiteralRefusal(state, object, literal) !== null) {
+    if (value === object.mark.attrs.literal || changeInlineLiteralRefusal(state, object, literal) !== null) {
         return null;
     }
     return markLiteralChange(state, object, value).scrollIntoView();
