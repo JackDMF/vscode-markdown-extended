@@ -299,7 +299,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(img);
         await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
         await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
-        assert.deepStrictEqual((await barState()).verbs, ['edit-image', 'open-image', 'remove-image']);
+        assert.deepStrictEqual((await barState()).verbs, ['edit-image', 'image-attributes', 'open-image', 'remove-image']);
         await clickVerb('edit-image');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'pic', 'the alt text first');
         await page.keyboard.press('Enter');
@@ -322,6 +322,59 @@ suite('Editor object toolbar (e2e)', () => {
         await page.keyboard.press('Enter');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'p.png', 'not the undone q.png');
         await page.keyboard.press('Escape');
+    });
+
+    /** A click on the page's first image, sized so it can be clicked (a broken image has no size of its own); its bar shown. */
+    const clickImage = async () => {
+        await page.addStyleTag({ content: '.ProseMirror img { display: inline-block; width: 60px; height: 30px; }' });
+        const img = await (await page.$('.ProseMirror img'))?.boundingBox();
+        assert.ok(img);
+        await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
+        await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
+    };
+
+    test('Attributes… on an image: the literal is written after its (…), drawn on the image at once, named by the bar, and {} removes it', async function () {
+        this.timeout(15000);
+        await showDocument('An ![pic](p.png) here.\n', 'An');
+        await clickImage();
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="image-attributes"]`, el => el.textContent), 'Attributes…');
+        await clickVerb('image-attributes');
+        assert.deepStrictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => ({ value: (el as HTMLInputElement).value, caret: (el as HTMLInputElement).selectionStart })), { value: '{.}', caret: 2 });
+        await page.keyboard.type('hero width=300');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png){.hero width=300} here.\n');
+        assert.deepStrictEqual(await page.$eval('.ProseMirror img', el => ({ width: el.getAttribute('width'), hero: el.classList.contains('hero') })), { width: '300', hero: true });
+        assert.strictEqual((await hint()).text, `Attributes set — ${UNDO}`);
+        await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
+        assert.strictEqual(await page.$eval(BAR, el => el.getAttribute('aria-label')), 'Image {.hero width=300}');
+
+        await clickVerb('image-attributes');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '{.hero width=300}', 'prefilled with the literal');
+        await page.keyboard.type('{}');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png) here.\n');
+        assert.deepStrictEqual(await page.$eval('.ProseMirror img', el => ({ width: el.getAttribute('width'), hero: el.classList.contains('hero') })), { width: null, hero: false });
+        assert.strictEqual((await hint()).text, `Attributes removed — ${UNDO}`);
+    });
+
+    test('the caret in code carrying a literal: the bar names it Code, with Attributes… and Remove attributes, keep formatting', async function () {
+        this.timeout(15000);
+        await showDocument('Run `--flag`{.k} to skip the cache.\n', 'Run');
+        await clickBefore('flag', 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        assert.deepStrictEqual(await barState(), { object: 'styled', label: 'Code', verbs: ['edit-attributes', 'remove-attributes'] });
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="edit-attributes"]`, el => el.textContent), 'Attributes…');
+        await clickVerb('edit-attributes');
+        await page.keyboard.type('{.k .big}');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Run `--flag`{.k .big} to skip the cache.\n');
+        assert.ok(await page.$('.ProseMirror code.k.big'));
+        await clickVerb('remove-attributes');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Run `--flag` to skip the cache.\n');
     });
 
     test('a wiki embed is one unit drawn as its source: a click selects it, its bar names it, and Remove embed takes it out whole', async function () {
@@ -825,12 +878,13 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual(await page.$('.ProseMirror div[data-mep-container]'), null);
     });
 
-    test('the caret in a span: Edit attributes and Remove attributes, keep text', async function () {
+    test('the caret in a span: Attributes… and Remove attributes, keep text', async function () {
         this.timeout(15000);
         await showDocument('A [styled]{.old} word.\n', 'styled');
         await clickBefore('styled', 2);
         await page.waitForSelector(BAR, { timeout: 2000 });
         assert.deepStrictEqual(await barState(), { object: 'span', label: 'Span', verbs: ['edit-attributes', 'remove-attributes'] });
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="edit-attributes"]`, el => el.textContent), 'Attributes…');
         await clickVerb('edit-attributes');
         await page.keyboard.type('{.new #s}');
         await page.keyboard.press('Enter');

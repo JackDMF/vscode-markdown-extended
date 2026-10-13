@@ -52,7 +52,7 @@ import {
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
-    changeInlineLiteralRefusal, changeInlineLiteralTransaction, isMarkObject,
+    changeInlineLiteralRefusal, changeInlineLiteralTransaction, isMarkObject, LiteralObject, literalObjectOf, literalOfObject,
 } from './objects';
 import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_FIELD_LABEL, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT, attributesStep } from './attributes';
 import { SPAN_FIELD_PREFILL } from './toolbar/actions';
@@ -1480,9 +1480,13 @@ class ObjectToolbarView implements PluginView {
             case 'image': {
                 const src = object.node.attrs.src as string;
                 const alt = (object.node.attrs.alt as string | null) ?? '';
+                const literal = (object.node.attrs.literal as string | null) ?? null;
+                const image = literalObjectOf(object) as LiteralObject;
                 return {
                     label: 'Image',
-                    title: alt === '' ? src : `${alt}: ${src}`,
+                    // The literal is read with the label: in its title, and after it, as an emoji's spelling is.
+                    ...(literal === null ? {} : { code: literal }),
+                    title: `${alt === '' ? src : `${alt}: ${src}`}${literal === null ? '' : ` · ${literal}`}`,
                     verbs: [
                         {
                             id: 'edit-image',
@@ -1505,6 +1509,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
+                        this.markAttributesVerb(image, 'image-attributes', 'Attributes…', 'The image\'s {…}, written after its (…): {.class}, {#id}, {width=300}; {} removes it (Enter to apply, Esc to cancel).'),
                         { id: 'open-image', label: 'Open file', title: `Open ${src} (as Ctrl+click on a link does).`, run: () => host.openLink(src) },
                         {
                             id: 'remove-image',
@@ -1524,7 +1529,7 @@ class ObjectToolbarView implements PluginView {
                     verbs: [
                         {
                             id: 'edit-attributes',
-                            label: 'Edit attributes',
+                            label: 'Attributes…',
                             title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
                             field: {
                                 value: literal,
@@ -1550,7 +1555,7 @@ class ObjectToolbarView implements PluginView {
                     label: name,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
                     verbs: [
-                        this.markAttributesVerb(object, 'edit-attributes', 'Edit attributes', `Change the ${name.toLowerCase()}'s {…}; {} removes it (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'edit-attributes', 'Attributes…', `Change the ${name.toLowerCase()}'s {…}; {} removes it (Enter to apply, Esc to cancel).`),
                         {
                             id: 'remove-attributes',
                             label: 'Remove attributes, keep formatting',
@@ -1848,14 +1853,15 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * The field that sets the literal of a link or of a styled run (`_x_{…}`):
-     * prefilled with the literal — or `{.}` with the caret after the dot when
-     * there is none — and committed through `changeInlineLiteralTransaction`, a
-     * refusal said beside the caret; `{}` or an empty field removes it.
+     * The field that sets the literal of a link, of a styled run (`_x_{…}`,
+     * `` `x`{…} ``) or of an image: prefilled with the literal — or `{.}` with
+     * the caret after the dot when there is none — and committed through
+     * `changeInlineLiteralTransaction`, a refusal said beside the caret; `{}`
+     * or an empty field removes it.
      */
-    private markAttributesVerb(object: Extract<EditorObject, { kind: 'link' | 'styled' }>, id: string, label: string, title: string): Verb {
+    private markAttributesVerb(object: LiteralObject, id: string, label: string, title: string): Verb {
         const view = this.view;
-        const literal = (object.mark.attrs.literal ?? null) as string | null;
+        const literal = literalOfObject(object);
         return {
             id,
             label,
@@ -1867,8 +1873,8 @@ class ObjectToolbarView implements PluginView {
                 keys: ATTRIBUTES_FIELD_KEYS,
                 commit: value => {
                     view.focus();
-                    const current = currentObject(view.state, object);
-                    if (current === null || (current.kind !== 'link' && current.kind !== 'styled')) {
+                    const current = literalObjectOf(currentObject(view.state, object));
+                    if (current === null || current.kind !== object.kind) {
                         return;
                     }
                     const refusal = changeInlineLiteralRefusal(view.state, current, value);
@@ -1877,8 +1883,10 @@ class ObjectToolbarView implements PluginView {
                         return;
                     }
                     const removed = value.trim() === '' || value.trim() === '{}';
-                    this.apply(current, now => (now.kind === current.kind ? changeInlineLiteralTransaction(view.state, now, value) : null),
-                        removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT);
+                    this.apply(current, now => {
+                        const found = literalObjectOf(now);
+                        return found !== null && found.kind === current.kind ? changeInlineLiteralTransaction(view.state, found, value) : null;
+                    }, removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT);
                 },
             },
         };
