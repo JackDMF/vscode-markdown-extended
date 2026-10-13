@@ -641,13 +641,20 @@ Two checks keep a save from reading attributes elsewhere. The read-back
 (`markLiteralVerdict`) holds every run of these marks, and every image, to its own token,
 kind by kind, where the parser opens as many tokens of a kind as there are runs — so a
 literal read on the emphasis before its own counts as lost — and matches the literals in
-order to the tokens given attributes where the counts differ. And brace escaping
+order to the tokens given attributes where the counts differ. It also counts the runs:
+where the parse gives fewer elements of a kind than the textblocks hold runs of it with
+text, and two of those runs touch, two runs of one mark that differ only in their literal
+stand side by side in the file and are read as one (`` `foo``abc`{.x} ``,
+`**foo****abc**{.x}`) — the edit is refused with its own reason (`mergedReason`), never
+saved so. And brace escaping
 (`literalCutsIn`) counts a cut that is the first after such a closing tag (or after code or
 an image) as the element's own only while the elements hold the literals their runs carry
 (`ownedLiterals`): a text `{b}` the plugin joined to a link's `{.x}`, or a `{.y}` typed
 after an earlier emphasis, is escaped, never the literal. The toolbar's mark toggle keeps
 the literal of the run it extends or gives the other delimiter (`addKeepingLiterals` in
-`toolbar/commands.ts`); taking the mark off part of a run leaves the literal on the rest;
+`toolbar/commands.ts`), and applied right beside a run of the same mark (and delimiter)
+with a literal it gives the new text that literal, so the two are one run; taking the mark
+off part of a run leaves the literal on the rest;
 *Edit image…* keeps the image's.
 
 **The attribute holder at the caret is one rule** (`attributeHolderAt` in `objects.ts`,
@@ -659,15 +666,26 @@ the selection's other end (`holderRunAt`). The bars' mark objects are the same s
 literal-carrying runs only (`objectAtSelection`), so where a bar shows a link, a span, a
 styled run or an image, the holder is that object; a run of formatting without a literal is
 a `holder` object, which `objectAtSelection` never returns — a caret rest in bold in a table
-keeps the table's bar. Three routes read it and open the one field step
+keeps the table's bar, and it is the same object as the styled run it becomes once it has
+a literal (`sameObject`). An element is named as the row names its button: by its
+delimiter where that changes its name — `**` Bold, `__` Strong, `*` Italic, `_` Emphasis
+(`markups`, `namesOf` in `inlineLiterals.ts`) — in the menu, the bubble, the bars, the
+field headings and the reasons alike; a styled run's bar shows its literal beside its name
+(`Code {.k}`), as an image's does. Three routes read it and open the one field step
 (`holderAttributesStep` in `attributes.ts`, which the bars' **Attributes…** is too):
-**Formatting → Attributes of Code…**, named by the holder (`ActionState.label`), disabled
-with the reason where there is none; `Alt+Enter`, which opens the bar of the object at the
+**Formatting → Attributes of Code…**, named by the holder (`ActionState.label`) and drawn
+as it — its sample the element the engine renders it as, its syntax column and card
+written as it (`tag`, `example` in the registry) — resting as plain *Attributes of
+Element…*, disabled with the reason, where there is none; under a locked row both named
+entries show their resting names; `Alt+Enter`, which opens the bar of the object at the
 caret as before — that bar adds a separated **Attributes of Strong…** for the holder inside
-it (`holderInside`: the same search, the bar's own holder left out) — and, where there is no
+it (`holderInside`: the same search, the bar's own holder left out and the object's range a
+condition of it, so a holder around the object hides none inside it; its field draws that
+element, not the object, while it is open) — and, where there is no
 object, a bar of the bare holder's own, never drawn on a caret rest and kept while the
 selection stays in its run; and the bubble's `{…}`, which gives a selection within one
-holder's run that holder's attributes and any other selection a span. The block half is
+holder's run that holder's attributes — marked meanwhile, its accessible name saying which —
+and any other selection a span. The block half is
 `attributesTargetAt`, which names **Attributes of Paragraph…**. A link's bar has
 **Attributes…**, an image's has it after *Edit image…*, and a run of emphasis,
 strikethrough, a highlight, code, superscript, subscript or a key carrying a literal is an
@@ -678,7 +696,9 @@ makes a removal and which, on a bare holder, gives its mark the literal over its
 **A refused field stays open** (`FieldStep.refusal`, `refusedStep` in `inlineField.ts`):
 a commit that refuses what was typed returns the same step with the typed value and the
 reason, and both bars that show fields (`ObjectBar.openField`, `Toolbar.openFieldBar`)
-draw it again with the reason in the keys' place, announced as an alert (`fieldAside`). Every
+draw it again with the reason in the keys' place, announced as an alert (`fieldAside`), the
+caret at the end of what was typed. The refusal is asked before the focus goes back to the
+text; the transaction is built after, since that may commit a source box. Every
 attributes field answers so; a caret hint for a refusal would close the field and lose what
 was typed.
 
