@@ -14,6 +14,8 @@
 - A refused attributes field stays open with what you typed and the reason beside it.
 - Every bar verb that opens the attributes field is called **Attributes…**.
 - Nested marks over the same text now offer the innermost one first; 4.4.0 offered emphasis first.
+- Bold, code or another mark applied right beside the same mark with attributes joins it and keeps them.
+- An edit that would save two such runs side by side, read as one, is refused instead of saved.
 
 ### ⚠️ Limits
 

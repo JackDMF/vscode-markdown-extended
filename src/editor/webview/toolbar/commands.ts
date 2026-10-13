@@ -111,6 +111,17 @@ function addKeepingLiterals(tr: Transaction, from: number, to: number, type: Mar
         }
     });
     const literals = [...new Set(pieces.flatMap(p => (p.literal === null ? [] : [p.literal])))];
+    if (literals.length === 0) {
+        // Right beside a run of the same mark with a literal, the text joins that run: two runs
+        // of one mark written side by side read as one, and one of them would lose its `{…}`
+        // (`` `foo``abc`{.x} ``). The run after the selection first, else the one before.
+        const touching = [tr.doc.resolve(to).nodeAfter, tr.doc.resolve(from).nodeBefore]
+            .map(node => node?.marks.find(m => m.type === type && (markup === null || m.attrs.markup === markup)))
+            .find(mark => mark !== undefined && literalsOf([mark]).length === 1);
+        if (touching !== undefined) {
+            literals.push(literalsOf([touching])[0]);
+        }
+    }
     tr.addMark(from, to, markWith(type, markup, literals.length === 1 ? literals[0] : null));
     if (literals.length > 1) {
         for (const piece of pieces) {

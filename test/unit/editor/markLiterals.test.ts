@@ -5,7 +5,7 @@ import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, fidelityPlugin, groupSourceBlocks, parseDocument, serializeDocument, splitLines } from '../../../src/editor';
 import { definitionOf } from '../../../src/editor/inlineEngine';
 import { editorSchema } from '../../../src/editor/schema';
-import { literalNotReadBack, unwritableInTable } from '../../../src/editor/serialize';
+import { literalLostReason, literalNotReadBack, unwritableInTable } from '../../../src/editor/serialize';
 import {
     EditorObject, LiteralObject, changeLinkTransaction, changeInlineLiteralRefusal, changeInlineLiteralTransaction, editImageTransaction, literalObjectOf,
     literalRefusal, objectAtSelection,
@@ -523,5 +523,46 @@ suite('Editor inline literals: edits keep the literal of code, an image, supersc
         const inNote = objectAtSelection(note) as Extract<EditorObject, { kind: 'styled' }>;
         assert.strictEqual(inNote.kind, 'styled');
         assert.ok(changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}')?.startsWith('Inline code in a note cannot hold'), changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}') ?? 'none');
+    });
+});
+
+/** Each mark that carries a literal, its delimiters, the markup its toggle writes, and the element the engine renders it as. */
+const ADJACENT: readonly [string, string, string, string | null, string][] = [
+    ['code', '`', '`', null, 'code'], ['strong', '**', '**', '**', 'b'], ['em', '*', '*', '*', 'i'], ['sup', '^', '^', null, 'sup'],
+    ['sub', '~', '~', null, 'sub'], ['kbd', '[[', ']]', null, 'kbd'], ['mark', '==', '==', null, 'mark'], ['strike', '~~', '~~', null, 's'],
+];
+
+suite('Editor inline literals: two runs of one mark side by side', () => {
+    const md = hostEngine();
+
+    for (const [name, open, close, markup, tag] of ADJACENT) {
+        test(`${name}: a run without a literal right before one with: refused exactly where the engine reads the two as one`, () => {
+            let state = stateOf(`A foo${open}abc${close}{.x} y.\n`);
+            const from = posOf(state.doc, 'foo');
+            const type = editorSchema.marks[name];
+            state = state.apply(state.tr.addMark(from, from + 3, type.create(markup === null ? {} : { markup })));
+            const p = touched(state.doc.child(0));
+            const written = serializeDocument({ doc: state.doc.type.create(null, [p]), eol: '\n', tail: '' }, options).trim();
+            const elements = (md.renderInline(written).match(new RegExp(`<${tag}[ >]`, 'g')) ?? []).length;
+            const lost = literalNotReadBack(p);
+            assert.strictEqual(lost?.merged !== undefined, elements < 2, `${written}: ${elements} element(s), verdict ${JSON.stringify(lost)}`);
+        });
+
+        test(`${name}: the toggle applied right before a run with a literal joins that run, which keeps its literal`, () => {
+            let state = select(stateOf(`A foo${open}abc${close}{.x} y.\n`), 'foo', 0, 3);
+            toggleMarkup(editorSchema.marks[name], markup)(state, tr => {
+                state = state.apply(tr);
+            });
+            assert.strictEqual(text(state), `A ${open}fooabc${close}{.x} y.\n`);
+            assert.strictEqual(literalNotReadBack(state.doc.child(0)), null);
+        });
+    }
+
+    test('the refusal says what would happen', () => {
+        let state = stateOf('A foo`abc`{.x} y.\n');
+        const from = posOf(state.doc, 'foo');
+        state = state.apply(state.tr.addMark(from, from + 3, editorSchema.marks.code.create()));
+        const lost = literalNotReadBack(touched(state.doc.child(0)));
+        assert.ok(lost !== null && literalLostReason(lost).startsWith('After this edit two pieces of inline code would stand side by side'), JSON.stringify(lost));
     });
 });
