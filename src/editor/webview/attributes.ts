@@ -107,12 +107,12 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
  * given the literal over its run — `{}` or nothing removes it; a refusal keeps
  * the field open with what was typed and the reason (`refusedStep`).
  */
-export function holderAttributesStep(view: EditorView, at: InlineHolderAt): FieldStep {
+export function holderAttributesStep(view: EditorView, at: InlineHolderAt, label = ATTRIBUTES_FIELD_LABEL): FieldStep {
     const literal = literalOfObject(at.object);
     const step: FieldStep = {
         value: literal ?? SPAN_FIELD_PREFILL.value,
         caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
-        label: ATTRIBUTES_FIELD_LABEL,
+        label,
         keys: ATTRIBUTES_FIELD_KEYS,
         commit: value => {
             const current = literalObjectOf(currentObject(view.state, at.object));

@@ -52,9 +52,10 @@ import {
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
-    changeInlineLiteralRefusal, changeInlineLiteralTransaction, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf,
+    changeInlineLiteralRefusal, changeInlineLiteralTransaction, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
 import { ATTRIBUTES_REMOVED_HINT, attributesStep, holderAttributesStep } from './attributes';
+import { currentReadsAttrs } from '../inlineEngine';
 import { CHROME_MOVED, Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { followPointer, selectionBubbleShown } from './toolbar/toolbar';
@@ -114,7 +115,7 @@ export const LENS_VERBS_INLINE = 4;
  * ones, whose text the field is about. A block's field (a container's name, an
  * admonition's title) names its block by the bar beside it.
  */
-const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'styled', 'note', 'image']);
+const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'styled', 'holder', 'note', 'image']);
 
 /** How long the caret rests in an inline object before its toolbar shows. */
 export const INLINE_DELAY_MS = 400;
@@ -181,13 +182,16 @@ interface Presentation {
  * (its own verbs are the properties panel's header), with none offered.
  */
 function barless(object: EditorObject, presentation: Presentation): boolean {
-    if (presentation.verbs.length === 0) {
+    // Attributes of Strong… for the bold the caret is in is no reason for a bar on a caret
+    // rest (`withInlineAttributes`): `Alt+Enter` draws it there (`ObjectToolbarView.forced`).
+    const verbs = presentation.verbs.filter(v => v.id !== 'inline-attributes');
+    if (verbs.length === 0) {
         return object.kind === 'heading' || object.kind === 'front_matter';
     }
     // A bar whose one verb is Attributes…, on a block with no literal yet — every plain
     // heading — is chrome on every such block; the menu reaches it, and the verb joins
     // the bar once the block has others (lenses, code actions) or a literal.
-    return 'node' in object && literalOf(object.node) === null && presentation.verbs.every(v => v.id === 'block-attributes');
+    return 'node' in object && literalOf(object.node) === null && verbs.every(v => v.id === 'block-attributes');
 }
 
 const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = {
@@ -801,6 +805,8 @@ class ObjectToolbarView implements PluginView {
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
     /** The inline object the caret has rested in long enough (or `Alt+Enter` opened). */
     private matured: EditorObject | null = null;
+    /** The object `Alt+Enter` opened the bar of: drawn even where `barless` says no, while it has a verb for the element at the caret. */
+    private forced: EditorObject | null = null;
     private pending: { object: EditorObject; timer: ReturnType<typeof setTimeout> } | null = null;
     /** The top-level atom's element the pointer is on. */
     private hovered: HTMLElement | null = null;
@@ -886,14 +892,21 @@ class ObjectToolbarView implements PluginView {
         this.hoverBar.el.remove();
     }
 
-    /** `Alt+Enter`: the bar of the object at the caret, now, the focus on its first verb. False where there is none. */
+    /**
+     * `Alt+Enter`: the bar of the object at the caret, now, the focus on its
+     * first verb. Where there is none but the caret is in code, a key,
+     * emphasis … without a `{…}` (`attributeHolderAt`), a bar of its own with
+     * **Attributes…** — never drawn on a caret rest, kept while the selection
+     * stays in its run (`selectionObject`). False where there is neither.
+     */
     openFromKeyboard(): boolean {
-        const object = objectAtSelection(this.view.state);
+        const object = objectAtSelection(this.view.state) ?? (currentReadsAttrs() ? attributeHolderAt(this.view.state).inline?.object ?? null : null);
         if (object === null) {
             return false;
         }
         this.cancelPending();
         this.matured = object;
+        this.forced = object;
         this.refresh();
         if (!this.selectionBar.visible) {
             return false;
@@ -929,14 +942,19 @@ class ObjectToolbarView implements PluginView {
         switch (place.kind) {
             case 'text':
             case 'content':
-                return objectAtSelection(this.view.state);
+                return objectAtSelection(this.view.state) ?? this.maturedHolder();
             case 'chrome':
-                return place.field ? null : objectAtSelection(this.view.state);
+                return place.field ? null : objectAtSelection(this.view.state) ?? this.maturedHolder();
             case 'control':
                 return place.owner === null ? null : objectOfNode(place.owner.node, place.owner.pos);
             case 'away':
                 return null;
         }
+    }
+
+    /** The bare holder `Alt+Enter` opened a bar for (`openFromKeyboard`), while the selection is still in its run. */
+    private maturedHolder(): EditorObject | null {
+        return this.matured?.kind === 'holder' ? currentObject(this.view.state, this.matured) : null;
     }
 
     private cancelPending(): void {
@@ -956,12 +974,16 @@ class ObjectToolbarView implements PluginView {
         if (object === null) {
             this.cancelPending();
             this.matured = null;
+            this.forced = null;
             this.selectionBar.hide();
         } else if (isBlockObject(object) || sameObject(object, this.matured)) {
             this.cancelPending();
             this.matured = isBlockObject(object) ? null : object;
             const presentation = this.present(object);
-            if (barless(object, presentation)) {
+            this.forced = sameObject(object, this.forced) ? this.forced : null;
+            const keyed = this.forced !== null && presentation.verbs.some(v => v.id === 'inline-attributes');
+            this.forced = keyed ? this.forced : null;
+            if (barless(object, presentation) && !keyed) {
                 // A heading's verbs are other extensions' lenses and actions; with none, no bar.
                 this.selectionBar.hide();
             } else if (isBlockPlaced(object) && selectionBubbleShown(this.view)) {
@@ -975,6 +997,7 @@ class ObjectToolbarView implements PluginView {
             // A new inline object: nothing until the caret has rested in it.
             this.cancelPending();
             this.matured = null;
+            this.forced = null;
             this.selectionBar.hide();
             this.pending = {
                 object,
@@ -1313,7 +1336,7 @@ class ObjectToolbarView implements PluginView {
      * run on what the box has not applied yet.
      */
     private present(object: EditorObject): Presentation {
-        const own = this.ownPresentation(object);
+        const own = this.withInlineAttributes(object, this.ownPresentation(object));
         if (!isTopLevelBlock(this.view.state, object) || this.holdsFocusedControl(object)) {
             return own;
         }
@@ -1334,6 +1357,30 @@ class ObjectToolbarView implements PluginView {
             };
         });
         return lenses.length + actions.length === 0 ? own : { ...own, verbs: [...own.verbs, ...lenses, ...actions] };
+    }
+
+    /**
+     * The object's own verbs and, after a separator, **Attributes of Strong…**
+     * for the element inside it the caret is in — bold in a table's cell, code
+     * in a link (`holderInside`, the rule the menu reads) — whose field is the
+     * one every route opens (`holderAttributesStep`), headed by the element.
+     */
+    private withInlineAttributes(object: EditorObject, own: Presentation): Presentation {
+        const inside = currentReadsAttrs() ? holderInside(this.view.state, object) : null;
+        if (inside === null) {
+            return own;
+        }
+        const name = `Attributes of ${inside.holder.label}`;
+        // Headed by the element, not by the object whose bar it is on (`Table · Attributes of Strong`).
+        const step = holderAttributesStep(this.view, inside, name);
+        const verb: Verb = {
+            id: 'inline-attributes',
+            label: `${name}…`,
+            title: `The ${inside.holder.noun}'s {…}, written right after it: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).`,
+            separated: true,
+            field: step,
+        };
+        return { ...own, verbs: [...own.verbs, verb] };
     }
 
     /**
@@ -1546,6 +1593,17 @@ class ObjectToolbarView implements PluginView {
                             run: () => this.apply(object, current => (current.kind === 'span' ? removeSpanTransaction(view.state, current) : null), 'Attributes removed'),
                         },
                     ],
+                };
+            }
+            case 'holder': {
+                // Only `Alt+Enter` opens it: formatting has no bar of its own on a caret rest.
+                const holder = holderOfCarrier(object.mark.type.name);
+                const label = holder?.label ?? object.mark.type.name;
+                const text = view.state.doc.textBetween(object.from, object.to, ' ', ' ');
+                return {
+                    label,
+                    title: `\`${text}\`: ${holder?.noun ?? label} — Attributes… gives it a {…}`,
+                    verbs: [this.markAttributesVerb(object, 'edit-attributes', 'Attributes…', `Give the ${(holder?.noun ?? label)} a {…}, written right after it: {.class}, {#id}, {key=value} (Enter to apply, Esc to cancel).`)],
                 };
             }
             case 'styled': {

@@ -866,6 +866,71 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual((await lastEdit())?.text, 'Alpha !!beta rXef|the body!! gamma.\n', 'Enter chose Convert to marginal note');
     });
 
+    const verbLabel = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => el.textContent);
+
+    test('Alt+Enter in bold in a table: the table\'s bar, with Attributes of Strong… after its own verbs; its field writes the literal after the bold', async function () {
+        this.timeout(15000);
+        await showDocument('| a | b |\n| - | - |\n| **bold** | c |\n', 'bold');
+        await clickBefore('bold', 2);
+        await delay(100);
+        await pressAlt('Enter');
+        const state = await barState();
+        assert.strictEqual(state.object, 'table');
+        assert.deepStrictEqual(state.verbs.slice(-2), ['delete-table', 'inline-attributes']);
+        assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Strong…');
+        await clickVerb('inline-attributes');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Table · Attributes of Strong');
+        await page.keyboard.type('b');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.ok((await lastEdit())?.text.includes('| **bold**{.b} |'), (await lastEdit())?.text);
+    });
+
+    test('bold in a plain heading grows no bar on a caret rest; Alt+Enter shows the heading\'s, with Attributes of Strong…', async function () {
+        this.timeout(15000);
+        await showDocument('## A **bold** title\n\nText.\n', 'bold');
+        await clickBefore('bold', 2);
+        await delay(INLINE_DELAY_MS + 300);
+        assert.strictEqual(await page.$(BAR), null, 'no bar on a caret rest');
+        await pressAlt('Enter');
+        assert.deepStrictEqual(await barState(), { object: 'heading', label: 'Heading 2', verbs: ['block-attributes', 'inline-attributes'] });
+        await page.keyboard.press('Escape');
+        await clickBefore('title', 2);
+        await delay(INLINE_DELAY_MS + 300);
+        assert.strictEqual(await page.$(BAR), null, 'gone once the caret leaves the bold');
+    });
+
+    test('Alt+Enter in code in a link: the link\'s bar, with Attributes of Code… after its own verbs', async function () {
+        this.timeout(15000);
+        await showDocument('See [the `x` here](u) now.\n', 'See');
+        await clickBefore('here', 1);
+        await clickBefore('x', 0);
+        await delay(100);
+        await pressAlt('Enter');
+        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'link-attributes', 'remove-link', 'inline-attributes'] });
+        assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Code…');
+    });
+
+    test('Alt+Enter in code without attributes: a bar of its own with Attributes…, never shown on a caret rest; once it has them, the styled bar', async function () {
+        this.timeout(15000);
+        await showDocument('Run `x` to skip the cache.\n', 'Run');
+        await clickBefore('x', 0);
+        await delay(INLINE_DELAY_MS + 600);
+        assert.strictEqual(await page.$(BAR), null, 'no bar on a caret rest');
+        await pressAlt('Enter');
+        assert.deepStrictEqual(await barState(), { object: 'holder', label: 'Code', verbs: ['edit-attributes'] });
+        assert.deepStrictEqual(await active(), { verb: 'edit-attributes', editor: false, field: false });
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => (el as HTMLElement).title), '`x`: inline code — Attributes… gives it a {…}');
+        await page.keyboard.press('Enter');
+        assert.strictEqual((await active()).field, true);
+        await page.keyboard.type('k');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Run `x`{.k} to skip the cache.\n');
+        await page.waitForSelector(`${BAR}[data-object="styled"]`, { timeout: 2000 });
+        assert.strictEqual((await barState()).label, 'Code');
+    });
+
     test('the caret in an admonition: Change type from the menu of types, Edit title; the page and the file say both', async function () {
         this.timeout(15000);
         await showDocument('Intro.\n\n!!! note "Old title"\n    Body text here.\n\nAfter.\n', 'Body');
