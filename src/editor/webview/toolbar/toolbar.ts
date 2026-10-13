@@ -1466,6 +1466,11 @@ export function selectionBubbleShown(view: EditorView): boolean {
     return toolbarViews.get(view)?.bubbleShown ?? false;
 }
 
+/** Have the toolbar of `view` read the page's state again (Export busy or not), without a transaction through every plugin. */
+export function refreshToolbar(view: EditorView): void {
+    toolbarViews.get(view)?.update(view);
+}
+
 /**
  * The toolbar and the bubble, as a plugin: its view is built with the editor's
  * and follows every state it takes. `Ctrl+K` (`Cmd+K`) is **Insert → Link…**;

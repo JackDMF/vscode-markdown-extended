@@ -40,7 +40,7 @@ import { objectToolbarPlugin } from './objectToolbar';
 import { editorPlugins } from './plugins';
 import { resyncTransaction } from './resync';
 import { changeIncludeTransaction, insertLineTransaction } from './toolbar/commands';
-import { toolbarPlugin, toolbarStatusSlot } from './toolbar/toolbar';
+import { refreshToolbar, toolbarPlugin, toolbarStatusSlot } from './toolbar/toolbar';
 
 interface VsCodeApi {
     postMessage(message: WebviewMessage): void;
@@ -696,32 +696,38 @@ let exporting = false;
  * busy until the host's `exportDone`.
  */
 function exportDocument(format: ExportFormatName): void {
-    if (!view || exporting) {
+    if (!view || !current || exporting) {
         return;
     }
     commitForSending();
     flush();
-    post({ type: 'export', format });
-    exporting = true;
-    redrawToolbar();
+    post({ type: 'export', format, baseVersion: current.version });
+    setExporting(true);
 }
 
 /**
- * The host's `exportDone`: Export is offered again. With `dropped`, nothing
- * was exported — the page's last edit had been dropped, the file having
- * changed outside the editor — and the page says so where the caret is.
+ * The host's `exportDone`. `busy`: another export runs, and Export keeps
+ * showing it. Otherwise Export is offered again; with `dropped` nothing was
+ * exported — the page was out of step with the file — and the page says so
+ * where the caret is.
  */
-function exportFinished(dropped: boolean): void {
-    exporting = false;
-    redrawToolbar();
-    if (dropped && view) {
-        showHint(view, 'Not exported: the file changed outside the editor — export again', 'refusal');
+function exportFinished(outcome: 'settled' | 'dropped' | 'busy'): void {
+    if (outcome === 'busy') {
+        setExporting(true);
+        return;
+    }
+    setExporting(false);
+    if (outcome === 'dropped' && view) {
+        showHint(view, 'Not exported: the editor was out of step with the file — export again.', 'refusal');
     }
 }
 
-/** Have the toolbar read the page's state again (Export busy or not): a transaction that changes nothing. */
-function redrawToolbar(): void {
-    view?.dispatch(view.state.tr.setMeta('addToHistory', false));
+/** Whether an export runs, and the toolbar's Export face drawn for it. */
+function setExporting(running: boolean): void {
+    exporting = running;
+    if (view) {
+        refreshToolbar(view);
+    }
 }
 
 /** Put a rendering on every raw block that still has the source it was made from. */
@@ -1028,6 +1034,11 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     switch (msg.type) {
         case 'document':
             showDocument(msg.json, msg.version, msg.defaultWrap, msg.includes, msg.inline);
+            // Only ever sets it: a page loaded again during an export learns it here, and
+            // a document posted before the host took this page's request does not clear it.
+            if (msg.exporting) {
+                setExporting(true);
+            }
             break;
         case 'rendered':
             applyRendered(msg.requestId, msg.html);
@@ -1081,7 +1092,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             }
             break;
         case 'exportDone':
-            exportFinished(msg.dropped === true);
+            exportFinished(msg.outcome);
             break;
     }
 });

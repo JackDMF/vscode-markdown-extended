@@ -106,7 +106,7 @@ suite('Editor toolbar: Export (e2e)', () => {
 
     teardown(async () => {
         // The host's answer to any export a test asked for: Export is offered again.
-        await (editor as EditorPage).send({ type: 'exportDone' });
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
         await page.keyboard.press('Escape');
         await page.mouse.click(WIDTH - 20, 880);
         await page.setViewport({ width: WIDTH, height: 900 });
@@ -197,7 +197,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         await page.click(`${PANEL} [data-export="settings"]`);
         await delay(80);
         const sent = (await posted()).slice(before).filter(m => m.type === 'export' || m.type === 'exportSettings');
-        assert.deepStrictEqual(sent, [{ type: 'export', format: 'png' }, { type: 'exportSettings' }]);
+        assert.deepStrictEqual(sent, [{ type: 'export', format: 'png', baseVersion: version }, { type: 'exportSettings' }]);
         await applyTheme(page, LIGHT_MODERN);
     });
 
@@ -226,7 +226,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         assert.strictEqual(await focused(), 'png');
         await page.keyboard.press('Enter');
         await delay(80);
-        assert.deepStrictEqual((await posted()).slice(before).filter(m => m.type === 'export'), [{ type: 'export', format: 'png' }]);
+        assert.deepStrictEqual((await posted()).slice(before).filter(m => m.type === 'export'), [{ type: 'export', format: 'png', baseVersion: version }]);
         assert.strictEqual(await page.$eval(PANEL, el => (el as HTMLElement).hidden), true, 'the menu closes');
         assert.strictEqual(await focused(), 'export', 'the focus back on the face');
     });
@@ -265,7 +265,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         assert.deepStrictEqual(sent.map(m => m.type), ['edit', 'export'], 'the edit first, then the export');
         const edit = sent[0] as Extract<WebviewMessage, { type: 'edit' }>;
         assert.strictEqual(edit.text, SOURCE.replace('</div>', '</div>X'), 'the edit carries the box\'s text');
-        assert.deepStrictEqual(sent[1], { type: 'export', format: 'pdf' });
+        assert.deepStrictEqual(sent[1], { type: 'export', format: 'pdf', baseVersion: version });
         await page.keyboard.press('Escape');
         await showDiagnostics(editor as EditorPage, version, []);
     });
@@ -299,24 +299,43 @@ suite('Editor toolbar: Export (e2e)', () => {
         await shot(page, 'export-5-busy-light.png');
         await page.click(`${PANEL} [data-export="pdf"]`);
         await delay(80);
-        assert.deepStrictEqual((await posted()).slice(before).filter(m => m.type === 'export'), [{ type: 'export', format: 'html' }], 'a second export is not asked for');
+        assert.deepStrictEqual((await posted()).slice(before).filter(m => m.type === 'export'), [{ type: 'export', format: 'html', baseVersion: version }], 'a second export is not asked for');
 
-        await (editor as EditorPage).send({ type: 'exportDone' });
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'busy' });
+        await delay(80);
+        assert.strictEqual((await face()).label, 'Exporting…', 'answered busy: the one running is still shown');
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
         await delay(80);
         assert.deepStrictEqual(await face(), { label: 'Export', busy: 'false', disabled: 'false', title: 'Export' });
         await page.keyboard.press('Escape');
     });
 
-    test('an export the host did not run — the edit before it was dropped — is said on the page, and Export is offered again', async function () {
+    test('a page loaded while an export runs shows it running, from the document the host posts, until its exportDone', async function () {
+        this.timeout(20000);
+        await showDocument(SOURCE);
+        assert.strictEqual(await page.$eval(`${FACE} .mep-face-label`, el => el.textContent), 'Export');
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        version++;
+        await (editor as EditorPage).send({
+            type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE, exporting: true,
+        });
+        await delay(100);
+        assert.deepStrictEqual(await page.$eval(FACE, el => [(el.querySelector('.mep-face-label') as HTMLElement).textContent, el.getAttribute('aria-busy')]), ['Exporting…', 'true']);
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
+        await delay(80);
+        assert.deepStrictEqual(await page.$eval(FACE, el => [(el.querySelector('.mep-face-label') as HTMLElement).textContent, el.getAttribute('aria-busy')]), ['Export', 'false']);
+    });
+
+    test('an export the host did not run — the page out of step with the file — is said on the page, and Export is offered again', async function () {
         this.timeout(20000);
         await showDocument(SOURCE);
         await page.click(FACE);
         await page.click(`${PANEL} [data-export="pdf"]`);
         await delay(80);
-        await (editor as EditorPage).send({ type: 'exportDone', dropped: true });
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'dropped' });
         await delay(80);
         assert.deepStrictEqual(await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden })),
-            { text: 'Not exported: the file changed outside the editor — export again', shown: true });
+            { text: 'Not exported: the editor was out of step with the file — export again.', shown: true });
         assert.strictEqual(await page.$eval(`${FACE} .mep-face-label`, el => el.textContent), 'Export');
     });
 });

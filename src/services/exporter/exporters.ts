@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
-import { ExporterQuickPickItem, MarkdownExporter, ExportFormat, FormatQuickPickItem, exportFormatOf } from './interfaces';
+import { ExporterQuickPickItem, MarkdownExporter, ExportFormat, FormatQuickPickItem } from './interfaces';
 import { EXPORT_FORMATS } from './formats';
 import { HtmlExporter } from './html';
 import { PuppeteerExporter } from './puppeteer';
 
 /** The formats of the table (`formats.ts`), named as the Visual Editor's Export menu names them. */
 export function formatPickItems(): FormatQuickPickItem[] {
-    return EXPORT_FORMATS.map(f => <FormatQuickPickItem>{ label: f.label, description: f.detail, format: exportFormatOf(f.format) });
+    return EXPORT_FORMATS.map(f => <FormatQuickPickItem>{ label: f.label, description: f.detail, format: f.format });
 }
 
 export async function pickFormat(): Promise<ExportFormat | undefined> {

@@ -1,24 +1,10 @@
 import * as vscode from 'vscode';
-import type { ExportFormatName } from './formats';
+import { ExportFormat } from './formats';
+
+// Declared with the format table, which the page's bundle reads too; exported here for the callers that always read it here.
+export { ExportFormat };
 
 export type Progress = vscode.Progress<{ message?: string; increment?: number }>;
-
-export enum ExportFormat {
-    PDF = "pdf",
-    HTML = "html",
-    JPG = "jpg",
-    PNG = "png",
-}
-
-/** True only while the enum and the format table (`formats.ts`) name the same formats: a format added to one alone does not compile. */
-type SameFormats = [`${ExportFormat}`] extends [ExportFormatName] ? ([ExportFormatName] extends [`${ExportFormat}`] ? true : false) : false;
-const FORMATS_AGREE: SameFormats = true;
-void FORMATS_AGREE;
-
-/** A format's name (from the page, or the table) as the enum's member. */
-export function exportFormatOf(name: ExportFormatName): ExportFormat {
-    return name as `${ExportFormat}` as ExportFormat;
-}
 
 export interface FormatQuickPickItem extends vscode.QuickPickItem {
     format: ExportFormat;

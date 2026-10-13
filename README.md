@@ -709,8 +709,9 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   value you are editing is applied first, as a save applies it. VS Code then asks only which
   exporter, where two can make the format. It is about the document, not the selection,
   so it stays on while the rest of the row is off. While an export runs, the face reads
-  *Exporting…* and another cannot start. If the file changed outside the editor just
-  before, nothing is exported and the editor says so: export again.
+  *Exporting…* and another cannot start. If the editor was out of step with the file —
+  it changed outside the editor just before — nothing is exported and the editor says so:
+  export again.
 
   *Limits:* a new property not yet added with `Enter` is left out, as a save leaves it out;
   and typing during the first moments of an export may still reach the exported file.
