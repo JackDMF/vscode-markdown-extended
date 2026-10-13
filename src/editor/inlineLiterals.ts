@@ -57,6 +57,23 @@ export const INLINE_LITERAL_HOLDERS: readonly InlineLiteralHolder[] = [
         own: [], noun: 'attribute span', subject: 'An attribute span', label: 'Span', styled: false,
     },
     {
+        // A nesting-0 token: the plugin gives the `{…}` after the closing backtick run to the code itself.
+        holder: 'code', carrier: { mark: 'code' }, token: 'code_inline', closing: 'markup', source: l => `\`x\`${l}`,
+        own: [], noun: 'inline code', subject: 'Inline code', label: 'Code', styled: true,
+    },
+    {
+        holder: 'sub', carrier: { mark: 'sub' }, token: 'sub_open', closing: 'markup', source: l => `~x~${l}`,
+        own: [], noun: 'subscript', subject: 'Subscript', label: 'Subscript', styled: true,
+    },
+    {
+        holder: 'sup', carrier: { mark: 'sup' }, token: 'sup_open', closing: 'markup', source: l => `^x^${l}`,
+        own: [], noun: 'superscript', subject: 'Superscript', label: 'Superscript', styled: true,
+    },
+    {
+        holder: 'kbd', carrier: { mark: 'kbd' }, token: 'kbd_open', closing: ']', source: l => `[[x]]${l}`,
+        own: [], noun: 'key', subject: 'A key', label: 'Key', styled: true,
+    },
+    {
         holder: 'mark', carrier: { mark: 'mark' }, token: 'mark_open', closing: 'markup', source: l => `==x==${l}`,
         own: [], noun: 'highlight', subject: 'A highlight', label: 'Highlight', styled: true,
     },
@@ -71,6 +88,12 @@ export const INLINE_LITERAL_HOLDERS: readonly InlineLiteralHolder[] = [
     {
         holder: 'em', carrier: { mark: 'em' }, token: 'em_open', closing: 'markup', source: l => `*x*${l}`,
         own: [], noun: 'emphasis', subject: 'Emphasis', label: 'Emphasis', styled: true,
+    },
+    {
+        // A node, and a nesting-0 token: `![a](s)` and `![a][r]` close with `)` or `]`. Its
+        // `src`, `alt` and `title` are written in its `(…)`; the renderer takes `alt` from the text.
+        holder: 'image', carrier: { node: 'image' }, token: 'image', closing: ')]', source: l => `![x](u)${l}`,
+        own: ['src', 'alt', 'title'], noun: 'image', subject: 'An image', label: 'Image', styled: false,
     },
 ];
 

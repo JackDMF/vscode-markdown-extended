@@ -289,15 +289,15 @@ export const NOTE_CLOSE_TOKENS: ReadonlySet<string> = new Set(['sidenote_close',
  * The attributes a token carries as part of what it is, which the schema has a
  * slot for. Anything beyond them came from a `{…}` literal (`markdown-it-attrs`):
  * the editor keeps that literal where it can say where it was written — a span's
- * (`[text]{…}`), emphasis' and a link's (`_x_{…}`, `[x](u){…}`, the inline
- * holders of `inlineLiterals.ts`, whose `own` attributes are theirs), a
- * top-level block's (`recoverBlockAttrs`), a list item's, a heading's — and
- * leaves any other element carrying one (a nested paragraph, inline code, an
- * image, superscript) a source block, since a re-serialization would lose it.
+ * (`[text]{…}`), the one written after emphasis, a link, inline code, an image,
+ * superscript, subscript or a key (`_x_{…}`, `[x](u){…}`, the inline holders of
+ * `inlineLiterals.ts`, whose `own` attributes are theirs: a link's `href`, an
+ * image's `src`), a top-level block's (`recoverBlockAttrs`), a list item's, a
+ * heading's — and leaves any other element carrying one (a nested paragraph) a
+ * source block, since a re-serialization would lose it.
  */
 const ALLOWED_ATTRS: Readonly<Record<string, readonly string[]>> = {
     ordered_list_open: ['start'],
-    image: ['src', 'alt', 'title'],
     ...Object.fromEntries(INLINE_LITERAL_HOLDERS.filter(h => h.own.length > 0).map(h => [h.token, h.own])),
 };
 
@@ -312,9 +312,10 @@ function attrsAllowed(token: Token): boolean {
 }
 
 /**
- * Whether an inline token opens a mark that carries a literal (`literal` on
- * its mark, `recoverInlineLiterals`): every attribute span, and emphasis or a
- * link markdown-it-attrs gave attributes (`holderOfToken`, `inlineLiterals.ts`).
+ * Whether an inline token is one whose mark or node carries a literal
+ * (`literal`, `recoverInlineLiterals`): every attribute span, and emphasis, a
+ * link, inline code, an image, superscript, subscript or a key
+ * markdown-it-attrs gave attributes (`holderOfToken`, `inlineLiterals.ts`).
  */
 export function carriesInlineLiteral(token: Token): boolean {
     return holderOfToken(token.type) !== undefined && (token.type === 'span_open' || literalAttrs(token).length > 0);
@@ -932,10 +933,12 @@ function closingCharacters(open: Token, close: Token): string {
 }
 
 /**
- * The literal of every inline mark that carries one in the group
- * (`carriesInlineLiteral`: an attribute span's `[text]{…}`, emphasis' or a
- * link's `_x_{…}`, `[x](u){…}`), in the order of their opening tokens,
- * recovered verbatim from the block's lines.
+ * The literal of every inline element that carries one in the group
+ * (`carriesInlineLiteral`: an attribute span's `[text]{…}`, emphasis', a
+ * link's, inline code's, an image's … `_x_{…}`, `[x](u){…}`, `` `x`{…} ``),
+ * in the order of their opening tokens, recovered verbatim from the block's
+ * lines. Inline code and an image are one token each, which opens and closes
+ * where it stands.
  *
  * Inline tokens carry no line map, so each literal is matched in the order
  * the marks *close* — the order their literals stand in the source, a link's
@@ -986,6 +989,10 @@ function recoverInlineLiterals(tokens: readonly Token[], group: TokenGroup, line
                 if (opener !== undefined && carriesInlineLiteral(opener)) {
                     closed.push({ token: opener, after: closingCharacters(opener, child), inNote: noteDepth > 0 });
                 }
+            } else if (carriesInlineLiteral(child)) {
+                // Inline code and an image are one token each: it opens and closes where it stands.
+                opened.push(child);
+                closed.push({ token: child, after: closingCharacters(child, child), inNote: noteDepth > 0 });
             }
         }
     }

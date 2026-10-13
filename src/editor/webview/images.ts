@@ -22,6 +22,7 @@
 import { Plugin } from 'prosemirror-state';
 import { EditorView, NodeView } from 'prosemirror-view';
 import { Node } from 'prosemirror-model';
+import { domAttrsOf } from '../attrs';
 import { schemeOf } from '../paths';
 import { showHint } from './hint';
 import { DROP_LOCK, IMAGE_LOCK, insertLockReason } from './objects';
@@ -132,12 +133,18 @@ export function showImagesIn(container: HTMLElement, sources: ImageSources): voi
 
 /**
  * An image node as the page draws it: the schema's `<img>` (its alt text and
- * title), its written `src` in `data-mep-src` and the address it is loaded
- * from in `src`. The schema's `toDOM` stays the written form — copy and paste
- * carry the file's `src`, never a webview address.
+ * title, and what a `{…}` after it gives — a class, a width — with the literal
+ * in `data-mep-attrs`, read as the schema's `toDOM` reads it: `domAttrsOf`),
+ * its written `src` in `data-mep-src` and the address it is loaded from in
+ * `src`. The schema's `toDOM` stays the written form — copy and paste carry
+ * the file's `src`, never a webview address.
  */
 export class ImageView implements NodeView {
     readonly dom: HTMLImageElement;
+    /** The names the literal put on the element last time: a literal removed or changed takes its own away. */
+    private applied = new Set<string>();
+    /** The classes it put there: ProseMirror's own (`ProseMirror-selectednode`) stay. */
+    private classes: string[] = [];
 
     constructor(private node: Node, private readonly sources: ImageSources) {
         this.dom = document.createElement('img');
@@ -154,7 +161,21 @@ export class ImageView implements NodeView {
     }
 
     private render(): void {
-        const { src, alt, title } = this.node.attrs as { src: string; alt: string | null; title: string | null };
+        const { src, alt, title, literal } = this.node.attrs as { src: string; alt: string | null; title: string | null; literal: string | null };
+        const { class: className, ...given }: Record<string, string> = literal ? { ...domAttrsOf(literal), 'data-mep-attrs': literal } : {};
+        for (const name of this.applied) {
+            if (!(name in given)) {
+                this.dom.removeAttribute(name);
+            }
+        }
+        for (const [name, value] of Object.entries(given)) {
+            this.dom.setAttribute(name, value);
+        }
+        this.applied = new Set(Object.keys(given));
+        this.dom.classList.remove(...this.classes);
+        this.classes = (className ?? '').split(/\s+/).filter(c => c !== '');
+        this.dom.classList.add(...this.classes);
+        // Its own after the literal's, as the engine renders them.
         for (const [name, value] of [['alt', alt], ['title', title]] as const) {
             if (value === null) {
                 this.dom.removeAttribute(name);

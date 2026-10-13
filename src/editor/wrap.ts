@@ -8,6 +8,7 @@
  * a line break in it would end the row — and its serializer writes whole rows
  * (`tableLines` in `serialize.ts`), never through here.
  */
+import { findRightDelimiter, isTextBrace } from '../syntax/attrsLiteral';
 
 /**
  * Private-use characters bracketing text a line break must not fall inside: a
@@ -19,6 +20,7 @@
  * break inside. A note or a sidebar is not held: `markdownItSidenote.ts`
  * finds its closing marker across line breaks, and the corpus wraps inside
  * notes. They exist only between the inline serializer and the wrapper.
+ * A `{…}` written right after an element's closing delimiter is held with it.
  */
 export const HOLD_OPEN = String.fromCharCode(0xe000);
 export const HOLD_CLOSE = String.fromCharCode(0xe001);
@@ -234,6 +236,13 @@ export function hasBreakOpportunity(content: string): boolean {
         const ch = line[i];
         if (ch === '\\') {
             i += 2;
+            continue;
+        }
+        // A `{…}` right after a closing delimiter (`` `x`{.a b} ``, `![a](s){width=1 .c}`,
+        // `*x*{.a b}`) is an element's literal, which the serializer holds with it.
+        const literal = ch === '{' && i > 0 && '`)>]^~*_='.includes(line[i - 1]) && !isTextBrace(line, i) ? findRightDelimiter(line, i + 1) : -1;
+        if (literal > i) {
+            i = literal + 1;
             continue;
         }
         if (ch === '`') {

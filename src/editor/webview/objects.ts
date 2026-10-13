@@ -42,7 +42,7 @@ import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
-import { INLINE_LITERAL_HOLDERS, carrierName, holderOfCarrier } from '../inlineLiterals';
+import { INLINE_LITERAL_HOLDERS, carrierName, holderNamed, holderOfCarrier } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalNotReadBack, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
@@ -553,8 +553,10 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph
     if (INLINE_PLACES.has(place) && hasInnerBrace(value)) {
         return `${value} holds a } inside a value: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
     }
-    if (place === 'link' && (parseAttrsLiteral(value) ?? []).some(([name]) => name === 'href' || name === 'title')) {
-        return `${value} sets the link's href or title, which the link writes in its (…): give it a class, an id or another attribute.`;
+    const holder = holderNamed(place);
+    if (holder !== undefined && holder.own.length > 0 && (parseAttrsLiteral(value) ?? []).some(([name]) => holder.own.includes(name))) {
+        const own = holder.own.length === 1 ? holder.own[0] : `${holder.own.slice(0, -1).join(', ')} or ${holder.own[holder.own.length - 1]}`;
+        return `${value} sets the ${holder.noun}'s ${own}, which the ${holder.noun} writes in its (…): give it a class, an id or another attribute.`;
     }
     if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(value)) {
         return `${value} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
@@ -620,55 +622,90 @@ export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, c
  */
 const INLINE_PLACES: ReadonlySet<string> = new Set(INLINE_LITERAL_HOLDERS.map(h => h.holder));
 
-/** The place (`LiteralPlace`) of the literal a mark object carries: its holder's key (`holderOfCarrier`), a span's `span`. */
-export function markLiteralPlace(object: Extract<EditorObject, { mark: Mark }>): LiteralPlace {
-    return holderOfCarrier(object.mark.type.name)?.holder ?? object.mark.type.name;
+/**
+ * An object that carries an inline literal (`inlineLiterals.ts`): a mark's run
+ * — a link, a span, a styled run — or an image, a node.
+ */
+export type LiteralObject = Extract<EditorObject, { mark: Mark }> | { kind: 'image'; from: number; to: number; node: Node };
+
+/** `object` as one that carries an inline literal (`LiteralObject`), or `null`: a mark's run, or an image. */
+export function literalObjectOf(object: EditorObject | null): LiteralObject | null {
+    if (object === null) {
+        return null;
+    }
+    return isMarkObject(object) ? object : object.kind === 'image' ? { kind: 'image', from: object.from, to: object.to, node: object.node } : null;
+}
+
+/** The mark or the node of `object` that carries its literal. */
+function carrierOf(object: LiteralObject): Mark | Node {
+    return 'mark' in object ? object.mark : object.node;
+}
+
+/** The literal `object` carries now, or `null`. */
+export function literalOfObject(object: LiteralObject): string | null {
+    const literal = carrierOf(object).attrs.literal;
+    return typeof literal === 'string' ? literal : null;
+}
+
+/** The place (`LiteralPlace`) of the literal an object carries: its holder's key (`holderOfCarrier`), a span's `span`, an image's `image`. */
+export function inlineLiteralPlace(object: LiteralObject): LiteralPlace {
+    const name = carrierOf(object).type.name;
+    return holderOfCarrier(name)?.holder ?? name;
 }
 
 /**
- * The literal typed into a link's or a styled run's field as the mark will
- * carry it: `null` for an empty field or `{}`, which remove it, the literal
- * trimmed otherwise.
+ * The literal typed into a link's, a styled run's or an image's field as its
+ * carrier will hold it: `null` for an empty field or `{}`, which remove it,
+ * the literal trimmed otherwise.
  */
 function typedMarkLiteral(literal: string): string | null {
     const value = literal.trim();
     return value === '' || value === '{}' ? null : value;
 }
 
-/** `object`'s run given `literal` (`null`: none) instead, every other attribute of its mark kept. */
-function markLiteralChange(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string | null): Transaction {
+/**
+ * `object` given `literal` (`null`: none) instead, every other attribute of
+ * its carrier kept: a mark's run its mark again, an image its node, still
+ * selected when it was.
+ */
+function literalChange(state: EditorState, object: LiteralObject, literal: string | null): Transaction {
+    if (!('mark' in object)) {
+        const tr = state.tr.setNodeMarkup(object.from, undefined, { ...object.node.attrs, literal });
+        return state.selection instanceof NodeSelection && state.selection.from === object.from ? tr.setSelection(NodeSelection.create(tr.doc, object.from)) : tr;
+    }
     const mark = object.mark.type.create({ ...object.mark.attrs, literal });
     return state.tr.removeMark(object.from, object.to, object.mark).addMark(object.from, object.to, mark);
 }
 
 /**
- * Why the literal of a link or of emphasis with one (`styled`) cannot be
- * changed to `literal`, or `null`: the literal alone where it is written
- * (`literalRefusal`, at `markLiteralPlace`), then read with its block
- * (`literalsReadBackRefusal`), then the note around it (`noteRefusal`). An
- * empty field or `{}` removes it, which only its block and a note can refuse.
+ * Why the literal of a link, of emphasis or code with one (`styled`) or of
+ * an image cannot be changed to `literal`, or `null`: the literal alone where
+ * it is written (`literalRefusal`, at `inlineLiteralPlace`), then read with
+ * its block (`literalsReadBackRefusal`), then the note around it
+ * (`noteRefusal`). An empty field or `{}` removes it, which only its block and
+ * a note can refuse.
  */
-export function changeInlineLiteralRefusal(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string): string | null {
+export function changeInlineLiteralRefusal(state: EditorState, object: LiteralObject, literal: string): string | null {
     const value = typedMarkLiteral(literal);
-    const alone = value === null ? null : literalRefusal(value, markLiteralPlace(object));
+    const alone = value === null ? null : literalRefusal(value, inlineLiteralPlace(object));
     if (alone !== null) {
         return alone;
     }
-    const tr = markLiteralChange(state, object, value);
-    return literalsReadBackRefusal(tr.doc, object.from, state.doc, object.mark.attrs.literal as string | null) ?? noteRefusal(tr);
+    const tr = literalChange(state, object, value);
+    return literalsReadBackRefusal(tr.doc, object.from, state.doc, literalOfObject(object)) ?? noteRefusal(tr);
 }
 
 /**
- * The link's or the styled run's literal set to `literal` — removed for an
- * empty field or `{}` — in one transaction. `null` when it is unchanged or
- * refused (`changeInlineLiteralRefusal`).
+ * The object's literal set to `literal` — removed for an empty field or `{}` —
+ * in one transaction. `null` when it is unchanged or refused
+ * (`changeInlineLiteralRefusal`).
  */
-export function changeInlineLiteralTransaction(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string): Transaction | null {
+export function changeInlineLiteralTransaction(state: EditorState, object: LiteralObject, literal: string): Transaction | null {
     const value = typedMarkLiteral(literal);
-    if (value === object.mark.attrs.literal || changeInlineLiteralRefusal(state, object, literal) !== null) {
+    if (value === literalOfObject(object) || changeInlineLiteralRefusal(state, object, literal) !== null) {
         return null;
     }
-    return markLiteralChange(state, object, value).scrollIntoView();
+    return literalChange(state, object, value).scrollIntoView();
 }
 
 /** Why `literal` cannot be given to the selection as an attribute span, or `null`: the span's literal alone (`literalRefusal`), then read with its block (`literalsReadBackRefusal`). */

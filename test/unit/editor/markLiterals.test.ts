@@ -1,13 +1,14 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import { Mark, Node } from 'prosemirror-model';
-import { EditorState, TextSelection } from 'prosemirror-state';
+import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, fidelityPlugin, groupSourceBlocks, parseDocument, serializeDocument, splitLines } from '../../../src/editor';
 import { definitionOf } from '../../../src/editor/inlineEngine';
 import { editorSchema } from '../../../src/editor/schema';
-import { literalNotReadBack } from '../../../src/editor/serialize';
+import { literalNotReadBack, unwritableInTable } from '../../../src/editor/serialize';
 import {
-    EditorObject, changeLinkTransaction, changeInlineLiteralRefusal, changeInlineLiteralTransaction, literalRefusal, objectAtSelection,
+    EditorObject, LiteralObject, changeLinkTransaction, changeInlineLiteralRefusal, changeInlineLiteralTransaction, editImageTransaction, literalObjectOf,
+    literalRefusal, objectAtSelection,
 } from '../../../src/editor/webview/objects';
 import { toggleMarkup } from '../../../src/editor/webview/toolbar/commands';
 import { hostEngine, readText, repoRoot, topChildren, touched } from './helpers';
@@ -27,10 +28,13 @@ function byRule(parsed: ParsedDocument): string {
     return write(parsed, parsed.doc.type.create(null, children));
 }
 
-/** Each mark carrying a literal, by its name and literal, in document order: one entry per text node. */
+/** Each mark or image carrying a literal, by its name and literal, in document order: one entry per text node or image. */
 function literals(doc: Node): string[] {
     const out: string[] = [];
     doc.descendants(node => {
+        if (node.type.name === 'image' && typeof node.attrs.literal === 'string') {
+            out.push(`image${node.attrs.literal as string}`);
+        }
         for (const mark of node.marks) {
             if (typeof mark.attrs.literal === 'string') {
                 out.push(`${mark.type.name}${mark.attrs.literal as string}`);
@@ -130,8 +134,6 @@ suite('Editor mark literals: emphasis and links with {…} after them are rich t
     });
 
     test('a literal the editor cannot keep leaves the block a source block, with its reason', () => {
-        assert.deepStrictEqual(reasons('A `code`{.c} b.\n'), ['attributes on code_inline']);
-        assert.deepStrictEqual(reasons('A ![i](x.png){.c} b.\n'), ['attributes on image']);
         assert.deepStrictEqual(reasons('A _b_{title="a}b"} c.\n'), ['emphasis whose literal holds a quoted }']);
         assert.deepStrictEqual(reasons('Text ++ref|a _b_{title="x|y"} body++ end.\n'), ['emphasis in a note whose literal holds a note marker']);
     });
@@ -274,5 +276,252 @@ suite('Editor mark literals: edits keep the literal with its mark', () => {
         styled = styled.apply(changeInlineLiteralTransaction(styled, again, '') as never);
         assert.strictEqual(text(styled), 'A _✓_ b.\n');
         assert.strictEqual(objectAtSelection(styled), null, 'emphasis without a literal is formatting, not an object');
+    });
+});
+
+/** The image node of `state` (the first), selected as a whole, as a click selects it. */
+function selectImage(state: EditorState): EditorState {
+    let at = -1;
+    state.doc.descendants((node, pos) => {
+        if (at < 0 && node.type.name === 'image') {
+            at = pos;
+        }
+        return at < 0;
+    });
+    assert.ok(at >= 0, 'no image in the document');
+    return state.apply(state.tr.setSelection(NodeSelection.create(state.doc, at)));
+}
+
+suite('Editor inline literals: inline code, an image, superscript, subscript and a key keep their {…}', () => {
+    const md = hostEngine();
+    const first = (source: string) => topChildren(parseDocument(md, source).doc)[0];
+    const reasons = (source: string) => groupSourceBlocks(md.parse(source, {}), splitLines(source), definitionOf(md)).blocks.map(b => b.reason);
+
+    for (const [source, expected] of [
+        ['A `x`{.c} b.\n', ['code{.c}']],
+        ['A ``x`y``{.c} b.\n', ['code{.c}']],
+        ['A `x`{title=t} b.\n', ['code{title=t}']],
+        ['Run `--flag`{.k} now.\n', ['code{.k}']],
+        ['A ![a](s.png){.c} b.\n', ['image{.c}']],
+        ['![a](s.png){.c}\n', ['image{.c}']],
+        ['A ![a](s.png "t"){.c} b.\n', ['image{.c}']],
+        ['![Screenshot](img.png){width=400}\n', ['image{width=400}']],
+        ['A ![a](v.mp4){.c} b.\n', ['image{.c}']],
+        ['x^2^{.c} b.\n', ['sup{.c}']],
+        ['H~2~{.f}O b.\n', ['sub{.f}']],
+        ['Press [[Ctrl]]{.key} now.\n', ['kbd{.key}']],
+        ['![a](s.png){.c} {.d}\n', ['image{.c}']],
+        ['- ![a](s.png){.c} {.unused}\n', ['image{.c}']],
+        ['A *`x`{.c}*{.d} b.\n', ['em{.d}', 'code{.c}']],
+        ['A ^a^{.c}^b^{.d} c.\n', ['sup{.c}', 'sup{.d}']],
+        ['A ~x~{.c}~~y~~{.d} b.\n', ['sub{.c}', 'strike{.d}']],
+        ['A [[a]]{.c}[[b]] b.\n', ['kbd{.c}']],
+        ['A [[a *b*]]{.c} b.\n', ['kbd{.c}']],
+        ['A [[[a]]{.c}](u) b.\n', ['kbd{.c}']],
+        ['A `x`{.c}`y`{.d} b.\n', ['code{.c}', 'code{.d}']],
+        // The first `{.c}` follows a backtick but is the code's text; recovery goes on past the one it took.
+        ['A `{.c}`{.c} and `y`{.d} b.\n', ['code{.c}', 'code{.d}']],
+        ['[![a](s.png){.c}](u){.d}\n', ['image{.c}', 'link{.d}']],
+        ['Text ++ref|a `x`{.c} body++ end.\n', ['code{.c}']],
+        ['| a | b |\n| - | - |\n| `x`{.c} | ![a](s.png){.d} |\n', ['code{.c}', 'image{.d}']],
+    ] as const) {
+        test(`${source.trim()}: the literal is the element's, verbatim; untouched and written by rule as it was`, () => {
+            const parsed = parseDocument(md, source);
+            const node = topChildren(parsed.doc)[0];
+            assert.notStrictEqual(node.type.name, 'raw_block', reasons(source).join());
+            assert.deepStrictEqual([...new Set(literals(node))], expected);
+            assert.strictEqual(write(parsed), source);
+            // A table written by rule is tidied: its literals stand where they stood, read back the same.
+            const once = byRule(parsed);
+            if (node.type.name !== 'table') {
+                assert.strictEqual(once, source);
+            }
+            assert.deepStrictEqual(literals(first(once)), literals(node), once);
+            assert.strictEqual(literalNotReadBack(touched(node)), null);
+        });
+    }
+
+    test('a line holding a long image with a literal is no evidence of the paragraph\'s width: the literal is held with it', () => {
+        const source = 'Some words here that wrap at forty\n![a long alt text](images/a-long-path.png){.hero width=300}\nand more words after the image here,\nand a last line of words to close it.\n';
+        assert.strictEqual(byRule(parseDocument(md, source)), source);
+    });
+
+    test('a second literal the plugin merged in, and a reference image, are written in the forms that read the same', () => {
+        assert.strictEqual(byRule(parseDocument(md, 'A `x`{.c}{.d} b.\n')), 'A `x`{.c .d} b.\n');
+        assert.strictEqual(byRule(parseDocument(md, '![a][r]{.c} b.\n\n[r]: s.png\n')), '![a](s.png){.c} b.\n\n[r]: s.png\n');
+    });
+
+    test('an image\'s src, alt and title are its own: a {…} setting them is no literal, as a link\'s href', () => {
+        assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){alt=b} b.\n')), 'A ![a](s.png) b.\n', 'the preview takes the alt from the text');
+        assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){title=t} b.\n')), 'A ![a](s.png "t") b.\n');
+        for (const literal of ['{src=x.png}', '{alt=x}', '{title=x}', '{.c title=x}']) {
+            assert.ok(literalRefusal(literal, 'image')?.includes('src, alt or title'), literal);
+        }
+        assert.strictEqual(literalRefusal('{.hero width=300}', 'image'), null);
+    });
+
+    test('what stays a source block: a quoted } in each one\'s literal, a note marker in a note; a wiki embed\'s {…} is text', () => {
+        assert.deepStrictEqual(reasons('A `x`{title="a}b"} c.\n'), ['inline code whose literal holds a quoted }']);
+        assert.deepStrictEqual(reasons('A ![a](s.png){.c data-x="a}b"} c.\n'), ['image whose literal holds a quoted }']);
+        assert.deepStrictEqual(reasons('A ^x^{title="a}b"} c.\n'), ['superscript whose literal holds a quoted }']);
+        assert.deepStrictEqual(reasons('A ~x~{title="a}b"} c.\n'), ['subscript whose literal holds a quoted }']);
+        assert.deepStrictEqual(reasons('A [[x]]{title="a}b"} c.\n'), ['key whose literal holds a quoted }']);
+        assert.deepStrictEqual(reasons('Text ++ref|a `x`{title="x|y"} body++ end.\n'), ['inline code in a note whose literal holds a note marker']);
+        const embed = first('A ![[e.png]]{.c} b.\n');
+        assert.strictEqual(embed.type.name, 'paragraph');
+        assert.ok(embed.textContent.includes('{.c} b.'));
+        assert.strictEqual(byRule(parseDocument(md, 'A ![[e.png]]{.c} b.\n')), 'A ![[e.png]]{.c} b.\n');
+    });
+
+    test('an emoji right after a literal is placed and kept', () => {
+        for (const source of ['A `x`{.c}:smile: b.\n', 'A ![a](s.png){.c} :) b.\n']) {
+            const p = first(source);
+            assert.strictEqual(p.type.name, 'paragraph', reasons(source).join());
+            let emoji = 0;
+            p.descendants(n => {
+                emoji += n.type.name === 'emoji' ? 1 : 0;
+            });
+            assert.strictEqual(emoji, 1, source);
+            assert.strictEqual(byRule(parseDocument(md, source)), source);
+        }
+    });
+
+    test('the elements carry the attributes the engine renders: code.c, sup, sub, kbd, img with a width', () => {
+        for (const [source, tag] of [['`x`{.c #i}', 'code'], ['^x^{.c}', 'sup'], ['~x~{.c}', 'sub'], ['[[x]]{.c data-k=1}', 'kbd']] as const) {
+            const html = md.renderInline(source);
+            const mark = (first(`${source}\n`).firstChild as Node).marks[0];
+            const spec = mark.type.spec.toDOM?.(mark, true) as unknown as [string, Record<string, string>];
+            assert.strictEqual(spec[0], tag, source);
+            assert.deepStrictEqual(Object.entries(spec[1]).filter(([n]) => !n.startsWith('data-mep-')), attrsOfFirst(html, tag), source);
+        }
+        const source = '![pic](p.png){.hero width=300}';
+        const image = first(`${source}\n`).firstChild as Node;
+        const spec = image.type.spec.toDOM?.(image) as unknown as [string, Record<string, string | null>];
+        const drawn = Object.entries(spec[1]).filter(([n, v]) => !n.startsWith('data-mep-') && v !== null);
+        assert.deepStrictEqual(drawn, attrsOfFirst(md.renderInline(source), 'img'));
+    });
+});
+
+suite('Editor inline literals: edits keep the literal of code, an image, superscript, subscript and a key', () => {
+    test('typing inside keeps the literal', () => {
+        for (const [source, needle, written] of [
+            ['A `ab`{.c} z.\n', 'ab', 'A `axb`{.c} z.\n'],
+            ['A ^ab^{.c} z.\n', 'ab', 'A ^axb^{.c} z.\n'],
+            ['A ~ab~{.c} z.\n', 'ab', 'A ~axb~{.c} z.\n'],
+            ['A [[ab]]{.c} z.\n', 'ab', 'A [[axb]]{.c} z.\n'],
+        ] as const) {
+            let state = select(stateOf(source), needle, 1);
+            state = state.apply(state.tr.insertText('x'));
+            assert.strictEqual(text(state), written, source);
+        }
+    });
+
+    test('a text {…} typed right after one, with a literal or without, is escaped and reads back as shown', () => {
+        const cases: [string, string, string][] = [
+            ['x `a` z\n', 'a', '{.y}'],
+            ['x `a`{.c} z\n', 'a', '{.y}'],
+            ['x ^a^ z\n', 'a', '{.y}'],
+            ['x ^a^{.c} z\n', 'a', '{.y}'],
+            ['x ~a~{.c} z\n', 'a', '{.y}'],
+            ['x [[a]] z\n', 'a', '{.y}'],
+            ['x [[a]]{.c} z\n', 'a', '{.y}'],
+        ];
+        for (const [source, needle, inserted] of cases) {
+            const state = insertAfter(stateOf(source), needle, inserted);
+            const written = text(state);
+            assert.ok(written.includes('\\{.y\\}'), `${source} -> ${written}`);
+            assert.strictEqual(literalNotReadBack(state.doc.child(0)), null, source);
+            const back = parseDocument(hostEngine(), written, {}).doc;
+            assert.strictEqual(back.textContent, state.doc.textContent, `${written} reads back as shown`);
+            assert.deepStrictEqual(literals(back), literals(state.doc), written);
+        }
+        for (const source of ['x ![a](s.png) z\n', 'x ![a](s.png){.c} z\n']) {
+            let state = stateOf(source);
+            let after = -1;
+            state.doc.descendants((n, pos) => {
+                if (after < 0 && n.type.name === 'image') {
+                    after = pos + n.nodeSize;
+                }
+                return after < 0;
+            });
+            state = state.apply(state.tr.insert(after, editorSchema.text('{.y}')));
+            const written = text(state);
+            assert.ok(written.includes('\\{.y\\}'), `${source} -> ${written}`);
+            assert.strictEqual(literalNotReadBack(state.doc.child(0)), null, source);
+            assert.deepStrictEqual(literals(parseDocument(hostEngine(), written, {}).doc), literals(state.doc), written);
+        }
+    });
+
+    test('code, superscript or a key extended over more text keeps the literal; removed from part, the rest keeps it', () => {
+        for (const [mark, source, extended, removed] of [
+            [editorSchema.marks.code, 'A `word`{.c} more b.\n', 'A `word more`{.c} b.\n', 'A `wo`{.c}rd more b.\n'],
+            [editorSchema.marks.sup, 'A ^word^{.c} more b.\n', 'A ^word more^{.c} b.\n', 'A ^wo^{.c}rd more b.\n'],
+            [editorSchema.marks.kbd, 'A [[word]]{.c} more b.\n', 'A [[word more]]{.c} b.\n', 'A [[wo]]{.c}rd more b.\n'],
+        ] as const) {
+            let more = select(stateOf(source), 'word', 0, 9);
+            toggleMarkup(mark, null)(more, tr => {
+                more = more.apply(tr);
+            });
+            assert.strictEqual(text(more), extended, source);
+            let part = select(stateOf(source), 'word', 2, 4);
+            toggleMarkup(mark, null)(part, tr => {
+                part = part.apply(tr);
+            });
+            assert.strictEqual(text(part), removed, source);
+        }
+    });
+
+    test('Edit image… keeps the literal', () => {
+        let state = selectImage(stateOf('A ![a](s.png){.hero} b.\n'));
+        state = state.apply(editImageTransaction(state, state.selection.from, 'b', 't.png') as never);
+        assert.strictEqual(text(state), 'A ![b](t.png){.hero} b.\n');
+    });
+
+    test('Attributes… on an image: set, change, remove; its src, alt and title refused', () => {
+        let state = selectImage(stateOf('An ![pic](p.png) here.\n'));
+        let image = literalObjectOf(objectAtSelection(state)) as LiteralObject;
+        assert.strictEqual(image.kind, 'image');
+        for (const literal of ['{src=x}', '{alt=x}', '{title=x}']) {
+            assert.ok(changeInlineLiteralRefusal(state, image, literal) !== null, literal);
+            assert.strictEqual(changeInlineLiteralTransaction(state, image, literal), null, literal);
+        }
+        state = state.apply(changeInlineLiteralTransaction(state, image, '{.hero width=300}') as never);
+        assert.strictEqual(text(state), 'An ![pic](p.png){.hero width=300} here.\n');
+        assert.ok(state.selection instanceof NodeSelection, 'the image stays selected');
+        image = literalObjectOf(objectAtSelection(state)) as LiteralObject;
+        state = state.apply(changeInlineLiteralTransaction(state, image, '{.hero}') as never);
+        assert.strictEqual(text(state), 'An ![pic](p.png){.hero} here.\n');
+        image = literalObjectOf(objectAtSelection(state)) as LiteralObject;
+        state = state.apply(changeInlineLiteralTransaction(state, image, '{}') as never);
+        assert.strictEqual(text(state), 'An ![pic](p.png) here.\n');
+    });
+
+    test('a run of code, superscript, subscript or a key carrying a literal is a styled object; without one it is formatting', () => {
+        for (const [source, needle] of [['A `ab`{.c} z.\n', 'ab'], ['A ^ab^{.c} z.\n', 'ab'], ['A ~ab~{.c} z.\n', 'ab'], ['A [[ab]]{.c} z.\n', 'ab']] as const) {
+            const state = select(stateOf(source), needle, 1);
+            const object = objectAtSelection(state) as Extract<EditorObject, { kind: 'styled' }>;
+            assert.strictEqual(object?.kind, 'styled', source);
+            const set = state.apply(changeInlineLiteralTransaction(state, object, '{.d}') as never);
+            assert.strictEqual(text(set), source.replace('{.c}', '{.d}'));
+            assert.strictEqual(objectAtSelection(select(stateOf(source.replace('{.c}', '')), needle, 1)), null, source);
+        }
+    });
+
+    test('a literal a cell or a note cannot hold is refused: a | in a cell, a note marker in a note', () => {
+        const cell = select(stateOf('| a | b |\n| - | - |\n| `x`{.c} | ![i](s.png) |\n'), 'x', 1);
+        const code = objectAtSelection(cell) as Extract<EditorObject, { kind: 'styled' }>;
+        assert.strictEqual(code.kind, 'styled');
+        assert.strictEqual(changeInlineLiteralTransaction(cell, code, '{data-x="a|b"}'), null);
+        // The table's own filter names the element, whatever made it.
+        const piped = cell.tr.addMark(code.from, code.to, editorSchema.marks.code.create({ literal: '{data-x="a|b"}' }));
+        assert.ok(unwritableInTable(piped.doc)?.startsWith('Inline code in a table cell cannot hold {data-x="a|b"}'), unwritableInTable(piped.doc) ?? 'none');
+        const image = literalObjectOf(objectAtSelection(selectImage(cell))) as LiteralObject;
+        const pipedImage = cell.tr.setNodeMarkup(image.from, undefined, { ...(image as { node: Node }).node.attrs, literal: '{data-x="a|b"}' });
+        assert.ok(unwritableInTable(pipedImage.doc)?.startsWith('An image in a table cell cannot hold'), unwritableInTable(pipedImage.doc) ?? 'none');
+
+        const note = select(stateOf('Text ++ref|a `q`{.c} body++ end.\n'), 'q', 1);
+        const inNote = objectAtSelection(note) as Extract<EditorObject, { kind: 'styled' }>;
+        assert.strictEqual(inNote.kind, 'styled');
+        assert.ok(changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}')?.startsWith('Inline code in a note cannot hold'), changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}') ?? 'none');
     });
 });

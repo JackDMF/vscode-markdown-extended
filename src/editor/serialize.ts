@@ -534,18 +534,28 @@ function backtickFence(text: string): { open: string; close: string } {
 }
 
 /**
- * The `{…}` literal a mark carries (`literal`: an attribute span's, emphasis',
- * strikethrough's, a highlight's, a link's), or `null` for none or a mark that
- * has no such attribute.
+ * The `{…}` literal a mark or an image carries (`literal`: an attribute
+ * span's, emphasis', a link's, inline code's, an image's … — the holders of
+ * `inlineLiterals.ts`), or `null` for none or a mark that has no such attribute.
  */
-export function markLiteralOf(mark: Mark): string | null {
-    const literal = (mark.attrs as { literal?: unknown }).literal;
+export function markLiteralOf(carrier: Mark | Node): string | null {
+    const literal = (carrier.attrs as { literal?: unknown }).literal;
     return typeof literal === 'string' ? literal : null;
+}
+
+/** What follows a carrier's closing delimiter in the file: its literal, or nothing. */
+function literalSuffix(carrier: Mark | Node): string {
+    return markLiteralOf(carrier) ?? '';
 }
 
 /** The token markdown-it-attrs gives each mark's literal to, by the mark's name (`inlineLiterals.ts`). */
 const MARK_LITERAL_TOKENS: Readonly<Record<string, string>> = Object.fromEntries(
     INLINE_LITERAL_HOLDERS.flatMap(h => ('mark' in h.carrier ? [[h.carrier.mark, h.token]] : [])),
+);
+
+/** The token markdown-it-attrs gives each node's literal to, by the node's name: an image's (`inlineLiterals.ts`). One per node. */
+const NODE_LITERAL_TOKENS: Readonly<Record<string, string>> = Object.fromEntries(
+    INLINE_LITERAL_HOLDERS.flatMap(h => ('node' in h.carrier ? [[h.carrier.node, h.token]] : [])),
 );
 
 /** The tokens markdown-it-attrs gives the literal of an inline holder to (`inlineLiterals.ts`). */
@@ -649,6 +659,7 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // A key right after a `!` would be read as a wiki embed's `![[…]]`
     // where the engine reads embeds (`InlineEngineDefinition.wikiEmbeds`), so
     // there that `!` is escaped, as a link's is.
+    // A literal follows the closing delimiter inside the held run (`` `x`{.a} ``, `^x^{.a}`, `[[x]]{.a}`).
     kbd: {
         open(state) {
             if (currentReadsWikiEmbeds()) {
@@ -656,14 +667,14 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
             }
             return HOLD_OPEN + KBD_MARKERS.open;
         },
-        close: KBD_MARKERS.close + HOLD_CLOSE,
+        close: (_state, mark) => KBD_MARKERS.close + literalSuffix(mark) + HOLD_CLOSE,
         mixable: true,
     },
-    sup: { open: HOLD_OPEN + INLINE_MARKERS.superscript, close: INLINE_MARKERS.superscript + HOLD_CLOSE },
-    sub: { open: HOLD_OPEN + INLINE_MARKERS.subscript, close: INLINE_MARKERS.subscript + HOLD_CLOSE },
+    sup: { open: HOLD_OPEN + INLINE_MARKERS.superscript, close: (_state, mark) => INLINE_MARKERS.superscript + literalSuffix(mark) + HOLD_CLOSE },
+    sub: { open: HOLD_OPEN + INLINE_MARKERS.subscript, close: (_state, mark) => INLINE_MARKERS.subscript + literalSuffix(mark) + HOLD_CLOSE },
     code: {
         open: (_state, _mark, parent, index) => HOLD_OPEN + backtickFence(parent.child(index).text ?? '').open,
-        close: (_state, _mark, parent, index) => backtickFence(parent.child(index - 1).text ?? '').close + HOLD_CLOSE,
+        close: (_state, mark, parent, index) => backtickFence(parent.child(index - 1).text ?? '').close + literalSuffix(mark) + HOLD_CLOSE,
         escape: false,
     },
 };
@@ -1157,7 +1168,8 @@ const inlineNodes: NodeSerializers = {
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
         const st = internals(state);
-        state.write(HOLD_OPEN + '![' + partText(st.notePart, state.esc(alt ?? '')) + '](' + target(st, src, title) + ')' + HOLD_CLOSE);
+        // A literal follows the `)` inside the hold, as after a link (`![a](s){.a}`).
+        state.write(HOLD_OPEN + '![' + partText(st.notePart, state.esc(alt ?? '')) + '](' + target(st, src, title) + ')' + literalSuffix(node) + HOLD_CLOSE);
     },
     hard_break(state, node, parent, index) {
         // As prosemirror-markdown does: a trailing hard break has no line to break to.
@@ -1233,6 +1245,9 @@ function noteUnwritable(note: Node): string | null {
         const terminator = part.type.name === 'note_ref' ? REFERENCE_TERMINATOR : undefined;
         let reason: string | null = null;
         part.forEach(child => {
+            if (reason === null && holderOfCarrier(child.type.name) !== undefined && NOTE_SYNTAX_CHARS.test(markLiteralOf(child) ?? '')) {
+                reason = `${literalSubject(child.type.name)} in a note cannot hold ${markLiteralOf(child) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+            }
             if (reason !== null || !child.isText) {
                 return;
             }
@@ -2230,7 +2245,7 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
             } else if (child.isText && (child.text ?? '').includes('|') && child.marks.some(m => m.type.name === 'code')) {
                 reason = 'Inline code in a table cell cannot hold "|": the table plugin splits the row at it, and nothing escapes it there.';
             } else {
-                const span = child.marks.find(m => /[|`]/.test(markLiteralOf(m) ?? ''));
+                const span = [child, ...child.marks].find(c => holderOfCarrier(c.type.name) !== undefined && /[|`]/.test(markLiteralOf(c) ?? ''));
                 if (span !== undefined) {
                     reason = `${literalSubject(span.type.name)} in a table cell cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
                 }
@@ -2572,6 +2587,10 @@ function markLiteralsOf(node: Node): Map<string, (string | null)[]> {
     const out = new Map<string, (string | null)[]>();
     const open = new Map<string, Mark>();
     node.forEach(child => {
+        const own = NODE_LITERAL_TOKENS[child.type.name];
+        if (own !== undefined) {
+            out.set(own, [...(out.get(own) ?? []), markLiteralOf(child)]);
+        }
         for (const [name, token] of Object.entries(MARK_LITERAL_TOKENS)) {
             const mark = child.marks.find(m => m.type.name === name);
             const before = open.get(name);
@@ -2817,17 +2836,21 @@ function withBlockSuffix(node: Node, text: string): string {
 
 /**
  * Every run of a mark that can carry a literal in `node`'s inline content
- * (`MARK_LITERAL_TOKENS`: an attribute span, emphasis, strikethrough, a
- * highlight, a link), notes' included, in document order — with its literal,
- * `null` for none, and the token it is read back as. One per run of one mark,
- * so the instances of one kind stand in the order the parser opens their
- * tokens in.
+ * (`MARK_LITERAL_TOKENS`: an attribute span, emphasis, a link, inline code …)
+ * and every image (`NODE_LITERAL_TOKENS`), notes' included, in document order
+ * — with its literal, `null` for none, and the token it is read back as. One
+ * per run of one mark and one per image, so the instances of one kind stand
+ * in the order the parser opens their tokens in.
  */
 function markInstancesIn(node: Node): { token: string; literal: string | null }[] {
     const out: { token: string; literal: string | null }[] = [];
     const walk = (parent: Node) => {
         const open = new Map<string, Mark>();
         parent.forEach(child => {
+            const own = NODE_LITERAL_TOKENS[child.type.name];
+            if (own !== undefined) {
+                out.push({ token: own, literal: markLiteralOf(child) });
+            }
             for (const [name, token] of Object.entries(MARK_LITERAL_TOKENS)) {
                 const mark = child.marks.find(m => m.type.name === name);
                 const before = open.get(name);
