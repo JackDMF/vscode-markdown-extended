@@ -33,7 +33,7 @@ import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { CHROME_MOVED, LOCK_ROOM_PROPERTY, firstFree } from '../clearance';
 import { showHint } from '../hint';
-import { FieldStep, InlineField, fieldHeading, fieldKeys } from '../inlineField';
+import { FieldStep, InlineField, fieldAside, fieldHeading, refusedStep } from '../inlineField';
 import { chevronNode, lensLabelNodes } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { FocusPlace, RowScope, focusPlace, placeOfElement, rowLock } from '../focusPlace';
@@ -1167,22 +1167,23 @@ class ToolbarView implements PluginView {
         if (spanLockReason(view.state) !== null) {
             return;
         }
-        this.openFieldBar('span', 'Span attributes', 'span-attributes', {
+        const step: FieldStep = {
             value: SPAN_FIELD_PREFILL.value,
             caret: SPAN_FIELD_PREFILL.caret,
             label: 'Attributes',
             keys: ATTRIBUTES_FIELD_KEYS,
             commit: value => {
-                view.focus();
+                // Asked before the focus goes back: a refusal keeps the field open with what was typed.
                 const refusal = spanLiteralRefusal(view.state, value);
                 const tr = refusal === null ? applySpanTransaction(view.state, value) : null;
                 if (tr === null) {
-                    showHint(view, refusal ?? 'These attributes cannot be given to this text here.', 'refusal');
-                    return;
+                    return refusedStep(step, value, refusal ?? 'These attributes cannot be given to this text here.');
                 }
+                view.focus();
                 view.dispatch(tr);
             },
-        });
+        };
+        this.openFieldBar('span', 'Span attributes', 'span-attributes', step);
     }
 
     /**
@@ -1348,7 +1349,7 @@ class ToolbarView implements PluginView {
             });
             field.el.dataset.verb = verb;
             label.textContent = fieldHeading(barLabel, step.label);
-            bar.replaceChildren(label, field.el, ...(step.keys ? [fieldKeys(step.keys)] : []));
+            bar.replaceChildren(label, field.el, ...fieldAside(step));
             this.fieldBar = { bar, field };
             return field;
         };

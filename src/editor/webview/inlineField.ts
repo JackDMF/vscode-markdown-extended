@@ -33,7 +33,9 @@ export type Completer = (query: string) => Promise<readonly Completion[]>;
  * One value a verb or an action asks for, and what follows it: `commit`
  * returns the next step to ask — a new link's text, then its address — or
  * nothing when the last one is in. The bar that shows the field shows the next
- * one in its place.
+ * one in its place. A commit that refuses what was typed returns the same step
+ * again with what was typed and why (`refusedStep`): the field stays open, the
+ * reason beside it, where the eye is.
  */
 export interface FieldStep {
     value: string;
@@ -43,7 +45,14 @@ export interface FieldStep {
     complete?: Completer;
     /** The keys and the syntax the field takes, drawn at its right in the bar (`↵ set · Esc cancel · …`). */
     keys?: string;
+    /** Why what was typed was refused: drawn beside the field in the keys' place, and announced (`role="alert"`), until the next commit. */
+    refusal?: string;
     commit(value: string): FieldStep | void;
+}
+
+/** The same step shown again with what was typed and why it was refused: a commit's answer to a refusal. The value is selected, so a retype replaces it. */
+export function refusedStep(step: FieldStep, typed: string, refusal: string): FieldStep {
+    return { ...step, value: typed, caret: undefined, refusal };
 }
 
 export interface InlineFieldOptions {
@@ -86,6 +95,22 @@ export function fieldKeys(text: string): HTMLElement {
     el.setAttribute('aria-hidden', 'true');
     el.textContent = text;
     return el;
+}
+
+/**
+ * What a bar draws at a field's right, the one rule for every bar that shows
+ * a field: the reason a commit was refused (`FieldStep.refusal`), announced,
+ * else the keys line (`fieldKeys`), else nothing.
+ */
+export function fieldAside(step: { keys?: string; refusal?: string }): HTMLElement[] {
+    if (step.refusal) {
+        const el = document.createElement('span');
+        el.className = 'mep-field-refusal';
+        el.setAttribute('role', 'alert');
+        el.textContent = step.refusal;
+        return [el];
+    }
+    return step.keys ? [fieldKeys(step.keys)] : [];
 }
 
 /** The completion list's footer: its keys, the glyphs VS Code's own keybinding labels use. */

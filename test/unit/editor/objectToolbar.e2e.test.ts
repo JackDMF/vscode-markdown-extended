@@ -250,6 +250,31 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'See [the spec](other.md) here.\n');
     });
 
+    test('a link\'s Attributes… refused for {title=x}: the field stays with what was typed and the reason beside it', async function () {
+        this.timeout(15000);
+        await showDocument('See [the spec](spec.md) here.\n', 'See');
+        const before = (await (editor as EditorPage).edits()).length;
+        await clickBefore('spec', 1);
+        await clickVerb('link-attributes');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a', editCommand('a'));
+        await page.keyboard.up(MOD);
+        await page.keyboard.type('{title=x}');
+        await page.keyboard.press('Enter');
+        await delay(150);
+        const kept = await page.evaluate(sel => ({
+            value: (document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null)?.value ?? null,
+            refusal: document.querySelector(`${sel} .mep-field-refusal`)?.textContent ?? null,
+        }), BAR);
+        assert.strictEqual(kept.value, '{title=x}');
+        assert.ok(kept.refusal?.includes('href or title'), kept.refusal ?? 'none');
+        assert.strictEqual((await active()).field, true, 'the field keeps the focus');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
+        await page.keyboard.press('Escape');
+        await delay(100);
+        assert.strictEqual(await page.$(`${BAR} .mep-inline-field`), null);
+    });
+
     test('the field survives the window losing the focus, and has it again when the window returns; a click in the page cancels it', async function () {
         this.timeout(15000);
         await showDocument('See [the spec](spec.md) here.\n', 'See');

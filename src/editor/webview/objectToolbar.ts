@@ -41,7 +41,7 @@ import { holderOfCarrier } from '../inlineLiterals';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, applyKey, showChangeHint, showHint, undoKey } from './hint';
-import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
+import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
@@ -730,8 +730,8 @@ class ObjectBar {
             // A prefilled field shows no placeholder: the label says what the value is.
             label.textContent = fieldHeading(this.el.getAttribute('aria-label') ?? '', spec.label);
         }
-        const keys = 'keys' in spec && spec.keys ? [fieldKeys(spec.keys)] : [];
-        this.el.replaceChildren(...(label ? [label] : []), field.el, ...keys);
+        const aside = 'options' in spec ? [] : fieldAside(spec);
+        this.el.replaceChildren(...(label ? [label] : []), field.el, ...aside);
         field.focus();
         if (this.object) {
             this.events.fieldOpened(this.object);
@@ -1523,6 +1523,12 @@ class ObjectToolbarView implements PluginView {
             }
             case 'span': {
                 const literal = object.mark.attrs.literal as string;
+                const step: FieldStep = {
+                    value: literal,
+                    label: 'Attributes',
+                    commit: value => this.commitLiteral(step, object, value, current =>
+                        current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null),
+                };
                 return {
                     label: 'Span',
                     title: `[text]${literal}: a span with these attributes.`,
@@ -1531,12 +1537,7 @@ class ObjectToolbarView implements PluginView {
                             id: 'edit-attributes',
                             label: 'Attributes…',
                             title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
-                            field: {
-                                value: literal,
-                                label: 'Attributes',
-                                commit: value => this.commitLiteral(object, value, current =>
-                                    current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null),
-                            },
+                            field: step,
                         },
                         {
                             id: 'remove-attributes',
@@ -1856,40 +1857,37 @@ class ObjectToolbarView implements PluginView {
      * The field that sets the literal of a link, of a styled run (`_x_{…}`,
      * `` `x`{…} ``) or of an image: prefilled with the literal — or `{.}` with
      * the caret after the dot when there is none — and committed through
-     * `changeInlineLiteralTransaction`, a refusal said beside the caret; `{}`
-     * or an empty field removes it.
+     * `changeInlineLiteralTransaction`; a refusal keeps the field open with
+     * what was typed and the reason beside it (`refusedStep`); `{}` or an
+     * empty field removes it.
      */
     private markAttributesVerb(object: LiteralObject, id: string, label: string, title: string): Verb {
         const view = this.view;
         const literal = literalOfObject(object);
-        return {
-            id,
-            label,
-            title,
-            field: {
-                value: literal ?? SPAN_FIELD_PREFILL.value,
-                caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
-                label: ATTRIBUTES_FIELD_LABEL,
-                keys: ATTRIBUTES_FIELD_KEYS,
-                commit: value => {
+        const step: FieldStep = {
+            value: literal ?? SPAN_FIELD_PREFILL.value,
+            caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
+            label: ATTRIBUTES_FIELD_LABEL,
+            keys: ATTRIBUTES_FIELD_KEYS,
+            commit: value => {
+                const current = literalObjectOf(currentObject(view.state, object));
+                if (current === null || current.kind !== object.kind) {
                     view.focus();
-                    const current = literalObjectOf(currentObject(view.state, object));
-                    if (current === null || current.kind !== object.kind) {
-                        return;
-                    }
-                    const refusal = changeInlineLiteralRefusal(view.state, current, value);
-                    if (refusal !== null) {
-                        this.say(refusal, 'refusal');
-                        return;
-                    }
-                    const removed = value.trim() === '' || value.trim() === '{}';
-                    this.apply(current, now => {
-                        const found = literalObjectOf(now);
-                        return found !== null && found.kind === current.kind ? changeInlineLiteralTransaction(view.state, found, value) : null;
-                    }, removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT);
-                },
+                    return;
+                }
+                const refusal = changeInlineLiteralRefusal(view.state, current, value);
+                if (refusal !== null) {
+                    return refusedStep(step, value, refusal);
+                }
+                view.focus();
+                const removed = value.trim() === '' || value.trim() === '{}';
+                this.apply(current, now => {
+                    const found = literalObjectOf(now);
+                    return found !== null && found.kind === current.kind ? changeInlineLiteralTransaction(view.state, found, value) : null;
+                }, removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT);
             },
         };
+        return { id, label, title, field: step };
     }
 
     /** A table's **Edit source**: the table becomes a source block holding its text, the source box open (`tableSourceTransaction`). */
@@ -1921,19 +1919,18 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * A literal typed into a field: refused, with the reason beside the caret,
-     * when markdown-it-attrs would not read it as attributes (`''` is allowed
-     * where it means "none"); applied otherwise.
+     * A literal typed into `step`'s field: refused — the field kept open with
+     * what was typed and the reason beside it (`refusedStep`) — when
+     * markdown-it-attrs would not read it as attributes (`''` is allowed where
+     * it means "none"); applied otherwise.
      */
-    private commitLiteral(object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): void {
+    private commitLiteral(step: FieldStep, object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): FieldStep | void {
         const place = 'node' in object ? literalPlaceOf(object.node) : 'span';
         const current = currentObject(this.view.state, object);
         const refusal = hint !== undefined && value.trim() === '' ? null
             : current?.kind === 'span' ? changeSpanRefusal(this.view.state, current, value) : literalRefusal(value, place);
         if (refusal !== null) {
-            this.view.focus();
-            this.say(refusal, 'refusal');
-            return;
+            return refusedStep(step, value, refusal);
         }
         this.apply(object, make, hint);
     }

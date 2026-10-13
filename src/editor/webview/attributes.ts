@@ -40,8 +40,8 @@
  * (`fidelity.ts`), and a list item's at any depth.
  */
 import { EditorView } from 'prosemirror-view';
-import { showChangeHint, showHint, undoKey } from './hint';
-import { FieldStep } from './inlineField';
+import { showChangeHint, undoKey } from './hint';
+import { FieldStep, refusedStep } from './inlineField';
 import { AttributesTarget, commitAttributes, literalOf } from './objects';
 import { SPAN_FIELD_PREFILL } from './toolbar/actions';
 
@@ -61,26 +61,26 @@ export const ATTRIBUTES_REMOVED_HINT = 'Attributes removed';
 /**
  * The field step for `target`: its literal prefilled (selected, so typing
  * replaces it), or `{.}` with the caret after the dot when it has none. `Enter`
- * commits: refused with the reason beside the caret when markdown-it-attrs
- * would not read the literal back, or the save the block it stands in — a
- * removal as much as a new literal (`commitAttributes`) — else one
- * transaction — one undo step — and the hint that says so.
+ * commits: refused — the field kept open with what was typed and the reason
+ * beside it (`refusedStep`) — when markdown-it-attrs would not read the
+ * literal back, or the save the block it stands in — a removal as much as a
+ * new literal (`commitAttributes`) — else one transaction — one undo step —
+ * and the hint that says so.
  */
 export function attributesStep(view: EditorView, target: AttributesTarget): FieldStep {
     const literal = literalOf(target.node);
-    return {
+    const step: FieldStep = {
         value: literal ?? SPAN_FIELD_PREFILL.value,
         caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
         label: ATTRIBUTES_FIELD_LABEL,
         keys: ATTRIBUTES_FIELD_KEYS,
         commit: value => {
-            view.focus();
             const made = commitAttributes(view.state, target, value);
-            if (made === null) {
-                return;
+            if (made !== null && 'refusal' in made) {
+                return refusedStep(step, value, made.refusal);
             }
-            if ('refusal' in made) {
-                showHint(view, made.refusal, 'refusal');
+            view.focus();
+            if (made === null || 'refusal' in made) {
                 return;
             }
             // Said only when the state moved, as the object bar's verbs say it: a filter refusing it leaves the state as it was.
@@ -91,4 +91,5 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
             }
         },
     };
+    return step;
 }

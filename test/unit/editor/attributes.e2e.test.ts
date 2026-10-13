@@ -278,6 +278,40 @@ suite('Editor Attributes… (e2e)', () => {
         assert.strictEqual(await page.$eval('.ProseMirror table', el => el.classList.contains('wide')), true);
     });
 
+    test('a refused literal keeps the field open with what was typed and the reason beside it; Esc then closes it', async function () {
+        this.timeout(15000);
+        await showDocument(DOC);
+        const before = (await (editor as EditorPage).edits()).length;
+        await clickAt('last paragraph', 2);
+        await openFormatting();
+        await page.click(ENTRY);
+        await page.waitForSelector(FIELD, { visible: true });
+        // `{.}`, the caret after the dot: `{.a` is typed by taking the `}` away.
+        await page.keyboard.press('Delete');
+        await page.keyboard.type('a');
+        await page.keyboard.press('Enter');
+        await delay(100);
+        const kept = await page.evaluate(sel => {
+            const input = document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null;
+            const refusal = document.querySelector(`${sel} .mep-field-refusal`) as HTMLElement | null;
+            return {
+                value: input?.value,
+                focused: document.activeElement === input,
+                selected: input ? [input.selectionStart, input.selectionEnd] : null,
+                role: refusal?.getAttribute('role') ?? null,
+                keys: document.querySelector(`${sel} .mep-field-keys`) !== null,
+                refusal: refusal?.textContent ?? null,
+            };
+        }, FIELD_BAR);
+        assert.deepStrictEqual({ ...kept, refusal: null }, { value: '{.a', focused: true, selected: [0, 3], role: 'alert', keys: false, refusal: null });
+        assert.ok(kept.refusal?.includes('is not closed'), kept.refusal ?? 'none');
+        await shot('06-refusal-kept-open.png');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
+        await page.keyboard.press('Escape');
+        await delay(100);
+        assert.strictEqual(await page.$(FIELD), null);
+    });
+
     test('Esc cancels: nothing is written, the field goes and the caret is back in the text', async function () {
         this.timeout(15000);
         await showDocument(DOC);
