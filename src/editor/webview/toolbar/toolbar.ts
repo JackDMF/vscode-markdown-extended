@@ -41,8 +41,8 @@ import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
-    applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction,
-    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLiteralRefusal, spanLockReason,
+    applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction,
+    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLockReason,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
@@ -1278,7 +1278,7 @@ class ToolbarView implements PluginView {
             commit: value => {
                 // Asked before the focus goes back: a refusal keeps the field open with what was typed.
                 // The transaction is built after it is back, which may commit a source box.
-                const refusal = spanLiteralRefusal(view.state, value) ?? (applySpanTransaction(view.state, value) === null ? SPAN_REFUSED : null);
+                const refusal = applySpanRefusal(view.state, value) ?? (applySpanTransaction(view.state, value) === null ? SPAN_REFUSED : null);
                 if (refusal !== null) {
                     return refusedStep(step, value, refusal);
                 }
@@ -1286,7 +1286,7 @@ class ToolbarView implements PluginView {
                 const tr = applySpanTransaction(view.state, value);
                 if (tr === null) {
                     // What the focus moved (a source box's commit) changed the answer: the field stays, saying why.
-                    return refusedStep(step, value, spanLiteralRefusal(view.state, value) ?? SPAN_REFUSED);
+                    return refusedStep(step, value, applySpanRefusal(view.state, value) ?? SPAN_REFUSED);
                 }
                 view.dispatch(tr);
             },

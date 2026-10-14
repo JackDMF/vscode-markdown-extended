@@ -108,7 +108,10 @@ export function sameObject(a: EditorObject | null, b: EditorObject | null): bool
     }
     // Two runs starting at one place are one object only when they are runs of one mark, written
     // alike: code inside bold starts where the bold does (`**`foo`bar**`), and is another.
-    return !('mark' in a) || !('mark' in b) || (a.mark.type === b.mark.type && a.mark.attrs.markup === b.mark.attrs.markup);
+    // The delimiter only where it names the mark (`**` Bold, `__` Strong): a link whose address changed,
+    // a bare one now written `[url](url)`, is the same link.
+    return !('mark' in a) || !('mark' in b) || (a.mark.type === b.mark.type
+        && (holderOfCarrier(a.mark.type.name)?.markups === undefined || a.mark.attrs.markup === b.mark.attrs.markup));
 }
 
 /** A run of formatting, bare or with a literal: one object as it gains or loses one. */
@@ -672,6 +675,9 @@ export const LITERAL_READ_WITH_BLOCK_REFUSAL = 'Read together with the rest of i
  * whatever is typed.
  */
 export function literalAlreadyLostRefusal(existing: LiteralLoss): string {
+    if (existing.cause !== undefined) {
+        return 'Read with the rest of this block, the preview already would not read it back as the page shows it: that is the cause, not the literal typed. Edit the block once in the text editor first.';
+    }
     if (existing.literal === null) {
         return 'Read with the rest of this block, the preview already would read text in it as attributes the editor does not show: that is the cause, not the literal typed. Edit the block once in the text editor first.';
     }
@@ -839,6 +845,22 @@ export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject
     }
     const tr = state.tr.removeMark(span.from, span.to, span.mark).addMark(span.from, span.to, editorSchema.marks.attr_span.create({ literal: value }));
     return literalsReadBackRefusal(tr.doc, span.from, state.doc, span.mark.attrs.literal as string);
+}
+
+/**
+ * Why Span with class makes no span of the selection with `literal`, or
+ * `null`: the literal alone and read with its block (`spanLiteralRefusal`),
+ * the selection (`spanLockReason`), then the edit filter's own answer for the
+ * span made (`noteRefusal`) — the one reason its field gives, before and after
+ * the focus is back.
+ */
+export function applySpanRefusal(state: EditorState, literal: string): string | null {
+    const alone = spanLiteralRefusal(state, literal) ?? spanLockReason(state);
+    if (alone !== null) {
+        return alone;
+    }
+    const { from, to } = state.selection;
+    return noteRefusal(state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: literal.trim() })));
 }
 
 /** Why an attribute span cannot be made of the selection, or `null`: it needs an engine that reads attributes, and selected text in one textblock that is not code. */

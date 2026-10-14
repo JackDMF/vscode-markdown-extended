@@ -22,3 +22,18 @@ suite('Editor inline round trip: the verdict agrees with the engine (a subset of
         assert.deepStrictEqual({ corrupt: tally.corrupt, overRefused: tally.overRefused }, { corrupt: [], overRefused: [] });
     });
 });
+
+suite('Editor inline round trip: with VS Code\'s typographer on', () => {
+    test('two runs side by side, every 25th case', function () {
+        this.timeout(60000);
+        const tally = sweep(twoRunCases(), 25, 3, true);
+        assert.ok(tally.cases > 500, `${tally.cases} cases`);
+        assert.deepStrictEqual({ corrupt: tally.corrupt, overRefused: tally.overRefused }, { corrupt: [], overRefused: [] });
+    });
+
+    test('three runs side by side, every 400th case', function () {
+        this.timeout(60000);
+        const tally = sweep(threeRunCases(), 400, 7, true);
+        assert.deepStrictEqual({ corrupt: tally.corrupt, overRefused: tally.overRefused }, { corrupt: [], overRefused: [] });
+    });
+});

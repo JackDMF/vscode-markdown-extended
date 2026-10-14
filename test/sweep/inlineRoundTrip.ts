@@ -33,12 +33,14 @@ Module._load = function (request: string, ...rest: unknown[]) {
 const sweeps = require('../unit/editor/roundTripSweep') as typeof import('../unit/editor/roundTripSweep');
 
 let failed = false;
-for (const [name, cases] of [['two', sweeps.twoRunCases], ['three', sweeps.threeRunCases]] as const) {
+for (const [name, cases, typographer] of [
+    ['two', sweeps.twoRunCases, false], ['three', sweeps.threeRunCases, false], ['two', sweeps.twoRunCases, true], ['three', sweeps.threeRunCases, true],
+] as const) {
     if (process.argv[2] !== undefined && process.argv[2] !== name) {
         continue;
     }
     const started = Date.now();
-    const tally = sweeps.sweep(cases());
+    const tally = sweeps.sweep(cases(), 1, 0, typographer);
     const corrupt = [...new Set(tally.corrupt)];
     const over = [...new Set(tally.overRefused)];
     for (const w of corrupt) {
@@ -47,7 +49,7 @@ for (const [name, cases] of [['two', sweeps.twoRunCases], ['three', sweeps.three
     for (const w of over) {
         console.log(`REFUSED, READS BACK           ${JSON.stringify(w)}`);
     }
-    console.log(`${name}-run: ${tally.cases} cases, ${tally.refused} refused, ${tally.corrupt.length} let through reading otherwise (${corrupt.length} distinct), ${tally.overRefused.length} refused reading back (${over.length} distinct), ${Date.now() - started} ms`);
+    console.log(`${name}-run, typographer ${typographer ? 'on' : 'off'}: ${tally.cases} cases, ${tally.refused} refused, ${tally.corrupt.length} let through reading otherwise (${corrupt.length} distinct), ${tally.overRefused.length} refused reading back (${over.length} distinct), ${Date.now() - started} ms`);
     failed ||= corrupt.length + over.length > 0;
 }
 process.exitCode = failed ? 1 : 0;

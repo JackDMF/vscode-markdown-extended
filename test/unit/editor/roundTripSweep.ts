@@ -1,7 +1,8 @@
 import { Mark, Node } from 'prosemirror-model';
 import { parseDocument, serializeDocument } from '../../../src/editor';
 import { editorSchema as S } from '../../../src/editor/schema';
-import { literalNotReadBack } from '../../../src/editor/serialize';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { literalNotReadBack, setInlineEngine } from '../../../src/editor/serialize';
 import { hostEngine, touched } from './helpers';
 
 /**
@@ -60,7 +61,7 @@ export function* twoRunCases(): Generator<SweepCase> {
     const sets = markSets();
     for (const a of sets) {
         for (const b of sets) {
-            const runs = [{ text: 'foo', marks: a }, { text: 'abc', marks: b }];
+            const runs = [{ text: "don't", marks: a }, { text: 'a...(c)', marks: b }];
             yield { runs, literals: [] };
             for (const i of b) {
                 if (takesLiteral(POOL[i][0])) {
@@ -161,8 +162,18 @@ export interface Tally {
     overRefused: string[];
 }
 
-/** Every `every`-th case of `cases` judged (`judge`), from the `offset`-th. */
-export function sweep(cases: Iterable<SweepCase>, every = 1, offset = 0): Tally {
+/** Every `every`-th case of `cases` judged (`judge`), from the `offset`-th, the page's engine with the typographer on or off. */
+export function sweep(cases: Iterable<SweepCase>, every = 1, offset = 0, typographer = false): Tally {
+    // With VS Code's typographer on, the page's engine rewrites quotes and dashes: the verdict must not take that for a loss.
+    setInlineEngine({ ...DEFAULT_INLINE_ENGINE, typographer });
+    try {
+        return sweepWith(cases, every, offset);
+    } finally {
+        setInlineEngine(DEFAULT_INLINE_ENGINE);
+    }
+}
+
+function sweepWith(cases: Iterable<SweepCase>, every: number, offset: number): Tally {
     const tally: Tally = { cases: 0, refused: 0, corrupt: [], overRefused: [] };
     let k = 0;
     for (const c of cases) {

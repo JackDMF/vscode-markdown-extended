@@ -2038,6 +2038,8 @@ export function causeReason(cause: ReadCause): string {
             return `After this edit the preview would read text here as ${cause.noun}, which the editor does not show: keep a space or another character between the delimiters that would make it.`;
         case 'text':
             return 'After this edit the preview would not read this text back as written: part of it would be taken as markup.';
+        case 'unread':
+            return 'After this edit the editor could not read this text back to check what the preview would show, so it is not applied. Edit it in the text editor.';
     }
 }
 
@@ -2063,6 +2065,9 @@ export function literalLostReason(lost: LiteralLoss): string {
 
 /** Why an edit is refused in a line whose literal `lost` names already does not read back as it is shown, edited or not — or, `literal` `null`, which already reads text as attributes. */
 export function literalRewritten(lost: LiteralLoss): string {
+    if (lost.cause?.kind === 'unread') {
+        return causeReason(lost.cause);
+    }
     if (lost.cause !== undefined) {
         return 'Written by the editor, this line would not read back as it is shown, edited or not: edit the line once in the text editor to unlock it.';
     }
@@ -2081,6 +2086,9 @@ export function literalRewritten(lost: LiteralLoss): string {
 export function literalRewrittenBeside(block: Node, textblock: Node, lost: LiteralLoss): string {
     const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
     const name = textblock.type.name;
+    if (lost.cause?.kind === 'unread') {
+        return causeReason(lost.cause);
+    }
     if (lost.cause !== undefined) {
         return `This edit makes the editor write the whole ${whole} again, and another part of it would then not read back as it is shown. Edit that part once in the text editor to unlock this ${whole}.`;
     }
@@ -3477,7 +3485,7 @@ export interface LiteralLoss {
 
 /** What differs between the model and the parse of the written text (`LiteralLoss.cause`). */
 export interface ReadCause {
-    kind: 'merged' | 'lost' | 'made' | 'text';
+    kind: 'merged' | 'lost' | 'made' | 'text' | 'unread';
     noun: string;
 }
 
@@ -3485,6 +3493,8 @@ export interface ReadCause {
 interface UnitVerdict {
     lost: LiteralLoss | null;
     mismatch: SidebarMismatch | null;
+    /** The literals' own verdict, before the comparison's finding is folded into `lost`: what a copy's literal is asked (`literalNotReadBack`). */
+    literalLost?: LiteralLoss | null;
 }
 
 /**
@@ -3615,25 +3625,29 @@ function markNoun(mark: Mark): string {
  * parse holds another number of textblocks than the model — the written text
  * is no longer the same kind of block — the block's own verdicts speak for it.
  */
-function readsBackAsShown(unit: WrittenUnit): ReadCause | null {
+function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | null {
     if (unit.textblocks.length === 0) {
         return null;
     }
-    const definition = currentInlineDefinition();
-    const md = attrsEngineFor(definition);
-    const doc = parseDocument(md, `${unit.text}\n`, {}, definition).doc;
-    const parsed = inlineTextblocks(doc, 0);
+    let parsed: Node[];
+    try {
+        parsed = comparisonParse(unit.text);
+    } catch {
+        // A parse that throws is no answer: the edit is refused, never a keystroke broken.
+        return { cause: { kind: 'unread', noun: '' }, at: unit.textblocks[0].node };
+    }
     if (parsed.length !== unit.textblocks.length) {
         return null;
     }
     for (let k = 0; k < parsed.length; k++) {
         const want = readItems(unit.textblocks[k].node);
-        const got = readItems(parsed[k].node);
+        const got = readItems(parsed[k]);
+        const at = unit.textblocks[k].node;
         for (let i = 0; i < Math.max(want.length, got.length); i++) {
             const w = want[i];
             const g = got[i];
             if (w === undefined || g === undefined || w.key !== g.key) {
-                return { kind: 'text', noun: '' };
+                return { cause: { kind: 'text', noun: '' }, at };
             }
             const wantMarks = withoutLinkify(w.marks, g.marks);
             const gotMarks = withoutLinkify(g.marks, w.marks);
@@ -3642,17 +3656,77 @@ function readsBackAsShown(unit: WrittenUnit): ReadCause | null {
             if (wantKeys.join('+') === gotKeys.join('+')) {
                 continue;
             }
-            // The first mark that differs, by type: the same kind otherwise written (merged), missing, or made.
+            // The first mark that differs, by type: two runs read as one, missing, or made.
             const differs = wantMarks.find(m => !gotKeys.includes(readMarkKey(m)));
             if (differs !== undefined) {
-                return { kind: gotMarks.some(m => m.type === differs.type) ? 'merged' : 'lost', noun: markNoun(differs) };
+                return { cause: { kind: readAsOne(want, got, i, differs) ? 'merged' : 'lost', noun: markNoun(differs) }, at };
             }
             const made = gotMarks.find(m => !wantKeys.includes(readMarkKey(m))) as Mark;
-            return { kind: 'made', noun: markNoun(made) };
+            return { cause: { kind: 'made', noun: markNoun(made) }, at };
         }
     }
     return null;
 }
+
+/**
+ * Whether the parse reads, at item `i`, one element of `differs`' type over
+ * items the model holds in two runs of it — two runs side by side read as one,
+ * one of them losing its `{…}` — rather than one run otherwise written.
+ */
+function readAsOne(want: readonly ReadItem[], got: readonly ReadItem[], i: number, differs: Mark): boolean {
+    const read = got[i].marks.find(m => m.type === differs.type);
+    if (read === undefined) {
+        return false;
+    }
+    const runs = new Set<string>();
+    for (const step of [-1, 1]) {
+        for (let k = step < 0 ? i : i + 1; k >= 0 && k < Math.min(want.length, got.length) && got[k].marks.some(m => m.eq(read)); k += step) {
+            const model = want[k].marks.find(m => m.type === differs.type);
+            runs.add(model === undefined ? '' : readMarkKey(model));
+        }
+    }
+    return runs.size > 1;
+}
+
+/**
+ * The definition the comparison parses with: the page's, without the
+ * typographer — which only rewrites the text of the tokens once the inline
+ * rules have read them (quotes, dashes, `(c)`), so it changes no mark, no
+ * literal and no element, while the model holds the text as typed.
+ */
+function comparisonDefinition(): InlineEngineDefinition {
+    const definition = currentInlineDefinition();
+    if (!definition.typographer) {
+        return definition;
+    }
+    if (plainDefinition?.from !== definition) {
+        plainDefinition = { from: definition, plain: { ...definition, typographer: false } };
+    }
+    return plainDefinition.plain;
+}
+
+let plainDefinition: { from: InlineEngineDefinition; plain: InlineEngineDefinition } | null = null;
+
+/** Each textblock of `text` parsed whole by the comparison's engine (`comparisonDefinition`), remembered by the text; the oldest dropped first. */
+function comparisonParse(text: string): Node[] {
+    const known = comparisonCache.get(text);
+    if (known !== undefined) {
+        comparisonCache.delete(text);
+        comparisonCache.set(text, known);
+        return known;
+    }
+    const definition = comparisonDefinition();
+    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition).doc;
+    const parsed = inlineTextblocks(doc, 0).map(t => t.node);
+    if (comparisonCache.size >= UNIT_READ_CACHE_SIZE) {
+        comparisonCache.delete(comparisonCache.keys().next().value as string);
+    }
+    comparisonCache.set(text, parsed);
+    return parsed;
+}
+
+/** What `comparisonParse` read, by the text. */
+const comparisonCache = new Map<string, Node[]>();
 
 /** The verdict of each part, by the node it is written from, with the text it was given for. */
 let verdictCache = new WeakMap<Node, { key: string; verdict: UnitVerdict | null }>();
@@ -3683,9 +3757,10 @@ function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
     // What the parse of the written text holds, compared with the model, always: where it
     // differs, that is the cause — before a literal's or a sidebar's, which it explains, unless
     // one of those names it better (a sidebar the parse reads elsewhere).
-    const cause = readsBackAsShown(unit);
-    if (cause !== null && (verdict === null || cause.kind === 'merged' || (verdict.lost === null && verdict.mismatch === null))) {
-        verdict = { lost: { literal: null, at: unit.textblocks[0]?.node ?? unit.anchor, cause }, mismatch: cause.kind === 'merged' ? null : verdict?.mismatch ?? null };
+    const literalLost = verdict?.lost ?? null;
+    const found = readsBackAsShown(unit);
+    if (found !== null && (verdict === null || found.cause.kind === 'merged' || (verdict.lost === null && verdict.mismatch === null))) {
+        verdict = { lost: { literal: null, at: found.at, cause: found.cause }, mismatch: found.cause.kind === 'merged' ? null : verdict?.mismatch ?? null, literalLost };
     }
     if (verdict !== null && verdict.lost === null && verdict.mismatch === null) {
         verdict = null;
@@ -3790,6 +3865,7 @@ function forgetReadBack(): void {
     verdictCache = new WeakMap();
     unitReadCache.clear();
     seamCache.clear();
+    comparisonCache.clear();
     orderVerdictCache.clear();
 }
 
@@ -3802,9 +3878,11 @@ function forgetReadBack(): void {
  * c. {title="d$ e"}` is math under VS Code's math and a left sidebar without
  * it, either literal alone is neither.
  */
-export function literalNotReadBack(block: Node): LiteralLoss | null {
+export function literalNotReadBack(block: Node, causes = true): LiteralLoss | null {
     for (const unit of unitsOf(block)) {
-        const lost = unitVerdict(unit)?.lost ?? null;
+        const verdict = unitVerdict(unit);
+        // Without `causes`, the literals alone: what the comparison finds elsewhere in the block is no reason to drop one.
+        const lost = (causes || verdict?.literalLost === undefined ? verdict?.lost : verdict.literalLost) ?? null;
         if (lost !== null) {
             return lost;
         }
@@ -3817,8 +3895,8 @@ export function literalNotReadBack(block: Node): LiteralLoss | null {
  * (`literalNotReadBack`). Asked by the Attributes field and a span's
  * (`literalsReadBackRefusal`) and of a copy's literal (`fidelity.ts`).
  */
-export function literalsReadBack(block: Node): boolean {
-    return literalNotReadBack(block) === null;
+export function literalsReadBack(block: Node, causes = true): boolean {
+    return literalNotReadBack(block, causes) === null;
 }
 
 /** The emoji atoms `node` holds, in document order, each at its position from `base` (a node at `base` holds its content from `base + 1`). */

@@ -643,7 +643,10 @@ kind by kind, where the parser opens as many tokens of a kind as there are runs 
 literal read on the emphasis before its own counts as lost — and matches the literals in
 order to the tokens given attributes where the counts differ. Above both stands the
 project's oracle (`readsBackAsShown`, Daniel, 2026-10-14): every part the save writes
-again is parsed whole by the page's engine (`parseDocument`) and each of its textblocks
+again is parsed whole by the page's engine without its typographer (`comparisonDefinition`:
+the typographer only rewrites the text of tokens once the inline rules have read them, so it
+changes no mark, literal or element, while the model holds the text as typed), remembered
+by the text (`comparisonParse`), and each of its textblocks
 compared with the model's, character by character — the same characters that are not
 white space, the same atoms, each with the same marks and literals. Only what is known
 to be harmless is not compared: white space (the writer moves it out of a run, the parser
@@ -652,10 +655,14 @@ trims a line), a hard break's marks (the writer drops them), Req Explorer's deco
 `[url](url)` where it must), emphasis' delimiter (the writer writes `*x*` where `_x_`
 would not be read, as before a letter) and a link's address or an image's path (the
 element's own, spelled as its place needs). Where the two
-differ, the edit is refused, with the cause the comparison can tell (`ReadCause`): two
-runs of one element read as one (`` `foo``abc`{.x} ``, `**foo****abc**{.x}`,
+differ, the edit is refused, with the cause the comparison can tell (`ReadCause`), named at
+the textblock it was found in: two runs of one element read as one — only where the parse
+reads one element over items the model holds in two runs (`readAsOne`); else a literal's own
+verdict names it — (`` `foo``abc`{.x} ``, `**foo****abc**{.x}`,
 `mergedReason`), an element lost (`**foo** ***abc**{.x}*` without its space loses the
-italic) or made, or other text. It is not gated on a `{`: no model of what could go wrong
+italic) or made, or other text; a parse that throws is a refusal (`unread`), never a broken
+keystroke. A copy's literal asks the literals alone (`literalsReadBack(block, false)`): what the
+comparison finds elsewhere in a block is no reason to drop a `{…}` that reads back. It is not gated on a `{`: no model of what could go wrong
 decides whether to ask. A part whose parse holds another number of textblocks than the
 model is left to the other checks, which name a block's literal or a sidebar better; the
 atoms' own checks (an emoji made code, an embed) speak before it, as they name the cause.
