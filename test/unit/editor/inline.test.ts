@@ -143,7 +143,7 @@ suite('Editor inline constructs: written back by rule', () => {
      */
     function assertOneElementPerRun(content: Node[], runs = runsIn(content)): string {
         const text = assertRoundTrip(content);
-        const elements = md.renderInline(text.trimEnd()).match(/<(mark|i|em|b|strong|s|a|kbd|span)[ >]/g) ?? [];
+        const elements = md.renderInline(text.trimEnd()).match(/<(mark|i|em|b|strong|s|a|kbd|span|code|sup|sub)[ >]/g) ?? [];
         assert.strictEqual(elements.length, runs, `${text.trimEnd()} renders ${md.renderInline(text.trimEnd())}`);
         return text;
     }
@@ -155,6 +155,8 @@ suite('Editor inline constructs: written back by rule', () => {
         '~sub~ at the start, ~~strike~~ later.', '~~strike~~ at the start.', 'A key [[a *b*]] with emphasis inside.',
         'A ==[a]{.x} b== here.', '**_a_ b** here.', '==*a* b== here.', '[*a* b](x.md) here.', '[[*a* b]] here.',
         '*==[a]{.x} b== c* here.', '==*[a]{.x} b* c== here.',
+        'A `x`{.c} b.', 'A ![a](s.png){.c} b.', 'x^2^{.c} b.', 'H~2~{.c}O b.', 'Press [[Ctrl]]{.c} now.', 'A *`x`{.c}*{.d} b.',
+        '[![a](s.png){.c}](u){.d} b.', 'A `x`{.c}`y`{.d} b.', 'A ^a^{.c}^b^{.d} c.', 'A [[a]]{.c}[[b]] b.', 'A ~x~{.c}~~y~~{.d} b.',
     ]) {
         test(`stability: ${JSON.stringify(source)} is written as it was, and the same twice`, () => {
             assert.strictEqual(assertStable(`${source}\n`), `${source}\n`);
@@ -425,6 +427,17 @@ suite('Editor inline constructs: written back by rule', () => {
         assert.strictEqual(shape(fact), 'paragraph("[" [kbd]"a]{.x} b")', 'a key whose text begins with [ has no closing');
         const content = [t('a', span(), key()), t(' b', key())];
         assert.strictEqual(assertOneElementPerRun(content, runsIn(content) + 1), '[[[a]]]{.x}[[ b]]\n');
+    });
+
+    test('code with a literal inside emphasis with one, two code spans with two literals, an image with one in a link with one: one element each', () => {
+        const code = (literal: string) => schema.marks.code.create({ literal });
+        const literalEm = schema.marks.em.create({ literal: '{.d}' });
+        assert.strictEqual(assertOneElementPerRun([t('A '), t('x', literalEm, code('{.c}')), t(' b.')]), 'A *`x`{.c}*{.d} b.\n');
+        assert.strictEqual(assertOneElementPerRun([t('A '), t('x', code('{.c}')), t('y', code('{.d}')), t(' b.')]), 'A `x`{.c}`y`{.d} b.\n');
+        const image = schema.nodes.image.create({ src: 's.png', alt: 'a', literal: '{.c}' }, null, [schema.marks.link.create({ href: 'u', literal: '{.d}' })]);
+        const text = written([image]);
+        assert.strictEqual(text, '[![a](s.png){.c}](u){.d}\n');
+        assert.strictEqual((md.renderInline(text.trimEnd()).match(/<(a|img)[ >]/g) ?? []).length, 2, md.renderInline(text.trimEnd()));
     });
 
     type MarkOf = () => ReturnType<typeof schema.mark>;

@@ -1,6 +1,7 @@
 import { Token } from '../@types/markdown-it';
 import { AttrPair, NOTE_SYNTAX_CHARS, attrsReadAt, endLiteralOf, fenceHolder, findLeftDelimiter, findRightDelimiter, hasInnerBrace, joinAttrs, normalizedLiteral, parseAttrsLiteral, readsBackAs, sameAttrs } from './attrs';
 import { InlineEngineDefinition } from './inlineEngine';
+import { INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderOfToken, namesOf } from './inlineLiterals';
 import { textBeforeAttrs } from '../plugin/markdownItAttrs';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 
@@ -288,36 +289,16 @@ export const NOTE_CLOSE_TOKENS: ReadonlySet<string> = new Set(['sidenote_close',
  * The attributes a token carries as part of what it is, which the schema has a
  * slot for. Anything beyond them came from a `{…}` literal (`markdown-it-attrs`):
  * the editor keeps that literal where it can say where it was written — a span's
- * (`[text]{…}`), emphasis' and a link's (`_x_{…}`, `[x](u){…}`,
- * `INLINE_LITERAL_HOLDERS`), a top-level block's (`recoverBlockAttrs`), a list
- * item's, a heading's — and leaves any other element carrying one (a nested
- * paragraph, inline code, an image, superscript) a source block, since a
- * re-serialization would lose it.
+ * (`[text]{…}`), the one written after emphasis, a link, inline code, an image,
+ * superscript, subscript or a key (`_x_{…}`, `[x](u){…}`, the inline holders of
+ * `inlineLiterals.ts`, whose `own` attributes are theirs: a link's `href`, an
+ * image's `src`), a top-level block's (`recoverBlockAttrs`), a list item's, a
+ * heading's — and leaves any other element carrying one (a nested paragraph) a
+ * source block, since a re-serialization would lose it.
  */
 const ALLOWED_ATTRS: Readonly<Record<string, readonly string[]>> = {
     ordered_list_open: ['start'],
-    link_open: ['href', 'title'],
-    image: ['src', 'alt', 'title'],
-};
-
-/**
- * The inline openers whose `{…}` the editor keeps as their mark's `literal`,
- * by the holder `attrsReadAt` reads it on (`READ_BACK` in `attrs.ts`): an
- * attribute span's, and the literal markdown-it-attrs gives emphasis (`*`,
- * `_`, `**`, `__`), strikethrough, a highlight or a link when it is written
- * right after the closing delimiter (`_x_{.a}`, `~~x~~{.a}`, `[x](u){.a}`) —
- * the plugin's "inline attributes" rule hands the text starting with it to
- * the element whose closing tag stands before it. Each is written back there
- * (`serialize.ts`). The other openers it reaches so — superscript,
- * subscript, a key — and inline code and an image keep a source block.
- */
-export const INLINE_LITERAL_HOLDERS: Readonly<Record<string, string>> = {
-    span_open: 'span',
-    em_open: 'em',
-    strong_open: 'strong',
-    s_open: 'strike',
-    mark_open: 'mark',
-    link_open: 'link',
+    ...Object.fromEntries(INLINE_LITERAL_HOLDERS.filter(h => h.own.length > 0).map(h => [h.token, h.own])),
 };
 
 /** The token's attributes that came from a `{…}` literal, as `[name, value]` pairs. */
@@ -331,12 +312,13 @@ function attrsAllowed(token: Token): boolean {
 }
 
 /**
- * Whether an inline token opens a mark that carries a literal (`literal` on
- * its mark, `recoverInlineLiterals`): every attribute span, and emphasis or a
- * link markdown-it-attrs gave attributes (`INLINE_LITERAL_HOLDERS`).
+ * Whether an inline token is one whose mark or node carries a literal
+ * (`literal`, `recoverInlineLiterals`): every attribute span, and emphasis, a
+ * link, inline code, an image, superscript, subscript or a key
+ * markdown-it-attrs gave attributes (`holderOfToken`, `inlineLiterals.ts`).
  */
 export function carriesInlineLiteral(token: Token): boolean {
-    return token.type === 'span_open' || (token.type in INLINE_LITERAL_HOLDERS && literalAttrs(token).length > 0);
+    return holderOfToken(token.type) !== undefined && (token.type === 'span_open' || literalAttrs(token).length > 0);
 }
 
 /** The index of the token closing the one opened at `open`, by nesting. */
@@ -726,7 +708,7 @@ function inlineNotEditable(children: readonly Token[]): string | null {
             spanDepth--;
             continue;
         }
-        if (!attrsAllowed(child) && !(child.type in INLINE_LITERAL_HOLDERS)) {
+        if (!attrsAllowed(child) && holderOfToken(child.type) === undefined) {
             return `attributes on ${child.type}`;
         }
     }
@@ -937,39 +919,26 @@ function recoverItemLiterals(tokens: readonly Token[], group: TokenGroup, lines:
     return out;
 }
 
-/** What a literal's holder is called in a reason (`INLINE_LITERAL_HOLDERS`). */
-const INLINE_LITERAL_NOUNS: Readonly<Record<string, string>> = {
-    span: 'attribute span',
-    em: 'emphasis',
-    strong: 'strong emphasis',
-    strike: 'strikethrough',
-    mark: 'highlight',
-    link: 'link',
-};
-
 /**
  * The characters a literal after `open`'s closing delimiter follows in the
- * source (`close` the token closing it): a span's `]`; a link's `)`, the `>`
- * of an autolink or the `]` of a reference link; emphasis' and the other
- * delimiter runs' last delimiter character, as its closing token's markup
- * says. A bare address linkify read has no closing character of its own.
+ * source (`close` the token closing it), as its holder says (`closing`,
+ * `inlineLiterals.ts`): a span's `]`; a link's `)`, the `>` of an autolink or
+ * the `]` of a reference link; emphasis' and the other delimiter runs' last
+ * delimiter character, as its closing token's markup says. A bare address
+ * linkify read has no closing character of its own.
  */
 function closingCharacters(open: Token, close: Token): string {
-    switch (open.type) {
-        case 'span_open':
-            return ']';
-        case 'link_open':
-            return ')>]';
-        default:
-            return close.markup.slice(-1);
-    }
+    const closing = holderOfToken(open.type)?.closing ?? 'markup';
+    return closing === 'markup' ? close.markup.slice(-1) : closing;
 }
 
 /**
- * The literal of every inline mark that carries one in the group
- * (`carriesInlineLiteral`: an attribute span's `[text]{…}`, emphasis' or a
- * link's `_x_{…}`, `[x](u){…}`), in the order of their opening tokens,
- * recovered verbatim from the block's lines.
+ * The literal of every inline element that carries one in the group
+ * (`carriesInlineLiteral`: an attribute span's `[text]{…}`, emphasis', a
+ * link's, inline code's, an image's … `_x_{…}`, `[x](u){…}`, `` `x`{…} ``),
+ * in the order of their opening tokens, recovered verbatim from the block's
+ * lines. Inline code and an image are one token each, which opens and closes
+ * where it stands.
  *
  * Inline tokens carry no line map, so each literal is matched in the order
  * the marks *close* — the order their literals stand in the source, a link's
@@ -1020,6 +989,10 @@ function recoverInlineLiterals(tokens: readonly Token[], group: TokenGroup, line
                 if (opener !== undefined && carriesInlineLiteral(opener)) {
                     closed.push({ token: opener, after: closingCharacters(opener, child), inNote: noteDepth > 0 });
                 }
+            } else if (carriesInlineLiteral(child)) {
+                // Inline code and an image are one token each: it opens and closes where it stands.
+                opened.push(child);
+                closed.push({ token: child, after: closingCharacters(child, child), inNote: noteDepth > 0 });
             }
         }
     }
@@ -1032,8 +1005,9 @@ function recoverInlineLiterals(tokens: readonly Token[], group: TokenGroup, line
     const found = new Map<Token, string>();
     let from = 0;
     for (const { token, after, inNote } of closed) {
-        const holder = INLINE_LITERAL_HOLDERS[token.type];
-        const noun = INLINE_LITERAL_NOUNS[holder];
+        const kind = holderOfToken(token.type) as InlineLiteralHolder;
+        const holder = kind.holder;
+        const noun = namesOf(kind, token.markup).noun;
         const wanted = literalAttrs(token);
         let literal: string | null = null;
         for (let at = src.indexOf('{', from); at >= 0 && literal === null; at = src.indexOf('{', at + 1)) {

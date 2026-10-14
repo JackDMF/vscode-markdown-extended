@@ -51,7 +51,9 @@ export type ToolbarSubmenu = 'admonition';
 
 export type ActionPlace =
     | { row: true }
-    | { menu: ToolbarMenu; submenu?: ToolbarSubmenu };
+    | { menu: ToolbarMenu; submenu?: ToolbarSubmenu }
+    /** The selection bubble only: a tool that acts on a selection and has no place in the row or a menu. */
+    | { bubble: true };
 
 /** An element to draw: a tag, its classes and attributes, and its content (text or elements, in order). */
 export interface SampleSpec {
@@ -93,6 +95,20 @@ export type ActionApply =
      * with the caret after the dot when it has none; `{}` removes it.
      */
     | { kind: 'block-attrs' }
+    /**
+     * The `{…}` literal of the inline element at the caret that carries or can
+     * carry one (`attributeHolderAt`): inline code, a key, a link, emphasis,
+     * superscript, subscript, a highlight, a span, a selected image. The entry
+     * is named after it (**Attributes of Code…**), and the inline field asks
+     * for the literal as the element's bar does (`holderAttributesStep`).
+     */
+    | { kind: 'inline-attrs' }
+    /**
+     * The bubble's `{…}`: over a selection within one inline holder's run,
+     * that element's attributes (`inline-attrs`, the whole run); over any
+     * other selection, an attribute span made of it (`attr-span`).
+     */
+    | { kind: 'attrs-bubble' }
     /**
      * A new container or admonition after the current block, edited in place,
      * the caret in its body (an empty paragraph): `name` is the container's
@@ -159,6 +175,12 @@ export interface ToolbarAction {
     preview?: ActionPreview;
     /** Offered in the selection bubble too. */
     bubble?: true;
+    /**
+     * Named by what the selection holds (`Attributes of Paragraph…`): its sample's text and
+     * its tooltip's name follow the selection, `label` being the resting form — the one
+     * shown while the row is locked, sample and tooltip alike.
+     */
+    named?: true;
 }
 
 /** What a source action's tooltip says: the construct is edited as Markdown in a source block, not as rich text. */
@@ -173,9 +195,9 @@ export function inRow(action: ToolbarAction): boolean {
     return 'row' in action.place;
 }
 
-/** The bubble: the row's marks, then the entries marked for it, in the table's order. */
+/** The bubble: the row's marks, then the entries marked for it, in the table's order, then its own. */
 export function inBubble(action: ToolbarAction): boolean {
-    return inRow(action) || action.bubble === true;
+    return inRow(action) || action.bubble === true || 'bubble' in action.place;
 }
 
 export function menuOf(action: ToolbarAction): ToolbarMenu | null {
@@ -196,12 +218,16 @@ export function elideDataUris(markdown: string): string {
     return markdown.replace(/\(data:([^,)\s]*),[^)\s]*\)/g, '(data:$1,…)');
 }
 
-/** The action's tooltip: its name, the syntax it writes, and the source footnote where it applies. */
-export function tooltipOf(action: ToolbarAction): string {
+/**
+ * The action's tooltip: its name — `label` where the selection names it
+ * (`Attributes of Paragraph…`), its own otherwise — the syntax it writes, and
+ * the source footnote where it applies.
+ */
+export function tooltipOf(action: ToolbarAction, label = action.label): string {
     const source = isSourceAction(action);
     const renders = action.apply.kind === 'mark' ? ` — rendered as <${action.sample.tag}>` : '';
     const syntax = action.syntax.includes('\n') ? `\n${action.syntax}` : ` ${action.syntax}`;
-    return `${action.label}${source ? '¹' : ''}:${syntax}${renders}${source ? `\n${SOURCE_FOOTNOTE}` : ''}`;
+    return `${label}${source ? '¹' : ''}:${syntax}${renders}${source ? `\n${SOURCE_FOOTNOTE}` : ''}`;
 }
 
 /** An element: `el('p', 'text', el('b', 'bold'), 'more')`; a class goes in the tag as `tag.class1.class2`. */
@@ -296,14 +322,18 @@ function formatAction(id: string, label: string, mark: MarkTarget, open: string,
 
 const M = INLINE_MARKERS;
 
-/** The literal the span action's example is written with. */
-const SPAN_LITERAL_EXAMPLE = '{.class}';
+/** The literal the attribute entries, the bubble's `{…}` and their tooltips write a class with. */
+export const CLASS_LITERAL = '{.class}';
 
 /** What the span action's field starts with, and where its caret goes: after the dot, to type the class. */
 export const SPAN_FIELD_PREFILL = { value: '{.}', caret: 2 } as const;
 
-/** The literal the block-attributes entry names as its syntax. */
+/** The literal the block-attributes entry's example is written with. */
 const BLOCK_LITERAL_EXAMPLE = '{.x}';
+
+
+/** Why Attributes of Code… is disabled: nothing inline at the caret carries a {…}. */
+export const INLINE_ATTRS_LOCK = 'Put the caret in code, a key, a link, emphasis, superscript, subscript, a highlight or a span, or select an image. Alt+Enter opens its bar.';
 
 const formatting: ToolbarAction[] = [
     formatAction('mark', 'Highlight', 'mark', M.mark, M.mark, el('mark', 'mark'),
@@ -318,13 +348,24 @@ const formatting: ToolbarAction[] = [
         { markdown: `Press ${KBD_MARKERS.open}Ctrl+S${KBD_MARKERS.close} to save.`, nodes: [el('p', 'Press ', el('kbd', 'Ctrl+S'), ' to save.')] }),
     {
         // markdown-it-bracketed-spans with markdown-it-attrs: the class a stylesheet names.
-        id: 'span-class', place: { menu: 'formatting' }, label: 'Span with class', syntax: `[text]${SPAN_LITERAL_EXAMPLE}`,
-        sample: el('span.class', 'span'), apply: { kind: 'attr-span' }, example: `[span]${SPAN_LITERAL_EXAMPLE}`,
+        id: 'span-class', place: { menu: 'formatting' }, label: 'Span with class', syntax: `[text]${CLASS_LITERAL}`,
+        sample: el('span.class', 'span'), apply: { kind: 'attr-span' }, example: `[span]${CLASS_LITERAL}`,
         preview: { markdown: 'A [styled phrase]{.lead} in a sentence.', nodes: [el('p', 'A ', el('span.lead', 'styled phrase'), ' in a sentence.')] },
     },
     {
+        // markdown-it-attrs on the inline element at the caret: written right after it. Named
+        // by the element (`Attributes of Link…`); the label here is its resting form.
+        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Element…', syntax: `…${CLASS_LITERAL}`,
+        sample: el('code.x', 'Attributes…'), apply: { kind: 'inline-attrs' }, example: `\`Attributes…\`${BLOCK_LITERAL_EXAMPLE}`,
+        preview: {
+            markdown: 'Run `--flag`{.k} to skip the cache.',
+            nodes: [el('p', 'Run ', el('code.k', '--flag'), ' to skip the cache.')],
+        },
+    },
+    {
         // markdown-it-attrs on the block at the caret: written where the plugin reads it for that block.
-        id: 'block-attributes', place: { menu: 'formatting' }, label: 'Attributes…', syntax: BLOCK_LITERAL_EXAMPLE,
+        // Named by the block (`Attributes of Paragraph…`); refused, `Attributes of Block…`.
+        id: 'block-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`,
         sample: el('p.x', 'Attributes…'), apply: { kind: 'block-attrs' }, example: `Attributes… ${BLOCK_LITERAL_EXAMPLE}`,
         preview: {
             markdown: 'A paragraph with a class of its own. {.lead}',
@@ -557,7 +598,19 @@ const insert: ToolbarAction[] = [
 ];
 
 /** Every action: the row's marks, then each menu's entries in their order. */
-export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, ...formatting, ...annotations, ...insert];
+/**
+ * The bubble's own tools, after the marks and the notes: `{…}`, one button for
+ * every element's attributes, always there so the bubble keeps its width. Its
+ * glyph is text, not an element's sample: it stands for every holder.
+ */
+const bubbleOnly: ToolbarAction[] = [
+    {
+        id: 'attrs-bubble', place: { bubble: true }, label: 'Attributes', syntax: `[text]${CLASS_LITERAL}`,
+        sample: el('span.x', '{…}'), apply: { kind: 'attrs-bubble' }, example: `[span]${BLOCK_LITERAL_EXAMPLE}`,
+    },
+];
+
+export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, ...formatting, ...annotations, ...insert, ...bubbleOnly];
 
 /** The row, left to right; hairlines between the groups. */
 export const ROW_LAYOUT: readonly (readonly ('marks' | ToolbarMenu)[])[] = [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']];

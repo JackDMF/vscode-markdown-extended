@@ -675,6 +675,22 @@ img.mep-pending-range {
     color: var(--vscode-descriptionForeground, GrayText);
 }
 
+/*
+ * Why what was typed was refused, in the keys' place while the field stays open with it:
+ * the text's colour, marked in the refusal's amber as the caret hint's refusal is; it may
+ * take two lines rather than run past the window.
+ */
+.mep-field-refusal {
+    margin-left: 6px;
+    padding-left: 6px;
+    max-width: 48ch;
+    border-left: 2px solid var(--vscode-editorWarning-foreground, #bf8803);
+    font-size: 11px;
+    line-height: 14px;
+    white-space: normal;
+    color: var(--vscode-foreground, inherit);
+}
+
 /* The inline field: one line, prefilled, in the bar in place of the verbs — the control's 22px, the input's colours. */
 .mep-inline-field {
     box-sizing: border-box;

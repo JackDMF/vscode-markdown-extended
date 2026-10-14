@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { PREVIEW_CARD_CLASS, TOOLBAR_ACTIONS, inRow, menuOf } from '../../../src/editor/webview/toolbar/actions';
+import { PREVIEW_CARD_CLASS, TOOLBAR_ACTIONS, menuOf } from '../../../src/editor/webview/toolbar/actions';
 import { ALL_LOCK, REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, MOD } from './pageHarness';
@@ -172,7 +172,7 @@ suite('Editor toolbar (e2e)', () => {
     test('every action is in its place once; menu entries are one height, samples fitted into them', async function () {
         this.timeout(15000);
         const inMenus = await page.$$eval('.mep-menu [data-action]', els => els.map(e => (e as HTMLElement).dataset.action));
-        assert.deepStrictEqual([...inMenus].sort(), TOOLBAR_ACTIONS.filter(a => !inRow(a)).map(a => a.id).sort());
+        assert.deepStrictEqual([...inMenus].sort(), TOOLBAR_ACTIONS.filter(a => menuOf(a) !== null).map(a => a.id).sort(), 'every action but the row\'s and the bubble\'s own is in a menu');
         for (const menu of ['block-type', 'formatting', 'annotation', 'insert']) {
             await openMenu(menu);
             const entries = await page.$$eval(`${panel(menu)} .mep-menu-item`, items => items.map(item => {
@@ -363,7 +363,7 @@ suite('Editor toolbar (e2e)', () => {
                 tools: Array.from(bubble.querySelectorAll('[data-action]')).map(t => (t as HTMLElement).dataset.action),
             };
         });
-        const tools = ['italic', 'emphasis', 'bold', 'strong', 'code', 'mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'sidenote', 'marginal-note'];
+        const tools = ['italic', 'emphasis', 'bold', 'strong', 'code', 'mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'sidenote', 'marginal-note', 'attrs-bubble'];
         // Right under a line whose text the bubble would cover: below.
         const shown = (marker: string) => page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         await showDocument('A first paragraph whose one line runs on, well across where the word below it stands.\n\nAlpha beta gamma.\n');
@@ -390,6 +390,57 @@ suite('Editor toolbar (e2e)', () => {
         await page.evaluate(() => (document.activeElement as HTMLElement).blur());
         await delay(50);
         assert.strictEqual(await page.$eval('.mep-bubble', el => (el as HTMLElement).hidden), true, 'nor does an editor without the focus');
+    });
+
+    test('the bubble\'s {…}: within one element\'s run it gives that element attributes, the whole run; across runs it makes a span; the bubble keeps its width', async function () {
+        this.timeout(15000);
+        const BUBBLE_TOOL = '.mep-bubble [data-action="attrs-bubble"]';
+        const FIELD_BAR = '.mep-object-toolbar[data-trigger="toolbar"]';
+        const bubbleWidth = () => page.$eval('.mep-bubble', el => el.getBoundingClientRect().width);
+        await showDocument('Alpha `xy` and *b* c here.\n');
+        await selectText('x');
+        const inCode = { title: await page.$eval(BUBBLE_TOOL, el => (el as HTMLElement).title), width: await bubbleWidth() };
+        assert.ok(inCode.title.startsWith('Attributes of Code…'), inCode.title);
+        await page.click(BUBBLE_TOOL);
+        await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true });
+        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-object-label`, el => el.textContent), 'Code · Attributes');
+        await page.keyboard.type('k');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Alpha `xy`{.k} and *b* c here.\n', 'the whole run, not the selection');
+
+        // From the emphasis into the plain text after it: no one element's run.
+        await page.focus('.ProseMirror');
+        await page.evaluate(() => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            const texts: Text[] = [];
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                texts.push(node as Text);
+            }
+            const b = texts.find(t => t.textContent === 'b') as Text;
+            const after = texts.find(t => (t.textContent ?? '').startsWith(' c here')) as Text;
+            (document.getSelection() as Selection).setBaseAndExtent(b, 0, after, 2);
+        });
+        await delay(150);
+        const across = { title: await page.$eval(BUBBLE_TOOL, el => (el as HTMLElement).title), width: await bubbleWidth() };
+        assert.ok(across.title.startsWith('Span with class'), across.title);
+        assert.strictEqual(across.width, inCode.width, 'the bubble keeps its width');
+        await page.click(BUBBLE_TOOL);
+        await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true });
+        await page.keyboard.type('s');
+        await page.keyboard.press('Enter');
+        await settle();
+        const written = (await lastEdit())?.text ?? '';
+        // What the span is written as is the serializer's: read it back with the engine, as the preview would.
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        const spanned: string[] = [];
+        parseDocument(md, written, {}).doc.descendants(n => {
+            if (n.isText && n.marks.some(m => m.type.name === 'attr_span' && m.attrs.literal === '{.s}')) {
+                spanned.push(n.text ?? '');
+            }
+        });
+        assert.strictEqual(spanned.join(''), 'b c', written);
     });
 
     test('Insert → Admonition lists exactly the plugin\'s types; one is inserted in place, and typed text is its indented body', async function () {

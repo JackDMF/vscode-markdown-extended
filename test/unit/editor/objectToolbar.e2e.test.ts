@@ -250,6 +250,31 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'See [the spec](other.md) here.\n');
     });
 
+    test('a link\'s Attributes… refused for {title=x}: the field stays with what was typed and the reason beside it', async function () {
+        this.timeout(15000);
+        await showDocument('See [the spec](spec.md) here.\n', 'See');
+        const before = (await (editor as EditorPage).edits()).length;
+        await clickBefore('spec', 1);
+        await clickVerb('link-attributes');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a', editCommand('a'));
+        await page.keyboard.up(MOD);
+        await page.keyboard.type('{title=x}');
+        await page.keyboard.press('Enter');
+        await delay(150);
+        const kept = await page.evaluate(sel => ({
+            value: (document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null)?.value ?? null,
+            refusal: document.querySelector(`${sel} .mep-field-refusal`)?.textContent ?? null,
+        }), BAR);
+        assert.strictEqual(kept.value, '{title=x}');
+        assert.ok(kept.refusal?.includes('href or title'), kept.refusal ?? 'none');
+        assert.strictEqual((await active()).field, true, 'the field keeps the focus');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
+        await page.keyboard.press('Escape');
+        await delay(100);
+        assert.strictEqual(await page.$(`${BAR} .mep-inline-field`), null);
+    });
+
     test('the field survives the window losing the focus, and has it again when the window returns; a click in the page cancels it', async function () {
         this.timeout(15000);
         await showDocument('See [the spec](spec.md) here.\n', 'See');
@@ -299,7 +324,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(img);
         await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
         await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
-        assert.deepStrictEqual((await barState()).verbs, ['edit-image', 'open-image', 'remove-image']);
+        assert.deepStrictEqual((await barState()).verbs, ['edit-image', 'image-attributes', 'open-image', 'remove-image']);
         await clickVerb('edit-image');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'pic', 'the alt text first');
         await page.keyboard.press('Enter');
@@ -322,6 +347,59 @@ suite('Editor object toolbar (e2e)', () => {
         await page.keyboard.press('Enter');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'p.png', 'not the undone q.png');
         await page.keyboard.press('Escape');
+    });
+
+    /** A click on the page's first image, sized so it can be clicked (a broken image has no size of its own); its bar shown. */
+    const clickImage = async () => {
+        await page.addStyleTag({ content: '.ProseMirror img { display: inline-block; width: 60px; height: 30px; }' });
+        const img = await (await page.$('.ProseMirror img'))?.boundingBox();
+        assert.ok(img);
+        await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
+        await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
+    };
+
+    test('Attributes… on an image: the literal is written after its (…), drawn on the image at once, named by the bar, and {} removes it', async function () {
+        this.timeout(15000);
+        await showDocument('An ![pic](p.png) here.\n', 'An');
+        await clickImage();
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="image-attributes"]`, el => el.textContent), 'Attributes…');
+        await clickVerb('image-attributes');
+        assert.deepStrictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => ({ value: (el as HTMLInputElement).value, caret: (el as HTMLInputElement).selectionStart })), { value: '{.}', caret: 2 });
+        await page.keyboard.type('hero width=300');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png){.hero width=300} here.\n');
+        assert.deepStrictEqual(await page.$eval('.ProseMirror img', el => ({ width: el.getAttribute('width'), hero: el.classList.contains('hero') })), { width: '300', hero: true });
+        assert.strictEqual((await hint()).text, `Attributes set — ${UNDO}`);
+        await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
+        assert.strictEqual(await page.$eval(BAR, el => el.getAttribute('aria-label')), 'Image {.hero width=300}');
+
+        await clickVerb('image-attributes');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '{.hero width=300}', 'prefilled with the literal');
+        await page.keyboard.type('{}');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png) here.\n');
+        assert.deepStrictEqual(await page.$eval('.ProseMirror img', el => ({ width: el.getAttribute('width'), hero: el.classList.contains('hero') })), { width: null, hero: false });
+        assert.strictEqual((await hint()).text, `Attributes removed — ${UNDO}`);
+    });
+
+    test('the caret in code carrying a literal: the bar names it Code, with Attributes… and Remove attributes, keep formatting', async function () {
+        this.timeout(15000);
+        await showDocument('Run `--flag`{.k} to skip the cache.\n', 'Run');
+        await clickBefore('flag', 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        assert.deepStrictEqual(await barState(), { object: 'styled', label: 'Code {.k}', verbs: ['edit-attributes', 'remove-attributes'] });
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="edit-attributes"]`, el => el.textContent), 'Attributes…');
+        await clickVerb('edit-attributes');
+        await page.keyboard.type('{.k .big}');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Run `--flag`{.k .big} to skip the cache.\n');
+        assert.ok(await page.$('.ProseMirror code.k.big'));
+        await clickVerb('remove-attributes');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Run `--flag` to skip the cache.\n');
     });
 
     test('a wiki embed is one unit drawn as its source: a click selects it, its bar names it, and Remove embed takes it out whole', async function () {
@@ -788,6 +866,79 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual((await lastEdit())?.text, 'Alpha !!beta rXef|the body!! gamma.\n', 'Enter chose Convert to marginal note');
     });
 
+    const verbLabel = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => el.textContent);
+
+    test('Alt+Enter in bold in a table: the table\'s bar, with Attributes of Bold… after its own verbs; its field writes the literal after the bold', async function () {
+        this.timeout(15000);
+        await showDocument('| a | b |\n| - | - |\n| **bold** | c |\n', 'bold');
+        await clickBefore('bold', 2);
+        await delay(100);
+        await pressAlt('Enter');
+        const state = await barState();
+        assert.strictEqual(state.object, 'table');
+        assert.deepStrictEqual(state.verbs.slice(-2), ['delete-table', 'inline-attributes']);
+        assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Bold…', 'named as the row names **');
+        await clickVerb('inline-attributes');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Table · Attributes of Bold');
+        assert.strictEqual(await page.$$eval('.ProseMirror .mep-pending-range', els => els.map(el => el.textContent).join('')), 'bold', 'the bold the field edits is drawn, not the table');
+        await page.keyboard.type('b');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.ok((await lastEdit())?.text.includes('| **bold**{.b} |'), (await lastEdit())?.text);
+    });
+
+    test('bold in a plain heading grows no bar on a caret rest; Alt+Enter shows the heading\'s, with Attributes of Bold…', async function () {
+        this.timeout(15000);
+        await showDocument('## A **bold** title\n\nText.\n', 'bold');
+        await clickBefore('bold', 2);
+        await delay(INLINE_DELAY_MS + 300);
+        assert.strictEqual(await page.$(BAR), null, 'no bar on a caret rest');
+        await pressAlt('Enter');
+        assert.deepStrictEqual(await barState(), { object: 'heading', label: 'Heading 2', verbs: ['block-attributes', 'inline-attributes'] });
+        await page.keyboard.press('Escape');
+        await clickBefore('title', 2);
+        await delay(INLINE_DELAY_MS + 300);
+        assert.strictEqual(await page.$(BAR), null, 'gone once the caret leaves the bold');
+    });
+
+    test('Alt+Enter in code in a link: the link\'s bar, with Attributes of Code… after its own verbs', async function () {
+        this.timeout(15000);
+        await showDocument('See [the `x` here](u) now.\n', 'See');
+        await clickBefore('here', 1);
+        await clickBefore('x', 0);
+        await delay(100);
+        await pressAlt('Enter');
+        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'link-attributes', 'remove-link', 'inline-attributes'] });
+        assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Code…');
+    });
+
+    test('Alt+Enter in code without attributes: a bar of its own with Attributes…, never shown on a caret rest; once it has them, the styled bar', async function () {
+        this.timeout(15000);
+        await showDocument('Run `x` to skip the cache.\n', 'Run');
+        await clickBefore('x', 0);
+        await delay(INLINE_DELAY_MS + 600);
+        assert.strictEqual(await page.$(BAR), null, 'no bar on a caret rest');
+        await pressAlt('Enter');
+        assert.deepStrictEqual(await barState(), { object: 'holder', label: 'Code', verbs: ['edit-attributes'] });
+        assert.deepStrictEqual(await active(), { verb: 'edit-attributes', editor: false, field: false });
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => (el as HTMLElement).title), '`x`: inline code — Attributes… gives it a {…}');
+        await page.keyboard.press('Enter');
+        assert.strictEqual((await active()).field, true);
+        await page.evaluate(() => {
+            const bar = document.querySelector('.mep-object-toolbar[data-trigger="selection"]') as HTMLElement;
+            const w = window as unknown as { holderHidden: boolean[] };
+            w.holderHidden = [];
+            new MutationObserver(() => w.holderHidden.push(bar.hidden)).observe(bar, { attributes: true, attributeFilter: ['hidden'] });
+        });
+        await page.keyboard.type('k');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.strictEqual((await lastEdit())?.text, 'Run `x`{.k} to skip the cache.\n');
+        assert.strictEqual(await page.$eval(BAR, el => (el as HTMLElement).dataset.object), 'styled', 'the same bar, now the styled run\'s');
+        assert.deepStrictEqual(await page.evaluate(() => (window as unknown as { holderHidden: boolean[] }).holderHidden.filter(h => h)), [], 'never hidden on the way');
+        assert.strictEqual((await barState()).label, 'Code {.k}');
+    });
+
     test('the caret in an admonition: Change type from the menu of types, Edit title; the page and the file say both', async function () {
         this.timeout(15000);
         await showDocument('Intro.\n\n!!! note "Old title"\n    Body text here.\n\nAfter.\n', 'Body');
@@ -825,12 +976,13 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual(await page.$('.ProseMirror div[data-mep-container]'), null);
     });
 
-    test('the caret in a span: Edit attributes and Remove attributes, keep text', async function () {
+    test('the caret in a span: Attributes… and Remove attributes, keep text', async function () {
         this.timeout(15000);
         await showDocument('A [styled]{.old} word.\n', 'styled');
         await clickBefore('styled', 2);
         await page.waitForSelector(BAR, { timeout: 2000 });
         assert.deepStrictEqual(await barState(), { object: 'span', label: 'Span', verbs: ['edit-attributes', 'remove-attributes'] });
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="edit-attributes"]`, el => el.textContent), 'Attributes…');
         await clickVerb('edit-attributes');
         await page.keyboard.type('{.new #s}');
         await page.keyboard.press('Enter');

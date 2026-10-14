@@ -365,9 +365,11 @@ blocks and horizontal rules, and inside them:
 - attribute spans (`[text]{.class}`, `[text]{#id style="…"}`), drawn with exactly the
   attributes the preview gives them, so your stylesheets style them for real; the `{…}`
   is kept as you wrote it;
-- attributes after a link or emphasis (`[Source](https://…){.source}`, `_✓_{.colorize}`,
-  `**x**{#id}`, `~~x~~{.c}`, `==x=={.c}`), drawn on the link's or the emphasis' element as
-  the preview draws them — a rule for `a.source` or `em.colorize` applies in the editor —
+- attributes after a link, emphasis, inline code, an image, superscript, subscript or a key
+  (`[Source](https://…){.source}`, `_✓_{.colorize}`, `**x**{#id}`, `~~x~~{.c}`,
+  `==x=={.c}`, `` `--flag`{.k} ``, `![Screenshot](img.png){width=400}`, `H~2~{.f}O`,
+  `x^2^{.c}`, `[[Ctrl]]{.key}`), drawn on the element as the preview draws them — a rule
+  for `a.source` or `code.k` applies in the editor, and an image is drawn at its `width` —
   and written back as you wrote them, right after the closing delimiter.
 
 And these blocks, edited in place with their content as rich text:
@@ -383,7 +385,7 @@ And these blocks, edited in place with their content as rich text:
   `> {.x}` under a quote's last paragraph, under a table after a blank line, on a fence's
   opening line, after a rule — are kept verbatim and written back where they stood; the
   block is drawn with them. A heading's `{#anchor}` stays as it always was.
-  **Formatting → Attributes…** sets them (below).
+  **Formatting → Attributes of Paragraph…** (named by the block) sets them (below).
 - **Pipe tables** — a header row, the delimiter row with its `:` alignment, body rows —
   with each cell's text edited like a paragraph's (emphasis, code, links, images, highlight,
   keys, sidebars). Rows and columns are added, deleted and aligned from the table's bar
@@ -456,9 +458,10 @@ are typing on, and never moves the page.
 | Sidenote, marginal note | while the caret is inside, after a moment | **Remove note, keep text** · **Convert to marginal note** / **Convert to sidenote** · **Edit source** |
 | Left or right sidebar | while the caret is inside, after a moment | **Remove sidebar, keep text** · **Move to right** / **Move to left** · **Edit source** |
 | Link | while the caret is in its text, after a moment | **Open** · **Edit link…** · **Attributes…** (its `{…}`; `{}` or empty removes it) · **Remove link** |
-| Span (`[text]{…}`) | while the caret is in its text, after a moment | **Edit attributes** · **Remove attributes, keep text** |
-| Emphasis, strikethrough or highlight with attributes (`_x_{…}`) | while the caret is in its text, after a moment | **Edit attributes** · **Remove attributes, keep formatting** |
-| Image | when you click it, after a moment | **Edit image…** (its alt text, then its path) · **Open file** · **Remove image** |
+| Span (`[text]{…}`) | while the caret is in its text, after a moment | **Attributes…** · **Remove attributes, keep text** |
+| Emphasis, strikethrough, highlight, inline code, superscript, subscript or a key with attributes (`_x_{…}`, `` `x`{…} ``) | while the caret is in its text, after a moment; named as the row names it — *Bold*, *Italic*, *Strong*, *Emphasis*, *Code*, *Key* … — with its `{…}` | **Attributes…** · **Remove attributes, keep formatting** |
+| The same without attributes | only on `Alt+Enter`, never on a caret rest | **Attributes…** (gives it its first `{…}`) |
+| Image | when you click it, after a moment; its label and tooltip show its `{…}` | **Edit image…** (its alt text, then its path) · **Attributes…** (its `{…}`, written after its `(…)`; `{}` or empty removes it) · **Open file** · **Remove image** |
 | Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Attributes…** (disabled: the plugin gives a `{…}` to the title bar) · **Remove admonition, keep content** |
 | Container | while the caret is in it, after a moment | **Change name/info** · **Attributes…** (disabled: the editor keeps no `{…}` on a `:::` line; a container written with one is a source block) · **Remove container, keep content** |
 | A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Attributes…** (`{}` or empty removes them) |
@@ -473,6 +476,11 @@ A block's bar — a source block, a snippet, the front matter, a heading, a cont
 admonition, a block with attributes — also offers the **code actions other extensions
 have for that block**, after its own verbs (see below).
 
+A bar whose object holds the element the caret is in — bold in a table's cell, code in a
+link's text, emphasis in a note — adds **Attributes of Bold…** (*of Code…*, *of
+Emphasis…*) after its own verbs, for that element's `{…}`; it is the element the
+Formatting menu names (below).
+
 - **A verb says what remains.** *Remove note, keep text* leaves the note's reference in
   the sentence, with its formatting (a sidebar leaves its text); the note's own text goes.
   *Remove link* keeps the linked text. *Delete directive* removes the
@@ -480,12 +488,12 @@ have for that block**, after its own verbs (see below).
 - **A removal says so.** Something disappearing is easy to miss, so a removal or deletion
   is announced beside the caret for a moment — *Note removed — Ctrl+Z* — and one `Ctrl+Z`
   brings it back.
-- **Edit source, Edit link…, Edit image…, Edit attributes, Edit title, Change
+- **Edit source, Edit link…, Edit image…, Attributes…, Edit title, Change
   name/info** open a one-line field in the bar, filled in: `Enter` applies (or goes on to
   the next field — *Edit image…* asks for the alt text, then the path), `Esc` or clicking
   away cancels. A link's address and an image's path complete as you type (below, *Links*). An attribute field takes a `{…}` as markdown-it-attrs reads it
-  (`{.a .b}`, `{#id}`, `{key="value"}`) and refuses anything else, saying why beside the
-  caret. **Change type** opens a list of the admonition types instead. A note's field holds its Markdown
+  (`{.a .b}`, `{#id}`, `{key="value"}`) and refuses anything else: the field stays open
+  with what you typed, the reason beside it, until you change it or press `Esc`. **Change type** opens a list of the admonition types instead. A note's field holds its Markdown
   (`++reference|note++`); what you type is read by the same parser as the preview, so it
   comes back as a note — of whichever kind its markers now say — or, if it no longer is
   one, as the text you typed. A source block's **Edit source** opens its Markdown in the
@@ -506,7 +514,7 @@ have for that block**, after its own verbs (see below).
 
 | Keys | Does |
 | ---- | ---- |
-| `Alt+Enter` | Opens the bar of the object at the caret, the focus on its first verb |
+| `Alt+Enter` | Opens the bar of the object at the caret, the focus on its first verb; in code, a key, emphasis … with no bar of its own, a bar with **Attributes…** |
 | `←` / `→` | Moves between the verbs |
 | `Enter` | Chooses the verb; in a field, applies it |
 | `Esc` | Back to the text; in a field, cancels
@@ -665,7 +673,10 @@ it. The five marks show their real
 element (the italic, emphasis, bold, strong and code your stylesheets draw) as their
 glyph; everything else is in a menu. Above any text you select, a small bubble offers the
 same five marks, the extension's five (highlight, superscript, subscript, strikethrough,
-key) and the two notes.
+key), the two notes and **`{…}`**: within one element — code, a link, emphasis … — the
+attributes of that element, the whole of it, as **Attributes of Code…** — marked while it
+targets one, its tooltip and its accessible name saying which; across plain text, **Span
+with class**.
 
 In a menu, each entry **is** the construct it makes — the very element the preview renders
 from that syntax, drawn by the same stylesheets and scaled to one entry height — with its
@@ -683,9 +694,18 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   strikethrough (`~~del~~`) and key (`[[Ctrl]]`), each toggled on the selection like bold;
   and **Span with class**, which asks for the attributes in a field under the selection —
   filled in as `{.}` with the caret after the dot, so you type the class name and `Enter` —
-  and makes the selection `[text]{.class}`; and **Attributes…**, which asks the same way
-  for the `{…}` of the block the caret is in — the field names it (*Paragraph ·
-  Attributes*), shows its literal when it has one, and `{}` removes it. The literal goes
+  and makes the selection `[text]{.class}`; **Attributes of Code…**, named by the element
+  the caret is in as the row names it — *Bold*, *Italic*, *Strong*, *Emphasis*, *Code*, a
+  key, a link, superscript, subscript, a highlight, a span, a selected image — and drawn
+  as that element, its syntax written as it, which asks the same way for that element's
+  `{…}`, written right after it; where there is none it rests as *Attributes of
+  Element…*, disabled, saying where to put the caret. Which
+  element that is: a link or a span, else the innermost — code, subscript, superscript, a
+  key, a highlight, strikethrough, strong, emphasis; between two runs of one kind at the
+  caret, the one after it. And **Attributes of Paragraph…**, named by the block the caret
+  is in (*Heading*, *List item*, *Quote*, *Table*, *Code block* …; *Attributes of Block…*,
+  disabled, where none takes one), which asks for that block's `{…}` — the field names it
+  (*Paragraph · Attributes*), shows its literal when it has one, and `{}` removes it. The literal goes
   where markdown-it-attrs reads it for that block: the end of a paragraph's or a heading's
   line, the end of a list item's first paragraph (the item, not the list), `> {.x}` under
   a quote's last paragraph, a line under a table after a blank line, a fence's opening
@@ -809,9 +829,9 @@ place — each for a reason:
 - **Tables using markdown-it-multimd-table's extensions, raw HTML and the rest of the extended syntax** — the table of contents,
   footnotes and their definitions, definition lists, task lists, abbreviations, reference
   definitions, setext headings — are *source blocks*, and so is a block whose attributes
-  the editor could not write back where they stand: on an image, inline code, superscript,
-  subscript or a key, a block inside another, a container, or an admonition's title; a
-  span, a link or emphasis whose `{…}` holds a quoted `}`, which the plugin cuts short; a container
+  the editor could not write back where they stand: on a block inside another, a
+  container, or an admonition's title; an element whose `{…}` holds a quoted `}`, which
+  the plugin cuts short; a container
   or admonition nested more than one level deep, or closed by its parent's fence rather
   than its own. Hover or
   select one and choose **Edit source** in its bar — or double-click it — to edit its
@@ -866,18 +886,27 @@ rather than a second heading, so the id and the anchor are never written twice.
   item the `{…}` line could no longer reach is written with the `{…}` after a blank line,
   which markdown-it-attrs also gives the list. Changing a block's type keeps its
   attributes; splitting it leaves them on the first half.
-- **Attributes on a link or on emphasis belong to that mark.** Typing inside it keeps them;
-  extending the emphasis over more text, or switching `*` for `_`, keeps them; taking the
-  emphasis off part of it leaves them on the rest. A paragraph split inside the mark, or
-  the mark copied, gives both pieces the same `{…}` — an `{#id}` then stands twice, as it
-  does for a span. A `{…}` you type as text right after a link or emphasis is written
-  escaped (`\{…\}`), so it stays text. An edit after which the preview would read the
-  attributes differently is refused, with the reason beside the caret. Emphasis gets its
-  first attributes only in the text editor (or as a span with **Span with class**); a link
-  gets them from **Attributes…** on its bar. A bare web address with attributes is written
-  `[address](address){…}`, and two `{…}` after one mark (`_x_{.a}{.b}`) are written as one
-  (`{.a .b}`) once the block changes. Nested marks may be written the other way round
-  (`**_x_{.a}**{.b}` as `_**x**{.b}_{.a}`), which the preview reads as the same attributes.
+- **Attributes on a link, emphasis, inline code, superscript, subscript, a key or an image
+  belong to it.** Typing inside it keeps them; extending the emphasis or the code over
+  more text, or switching `*` for `_`, keeps them; taking it off part of the text leaves
+  them on the rest. A paragraph split inside the element, or the element copied, gives
+  both pieces the same `{…}` — an `{#id}` then stands twice, as it does for a span. A
+  `{…}` you type as text right after one is written escaped (`\{…\}`), so it stays text.
+  An edit after which the preview would read the attributes differently is refused, with
+  the reason beside the caret. Each gets its first attributes from **Formatting →
+  Attributes of …**, from `Alt+Enter` or from the bubble's `{…}`. A bare web address with
+  attributes is written `[address](address){…}`, and two `{…}` after one element
+  (`_x_{.a}{.b}`) are written as one (`{.a .b}`) once the block changes. Nested marks may
+  be written the other way round (`**_x_{.a}**{.b}` as `_**x**{.b}_{.a}`), which the
+  preview reads as the same attributes. Over exactly the same text (``*`x`*``) only the
+  innermost element's attributes are offered; the outer one's are edited in the text
+  editor, or once it covers more text.
+- **An image's `src`, `alt` and `title` are its own.** A `{…}` setting them is not kept as
+  attributes: `src` and `title` are written into `![alt](src "title")`, `alt` is dropped
+  (the preview takes it from the text anyway); the field refuses them. A wiki embed's `{…}`
+  (`![[x.png]]{.c}`) is text, as markdown-it-attrs gives an embed none. A video embedded
+  as an image (`![a](v.mp4){.c}`) keeps its `{…}` and is drawn with it here, but the
+  preview's `<video>` ignores it.
 - **A note holds no note.** The notes plugin allows a note of another kind inside one
   (`++a|see !!b|c!!++`); a paragraph written so stays a source block.
 - **Some characters cannot be in inline code inside a note.** The notes plugin finds a

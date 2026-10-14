@@ -42,34 +42,35 @@ import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
+import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
-import { LiteralLoss, itemTakesLiteral, literalHolder, literalNotReadBack, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
+import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 
 const nodes = editorSchema.nodes;
 
 export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
 
-/** The objects that are a mark's run in its textblock rather than a node. */
-export type MarkObjectKind = 'link' | 'span' | 'styled';
+/**
+ * The objects that are a mark's run in its textblock rather than a node. A
+ * `holder` is the run of a styled mark carrying no literal yet (`**x**`,
+ * `` `x` ``): never what `objectAtSelection` finds — formatting has no bar of
+ * its own on a caret rest — only what `attributeHolderAt` names, so its
+ * attributes can be given from the menu, the bubble and `Alt+Enter`.
+ */
+export type MarkObjectKind = 'link' | 'span' | 'styled' | 'holder';
 
 export type EditorObject =
     | { kind: 'link'; from: number; to: number; mark: Mark }
     | { kind: 'span'; from: number; to: number; mark: Mark }
     | { kind: 'styled'; from: number; to: number; mark: Mark }
+    | { kind: 'holder'; from: number; to: number; mark: Mark }
     | { kind: NodeObjectKind; from: number; to: number; node: Node };
 
-/** Whether the object is a mark's run (`MarkObjectKind`): a link, an attribute span, emphasis with a literal. */
+/** Whether the object is a mark's run (`MarkObjectKind`): a link, an attribute span, emphasis with a literal, a bare holder. */
 export function isMarkObject(object: EditorObject): object is Extract<EditorObject, { mark: Mark }> {
-    return object.kind === 'link' || object.kind === 'span' || object.kind === 'styled';
+    return object.kind === 'link' || object.kind === 'span' || object.kind === 'styled' || object.kind === 'holder';
 }
-
-/**
- * The marks whose run is a `styled` object when it carries a literal
- * (`_x_{.a}`, `~~x~~{.a}`): its bar shows and edits the literal, as a span's
- * does; without one such a run is formatting, with no bar of its own.
- */
-export const STYLED_MARKS: readonly string[] = ['em', 'strong', 'strike', 'mark'];
 
 /** The objects the pointer resting on them shows the toolbar for; the others show it for the caret. */
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
@@ -96,10 +97,25 @@ export function isTopLevelBlock(state: EditorState, object: EditorObject): boole
         && state.doc.resolve(object.from).depth === 0 && state.doc.nodeAt(object.from) === object.node;
 }
 
-/** Whether two objects are the same one: the same kind at the same place. */
+/**
+ * Whether two objects are the same one: the same kind at the same place, of
+ * the same mark where it is a run — a bare holder and the styled run it
+ * becomes once it has a literal count as one.
+ */
 export function sameObject(a: EditorObject | null, b: EditorObject | null): boolean {
-    return a !== null && b !== null && a.kind === b.kind && a.from === b.from;
+    if (a === null || b === null || a.from !== b.from || (a.kind !== b.kind && !(RUN_KINDS.has(a.kind) && RUN_KINDS.has(b.kind)))) {
+        return false;
+    }
+    // Two runs starting at one place are one object only when they are runs of one mark, written
+    // alike: code inside bold starts where the bold does (`**`foo`bar**`), and is another.
+    // The delimiter only where it names the mark (`**` Bold, `__` Strong): a link whose address changed,
+    // a bare one now written `[url](url)`, is the same link.
+    return !('mark' in a) || !('mark' in b) || (a.mark.type === b.mark.type
+        && (holderOfCarrier(a.mark.type.name)?.markups === undefined || a.mark.attrs.markup === b.mark.attrs.markup));
 }
+
+/** A run of formatting, bare or with a literal: one object as it gains or loses one. */
+const RUN_KINDS: ReadonlySet<string> = new Set(['holder', 'styled']);
 
 const NODE_KINDS: Readonly<Record<string, NodeObjectKind>> = {
     sidenote: 'note',
@@ -162,28 +178,92 @@ function markRunAt($pos: ResolvedPos, mark: Mark): { from: number; to: number } 
     return null;
 }
 
+/** What an inline holder at the selection is: the holder, and the object its run or its image is. */
+export interface InlineHolderAt {
+    holder: InlineLiteralHolder;
+    object: LiteralObject;
+}
+
+/** The object a run of `mark` (`holder`'s) is: a link, a span, a styled run carrying a literal, else a bare holder. */
+function runObject(holder: InlineLiteralHolder, mark: Mark, from: number, to: number): LiteralObject {
+    const kind = holder.holder === 'link' ? 'link' : holder.holder === 'span' ? 'span' : mark.attrs.literal !== null ? 'styled' : 'holder';
+    return { kind, from, to, mark };
+}
+
 /**
- * The run of the mark the selection is in — a link, an attribute span,
- * emphasis carrying a literal (`styled`): a caret inside its text or at either
- * of its ends, or a selection both of whose ends are within it.
+ * The one rule for "the inline element at the selection that carries, or can
+ * carry, a `{…}`", read by the bars (`objectAtSelection`, `withLiteral`) and
+ * by the menu, the bubble and `Alt+Enter` (`attributeHolderAt`), so no two of
+ * them name different elements: a selected image; else, with both ends of the
+ * selection in one textblock, the first of `holders` — in the registry's
+ * order, a link, a span, then the styled ones innermost first
+ * (`inlineLiterals.ts`) — whose mark is on the node after the caret, or else
+ * on the node before it, and whose run holds the selection's other end. At a
+ * seam between two runs of one kind the one after the caret is meant; over
+ * exactly the same text, the innermost. With `withLiteral`, a styled mark
+ * counts only while it carries a literal: formatting has no bar of its own.
  */
-function markObjectAt(state: EditorState, kind: MarkObjectKind): EditorObject | null {
-    const { $from, $to } = state.selection;
+function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[], withLiteral: boolean, accept: (object: LiteralObject) => boolean = () => true): InlineHolderAt | null {
+    const sel = state.selection;
+    if (sel instanceof NodeSelection) {
+        const holder = holderOfCarrier(sel.node.type.name);
+        return holder !== undefined && holders.includes(holder) && 'node' in holder.carrier
+            ? { holder, object: { kind: 'image', from: sel.from, to: sel.to, node: sel.node } }
+            : null;
+    }
+    const { $from, $to } = sel;
     if (!$from.parent.inlineContent || !$from.sameParent($to)) {
         return null;
     }
-    const types = kind === 'link' ? [editorSchema.marks.link] : kind === 'span' ? [editorSchema.marks.attr_span] : STYLED_MARKS.map(name => editorSchema.marks[name]);
-    for (const neighbour of [$from.nodeAfter, $from.nodeBefore]) {
-        const mark = neighbour?.marks.find(m => types.includes(m.type) && (kind !== 'styled' || m.attrs.literal !== null));
-        if (!mark) {
+    for (const holder of holders) {
+        if (!('mark' in holder.carrier)) {
             continue;
         }
-        const run = markRunAt($from, mark);
-        if (run !== null && $to.pos <= run.to) {
-            return { kind, from: run.from, to: run.to, mark } as EditorObject;
+        const type = editorSchema.marks[holder.carrier.mark];
+        for (const neighbour of [$from.nodeAfter, $from.nodeBefore]) {
+            const mark = neighbour?.marks.find(m => m.type === type && (!withLiteral || !holder.styled || m.attrs.literal !== null));
+            const run = mark === undefined ? null : markRunAt($from, mark);
+            const object = mark === undefined || run === null || $to.pos > run.to ? null : runObject(holder, mark, run.from, run.to);
+            if (object !== null && accept(object)) {
+                return { holder, object };
+            }
         }
     }
     return null;
+}
+
+/**
+ * What at the selection can carry a `{…}`: the inline holder there — a
+ * selected image, or the run of a link, a span or a styled mark, with a
+ * literal or without one (`holderRunAt`) — and the block **Attributes…** acts
+ * on (`attributesTargetAt`) or why there is none. Where the bars show a mark's
+ * object or an image, `inline` is that same object.
+ */
+export function attributeHolderAt(state: EditorState): { inline: InlineHolderAt | null; block: AttributesTarget | { refusal: string } } {
+    // Asked by every surface on every update: once per state — and per engine, whose reading of attributes the block's half asks.
+    const definition = currentInlineDefinition();
+    const known = holderCache.get(state);
+    if (known !== undefined && known.definition === definition) {
+        return known.value;
+    }
+    const value = { inline: holderRunAt(state, INLINE_LITERAL_HOLDERS, false), block: attributesTargetAt(state) };
+    holderCache.set(state, { definition, value });
+    return value;
+}
+
+const holderCache = new WeakMap<EditorState, { definition: unknown; value: ReturnType<typeof attributeHolderAt> }>();
+
+/**
+ * The inline holder inside `object` the selection is in, other than `object`
+ * itself — bold in a table cell, code in a link — whose attributes the
+ * object's bar offers as a verb of its own: the same search, `object`'s own
+ * holder left out, the run within `object`'s range. `null` where there is none.
+ */
+export function holderInside(state: EditorState, object: EditorObject): InlineHolderAt | null {
+    const own = isMarkObject(object) ? holderOfCarrier(object.mark.type.name) : undefined;
+    // Within `object` is part of the search: a holder around it (a span around a link) is passed over, not the end of it.
+    return holderRunAt(state, INLINE_LITERAL_HOLDERS.filter(h => h !== own && 'mark' in h.carrier), false,
+        found => found.from >= object.from && found.to <= object.to && !sameObject(found, object));
 }
 
 /** The innermost container or admonition holding both ends of the selection. */
@@ -245,7 +325,7 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     if (!(sel instanceof TextSelection)) {
         return null;
     }
-    const mark = markObjectAt(state, 'link') ?? markObjectAt(state, 'span') ?? markObjectAt(state, 'styled');
+    const mark = holderRunAt(state, INLINE_LITERAL_HOLDERS, true)?.object ?? null;
     if (mark !== null) {
         return mark;
     }
@@ -257,11 +337,21 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     return wrapperAt(state) ?? tableObjectAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
 }
 
-/** The object at the same place in `state`, if it is still there and still the same kind; verbs act on this, never on a stale one. */
+/**
+ * The object at the same place in `state`, if it is still there and still the
+ * same kind; verbs act on this, never on a stale one. A mark's run is the
+ * selection's object again, or — a run inside another object's, a bare
+ * holder — the run of the same mark the selection is in (`holderRunAt`).
+ */
 export function currentObject(state: EditorState, object: EditorObject): EditorObject | null {
     if (isMarkObject(object)) {
         const found = objectAtSelection(state);
-        return sameObject(found, object) ? found : null;
+        if (sameObject(found, object)) {
+            return found;
+        }
+        const holder = holderOfCarrier(object.mark.type.name);
+        const again = holder === undefined ? null : holderRunAt(state, [holder], false)?.object ?? null;
+        return sameObject(again, object) ? again : null;
     }
     if (object.from < 0 || object.from >= state.doc.content.size) {
         return null;
@@ -551,8 +641,14 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph
     if (INLINE_PLACES.has(place) && hasInnerBrace(value)) {
         return `${value} holds a } inside a value: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
     }
-    if (place === 'link' && (parseAttrsLiteral(value) ?? []).some(([name]) => name === 'href' || name === 'title')) {
+    const holder = holderNamed(place);
+    const own = holder === undefined ? undefined : (parseAttrsLiteral(value) ?? []).find(([name]) => holder.own.includes(name))?.[0];
+    if (place === 'link' && own !== undefined) {
         return `${value} sets the link's href or title, which the link writes in its (…): give it a class, an id or another attribute.`;
+    }
+    if (holder !== undefined && own !== undefined) {
+        // The one key at fault, and where it is changed instead.
+        return `${own} is the ${holder.noun}'s own: change it with Edit ${holder.noun}…. Here, give it a class, an id or another attribute.`;
     }
     if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(value)) {
         return `${value} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
@@ -579,6 +675,12 @@ export const LITERAL_READ_WITH_BLOCK_REFUSAL = 'Read together with the rest of i
  * whatever is typed.
  */
 export function literalAlreadyLostRefusal(existing: LiteralLoss): string {
+    if (existing.cause?.kind === 'unread') {
+        return literalLostReason(existing);
+    }
+    if (existing.cause !== undefined) {
+        return 'Read with the rest of this block, the preview already would not read it back as the page shows it: that is the cause, not the literal typed. Edit the block once in the text editor first.';
+    }
     if (existing.literal === null) {
         return 'Read with the rest of this block, the preview already would read text in it as attributes the editor does not show: that is the cause, not the literal typed. Edit the block once in the text editor first.';
     }
@@ -602,71 +704,127 @@ function topBlockAt(doc: Node, pos: number): Node | null {
  */
 export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, changing?: string | null): string | null {
     const block = topBlockAt(doc, pos);
-    if (block === null || literalsReadBack(block)) {
+    const lost = block === null ? null : literalNotReadBack(block);
+    if (lost === null) {
         return null;
     }
     const old = before === undefined ? null : topBlockAt(before, pos);
     const existing = old === null ? null : literalNotReadBack(old);
+    if (existing === null && lost.cause !== undefined) {
+        // What the comparison of the save's text found (two runs read as one …): the edit filter's own answer.
+        return literalLostReason(lost);
+    }
     return existing === null || (existing.literal !== null && existing.literal === changing) ? LITERAL_READ_WITH_BLOCK_REFUSAL : literalAlreadyLostRefusal(existing);
 }
 
 /**
- * The places of the literals written right after an inline mark — a span's
+ * The places of the literals written right after an inline element — a span's
  * `]`, emphasis' closing delimiter, a link's `)` — as `attrsReadAt` knows them
- * (`INLINE_LITERAL_HOLDERS` in `blocks.ts`), by the mark's name: there
- * markdown-it-attrs cuts the text after the mark at the literal's first `}`.
+ * (the holders' keys, `inlineLiterals.ts`): there markdown-it-attrs cuts the
+ * text after the element at the literal's first `}`.
  */
-const INLINE_PLACES: ReadonlySet<string> = new Set(['span', 'em', 'strong', 'strike', 'mark', 'link']);
+const INLINE_PLACES: ReadonlySet<string> = new Set(INLINE_LITERAL_HOLDERS.map(h => h.holder));
 
-/** The place (`LiteralPlace`) of the literal a mark object carries: its mark's name, a span's `span`. */
-export function markLiteralPlace(object: Extract<EditorObject, { mark: Mark }>): LiteralPlace {
-    return object.mark.type === editorSchema.marks.attr_span ? 'span' : object.mark.type.name;
+/**
+ * An object that carries an inline literal (`inlineLiterals.ts`): a mark's run
+ * — a link, a span, a styled run — or an image, a node.
+ */
+export type LiteralObject = Extract<EditorObject, { mark: Mark }> | { kind: 'image'; from: number; to: number; node: Node };
+
+/** `object` as one that carries an inline literal (`LiteralObject`), or `null`: a mark's run, or an image. */
+export function literalObjectOf(object: EditorObject | null): LiteralObject | null {
+    if (object === null) {
+        return null;
+    }
+    return isMarkObject(object) ? object : object.kind === 'image' ? { kind: 'image', from: object.from, to: object.to, node: object.node } : null;
+}
+
+/** The mark or the node of `object` that carries its literal. */
+function carrierOf(object: LiteralObject): Mark | Node {
+    return 'mark' in object ? object.mark : object.node;
+}
+
+/** `object` with the holder of its literal (`inlineLiterals.ts`). */
+export function inlineHolderOf(object: LiteralObject): InlineHolderAt {
+    return { holder: holderOfCarrier(carrierOf(object).type.name) as InlineLiteralHolder, object };
+}
+
+/** What the holder at `at` is called, by the delimiter its run is written with (`namesOf`: `**` Bold, `_` Emphasis …). */
+export function holderNames(at: InlineHolderAt): HolderNames {
+    return namesOf(at.holder, carrierOf(at.object).attrs.markup);
+}
+
+/** The delimiter `at`'s run is written with, where its mark has a choice of one (`**`, `_`); else none. */
+export function holderMarkup(at: InlineHolderAt): string | undefined {
+    const markup = carrierOf(at.object).attrs.markup;
+    return typeof markup === 'string' ? markup : undefined;
+}
+
+/** The literal `object` carries now, or `null`. */
+export function literalOfObject(object: LiteralObject): string | null {
+    const literal = carrierOf(object).attrs.literal;
+    return typeof literal === 'string' ? literal : null;
+}
+
+/** The place (`LiteralPlace`) of the literal an object carries: its holder's key (`holderOfCarrier`), a span's `span`, an image's `image`. */
+export function inlineLiteralPlace(object: LiteralObject): LiteralPlace {
+    const name = carrierOf(object).type.name;
+    return holderOfCarrier(name)?.holder ?? name;
 }
 
 /**
- * The literal typed into a link's or a styled run's field as the mark will
- * carry it: `null` for an empty field or `{}`, which remove it, the literal
- * trimmed otherwise.
+ * The literal typed into a link's, a styled run's or an image's field as its
+ * carrier will hold it: `null` for an empty field or `{}`, which remove it,
+ * the literal trimmed otherwise.
  */
 function typedMarkLiteral(literal: string): string | null {
     const value = literal.trim();
     return value === '' || value === '{}' ? null : value;
 }
 
-/** `object`'s run given `literal` (`null`: none) instead, every other attribute of its mark kept. */
-function markLiteralChange(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string | null): Transaction {
+/**
+ * `object` given `literal` (`null`: none) instead, every other attribute of
+ * its carrier kept: a mark's run its mark again, an image its node, still
+ * selected when it was.
+ */
+function literalChange(state: EditorState, object: LiteralObject, literal: string | null): Transaction {
+    if (!('mark' in object)) {
+        const tr = state.tr.setNodeMarkup(object.from, undefined, { ...object.node.attrs, literal });
+        return state.selection instanceof NodeSelection && state.selection.from === object.from ? tr.setSelection(NodeSelection.create(tr.doc, object.from)) : tr;
+    }
     const mark = object.mark.type.create({ ...object.mark.attrs, literal });
     return state.tr.removeMark(object.from, object.to, object.mark).addMark(object.from, object.to, mark);
 }
 
 /**
- * Why the literal of a link or of emphasis with one (`styled`) cannot be
- * changed to `literal`, or `null`: the literal alone where it is written
- * (`literalRefusal`, at `markLiteralPlace`), then read with its block
- * (`literalsReadBackRefusal`), then the note around it (`noteRefusal`). An
- * empty field or `{}` removes it, which only its block and a note can refuse.
+ * Why the literal of a link, of emphasis or code with one (`styled`) or of
+ * an image cannot be changed to `literal`, or `null`: the literal alone where
+ * it is written (`literalRefusal`, at `inlineLiteralPlace`), then read with
+ * its block (`literalsReadBackRefusal`), then the note around it
+ * (`noteRefusal`). An empty field or `{}` removes it, which only its block and
+ * a note can refuse.
  */
-export function changeMarkLiteralRefusal(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string): string | null {
+export function changeInlineLiteralRefusal(state: EditorState, object: LiteralObject, literal: string): string | null {
     const value = typedMarkLiteral(literal);
-    const alone = value === null ? null : literalRefusal(value, markLiteralPlace(object));
+    const alone = value === null ? null : literalRefusal(value, inlineLiteralPlace(object));
     if (alone !== null) {
         return alone;
     }
-    const tr = markLiteralChange(state, object, value);
-    return literalsReadBackRefusal(tr.doc, object.from, state.doc, object.mark.attrs.literal as string | null) ?? noteRefusal(tr);
+    const tr = literalChange(state, object, value);
+    return literalsReadBackRefusal(tr.doc, object.from, state.doc, literalOfObject(object)) ?? noteRefusal(tr);
 }
 
 /**
- * The link's or the styled run's literal set to `literal` — removed for an
- * empty field or `{}` — in one transaction. `null` when it is unchanged or
- * refused (`changeMarkLiteralRefusal`).
+ * The object's literal set to `literal` — removed for an empty field or `{}` —
+ * in one transaction. `null` when it is unchanged or refused
+ * (`changeInlineLiteralRefusal`).
  */
-export function changeMarkLiteralTransaction(state: EditorState, object: Extract<EditorObject, { mark: Mark }>, literal: string): Transaction | null {
+export function changeInlineLiteralTransaction(state: EditorState, object: LiteralObject, literal: string): Transaction | null {
     const value = typedMarkLiteral(literal);
-    if (value === object.mark.attrs.literal || changeMarkLiteralRefusal(state, object, literal) !== null) {
+    if (value === literalOfObject(object) || changeInlineLiteralRefusal(state, object, literal) !== null) {
         return null;
     }
-    return markLiteralChange(state, object, value).scrollIntoView();
+    return literalChange(state, object, value).scrollIntoView();
 }
 
 /** Why `literal` cannot be given to the selection as an attribute span, or `null`: the span's literal alone (`literalRefusal`), then read with its block (`literalsReadBackRefusal`). */
@@ -689,7 +847,24 @@ export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject
         return alone;
     }
     const tr = state.tr.removeMark(span.from, span.to, span.mark).addMark(span.from, span.to, editorSchema.marks.attr_span.create({ literal: value }));
-    return literalsReadBackRefusal(tr.doc, span.from, state.doc, span.mark.attrs.literal as string);
+    // The edit filter's answer too, as `changeSpanTransaction` asks it: a field never closes on a change that is then dropped.
+    return literalsReadBackRefusal(tr.doc, span.from, state.doc, span.mark.attrs.literal as string) ?? noteRefusal(tr);
+}
+
+/**
+ * Why Span with class makes no span of the selection with `literal`, or
+ * `null`: the literal alone and read with its block (`spanLiteralRefusal`),
+ * the selection (`spanLockReason`), then the edit filter's own answer for the
+ * span made (`noteRefusal`) — the one reason its field gives, before and after
+ * the focus is back.
+ */
+export function applySpanRefusal(state: EditorState, literal: string): string | null {
+    const alone = spanLiteralRefusal(state, literal) ?? spanLockReason(state);
+    if (alone !== null) {
+        return alone;
+    }
+    const { from, to } = state.selection;
+    return noteRefusal(state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: literal.trim() })));
 }
 
 /** Why an attribute span cannot be made of the selection, or `null`: it needs an engine that reads attributes, and selected text in one textblock that is not code. */
@@ -700,7 +875,7 @@ export function spanLockReason(state: EditorState): string | null {
     const sel = state.selection;
     const ok = sel instanceof TextSelection && !sel.empty && sel.$from.sameParent(sel.$to)
         && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code;
-    return ok ? null : 'Select text within one paragraph, heading or list item (not code) to give it attributes.';
+    return ok ? null : 'Select text within one paragraph, heading or list item (not in a code block) to give it attributes.';
 }
 
 /**
@@ -977,7 +1152,7 @@ export function attributesTargetOf(node: Node, pos: number): AttributesTarget | 
 
 /**
  * The block the selection gives attributes to, or why there is none — what
- * **Formatting → Attributes…** is enabled by and acts on. Innermost first: the
+ * **Formatting → Attributes of Paragraph…** is named by and acts on. Innermost first: the
  * list item holding both ends of the selection (a literal the item writes at
  * the end of its first paragraph, at any depth), else the top-level block
  * holding them — a nested paragraph's or quote's literal is not written

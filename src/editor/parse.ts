@@ -456,7 +456,8 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
             node: 'image',
             getAttrs: tok => {
                 const t = real(tok);
-                return { src: attr(t, 'src') ?? '', alt: tokenText(t.children) || null, title: attr(t, 'title') };
+                // A `{…}` after its `)` is its `literal` (`recoverInlineLiterals`); its `src`, `alt` and `title` are its own.
+                return { src: attr(t, 'src') ?? '', alt: tokenText(t.children) || null, title: attr(t, 'title'), literal: inlineLiteral.get(tok) ?? null };
             },
         },
         hardbreak: { node: 'hard_break' },
@@ -486,13 +487,13 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 };
             },
         },
-        code_inline: { mark: 'code', noCloseToken: true },
+        code_inline: { mark: 'code', noCloseToken: true, getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
         // The extension's inline syntax, each delimiter pair a mark.
         mark: { mark: 'mark', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
         s: { mark: 'strike', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
-        sup: { mark: 'sup' },
-        sub: { mark: 'sub' },
-        kbd: { mark: 'kbd' },
+        sup: { mark: 'sup', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
+        sub: { mark: 'sub', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
+        kbd: { mark: 'kbd', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
         // A note's `_ref_` and `_content_` pairs are its two child nodes.
         sidenote: { block: 'sidenote' },
         sidenote_ref: { block: 'note_ref' },

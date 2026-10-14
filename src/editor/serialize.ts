@@ -11,6 +11,7 @@ import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
 import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { parseDocument } from './parse';
 import { NOTE_CLOSE_TOKENS, NOTE_OPEN_TOKENS } from './blocks';
+import { INLINE_LITERAL_HOLDERS, holderOfCarrier, namesOf } from './inlineLiterals';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
@@ -533,37 +534,38 @@ function backtickFence(text: string): { open: string; close: string } {
 }
 
 /**
- * The `{…}` literal a mark carries (`literal`: an attribute span's, emphasis',
- * strikethrough's, a highlight's, a link's), or `null` for none or a mark that
- * has no such attribute.
+ * The `{…}` literal a mark or an image carries (`literal`: an attribute
+ * span's, emphasis', a link's, inline code's, an image's … — the holders of
+ * `inlineLiterals.ts`), or `null` for none or a mark that has no such attribute.
  */
-export function markLiteralOf(mark: Mark): string | null {
-    const literal = (mark.attrs as { literal?: unknown }).literal;
+export function markLiteralOf(carrier: Mark | Node): string | null {
+    const literal = (carrier.attrs as { literal?: unknown }).literal;
     return typeof literal === 'string' ? literal : null;
 }
 
-/** The token markdown-it-attrs gives each mark's literal to: the mark's opening token. */
-const MARK_LITERAL_TOKENS: Readonly<Record<string, string>> = {
-    'attr_span': 'span_open',
-    em: 'em_open',
-    strong: 'strong_open',
-    strike: 's_open',
-    mark: 'mark_open',
-    link: 'link_open',
-};
+/** What follows a carrier's closing delimiter in the file: its literal, or nothing. */
+function literalSuffix(carrier: Mark | Node): string {
+    return markLiteralOf(carrier) ?? '';
+}
 
-/** The opening tokens of the marks that carry a literal (`MARK_LITERAL_TOKENS`). */
-const LITERAL_OPEN_TOKENS: ReadonlySet<string> = new Set(Object.values(MARK_LITERAL_TOKENS));
+/** The token markdown-it-attrs gives each mark's literal to, by the mark's name (`inlineLiterals.ts`). */
+const MARK_LITERAL_TOKENS: Readonly<Record<string, string>> = Object.fromEntries(
+    INLINE_LITERAL_HOLDERS.flatMap(h => ('mark' in h.carrier ? [[h.carrier.mark, h.token]] : [])),
+);
 
-/** What each mark that carries a literal is called at the start of a refusal. */
-const MARK_LITERAL_NOUNS: Readonly<Record<string, string>> = {
-    'attr_span': 'An attribute span',
-    em: 'Emphasis',
-    strong: 'Strong emphasis',
-    strike: 'Strikethrough',
-    mark: 'A highlight',
-    link: 'A link',
-};
+/** The token markdown-it-attrs gives each node's literal to, by the node's name: an image's (`inlineLiterals.ts`). One per node. */
+const NODE_LITERAL_TOKENS: Readonly<Record<string, string>> = Object.fromEntries(
+    INLINE_LITERAL_HOLDERS.flatMap(h => ('node' in h.carrier ? [[h.carrier.node, h.token]] : [])),
+);
+
+/** The tokens markdown-it-attrs gives the literal of an inline holder to (`inlineLiterals.ts`). */
+const LITERAL_OPEN_TOKENS: ReadonlySet<string> = new Set(INLINE_LITERAL_HOLDERS.map(h => h.token));
+
+/** What the mark or node `carrier` carrying a literal is called at the start of a refusal (`subject`). */
+function literalSubject(carrier: Mark | Node): string {
+    const holder = holderOfCarrier(carrier.type.name);
+    return holder === undefined ? carrier.type.name : namesOf(holder, carrier.attrs.markup).subject;
+}
 
 /**
  * A closing delimiter with the mark's literal after it, when it has one
@@ -658,6 +660,7 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
     // A key right after a `!` would be read as a wiki embed's `![[…]]`
     // where the engine reads embeds (`InlineEngineDefinition.wikiEmbeds`), so
     // there that `!` is escaped, as a link's is.
+    // A literal follows the closing delimiter inside the held run (`` `x`{.a} ``, `^x^{.a}`, `[[x]]{.a}`).
     kbd: {
         open(state) {
             if (currentReadsWikiEmbeds()) {
@@ -665,14 +668,14 @@ const marks: ConstructorParameters<typeof MarkdownSerializer>[1] = {
             }
             return HOLD_OPEN + KBD_MARKERS.open;
         },
-        close: KBD_MARKERS.close + HOLD_CLOSE,
+        close: (_state, mark) => KBD_MARKERS.close + literalSuffix(mark) + HOLD_CLOSE,
         mixable: true,
     },
-    sup: { open: HOLD_OPEN + INLINE_MARKERS.superscript, close: INLINE_MARKERS.superscript + HOLD_CLOSE },
-    sub: { open: HOLD_OPEN + INLINE_MARKERS.subscript, close: INLINE_MARKERS.subscript + HOLD_CLOSE },
+    sup: { open: HOLD_OPEN + INLINE_MARKERS.superscript, close: (_state, mark) => INLINE_MARKERS.superscript + literalSuffix(mark) + HOLD_CLOSE },
+    sub: { open: HOLD_OPEN + INLINE_MARKERS.subscript, close: (_state, mark) => INLINE_MARKERS.subscript + literalSuffix(mark) + HOLD_CLOSE },
     code: {
         open: (_state, _mark, parent, index) => HOLD_OPEN + backtickFence(parent.child(index).text ?? '').open,
-        close: (_state, _mark, parent, index) => backtickFence(parent.child(index - 1).text ?? '').close + HOLD_CLOSE,
+        close: (_state, mark, parent, index) => backtickFence(parent.child(index - 1).text ?? '').close + literalSuffix(mark) + HOLD_CLOSE,
         escape: false,
     },
 };
@@ -1107,9 +1110,16 @@ function inlineModel(parent: Node): string {
 
 /** Whether `text`, read whole by the page's engine as `readUnit` reads a part, is one paragraph holding what `parent` holds. */
 function readsBack(text: string, parent: Node): boolean {
-    const definition = currentInlineDefinition();
-    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition).doc;
-    return doc.childCount === 1 && doc.firstChild.type.name === 'paragraph' && inlineModel(doc.firstChild) === inlineModel(parent);
+    let doc: Node;
+    try {
+        // The comparison's own parse (`comparisonDoc`): the typographer's quotes are no other order.
+        doc = comparisonDoc(text);
+    } catch (error) {
+        // No answer is the library's order, which needs none; the error is said, not swallowed.
+        console.error('Markdown Extended: the editor could not read a paragraph back to choose how to write its marks', error);
+        return false;
+    }
+    return doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph' && inlineModel(doc.firstChild) === inlineModel(parent);
 }
 
 /** prosemirror-markdown's serializer, writing through `OrderedInlineState` (the library's `serialize`, 1.13.8, with that state). */
@@ -1166,7 +1176,8 @@ const inlineNodes: NodeSerializers = {
     image(state, node) {
         const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
         const st = internals(state);
-        state.write(HOLD_OPEN + '![' + partText(st.notePart, state.esc(alt ?? '')) + '](' + target(st, src, title) + ')' + HOLD_CLOSE);
+        // A literal follows the `)` inside the hold, as after a link (`![a](s){.a}`).
+        state.write(HOLD_OPEN + '![' + partText(st.notePart, state.esc(alt ?? '')) + '](' + target(st, src, title) + ')' + literalSuffix(node) + HOLD_CLOSE);
     },
     hard_break(state, node, parent, index) {
         // As prosemirror-markdown does: a trailing hard break has no line to break to.
@@ -1242,6 +1253,9 @@ function noteUnwritable(note: Node): string | null {
         const terminator = part.type.name === 'note_ref' ? REFERENCE_TERMINATOR : undefined;
         let reason: string | null = null;
         part.forEach(child => {
+            if (reason === null && holderOfCarrier(child.type.name) !== undefined && NOTE_SYNTAX_CHARS.test(markLiteralOf(child) ?? '')) {
+                reason = `${literalSubject(child)} in a note cannot hold ${markLiteralOf(child) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+            }
             if (reason !== null || !child.isText) {
                 return;
             }
@@ -1250,7 +1264,7 @@ function noteUnwritable(note: Node): string | null {
             const raw = child.marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
             const span = child.marks.find(m => NOTE_SYNTAX_CHARS.test(markLiteralOf(m) ?? ''));
             if (span !== undefined) {
-                reason = `${MARK_LITERAL_NOUNS[span.type.name]} in a note cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+                reason = `${literalSubject(span)} in a note cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
             } else if (raw && terminator !== undefined && text.includes(terminator)) {
                 reason = `Inline code, superscript and subscript in this part of a note cannot hold "${terminator}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
             } else if (code && marker !== null && text.includes(marker)) {
@@ -1375,7 +1389,7 @@ export function emojiBeyondAtoms(block: Node): number {
  * buttons, the object bar's verbs — goes through here with the transaction's
  * origin (`noteRefusal`).
  */
-export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin): string | null {
+export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin, causes = true): string | null {
     let reason: string | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
@@ -1413,7 +1427,9 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
                 continue;
             }
             const verdict = unitVerdict(unit);
-            if (verdict !== null) {
+            // Without `causes`, only what a literal or a sidebar names: the comparison's own finding
+            // waits until the checks that name an atom's cause have spoken (`noteRefusal`).
+            if (verdict !== null && (causes || verdict.mismatch !== null || verdict.lost?.cause === undefined)) {
                 const failed = verdict.lost?.at ?? verdict.mismatch?.at;
                 const textblock = unit.textblocks.find(t => t.node === failed);
                 const beside = textblock === undefined
@@ -2009,6 +2025,31 @@ function unitBefore(origin: EditOrigin, block: { node: Node; offset: number; cop
     return { verdict, positionOf: node => oldOffset + (textblocks.find(t => t.node === node)?.pos ?? 0) };
 }
 
+/**
+ * Why an edit is refused after which two runs of one element — inline code,
+ * strong emphasis … — would stand side by side in the file, which the parser
+ * reads as one: the two differ only in their `{…}`, and the first's would be lost.
+ */
+export function mergedReason(noun: string): string {
+    return `After this edit two pieces of ${noun} would stand side by side, and the preview would read them as one, losing a {…}: give both the same attributes, or keep a character between them.`;
+}
+
+/** Why an edit is refused after which the save would not read back as the page shows it, by what the comparison found (`ReadCause`). */
+export function causeReason(cause: ReadCause): string {
+    switch (cause.kind) {
+        case 'merged':
+            return mergedReason(cause.noun);
+        case 'lost':
+            return `After this edit the preview would not read the ${cause.noun} here back as written: the delimiters around it would touch what stands beside it. Keep a space or another character between them.`;
+        case 'made':
+            return `After this edit the preview would read text here as ${cause.noun}, which the editor does not show: keep a space or another character between the delimiters that would make it.`;
+        case 'text':
+            return 'After this edit the preview would not read this text back as written: part of it would be taken as markup.';
+        case 'unread':
+            return 'After this edit the editor could not read this text back to check what the preview would show, so it is not applied. Edit it in the text editor.';
+    }
+}
+
 /** Why an edit is refused after which text would be read as attributes no literal gives. */
 export const LITERAL_MADE = 'After this edit text here would be read as attributes, which the editor does not show.';
 
@@ -2020,6 +2061,9 @@ export const LITERAL_MADE = 'After this edit text here would be read as attribut
  * attributes.
  */
 export function literalLostReason(lost: LiteralLoss): string {
+    if (lost.cause !== undefined) {
+        return causeReason(lost.cause);
+    }
     if (lost.literal === null) {
         return LITERAL_MADE;
     }
@@ -2028,6 +2072,12 @@ export function literalLostReason(lost: LiteralLoss): string {
 
 /** Why an edit is refused in a line whose literal `lost` names already does not read back as it is shown, edited or not — or, `literal` `null`, which already reads text as attributes. */
 export function literalRewritten(lost: LiteralLoss): string {
+    if (lost.cause?.kind === 'unread') {
+        return causeReason(lost.cause);
+    }
+    if (lost.cause !== undefined) {
+        return 'Written by the editor, this line would not read back as it is shown, edited or not: edit the line once in the text editor to unlock it.';
+    }
     if (lost.literal === null) {
         return 'Written by the editor, this line would read text here as attributes the editor does not show, edited or not: edit the line once in the text editor to unlock it.';
     }
@@ -2043,6 +2093,12 @@ export function literalRewritten(lost: LiteralLoss): string {
 export function literalRewrittenBeside(block: Node, textblock: Node, lost: LiteralLoss): string {
     const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
     const name = textblock.type.name;
+    if (lost.cause?.kind === 'unread') {
+        return causeReason(lost.cause);
+    }
+    if (lost.cause !== undefined) {
+        return `This edit makes the editor write the whole ${whole} again, and another part of it would then not read back as it is shown. Edit that part once in the text editor to unlock this ${whole}.`;
+    }
     if (lost.literal !== null && !textblock.isTextblock && name !== 'list_item') {
         return `This edit makes the editor write the whole ${whole} again, and the ${whole}'s own literal ${lost.literal} would then not read back as written. Remove that literal, or edit the ${whole} once in the text editor to unlock it.`;
     }
@@ -2239,9 +2295,9 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
             } else if (child.isText && (child.text ?? '').includes('|') && child.marks.some(m => m.type.name === 'code')) {
                 reason = 'Inline code in a table cell cannot hold "|": the table plugin splits the row at it, and nothing escapes it there.';
             } else {
-                const span = child.marks.find(m => /[|`]/.test(markLiteralOf(m) ?? ''));
+                const span = [child, ...child.marks].find(c => holderOfCarrier(c.type.name) !== undefined && /[|`]/.test(markLiteralOf(c) ?? ''));
                 if (span !== undefined) {
-                    reason = `${MARK_LITERAL_NOUNS[span.type.name]} in a table cell cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
+                    reason = `${literalSubject(span)} in a table cell cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
                 }
             }
             return true;
@@ -2581,6 +2637,10 @@ function markLiteralsOf(node: Node): Map<string, (string | null)[]> {
     const out = new Map<string, (string | null)[]>();
     const open = new Map<string, Mark>();
     node.forEach(child => {
+        const own = NODE_LITERAL_TOKENS[child.type.name];
+        if (own !== undefined) {
+            out.set(own, [...(out.get(own) ?? []), markLiteralOf(child)]);
+        }
         for (const [name, token] of Object.entries(MARK_LITERAL_TOKENS)) {
             const mark = child.marks.find(m => m.type.name === name);
             const before = open.get(name);
@@ -2826,27 +2886,31 @@ function withBlockSuffix(node: Node, text: string): string {
 
 /**
  * Every run of a mark that can carry a literal in `node`'s inline content
- * (`MARK_LITERAL_TOKENS`: an attribute span, emphasis, strikethrough, a
- * highlight, a link), notes' included, in document order — with its literal,
- * `null` for none, and the token it is read back as. One per run of one mark,
- * so the instances of one kind stand in the order the parser opens their
- * tokens in.
+ * (`MARK_LITERAL_TOKENS`: an attribute span, emphasis, a link, inline code …)
+ * and every image (`NODE_LITERAL_TOKENS`), notes' included, in document order
+ * — with its literal, `null` for none, and the token it is read back as. One
+ * per run of one mark and one per image, so the instances of one kind stand
+ * in the order the parser opens their tokens in.
  */
-function markInstancesIn(node: Node): { token: string; literal: string | null }[] {
-    const out: { token: string; literal: string | null }[] = [];
+function markInstancesIn(node: Node): { token: string; literal: string | null; carrier: Mark | Node }[] {
+    const out: { token: string; literal: string | null; carrier: Mark | Node }[] = [];
     const walk = (parent: Node) => {
-        const open = new Map<string, Mark>();
+        const open = new Map<string, { mark: Mark; instance: (typeof out)[number] }>();
         parent.forEach(child => {
+            const own = NODE_LITERAL_TOKENS[child.type.name];
+            if (own !== undefined) {
+                out.push({ token: own, literal: markLiteralOf(child), carrier: child });
+            }
             for (const [name, token] of Object.entries(MARK_LITERAL_TOKENS)) {
                 const mark = child.marks.find(m => m.type.name === name);
                 const before = open.get(name);
-                if (mark !== undefined && (before === undefined || !mark.eq(before))) {
-                    out.push({ token, literal: markLiteralOf(mark) });
+                if (mark !== undefined && (before === undefined || !mark.eq(before.mark))) {
+                    const instance = { token, literal: markLiteralOf(mark), carrier: mark };
+                    out.push(instance);
+                    open.set(name, { mark, instance });
                 }
                 if (mark === undefined) {
                     open.delete(name);
-                } else {
-                    open.set(name, mark);
                 }
             }
             if (!child.isLeaf) {
@@ -3416,12 +3480,28 @@ function remarkedList(leader: string, follower: string, next: () => string | nul
 export interface LiteralLoss {
     literal: string | null;
     at?: Node;
+    /**
+     * Set where the parse of the written text, compared with the model character by
+     * character (`readsBackAsShown`), gives other text or other formatting: two runs of one
+     * element read as one (`merged`), an element not read back (`lost`), text read as one
+     * the page does not show (`made`), or other characters (`text`) — and what that
+     * element is called (`inline code`, `bold text`).
+     */
+    cause?: ReadCause;
+}
+
+/** What differs between the model and the parse of the written text (`LiteralLoss.cause`). */
+export interface ReadCause {
+    kind: 'merged' | 'lost' | 'made' | 'text' | 'unread';
+    noun: string;
 }
 
 /** Where a part does not read back as it is shown (`unitVerdict`): the first literal, else the first sidebar. */
 interface UnitVerdict {
     lost: LiteralLoss | null;
     mismatch: SidebarMismatch | null;
+    /** The literals' own verdict, before the comparison's finding is folded into `lost`: what a copy's literal is asked (`literalNotReadBack`). */
+    literalLost?: LiteralLoss | null;
 }
 
 /**
@@ -3449,6 +3529,211 @@ function matchInOrder<W, F>(wanted: readonly W[], found: readonly F[], same: (w:
     return { missing, extra };
 }
 
+/**
+ * One thing the parser reads in a textblock, as the comparison sees it
+ * (`readItems`): a character that is not white space, or an inline atom, with
+ * where it stands (inside which note) and the marks it carries.
+ */
+interface ReadItem {
+    key: string;
+    marks: readonly Mark[];
+}
+
+/**
+ * A mark as the comparison tells it from another: its type and its literal, by
+ * the attributes it gives. Not emphasis' delimiter, which the writer chooses
+ * where the parser needs it (`_x_` followed by a letter is written `*x*`), nor
+ * a link's address, which is the link's own and spelled as its place needs.
+ */
+function readMarkKey(mark: Mark): string {
+    const literal = typeof mark.attrs.literal === 'string' ? attrsKey(literalPairs(mark.attrs.literal)) : '';
+    return `${mark.type.name}${literal}`;
+}
+
+/**
+ * The marks the comparison weighs: not Req Explorer's decoration, which is not
+ * written, and not a bare address linkify reads, which is the parser's to find
+ * — where the model holds one or the parse makes one, the text is the same.
+ */
+function weighedMarks(marks: readonly Mark[]): Mark[] {
+    return marks.filter(m => m.type.name !== 'req_ref');
+}
+
+/** `marks` without a bare address linkify reads, where `other` holds no link there: a link is the parser's to find, and the writer's to write `[url](url)`. */
+function withoutLinkify(marks: readonly Mark[], other: readonly Mark[]): readonly Mark[] {
+    return other.some(m => m.type.name === 'link') ? marks : marks.filter(m => !(m.type.name === 'link' && m.attrs.markup === 'linkify'));
+}
+
+/**
+ * What a textblock holds as the comparison reads it, in order (`ReadItem`):
+ * each character that is not white space, a heading's requirement prefix
+ * first (written, though the model holds it apart), and each inline atom by
+ * what is written for it. White space is not compared — the writer moves it
+ * out of a run, and the parser trims a line — nor a hard break, whose marks
+ * the writer drops; injected content is not written at all.
+ */
+function readItems(textblock: Node): ReadItem[] {
+    const out: ReadItem[] = [];
+    const prefix = textblock.type.name === 'heading' ? (textblock.attrs.reqPrefix as string | null) ?? '' : '';
+    for (const ch of prefix) {
+        if (/\S/.test(ch)) {
+            out.push({ key: `|${ch}`, marks: [] });
+        }
+    }
+    const walk = (parent: Node, path: string) => {
+        parent.forEach(child => {
+            const marks = weighedMarks(child.marks);
+            if (child.isText) {
+                for (const ch of child.text ?? '') {
+                    if (/\S/.test(ch)) {
+                        out.push({ key: `${path}|${ch}`, marks });
+                    }
+                }
+                return;
+            }
+            const name = child.type.name;
+            if (name === 'hard_break' || name === 'inline_atom') {
+                return;
+            }
+            if (name === 'image') {
+                // Its alt text and its literal; its path is its own, spelled as its place needs.
+                const { alt, literal } = child.attrs as { alt: string | null; literal: string | null };
+                out.push({ key: `${path}|image(${alt ?? ''},${attrsKey(literalPairs(literal))})`, marks });
+            } else if (name === 'wiki_embed') {
+                // By the name it reads as: the writer encodes what its place needs (`&#96;`, `\|`).
+                out.push({ key: `${path}|${name}(${plainWikiEmbed(String(child.attrs.source))})`, marks });
+            } else if (child.isLeaf) {
+                out.push({ key: `${path}|${name}(${String(child.attrs.source ?? '')})`, marks });
+            } else {
+                out.push({ key: `${path}|<${name}>`, marks });
+                walk(child, `${path}/${name}`);
+            }
+        });
+    };
+    walk(textblock, '');
+    return out;
+}
+
+/** What a mark is called in a reason, by its delimiter (`namesOf`). */
+function markNoun(mark: Mark): string {
+    const holder = holderOfCarrier(mark.type.name);
+    return holder === undefined ? mark.type.name : namesOf(holder, mark.attrs.markup).noun;
+}
+
+/**
+ * Whether `unit`, as the save writes it, reads back as the page shows it, by
+ * the parser itself (the project's oracle): the written text parsed whole by
+ * the page's engine (`parseDocument`), and each of its textblocks compared
+ * with the model's, item by item (`readItems`) — the same characters, the same
+ * atoms, each with the same marks and literals. `null` when they are
+ * the same; else what differs at the first item that does (`ReadCause`): one
+ * element where the model holds another of its kind (two runs read as one),
+ * an element missing, one the model does not hold, or other text. Where the
+ * parse holds another number of textblocks than the model — the written text
+ * is no longer the same kind of block — the block's own verdicts speak for it.
+ */
+function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | null {
+    if (unit.textblocks.length === 0) {
+        return null;
+    }
+    // A parse that throws is the whole verdict's to answer (`unitVerdict`): `unread`.
+    const parsed = inlineTextblocks(comparisonDoc(unit.text), 0).map(t => t.node);
+    if (parsed.length !== unit.textblocks.length) {
+        return null;
+    }
+    for (let k = 0; k < parsed.length; k++) {
+        const want = readItems(unit.textblocks[k].node);
+        const got = readItems(parsed[k]);
+        const at = unit.textblocks[k].node;
+        for (let i = 0; i < Math.max(want.length, got.length); i++) {
+            const w = want[i];
+            const g = got[i];
+            if (w === undefined || g === undefined || w.key !== g.key) {
+                return { cause: { kind: 'text', noun: '' }, at };
+            }
+            const wantMarks = withoutLinkify(w.marks, g.marks);
+            const gotMarks = withoutLinkify(g.marks, w.marks);
+            const wantKeys = wantMarks.map(m => readMarkKey(m)).sort();
+            const gotKeys = gotMarks.map(m => readMarkKey(m)).sort();
+            if (wantKeys.join('+') === gotKeys.join('+')) {
+                continue;
+            }
+            // The first mark that differs, by type: two runs read as one, missing, or made.
+            const differs = wantMarks.find(m => !gotKeys.includes(readMarkKey(m)));
+            if (differs !== undefined) {
+                return { cause: { kind: readAsOne(want, got, i, differs) ? 'merged' : 'lost', noun: markNoun(differs) }, at };
+            }
+            const made = gotMarks.find(m => !wantKeys.includes(readMarkKey(m))) as Mark;
+            return { cause: { kind: 'made', noun: markNoun(made) }, at };
+        }
+    }
+    return null;
+}
+
+/**
+ * Whether the parse reads, at item `i`, one element of `differs`' type over
+ * items the model holds in two runs of it — two runs side by side read as one,
+ * one of them losing its `{…}` — rather than one run otherwise written.
+ */
+function readAsOne(want: readonly ReadItem[], got: readonly ReadItem[], i: number, differs: Mark): boolean {
+    const read = got[i].marks.find(m => m.type === differs.type);
+    if (read === undefined) {
+        return false;
+    }
+    const runs = new Set<string>();
+    for (const step of [-1, 1]) {
+        for (let k = step < 0 ? i : i + 1; k >= 0 && k < Math.min(want.length, got.length) && got[k].marks.some(m => m.eq(read)); k += step) {
+            const model = want[k].marks.find(m => m.type === differs.type);
+            runs.add(model === undefined ? '' : readMarkKey(model));
+        }
+    }
+    return runs.size > 1;
+}
+
+/**
+ * The definition the comparison parses with: the page's, without the
+ * typographer — which only rewrites the text of the tokens once the inline
+ * rules have read them (quotes, dashes, `(c)`), so it changes no mark, no
+ * literal and no element, while the model holds the text as typed.
+ */
+function comparisonDefinition(): InlineEngineDefinition {
+    const definition = currentInlineDefinition();
+    if (!definition.typographer) {
+        return definition;
+    }
+    if (plainDefinition?.from !== definition) {
+        plainDefinition = { from: definition, plain: { ...definition, typographer: false } };
+    }
+    return plainDefinition.plain;
+}
+
+let plainDefinition: { from: InlineEngineDefinition; plain: InlineEngineDefinition } | null = null;
+
+/**
+ * `text` parsed whole by the comparison's engine (`comparisonDefinition`), as
+ * a document, remembered by the text; the oldest dropped first. The one parse
+ * both oracles read: the save's verdict (`readsBackAsShown`) and the writer's
+ * choice of mark order (`readsBack`).
+ */
+function comparisonDoc(text: string): Node {
+    const known = comparisonCache.get(text);
+    if (known !== undefined) {
+        comparisonCache.delete(text);
+        comparisonCache.set(text, known);
+        return known;
+    }
+    const definition = comparisonDefinition();
+    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition).doc;
+    if (comparisonCache.size >= UNIT_READ_CACHE_SIZE) {
+        comparisonCache.delete(comparisonCache.keys().next().value as string);
+    }
+    comparisonCache.set(text, doc);
+    return doc;
+}
+
+/** What `comparisonDoc` read, by the text. */
+const comparisonCache = new Map<string, Node>();
+
 /** The verdict of each part, by the node it is written from, with the text it was given for. */
 let verdictCache = new WeakMap<Node, { key: string; verdict: UnitVerdict | null }>();
 
@@ -3467,15 +3752,40 @@ function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
     if (known !== undefined && known.key === unit.key) {
         return known.verdict;
     }
-    let verdict: UnitVerdict | null = null;
-    if (/[{$@]/.test(unit.text)) {
-        const read = readUnit(unit.text, unit.key);
-        verdict = { lost: literalVerdict(unit, read), mismatch: sidebarVerdict(unit, read) };
-        if (verdict.lost === null && verdict.mismatch === null) {
-            verdict = null;
-        }
+    let verdict: UnitVerdict | null;
+    try {
+        verdict = judgedUnit(unit);
+    } catch (error) {
+        // A read that throws is no answer: the edit is refused (`unread`), never a keystroke broken —
+        // and the error is said, so a fault in the editor is seen, not only refused.
+        console.error('Markdown Extended: the editor could not read a part of the document back', error);
+        verdict = { lost: { literal: null, at: unit.textblocks[0]?.node ?? unit.anchor, cause: { kind: 'unread', noun: '' } }, mismatch: null };
     }
     verdictCache.set(unit.anchor, { key: unit.key, verdict });
+    return verdict;
+}
+
+/** `unitVerdict`'s answer, read anew: the reads that may throw. */
+function judgedUnit(unit: WrittenUnit): UnitVerdict | null {
+    let verdict: UnitVerdict | null = null;
+    // The literals and the sidebars are asked of a parse only where the text can hold one: a
+    // literal is read from a `{`, a sidebar from its marker — and a literal the model holds
+    // that the text has no `{` for is lost unread (`A **x**{#a} y.` with `x` a space).
+    if (/[{$@]/.test(unit.text) || unit.literals.length > 0 || unit.textblocks.some(({ node }) => markInstancesIn(node).some(i => i.literal !== null))) {
+        const read = readUnit(unit.text, unit.key);
+        verdict = { lost: literalVerdict(unit, read), mismatch: sidebarVerdict(unit, read) };
+    }
+    // What the parse of the written text holds, compared with the model, always: where it
+    // differs, that is the cause — before a literal's or a sidebar's, which it explains, unless
+    // one of those names it better (a sidebar the parse reads elsewhere).
+    const literalLost = verdict?.lost ?? null;
+    const found = readsBackAsShown(unit);
+    if (found !== null && (verdict === null || found.cause.kind === 'merged' || (verdict.lost === null && verdict.mismatch === null))) {
+        verdict = { lost: { literal: null, at: found.at, cause: found.cause }, mismatch: found.cause.kind === 'merged' ? null : verdict?.mismatch ?? null, literalLost };
+    }
+    if (verdict !== null && verdict.lost === null && verdict.mismatch === null) {
+        verdict = null;
+    }
     return verdict;
 }
 
@@ -3575,6 +3885,7 @@ function forgetReadBack(): void {
     verdictCache = new WeakMap();
     unitReadCache.clear();
     seamCache.clear();
+    comparisonCache.clear();
     orderVerdictCache.clear();
 }
 
@@ -3587,9 +3898,19 @@ function forgetReadBack(): void {
  * c. {title="d$ e"}` is math under VS Code's math and a left sidebar without
  * it, either literal alone is neither.
  */
-export function literalNotReadBack(block: Node): LiteralLoss | null {
-    for (const unit of unitsOf(block)) {
-        const lost = unitVerdict(unit)?.lost ?? null;
+export function literalNotReadBack(block: Node, causes = true): LiteralLoss | null {
+    let units: WrittenUnit[];
+    try {
+        units = unitsOf(block);
+    } catch (error) {
+        // Writing the block threw: no answer, so nothing is let through on it (`unread`), and the error is said.
+        console.error('Markdown Extended: the editor could not write a block to check it', error);
+        return { literal: null, at: block, cause: { kind: 'unread', noun: '' } };
+    }
+    for (const unit of units) {
+        const verdict = unitVerdict(unit);
+        // Without `causes`, the literals alone: what the comparison finds elsewhere in the block is no reason to drop one.
+        const lost = (causes || verdict?.literalLost === undefined ? verdict?.lost : verdict.literalLost) ?? null;
         if (lost !== null) {
             return lost;
         }
@@ -3602,8 +3923,8 @@ export function literalNotReadBack(block: Node): LiteralLoss | null {
  * (`literalNotReadBack`). Asked by the Attributes field and a span's
  * (`literalsReadBackRefusal`) and of a copy's literal (`fidelity.ts`).
  */
-export function literalsReadBack(block: Node): boolean {
-    return literalNotReadBack(block) === null;
+export function literalsReadBack(block: Node, causes = true): boolean {
+    return literalNotReadBack(block, causes) === null;
 }
 
 /** The emoji atoms `node` holds, in document order, each at its position from `base` (a node at `base` holds its content from `base + 1`). */

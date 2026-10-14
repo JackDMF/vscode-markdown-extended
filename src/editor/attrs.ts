@@ -34,6 +34,7 @@
 
 import { findLeftDelimiter, findRightDelimiter, isTextBrace, isUnescapedDoubleQuote } from '../syntax/attrsLiteral';
 import { InlineEngineDefinition, attrsEngineFor, currentInlineDefinition } from './inlineEngine';
+import { INLINE_LITERAL_HOLDERS } from './inlineLiterals';
 
 export { findLeftDelimiter, findRightDelimiter };
 
@@ -277,10 +278,11 @@ function writtenLiteral(attrs: readonly AttrPair[]): string | null {
  * Emphasis, strikethrough, a highlight and a link take a literal written
  * right after their closing delimiter (`_x_{.a}`, `[x](u){.a}`), as a span
  * does after its `]`: the plugin gives the text that starts with it to the
- * element the closing tag before it closes. They are held by their mark's
- * name (`INLINE_LITERAL_HOLDERS`, `blocks.ts`). A link's `href` is the
- * token's before the plugin runs, and no literal's (`omit`): one that sets
- * `href` or `title` is read as other attributes than it gives, so it is none.
+ * element the closing tag before it closes. They are held by their key in
+ * the registry (`INLINE_LITERAL_HOLDERS`, `inlineLiterals.ts`). A link's
+ * `href` and `title` are the token's own, and no literal's (`omit`, the
+ * holder's `own`): one that sets either is read as other attributes than it
+ * gives, so it is none.
  */
 const READ_BACK: Record<string, { source: (literal: string) => string; token: string; omit?: readonly string[] }> = {
     paragraph: { source: l => `x ${l}`, token: 'paragraph_open' },
@@ -293,12 +295,7 @@ const READ_BACK: Record<string, { source: (literal: string) => string; token: st
     'horizontal_rule': { source: l => `--- ${l}`, token: 'hr' },
     blockquote: { source: l => `> x\n> ${l}`, token: 'blockquote_open' },
     table: { source: l => `| x |\n| - |\n\n${l}`, token: 'table_open' },
-    span: { source: l => `[x]${l}`, token: 'span_open' },
-    em: { source: l => `*x*${l}`, token: 'em_open' },
-    strong: { source: l => `**x**${l}`, token: 'strong_open' },
-    strike: { source: l => `~~x~~${l}`, token: 's_open' },
-    mark: { source: l => `==x==${l}`, token: 'mark_open' },
-    link: { source: l => `[x](u)${l}`, token: 'link_open', omit: ['href'] },
+    ...Object.fromEntries(INLINE_LITERAL_HOLDERS.map(h => [h.holder, { source: h.source, token: h.token, omit: h.own }])),
 };
 
 /**
@@ -324,15 +321,32 @@ export function readBack(literal: string, holder: string, definition: InlineEngi
     if (shape === undefined) {
         return null;
     }
+    // Asked again for every parse of a block holding the literal: remembered, per engine.
+    let known = readBackCache.get(definition);
+    if (known === undefined) {
+        known = new Map();
+        readBackCache.set(definition, known);
+    }
+    const key = `${holder}\u0000${literal}`;
+    if (known.has(key)) {
+        return known.get(key) as AttrPair[] | null;
+    }
     const tokens = attrsEngineFor(definition).parse(shape.source(literal), {});
     const all = tokens.flatMap(t => [t, ...(t.children ?? [])]);
-    if (all.some(t => t.type === 'text' && /[{}]/.test(t.content))) {
-        return null;
-    }
-    const token = all.find(t => t.type === shape.token);
+    const token = all.some(t => t.type === 'text' && /[{}]/.test(t.content)) ? undefined : all.find(t => t.type === shape.token);
     const omit = shape.omit ?? [];
-    return token === undefined ? null : (token.attrs ?? []).filter(([name]) => !omit.includes(name)).map(([name, value]) => [name, value] as AttrPair);
+    const read = token === undefined ? null : (token.attrs ?? []).filter(([name]) => !omit.includes(name)).map(([name, value]) => [name, value] as AttrPair);
+    if (known.size >= READ_BACK_CACHE_SIZE) {
+        known.delete(known.keys().next().value as string);
+    }
+    known.set(key, read);
+    return read;
 }
+
+/** What `readBack` read, by the engine's definition and the holder with the literal; the oldest is dropped first. */
+const readBackCache = new WeakMap<InlineEngineDefinition, Map<string, AttrPair[] | null>>();
+/** How many literals `readBackCache` keeps per engine. */
+const READ_BACK_CACHE_SIZE = 2048;
 
 /**
  * The attributes the preview gives `holder` for `literal` written where that

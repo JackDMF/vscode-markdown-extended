@@ -586,7 +586,7 @@ function copiedLiteral(node: Node, kept: string | null): string | null {
     if (kept === null || kept === node.attrs.attrsSuffix) {
         return kept;
     }
-    return literalsReadBack(node.type.create({ ...node.attrs, attrsSuffix: kept }, node.content, node.marks)) ? kept : null;
+    return literalsReadBack(node.type.create({ ...node.attrs, attrsSuffix: kept }, node.content, node.marks), false) ? kept : null;
 }
 
 /**
@@ -604,7 +604,7 @@ function copiedItemLiteral(block: Node, pos: number, item: Node, kept: string | 
         const parent = $pos.node(d);
         rebuilt = parent.copy(parent.content.replaceChild($pos.index(d), rebuilt));
     }
-    return literalsReadBack(rebuilt) ? kept : null;
+    return literalsReadBack(rebuilt, false) ? kept : null;
 }
 
 /**

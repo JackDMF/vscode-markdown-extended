@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { Mark, Node } from 'prosemirror-model';
-import { MarkdownIt } from '../../../src/@types/markdown-it';
+import { MarkdownIt, Token } from '../../../src/@types/markdown-it';
 import { attrsReadAt, domAttrsOf, endLiteralOf, joinAttrs, normalizedLiteral, parseAttrsLiteral, sameAttrs, withoutId } from '../../../src/editor/attrs';
 import { groupSourceBlocks, splitLines } from '../../../src/editor/blocks';
 import { createEditorEngine } from '../../../src/editor/engine';
@@ -8,6 +8,8 @@ import { DEFAULT_INLINE_ENGINE, currentInlineDefinition, definitionOf, setCurren
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { literalRefusal } from '../../../src/editor/webview/objects';
+import { INLINE_LITERAL_HOLDERS } from '../../../src/editor/inlineLiterals';
+import { attrsCutsIn, attrsGivenTo } from '../../../src/plugin/markdownItAttrs';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
 
@@ -454,4 +456,49 @@ suite('Editor attribute spans: the literal is recovered from the source', () => 
         assert.strictEqual(spec[0], 'span');
         assert.deepStrictEqual(drawn, attrsOfFirst(html, 'span'));
     });
+});
+
+/**
+ * The registry of the inline elements that carry a `{…}` (`inlineLiterals.ts`)
+ * held to the engine, as the port is: for each holder, a literal written after
+ * its source is given to its token and to no other, the cut the plugin made is
+ * right after that element, and the character the literal follows is the one
+ * the registry names.
+ */
+suite('Editor inline literal holders: the registry says what the engine does', () => {
+    const md = hostEngine();
+
+    for (const h of INLINE_LITERAL_HOLDERS) {
+        test(`${h.holder}: ${h.source('{.c}')} gives {.c} to ${h.token}, cut right after it`, () => {
+            const source = h.source('{.c}');
+            assert.deepStrictEqual(attrsReadAt('{.c}', h.holder), [['class', 'c']]);
+            const tokens = md.parse(source, {});
+            const all = tokens.flatMap(t => [t, ...(t.children ?? [])]);
+            const given = all.filter(t => attrsGivenTo(t).length > 0);
+            assert.deepStrictEqual(given.map(t => [t.type, attrsGivenTo(t)]), [[h.token, [['class', 'c']]]]);
+            const inline = tokens.find(t => t.type === 'inline') as Token;
+            const cuts = attrsCutsIn(inline);
+            const nested = h.token.endsWith('_open');
+            const close = nested ? h.token.replace(/_open$/, '_close') : h.token;
+            assert.deepStrictEqual(cuts.map(c => [c.after, c.first, c.end]), [[close, true, false]]);
+            const closeToken = (inline.children ?? []).find(t => t.type === close) as Token;
+            const before = source.charAt(source.indexOf('{.c}') - 1);
+            const closing = h.closing === 'markup' ? closeToken.markup.slice(-1) : h.closing;
+            assert.ok(closing.includes(before), `${before} is among ${closing}`);
+        });
+    }
+});
+
+suite('Editor inline literal holders: each one\'s example renders as its tag, by delimiter', () => {
+    const md = hostEngine();
+
+    for (const h of INLINE_LITERAL_HOLDERS) {
+        for (const markup of [undefined, ...Object.keys(h.markups ?? {})]) {
+            test(`${h.holder}${markup === undefined ? '' : ` ${markup}`}: ${h.example('text', '{.c}', markup)}`, () => {
+                const html = md.renderInline(h.example('text', '{.c}', markup));
+                const tag = h.tag?.(markup) ?? 'img';
+                assert.ok(new RegExp(`<${tag}[^>]*class="c"`).test(html), html);
+            });
+        }
+    }
 });

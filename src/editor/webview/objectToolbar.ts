@@ -40,7 +40,7 @@ import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, applyKey, showChangeHint, showHint, undoKey } from './hint';
-import { FieldStep, InlineChoice, InlineField, fieldHeading, fieldKeys } from './inlineField';
+import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
@@ -51,10 +51,10 @@ import {
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
-    changeMarkLiteralRefusal, changeMarkLiteralTransaction, isMarkObject,
+    changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
-import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_FIELD_LABEL, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT, attributesStep } from './attributes';
-import { SPAN_FIELD_PREFILL } from './toolbar/actions';
+import { ATTRIBUTES_REMOVED_HINT, attributesStep, holderAttributesStep } from './attributes';
+import { currentReadsAttrs } from '../inlineEngine';
 import { CHROME_MOVED, Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
 import { followPointer, selectionBubbleShown } from './toolbar/toolbar';
@@ -114,10 +114,7 @@ export const LENS_VERBS_INLINE = 4;
  * ones, whose text the field is about. A block's field (a container's name, an
  * admonition's title) names its block by the bar beside it.
  */
-const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'styled', 'note', 'image']);
-
-/** What a styled run's bar calls its mark (`styled` objects: emphasis, strikethrough, a highlight with a literal). */
-const STYLED_NAMES: Readonly<Record<string, string>> = { em: 'Emphasis', strong: 'Strong', strike: 'Strikethrough', mark: 'Highlight' };
+const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'styled', 'holder', 'note', 'image']);
 
 /** How long the caret rests in an inline object before its toolbar shows. */
 export const INLINE_DELAY_MS = 400;
@@ -152,6 +149,8 @@ export interface Verb {
     menu?: readonly MenuEntry[];
     /** Drawn after a separator: the first of another extension's lenses, or of its code actions, or a group of the object's own. */
     separated?: boolean;
+    /** What its field edits, when it is not the bar's object: the element inside it (`withInlineAttributes`), drawn while the field is open. */
+    target?: { from: number; to: number };
 }
 
 /** One entry of a set-verb's menu. */
@@ -184,13 +183,16 @@ interface Presentation {
  * (its own verbs are the properties panel's header), with none offered.
  */
 function barless(object: EditorObject, presentation: Presentation): boolean {
-    if (presentation.verbs.length === 0) {
+    // Attributes of Bold… for the bold the caret is in is no reason for a bar on a caret
+    // rest (`withInlineAttributes`): `Alt+Enter` draws it there (`ObjectToolbarView.forced`).
+    const verbs = presentation.verbs.filter(v => v.id !== 'inline-attributes');
+    if (verbs.length === 0) {
         return object.kind === 'heading' || object.kind === 'front_matter';
     }
     // A bar whose one verb is Attributes…, on a block with no literal yet — every plain
     // heading — is chrome on every such block; the menu reaches it, and the verb joins
     // the bar once the block has others (lenses, code actions) or a literal.
-    return 'node' in object && literalOf(object.node) === null && presentation.verbs.every(v => v.id === 'block-attributes');
+    return 'node' in object && literalOf(object.node) === null && verbs.every(v => v.id === 'block-attributes');
 }
 
 const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = {
@@ -362,7 +364,8 @@ function atomVerbs(state: EditorState, object: EditorObject, actions: EmbedActio
             title: texts.asText.title,
             refusal: refusalOnce(state, `${texts.asText.id}@${place}`, () => {
                 const tr = texts.asTextTransaction(state, object.from, object.to);
-                return filterRefusal(tr, texts.none) ?? (tr === null ? null : texts.asTextRefusal?.(state, tr, object.from) ?? null);
+                // The atom's own reason first: it names why its text would read otherwise, which the filters only find.
+                return tr === null ? texts.none : texts.asTextRefusal?.(state, tr, object.from) ?? filterRefusal(tr, texts.none);
             }),
             run: () => actions.asText(),
         },
@@ -405,8 +408,8 @@ export function emojiVerbs(state: EditorState, object: EditorObject, actions: Em
 /** What a bar tells the view about its field. */
 interface BarEvents {
     escape(): void;
-    /** A field opened for `object`: what it acts on is drawn (`pendingRange.ts`). */
-    fieldOpened(object: EditorObject): void;
+    /** A field opened for `object`, editing `target` within it when given: what it acts on is drawn (`pendingRange.ts`). */
+    fieldOpened(object: EditorObject, target?: { from: number; to: number }): void;
     fieldClosed(committed: boolean): void;
     /** The bar went with its field open: the view hides it from inside an update, so the drawing goes after it. */
     fieldDropped(): void;
@@ -499,6 +502,7 @@ class ObjectBar {
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
+        this.el.dataset.name = presentation.label;
         if (presentation.code !== undefined) {
             const code = document.createElement('span');
             code.className = 'mep-object-label-code';
@@ -730,13 +734,14 @@ class ObjectBar {
         this.field = field;
         if (label) {
             // A prefilled field shows no placeholder: the label says what the value is.
-            label.textContent = fieldHeading(this.el.getAttribute('aria-label') ?? '', spec.label);
+            // The object's name alone: what the field holds (a literal) is not said twice (`Image · Attributes`).
+            label.textContent = fieldHeading(this.el.dataset.name ?? '', spec.label);
         }
-        const keys = 'keys' in spec && spec.keys ? [fieldKeys(spec.keys)] : [];
-        this.el.replaceChildren(...(label ? [label] : []), field.el, ...keys);
+        const aside = 'options' in spec ? [] : fieldAside(spec);
+        this.el.replaceChildren(...(label ? [label] : []), field.el, ...aside);
         field.focus();
         if (this.object) {
-            this.events.fieldOpened(this.object);
+            this.events.fieldOpened(this.object, verb.target);
         }
     }
 
@@ -804,6 +809,8 @@ class ObjectToolbarView implements PluginView {
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
     /** The inline object the caret has rested in long enough (or `Alt+Enter` opened). */
     private matured: EditorObject | null = null;
+    /** The object `Alt+Enter` opened the bar of: drawn even where `barless` says no, while it has a verb for the element at the caret. */
+    private forced: EditorObject | null = null;
     private pending: { object: EditorObject; timer: ReturnType<typeof setTimeout> } | null = null;
     /** The top-level atom's element the pointer is on. */
     private hovered: HTMLElement | null = null;
@@ -816,8 +823,10 @@ class ObjectToolbarView implements PluginView {
         this.mount = view.dom.parentElement as HTMLElement;
         const events: BarEvents = {
             escape: () => this.view.focus(),
-            fieldOpened: object => {
-                if (PENDING_OBJECTS.has(object.kind)) {
+            fieldOpened: (object, target) => {
+                if (target !== undefined) {
+                    showPendingRange(this.view, target.from, target.to);
+                } else if (PENDING_OBJECTS.has(object.kind)) {
                     showPendingRange(this.view, object.from, object.to);
                 }
             },
@@ -889,14 +898,21 @@ class ObjectToolbarView implements PluginView {
         this.hoverBar.el.remove();
     }
 
-    /** `Alt+Enter`: the bar of the object at the caret, now, the focus on its first verb. False where there is none. */
+    /**
+     * `Alt+Enter`: the bar of the object at the caret, now, the focus on its
+     * first verb. Where there is none but the caret is in code, a key,
+     * emphasis … without a `{…}` (`attributeHolderAt`), a bar of its own with
+     * **Attributes…** — never drawn on a caret rest, kept while the selection
+     * stays in its run (`selectionObject`). False where there is neither.
+     */
     openFromKeyboard(): boolean {
-        const object = objectAtSelection(this.view.state);
+        const object = objectAtSelection(this.view.state) ?? (currentReadsAttrs() ? attributeHolderAt(this.view.state).inline?.object ?? null : null);
         if (object === null) {
             return false;
         }
         this.cancelPending();
         this.matured = object;
+        this.forced = object;
         this.refresh();
         if (!this.selectionBar.visible) {
             return false;
@@ -932,14 +948,19 @@ class ObjectToolbarView implements PluginView {
         switch (place.kind) {
             case 'text':
             case 'content':
-                return objectAtSelection(this.view.state);
+                return objectAtSelection(this.view.state) ?? this.maturedHolder();
             case 'chrome':
-                return place.field ? null : objectAtSelection(this.view.state);
+                return place.field ? null : objectAtSelection(this.view.state) ?? this.maturedHolder();
             case 'control':
                 return place.owner === null ? null : objectOfNode(place.owner.node, place.owner.pos);
             case 'away':
                 return null;
         }
+    }
+
+    /** The bare holder `Alt+Enter` opened a bar for (`openFromKeyboard`), while the selection is still in its run. */
+    private maturedHolder(): EditorObject | null {
+        return this.matured?.kind === 'holder' ? currentObject(this.view.state, this.matured) : null;
     }
 
     private cancelPending(): void {
@@ -959,12 +980,16 @@ class ObjectToolbarView implements PluginView {
         if (object === null) {
             this.cancelPending();
             this.matured = null;
+            this.forced = null;
             this.selectionBar.hide();
         } else if (isBlockObject(object) || sameObject(object, this.matured)) {
             this.cancelPending();
             this.matured = isBlockObject(object) ? null : object;
             const presentation = this.present(object);
-            if (barless(object, presentation)) {
+            this.forced = sameObject(object, this.forced) ? this.forced : null;
+            const keyed = this.forced !== null && presentation.verbs.some(v => v.id === 'inline-attributes');
+            this.forced = keyed ? this.forced : null;
+            if (barless(object, presentation) && !keyed) {
                 // A heading's verbs are other extensions' lenses and actions; with none, no bar.
                 this.selectionBar.hide();
             } else if (isBlockPlaced(object) && selectionBubbleShown(this.view)) {
@@ -978,6 +1003,7 @@ class ObjectToolbarView implements PluginView {
             // A new inline object: nothing until the caret has rested in it.
             this.cancelPending();
             this.matured = null;
+            this.forced = null;
             this.selectionBar.hide();
             this.pending = {
                 object,
@@ -1316,7 +1342,7 @@ class ObjectToolbarView implements PluginView {
      * run on what the box has not applied yet.
      */
     private present(object: EditorObject): Presentation {
-        const own = this.ownPresentation(object);
+        const own = this.withInlineAttributes(object, this.ownPresentation(object));
         if (!isTopLevelBlock(this.view.state, object) || this.holdsFocusedControl(object)) {
             return own;
         }
@@ -1337,6 +1363,32 @@ class ObjectToolbarView implements PluginView {
             };
         });
         return lenses.length + actions.length === 0 ? own : { ...own, verbs: [...own.verbs, ...lenses, ...actions] };
+    }
+
+    /**
+     * The object's own verbs and, after a separator, **Attributes of Bold…**
+     * for the element inside it the caret is in — bold in a table's cell, code
+     * in a link (`holderInside`, the rule the menu reads) — whose field is the
+     * one every route opens (`holderAttributesStep`), headed by the element.
+     */
+    private withInlineAttributes(object: EditorObject, own: Presentation): Presentation {
+        const inside = currentReadsAttrs() ? holderInside(this.view.state, object) : null;
+        if (inside === null) {
+            return own;
+        }
+        const names = holderNames(inside);
+        const name = `Attributes of ${names.label}`;
+        // Headed by the element, not by the object whose bar it is on (`Table · Attributes of Bold`).
+        const step = holderAttributesStep(this.view, inside, name);
+        const verb: Verb = {
+            id: 'inline-attributes',
+            label: `${name}…`,
+            title: `The ${names.noun}'s {…}, written right after it: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).`,
+            separated: true,
+            field: step,
+            target: { from: inside.object.from, to: inside.object.to },
+        };
+        return { ...own, verbs: [...own.verbs, verb] };
     }
 
     /**
@@ -1482,9 +1534,13 @@ class ObjectToolbarView implements PluginView {
             case 'image': {
                 const src = object.node.attrs.src as string;
                 const alt = (object.node.attrs.alt as string | null) ?? '';
+                const literal = (object.node.attrs.literal as string | null) ?? null;
+                const image = literalObjectOf(object) as LiteralObject;
                 return {
                     label: 'Image',
-                    title: alt === '' ? src : `${alt}: ${src}`,
+                    // The literal is read with the label: in its title, and after it, as an emoji's spelling is.
+                    ...(literal === null ? {} : { code: literal }),
+                    title: `${alt === '' ? src : `${alt}: ${src}`}${literal === null ? '' : ` · ${literal}`}`,
                     verbs: [
                         {
                             id: 'edit-image',
@@ -1507,6 +1563,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
+                        this.markAttributesVerb(image, 'image-attributes', 'Attributes…', 'The image\'s {…}, written after its (…): {.class}, {#id}, {width=300}; {} removes it (Enter to apply, Esc to cancel).'),
                         { id: 'open-image', label: 'Open file', title: `Open ${src} (as Ctrl+click on a link does).`, run: () => host.openLink(src) },
                         {
                             id: 'remove-image',
@@ -1520,20 +1577,21 @@ class ObjectToolbarView implements PluginView {
             }
             case 'span': {
                 const literal = object.mark.attrs.literal as string;
+                const step: FieldStep = {
+                    value: literal,
+                    label: 'Attributes',
+                    commit: value => this.commitLiteral(step, object, value, current =>
+                        current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null),
+                };
                 return {
                     label: 'Span',
                     title: `[text]${literal}: a span with these attributes.`,
                     verbs: [
                         {
                             id: 'edit-attributes',
-                            label: 'Edit attributes',
+                            label: 'Attributes…',
                             title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
-                            field: {
-                                value: literal,
-                                label: 'Attributes',
-                                commit: value => this.commitLiteral(object, value, current =>
-                                    current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null),
-                            },
+                            field: step,
                         },
                         {
                             id: 'remove-attributes',
@@ -1545,20 +1603,32 @@ class ObjectToolbarView implements PluginView {
                     ],
                 };
             }
+            case 'holder': {
+                // Only `Alt+Enter` opens it: formatting has no bar of its own on a caret rest.
+                const names = holderNames(inlineHolderOf(object));
+                const text = view.state.doc.textBetween(object.from, object.to, ' ', ' ');
+                return {
+                    label: names.label,
+                    title: `\`${text}\`: ${names.noun} — Attributes… gives it a {…}`,
+                    verbs: [this.markAttributesVerb(object, 'edit-attributes', 'Attributes…', `Give the ${names.noun} a {…}, written right after it: {.class}, {#id}, {key=value} (Enter to apply, Esc to cancel).`)],
+                };
+            }
             case 'styled': {
                 const literal = object.mark.attrs.literal as string;
-                const name = STYLED_NAMES[object.mark.type.name] ?? object.mark.type.name;
+                const name = holderNames(inlineHolderOf(object)).label;
                 return {
                     label: name,
+                    // The literal is read with the label, as an image's is (`Code {.k}`).
+                    code: literal,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
                     verbs: [
-                        this.markAttributesVerb(object, 'edit-attributes', 'Edit attributes', `Change the ${name.toLowerCase()}'s {…}; {} removes it (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'edit-attributes', 'Attributes…', `Change the ${name.toLowerCase()}'s {…}; {} removes it (Enter to apply, Esc to cancel).`),
                         {
                             id: 'remove-attributes',
                             label: 'Remove attributes, keep formatting',
                             title: `The {…} goes; the text stays ${name.toLowerCase()}.`,
-                            refusal: refusalOnce(view.state, `remove-attributes@${object.from}:${object.to}`, () => changeMarkLiteralRefusal(view.state, object, '')),
-                            run: () => this.apply(object, current => (current.kind === 'styled' ? changeMarkLiteralTransaction(view.state, current, '') : null), ATTRIBUTES_REMOVED_HINT),
+                            refusal: refusalOnce(view.state, `remove-attributes@${object.from}:${object.to}`, () => changeInlineLiteralRefusal(view.state, object, '')),
+                            run: () => this.apply(object, current => (current.kind === 'styled' ? changeInlineLiteralTransaction(view.state, current, '') : null), ATTRIBUTES_REMOVED_HINT),
                         },
                     ],
                 };
@@ -1850,40 +1920,12 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * The field that sets the literal of a link or of a styled run (`_x_{…}`):
-     * prefilled with the literal — or `{.}` with the caret after the dot when
-     * there is none — and committed through `changeMarkLiteralTransaction`, a
-     * refusal said beside the caret; `{}` or an empty field removes it.
+     * The verb that opens the attributes field of a link, a styled run
+     * (`_x_{…}`, `` `x`{…} ``), an image or a bare holder: the one step every
+     * route shares (`holderAttributesStep`).
      */
-    private markAttributesVerb(object: Extract<EditorObject, { kind: 'link' | 'styled' }>, id: string, label: string, title: string): Verb {
-        const view = this.view;
-        const literal = (object.mark.attrs.literal ?? null) as string | null;
-        return {
-            id,
-            label,
-            title,
-            field: {
-                value: literal ?? SPAN_FIELD_PREFILL.value,
-                caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
-                label: ATTRIBUTES_FIELD_LABEL,
-                keys: ATTRIBUTES_FIELD_KEYS,
-                commit: value => {
-                    view.focus();
-                    const current = currentObject(view.state, object);
-                    if (current === null || (current.kind !== 'link' && current.kind !== 'styled')) {
-                        return;
-                    }
-                    const refusal = changeMarkLiteralRefusal(view.state, current, value);
-                    if (refusal !== null) {
-                        this.say(refusal, 'refusal');
-                        return;
-                    }
-                    const removed = value.trim() === '' || value.trim() === '{}';
-                    this.apply(current, now => (now.kind === current.kind ? changeMarkLiteralTransaction(view.state, now, value) : null),
-                        removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT);
-                },
-            },
-        };
+    private markAttributesVerb(object: LiteralObject, id: string, label: string, title: string): Verb {
+        return { id, label, title, field: holderAttributesStep(this.view, inlineHolderOf(object)) };
     }
 
     /** A table's **Edit source**: the table becomes a source block holding its text, the source box open (`tableSourceTransaction`). */
@@ -1915,19 +1957,18 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * A literal typed into a field: refused, with the reason beside the caret,
-     * when markdown-it-attrs would not read it as attributes (`''` is allowed
-     * where it means "none"); applied otherwise.
+     * A literal typed into `step`'s field: refused — the field kept open with
+     * what was typed and the reason beside it (`refusedStep`) — when
+     * markdown-it-attrs would not read it as attributes (`''` is allowed where
+     * it means "none"); applied otherwise.
      */
-    private commitLiteral(object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): void {
+    private commitLiteral(step: FieldStep, object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): FieldStep | void {
         const place = 'node' in object ? literalPlaceOf(object.node) : 'span';
         const current = currentObject(this.view.state, object);
         const refusal = hint !== undefined && value.trim() === '' ? null
             : current?.kind === 'span' ? changeSpanRefusal(this.view.state, current, value) : literalRefusal(value, place);
         if (refusal !== null) {
-            this.view.focus();
-            this.say(refusal, 'refusal');
-            return;
+            return refusedStep(step, value, refusal);
         }
         this.apply(object, make, hint);
     }

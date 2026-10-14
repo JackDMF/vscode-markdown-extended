@@ -35,7 +35,7 @@ import { Mapping } from 'prosemirror-transform';
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
-import { RAW_TEXT_MARKS, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
+import { RAW_TEXT_MARKS, causeReason, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
 import { showHint } from './hint';
 import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
@@ -351,16 +351,30 @@ export function noteRefusal(tr: Transaction): string | null {
     if (range === null) {
         return null;
     }
+    try {
+        return filterRefusal(tr, range);
+    } catch (error) {
+        // Whatever throws while the save is written or read back: no answer, so the edit is
+        // refused (`unread`), never a keystroke broken — and the error is said, not swallowed.
+        console.error('Markdown Extended: the editor could not check an edit', error);
+        return causeReason({ kind: 'unread', noun: '' });
+    }
+}
+
+/** `noteRefusal`'s answer for the edit's `range`: the reads that may throw. */
+function filterRefusal(tr: Transaction, range: { from: number; to: number }): string | null {
     const before = tr.before;
     const written = writtenEdit(tr);
     // The written document is the edit's with atoms made text (`writtenEdit`): positions are read in it.
     const mapping = new Mapping([...tr.mapping.maps, ...written.mapping.maps]);
-    return unwritableInNote(written.doc, written.mapping.map(range.from, -1), written.mapping.map(range.to, 1), {
-        doc: before,
-        mapping,
-        rewritten: written.rewritten,
-        sourceOf: pos => textblockSource(before, pos),
-    }) ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to) ?? unplacedRefusal(tr, written.rewritten, mapping);
+    const origin = { doc: before, mapping, rewritten: written.rewritten, sourceOf: (pos: number) => textblockSource(before, pos) };
+    const from = written.mapping.map(range.from, -1);
+    const to = written.mapping.map(range.to, 1);
+    // What the comparison of the save's text with the model finds (`readsBackAsShown`) is said last:
+    // where an atom's own check names the cause (an emoji made code), that reason is the better one.
+    return unwritableInNote(written.doc, from, to, origin, false)
+        ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to) ?? unplacedRefusal(tr, written.rewritten, mapping)
+        ?? unwritableInNote(written.doc, from, to, origin, true);
 }
 
 /** Whether the ways out of an unplaced atom are being tried (`unplacedRefusal`): a way out is no edit to try them for again. */

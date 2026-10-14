@@ -33,7 +33,7 @@ import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { CHROME_MOVED, LOCK_ROOM_PROPERTY, firstFree } from '../clearance';
 import { showHint } from '../hint';
-import { FieldStep, InlineField, fieldHeading, fieldKeys } from '../inlineField';
+import { FieldStep, InlineField, fieldAside, fieldHeading, refusedStep } from '../inlineField';
 import { chevronNode, lensLabelNodes } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { FocusPlace, RowScope, focusPlace, placeOfElement, rowLock } from '../focusPlace';
@@ -41,14 +41,15 @@ import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
-    applySpanTransaction, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason,
-    LINK_LOCK, objectAtSelection, spanLiteralRefusal, spanLockReason,
+    applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction,
+    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLockReason,
 } from '../objects';
-import { ATTRIBUTES_FIELD_KEYS, attributesStep } from '../attributes';
+import { currentReadsAttrs } from '../../inlineEngine';
+import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu,
-    elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
+    ActionPreview, CLASS_LITERAL, INLINE_ATTRS_LOCK, MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS,
+    ToolbarAction, ToolbarMenu, ToolbarSubmenu, elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertPropertiesTransaction, insertSourceTransaction, insertWrapperTransaction, isCurrent,
@@ -162,21 +163,79 @@ export function followPointer(panel: HTMLElement, item: HTMLElement): void {
     }
 }
 
+/**
+ * What the inline holder at the selection makes the Formatting entry and the
+ * bubble's `{…}` say: its name by its delimiter (`Attributes of Bold…`,
+ * `holderNames`), its sample the element the engine renders it as with that
+ * name — plain text for an image, which has none to show — and its syntax and
+ * card written as it (`example`, `tag` in `inlineLiterals.ts`).
+ */
+function inlineEntry(inline: InlineHolderAt): { label: string; sample: SampleSpec; syntax: string; preview: ActionPreview } {
+    const label = `Attributes of ${holderNames(inline).label}…`;
+    const markup = holderMarkup(inline);
+    const holder = inline.holder;
+    const tag = holder.tag?.(markup);
+    const text = holder.holder === 'code' ? 'code' : holder.holder === 'image' ? 'alt' : 'text';
+    return {
+        label,
+        sample: tag === undefined ? { tag: 'span', children: [label] } : { tag, className: 'x', children: [label] },
+        syntax: holder.example(text, CLASS_LITERAL, markup),
+        preview: {
+            markdown: `Run ${holder.example('--flag', '{.k}', markup)} now.`,
+            nodes: tag === undefined ? [] : [{ tag: 'p', children: ['Run ', { tag, className: 'k', children: ['--flag'] }, ' now.'] }],
+        },
+    };
+}
+
+/** The sample an entry draws, replaced when what the selection makes it draw changed (`ActionState.sample`). */
+function resample(item: HTMLElement, spec: SampleSpec): void {
+    const holder = item.querySelector<HTMLElement>('.mep-sample');
+    const key = JSON.stringify(spec);
+    if (holder !== null && holder.dataset.drawn !== key) {
+        holder.dataset.drawn = key;
+        holder.replaceChildren(renderSample(spec));
+    }
+}
+
+/** The syntax column an entry shows, where the selection decides it. */
+function resyntax(item: HTMLElement, syntax: string): void {
+    const column = item.querySelector('.mep-entry-syntax');
+    if (column !== null && column.textContent !== syntax) {
+        column.textContent = syntax;
+    }
+}
+
+/** Why Span with class makes no span where its literal alone is fine: the note around it, or the block read whole, would not hold it. */
+const SPAN_REFUSED = 'These attributes cannot be given to this text here.';
+
 function div(className: string): HTMLElement {
     const node = document.createElement('div');
     node.className = className;
     return node;
 }
 
-interface ActionState {
+export interface ActionState {
     enabled: boolean;
     active: boolean;
     /** Why a disabled action is disabled, when there is something to say. */
     reason: string | null;
+    /**
+     * What the selection names the action (`Attributes of Paragraph…`, `Attributes of Code…`):
+     * its sample's text and its tooltip's name, where the action's own label is only the resting form.
+     */
+    label?: string;
+    /** The whole tooltip, where the selection decides what the action does (the bubble's `{…}`). */
+    tooltip?: string;
+    /** What a named entry draws as its sample, its syntax column and its card, where the selection decides it (`Attributes of Bold…` as `**text**{.class}`). */
+    sample?: SampleSpec;
+    syntax?: string;
+    preview?: ActionPreview;
+    /** The button's accessible name, where the selection decides what it does (the bubble's `{…}`). */
+    ariaLabel?: string;
 }
 
 /** Whether each action applies at the selection, and whether it is what the selection already has. */
-function evaluate(action: ToolbarAction, state: EditorState, includes: boolean): ActionState {
+export function evaluate(action: ToolbarAction, state: EditorState, includes: boolean): ActionState {
     const apply = action.apply;
     switch (apply.kind) {
         case 'mark': {
@@ -221,8 +280,31 @@ function evaluate(action: ToolbarAction, state: EditorState, includes: boolean):
             return { enabled: reason === null, active: false, reason };
         }
         case 'block-attrs': {
-            const target = attributesTargetAt(state);
-            return 'refusal' in target ? { enabled: false, active: false, reason: target.refusal } : { enabled: true, active: false, reason: null };
+            // Named by the block it acts on (`attributeHolderAt`'s block half), the refused form by none.
+            const target = attributeHolderAt(state).block;
+            return 'refusal' in target
+                ? { enabled: false, active: false, reason: target.refusal, label: 'Attributes of Block…' }
+                : { enabled: true, active: false, reason: null, label: `Attributes of ${target.name}…` };
+        }
+        case 'inline-attrs': {
+            // Named by the inline element it acts on, the one its bar and the bubble name (`attributeHolderAt`),
+            // and drawn as that element, its syntax and card written as it (`inlineEntry`).
+            const inline = currentReadsAttrs() ? attributeHolderAt(state).inline : null;
+            return inline === null
+                ? { enabled: false, active: false, reason: currentReadsAttrs() ? INLINE_ATTRS_LOCK : NO_ATTRS_REFUSAL, label: action.label }
+                : { enabled: true, active: false, reason: null, ...inlineEntry(inline) };
+        }
+        case 'attrs-bubble': {
+            // Within one element's run, its attributes — the one the menu and its bar name
+            // (`attributeHolderAt`) — else an attribute span made of the selection.
+            const inline = currentReadsAttrs() && !state.selection.empty ? attributeHolderAt(state).inline : null;
+            if (inline !== null) {
+                // Marked while it targets an element, so what it does is seen without the tooltip.
+                const entry = inlineEntry(inline);
+                return { enabled: true, active: true, reason: null, tooltip: `${entry.label} — ${entry.syntax}`, ariaLabel: entry.label };
+            }
+            const reason = spanLockReason(state);
+            return { enabled: reason === null, active: false, reason, tooltip: `Span with class — [text]${CLASS_LITERAL}`, ariaLabel: 'Span with class' };
         }
         case 'insert-link': {
             const reason = objectAtSelection(state)?.kind === 'link' ? null : insertLockReason(state, LINK_LOCK);
@@ -419,7 +501,18 @@ class ToolbarView implements PluginView {
         for (const tool of this.tools) {
             const s = stateOf(tool.action);
             setState(tool.el, s.enabled, s.active);
-            tool.el.title = s.enabled || !s.reason ? tooltipOf(tool.action) : `${tooltipOf(tool.action)}\n${s.reason}`;
+            // A named entry's sample and tooltip say one name: the selection's, or — the row locked — its resting one.
+            const label = s.label ?? (tool.action.named ? tool.action.label : undefined);
+            const tooltip = s.tooltip ?? (s.syntax === undefined ? tooltipOf(tool.action, label) : `${label as string}: ${s.syntax}`);
+            tool.el.title = s.enabled || !s.reason ? tooltip : `${tooltip}\n${s.reason}`;
+            if (tool.action.named && label !== undefined) {
+                // Its resting form is plain text for the inline entry (no element to draw), the block's own element for the block's.
+                resample(tool.el, s.sample ?? (tool.action.apply.kind === 'inline-attrs' ? { tag: 'span', children: [label] } : { ...tool.action.sample, children: [label] }));
+                resyntax(tool.el, s.syntax ?? tool.action.syntax.split('\n')[0]);
+            }
+            if (s.ariaLabel !== undefined) {
+                tool.el.setAttribute('aria-label', s.ariaLabel);
+            }
         }
         for (const menu of this.menus) {
             if (menu.opener) {
@@ -1005,7 +1098,8 @@ class ToolbarView implements PluginView {
      * at any window width instead of floating out of it.
      */
     private showCard(action: ToolbarAction, item: HTMLElement, menu: Menu): void {
-        const preview = action.preview;
+        const now = evaluate(action, this.view.state, this.host.includesOffered());
+        const preview = now.preview ?? action.preview;
         if (!preview || menu.panel.hidden) {
             return;
         }
@@ -1017,7 +1111,6 @@ class ToolbarView implements PluginView {
         syntax.textContent = elideDataUris(preview.markdown);
         this.card.replaceChildren(body, syntax);
         // A disabled entry says why where the eye already is, not only in its tooltip.
-        const now = evaluate(action, this.view.state, this.host.includesOffered());
         if (!now.enabled && now.reason) {
             const why = div('mep-preview-refusal');
             why.textContent = now.reason;
@@ -1141,6 +1234,16 @@ class ToolbarView implements PluginView {
             case 'block-attrs':
                 this.askBlockAttributes();
                 return;
+            case 'inline-attrs':
+                this.askInlineAttributes();
+                return;
+            case 'attrs-bubble':
+                if (!view.state.selection.empty && currentReadsAttrs() && attributeHolderAt(view.state).inline !== null) {
+                    this.askInlineAttributes();
+                } else {
+                    this.askSpanLiteral();
+                }
+                return;
             case 'insert-link':
                 this.askLink();
                 return;
@@ -1167,22 +1270,28 @@ class ToolbarView implements PluginView {
         if (spanLockReason(view.state) !== null) {
             return;
         }
-        this.openFieldBar('span', 'Span attributes', 'span-attributes', {
+        const step: FieldStep = {
             value: SPAN_FIELD_PREFILL.value,
             caret: SPAN_FIELD_PREFILL.caret,
             label: 'Attributes',
             keys: ATTRIBUTES_FIELD_KEYS,
             commit: value => {
+                // Asked before the focus goes back: a refusal keeps the field open with what was typed.
+                // The transaction is built after it is back, which may commit a source box.
+                const refusal = applySpanRefusal(view.state, value) ?? (applySpanTransaction(view.state, value) === null ? SPAN_REFUSED : null);
+                if (refusal !== null) {
+                    return refusedStep(step, value, refusal);
+                }
                 view.focus();
-                const refusal = spanLiteralRefusal(view.state, value);
-                const tr = refusal === null ? applySpanTransaction(view.state, value) : null;
+                const tr = applySpanTransaction(view.state, value);
                 if (tr === null) {
-                    showHint(view, refusal ?? 'These attributes cannot be given to this text here.', 'refusal');
-                    return;
+                    // What the focus moved (a source box's commit) changed the answer: the field stays, saying why.
+                    return refusedStep(step, value, applySpanRefusal(view.state, value) ?? SPAN_REFUSED);
                 }
                 view.dispatch(tr);
             },
-        });
+        };
+        this.openFieldBar('span', 'Span attributes', 'span-attributes', step);
     }
 
     /**
@@ -1198,6 +1307,22 @@ class ToolbarView implements PluginView {
             return;
         }
         this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target));
+    }
+
+    /**
+     * **Attributes of Code…** (and of a key, a link, emphasis, an image …):
+     * the inline field, in a bar at the element the caret is in, labelled with
+     * its name (`Code · Attributes`), prefilled as the element's own bar
+     * prefills it — the one step every route shares (`holderAttributesStep`).
+     * The element's run stays drawn while the field is open.
+     */
+    private askInlineAttributes(): void {
+        const at = currentReadsAttrs() ? attributeHolderAt(this.view.state).inline : null;
+        if (at === null) {
+            showHint(this.view, currentReadsAttrs() ? INLINE_ATTRS_LOCK : NO_ATTRS_REFUSAL, 'refusal');
+            return;
+        }
+        this.openFieldBar(at.holder.holder, holderNames(at).label, 'inline-attributes', holderAttributesStep(this.view, at), { from: at.object.from, to: at.object.to });
     }
 
     // -- links and images ------------------------------------------------------
@@ -1348,7 +1473,7 @@ class ToolbarView implements PluginView {
             });
             field.el.dataset.verb = verb;
             label.textContent = fieldHeading(barLabel, step.label);
-            bar.replaceChildren(label, field.el, ...(step.keys ? [fieldKeys(step.keys)] : []));
+            bar.replaceChildren(label, field.el, ...fieldAside(step));
             this.fieldBar = { bar, field };
             return field;
         };

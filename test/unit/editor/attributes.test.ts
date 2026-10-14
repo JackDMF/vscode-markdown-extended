@@ -14,6 +14,7 @@ import {
     ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, INDENTED_CODE_ATTRS_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt,
     commitAttributes, containerNameOf, literalOf, literalRefusal, spanLockReason,
 } from '../../../src/editor/webview/objects';
+import { FieldStep, refusedStep } from '../../../src/editor/webview/inlineField';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
 
@@ -427,5 +428,14 @@ suite('Editor Attributes…: where the engine reads no attributes, nothing offer
         const parsed = parseDocument(noAttrs, source, {});
         const doc = parsed.doc.type.create(null, topChildren(parsed.doc).map(n => touched(n)));
         assert.strictEqual(serializeDocument({ ...parsed, doc }, options), source);
+    });
+});
+
+suite('Editor fields: a refused commit keeps the field', () => {
+    test('refusedStep is the same step with what was typed, the caret at its end, and the reason', () => {
+        const step: FieldStep = { value: '{.}', caret: 2, label: 'Attributes', keys: 'keys', commit: () => undefined };
+        const refused = refusedStep(step, '{.a', 'It is not closed.');
+        assert.deepStrictEqual({ ...refused, commit: null }, { value: '{.a', caret: 3, label: 'Attributes', keys: 'keys', refusal: 'It is not closed.', commit: null });
+        assert.strictEqual(refused.commit, step.commit, 'it commits as the step does');
     });
 });

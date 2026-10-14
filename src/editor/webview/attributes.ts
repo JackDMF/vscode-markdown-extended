@@ -40,9 +40,12 @@
  * (`fidelity.ts`), and a list item's at any depth.
  */
 import { EditorView } from 'prosemirror-view';
-import { showChangeHint, showHint, undoKey } from './hint';
-import { FieldStep } from './inlineField';
-import { AttributesTarget, commitAttributes, literalOf } from './objects';
+import { showChangeHint, undoKey } from './hint';
+import { FieldStep, refusedStep } from './inlineField';
+import {
+    AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, literalObjectOf, literalOf,
+    literalOfObject,
+} from './objects';
 import { SPAN_FIELD_PREFILL } from './toolbar/actions';
 
 /** The field's own label; its heading is the block's name before it (`Paragraph · Attributes`). */
@@ -61,27 +64,34 @@ export const ATTRIBUTES_REMOVED_HINT = 'Attributes removed';
 /**
  * The field step for `target`: its literal prefilled (selected, so typing
  * replaces it), or `{.}` with the caret after the dot when it has none. `Enter`
- * commits: refused with the reason beside the caret when markdown-it-attrs
- * would not read the literal back, or the save the block it stands in — a
- * removal as much as a new literal (`commitAttributes`) — else one
- * transaction — one undo step — and the hint that says so.
+ * commits: refused — the field kept open with what was typed and the reason
+ * beside it (`refusedStep`) — when markdown-it-attrs would not read the
+ * literal back, or the save the block it stands in — a removal as much as a
+ * new literal (`commitAttributes`) — else one transaction — one undo step —
+ * and the hint that says so.
  */
 export function attributesStep(view: EditorView, target: AttributesTarget): FieldStep {
     const literal = literalOf(target.node);
-    return {
+    const step: FieldStep = {
         value: literal ?? SPAN_FIELD_PREFILL.value,
         caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
         label: ATTRIBUTES_FIELD_LABEL,
         keys: ATTRIBUTES_FIELD_KEYS,
         commit: value => {
+            // Asked first, so a refusal keeps the field open with what was typed; the
+            // transaction is built after the focus is back, which may commit a source box.
+            const asked = commitAttributes(view.state, target, value);
+            if (asked !== null && 'refusal' in asked) {
+                return refusedStep(step, value, asked.refusal);
+            }
             view.focus();
-            const made = commitAttributes(view.state, target, value);
+            const made = asked === null ? null : commitAttributes(view.state, target, value);
             if (made === null) {
                 return;
             }
             if ('refusal' in made) {
-                showHint(view, made.refusal, 'refusal');
-                return;
+                // What the focus moved (a source box's commit) changed the answer: the field stays, saying why.
+                return refusedStep(step, value, made.refusal);
             }
             // Said only when the state moved, as the object bar's verbs say it: a filter refusing it leaves the state as it was.
             const before = view.state;
@@ -91,4 +101,52 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
             }
         },
     };
+    return step;
+}
+
+/**
+ * The field step for an inline holder (`attributeHolderAt`): a link's, a
+ * styled run's, an image's, a bare run of formatting's — the one step the
+ * bars' **Attributes…**, the Formatting menu's **Attributes of Code…**,
+ * `Alt+Enter`'s bar and the bubble's `{…}` open. Prefilled as a block's: the
+ * literal, selected, or `{.}` with the caret after the dot. `Enter` sets it
+ * through `changeInlineLiteralTransaction` — on a bare run the same mark is
+ * given the literal over its run — `{}` or nothing removes it; a refusal keeps
+ * the field open with what was typed and the reason (`refusedStep`).
+ */
+export function holderAttributesStep(view: EditorView, at: InlineHolderAt, label = ATTRIBUTES_FIELD_LABEL): FieldStep {
+    const literal = literalOfObject(at.object);
+    const step: FieldStep = {
+        value: literal ?? SPAN_FIELD_PREFILL.value,
+        caret: literal === null ? SPAN_FIELD_PREFILL.caret : undefined,
+        label,
+        keys: ATTRIBUTES_FIELD_KEYS,
+        commit: value => {
+            const current = literalObjectOf(currentObject(view.state, at.object));
+            if (current === null) {
+                view.focus();
+                return;
+            }
+            const refusal = changeInlineLiteralRefusal(view.state, current, value);
+            if (refusal !== null) {
+                return refusedStep(step, value, refusal);
+            }
+            // The focus first, as the bars' verbs do: what it moves (a source box's commit) is followed.
+            view.focus();
+            const now = literalObjectOf(currentObject(view.state, current));
+            const tr = now === null ? null : changeInlineLiteralTransaction(view.state, now, value);
+            if (tr === null) {
+                // What the focus moved (a source box's commit) changed the answer: the field stays, saying why.
+                const after = now === null ? null : changeInlineLiteralRefusal(view.state, now, value);
+                return after === null ? undefined : refusedStep(step, value, after);
+            }
+            const removed = value.trim() === '' || value.trim() === '{}';
+            const before = view.state;
+            view.dispatch(tr);
+            if (view.state !== before) {
+                showChangeHint(view, `${removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT} — ${undoKey()}`);
+            }
+        },
+    };
+    return step;
 }

@@ -418,7 +418,8 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         } finally {
             engine.parse = parse;
         }
-        assert.ok(parses <= 20, `${parses} parses for 20 keystrokes`);
+        // Two per keystroke: the literals' and sidebars' read (`readUnit`) and the comparison's (`readsBackAsShown`) — of the one item.
+        assert.ok(parses <= 40, `${parses} parses for 20 keystrokes`);
     });
 
     /** Every token the host gives attributes, children included, as `[type, attrs]`: a link's or an image's own aside. */
@@ -597,7 +598,8 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
             } finally {
                 engine.parse = parse;
             }
-            assert.ok(parsed.length <= 60, `${source.slice(0, 12)}: ${parsed.length} parses for 20 keystrokes`);
+            // At most four per keystroke, of the one block: the literals' read, the comparison's, and the wrapper's lines around it.
+            assert.ok(parsed.length <= 80, `${source.slice(0, 12)}: ${parsed.length} parses for 20 keystrokes`);
             assert.ok(Math.max(...parsed) < 200, `${source.slice(0, 12)}: one block parsed at a time (${Math.max(...parsed)} characters)`);
         }
     });
@@ -632,7 +634,12 @@ function posIn(doc: Node, needle: string, pad = ' '): number {
     return found;
 }
 
-/** What the page shows of `doc` that a save must give back: each block's, item's and span's attributes, each sidebar and its text; and how many source blocks it holds. */
+/**
+ * What the page shows of `doc` that a save must give back: each block's, item's and span's
+ * attributes, each sidebar and its text, each textblock's formatting (each character that is
+ * not white space with its marks and their literals; links are the linkify tests'); and how
+ * many source blocks it holds.
+ */
 function shown(doc: Node): { facts: string; raw: number } {
     const pairs = (literal: string) => JSON.stringify(joinAttrs(parseAttrsLiteral(literal) ?? []).map(([n, v]) => [n, v]).sort());
     const out: string[] = [];
@@ -650,6 +657,17 @@ function shown(doc: Node): { facts: string; raw: number } {
         raw += node.type.name === 'raw_block' ? 1 : 0;
         let open: Mark | null = null;
         if (node.isTextblock) {
+            const formatting: string[] = [];
+            node.descendants(child => {
+                const marks = child.marks.filter(m => m.type.name !== 'link' && m.type.name !== 'req_ref')
+                    .map(m => `${m.type.name}${typeof m.attrs.literal === 'string' ? pairs(m.attrs.literal) : ''}`).sort().join('+');
+                for (const ch of child.isText ? child.text ?? '' : '') {
+                    if (/\S/.test(ch)) {
+                        formatting.push(`${ch}[${marks}]`);
+                    }
+                }
+            });
+            out.push(`formatting ${formatting.join(' ')}`);
             node.forEach(child => {
                 const mark = child.marks.find(m => m.type.name === 'attr_span') ?? null;
                 if (mark !== null && (open === null || !mark.eq(open))) {

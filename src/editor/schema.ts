@@ -151,19 +151,21 @@ function emphasisParseRules(markups: readonly string[]): (TagParseRule & { attrs
 
 /**
  * A mark's `{…}` literal written after its closing delimiter — emphasis',
- * strikethrough's, a highlight's, a link's (`_x_{.a}`, `[x](u){.a}`): kept
- * verbatim, `null` for none, and written back after that delimiter.
+ * strikethrough's, a highlight's, a link's, inline code's, superscript's,
+ * subscript's, a key's (`_x_{.a}`, `[x](u){.a}`, `` `x`{.a} ``): kept
+ * verbatim, `null` for none, and written back after that delimiter
+ * (`inlineLiterals.ts`). An image carries one the same way.
  */
 const markLiteral = { literal: { default: null as string | null } };
 
 /**
- * The attributes a mark with a literal is drawn with: what the literal gives
+ * The attributes a mark or an image with a literal is drawn with: what the literal gives
  * (`domAttrsOf`), as the engine renders them on the element, and the literal
  * itself in `data-mep-attrs`, by which a copy of it in the page pastes with
  * it — as an attribute span's is (`attr_span`).
  */
-function literalDOM(mark: Mark): Record<string, string> {
-    const literal = mark.attrs.literal as string;
+export function literalDOM(carrier: Mark | Node): Record<string, string> {
+    const literal = carrier.attrs.literal as string;
     return { ...domAttrsOf(literal), 'data-mep-attrs': literal };
 }
 
@@ -638,6 +640,8 @@ export const editorSchema = new Schema({
                 src: {},
                 alt: { default: null as string | null },
                 title: { default: null as string | null },
+                /** The `{…}` written after its `)` (`![a](s){.a}`), as an emphasis' is; `null` for none. */
+                literal: { default: null as string | null },
             },
             parseDOM: [{
                 tag: 'img[src]',
@@ -645,11 +649,15 @@ export const editorSchema = new Schema({
                     src: dom.getAttribute('src'),
                     title: dom.getAttribute('title'),
                     alt: dom.getAttribute('alt'),
+                    literal: literalOfDOM(dom),
                 }),
             }],
             toDOM(node): DOMOutputSpec {
                 const { src, alt, title } = node.attrs as { src: string; alt: string | null; title: string | null };
-                return ['img', { src, alt, title }];
+                // A literal's attributes follow the image's own, as the engine renders them, and none
+                // overrides them: a src, an alt or a title is no literal's (`READ_BACK`), as a link's href.
+                const own = { src, alt, title };
+                return ['img', node.attrs.literal ? { ...own, ...literalDOM(node), ...own } : own];
             },
         },
         hard_break: {
@@ -838,27 +846,31 @@ export const editorSchema = new Schema({
         // Inside a link, not around one: `[[[x]]](url)` is a link holding a
         // key, while a key holding a link does not parse. No line break inside.
         kbd: {
-            parseDOM: [{ tag: 'kbd' }],
-            toDOM(): DOMOutputSpec { return ['kbd']; },
+            attrs: markLiteral,
+            parseDOM: [{ tag: 'kbd', getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }) }],
+            toDOM(mark: Mark): DOMOutputSpec { return mark.attrs.literal ? ['kbd', literalDOM(mark)] : ['kbd']; },
         },
         // `markdown-it-sup-alt` and `-sub-alt` read their content as plain text,
         // so they sit innermost but for code, and exclude code and each other:
         // `^`x`^` is the text `` `x` `` raised, not code.
         sup: {
+            attrs: markLiteral,
             excludes: 'sup sub code',
-            parseDOM: [{ tag: 'sup' }],
-            toDOM(): DOMOutputSpec { return ['sup']; },
+            parseDOM: [{ tag: 'sup', getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }) }],
+            toDOM(mark: Mark): DOMOutputSpec { return mark.attrs.literal ? ['sup', literalDOM(mark)] : ['sup']; },
         },
         sub: {
+            attrs: markLiteral,
             excludes: 'sub sup code',
-            parseDOM: [{ tag: 'sub' }],
-            toDOM(): DOMOutputSpec { return ['sub']; },
+            parseDOM: [{ tag: 'sub', getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }) }],
+            toDOM(mark: Mark): DOMOutputSpec { return mark.attrs.literal ? ['sub', literalDOM(mark)] : ['sub']; },
         },
         // Last, so it is the innermost mark: the serializer writes code spans unescaped.
         code: {
             code: true,
-            parseDOM: [{ tag: 'code' }],
-            toDOM(): DOMOutputSpec { return ['code']; },
+            attrs: markLiteral,
+            parseDOM: [{ tag: 'code', getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }) }],
+            toDOM(mark: Mark): DOMOutputSpec { return mark.attrs.literal ? ['code', literalDOM(mark)] : ['code']; },
         },
     },
 });

@@ -38,3 +38,14 @@ points with classed emphasis, as written in the corpus the editor is used on.
     > „Als wir zusammen im Predigtdienst waren, *hörte er sich geduldig an, was ich auf dem Herzen hatte*."
     > [Der Wachtturm, 15.12.2004, S. 17-22 „Nimmst du Jehovas Hilfe an?" Abs. 20](https://wol.jw.org/de/wol/d/r10/lp-x/2004924#h=27:330-27:793){.source}
   - _&#x2713;_{.colorize} Fürsorgliche Vertreter &ndash; weil der König den Ton angibt
+
+## Commands, formulas, keys and screenshots
+
+The shapes of a how-to that classes its commands and keys and sizes its screenshots.
+
+- Run `--flag`{.k} to skip the cache, then press [[Ctrl]]{.key}+[[S]]{.key}.
+- Water is H~2~{.f}O, and x^2^{.c} grows faster than x.
+
+![Screenshot](img.png){width=400}
+
+[![a](s.png){.c}](u){.d}

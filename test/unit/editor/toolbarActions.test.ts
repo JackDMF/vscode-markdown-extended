@@ -127,8 +127,20 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                 // The block the example parses into carries the literal, and draws
                 // the element and class the engine renders the example as.
                 const block = parseDocument(md, action.example, {}).doc.child(0);
-                assert.strictEqual(block.attrs.attrsSuffix, action.syntax, `${action.example} carries ${action.syntax}`);
+                assert.ok(action.example.endsWith(` ${block.attrs.attrsSuffix as string}`), `${action.example} carries its literal`);
                 const [tag, attrs] = block.type.spec.toDOM?.(block) as unknown as [string, { class?: string }];
+                assert.strictEqual(tag, action.sample.tag);
+                assert.strictEqual(attrs.class, action.sample.className);
+            }
+            if (action.apply.kind === 'inline-attrs') {
+                // The example parses into code carrying the literal, drawn as the
+                // element and class the engine renders the example as.
+                const marks: Mark[] = [];
+                parseDocument(md, action.example, {}).doc.descendants(n => {
+                    marks.push(...n.marks.filter(m => m.type.name === 'code'));
+                });
+                assert.strictEqual(marks[0]?.attrs.literal, '{.x}', `${action.example} parses as code carrying {.x}`);
+                const [tag, attrs] = marks[0].type.spec.toDOM?.(marks[0], true) as unknown as [string, { class?: string }];
                 assert.strictEqual(tag, action.sample.tag);
                 assert.strictEqual(attrs.class, action.sample.className);
             }
@@ -160,16 +172,19 @@ suite('Editor toolbar: every action makes the element it shows', () => {
         });
     }
 
-    test('the row holds the five native marks; every other action is a menu entry with a preview', () => {
+    test('the row holds the five native marks; every other action is a menu entry with a preview, but the bubble\'s own {…}', () => {
         assert.deepStrictEqual(TOOLBAR_ACTIONS.filter(inRow).map(a => a.id), ['italic', 'emphasis', 'bold', 'strong', 'code']);
         assert.ok(TOOLBAR_ACTIONS.filter(inRow).every(a => a.apply.kind === 'mark'));
-        for (const action of TOOLBAR_ACTIONS.filter(a => !inRow(a))) {
+        const bubbleOnly = TOOLBAR_ACTIONS.filter(a => 'bubble' in a.place);
+        assert.deepStrictEqual(bubbleOnly.map(a => [a.id, inBubble(a), menuOf(a)]), [['attrs-bubble', true, null]]);
+        assert.strictEqual(TOOLBAR_ACTIONS.filter(inBubble).pop()?.id, 'attrs-bubble', 'last in the bubble');
+        for (const action of TOOLBAR_ACTIONS.filter(a => !inRow(a) && !bubbleOnly.includes(a))) {
             assert.ok(menuOf(action) !== null, action.id);
             assert.ok(action.preview && action.preview.nodes.length > 0, `${action.id} has a preview`);
         }
         assert.deepStrictEqual(ROW_LAYOUT, [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']]);
         const byMenu = (menu: string) => TOOLBAR_ACTIONS.filter(a => menuOf(a) === menu && submenuOf(a) === null).map(a => a.id);
-        assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class', 'block-attributes']);
+        assert.deepStrictEqual(byMenu('formatting'), ['mark', 'superscript', 'subscript', 'strikethrough', 'kbd', 'span-class', 'inline-attributes', 'block-attributes']);
         assert.deepStrictEqual(byMenu('annotation'), ['sidenote', 'marginal-note', 'left-sidebar', 'right-sidebar', 'footnote-reference']);
         assert.deepStrictEqual(byMenu('insert'),
             ['link', 'image', 'horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents', 'include', 'properties']);

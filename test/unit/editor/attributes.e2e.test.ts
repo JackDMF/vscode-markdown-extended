@@ -6,6 +6,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } from '../../../src/editor/webview/attributes';
 import { CONTAINER_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
+import { INLINE_ATTRS_LOCK } from '../../../src/editor/webview/toolbar/actions';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import type { WebviewMessage } from '../../../src/editor/protocol';
 import { closeEditorPage, EXTENSION_ID, EditMessage, EditorPage, openEditorPage, settle, UNDO } from './pageHarness';
@@ -170,18 +171,18 @@ suite('Editor Attributes… (e2e)', () => {
         await page.mouse.click(1270, 790);
     });
 
-    test('Formatting → Attributes… opens the field on the paragraph, named after it; Enter writes {.note} at its end and the page draws the class', async function () {
+    test('Formatting → Attributes of Paragraph… opens the field on the paragraph, named after it; Enter writes {.note} at its end and the page draws the class', async function () {
         this.timeout(15000);
         await showDocument(DOC);
         await clickAt('configurable', 3);
         await openFormatting();
         const entry = await page.$eval(ENTRY, el => ({
-            label: el.querySelector('.mep-menu-label')?.textContent ?? el.textContent,
+            label: el.querySelector('.mep-sample')?.textContent,
             previous: (el.previousElementSibling as HTMLElement | null)?.dataset.action,
             disabled: el.getAttribute('aria-disabled'),
         }));
-        assert.ok(entry.label?.includes('Attributes…'), JSON.stringify(entry));
-        assert.strictEqual(entry.previous, 'span-class', 'right after Span with class');
+        assert.strictEqual(entry.label, 'Attributes of Paragraph…', JSON.stringify(entry));
+        assert.strictEqual(entry.previous, 'inline-attributes', 'right after Attributes of Code…, the inline one');
         assert.strictEqual(entry.disabled, 'false');
         await page.hover(ENTRY);
         await page.waitForSelector('.mep-preview-card[data-action="block-attributes"]:not([hidden])', { timeout: 2000 });
@@ -276,6 +277,69 @@ suite('Editor Attributes… (e2e)', () => {
         await settle();
         assert.ok((await lastEdit())?.text.includes(`${TABLE}\n\n{.wide}\n\n<div>`), (await lastEdit())?.text);
         assert.strictEqual(await page.$eval('.ProseMirror table', el => el.classList.contains('wide')), true);
+    });
+
+    test('Formatting → Attributes of Code…: disabled in plain text saying why, named by the element at the caret, its field writes the literal after it', async function () {
+        this.timeout(15000);
+        const INLINE = '.mep-menu [data-action="inline-attributes"]';
+        await showDocument('Run `x` now, or plain words.\n\nThe last paragraph.\n');
+        await clickAt('plain words', 2);
+        await openFormatting();
+        const plain = await page.$eval(INLINE, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title, label: el.querySelector('.mep-sample')?.textContent }));
+        assert.strictEqual(plain.disabled, 'true');
+        assert.strictEqual(plain.label, 'Attributes of Element…', 'its resting name');
+        assert.ok(plain.title.includes(INLINE_ATTRS_LOCK), plain.title);
+        await shot('07-formatting-inline-disabled.png');
+        await page.keyboard.press('Escape');
+
+        await clickAt('x', 0);
+        await openFormatting();
+        const inCode = await page.$eval(INLINE, el => ({ disabled: el.getAttribute('aria-disabled'), label: el.querySelector('.mep-sample')?.textContent }));
+        assert.deepStrictEqual(inCode, { disabled: 'false', label: 'Attributes of Code…' });
+        await page.hover(INLINE);
+        await shot('08-formatting-inline-enabled.png');
+        await page.click(INLINE);
+        await page.waitForSelector(FIELD, { visible: true });
+        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-object-label`, el => el.textContent), 'Code · Attributes');
+        await page.keyboard.type('k');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.ok((await lastEdit())?.text.startsWith('Run `x`{.k} now'), (await lastEdit())?.text);
+        assert.ok(await page.$('.ProseMirror code.k'));
+    });
+
+    test('a refused literal keeps the field open with what was typed and the reason beside it; Esc then closes it', async function () {
+        this.timeout(15000);
+        await showDocument(DOC);
+        const before = (await (editor as EditorPage).edits()).length;
+        await clickAt('last paragraph', 2);
+        await openFormatting();
+        await page.click(ENTRY);
+        await page.waitForSelector(FIELD, { visible: true });
+        // `{.}`, the caret after the dot: `{.a` is typed by taking the `}` away.
+        await page.keyboard.press('Delete');
+        await page.keyboard.type('a');
+        await page.keyboard.press('Enter');
+        await delay(100);
+        const kept = await page.evaluate(sel => {
+            const input = document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null;
+            const refusal = document.querySelector(`${sel} .mep-field-refusal`) as HTMLElement | null;
+            return {
+                value: input?.value,
+                focused: document.activeElement === input,
+                selected: input ? [input.selectionStart, input.selectionEnd] : null,
+                role: refusal?.getAttribute('role') ?? null,
+                keys: document.querySelector(`${sel} .mep-field-keys`) !== null,
+                refusal: refusal?.textContent ?? null,
+            };
+        }, FIELD_BAR);
+        assert.deepStrictEqual({ ...kept, refusal: null }, { value: '{.a', focused: true, selected: [3, 3], role: 'alert', keys: false, refusal: null });
+        assert.ok(kept.refusal?.includes('is not closed'), kept.refusal ?? 'none');
+        await shot('06-refusal-kept-open.png');
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
+        await page.keyboard.press('Escape');
+        await delay(100);
+        assert.strictEqual(await page.$(FIELD), null);
     });
 
     test('Esc cancels: nothing is written, the field goes and the caret is back in the text', async function () {
