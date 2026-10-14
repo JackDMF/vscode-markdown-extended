@@ -5,9 +5,9 @@ import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, fidelityPlugin, groupSourceBlocks, parseDocument, serializeDocument, splitLines } from '../../../src/editor';
 import { definitionOf } from '../../../src/editor/inlineEngine';
 import { editorSchema } from '../../../src/editor/schema';
-import { literalLostReason, literalNotReadBack, unwritableInTable } from '../../../src/editor/serialize';
+import { causeReason, literalLostReason, literalNotReadBack, unwritableInTable } from '../../../src/editor/serialize';
 import {
-    EditorObject, LiteralObject, changeLinkTransaction, changeInlineLiteralRefusal, changeInlineLiteralTransaction, editImageTransaction, literalObjectOf,
+    EditorObject, InlineHolderAt, LiteralObject, attributeHolderAt, currentObject, holderNames, sameObject, changeLinkTransaction, changeInlineLiteralRefusal, changeInlineLiteralTransaction, editImageTransaction, literalObjectOf,
     literalRefusal, objectAtSelection,
 } from '../../../src/editor/webview/objects';
 import { toggleMarkup } from '../../../src/editor/webview/toolbar/commands';
@@ -546,7 +546,8 @@ suite('Editor inline literals: two runs of one mark side by side', () => {
             const written = serializeDocument({ doc: state.doc.type.create(null, [p]), eol: '\n', tail: '' }, options).trim();
             const elements = (md.renderInline(written).match(new RegExp(`<${tag}[ >]`, 'g')) ?? []).length;
             const lost = literalNotReadBack(p);
-            assert.strictEqual(lost?.merged !== undefined, elements < 2, `${written}: ${elements} element(s), verdict ${JSON.stringify(lost)}`);
+            assert.strictEqual(lost !== null, elements < 2, `${written}: ${elements} element(s), verdict ${JSON.stringify(lost)}`);
+            assert.ok(lost === null || lost.cause?.kind === 'merged', JSON.stringify(lost?.cause));
         });
 
         test(`${name}: the toggle applied right before a run with a literal joins that run, which keeps its literal`, () => {
@@ -565,5 +566,65 @@ suite('Editor inline literals: two runs of one mark side by side', () => {
         state = state.apply(state.tr.addMark(from, from + 3, editorSchema.marks.code.create()));
         const lost = literalNotReadBack(touched(state.doc.child(0)));
         assert.ok(lost !== null && literalLostReason(lost).startsWith('After this edit two pieces of inline code would stand side by side'), JSON.stringify(lost));
+    });
+});
+
+suite('Editor inline literals: review 2 — the right run, and the save read back by the engine', () => {
+    /** `state` with the edit `make` applied without the filters: what the filters are then asked about. */
+    const edited = (state: EditorState, needle: string, make: (s: EditorState, at: number) => import('prosemirror-state').Transaction) => make(state, posOf(state.doc, needle));
+
+    test('a run that starts where another of another mark does is not that one: code at the start of bold, bold at the start of italic', () => {
+        for (const [source, needle, label, written] of [
+            ['A **`foo`bar**{.a} y.\n', 'foo', 'Code', 'A **`foo`{.b}bar**{.a} y.\n'],
+            ['A ***foo**bar*{.a} y.\n', 'foo', 'Bold', 'A ***foo**{.b}bar*{.a} y.\n'],
+        ] as const) {
+            const state = select(stateOf(source), needle, 1);
+            const at = attributeHolderAt(state).inline as InlineHolderAt;
+            assert.strictEqual(holderNames(at).label, label, source);
+            const current = literalObjectOf(currentObject(state, at.object)) as LiteralObject;
+            assert.ok(sameObject(current, at.object), `${source}: the same run, not the ${label === 'Code' ? 'bold' : 'italic'} it starts with`);
+            const next = state.apply(changeInlineLiteralTransaction(state, current, '{.b}') as never);
+            assert.strictEqual(text(next), written, source);
+        }
+    });
+
+    test('what a save would read otherwise is refused, named where the comparison can tell', () => {
+        const cases: [string, string, (s: EditorState, at: number) => import('prosemirror-state').Transaction, string][] = [
+            // Two code spans of another literal, the space between them gone: read as one, `bar` swallowed.
+            ['A ==`foo`==`bar` `baz`{.x} y.\n', 'bar', (s, at) => s.tr.delete(at + 3, at + 4), causeReason({ kind: 'merged', noun: 'inline code' })],
+            // Bold beside italic holding bold, the space gone: the italic is lost and a `*` stays as text.
+            ['A **foo** ***abc**{.x}* y.\n', 'foo', (s, at) => s.tr.delete(at + 3, at + 4), 'refused'],
+            // A run of white space with a literal: written without it, the literal would vanish.
+            ['A **x**{#anchor} y.\n', 'x', (s, at) => s.tr.insertText(' ', at, at + 1), 'refused'],
+        ];
+        for (const [source, needle, make, reason] of cases) {
+            const state = stateOf(source);
+            const tr = edited(state, needle, make);
+            const lost = literalNotReadBack(touched(tr.doc.child(0)));
+            assert.ok(lost !== null, `${source}: refused`);
+            if (reason !== 'refused') {
+                assert.strictEqual(literalLostReason(lost), reason, source);
+            }
+        }
+    });
+
+    test('the Attributes field gives the edit filter\'s answer for a merge', () => {
+        // Two bold runs side by side, each with a literal: removing the first's leaves it to merge with the second.
+        let state = stateOf('A foo**abc**{.x} y.\n');
+        const from = posOf(state.doc, 'foo');
+        state = state.apply(state.tr.addMark(from, from + 3, editorSchema.marks.strong.create({ markup: '**', literal: '{.y}' })));
+        const run = select(state, 'foo', 1);
+        const object = objectAtSelection(run) as Extract<EditorObject, { kind: 'styled' }>;
+        assert.strictEqual(object.mark.attrs.literal, '{.y}');
+        assert.strictEqual(changeInlineLiteralRefusal(run, object, '{}'), causeReason({ kind: 'merged', noun: 'bold text' }));
+    });
+
+    test('a mark stored at a caret beside a run of it with a literal takes that literal: the next keystroke joins the run', () => {
+        let state = select(stateOf('A foo`abc`{.x} y.\n'), 'foo', 3);
+        toggleMarkup(editorSchema.marks.code, null)(state, tr => {
+            state = state.apply(tr);
+        });
+        state = state.apply(state.tr.insertText('z'));
+        assert.strictEqual(text(state), 'A foo`zabc`{.x} y.\n');
     });
 });

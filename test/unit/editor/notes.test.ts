@@ -10,7 +10,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { DEFAULT_INLINE_ENGINE, createInlineEngine, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import {
     SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, SIDEBAR_LEFT_MATH, SIDEBAR_REWRITTEN, SIDEBAR_REWRITTEN_REFERENCE,
-    serializeDocument, setInlineEngine, sidebarRewrittenBeside, unwritableInNote,
+    causeReason, serializeDocument, setInlineEngine, sidebarRewrittenBeside, unwritableInNote,
 } from '../../../src/editor/serialize';
 import {
     NESTED_NOTE_LOCK, NOTE_BODY_PLACEHOLDER, NOTE_REF_PLACEHOLDER, NoteNodeName, inNoteOf, leaveNote, nextNotePart, noteContextAt, noteRefusal,
@@ -574,6 +574,13 @@ suite('Editor notes: a seam the file already holds is never refused, only one th
                 const from = needle === ')' ? posOf(held.doc, ')') : posOf(held.doc, 'See');
                 const state = held.apply(held.tr.setSelection(TextSelection.create(held.doc, from, sidebarAt(held.doc))));
                 const type = editorSchema.marks[mark];
+                if (needle === ')' && (mark === 'strong' || mark === 'em')) {
+                    // `**)**$note$`, `*)*$note$`: the closing delimiter follows punctuation and precedes `$`,
+                    // so the parser reads no emphasis — the save would show the delimiters as text.
+                    // Refused, as the comparison of the save's text with the model finds.
+                    assert.strictEqual(markRefusal(state, type, markup), causeReason({ kind: 'text', noun: '' }), `${mark} over ${needle}`);
+                    continue;
+                }
                 assert.strictEqual(markRefusal(state, type, markup), null, `${mark} over ${needle}: not disabled`);
                 const formatted = run(state, toggleMarkup(type, markup));
                 assert.ok(formatted.doc !== state.doc, `${mark} over ${needle}: applied`);

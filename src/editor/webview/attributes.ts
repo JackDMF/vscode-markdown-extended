@@ -86,8 +86,12 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
             }
             view.focus();
             const made = asked === null ? null : commitAttributes(view.state, target, value);
-            if (made === null || 'refusal' in made) {
+            if (made === null) {
                 return;
+            }
+            if ('refusal' in made) {
+                // What the focus moved (a source box's commit) changed the answer: the field stays, saying why.
+                return refusedStep(step, value, made.refusal);
             }
             // Said only when the state moved, as the object bar's verbs say it: a filter refusing it leaves the state as it was.
             const before = view.state;
@@ -132,7 +136,9 @@ export function holderAttributesStep(view: EditorView, at: InlineHolderAt, label
             const now = literalObjectOf(currentObject(view.state, current));
             const tr = now === null ? null : changeInlineLiteralTransaction(view.state, now, value);
             if (tr === null) {
-                return;
+                // What the focus moved (a source box's commit) changed the answer: the field stays, saying why.
+                const after = now === null ? null : changeInlineLiteralRefusal(view.state, now, value);
+                return after === null ? undefined : refusedStep(step, value, after);
             }
             const removed = value.trim() === '' || value.trim() === '{}';
             const before = view.state;

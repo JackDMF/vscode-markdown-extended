@@ -11,13 +11,13 @@
 - The entry, the bubble and the bars name an element as the row does: Bold, Italic, Strong, Emphasis.
 - A bar of an element with attributes shows them beside its name: **Code {.k}**.
 - The block entry is named by its block: **Attributes of Paragraph…**, **Attributes of List item…**, **Attributes of Table…**.
-- `Alt+Enter` in code or bold without attributes opens a bar with **Attributes…**; a table's bar adds **Attributes of Strong…**.
+- `Alt+Enter` in code or bold without attributes opens a bar with **Attributes…**; a table's bar adds **Attributes of Bold…**.
 - The selection bubble has a `{…}` button: attributes of the element selected, else a span with class.
 - A refused attributes field stays open with what you typed and the reason beside it.
 - Every bar verb that opens the attributes field is called **Attributes…**.
 - Nested marks over the same text now offer the innermost one first; 4.4.0 offered emphasis first.
 - Bold, code or another mark applied right beside the same mark with attributes joins it and keeps them.
-- An edit that would save two such runs side by side, read as one, is refused instead of saved.
+- An edit the save would write so it reads otherwise — italic or bold swallowed by its neighbour — is refused, not saved.
 
 ### ⚠️ Limits
 

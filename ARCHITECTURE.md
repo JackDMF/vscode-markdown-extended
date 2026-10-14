@@ -641,12 +641,28 @@ Two checks keep a save from reading attributes elsewhere. The read-back
 (`markLiteralVerdict`) holds every run of these marks, and every image, to its own token,
 kind by kind, where the parser opens as many tokens of a kind as there are runs — so a
 literal read on the emphasis before its own counts as lost — and matches the literals in
-order to the tokens given attributes where the counts differ. It also counts the runs:
-where the parse gives fewer elements of a kind than the textblocks hold runs of it with
-text, and two of those runs touch, two runs of one mark that differ only in their literal
-stand side by side in the file and are read as one (`` `foo``abc`{.x} ``,
-`**foo****abc**{.x}`) — the edit is refused with its own reason (`mergedReason`), never
-saved so. And brace escaping
+order to the tokens given attributes where the counts differ. Above both stands the
+project's oracle (`readsBackAsShown`, Daniel, 2026-10-14): every part the save writes
+again is parsed whole by the page's engine (`parseDocument`) and each of its textblocks
+compared with the model's, character by character — the same characters that are not
+white space, the same atoms, each with the same marks, delimiter (`**` or `__`, `*` or
+`_`), literal and address. Only what is known to be harmless is not compared: white space
+(the writer moves it out of a run, the parser trims a line), a hard break's marks (the
+writer drops them), Req Explorer's decoration (not written), and a bare address linkify
+reads on one side only (the writer writes `[url](url)` where it must). Where the two
+differ, the edit is refused, with the cause the comparison can tell (`ReadCause`): two
+runs of one element read as one (`` `foo``abc`{.x} ``, `**foo****abc**{.x}`,
+`mergedReason`), an element lost (`**foo** ***abc**{.x}*` without its space loses the
+italic) or made, or other text. It is not gated on a `{`: no model of what could go wrong
+decides whether to ask. A part whose parse holds another number of textblocks than the
+model is left to the other checks, which name a block's literal or a sidebar better; the
+atoms' own checks (an emoji made code, an embed) speak before it, as they name the cause.
+Its cost per keystroke, measured on 1500–3000-line documents, is about 0.3 ms at the
+median and 1 ms at the 90th percentile over master's. The literal and sidebar reads run
+where the text holds a `{`, a `$` or an `@`, or the model holds a literal (one written on
+white space alone has no `{` and is lost unread). A brute-force sweep holds the verdict to
+the engine (`test/sweep/inlineRoundTrip.ts`, a fixed subset in the suite): no case it lets
+through reads back otherwise, none it refuses reads back. And brace escaping
 (`literalCutsIn`) counts a cut that is the first after such a closing tag (or after code or
 an image) as the element's own only while the elements hold the literals their runs carry
 (`ownedLiterals`): a text `{b}` the plugin joined to a link's `{.x}`, or a `{.y}` typed
@@ -678,7 +694,7 @@ as it — its sample the element the engine renders it as, its syntax column and
 written as it (`tag`, `example` in the registry) — resting as plain *Attributes of
 Element…*, disabled with the reason, where there is none; under a locked row both named
 entries show their resting names; `Alt+Enter`, which opens the bar of the object at the
-caret as before — that bar adds a separated **Attributes of Strong…** for the holder inside
+caret as before — that bar adds a separated **Attributes of Bold…** for the holder inside
 it (`holderInside`: the same search, the bar's own holder left out and the object's range a
 condition of it, so a holder around the object hides none inside it; its field draws that
 element, not the object, while it is open) — and, where there is no
@@ -1789,7 +1805,7 @@ of thing, two triggers and two places.
 - styled run (emphasis, code, a key … with a literal) — *Attributes…*, *Remove attributes,
   keep formatting*; a bare holder (only from `Alt+Enter`) — *Attributes…*;
 - any object holding the element the caret is in — after its own verbs, separated,
-  *Attributes of Strong…* (`holderInside`);
+  *Attributes of Bold…* (`holderInside`);
 - container — *Change name/info* (first word the name, the rest the info, verbatim; a
   trailing `{…}` refused, since markdown-it-attrs would take it off the info),
   *Attributes…* (refused, with the reason: the container's renderer drops a literal),

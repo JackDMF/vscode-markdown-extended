@@ -561,12 +561,6 @@ const NODE_LITERAL_TOKENS: Readonly<Record<string, string>> = Object.fromEntries
 /** The tokens markdown-it-attrs gives the literal of an inline holder to (`inlineLiterals.ts`). */
 const LITERAL_OPEN_TOKENS: ReadonlySet<string> = new Set(INLINE_LITERAL_HOLDERS.map(h => h.token));
 
-/** What the mark or node `carrier` carrying a literal is called in a reason (`noun`). */
-function literalNoun(carrier: Mark | Node): string {
-    const holder = holderOfCarrier(carrier.type.name);
-    return holder === undefined ? carrier.type.name : namesOf(holder, carrier.attrs.markup).noun;
-}
-
 /** What the mark or node `carrier` carrying a literal is called at the start of a refusal (`subject`). */
 function literalSubject(carrier: Mark | Node): string {
     const holder = holderOfCarrier(carrier.type.name);
@@ -1388,7 +1382,7 @@ export function emojiBeyondAtoms(block: Node): number {
  * buttons, the object bar's verbs — goes through here with the transaction's
  * origin (`noteRefusal`).
  */
-export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin): string | null {
+export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin, causes = true): string | null {
     let reason: string | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
@@ -1426,7 +1420,9 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
                 continue;
             }
             const verdict = unitVerdict(unit);
-            if (verdict !== null) {
+            // Without `causes`, only what a literal or a sidebar names: the comparison's own finding
+            // waits until the checks that name an atom's cause have spoken (`noteRefusal`).
+            if (verdict !== null && (causes || verdict.mismatch !== null || verdict.lost?.cause === undefined)) {
                 const failed = verdict.lost?.at ?? verdict.mismatch?.at;
                 const textblock = unit.textblocks.find(t => t.node === failed);
                 const beside = textblock === undefined
@@ -2031,6 +2027,20 @@ export function mergedReason(noun: string): string {
     return `After this edit two pieces of ${noun} would stand side by side, and the preview would read them as one, losing a {…}: give both the same attributes, or keep a character between them.`;
 }
 
+/** Why an edit is refused after which the save would not read back as the page shows it, by what the comparison found (`ReadCause`). */
+export function causeReason(cause: ReadCause): string {
+    switch (cause.kind) {
+        case 'merged':
+            return mergedReason(cause.noun);
+        case 'lost':
+            return `After this edit the preview would not read the ${cause.noun} here back as written: the delimiters around it would touch what stands beside it. Keep a space or another character between them.`;
+        case 'made':
+            return `After this edit the preview would read text here as ${cause.noun}, which the editor does not show: keep a space or another character between the delimiters that would make it.`;
+        case 'text':
+            return 'After this edit the preview would not read this text back as written: part of it would be taken as markup.';
+    }
+}
+
 /** Why an edit is refused after which text would be read as attributes no literal gives. */
 export const LITERAL_MADE = 'After this edit text here would be read as attributes, which the editor does not show.';
 
@@ -2042,8 +2052,8 @@ export const LITERAL_MADE = 'After this edit text here would be read as attribut
  * attributes.
  */
 export function literalLostReason(lost: LiteralLoss): string {
-    if (lost.merged !== undefined) {
-        return mergedReason(lost.merged);
+    if (lost.cause !== undefined) {
+        return causeReason(lost.cause);
     }
     if (lost.literal === null) {
         return LITERAL_MADE;
@@ -2053,8 +2063,8 @@ export function literalLostReason(lost: LiteralLoss): string {
 
 /** Why an edit is refused in a line whose literal `lost` names already does not read back as it is shown, edited or not — or, `literal` `null`, which already reads text as attributes. */
 export function literalRewritten(lost: LiteralLoss): string {
-    if (lost.merged !== undefined) {
-        return mergedReason(lost.merged);
+    if (lost.cause !== undefined) {
+        return 'Written by the editor, this line would not read back as it is shown, edited or not: edit the line once in the text editor to unlock it.';
     }
     if (lost.literal === null) {
         return 'Written by the editor, this line would read text here as attributes the editor does not show, edited or not: edit the line once in the text editor to unlock it.';
@@ -2071,6 +2081,9 @@ export function literalRewritten(lost: LiteralLoss): string {
 export function literalRewrittenBeside(block: Node, textblock: Node, lost: LiteralLoss): string {
     const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
     const name = textblock.type.name;
+    if (lost.cause !== undefined) {
+        return `This edit makes the editor write the whole ${whole} again, and another part of it would then not read back as it is shown. Edit that part once in the text editor to unlock this ${whole}.`;
+    }
     if (lost.literal !== null && !textblock.isTextblock && name !== 'list_item') {
         return `This edit makes the editor write the whole ${whole} again, and the ${whole}'s own literal ${lost.literal} would then not read back as written. Remove that literal, or edit the ${whole} once in the text editor to unlock it.`;
     }
@@ -2864,26 +2877,22 @@ function withBlockSuffix(node: Node, text: string): string {
  * per run of one mark and one per image, so the instances of one kind stand
  * in the order the parser opens their tokens in.
  */
-function markInstancesIn(node: Node): { token: string; literal: string | null; carrier: Mark | Node; blank: boolean; adjacent: boolean }[] {
-    const out: { token: string; literal: string | null; carrier: Mark | Node; blank: boolean; adjacent: boolean }[] = [];
+function markInstancesIn(node: Node): { token: string; literal: string | null; carrier: Mark | Node }[] {
+    const out: { token: string; literal: string | null; carrier: Mark | Node }[] = [];
     const walk = (parent: Node) => {
         const open = new Map<string, { mark: Mark; instance: (typeof out)[number] }>();
         parent.forEach(child => {
             const own = NODE_LITERAL_TOKENS[child.type.name];
             if (own !== undefined) {
-                out.push({ token: own, literal: markLiteralOf(child), carrier: child, blank: false, adjacent: false });
+                out.push({ token: own, literal: markLiteralOf(child), carrier: child });
             }
-            // A run of nothing but white space is no run in the file: the writer moves the space out of it.
-            const blank = child.isText ? !/\S/.test(child.text ?? '') : false;
             for (const [name, token] of Object.entries(MARK_LITERAL_TOKENS)) {
                 const mark = child.marks.find(m => m.type.name === name);
                 const before = open.get(name);
                 if (mark !== undefined && (before === undefined || !mark.eq(before.mark))) {
-                    const instance = { token, literal: markLiteralOf(mark), carrier: mark, blank, adjacent: before !== undefined };
+                    const instance = { token, literal: markLiteralOf(mark), carrier: mark };
                     out.push(instance);
                     open.set(name, { mark, instance });
-                } else if (mark !== undefined && before !== undefined) {
-                    before.instance.blank &&= blank;
                 }
                 if (mark === undefined) {
                     open.delete(name);
@@ -3456,8 +3465,20 @@ function remarkedList(leader: string, follower: string, next: () => string | nul
 export interface LiteralLoss {
     literal: string | null;
     at?: Node;
-    /** Set where two runs of one element would be read as one: what that element is called (`inline code`). */
-    merged?: string;
+    /**
+     * Set where the parse of the written text, compared with the model character by
+     * character (`readsBackAsShown`), gives other text or other formatting: two runs of one
+     * element read as one (`merged`), an element not read back (`lost`), text read as one
+     * the page does not show (`made`), or other characters (`text`) — and what that
+     * element is called (`inline code`, `bold text`).
+     */
+    cause?: ReadCause;
+}
+
+/** What differs between the model and the parse of the written text (`LiteralLoss.cause`). */
+export interface ReadCause {
+    kind: 'merged' | 'lost' | 'made' | 'text';
+    noun: string;
 }
 
 /** Where a part does not read back as it is shown (`unitVerdict`): the first literal, else the first sidebar. */
@@ -3491,6 +3512,148 @@ function matchInOrder<W, F>(wanted: readonly W[], found: readonly F[], same: (w:
     return { missing, extra };
 }
 
+/**
+ * One thing the parser reads in a textblock, as the comparison sees it
+ * (`readItems`): a character that is not white space, or an inline atom, with
+ * where it stands (inside which note) and the marks it carries.
+ */
+interface ReadItem {
+    key: string;
+    marks: readonly Mark[];
+}
+
+/**
+ * A mark as the comparison tells it from another: its type and its literal, by
+ * the attributes it gives. Not emphasis' delimiter, which the writer chooses
+ * where the parser needs it (`_x_` followed by a letter is written `*x*`), nor
+ * a link's address, which is the link's own and spelled as its place needs.
+ */
+function readMarkKey(mark: Mark): string {
+    const literal = typeof mark.attrs.literal === 'string' ? attrsKey(literalPairs(mark.attrs.literal)) : '';
+    return `${mark.type.name}${literal}`;
+}
+
+/**
+ * The marks the comparison weighs: not Req Explorer's decoration, which is not
+ * written, and not a bare address linkify reads, which is the parser's to find
+ * — where the model holds one or the parse makes one, the text is the same.
+ */
+function weighedMarks(marks: readonly Mark[]): Mark[] {
+    return marks.filter(m => m.type.name !== 'req_ref');
+}
+
+/** `marks` without a bare address linkify reads, where `other` holds no link there: a link is the parser's to find, and the writer's to write `[url](url)`. */
+function withoutLinkify(marks: readonly Mark[], other: readonly Mark[]): readonly Mark[] {
+    return other.some(m => m.type.name === 'link') ? marks : marks.filter(m => !(m.type.name === 'link' && m.attrs.markup === 'linkify'));
+}
+
+/**
+ * What a textblock holds as the comparison reads it, in order (`ReadItem`):
+ * each character that is not white space, a heading's requirement prefix
+ * first (written, though the model holds it apart), and each inline atom by
+ * what is written for it. White space is not compared — the writer moves it
+ * out of a run, and the parser trims a line — nor a hard break, whose marks
+ * the writer drops; injected content is not written at all.
+ */
+function readItems(textblock: Node): ReadItem[] {
+    const out: ReadItem[] = [];
+    const prefix = textblock.type.name === 'heading' ? (textblock.attrs.reqPrefix as string | null) ?? '' : '';
+    for (const ch of prefix) {
+        if (/\S/.test(ch)) {
+            out.push({ key: `|${ch}`, marks: [] });
+        }
+    }
+    const walk = (parent: Node, path: string) => {
+        parent.forEach(child => {
+            const marks = weighedMarks(child.marks);
+            if (child.isText) {
+                for (const ch of child.text ?? '') {
+                    if (/\S/.test(ch)) {
+                        out.push({ key: `${path}|${ch}`, marks });
+                    }
+                }
+                return;
+            }
+            const name = child.type.name;
+            if (name === 'hard_break' || name === 'inline_atom') {
+                return;
+            }
+            if (name === 'image') {
+                // Its alt text and its literal; its path is its own, spelled as its place needs.
+                const { alt, literal } = child.attrs as { alt: string | null; literal: string | null };
+                out.push({ key: `${path}|image(${alt ?? ''},${attrsKey(literalPairs(literal))})`, marks });
+            } else if (name === 'wiki_embed') {
+                // By the name it reads as: the writer encodes what its place needs (`&#96;`, `\|`).
+                out.push({ key: `${path}|${name}(${plainWikiEmbed(String(child.attrs.source))})`, marks });
+            } else if (child.isLeaf) {
+                out.push({ key: `${path}|${name}(${String(child.attrs.source ?? '')})`, marks });
+            } else {
+                out.push({ key: `${path}|<${name}>`, marks });
+                walk(child, `${path}/${name}`);
+            }
+        });
+    };
+    walk(textblock, '');
+    return out;
+}
+
+/** What a mark is called in a reason, by its delimiter (`namesOf`). */
+function markNoun(mark: Mark): string {
+    const holder = holderOfCarrier(mark.type.name);
+    return holder === undefined ? mark.type.name : namesOf(holder, mark.attrs.markup).noun;
+}
+
+/**
+ * Whether `unit`, as the save writes it, reads back as the page shows it, by
+ * the parser itself (the project's oracle): the written text parsed whole by
+ * the page's engine (`parseDocument`), and each of its textblocks compared
+ * with the model's, item by item (`readItems`) — the same characters, the same
+ * atoms, each with the same marks and literals. `null` when they are
+ * the same; else what differs at the first item that does (`ReadCause`): one
+ * element where the model holds another of its kind (two runs read as one),
+ * an element missing, one the model does not hold, or other text. Where the
+ * parse holds another number of textblocks than the model — the written text
+ * is no longer the same kind of block — the block's own verdicts speak for it.
+ */
+function readsBackAsShown(unit: WrittenUnit): ReadCause | null {
+    if (unit.textblocks.length === 0) {
+        return null;
+    }
+    const definition = currentInlineDefinition();
+    const md = attrsEngineFor(definition);
+    const doc = parseDocument(md, `${unit.text}\n`, {}, definition).doc;
+    const parsed = inlineTextblocks(doc, 0);
+    if (parsed.length !== unit.textblocks.length) {
+        return null;
+    }
+    for (let k = 0; k < parsed.length; k++) {
+        const want = readItems(unit.textblocks[k].node);
+        const got = readItems(parsed[k].node);
+        for (let i = 0; i < Math.max(want.length, got.length); i++) {
+            const w = want[i];
+            const g = got[i];
+            if (w === undefined || g === undefined || w.key !== g.key) {
+                return { kind: 'text', noun: '' };
+            }
+            const wantMarks = withoutLinkify(w.marks, g.marks);
+            const gotMarks = withoutLinkify(g.marks, w.marks);
+            const wantKeys = wantMarks.map(m => readMarkKey(m)).sort();
+            const gotKeys = gotMarks.map(m => readMarkKey(m)).sort();
+            if (wantKeys.join('+') === gotKeys.join('+')) {
+                continue;
+            }
+            // The first mark that differs, by type: the same kind otherwise written (merged), missing, or made.
+            const differs = wantMarks.find(m => !gotKeys.includes(readMarkKey(m)));
+            if (differs !== undefined) {
+                return { kind: gotMarks.some(m => m.type === differs.type) ? 'merged' : 'lost', noun: markNoun(differs) };
+            }
+            const made = gotMarks.find(m => !wantKeys.includes(readMarkKey(m))) as Mark;
+            return { kind: 'made', noun: markNoun(made) };
+        }
+    }
+    return null;
+}
+
 /** The verdict of each part, by the node it is written from, with the text it was given for. */
 let verdictCache = new WeakMap<Node, { key: string; verdict: UnitVerdict | null }>();
 
@@ -3510,12 +3673,22 @@ function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
         return known.verdict;
     }
     let verdict: UnitVerdict | null = null;
-    if (/[{$@]/.test(unit.text)) {
+    // The literals and the sidebars are asked of a parse only where the text can hold one: a
+    // literal is read from a `{`, a sidebar from its marker — and a literal the model holds
+    // that the text has no `{` for is lost unread (`A **x**{#a} y.` with `x` a space).
+    if (/[{$@]/.test(unit.text) || unit.literals.length > 0 || unit.textblocks.some(({ node }) => markInstancesIn(node).some(i => i.literal !== null))) {
         const read = readUnit(unit.text, unit.key);
         verdict = { lost: literalVerdict(unit, read), mismatch: sidebarVerdict(unit, read) };
-        if (verdict.lost === null && verdict.mismatch === null) {
-            verdict = null;
-        }
+    }
+    // What the parse of the written text holds, compared with the model, always: where it
+    // differs, that is the cause — before a literal's or a sidebar's, which it explains, unless
+    // one of those names it better (a sidebar the parse reads elsewhere).
+    const cause = readsBackAsShown(unit);
+    if (cause !== null && (verdict === null || cause.kind === 'merged' || (verdict.lost === null && verdict.mismatch === null))) {
+        verdict = { lost: { literal: null, at: unit.textblocks[0]?.node ?? unit.anchor, cause }, mismatch: cause.kind === 'merged' ? null : verdict?.mismatch ?? null };
+    }
+    if (verdict !== null && verdict.lost === null && verdict.mismatch === null) {
+        verdict = null;
     }
     verdictCache.set(unit.anchor, { key: unit.key, verdict });
     return verdict;
@@ -3542,21 +3715,13 @@ function textblockOfInline(unit: WrittenUnit, read: UnitRead, index?: number): N
  * differ (a run the save writes in two, a bare address the parser links),
  * the literals are matched in order to the tokens given attributes.
  */
-function markLiteralVerdict(unit: WrittenUnit, read: UnitRead): { missing?: { literal: string; at: Node }; extra?: { inline: number }; merged?: { carrier: Mark | Node; literal: string | null; at: Node } } {
+function markLiteralVerdict(unit: WrittenUnit, read: UnitRead): { missing?: { literal: string; at: Node }; extra?: { inline: number } } {
     const instances = unit.textblocks.flatMap(({ node }) => markInstancesIn(node).map(instance => ({ ...instance, key: attrsKey(literalPairs(instance.literal)), at: node })));
     let missing: { literal: string; at: Node } | undefined;
     let extra: { inline: number } | undefined;
-    let merged: { carrier: Mark | Node; literal: string | null; at: Node } | undefined;
     for (const token of LITERAL_OPEN_TOKENS) {
         const wanted = instances.filter(w => w.token === token);
         const found = read.marks.filter(f => f.type === token);
-        // Fewer elements read than runs written: two runs of one kind stand side by side in
-        // the file (`` `foo``abc`{.x} ``, `**foo****abc**{.x}`) and the parser reads them as one.
-        const runs = wanted.filter(w => !w.blank);
-        const second = runs.find(w => w.adjacent);
-        if (found.length < runs.length && second !== undefined) {
-            merged ??= { carrier: second.carrier, literal: second.literal, at: second.at };
-        }
         if (wanted.length === found.length) {
             wanted.forEach((w, k) => {
                 if (w.key === attrsKey(found[k].given)) {
@@ -3576,15 +3741,12 @@ function markLiteralVerdict(unit: WrittenUnit, read: UnitRead): { missing?: { li
         }
         extra ??= match.extra;
     }
-    return { missing, extra, merged };
+    return { missing, extra };
 }
 
 /** The first literal of `unit` that `read` does not give back, its marks' first, or attributes it reads that none gives. */
 function literalVerdict(unit: WrittenUnit, read: UnitRead): LiteralLoss | null {
     const markMatch = markLiteralVerdict(unit, read);
-    if (markMatch.merged !== undefined) {
-        return { literal: markMatch.merged.literal, at: markMatch.merged.at, merged: literalNoun(markMatch.merged.carrier) };
-    }
     if (markMatch.missing !== undefined) {
         return { literal: markMatch.missing.literal, at: markMatch.missing.at };
     }

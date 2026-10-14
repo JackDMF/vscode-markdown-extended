@@ -477,7 +477,7 @@ admonition, a block with attributes — also offers the **code actions other ext
 have for that block**, after its own verbs (see below).
 
 A bar whose object holds the element the caret is in — bold in a table's cell, code in a
-link's text, emphasis in a note — adds **Attributes of Strong…** (*of Code…*, *of
+link's text, emphasis in a note — adds **Attributes of Bold…** (*of Code…*, *of
 Emphasis…*) after its own verbs, for that element's `{…}`; it is the element the
 Formatting menu names (below).
 

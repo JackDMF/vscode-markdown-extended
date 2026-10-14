@@ -868,7 +868,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
 
     const verbLabel = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => el.textContent);
 
-    test('Alt+Enter in bold in a table: the table\'s bar, with Attributes of Strong… after its own verbs; its field writes the literal after the bold', async function () {
+    test('Alt+Enter in bold in a table: the table\'s bar, with Attributes of Bold… after its own verbs; its field writes the literal after the bold', async function () {
         this.timeout(15000);
         await showDocument('| a | b |\n| - | - |\n| **bold** | c |\n', 'bold');
         await clickBefore('bold', 2);
@@ -887,7 +887,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.ok((await lastEdit())?.text.includes('| **bold**{.b} |'), (await lastEdit())?.text);
     });
 
-    test('bold in a plain heading grows no bar on a caret rest; Alt+Enter shows the heading\'s, with Attributes of Strong…', async function () {
+    test('bold in a plain heading grows no bar on a caret rest; Alt+Enter shows the heading\'s, with Attributes of Bold…', async function () {
         this.timeout(15000);
         await showDocument('## A **bold** title\n\nText.\n', 'bold');
         await clickBefore('bold', 2);

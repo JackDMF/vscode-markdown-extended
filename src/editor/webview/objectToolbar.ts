@@ -183,7 +183,7 @@ interface Presentation {
  * (its own verbs are the properties panel's header), with none offered.
  */
 function barless(object: EditorObject, presentation: Presentation): boolean {
-    // Attributes of Strong… for the bold the caret is in is no reason for a bar on a caret
+    // Attributes of Bold… for the bold the caret is in is no reason for a bar on a caret
     // rest (`withInlineAttributes`): `Alt+Enter` draws it there (`ObjectToolbarView.forced`).
     const verbs = presentation.verbs.filter(v => v.id !== 'inline-attributes');
     if (verbs.length === 0) {
@@ -364,7 +364,8 @@ function atomVerbs(state: EditorState, object: EditorObject, actions: EmbedActio
             title: texts.asText.title,
             refusal: refusalOnce(state, `${texts.asText.id}@${place}`, () => {
                 const tr = texts.asTextTransaction(state, object.from, object.to);
-                return filterRefusal(tr, texts.none) ?? (tr === null ? null : texts.asTextRefusal?.(state, tr, object.from) ?? null);
+                // The atom's own reason first: it names why its text would read otherwise, which the filters only find.
+                return tr === null ? texts.none : texts.asTextRefusal?.(state, tr, object.from) ?? filterRefusal(tr, texts.none);
             }),
             run: () => actions.asText(),
         },
@@ -1365,7 +1366,7 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * The object's own verbs and, after a separator, **Attributes of Strong…**
+     * The object's own verbs and, after a separator, **Attributes of Bold…**
      * for the element inside it the caret is in — bold in a table's cell, code
      * in a link (`holderInside`, the rule the menu reads) — whose field is the
      * one every route opens (`holderAttributesStep`), headed by the element.
@@ -1377,7 +1378,7 @@ class ObjectToolbarView implements PluginView {
         }
         const names = holderNames(inside);
         const name = `Attributes of ${names.label}`;
-        // Headed by the element, not by the object whose bar it is on (`Table · Attributes of Strong`).
+        // Headed by the element, not by the object whose bar it is on (`Table · Attributes of Bold`).
         const step = holderAttributesStep(this.view, inside, name);
         const verb: Verb = {
             id: 'inline-attributes',

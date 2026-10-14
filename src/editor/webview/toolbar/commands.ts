@@ -60,7 +60,8 @@ function markTransaction(state: EditorState, type: MarkType, markup: string | nu
     const tr = state.tr;
     if (state.selection.empty) {
         const kept = literalsOf((state.storedMarks ?? state.selection.$from.marks()).filter(m => m.type === type));
-        return active ? tr.removeStoredMark(type) : tr.addStoredMark(markWith(type, markup, kept.length === 1 ? kept[0] : null));
+        const joined = kept.length === 0 ? touchingLiteral(state.selection.$from.pos, state.selection.$from.pos, tr, type, markup) : null;
+        return active ? tr.removeStoredMark(type) : tr.addStoredMark(markWith(type, markup, kept.length === 1 ? kept[0] : joined));
     }
     for (const range of state.selection.ranges) {
         if (active) {
@@ -79,6 +80,21 @@ function markWith(type: MarkType, markup: string | null, literal: string | null)
         attrs.literal = literal;
     }
     return type.create(attrs);
+}
+
+/**
+ * The literal of a run of `type` (written with `markup`) right beside `from`–`to`,
+ * the one after first: text given that mark there joins the run and takes its
+ * literal, as extending it does — two runs of one mark side by side are read as
+ * one, and one of them would lose its `{…}` (`` `foo``abc`{.x} ``). `null` where
+ * no such run touches it. For the selection's range, and for a mark stored at a
+ * caret, which the next keystroke types.
+ */
+function touchingLiteral(from: number, to: number, tr: Transaction, type: MarkType, markup: string | null): string | null {
+    const touching = [tr.doc.resolve(to).nodeAfter, tr.doc.resolve(from).nodeBefore]
+        .map(node => node?.marks.find(m => m.type === type && (markup === null || m.attrs.markup === markup)))
+        .find(mark => mark !== undefined && literalsOf([mark]).length === 1);
+    return touching === undefined ? null : literalsOf([touching])[0];
 }
 
 /** The distinct literals `marks` carry (`_x_{.a}`), in order. */
@@ -112,14 +128,9 @@ function addKeepingLiterals(tr: Transaction, from: number, to: number, type: Mar
     });
     const literals = [...new Set(pieces.flatMap(p => (p.literal === null ? [] : [p.literal])))];
     if (literals.length === 0) {
-        // Right beside a run of the same mark with a literal, the text joins that run: two runs
-        // of one mark written side by side read as one, and one of them would lose its `{…}`
-        // (`` `foo``abc`{.x} ``). The run after the selection first, else the one before.
-        const touching = [tr.doc.resolve(to).nodeAfter, tr.doc.resolve(from).nodeBefore]
-            .map(node => node?.marks.find(m => m.type === type && (markup === null || m.attrs.markup === markup)))
-            .find(mark => mark !== undefined && literalsOf([mark]).length === 1);
-        if (touching !== undefined) {
-            literals.push(literalsOf([touching])[0]);
+        const joined = touchingLiteral(from, to, tr, type, markup);
+        if (joined !== null) {
+            literals.push(joined);
         }
     }
     tr.addMark(from, to, markWith(type, markup, literals.length === 1 ? literals[0] : null));

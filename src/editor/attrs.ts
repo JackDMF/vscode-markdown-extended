@@ -321,15 +321,32 @@ export function readBack(literal: string, holder: string, definition: InlineEngi
     if (shape === undefined) {
         return null;
     }
+    // Asked again for every parse of a block holding the literal: remembered, per engine.
+    let known = readBackCache.get(definition);
+    if (known === undefined) {
+        known = new Map();
+        readBackCache.set(definition, known);
+    }
+    const key = `${holder}\u0000${literal}`;
+    if (known.has(key)) {
+        return known.get(key) as AttrPair[] | null;
+    }
     const tokens = attrsEngineFor(definition).parse(shape.source(literal), {});
     const all = tokens.flatMap(t => [t, ...(t.children ?? [])]);
-    if (all.some(t => t.type === 'text' && /[{}]/.test(t.content))) {
-        return null;
-    }
-    const token = all.find(t => t.type === shape.token);
+    const token = all.some(t => t.type === 'text' && /[{}]/.test(t.content)) ? undefined : all.find(t => t.type === shape.token);
     const omit = shape.omit ?? [];
-    return token === undefined ? null : (token.attrs ?? []).filter(([name]) => !omit.includes(name)).map(([name, value]) => [name, value] as AttrPair);
+    const read = token === undefined ? null : (token.attrs ?? []).filter(([name]) => !omit.includes(name)).map(([name, value]) => [name, value] as AttrPair);
+    if (known.size >= READ_BACK_CACHE_SIZE) {
+        known.delete(known.keys().next().value as string);
+    }
+    known.set(key, read);
+    return read;
 }
+
+/** What `readBack` read, by the engine's definition and the holder with the literal; the oldest is dropped first. */
+const readBackCache = new WeakMap<InlineEngineDefinition, Map<string, AttrPair[] | null>>();
+/** How many literals `readBackCache` keeps per engine. */
+const READ_BACK_CACHE_SIZE = 2048;
 
 /**
  * The attributes the preview gives `holder` for `literal` written where that

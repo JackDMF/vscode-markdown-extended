@@ -44,7 +44,7 @@ import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLitera
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
-import { LiteralLoss, itemTakesLiteral, literalHolder, literalNotReadBack, literalsReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
+import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 
 const nodes = editorSchema.nodes;
@@ -98,11 +98,17 @@ export function isTopLevelBlock(state: EditorState, object: EditorObject): boole
 }
 
 /**
- * Whether two objects are the same one: the same kind at the same place — a
- * bare holder and the styled run it becomes once it has a literal count as one.
+ * Whether two objects are the same one: the same kind at the same place, of
+ * the same mark where it is a run — a bare holder and the styled run it
+ * becomes once it has a literal count as one.
  */
 export function sameObject(a: EditorObject | null, b: EditorObject | null): boolean {
-    return a !== null && b !== null && a.from === b.from && (a.kind === b.kind || (RUN_KINDS.has(a.kind) && RUN_KINDS.has(b.kind)));
+    if (a === null || b === null || a.from !== b.from || (a.kind !== b.kind && !(RUN_KINDS.has(a.kind) && RUN_KINDS.has(b.kind)))) {
+        return false;
+    }
+    // Two runs starting at one place are one object only when they are runs of one mark, written
+    // alike: code inside bold starts where the bold does (`**`foo`bar**`), and is another.
+    return !('mark' in a) || !('mark' in b) || (a.mark.type === b.mark.type && a.mark.attrs.markup === b.mark.attrs.markup);
 }
 
 /** A run of formatting, bare or with a literal: one object as it gains or loses one. */
@@ -231,16 +237,18 @@ function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[]
  * object or an image, `inline` is that same object.
  */
 export function attributeHolderAt(state: EditorState): { inline: InlineHolderAt | null; block: AttributesTarget | { refusal: string } } {
-    // Asked by every surface on every update: once per state.
-    let known = holderCache.get(state);
-    if (known === undefined) {
-        known = { inline: holderRunAt(state, INLINE_LITERAL_HOLDERS, false), block: attributesTargetAt(state) };
-        holderCache.set(state, known);
+    // Asked by every surface on every update: once per state — and per engine, whose reading of attributes the block's half asks.
+    const definition = currentInlineDefinition();
+    const known = holderCache.get(state);
+    if (known !== undefined && known.definition === definition) {
+        return known.value;
     }
-    return known;
+    const value = { inline: holderRunAt(state, INLINE_LITERAL_HOLDERS, false), block: attributesTargetAt(state) };
+    holderCache.set(state, { definition, value });
+    return value;
 }
 
-const holderCache = new WeakMap<EditorState, ReturnType<typeof attributeHolderAt>>();
+const holderCache = new WeakMap<EditorState, { definition: unknown; value: ReturnType<typeof attributeHolderAt> }>();
 
 /**
  * The inline holder inside `object` the selection is in, other than `object`
@@ -687,11 +695,16 @@ function topBlockAt(doc: Node, pos: number): Node | null {
  */
 export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, changing?: string | null): string | null {
     const block = topBlockAt(doc, pos);
-    if (block === null || literalsReadBack(block)) {
+    const lost = block === null ? null : literalNotReadBack(block);
+    if (lost === null) {
         return null;
     }
     const old = before === undefined ? null : topBlockAt(before, pos);
     const existing = old === null ? null : literalNotReadBack(old);
+    if (existing === null && lost.cause !== undefined) {
+        // What the comparison of the save's text found (two runs read as one …): the edit filter's own answer.
+        return literalLostReason(lost);
+    }
     return existing === null || (existing.literal !== null && existing.literal === changing) ? LITERAL_READ_WITH_BLOCK_REFUSAL : literalAlreadyLostRefusal(existing);
 }
 

@@ -355,12 +355,14 @@ export function noteRefusal(tr: Transaction): string | null {
     const written = writtenEdit(tr);
     // The written document is the edit's with atoms made text (`writtenEdit`): positions are read in it.
     const mapping = new Mapping([...tr.mapping.maps, ...written.mapping.maps]);
-    return unwritableInNote(written.doc, written.mapping.map(range.from, -1), written.mapping.map(range.to, 1), {
-        doc: before,
-        mapping,
-        rewritten: written.rewritten,
-        sourceOf: pos => textblockSource(before, pos),
-    }) ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to) ?? unplacedRefusal(tr, written.rewritten, mapping);
+    const origin = { doc: before, mapping, rewritten: written.rewritten, sourceOf: (pos: number) => textblockSource(before, pos) };
+    const from = written.mapping.map(range.from, -1);
+    const to = written.mapping.map(range.to, 1);
+    // What the comparison of the save's text with the model finds (`readsBackAsShown`) is said last:
+    // where an atom's own check names the cause (an emoji made code), that reason is the better one.
+    return unwritableInNote(written.doc, from, to, origin, false)
+        ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to) ?? unplacedRefusal(tr, written.rewritten, mapping)
+        ?? unwritableInNote(written.doc, from, to, origin, true);
 }
 
 /** Whether the ways out of an unplaced atom are being tried (`unplacedRefusal`): a way out is no edit to try them for again. */

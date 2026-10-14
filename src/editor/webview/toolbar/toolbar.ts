@@ -1284,9 +1284,11 @@ class ToolbarView implements PluginView {
                 }
                 view.focus();
                 const tr = applySpanTransaction(view.state, value);
-                if (tr !== null) {
-                    view.dispatch(tr);
+                if (tr === null) {
+                    // What the focus moved (a source box's commit) changed the answer: the field stays, saying why.
+                    return refusedStep(step, value, spanLiteralRefusal(view.state, value) ?? SPAN_REFUSED);
                 }
+                view.dispatch(tr);
             },
         };
         this.openFieldBar('span', 'Span attributes', 'span-attributes', step);
