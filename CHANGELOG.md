@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.6.0 — Attributes on Every Inline Element
 
 ### ✨ Features
 
