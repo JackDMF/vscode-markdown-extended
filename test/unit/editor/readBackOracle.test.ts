@@ -6,7 +6,9 @@ import { DEFAULT_INLINE_ENGINE, attrsEngineFor, currentInlineDefinition } from '
 import { editorSchema } from '../../../src/editor/schema';
 import { causeReason, literalLostReason, literalNotReadBack, literalsReadBack, setInlineEngine } from '../../../src/editor/serialize';
 import { noteRefusal } from '../../../src/editor/webview/notes';
-import { EditorObject, changeLinkTransaction, objectAtSelection, sameObject } from '../../../src/editor/webview/objects';
+import {
+    EditorObject, changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, literalAlreadyLostRefusal, objectAtSelection, sameObject,
+} from '../../../src/editor/webview/objects';
 import { touched } from './helpers';
 
 /** `text` read with the page's engine as it now is, in a state with the edit filter. */
@@ -115,5 +117,61 @@ suite('Editor read-back oracle: review 3', () => {
         const tr = state.tr.insertText('don\'t... (c) "x"', posOf(state.doc, 'foo'));
         const next = state.apply(tr);
         assert.strictEqual(serializeDocument({ doc: next.doc, eol: '\n', tail: '' }, { defaultWrap: 90 }), 'A don\'t... (c) "x"foo y.\n');
+    });
+});
+
+suite('Editor read-back oracle: the targeted check', () => {
+    teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
+
+    test('the writer\'s mark order is chosen by the same parse: with the typographer on, quotes change no order', () => {
+        const highlight = editorSchema.marks.mark.create();
+        const em = editorSchema.marks.em.create({ markup: '*' });
+        const write = () => serializeDocument({
+            doc: editorSchema.topNodeType.create(null, [touched(editorSchema.nodes.paragraph.create(null, [
+                editorSchema.text('a\'', [em, highlight]), editorSchema.text(' b\'...', [highlight]),
+            ]))]),
+            eol: '\n', tail: '',
+        }, { defaultWrap: 90 });
+        const off = write();
+        assert.strictEqual(off, '==*a\'* b\'...==\n');
+        setInlineEngine({ ...DEFAULT_INLINE_ENGINE, typographer: true });
+        assert.strictEqual(write(), off);
+    });
+
+    test('a throw anywhere in the check, with the typographer off and a { in the text, is the unread refusal, and is said', () => {
+        const state = stateOf('A x{y} b.\n');
+        const engine = attrsEngineFor(currentInlineDefinition());
+        const parse = engine.parse;
+        const error = console.error;
+        const said: unknown[] = [];
+        engine.parse = () => {
+            throw new Error('stubbed');
+        };
+        const replacement = (...args: unknown[]) => {
+            said.push(args);
+        };
+        console.error = replacement;
+        // VS Code's extension host keeps its own console.error: there the error goes to its log, unseen here.
+        const watched = console.error === replacement;
+        try {
+            assert.strictEqual(noteRefusal(state.tr.insertText('z', 3)), causeReason({ kind: 'unread', noun: '' }));
+            const lost = literalNotReadBack(touched(state.tr.insertText('q', 3).doc.child(0)));
+            assert.strictEqual(lost?.cause?.kind, 'unread');
+        } finally {
+            engine.parse = parse;
+            console.error = error;
+        }
+        assert.ok(!watched || said.length > 0, 'the error is logged');
+        assert.strictEqual(literalAlreadyLostRefusal({ literal: null, cause: { kind: 'unread', noun: '' } }), causeReason({ kind: 'unread', noun: '' }));
+    });
+
+    test('changing a span\'s literal is refused with the edit filter\'s answer, as the change itself is', () => {
+        let state = stateOf('Text ++ref|a [b]{.c} body++ end.\n');
+        state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, posOf(state.doc, 'b') + 1)));
+        const span = objectAtSelection(state) as Extract<EditorObject, { kind: 'span' }>;
+        assert.strictEqual(span.kind, 'span');
+        const refusal = changeSpanRefusal(state, span, '{title="x|y"}');
+        assert.ok(refusal !== null && refusal.includes('note'), refusal ?? 'none');
+        assert.strictEqual(changeSpanTransaction(state, span, '{title="x|y"}'), null);
     });
 });

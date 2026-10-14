@@ -1110,9 +1110,16 @@ function inlineModel(parent: Node): string {
 
 /** Whether `text`, read whole by the page's engine as `readUnit` reads a part, is one paragraph holding what `parent` holds. */
 function readsBack(text: string, parent: Node): boolean {
-    const definition = currentInlineDefinition();
-    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition).doc;
-    return doc.childCount === 1 && doc.firstChild.type.name === 'paragraph' && inlineModel(doc.firstChild) === inlineModel(parent);
+    let doc: Node;
+    try {
+        // The comparison's own parse (`comparisonDoc`): the typographer's quotes are no other order.
+        doc = comparisonDoc(text);
+    } catch (error) {
+        // No answer is the library's order, which needs none; the error is said, not swallowed.
+        console.error('Markdown Extended: the editor could not read a paragraph back to choose how to write its marks', error);
+        return false;
+    }
+    return doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph' && inlineModel(doc.firstChild) === inlineModel(parent);
 }
 
 /** prosemirror-markdown's serializer, writing through `OrderedInlineState` (the library's `serialize`, 1.13.8, with that state). */
@@ -3629,13 +3636,8 @@ function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | n
     if (unit.textblocks.length === 0) {
         return null;
     }
-    let parsed: Node[];
-    try {
-        parsed = comparisonParse(unit.text);
-    } catch {
-        // A parse that throws is no answer: the edit is refused, never a keystroke broken.
-        return { cause: { kind: 'unread', noun: '' }, at: unit.textblocks[0].node };
-    }
+    // A parse that throws is the whole verdict's to answer (`unitVerdict`): `unread`.
+    const parsed = inlineTextblocks(comparisonDoc(unit.text), 0).map(t => t.node);
     if (parsed.length !== unit.textblocks.length) {
         return null;
     }
@@ -3707,8 +3709,13 @@ function comparisonDefinition(): InlineEngineDefinition {
 
 let plainDefinition: { from: InlineEngineDefinition; plain: InlineEngineDefinition } | null = null;
 
-/** Each textblock of `text` parsed whole by the comparison's engine (`comparisonDefinition`), remembered by the text; the oldest dropped first. */
-function comparisonParse(text: string): Node[] {
+/**
+ * `text` parsed whole by the comparison's engine (`comparisonDefinition`), as
+ * a document, remembered by the text; the oldest dropped first. The one parse
+ * both oracles read: the save's verdict (`readsBackAsShown`) and the writer's
+ * choice of mark order (`readsBack`).
+ */
+function comparisonDoc(text: string): Node {
     const known = comparisonCache.get(text);
     if (known !== undefined) {
         comparisonCache.delete(text);
@@ -3717,16 +3724,15 @@ function comparisonParse(text: string): Node[] {
     }
     const definition = comparisonDefinition();
     const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition).doc;
-    const parsed = inlineTextblocks(doc, 0).map(t => t.node);
     if (comparisonCache.size >= UNIT_READ_CACHE_SIZE) {
         comparisonCache.delete(comparisonCache.keys().next().value as string);
     }
-    comparisonCache.set(text, parsed);
-    return parsed;
+    comparisonCache.set(text, doc);
+    return doc;
 }
 
-/** What `comparisonParse` read, by the text. */
-const comparisonCache = new Map<string, Node[]>();
+/** What `comparisonDoc` read, by the text. */
+const comparisonCache = new Map<string, Node>();
 
 /** The verdict of each part, by the node it is written from, with the text it was given for. */
 let verdictCache = new WeakMap<Node, { key: string; verdict: UnitVerdict | null }>();
@@ -3746,6 +3752,21 @@ function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
     if (known !== undefined && known.key === unit.key) {
         return known.verdict;
     }
+    let verdict: UnitVerdict | null;
+    try {
+        verdict = judgedUnit(unit);
+    } catch (error) {
+        // A read that throws is no answer: the edit is refused (`unread`), never a keystroke broken —
+        // and the error is said, so a fault in the editor is seen, not only refused.
+        console.error('Markdown Extended: the editor could not read a part of the document back', error);
+        verdict = { lost: { literal: null, at: unit.textblocks[0]?.node ?? unit.anchor, cause: { kind: 'unread', noun: '' } }, mismatch: null };
+    }
+    verdictCache.set(unit.anchor, { key: unit.key, verdict });
+    return verdict;
+}
+
+/** `unitVerdict`'s answer, read anew: the reads that may throw. */
+function judgedUnit(unit: WrittenUnit): UnitVerdict | null {
     let verdict: UnitVerdict | null = null;
     // The literals and the sidebars are asked of a parse only where the text can hold one: a
     // literal is read from a `{`, a sidebar from its marker — and a literal the model holds
@@ -3765,7 +3786,6 @@ function unitVerdict(unit: WrittenUnit): UnitVerdict | null {
     if (verdict !== null && verdict.lost === null && verdict.mismatch === null) {
         verdict = null;
     }
-    verdictCache.set(unit.anchor, { key: unit.key, verdict });
     return verdict;
 }
 
@@ -3879,7 +3899,15 @@ function forgetReadBack(): void {
  * it, either literal alone is neither.
  */
 export function literalNotReadBack(block: Node, causes = true): LiteralLoss | null {
-    for (const unit of unitsOf(block)) {
+    let units: WrittenUnit[];
+    try {
+        units = unitsOf(block);
+    } catch (error) {
+        // Writing the block threw: no answer, so nothing is let through on it (`unread`), and the error is said.
+        console.error('Markdown Extended: the editor could not write a block to check it', error);
+        return { literal: null, at: block, cause: { kind: 'unread', noun: '' } };
+    }
+    for (const unit of units) {
         const verdict = unitVerdict(unit);
         // Without `causes`, the literals alone: what the comparison finds elsewhere in the block is no reason to drop one.
         const lost = (causes || verdict?.literalLost === undefined ? verdict?.lost : verdict.literalLost) ?? null;

@@ -675,6 +675,9 @@ export const LITERAL_READ_WITH_BLOCK_REFUSAL = 'Read together with the rest of i
  * whatever is typed.
  */
 export function literalAlreadyLostRefusal(existing: LiteralLoss): string {
+    if (existing.cause?.kind === 'unread') {
+        return literalLostReason(existing);
+    }
     if (existing.cause !== undefined) {
         return 'Read with the rest of this block, the preview already would not read it back as the page shows it: that is the cause, not the literal typed. Edit the block once in the text editor first.';
     }
@@ -844,7 +847,8 @@ export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject
         return alone;
     }
     const tr = state.tr.removeMark(span.from, span.to, span.mark).addMark(span.from, span.to, editorSchema.marks.attr_span.create({ literal: value }));
-    return literalsReadBackRefusal(tr.doc, span.from, state.doc, span.mark.attrs.literal as string);
+    // The edit filter's answer too, as `changeSpanTransaction` asks it: a field never closes on a change that is then dropped.
+    return literalsReadBackRefusal(tr.doc, span.from, state.doc, span.mark.attrs.literal as string) ?? noteRefusal(tr);
 }
 
 /**

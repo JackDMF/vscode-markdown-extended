@@ -35,7 +35,7 @@ import { Mapping } from 'prosemirror-transform';
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
-import { RAW_TEXT_MARKS, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
+import { RAW_TEXT_MARKS, causeReason, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
 import { showHint } from './hint';
 import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
@@ -351,6 +351,18 @@ export function noteRefusal(tr: Transaction): string | null {
     if (range === null) {
         return null;
     }
+    try {
+        return filterRefusal(tr, range);
+    } catch (error) {
+        // Whatever throws while the save is written or read back: no answer, so the edit is
+        // refused (`unread`), never a keystroke broken — and the error is said, not swallowed.
+        console.error('Markdown Extended: the editor could not check an edit', error);
+        return causeReason({ kind: 'unread', noun: '' });
+    }
+}
+
+/** `noteRefusal`'s answer for the edit's `range`: the reads that may throw. */
+function filterRefusal(tr: Transaction, range: { from: number; to: number }): string | null {
     const before = tr.before;
     const written = writtenEdit(tr);
     // The written document is the edit's with atoms made text (`writtenEdit`): positions are read in it.
