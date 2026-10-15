@@ -120,6 +120,86 @@ suite('Editor read-back oracle: review 3', () => {
     });
 });
 
+suite('Editor read-back oracle: addresses, paths and titles', () => {
+    teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
+
+    const BS = '\\';
+    function linkParagraph(href: string, title: string | null): Node {
+        return touched(editorSchema.nodes.paragraph.create(null, [
+            editorSchema.text('A '), editorSchema.text('foo', [editorSchema.marks.link.create({ href, title })]), editorSchema.text(' y.'),
+        ]));
+    }
+    function imageParagraph(src: string, title: string | null): Node {
+        return touched(editorSchema.nodes.paragraph.create(null, [
+            editorSchema.text('A '), editorSchema.nodes.image.create({ src, title, alt: 'pic' }), editorSchema.text(' y.'),
+        ]));
+    }
+    function write(block: Node): string {
+        return serializeDocument({ doc: editorSchema.topNodeType.create(null, [block]), eol: '\n', tail: '' }, { defaultWrap: 200 });
+    }
+    /** The first link's or image's address and title, read back by the page's engine from what the save writes. */
+    function readBack(block: Node): { href: string; title: string | null } | null {
+        const definition = currentInlineDefinition();
+        let found: { href: string; title: string | null } | null = null;
+        parseDocument(attrsEngineFor(definition), write(block), {}, definition).doc.descendants(node => {
+            const link = node.marks.find(m => m.type.name === 'link');
+            if (found === null && link !== undefined) {
+                found = { href: link.attrs.href as string, title: link.attrs.title as string | null };
+            } else if (found === null && node.type.name === 'image') {
+                found = { href: node.attrs.src as string, title: node.attrs.title as string | null };
+            }
+        });
+        return found;
+    }
+
+    test('an address, a path and a title the UI set are written so the engine reads them back, and the comparison agrees', () => {
+        const md = attrsEngineFor(currentInlineDefinition());
+        const hrefs = ['<x>', `${BS}*a`, `a${BS}`, `a${BS})b`, '&amp;', 'a&lt;b', ' u', 'u ', 'a b', 'a)b', '<x', 'ä', 'a"b', 'a\tb', 'a\nb'];
+        for (const href of hrefs) {
+            for (const block of [linkParagraph(href, null), imageParagraph(href, null)]) {
+                const back = readBack(block);
+                assert.strictEqual(back?.href, md.normalizeLink(href), `${JSON.stringify(href)} written ${JSON.stringify(write(block))}`);
+                assert.strictEqual(literalNotReadBack(block), null, JSON.stringify(href));
+            }
+        }
+        const titles = [`a${BS}`, `a${BS}*b`, 'a&amp;b', '&#35;', 'a\n\nb', 'a\n# b', 'a"b', 'a)b'];
+        for (const title of titles) {
+            for (const block of [linkParagraph('u', title), imageParagraph('u', title)]) {
+                assert.strictEqual(readBack(block)?.title, title, `${JSON.stringify(title)} written ${JSON.stringify(write(block))}`);
+                assert.strictEqual(literalNotReadBack(block), null, JSON.stringify(title));
+            }
+        }
+    });
+
+    test('an address the engine reads otherwise than the page shows is refused, named as the address', () => {
+        const engine = attrsEngineFor(currentInlineDefinition());
+        const parse = engine.parse;
+        type Visited = { type: string; attrs: [string, string][] | null; children: Visited[] | null };
+        // Every address the comparison's parse reads is somewhere else: the save would link elsewhere.
+        engine.parse = ((...args: Parameters<typeof parse>) => {
+            const tokens = parse.apply(engine, args);
+            const visit = (list: Visited[]) => list.forEach(token => {
+                if (token.type === 'link_open' || token.type === 'image') {
+                    token.attrs = (token.attrs ?? []).map(([n, v]): [string, string] => [n, n === 'href' || n === 'src' ? `${v}-elsewhere` : v]);
+                }
+                visit(token.children ?? []);
+            });
+            visit(tokens as unknown as Visited[]);
+            return tokens;
+        }) as typeof parse;
+        try {
+            const link = literalNotReadBack(linkParagraph('https://example.org/oracle-address', null));
+            assert.deepStrictEqual(link?.cause, { kind: 'address', noun: 'link' });
+            const image = literalNotReadBack(imageParagraph('oracle-path.png', null));
+            assert.deepStrictEqual(image?.cause, { kind: 'address', noun: 'image' });
+            assert.ok(causeReason({ kind: 'address', noun: 'image' }).includes('image\'s path'));
+            assert.ok(causeReason({ kind: 'title', noun: 'link' }).includes('link\'s title'));
+        } finally {
+            engine.parse = parse;
+        }
+    });
+});
+
 suite('Editor read-back oracle: the targeted check', () => {
     teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
 

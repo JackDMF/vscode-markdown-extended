@@ -339,10 +339,16 @@ function destination(href: string, part?: NotePart, noteMarker?: string, inTable
             return seq;
         }
     });
-    // A space or control character ends a destination; markdown-it never
-    // produces one, but a link the UI set can hold one.
-    const written = decoded
-        .replace(/[\x00-\x20\x7f]/g, percent)
+    // A space or control character ends a destination, `<` opens one of its
+    // own, a backslash escapes what follows it and a character reference is
+    // decoded: markdown-it never produces one raw, but a link the UI set can
+    // hold one. Each is written as the engine reads it back to the address
+    // the page shows (`normalizeLink`, `targetDiffers`) — percent-encoded,
+    // which it would do itself, or a reference's `&` escaped — and white space
+    // at the ends, which the engine drops, is dropped.
+    const written = decoded.trim()
+        .replace(/[\x00-\x20\x7f<>\\]/g, percent)
+        .replace(CHARACTER_REFERENCE_START, '\\&')
         .replace(/[()]/g, '\\$&');
     // Inside a note part its terminator, and a run of the note's marker
     // character (`C++`), are percent-encoded: a URL takes no character reference.
@@ -357,8 +363,9 @@ function destination(href: string, part?: NotePart, noteMarker?: string, inTable
 function target(st: StateInternals, href: string, title: string | null): string {
     // A backtick in a title would open code for the table plugin's row scan; the title takes an escape.
     // In a table cell a `|` in a title is a boundary to the row scan, and it takes an escape.
-    const titleText = st.inTableCell && title ? title.replace(/[`|]/g, '\\$&') : title;
-    const titled = breakMarkerRuns(partText(st.notePart, titlePart(titleText)), st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
+    const written = titlePart(title);
+    const inCell = st.inTableCell ? written.replace(/[`|]/g, '\\$&') : written;
+    const titled = breakMarkerRuns(partText(st.notePart, inCell), st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
     return destination(href, st.notePart, st.noteMarker, st.inTableCell) + titled;
 }
 
@@ -376,9 +383,25 @@ function partText(part: NotePart | undefined, escaped: string): string {
     return terminator === null ? escaped : escaped.replace(terminator.escaped, terminator.entity).split(terminator.raw).join(terminator.entity);
 }
 
+/**
+ * A title as the engine reads it back to the text the page shows: a backslash
+ * and a `"` escaped, a character reference's `&` escaped, and a line break as
+ * a reference — a blank line would end the paragraph, and a line of its own
+ * could open a block.
+ */
 function titlePart(title: string | null): string {
-    return title ? ` "${title.replace(/"/g, '\\"')}"` : '';
+    if (!title) {
+        return '';
+    }
+    const escaped = title
+        .replace(/[\\"]/g, '\\$&')
+        .replace(CHARACTER_REFERENCE_START, '\\&')
+        .replace(/\r?\n|\r/g, ch => (ch === '\r' ? '&#13;' : ch === '\n' ? '&#10;' : '&#13;&#10;'));
+    return ` "${escaped}"`;
 }
+
+/** The `&` of what markdown-it would read as a character reference (`&amp;`, `&#35;`, `&#x1F;`) — or a name it does not know, which an escape leaves as it is. */
+const CHARACTER_REFERENCE_START = /&(?=#?[A-Za-z0-9]+;)/g;
 
 /**
  * How a link is written: a bare URL stays bare and an `<…>` autolink stays one,
@@ -2045,6 +2068,10 @@ export function causeReason(cause: ReadCause): string {
             return `After this edit the preview would read text here as ${cause.noun}, which the editor does not show: keep a space or another character between the delimiters that would make it.`;
         case 'text':
             return 'After this edit the preview would not read this text back as written: part of it would be taken as markup.';
+        case 'address':
+            return `After this edit the preview would not read the ${cause.noun === 'image' ? 'image\'s path' : 'link\'s address'} back as it is shown: no way of writing it here reads back. Change it, or edit it in the text editor.`;
+        case 'title':
+            return `After this edit the preview would not read the ${cause.noun}'s title back as it is shown: no way of writing it here reads back. Change it, or edit it in the text editor.`;
         case 'unread':
             return 'After this edit the editor could not read this text back to check what the preview would show, so it is not applied. Edit it in the text editor.';
     }
@@ -3484,15 +3511,16 @@ export interface LiteralLoss {
      * Set where the parse of the written text, compared with the model character by
      * character (`readsBackAsShown`), gives other text or other formatting: two runs of one
      * element read as one (`merged`), an element not read back (`lost`), text read as one
-     * the page does not show (`made`), or other characters (`text`) — and what that
-     * element is called (`inline code`, `bold text`).
+     * the page does not show (`made`), other characters (`text`), or a link's address or
+     * an image's path (`address`) or their title (`title`) read otherwise — and what that
+     * element is called (`inline code`, `bold text`; `link` or `image`).
      */
     cause?: ReadCause;
 }
 
 /** What differs between the model and the parse of the written text (`LiteralLoss.cause`). */
 export interface ReadCause {
-    kind: 'merged' | 'lost' | 'made' | 'text' | 'unread';
+    kind: 'merged' | 'lost' | 'made' | 'text' | 'address' | 'title' | 'unread';
     noun: string;
 }
 
@@ -3537,13 +3565,21 @@ function matchInOrder<W, F>(wanted: readonly W[], found: readonly F[], same: (w:
 interface ReadItem {
     key: string;
     marks: readonly Mark[];
+    /** An image's path and title, compared apart from its key so that a difference is named as one (`targetDiffers`). */
+    target?: ReadTarget;
+}
+
+/** A link's address or an image's path, and its title, as the comparison holds them. */
+interface ReadTarget {
+    href: string;
+    title: string | null;
 }
 
 /**
  * A mark as the comparison tells it from another: its type and its literal, by
  * the attributes it gives. Not emphasis' delimiter, which the writer chooses
  * where the parser needs it (`_x_` followed by a letter is written `*x*`), nor
- * a link's address, which is the link's own and spelled as its place needs.
+ * a link's address and title, which are compared apart (`targetDiffers`).
  */
 function readMarkKey(mark: Mark): string {
     const literal = typeof mark.attrs.literal === 'string' ? attrsKey(literalPairs(mark.attrs.literal)) : '';
@@ -3596,9 +3632,9 @@ function readItems(textblock: Node): ReadItem[] {
                 return;
             }
             if (name === 'image') {
-                // Its alt text and its literal; its path is its own, spelled as its place needs.
-                const { alt, literal } = child.attrs as { alt: string | null; literal: string | null };
-                out.push({ key: `${path}|image(${alt ?? ''},${attrsKey(literalPairs(literal))})`, marks });
+                // Its alt text and its literal; its path and its title apart (`targetDiffers`).
+                const { alt, literal, src, title } = child.attrs as { alt: string | null; literal: string | null; src: string; title: string | null };
+                out.push({ key: `${path}|image(${alt ?? ''},${attrsKey(literalPairs(literal))})`, marks, target: { href: src, title } });
             } else if (name === 'wiki_embed') {
                 // By the name it reads as: the writer encodes what its place needs (`&#96;`, `\|`).
                 out.push({ key: `${path}|${name}(${plainWikiEmbed(String(child.attrs.source))})`, marks });
@@ -3656,6 +3692,10 @@ function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | n
             const wantKeys = wantMarks.map(m => readMarkKey(m)).sort();
             const gotKeys = gotMarks.map(m => readMarkKey(m)).sort();
             if (wantKeys.join('+') === gotKeys.join('+')) {
+                const target = targetDiffers(w, g, wantMarks, gotMarks);
+                if (target !== null) {
+                    return { cause: target, at };
+                }
                 continue;
             }
             // The first mark that differs, by type: two runs read as one, missing, or made.
@@ -3665,6 +3705,36 @@ function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | n
             }
             const made = gotMarks.find(m => !wantKeys.includes(readMarkKey(m))) as Mark;
             return { cause: { kind: 'made', noun: markNoun(made) }, at };
+        }
+    }
+    return null;
+}
+
+/**
+ * Where the model's item `w` and the parse's `g` are the same element but the
+ * address (a link's, an image's path) or the title differs, which it is
+ * (`address`, `title`) and of what; else `null`. An address is compared as the
+ * engine reads a destination (`normalizeLink`), so a spelling the writer chose
+ * for its place — `%20` for a space, `\(` — is the same address; a title by its
+ * text, white space as one space, as everywhere in the comparison.
+ */
+function targetDiffers(w: ReadItem, g: ReadItem, wantMarks: readonly Mark[], gotMarks: readonly Mark[]): ReadCause | null {
+    const linkTarget = (marks: readonly Mark[]): ReadTarget | undefined => {
+        const link = marks.find(m => m.type.name === 'link');
+        return link === undefined ? undefined : { href: String(link.attrs.href ?? ''), title: (link.attrs.title as string | null) ?? null };
+    };
+    const pairs: [ReadTarget | undefined, ReadTarget | undefined, string][] = [[w.target, g.target, 'image'], [linkTarget(wantMarks), linkTarget(gotMarks), 'link']];
+    const md = attrsEngineFor(comparisonDefinition());
+    const title = (t: string | null) => (t ?? '').replace(/\s+/g, ' ');
+    for (const [want, got, noun] of pairs) {
+        if (want === undefined || got === undefined) {
+            continue;
+        }
+        if (md.normalizeLink(want.href) !== md.normalizeLink(got.href)) {
+            return { kind: 'address', noun };
+        }
+        if (title(want.title) !== title(got.title)) {
+            return { kind: 'title', noun };
         }
     }
     return null;
