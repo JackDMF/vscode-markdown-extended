@@ -3021,7 +3021,7 @@ export function setWriteOptions(options: SerializeOptions): void {
     }
     writeOptions = { ...options };
     writer = null;
-    forgetReadBack();
+    forgetReadBack(false);
 }
 
 function currentWriter(): MarkdownSerializer {
@@ -3352,7 +3352,7 @@ function readUnit(text: string, key = text): UnitRead {
         unitReadCache.set(key, read);
         return read;
     }
-    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+    const tokens = unitTokens(text);
     read = { blocks: [], marks: [], sidebars: [], inlines: 0, madeInline: false, math: false, emoji: [], texts: [] };
     const found = read;
     // Superscript's text is read apart (markdown-it-sup-alt): an emoji there may have no known place.
@@ -3851,9 +3851,11 @@ function targetDiffers(w: ReadItem, g: ReadItem, wantMarks: readonly Mark[], got
 /**
  * Whether the parse reads, at item `i`, one element of `differs`' type over
  * items the model holds in two runs of it — two runs side by side read as one,
- * one of them losing its `{…}` — rather than one run otherwise written.
+ * one of them losing its `{…}` — rather than one run otherwise written. Only
+ * items the model gives the mark count as a run: one it does not, which the
+ * parse's element reaches over, is no second run but text the element took.
  */
-function readAsOne(want: readonly ReadItem[], got: readonly ReadItem[], i: number, differs: Mark): boolean {
+export function readAsOne(want: readonly ReadItem[], got: readonly ReadItem[], i: number, differs: Mark): boolean {
     const read = got[i].marks.find(m => m.type === differs.type);
     if (read === undefined) {
         return false;
@@ -3862,7 +3864,9 @@ function readAsOne(want: readonly ReadItem[], got: readonly ReadItem[], i: numbe
     for (const step of [-1, 1]) {
         for (let k = step < 0 ? i : i + 1; k >= 0 && k < Math.min(want.length, got.length) && got[k].marks.some(m => m.eq(read)); k += step) {
             const model = want[k].marks.find(m => m.type === differs.type);
-            runs.add(model === undefined ? '' : readMarkKey(model));
+            if (model !== undefined) {
+                runs.add(readMarkKey(model));
+            }
         }
     }
     return runs.size > 1;
@@ -3901,7 +3905,9 @@ function comparisonDoc(text: string): Node {
         return known;
     }
     const definition = comparisonDefinition();
-    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition).doc;
+    // Without the typographer the comparison reads with the page's own engine: the tokens `readUnit` read are these.
+    const tokens = definition === currentInlineDefinition() ? unitTokens(text) : undefined;
+    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition, tokens).doc;
     if (comparisonCache.size >= UNIT_READ_CACHE_SIZE) {
         comparisonCache.delete(comparisonCache.keys().next().value as string);
     }
@@ -3911,6 +3917,22 @@ function comparisonDoc(text: string): Node {
 
 /** What `comparisonDoc` read, by the text. */
 const comparisonCache = new Map<string, Node>();
+
+/** The last text `unitTokens` parsed, and its tokens: a part's literals and its comparison ask one after the other. */
+let lastTokens: { text: string; tokens: Token[] } | null = null;
+
+/**
+ * `text` with a line end, as `comparisonDoc` parses it, parsed by the page's
+ * engine with markdown-it-attrs: the one token stream the reads of a part
+ * share (`readUnit`, `comparisonDoc` without the typographer), so text that
+ * holds a `{` is parsed once, not once per read.
+ */
+function unitTokens(text: string): Token[] {
+    if (lastTokens?.text !== text) {
+        lastTokens = { text, tokens: attrsEngineFor(currentInlineDefinition()).parse(`${text}\n`, {}) };
+    }
+    return lastTokens.tokens;
+}
 
 /** The verdict of each part, by the node it is written from, with the text it was given for. */
 let verdictCache = new WeakMap<Node, { key: string; verdict: UnitVerdict | null }>();
@@ -3960,6 +3982,9 @@ function judgedUnit(unit: WrittenUnit): UnitVerdict | null {
     const found = readsBackAsShown(unit);
     if (found !== null && (verdict === null || found.cause.kind === 'merged' || (verdict.lost === null && verdict.mismatch === null))) {
         verdict = { lost: { literal: null, at: found.at, cause: found.cause }, mismatch: found.cause.kind === 'merged' ? null : verdict?.mismatch ?? null, literalLost };
+    } else if (found !== null && verdict !== null && verdict.lost !== null && verdict.lost.literal === null && verdict.lost.cause === undefined) {
+        // Text read as attributes no literal gives is what the comparison found, said as what it found.
+        verdict = { ...verdict, lost: { ...verdict.lost, cause: found.cause }, literalLost };
     }
     if (verdict !== null && verdict.lost === null && verdict.mismatch === null) {
         verdict = null;
@@ -4055,13 +4080,21 @@ function sidebarVerdict(unit: WrittenUnit, read: UnitRead): SidebarMismatch | nu
     return null;
 }
 
-/** Forget every part, read and verdict: the engine or the options they were made with changed. */
-function forgetReadBack(): void {
+/**
+ * Forget every part and verdict, and with `reads` every read: the engine they
+ * were made with changed. A change of the write options changes what a part
+ * writes, not what a text reads as, so the reads by text stay (`reads` false).
+ */
+function forgetReadBack(reads = true): void {
     unitsCache = new WeakMap();
     itemCache = new WeakMap();
     wrappedCache = new WeakMap();
     verdictCache = new WeakMap();
+    if (!reads) {
+        return;
+    }
     unitReadCache.clear();
+    lastTokens = null;
     seamCache.clear();
     comparisonCache.clear();
     orderVerdictCache.clear();

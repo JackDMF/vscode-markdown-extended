@@ -15,6 +15,13 @@ suite('Editor inline round trip: the verdict agrees with the engine (a subset of
         assert.deepStrictEqual({ corrupt: tally.corrupt, overRefused: tally.overRefused }, { corrupt: [], overRefused: [] });
     });
 
+    test('two words side by side, every 25th case: a delimiter glued to a letter (foo_abc_{.x})', function () {
+        this.timeout(60000);
+        const tally = sweep(twoRunCases(['foo', 'abc']), 25, 1);
+        assert.ok(tally.cases > 500, `${tally.cases} cases`);
+        assert.deepStrictEqual({ corrupt: tally.corrupt, overRefused: tally.overRefused }, { corrupt: [], overRefused: [] });
+    });
+
     test('three runs side by side, every 400th case', function () {
         this.timeout(60000);
         const tally = sweep(threeRunCases(), 400);
@@ -34,6 +41,7 @@ suite('Editor inline round trip: with VS Code\'s typographer on', () => {
     test('three runs side by side, every 400th case', function () {
         this.timeout(60000);
         const tally = sweep(threeRunCases(), 400, 7, true);
+        assert.ok(tally.cases > 300, `${tally.cases} cases`);
         assert.deepStrictEqual({ corrupt: tally.corrupt, overRefused: tally.overRefused }, { corrupt: [], overRefused: [] });
     });
 });

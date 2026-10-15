@@ -710,13 +710,14 @@ export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, c
     }
     const old = before === undefined ? null : topBlockAt(before, pos);
     const existing = old === null ? null : literalNotReadBack(old);
-    if (existing === null && lost.cause !== undefined) {
+    if (existing === null && (lost.cause !== undefined || lost.literal === null)) {
         // A block read as another is the edit filter's to name, which every caller asks next (`noteRefusal`):
         // a note's or an atom's own check names it better, and speaks first there.
-        if (lost.cause.kind === 'block') {
+        if (lost.cause?.kind === 'block') {
             return null;
         }
-        // What the comparison of the save's text found (two runs read as one …): the edit filter's own answer.
+        // What the comparison of the save's text found (two runs read as one …), else text read as
+        // attributes no literal gives: the edit filter's own answer, not a `$` pairing.
         return literalLostReason(lost);
     }
     return existing === null || (existing.literal !== null && existing.literal === changing) ? LITERAL_READ_WITH_BLOCK_REFUSAL : literalAlreadyLostRefusal(existing);
@@ -864,12 +865,25 @@ export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject
  * the focus is back.
  */
 export function applySpanRefusal(state: EditorState, literal: string): string | null {
+    const applied = spanApplied(state, literal);
+    return 'refusal' in applied ? applied.refusal : null;
+}
+
+/**
+ * Span with class on the selection, decided in one place for its field's
+ * reason (`applySpanRefusal`) and its transaction (`applySpanTransaction`):
+ * the literal alone and read with its block (`spanLiteralRefusal`), the
+ * selection (`spanLockReason`), then the edit filter (`noteRefusal`).
+ */
+function spanApplied(state: EditorState, literal: string): { tr: Transaction } | { refusal: string } {
     const alone = spanLiteralRefusal(state, literal) ?? spanLockReason(state);
     if (alone !== null) {
-        return alone;
+        return { refusal: alone };
     }
     const { from, to } = state.selection;
-    return noteRefusal(state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: literal.trim() })));
+    const tr = state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: literal.trim() }));
+    const filtered = noteRefusal(tr);
+    return filtered === null ? { tr } : { refusal: filtered };
 }
 
 /** Why an attribute span cannot be made of the selection, or `null`: it needs an engine that reads attributes, and selected text in one textblock that is not code. */
@@ -889,13 +903,8 @@ export function spanLockReason(state: EditorState): string | null {
  * there is no selection to make it of, or the literal is not one the plugin reads.
  */
 export function applySpanTransaction(state: EditorState, literal: string): Transaction | null {
-    const value = literal.trim();
-    if (spanLockReason(state) !== null || literalRefusal(value, 'span') !== null) {
-        return null;
-    }
-    const { from, to } = state.selection;
-    const tr = state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: value }));
-    return noteRefusal(tr) === null && literalsReadBackRefusal(tr.doc, from, state.doc) === null ? tr.scrollIntoView() : null;
+    const applied = spanApplied(state, literal);
+    return 'tr' in applied ? applied.tr.scrollIntoView() : null;
 }
 
 /** The span's run given `literal` instead. `null` for an unchanged or unreadable literal, or one a note around it could not hold. */

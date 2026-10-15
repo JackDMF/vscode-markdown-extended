@@ -4,10 +4,10 @@ import { Node } from 'prosemirror-model';
 import { fidelityPlugin, parseDocument, serializeDocument } from '../../../src/editor';
 import { DEFAULT_INLINE_ENGINE, attrsEngineFor, currentInlineDefinition } from '../../../src/editor/inlineEngine';
 import { editorSchema } from '../../../src/editor/schema';
-import { causeReason, literalLostReason, literalNotReadBack, literalsReadBack, setInlineEngine } from '../../../src/editor/serialize';
+import { causeReason, literalLostReason, literalNotReadBack, literalsReadBack, readAsOne, setInlineEngine } from '../../../src/editor/serialize';
 import { noteRefusal } from '../../../src/editor/webview/notes';
 import {
-    EditorObject, changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, literalAlreadyLostRefusal, objectAtSelection, sameObject,
+    EditorObject, LITERAL_READ_WITH_BLOCK_REFUSAL, applySpanRefusal, applySpanTransaction, changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, literalAlreadyLostRefusal, objectAtSelection, sameObject,
 } from '../../../src/editor/webview/objects';
 import { hostEngine, touched } from './helpers';
 
@@ -89,11 +89,12 @@ suite('Editor read-back oracle: review 3', () => {
         assert.strictEqual(lost.cause?.kind, 'merged');
         assert.strictEqual(lost.at?.textContent, 'fooabc', 'the cell, not the header');
         // A literal only otherwise read — one run, `{…}` taken as text — is no merge: the literal's own verdict names it.
-        let other = stateOf('A **b** y.\n');
+        let other = stateOf('A **b**$c$ y.\n');
         const at = posOf(other.doc, 'b');
         other = other.apply(other.tr.removeMark(at, at + 1, editorSchema.marks.strong).addMark(at, at + 1, editorSchema.marks.strong.create({ markup: '**', literal: '{title="a $b"}' })));
         const literal = literalNotReadBack(touched(other.doc.child(0)));
-        assert.ok(literal === null || literal.cause?.kind !== 'merged', JSON.stringify(literal?.cause));
+        assert.ok(literal !== null, 'the $ in the literal pairs: refused');
+        assert.notStrictEqual(literal.cause?.kind, 'merged', JSON.stringify(literal.cause));
     });
 
     test('a block whose text the save reads otherwise still keeps a {…} it can carry: a copy asks the literals alone', () => {
@@ -304,6 +305,49 @@ suite('Editor read-back oracle: a run of underscores', () => {
             const written = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
             assert.strictEqual(written, wanted);
         }
+    });
+});
+
+suite('Editor read-back oracle: the follow-ups', () => {
+    teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
+
+    test('a parse whose element reaches over text the model leaves unmarked reads no second run: not merged', () => {
+        const withX = editorSchema.marks.strong.create({ markup: '**', literal: '{.x}' });
+        const plain = editorSchema.marks.strong.create({ markup: '**' });
+        const want = [{ key: '|a', marks: [withX] }, { key: '|b', marks: [] }];
+        const got = [{ key: '|a', marks: [plain] }, { key: '|b', marks: [plain] }];
+        assert.strictEqual(readAsOne(want, got, 0, withX), false, 'one run, and text the element took');
+        const two = [{ key: '|a', marks: [withX] }, { key: '|b', marks: [plain] }];
+        assert.strictEqual(readAsOne(two, got, 0, withX), true, 'two runs of the model read as one');
+    });
+
+    test('Span with class over a selection starting inside emphasis gives the edit filter\'s answer, not a $ pairing', () => {
+        for (const source of ['A *foo* bar y.\n', 'A **foo** bar y.\n']) {
+            let state = stateOf(source);
+            const from = posOf(state.doc, 'oo');
+            const to = posOf(state.doc, 'bar') + 3;
+            state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
+            const refusal = applySpanRefusal(state, '{.c}');
+            assert.ok(refusal !== null, source);
+            assert.notStrictEqual(refusal, LITERAL_READ_WITH_BLOCK_REFUSAL, source);
+            assert.strictEqual(refusal, noteRefusal(state.tr.addMark(from, to, editorSchema.marks.attr_span.create({ literal: '{.c}' }))), source);
+        }
+    });
+
+    test('Span with class: its field\'s reason and its transaction are one decision', () => {
+        const cases: [string, string, string, string][] = [
+            ['A *foo* bar y.\n', 'oo', 'bar', '{.c}'], ['A foo bar y.\n', 'foo', 'bar', '{.c}'], ['A foo bar y.\n', 'foo', 'bar', '{.c'],
+            ['A **b**$c$ y.\n', 'A', 'y', '{title="a $b"}'], ['Text ++ref|a b body++ end.\n', 'b', 'body', '{title="x|y"}'], ['A `foo` bar y.\n', 'oo', 'bar', '{.c}'],
+        ];
+        let refused = 0;
+        for (const [source, start, end, literal] of cases) {
+            let state = stateOf(source);
+            state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, posOf(state.doc, start), posOf(state.doc, end) + end.length)));
+            const refusal = applySpanRefusal(state, literal);
+            refused += refusal === null ? 0 : 1;
+            assert.strictEqual(applySpanTransaction(state, literal) === null, refusal !== null, `${source} ${literal}: ${refusal}`);
+        }
+        assert.ok(refused > 0 && refused < cases.length, `${refused} of ${cases.length} refused`);
     });
 });
 

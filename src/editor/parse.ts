@@ -202,12 +202,15 @@ function liftRequirementPrefix(
  * literals the parse finds are judged with it (`groupSourceBlocks`), as the
  * page judges the literals it writes, so both answer alike under any setting.
  *
+ * `parsed`, where given, is `md.parse(text, env)` already made — read, never
+ * changed, by the page's save, which asks the same text of its tokens too.
+ *
  * Throws when the document cannot be represented without losing a byte; the
  * caller then keeps the text editor.
  */
-export function parseDocument(md: MarkdownIt, text: string, env: Environment = {}, definition: InlineEngineDefinition = definitionOf(md)): ParsedDocument {
+export function parseDocument(md: MarkdownIt, text: string, env: Environment = {}, definition: InlineEngineDefinition = definitionOf(md), parsed?: Token[]): ParsedDocument {
     const engine = md as EngineWithOptions;
-    const tokens = md.parse(text, env);
+    const tokens = parsed ?? md.parse(text, env);
     const lines = splitLines(text);
     const { blocks, tail } = groupSourceBlocks(tokens, lines, definition);
 
