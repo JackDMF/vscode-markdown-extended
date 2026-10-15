@@ -9,7 +9,7 @@ import { noteRefusal } from '../../../src/editor/webview/notes';
 import {
     EditorObject, changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, literalAlreadyLostRefusal, objectAtSelection, sameObject,
 } from '../../../src/editor/webview/objects';
-import { touched } from './helpers';
+import { hostEngine, touched } from './helpers';
 
 /** `text` read with the page's engine as it now is, in a state with the edit filter. */
 function stateOf(text: string): EditorState {
@@ -197,6 +197,74 @@ suite('Editor read-back oracle: addresses, paths and titles', () => {
         } finally {
             engine.parse = parse;
         }
+    });
+});
+
+suite('Editor read-back oracle: the textblocks themselves', () => {
+    teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
+
+    function save(state: EditorState): string {
+        return serializeDocument({ doc: state.doc, eol: '\n', tail: '' }, { defaultWrap: 200 });
+    }
+    /** The top-level blocks the host's engine, front-matter rule and all, reads in `text`. */
+    function hostBlocks(text: string): string[] {
+        const blocks: string[] = [];
+        parseDocument(hostEngine(), text, {}).doc.forEach(node => blocks.push(node.type.name));
+        return blocks;
+    }
+
+    test('a tab typed at a paragraph\'s start is not written: the paragraph stays one, not a code block', () => {
+        for (const [source, first] of [['A foo y.\n', 'A '], ['- item foo\n', 'item'], ['!!! note\n    body foo\n', 'body'], ['::: warning\nbody foo\n:::\n', 'body']]) {
+            const state = stateOf(source);
+            const tr = state.tr.insertText('\t', posOf(state.doc, first));
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const written = save(state.apply(tr));
+            assert.ok(!written.includes('\t'), JSON.stringify(written));
+            assert.deepStrictEqual(hostBlocks(written), hostBlocks(source), JSON.stringify(written));
+        }
+    });
+
+    test('text the save would read as another block, or as more than one, is refused, named by what it would be', () => {
+        const state = stateOf('A foo y.\n');
+        const at = posOf(state.doc, 'foo');
+        assert.strictEqual(noteRefusal(state.tr.insertText('\n\n', at)), causeReason({ kind: 'block', noun: 'more than one block' }));
+        const heading = stateOf('# Head foo\n');
+        assert.strictEqual(noteRefusal(heading.tr.insertText('\n# ', posOf(heading.doc, 'foo'))), causeReason({ kind: 'block', noun: 'a heading' }));
+        assert.strictEqual(noteRefusal(heading.tr.insertText('\n', posOf(heading.doc, 'foo'))), causeReason({ kind: 'block', noun: 'more than one block' }));
+        // Where a line start can be escaped, it is, and nothing is refused: `A\n\# foo y.` is one paragraph.
+        assert.strictEqual(noteRefusal(state.tr.insertText('\n# ', at)), null);
+        // An emptied paragraph is written as nothing and read as nothing: no refusal.
+        const items = stateOf('- one\n- two\n');
+        const two = posOf(items.doc, 'two');
+        assert.strictEqual(noteRefusal(items.tr.delete(two, two + 3)), null);
+    });
+
+    test('a document\'s first list is not written so that the host reads front matter in its first item', () => {
+        for (const [source, typed, wanted] of [
+            ['- a | b\n', '---', '* \\---a | b\n'],
+            ['- a | b\n', 'x---', '* x---a | b\n'],
+            ['- a\n\n* b\n', 'x---', '+ x---a\n\n* b\n'],
+        ] as const) {
+            const state = stateOf(source);
+            const tr = state.tr.insertText(typed, posOf(state.doc, 'a'));
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const written = save(state.apply(tr));
+            assert.strictEqual(written, wanted);
+            assert.deepStrictEqual(hostBlocks(written), hostBlocks(source), JSON.stringify(written));
+        }
+        // Not at the file's start, the list keeps its bullet.
+        const later = stateOf('Text.\n\n- a\n');
+        const tr = later.tr.insertText('x---', posOf(later.doc, 'a'));
+        assert.strictEqual(save(later.apply(tr)), 'Text.\n\n- x---a\n');
+    });
+
+    test('a rule inserted at a document\'s start is not written as the --- that opens front matter', () => {
+        const doc = editorSchema.topNodeType.create(null, [
+            editorSchema.nodes.horizontal_rule.create(), touched(editorSchema.nodes.paragraph.create(null, [editorSchema.text('A y.')])),
+        ]);
+        const written = serializeDocument({ doc, eol: '\n', tail: '' }, { defaultWrap: 80 });
+        assert.strictEqual(written, '***\n\nA y.\n');
+        assert.deepStrictEqual(hostBlocks(written), ['horizontal_rule', 'paragraph']);
     });
 });
 

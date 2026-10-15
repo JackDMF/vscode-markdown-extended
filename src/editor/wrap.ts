@@ -145,7 +145,8 @@ function splitChunks(line: string): { chunks: Chunk[]; escapedAt: number | null 
  * following one. A line breaks only between chunks, so it overruns the room
  * only when it is a single chunk — which is what `measureWrapWidth` relies on.
  * Spaces at a break are dropped: two of them at a line end would be a hard
- * break. Given `inserted`, it is told where in `inline` a backslash went
+ * break; so are spaces and tabs at a line's start, and blank lines before
+ * and after the text. Given `inserted`, it is told where in `inline` a backslash went
  * (`escapeLineStart`, the first word of the paragraph and of each line after
  * a hard break): before the character at each of those places, in order — the
  * one thing the wrap writes that is no white space and not in `inline`.
@@ -157,10 +158,11 @@ export function wrapInline(inline: string, first: number, rest: number, inserted
     segments.forEach((segment, k) => {
         const hardBreak = k < segments.length - 1 && segment.endsWith('\\');
         const unbroken = hardBreak ? segment.slice(0, -1) : segment;
-        const body = unbroken.replace(/^ +/, '').replace(/ +$/, '');
+        // A tab at a line's start is white space the parser drops too, but on a paragraph's first line it opens a code block.
+        const body = unbroken.replace(/^[ \t]+/, '').replace(/ +$/, '');
         const { chunks, escapedAt } = splitChunks(body);
         if (escapedAt !== null) {
-            inserted?.push(offset + (unbroken.length - unbroken.replace(/^ +/, '').length) + escapedAt);
+            inserted?.push(offset + (unbroken.length - unbroken.replace(/^[ \t]+/, '').length) + escapedAt);
         }
         offset += segment.length + 1;
         let line = '';
@@ -177,8 +179,15 @@ export function wrapInline(inline: string, first: number, rest: number, inserted
             line += chunk.sep + chunk.text;
             lineWidth = i === 0 ? characterCount(chunk.text) : candidate;
         });
-        out.push(hardBreak ? line + '\\' : line);
+        // A blank line before the text would end an item's first line, and one inside it the paragraph: one at the start is not written.
+        if (hardBreak || line !== '' || out.length > 0) {
+            out.push(hardBreak ? line + '\\' : line);
+        }
     });
+    // Nor one at the end, after text that ends no hard break.
+    while (out.length > 1 && out[out.length - 1] === '' && !out[out.length - 2].endsWith('\\')) {
+        out.pop();
+    }
     return out.map(l => l.replace(HOLD_RE, ''));
 }
 

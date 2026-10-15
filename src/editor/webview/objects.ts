@@ -711,6 +711,11 @@ export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, c
     const old = before === undefined ? null : topBlockAt(before, pos);
     const existing = old === null ? null : literalNotReadBack(old);
     if (existing === null && lost.cause !== undefined) {
+        // A block read as another is the edit filter's to name, which every caller asks next (`noteRefusal`):
+        // a note's or an atom's own check names it better, and speaks first there.
+        if (lost.cause.kind === 'block') {
+            return null;
+        }
         // What the comparison of the save's text found (two runs read as one …): the edit filter's own answer.
         return literalLostReason(lost);
     }
