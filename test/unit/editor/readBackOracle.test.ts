@@ -5,7 +5,7 @@ import { fidelityPlugin, parseDocument, serializeDocument } from '../../../src/e
 import { DEFAULT_INLINE_ENGINE, attrsEngineFor, currentInlineDefinition } from '../../../src/editor/inlineEngine';
 import { editorSchema } from '../../../src/editor/schema';
 import {
-    blockDiffers, causeReason, frontMatterTakeover, literalLostReason, literalNotReadBack, literalsReadBack, readAsOne, setInlineEngine,
+    blockDiffers, causeReason, frontMatterTakeover, pairingsDiffer, literalLostReason, literalNotReadBack, literalsReadBack, readAsOne, setInlineEngine,
 } from '../../../src/editor/serialize';
 import { noteRefusal } from '../../../src/editor/webview/notes';
 import {
@@ -332,17 +332,53 @@ suite('Editor read-back oracle: the merge review', () => {
 
     test('a block the editor shows as its source stands for the textblocks it took; the rest of the part is compared', () => {
         const a = p('A'), b = p('B');
-        const pairs = blockDiffers([a, b], doc(raw(), p('B')), a);
-        assert.ok(pairs !== null && 'pairs' in pairs);
-        assert.deepStrictEqual(pairs.pairs.map(([shown, read]) => [shown.textContent, read.textContent]), [['B', 'B']]);
+        /** The distinct pairings, each as `shown→read` texts. */
+        const texts = (found: ReturnType<typeof blockDiffers>) => {
+            assert.ok(found !== null && 'pairings' in found, 'pairings');
+            return found.pairings.map(pairs => pairs.map(([shown, read]) => `${shown.textContent}→${read.textContent}`).join(' '));
+        };
+        assert.deepStrictEqual(texts(blockDiffers([a, b], doc(raw(), p('B')), a)), ['B→B']);
         // Beside it, another kind of textblock than the page shows is still a difference.
         const h = editorSchema.nodes.heading.create({ level: 2 }, [editorSchema.text('H')]);
         const heading = editorSchema.nodes.heading.create({ level: 2 }, [editorSchema.text('H')]);
         assertCause(blockDiffers([a, h], doc(raw(), heading, p('C')), a), { cause: { kind: 'block', noun: 'more than one block' }, at: h });
-        const tail = blockDiffers([a, b], doc(p('A'), raw()), a);
-        assert.ok(tail !== null && 'pairs' in tail && tail.pairs.length === 1);
-        // Two source blocks around one paragraph: which shown one each took cannot be told — nothing compared, the atoms' checks speak.
-        assert.strictEqual(blockDiffers([a, b], doc(raw(), p('X'), raw()), a), null);
+        assert.deepStrictEqual(texts(blockDiffers([a, b], doc(p('A'), raw()), a)), ['A→A']);
+        // Two source blocks side by side take what they take together: one pairing, compared.
+        const together = blockDiffers([a, b], doc(raw(), raw(), p('Bchanged')), a);
+        assert.deepStrictEqual(texts(together), ['B→Bchanged']);
+        assert.deepStrictEqual(pairingsDiffer((together as { pairings: [Node, Node][][] }).pairings)?.cause, { kind: 'text', noun: '' });
+        // Around one paragraph: two pairings, and it reads back under neither — refused; under one of them — not.
+        const around = blockDiffers([a, b], doc(raw(), p('Bchanged'), raw()), a);
+        assert.deepStrictEqual(texts(around).sort(), ['A→Bchanged', 'B→Bchanged']);
+        assert.deepStrictEqual(pairingsDiffer((around as { pairings: [Node, Node][][] }).pairings)?.cause, { kind: 'text', noun: '' });
+        const either = blockDiffers([a, b], doc(raw(), p('B'), raw()), a) as { pairings: [Node, Node][][] };
+        assert.strictEqual(pairingsDiffer(either.pairings), null);
+        assert.ok(texts(blockDiffers([a, b, p('C')], doc(raw(), raw(), p('B'), p('C')), a)).includes('B→B C→C'));
+    });
+
+    test('an empty paragraph in a respelled first list is no other shape: the list is kept out of front matter, not refused', () => {
+        const li = (...content: Node[]) => editorSchema.nodes.list_item.create(null, content);
+        const list = editorSchema.nodes.bullet_list.create({ bullet: '-' }, [li(p('x---'), p(''))]);
+        const state = EditorState.create({ doc: doc(list), plugins: [fidelityPlugin()] });
+        const tr = state.tr.insertText('y', 7);
+        assert.strictEqual(noteRefusal(tr), null);
+        const written = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 80 });
+        assert.ok(written.startsWith('* '), JSON.stringify(written));
+        assert.ok(!parseDocument(hostEngine(), written, {}).doc.content.content.some(n => n.type.name === 'front_matter'), JSON.stringify(written));
+    });
+
+    test('a block of a document that wrote nothing which comes to open the file is held to the front-matter rule', () => {
+        const li = (...content: Node[]) => editorSchema.nodes.list_item.create(null, content);
+        const state = EditorState.create({ doc: doc(p(''), p('')), plugins: [fidelityPlugin()] });
+        const list = editorSchema.nodes.bullet_list.create({ bullet: '-' }, [li(p('x---'), p(''))]);
+        const second = state.doc.child(0).nodeSize;
+        const tr = state.tr.replaceWith(second, second + state.doc.child(1).nodeSize, list);
+        const refusal = noteRefusal(tr);
+        const written = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 80 });
+        const host = parseDocument(hostEngine(), written, {}).doc;
+        // Kept out by another bullet, or refused: never saved as front matter.
+        assert.ok(refusal !== null || !host.content.content.some(n => n.type.name === 'front_matter'), `${refusal} ${JSON.stringify(written)}`);
+        assert.strictEqual(frontMatterTakeover(tr.doc, state.doc), frontMatterTakeover(tr.doc));
     });
 
     test('a list item that is a rule is written with a character its list\'s marker is not', () => {

@@ -1498,7 +1498,7 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
     const outside = (from: number, to: number) => to <= start || from >= Math.max(end, start + 1);
     for (const block of blocks) {
         // The document's first block is read as it is written: with the bullet that keeps it out of front matter.
-        const written = asWrittenIn(doc, block.node);
+        const written = asWrittenIn(doc, block.node, block.offset);
         for (const [index, unit] of unitsOf(written).entries()) {
             if (origin?.rewritten === undefined && outside(block.offset + unit.from, block.offset + unit.to)) {
                 continue;
@@ -2083,7 +2083,7 @@ function unitBefore(origin: EditOrigin, block: { node: Node; offset: number; cop
     if (block.copyOf !== undefined && block.copyOf !== null) {
         oldOffset = block.copyOf;
         oldBlock = origin.doc.nodeAt(oldOffset);
-        oldUnit = oldBlock === null ? undefined : unitsOf(asWrittenIn(origin.doc, oldBlock))[index];
+        oldUnit = oldBlock === null ? undefined : unitsOf(asWrittenIn(origin.doc, oldBlock, oldOffset))[index];
     } else {
         const pos = Math.min(origin.mapping.invert().map(block.offset + unit.from + 1, -1), origin.doc.content.size);
         const $old = origin.doc.resolve(pos);
@@ -2092,7 +2092,7 @@ function unitBefore(origin: EditOrigin, block: { node: Node; offset: number; cop
         }
         oldOffset = $old.depth === 0 ? pos : $old.before(1);
         oldBlock = origin.doc.nodeAt(oldOffset);
-        oldUnit = oldBlock === null ? undefined : unitsOf(asWrittenIn(origin.doc, oldBlock)).find(u => u.from <= pos - oldOffset && pos - oldOffset < u.to);
+        oldUnit = oldBlock === null ? undefined : unitsOf(asWrittenIn(origin.doc, oldBlock, oldOffset)).find(u => u.from <= pos - oldOffset && pos - oldOffset < u.to);
     }
     const verdict = oldUnit === undefined ? null : unitVerdict(oldUnit);
     if (oldUnit === undefined || verdict === null) {
@@ -3748,7 +3748,29 @@ function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | n
     if ('cause' in block) {
         return block;
     }
-    for (const [shownBlock, parsedBlock] of block.pairs) {
+    return pairingsDiffer(block.pairings);
+}
+
+/**
+ * What differs under `pairings` (`blockDiffers`): `null` where the part reads
+ * back under any of them — a source block makes more than one hold, and which
+ * one is meant cannot be told — else what the first finds.
+ */
+export function pairingsDiffer(pairings: readonly (readonly [Node, Node][])[]): { cause: ReadCause; at: Node } | null {
+    let first: { cause: ReadCause; at: Node } | null = null;
+    for (const pairs of pairings) {
+        const found = pairsDiffer(pairs);
+        if (found === null) {
+            return null;
+        }
+        first ??= found;
+    }
+    return first;
+}
+
+/** What differs first between each shown textblock and the one the parse reads for it (`readsBackAsShown`), item by item; `null` where nothing does. */
+function pairsDiffer(pairs: readonly [Node, Node][]): { cause: ReadCause; at: Node } | null {
+    for (const [shownBlock, parsedBlock] of pairs) {
         const want = readItems(shownBlock);
         const got = readItems(parsedBlock);
         const at = shownBlock;
@@ -3825,6 +3847,9 @@ function readBlocks(doc: Node): ReadBlock[] {
     return out;
 }
 
+/** How many distinct pairings `blockDiffers` gives to be compared before it leaves a part to the atoms' own checks. */
+const PAIRINGS_COMPARED = 8;
+
 /** A textblock's kind as `blockDiffers` compares it: its type, and a heading's level. */
 function blockKind(node: Node): string {
     return node.type.name === 'heading' ? `heading${String(node.attrs.level)}` : node.type.name;
@@ -3836,8 +3861,10 @@ function blockKind(node: Node): string {
  * counts); a block the editor shows as its source stands for as many of the
  * shown ones as it must, none of them compared — only that block is left to
  * the atoms' own checks, which name what made it (`noteRefusal`), the rest of
- * the part is compared. Where more than one pairing holds (two source blocks,
- * paragraphs between them), which shown one a source block took cannot be
+ * the part is compared. Where more than one distinct pairing holds (two
+ * source blocks with a paragraph between them), each is given
+ * (`pairings`), and the part reads back if it does under any; where more than
+ * `PAIRINGS_COMPARED` do, which shown one a source block took cannot be
  * told: `null`, nothing compared, the atoms' own checks speak. Where none
  * holds, the cause (`block`) at the furthest point a pairing reaches, named
  * by what is read there instead and anchored at the shown textblock there,
@@ -3845,10 +3872,10 @@ function blockKind(node: Node): string {
  * or a header among them, the table writer pads and the tables plugin
  * repairs in the same dispatch: `null`.
  */
-export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node): { pairs: [Node, Node][] } | { cause: ReadCause; at: Node } | null {
+export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node): { pairings: [Node, Node][][] } | { cause: ReadCause; at: Node } | null {
     const blocks = readBlocks(doc);
     const reads = blocks.filter(b => b.kind !== 'other');
-    // How many pairings of shown[i..] with reads[j..] hold, up to two: a source block takes none of them or one more.
+    // Whether a pairing of shown[i..] with reads[j..] holds (1, else 0, two or more paths counted as 2): a source block takes none of them or one more.
     const memo = new Map<number, number>();
     const ways = (i: number, j: number): number => {
         if (j === reads.length) {
@@ -3865,24 +3892,31 @@ export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node):
         }
         return known;
     };
-    const held = ways(0, 0);
-    if (held > 1) {
-        return null;
-    }
-    if (held === 1) {
-        const pairs: [Node, Node][] = [];
-        for (let i = 0, j = 0; j < reads.length;) {
+    if (ways(0, 0) > 0) {
+        // Every distinct pairing — which shown textblock each read one pairs with — up to a few: two source
+        // blocks side by side share what they take in more ways than they pair differently.
+        const pairings = new Map<string, [Node, Node][]>();
+        let paths = 0;
+        const collect = (i: number, j: number, pairs: readonly [number, number][]): void => {
+            if (pairings.size > PAIRINGS_COMPARED || ++paths > 64 * PAIRINGS_COMPARED || ways(i, j) === 0) {
+                return;
+            }
+            if (j === reads.length) {
+                pairings.set(pairs.map(([a, b]) => `${a}:${b}`).join(' '), pairs.map(([a, b]): [Node, Node] => [shown[a], reads[b].node]));
+                return;
+            }
             if (reads[j].kind === 'source') {
-                if (ways(i, j + 1) > 0) {
-                    j++;
-                } else {
-                    i++;
+                collect(i, j + 1, pairs);
+                if (i < shown.length) {
+                    collect(i + 1, j, pairs);
                 }
             } else {
-                pairs.push([shown[i++], reads[j++].node]);
+                collect(i + 1, j + 1, [...pairs, [i, j]]);
             }
-        }
-        return { pairs };
+        };
+        collect(0, 0, []);
+        // Too many to tell apart, or too many ways to count them: nothing compared, the atoms' own checks speak.
+        return pairings.size > PAIRINGS_COMPARED || paths > 64 * PAIRINGS_COMPARED ? null : { pairings: [...pairings.values()] };
     }
     const cell = (node: Node) => node.type.name === 'table_cell' || node.type.name === 'table_header';
     const texts = blocks.filter(b => b.kind === 'text');
@@ -4809,7 +4843,19 @@ function writtenStart(doc: Node, bodyOf: (node: Node) => string): WrittenStart |
  * held to (`writtenStart`): `* ***` is a rule, not an item.
  */
 function readsAsBlock(node: Node, body: string): boolean {
-    const shape = (n: Node): string => (n.isTextblock || n.isLeaf ? n.type.name : `${n.type.name}(${Array.from({ length: n.childCount }, (_, i) => shape(n.child(i))).join(',')})`);
+    // An empty paragraph is written as nothing and read as nothing, as everywhere in the comparison (`holdsWhatIsRead`).
+    const shape = (n: Node): string => {
+        if (n.isTextblock || n.isLeaf) {
+            return n.type.name;
+        }
+        const children: string[] = [];
+        n.forEach(child => {
+            if (!child.isTextblock || holdsWhatIsRead(child)) {
+                children.push(shape(child));
+            }
+        });
+        return `${n.type.name}(${children.join(',')})`;
+    };
     const read = comparisonDoc(body.replace(/\r?\n$/, ''));
     return read.childCount === 1 && shape(read.child(0)) === shape(node);
 }
@@ -4836,13 +4882,21 @@ function verdictStart(doc: Node): WrittenStart | null {
     return start;
 }
 
-/** The node the save writes `node`, a top-level block of `doc`, from (`writtenStart`): what the verdict reads. */
-function asWrittenIn(doc: Node, node: Node): Node {
-    if (doc.firstChild === null || doc.firstChild.type.name === 'front_matter') {
+/**
+ * The node the save writes `node`, the top-level block of `doc` at `offset`,
+ * from (`writtenStart`): what the verdict reads. Told by where it stands, not
+ * by which object it is — a block the edit filter writes may be a copy — and,
+ * where the opening block is respelled, `node` is given the same spelling.
+ */
+function asWrittenIn(doc: Node, node: Node, offset: number): Node {
+    if (doc.firstChild === null || doc.firstChild.type.name === 'front_matter' || offset >= doc.content.size) {
         return node;
     }
     const start = verdictStart(doc);
-    return start !== null && doc.child(start.index) === node ? start.node : node;
+    if (start === null || doc.resolve(offset).index(0) !== start.index || start.node === doc.child(start.index)) {
+        return node;
+    }
+    return node.type === start.node.type ? node.type.create({ ...node.attrs, bullet: start.node.attrs.bullet, markup: start.node.attrs.markup }, node.content, node.marks) : node;
 }
 
 /**
@@ -4855,8 +4909,9 @@ function asWrittenIn(doc: Node, node: Node): Node {
  * not the very ones they were: an edit that left them reads as it did.
  */
 export function frontMatterTakeover(doc: Node, before?: Node): string | null {
-    if (before !== undefined) {
-        const was = verdictStart(before);
+    const was = before === undefined ? undefined : verdictStart(before);
+    // A document that wrote nothing has no opening block to keep: any of its blocks may open the file now.
+    if (before !== undefined && was !== undefined && (was !== null || before.firstChild?.type.name === 'front_matter')) {
         const keep = was === null ? 1 : was.index + 1;
         let same = 0;
         while (same < keep && same < doc.childCount && same < before.childCount && doc.child(same) === before.child(same)) {

@@ -676,7 +676,8 @@ decides whether to ask. The textblocks are paired in order, of one kind each; a 
 parse holds that the editor shows as its source (an emoji it cannot place) stands for as many
 of the shown ones as it must, and only those go uncompared — the rest of the part is
 compared, and what made that block is the atoms' own checks' to name; where more than one
-pairing holds, which shown one it took cannot be told, and nothing is compared. Where none
+distinct pairing holds, the part reads back if it does under any of them (`pairingsDiffer`),
+and past eight, which shown one it took cannot be told, and nothing is compared. Where none
 holds, the cause is named at the furthest point a pairing reaches. A row's cells one more
 or less stay the tables' (the writer pads a row, the plugin repairs one). The atoms' own checks
 (an emoji made code, an embed) and a note's speak before a `block` cause, which the attribute
