@@ -675,7 +675,9 @@ comparison finds elsewhere in a block is no reason to drop a `{…}` that reads 
 decides whether to ask. The textblocks are paired in order, of one kind each; a block the
 parse holds that the editor shows as its source (an emoji it cannot place) stands for as many
 of the shown ones as it must, and only those go uncompared — the rest of the part is
-compared, and what made that block is the atoms' own checks' to name. A row's cells one more
+compared, and what made that block is the atoms' own checks' to name; where more than one
+pairing holds, which shown one it took cannot be told, and nothing is compared. Where none
+holds, the cause is named at the furthest point a pairing reaches. A row's cells one more
 or less stay the tables' (the writer pads a row, the plugin repairs one). The atoms' own checks
 (an emoji made code, an embed) and a note's speak before a `block` cause, which the attribute
 fields therefore leave to the edit filter (`literalsReadBackRefusal`). Where a safe spelling
@@ -684,12 +686,17 @@ written (`wrapInline`), a run of `_` is written bare only where the engine's own
 scan finds it can neither open nor close (`underscoreRunsEscaped`), and a document's first `-`
 list or `---` rule that the host's front-matter rule — which only the host's engine runs,
 inside a list item at the first line too — would read as front matter is written with another
-bullet or rule (`outOfFrontMatter`, asked of the page's engine with that rule,
-`frontMatterEngineFor`). That one function says what the first block is written as, to the
-save and to the verdict, which reads that block's parts as written; and the edit filter
-reads the file's first line as written with the rule (`frontMatterTakeover`), so a start no
-spelling keeps out of front matter — a source block's `---` left at the top once the front
-matter above it is deleted — is refused.
+bullet or rule — only where the engine reads the block so written back as the same block,
+every item and a rule among them (`readsAsBlock`). One function says which block opens the
+file and what it is written as (`writtenStart`, asked of the page's engine with that rule,
+`frontMatterEngineFor`): the save asks it, and so does the verdict, for the part after the
+edit and for the one before it (`unitBefore`). Only a `-` list or a rule written by rule, or a
+block kept as spelled whose text opens with `-`, can put the rule's `-` first, and a list is
+judged by its first item, as the rule is. The edit filter refuses a start no spelling keeps
+out of front matter — a source block's `---` left at the top once the front matter above it
+is deleted (`frontMatterTakeover`) — asked only where the blocks up to the one that opened
+the file are not the very ones they were. And a list item that is a rule is written with a
+character its marker is not (`* ---`, `- ***`): `* ***` is a rule that ends the list.
 Its cost per keystroke, measured on 1500–3000-line documents, is about 0.3 ms at the
 median and 1 ms at the 90th percentile over master's. The literal and sidebar reads run
 where the text holds a `{`, a `$` or an `@`, or the model holds a literal (one written on
