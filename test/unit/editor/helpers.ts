@@ -25,9 +25,9 @@ export function readText(file: string): string {
     return fs.readFileSync(file, 'utf8');
 }
 
-/** The engine exactly as the host builds it. */
-export function hostEngine(extend: MarkdownItExtender[] = []): MarkdownIt {
-    return createEditorEngine({ linkify: true, typographer: false, plugins, extend });
+/** The engine exactly as the host builds it — with VS Code's typographer where `typographer` says. */
+export function hostEngine(extend: MarkdownItExtender[] = [], typographer = false): MarkdownIt {
+    return createEditorEngine({ linkify: true, typographer, plugins, extend });
 }
 
 export function toCrlf(text: string): string {

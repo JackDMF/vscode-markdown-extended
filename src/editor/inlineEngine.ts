@@ -1,4 +1,5 @@
 import markdownIt from 'markdown-it';
+import frontMatter from 'markdown-it-front-matter';
 import { MarkdownIt, Token } from '../@types/markdown-it';
 import { PAGE_PLUGINS, PAGE_PLUGINS_IN_ORDER, isPagePlugin } from '../plugin/inlinePlugins';
 import { MarkdownItAttrs, readsAttrs } from '../plugin/markdownItAttrs';
@@ -223,10 +224,16 @@ export function definitionOf(md: MarkdownIt): InlineEngineDefinition {
  * (`threw`) runs as far as it gets here too. Then what the host's extenders
  * did after its registry: the wiki embed rule disabled where the host's is
  * not read (`wikiEmbeds`), the emoji rule where the host's is not
- * (`emoji`), and with `math` the stand-in for VS Code's math.
+ * (`emoji`), and with `math` the stand-in for VS Code's math. With
+ * `withFrontMatter`, the host's front-matter rule first, as the host registers
+ * it (`createEditorEngine`): what reads a document's first lines as the host does.
  */
-export function createInlineEngine(definition: InlineEngineDefinition): MarkdownIt {
+export function createInlineEngine(definition: InlineEngineDefinition, withFrontMatter = false): MarkdownIt {
     const md = baseEngine(definition);
+    if (withFrontMatter) {
+        // The callback receives the YAML; only whether the rule reads a block is asked.
+        md.use(frontMatter as unknown as (md: MarkdownIt, cb: () => void) => void, () => undefined);
+    }
     for (const { name, args, threw } of definition.plugins) {
         if (isPagePlugin(name)) {
             const plugin = PAGE_PLUGINS[name] as unknown as (md: MarkdownIt, ...args: unknown[]) => void;
@@ -254,7 +261,7 @@ export function createInlineEngine(definition: InlineEngineDefinition): Markdown
 
 /** The definition the page reads with now (`setCurrentInlineDefinition`), and the engines built from it, made when first asked. */
 let currentDefinition: InlineEngineDefinition = DEFAULT_INLINE_ENGINE;
-let currentEngines: { inline: MarkdownIt | null; attrs: MarkdownIt | null } = { inline: null, attrs: null };
+let currentEngines: { inline: MarkdownIt | null; attrs: MarkdownIt | null; frontMatter: MarkdownIt | null } = { inline: null, attrs: null, frontMatter: null };
 
 /**
  * Read with the engine `definition` describes from now on — the host's, which
@@ -268,7 +275,7 @@ export function setCurrentInlineDefinition(definition: InlineEngineDefinition): 
         return false;
     }
     currentDefinition = definition;
-    currentEngines = { inline: null, attrs: null };
+    currentEngines = { inline: null, attrs: null, frontMatter: null };
     return true;
 }
 
@@ -299,6 +306,29 @@ export function currentReadsAttrs(): boolean {
 export function currentInlineEngine(): MarkdownIt {
     currentEngines.inline ??= createInlineEngine(currentDefinition);
     return currentEngines.inline;
+}
+
+/** The engines `frontMatterEngineFor` built, by definition. */
+const frontMatterEngines = new Map<string, MarkdownIt>();
+
+/**
+ * The page's engine for `definition` with the host's front-matter rule
+ * (`createInlineEngine`), which only the host's engine runs: a document's first
+ * block is read with it where the save asks whether its first lines would be
+ * taken for front matter (`serializeLayout`).
+ */
+export function frontMatterEngineFor(definition: InlineEngineDefinition): MarkdownIt {
+    if (definition === currentDefinition) {
+        currentEngines.frontMatter ??= createInlineEngine(currentDefinition, true);
+        return currentEngines.frontMatter;
+    }
+    const key = JSON.stringify(definition);
+    let md = frontMatterEngines.get(key);
+    if (md === undefined) {
+        md = createInlineEngine(definition, true);
+        frontMatterEngines.set(key, md);
+    }
+    return md;
 }
 
 /** The engines `attrsEngineFor` built, by definition; few, as a session reads with one at a time. */

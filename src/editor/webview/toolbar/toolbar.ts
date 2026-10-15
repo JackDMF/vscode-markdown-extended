@@ -1277,8 +1277,9 @@ class ToolbarView implements PluginView {
             keys: ATTRIBUTES_FIELD_KEYS,
             commit: value => {
                 // Asked before the focus goes back: a refusal keeps the field open with what was typed.
-                // The transaction is built after it is back, which may commit a source box.
-                const refusal = applySpanRefusal(view.state, value) ?? (applySpanTransaction(view.state, value) === null ? SPAN_REFUSED : null);
+                // The transaction is built after it is back, which may commit a source box. Both are
+                // decided in one place (`applySpanRefusal`, `applySpanTransaction`): no refusal, a transaction.
+                const refusal = applySpanRefusal(view.state, value);
                 if (refusal !== null) {
                     return refusedStep(step, value, refusal);
                 }

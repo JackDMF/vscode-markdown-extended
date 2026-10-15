@@ -16,7 +16,7 @@ import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wr
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
 import { SHORTCUT_PRETEST, shortcutEscapes } from './emojiShortcuts';
-import { InlineEngineDefinition, ReadAutoLink, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, currentReadsWikiEmbeds, placesOf as placesOfText, readAutoLinks, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
+import { InlineEngineDefinition, ReadAutoLink, ReadSidebar, attrsEngineFor, currentInlineDefinition, currentInlineEngine, frontMatterEngineFor, currentReadsWikiEmbeds, placesOf as placesOfText, readAutoLinks, readSidebars, setCurrentInlineDefinition, sidebarsIn } from './inlineEngine';
 
 /**
  * Writing the editor's document back to Markdown.
@@ -250,6 +250,58 @@ function backslashedAt(text: string, at: readonly number[]): string {
     return written + text.slice(last);
 }
 
+/**
+ * `escaped`, the library's escape of `text`, with each run of `_` written
+ * whole: bare where the engine reads the bare run, where it stands in `text`,
+ * as a delimiter that can neither open nor close (`scanDelims`, the very test
+ * its emphasis rule makes — `snake__case`, `größe__x`), escaped every one
+ * otherwise, and at either end of `text`, whose neighbour is not known here.
+ * The library decided by `\w`, `_` among it and `é` not, and so escaped a run
+ * at its outer ends only: `__abc__` after a closing `**` came out
+ * `\__abc_\_`, which reads as an emphasis between two underscores.
+ */
+function underscoreRunsEscaped(text: string, escaped: string): string {
+    if (!text.includes('_')) {
+        return escaped;
+    }
+    // Whether each `_` of `text`, in order, is to be escaped.
+    const escapes: boolean[] = [];
+    let state: DelimiterScan | null = null;
+    for (const run of text.matchAll(/_+/g)) {
+        const end = run.index + run[0].length;
+        let inert = false;
+        if (run.index > 0 && end < text.length) {
+            const md = currentInlineEngine();
+            state ??= new (md.inline as unknown as { State: new (src: string, md: MarkdownIt, env: object, tokens: Token[]) => DelimiterScan }).State(text, md, {}, []);
+            const read = state.scanDelims(run.index, false);
+            inert = !read.can_open && !read.can_close;
+        }
+        escapes.push(...Array<boolean>(run[0].length).fill(!inert));
+    }
+    // Each `_` of `text` stands in `escaped` once, in order, with the library's backslash or without.
+    let out = '';
+    let k = 0;
+    for (let i = 0; i < escaped.length; i++) {
+        const ch = escaped[i];
+        if (ch === '\\' && escaped[i + 1] === '_') {
+            out += escapes[k++] ? '\\_' : '_';
+            i++;
+        } else if (ch === '\\' && i + 1 < escaped.length) {
+            out += ch + escaped[++i];
+        } else if (ch === '_') {
+            out += escapes[k++] ? '\\_' : '_';
+        } else {
+            out += ch;
+        }
+    }
+    return out;
+}
+
+/** markdown-it's inline state, as far as `underscoreRunsEscaped` asks it: whether a run of delimiters at `start` can open or close. */
+interface DelimiterScan {
+    scanDelims(start: number, canSplitWord: boolean): { can_open: boolean; can_close: boolean };
+}
+
 /** Whether the UTF-16 unit `code` is a hold marker (`HOLD_OPEN`, `HOLD_CLOSE`). */
 function isHold(code: number): boolean {
     return code === HOLD_OPEN.charCodeAt(0) || code === HOLD_CLOSE.charCodeAt(0);
@@ -339,10 +391,16 @@ function destination(href: string, part?: NotePart, noteMarker?: string, inTable
             return seq;
         }
     });
-    // A space or control character ends a destination; markdown-it never
-    // produces one, but a link the UI set can hold one.
-    const written = decoded
-        .replace(/[\x00-\x20\x7f]/g, percent)
+    // A space or control character ends a destination, `<` opens one of its
+    // own, a backslash escapes what follows it and a character reference is
+    // decoded: markdown-it never produces one raw, but a link the UI set can
+    // hold one. Each is written as the engine reads it back to the address
+    // the page shows (`normalizeLink`, `targetDiffers`) — percent-encoded,
+    // which it would do itself, or a reference's `&` escaped — and white space
+    // at the ends, which the engine drops, is dropped.
+    const written = decoded.trim()
+        .replace(/[\x00-\x20\x7f<>\\]/g, percent)
+        .replace(CHARACTER_REFERENCE_START, '\\&')
         .replace(/[()]/g, '\\$&');
     // Inside a note part its terminator, and a run of the note's marker
     // character (`C++`), are percent-encoded: a URL takes no character reference.
@@ -357,8 +415,9 @@ function destination(href: string, part?: NotePart, noteMarker?: string, inTable
 function target(st: StateInternals, href: string, title: string | null): string {
     // A backtick in a title would open code for the table plugin's row scan; the title takes an escape.
     // In a table cell a `|` in a title is a boundary to the row scan, and it takes an escape.
-    const titleText = st.inTableCell && title ? title.replace(/[`|]/g, '\\$&') : title;
-    const titled = breakMarkerRuns(partText(st.notePart, titlePart(titleText)), st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
+    const written = titlePart(title);
+    const inCell = st.inTableCell ? written.replace(/[`|]/g, '\\$&') : written;
+    const titled = breakMarkerRuns(partText(st.notePart, inCell), st.noteMarker, ch => MARKER_REFERENCES[ch] ?? ch);
     return destination(href, st.notePart, st.noteMarker, st.inTableCell) + titled;
 }
 
@@ -376,9 +435,25 @@ function partText(part: NotePart | undefined, escaped: string): string {
     return terminator === null ? escaped : escaped.replace(terminator.escaped, terminator.entity).split(terminator.raw).join(terminator.entity);
 }
 
+/**
+ * A title as the engine reads it back to the text the page shows: a backslash
+ * and a `"` escaped, a character reference's `&` escaped, and a line break as
+ * a reference — a blank line would end the paragraph, and a line of its own
+ * could open a block.
+ */
 function titlePart(title: string | null): string {
-    return title ? ` "${title.replace(/"/g, '\\"')}"` : '';
+    if (!title) {
+        return '';
+    }
+    const escaped = title
+        .replace(/[\\"]/g, '\\$&')
+        .replace(CHARACTER_REFERENCE_START, '\\&')
+        .replace(/\r?\n|\r/g, ch => (ch === '\r' ? '&#13;' : ch === '\n' ? '&#10;' : '&#13;&#10;'));
+    return ` "${escaped}"`;
 }
+
+/** The `&` of what markdown-it would read as a character reference (`&amp;`, `&#35;`, `&#x1F;`) — or a name it does not know, which an escape leaves as it is. */
+const CHARACTER_REFERENCE_START = /&(?=#?[A-Za-z0-9]+;)/g;
 
 /**
  * How a link is written: a bare URL stays bare and an `<…>` autolink stays one,
@@ -765,7 +840,7 @@ export class OrderedInlineState extends LibraryState {
      * (`escapedTexts`). A text holding no shortcut is written as escaped.
      */
     esc(str: string, startOfLine = false): string {
-        const escaped = super.esc(str, startOfLine);
+        const escaped = underscoreRunsEscaped(str, super.esc(str, startOfLine));
         if (!SHORTCUT_PRETEST.test(escaped)) {
             return escaped;
         }
@@ -1422,7 +1497,9 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
     // Whether `[from, to)` lies outside the edit's range: only written again beside it.
     const outside = (from: number, to: number) => to <= start || from >= Math.max(end, start + 1);
     for (const block of blocks) {
-        for (const [index, unit] of unitsOf(block.node).entries()) {
+        // The document's first block is read as it is written: with the bullet that keeps it out of front matter.
+        const written = asWrittenIn(doc, block.node, block.offset);
+        for (const [index, unit] of unitsOf(written).entries()) {
             if (origin?.rewritten === undefined && outside(block.offset + unit.from, block.offset + unit.to)) {
                 continue;
             }
@@ -2006,7 +2083,7 @@ function unitBefore(origin: EditOrigin, block: { node: Node; offset: number; cop
     if (block.copyOf !== undefined && block.copyOf !== null) {
         oldOffset = block.copyOf;
         oldBlock = origin.doc.nodeAt(oldOffset);
-        oldUnit = oldBlock === null ? undefined : unitsOf(oldBlock)[index];
+        oldUnit = oldBlock === null ? undefined : unitsOf(asWrittenIn(origin.doc, oldBlock, oldOffset))[index];
     } else {
         const pos = Math.min(origin.mapping.invert().map(block.offset + unit.from + 1, -1), origin.doc.content.size);
         const $old = origin.doc.resolve(pos);
@@ -2015,7 +2092,7 @@ function unitBefore(origin: EditOrigin, block: { node: Node; offset: number; cop
         }
         oldOffset = $old.depth === 0 ? pos : $old.before(1);
         oldBlock = origin.doc.nodeAt(oldOffset);
-        oldUnit = oldBlock === null ? undefined : unitsOf(oldBlock).find(u => u.from <= pos - oldOffset && pos - oldOffset < u.to);
+        oldUnit = oldBlock === null ? undefined : unitsOf(asWrittenIn(origin.doc, oldBlock, oldOffset)).find(u => u.from <= pos - oldOffset && pos - oldOffset < u.to);
     }
     const verdict = oldUnit === undefined ? null : unitVerdict(oldUnit);
     if (oldUnit === undefined || verdict === null) {
@@ -2045,6 +2122,12 @@ export function causeReason(cause: ReadCause): string {
             return `After this edit the preview would read text here as ${cause.noun}, which the editor does not show: keep a space or another character between the delimiters that would make it.`;
         case 'text':
             return 'After this edit the preview would not read this text back as written: part of it would be taken as markup.';
+        case 'address':
+            return `After this edit the preview would not read the ${cause.noun === 'image' ? 'image\'s path' : 'link\'s address'} back as it is shown: no way of writing it here reads back. Change it, or edit it in the text editor.`;
+        case 'title':
+            return `After this edit the preview would not read the ${cause.noun}'s title back as it is shown: no way of writing it here reads back. Change it, or edit it in the text editor.`;
+        case 'block':
+            return `After this edit the preview would read this text as ${cause.noun}, which the editor does not show here. Edit it in the text editor to write that.`;
         case 'unread':
             return 'After this edit the editor could not read this text back to check what the preview would show, so it is not applied. Edit it in the text editor.';
     }
@@ -2423,7 +2506,13 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             state.closeBlock(node);
         },
         horizontal_rule(state, node) {
-            state.write(String(node.attrs.markup || '---'));
+            // On a line a list item's marker opened, a rule of the marker's own character is read as a
+            // rule that ends the list (`* ***`, `- ---`): it is written with another character.
+            state.write('');
+            const st = internals(state);
+            const line = st.out.slice(st.out.lastIndexOf('\n') + 1);
+            const markup = String(node.attrs.markup || '---');
+            state.write([markup, '***', '---', '___'].find(m => !line.includes(m[0])) ?? markup);
             state.closeBlock(node);
         },
         table(state, node) {
@@ -2955,7 +3044,7 @@ export function setWriteOptions(options: SerializeOptions): void {
     }
     writeOptions = { ...options };
     writer = null;
-    forgetReadBack();
+    forgetReadBack(false);
 }
 
 function currentWriter(): MarkdownSerializer {
@@ -3286,7 +3375,7 @@ function readUnit(text: string, key = text): UnitRead {
         unitReadCache.set(key, read);
         return read;
     }
-    const tokens = attrsEngineFor(currentInlineDefinition()).parse(text, {});
+    const tokens = unitTokens(text);
     read = { blocks: [], marks: [], sidebars: [], inlines: 0, madeInline: false, math: false, emoji: [], texts: [] };
     const found = read;
     // Superscript's text is read apart (markdown-it-sup-alt): an emoji there may have no known place.
@@ -3484,15 +3573,17 @@ export interface LiteralLoss {
      * Set where the parse of the written text, compared with the model character by
      * character (`readsBackAsShown`), gives other text or other formatting: two runs of one
      * element read as one (`merged`), an element not read back (`lost`), text read as one
-     * the page does not show (`made`), or other characters (`text`) — and what that
-     * element is called (`inline code`, `bold text`).
+     * the page does not show (`made`), other characters (`text`), a link's address or
+     * an image's path (`address`) or their title (`title`) read otherwise, or the
+     * textblocks themselves (`block`) — and what that element is called (`inline code`,
+     * `bold text`; `link` or `image`; for a block, what is read instead: `a code block`).
      */
     cause?: ReadCause;
 }
 
 /** What differs between the model and the parse of the written text (`LiteralLoss.cause`). */
 export interface ReadCause {
-    kind: 'merged' | 'lost' | 'made' | 'text' | 'unread';
+    kind: 'merged' | 'lost' | 'made' | 'text' | 'address' | 'title' | 'block' | 'unread';
     noun: string;
 }
 
@@ -3537,13 +3628,21 @@ function matchInOrder<W, F>(wanted: readonly W[], found: readonly F[], same: (w:
 interface ReadItem {
     key: string;
     marks: readonly Mark[];
+    /** An image's path and title, compared apart from its key so that a difference is named as one (`targetDiffers`). */
+    target?: ReadTarget;
+}
+
+/** A link's address or an image's path, and its title, as the comparison holds them. */
+interface ReadTarget {
+    href: string;
+    title: string | null;
 }
 
 /**
  * A mark as the comparison tells it from another: its type and its literal, by
  * the attributes it gives. Not emphasis' delimiter, which the writer chooses
  * where the parser needs it (`_x_` followed by a letter is written `*x*`), nor
- * a link's address, which is the link's own and spelled as its place needs.
+ * a link's address and title, which are compared apart (`targetDiffers`).
  */
 function readMarkKey(mark: Mark): string {
     const literal = typeof mark.attrs.literal === 'string' ? attrsKey(literalPairs(mark.attrs.literal)) : '';
@@ -3596,9 +3695,9 @@ function readItems(textblock: Node): ReadItem[] {
                 return;
             }
             if (name === 'image') {
-                // Its alt text and its literal; its path is its own, spelled as its place needs.
-                const { alt, literal } = child.attrs as { alt: string | null; literal: string | null };
-                out.push({ key: `${path}|image(${alt ?? ''},${attrsKey(literalPairs(literal))})`, marks });
+                // Its alt text and its literal; its path and its title apart (`targetDiffers`).
+                const { alt, literal, src, title } = child.attrs as { alt: string | null; literal: string | null; src: string; title: string | null };
+                out.push({ key: `${path}|image(${alt ?? ''},${attrsKey(literalPairs(literal))})`, marks, target: { href: src, title } });
             } else if (name === 'wiki_embed') {
                 // By the name it reads as: the writer encodes what its place needs (`&#96;`, `\|`).
                 out.push({ key: `${path}|${name}(${plainWikiEmbed(String(child.attrs.source))})`, marks });
@@ -3628,23 +3727,53 @@ function markNoun(mark: Mark): string {
  * atoms, each with the same marks and literals. `null` when they are
  * the same; else what differs at the first item that does (`ReadCause`): one
  * element where the model holds another of its kind (two runs read as one),
- * an element missing, one the model does not hold, or other text. Where the
- * parse holds another number of textblocks than the model — the written text
- * is no longer the same kind of block — the block's own verdicts speak for it.
+ * an element missing, one the model does not hold, or other text. Before
+ * that, the textblocks themselves (`blockDiffers`): where the parse holds
+ * another number or kind of them — a paragraph read as a code block, a rule,
+ * a heading, two paragraphs — the written text is no longer the same block.
  */
 function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | null {
     if (unit.textblocks.length === 0) {
         return null;
     }
     // A parse that throws is the whole verdict's to answer (`unitVerdict`): `unread`.
-    const parsed = inlineTextblocks(comparisonDoc(unit.text), 0).map(t => t.node);
-    if (parsed.length !== unit.textblocks.length) {
+    const doc = comparisonDoc(unit.text);
+    // A paragraph the save writes nothing for — emptied, or holding only what is not written — the parser never
+    // reads; nor is the empty one the parse gives an empty item a textblock read.
+    const shown = unit.textblocks.map(t => t.node).filter(holdsWhatIsRead);
+    const block = blockDiffers(shown, doc, unit.textblocks[0].node);
+    if (block === null) {
         return null;
     }
-    for (let k = 0; k < parsed.length; k++) {
-        const want = readItems(unit.textblocks[k].node);
-        const got = readItems(parsed[k]);
-        const at = unit.textblocks[k].node;
+    if ('cause' in block) {
+        return block;
+    }
+    return pairingsDiffer(block.pairings);
+}
+
+/**
+ * What differs under `pairings` (`blockDiffers`): `null` where the part reads
+ * back under any of them — a source block makes more than one hold, and which
+ * one is meant cannot be told — else what the first finds.
+ */
+export function pairingsDiffer(pairings: readonly (readonly [Node, Node][])[]): { cause: ReadCause; at: Node } | null {
+    let first: { cause: ReadCause; at: Node } | null = null;
+    for (const pairs of pairings) {
+        const found = pairsDiffer(pairs);
+        if (found === null) {
+            return null;
+        }
+        first ??= found;
+    }
+    return first;
+}
+
+/** What differs first between each shown textblock and the one the parse reads for it (`readsBackAsShown`), item by item; `null` where nothing does. */
+function pairsDiffer(pairs: readonly [Node, Node][]): { cause: ReadCause; at: Node } | null {
+    for (const [shownBlock, parsedBlock] of pairs) {
+        const want = readItems(shownBlock);
+        const got = readItems(parsedBlock);
+        const at = shownBlock;
         for (let i = 0; i < Math.max(want.length, got.length); i++) {
             const w = want[i];
             const g = got[i];
@@ -3656,6 +3785,10 @@ function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | n
             const wantKeys = wantMarks.map(m => readMarkKey(m)).sort();
             const gotKeys = gotMarks.map(m => readMarkKey(m)).sort();
             if (wantKeys.join('+') === gotKeys.join('+')) {
+                const target = targetDiffers(w, g, wantMarks, gotMarks);
+                if (target !== null) {
+                    return { cause: target, at };
+                }
                 continue;
             }
             // The first mark that differs, by type: two runs read as one, missing, or made.
@@ -3670,12 +3803,206 @@ function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | n
     return null;
 }
 
+/** What a block the parse reads instead of a textblock the page shows is called in a reason (`blockDiffers`). */
+const READ_BLOCK_NOUNS: Readonly<Record<string, string>> = {
+    paragraph: 'a paragraph',
+    heading: 'a heading',
+    table_cell: 'a table',
+    table_header: 'a table',
+    code_block: 'a code block',
+    horizontal_rule: 'a rule',
+};
+
+/**
+ * A block the parse of a part reads, in order (`readBlocks`): a textblock
+ * whose inline content it reads (`text`), a block the editor shows as its
+ * source (`source`: an emoji it cannot place, a construct it does not edit),
+ * or another holding no inline text (`other`: a code block, a rule).
+ */
+interface ReadBlock {
+    node: Node;
+    kind: 'text' | 'source' | 'other';
+}
+
+/** The blocks `doc`, a part's parse, reads (`ReadBlock`), but the empty paragraph the parse gives an empty item. */
+function readBlocks(doc: Node): ReadBlock[] {
+    const out: ReadBlock[] = [];
+    doc.descendants(node => {
+        if (node.isTextblock && INLINE_TEXTBLOCKS.has(node.type.name)) {
+            if (holdsWhatIsRead(node)) {
+                out.push({ node, kind: 'text' });
+            }
+            return false;
+        }
+        if (SOURCE_NODES.has(node.type.name)) {
+            out.push({ node, kind: 'source' });
+            return false;
+        }
+        if (node.isTextblock || node.isLeaf) {
+            out.push({ node, kind: 'other' });
+            return false;
+        }
+        return true;
+    });
+    return out;
+}
+
+/** How many distinct pairings `blockDiffers` gives to be compared before it leaves a part to the atoms' own checks. */
+const PAIRINGS_COMPARED = 8;
+
+/** A textblock's kind as `blockDiffers` compares it: its type, and a heading's level. */
+function blockKind(node: Node): string {
+    return node.type.name === 'heading' ? `heading${String(node.attrs.level)}` : node.type.name;
+}
+
+/**
+ * The textblocks the page shows (`shown`) paired with those the parse of the
+ * part (`doc`) reads, in order and of one kind each (a heading's level
+ * counts); a block the editor shows as its source stands for as many of the
+ * shown ones as it must, none of them compared — only that block is left to
+ * the atoms' own checks, which name what made it (`noteRefusal`), the rest of
+ * the part is compared. Where more than one distinct pairing holds (two
+ * source blocks with a paragraph between them), each is given
+ * (`pairings`), and the part reads back if it does under any; where more than
+ * `PAIRINGS_COMPARED` do, which shown one a source block took cannot be
+ * told: `null`, nothing compared, the atoms' own checks speak. Where none
+ * holds, the cause (`block`) at the furthest point a pairing reaches, named
+ * by what is read there instead and anchored at the shown textblock there,
+ * else at `fallback` — but for a table's row, whose cells, one more or less
+ * or a header among them, the table writer pads and the tables plugin
+ * repairs in the same dispatch: `null`.
+ */
+export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node): { pairings: [Node, Node][][] } | { cause: ReadCause; at: Node } | null {
+    const blocks = readBlocks(doc);
+    // A run of source blocks side by side takes what it takes as one: one read, so each way through is one pairing.
+    const reads = blocks.filter(b => b.kind !== 'other').filter((b, k, all) => b.kind !== 'source' || all[k - 1]?.kind !== 'source');
+    // Whether a pairing of shown[i..] with reads[j..] holds (1, else 0, two or more paths counted as 2): a source block takes none of them or one more.
+    const memo = new Map<number, number>();
+    const ways = (i: number, j: number): number => {
+        if (j === reads.length) {
+            return i === shown.length ? 1 : 0;
+        }
+        const key = i * (reads.length + 1) + j;
+        let known = memo.get(key);
+        if (known === undefined) {
+            const read = reads[j];
+            known = read.kind === 'source'
+                ? Math.min(2, ways(i, j + 1) + (i < shown.length ? ways(i + 1, j) : 0))
+                : i < shown.length && blockKind(shown[i]) === blockKind(read.node) ? ways(i + 1, j + 1) : 0;
+            memo.set(key, known);
+        }
+        return known;
+    };
+    if (ways(0, 0) > 0) {
+        // Every pairing — which shown textblock each read one pairs with — up to a few: with the runs of
+        // source blocks made one, each way through is a pairing of its own.
+        const pairings: [Node, Node][][] = [];
+        const collect = (i: number, j: number, pairs: readonly [number, number][]): void => {
+            if (pairings.length > PAIRINGS_COMPARED || ways(i, j) === 0) {
+                return;
+            }
+            if (j === reads.length) {
+                pairings.push(pairs.map(([a, b]): [Node, Node] => [shown[a], reads[b].node]));
+                return;
+            }
+            if (reads[j].kind === 'source') {
+                collect(i, j + 1, pairs);
+                if (i < shown.length) {
+                    collect(i + 1, j, pairs);
+                }
+            } else {
+                collect(i + 1, j + 1, [...pairs, [i, j]]);
+            }
+        };
+        collect(0, 0, []);
+        // Too many to tell apart: nothing compared, the atoms' own checks speak.
+        return pairings.length > PAIRINGS_COMPARED ? null : { pairings };
+    }
+    const cell = (node: Node) => node.type.name === 'table_cell' || node.type.name === 'table_header';
+    const texts = blocks.filter(b => b.kind === 'text');
+    if (shown.length > 0 && texts.length > 0 && shown.every(cell) && texts.every(b => cell(b.node))) {
+        return null;
+    }
+    // The furthest point a pairing reaches, the most shown textblocks paired first.
+    let far = { i: 0, j: 0 };
+    const seen = new Set<number>();
+    const walk = [far];
+    while (walk.length > 0) {
+        const at = walk.pop() as { i: number; j: number };
+        const key = at.i * (reads.length + 1) + at.j;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        if (at.i > far.i || (at.i === far.i && at.j > far.j)) {
+            far = at;
+        }
+        const read = reads[at.j] as ReadBlock | undefined;
+        if (read?.kind === 'source') {
+            walk.push({ i: at.i, j: at.j + 1 });
+            if (at.i < shown.length) {
+                walk.push({ i: at.i + 1, j: at.j });
+            }
+        } else if (read !== undefined && at.i < shown.length && blockKind(shown[at.i]) === blockKind(read.node)) {
+            walk.push({ i: at.i + 1, j: at.j + 1 });
+        }
+    }
+    const want = shown[far.i] as Node | undefined;
+    const got = reads.slice(far.j).find(b => b.kind === 'text');
+    const anchor = want ?? shown[shown.length - 1] ?? fallback;
+    if (got !== undefined && want === undefined && blockKind(got.node) === 'paragraph') {
+        return { cause: { kind: 'block', noun: 'more than one block' }, at: anchor };
+    }
+    // What is read where the shown one would be: the textblock there, else the block that took its place.
+    const after = far.j === 0 ? 0 : blocks.indexOf(reads[far.j - 1]) + 1;
+    const instead = got?.node ?? blocks.slice(after).find(b => b.kind !== 'text')?.node;
+    const noun = (instead === undefined ? undefined : READ_BLOCK_NOUNS[instead.type.name]) ?? 'another kind of block';
+    return { cause: { kind: 'block', noun }, at: anchor };
+}
+
+/** Whether a textblock holds anything the comparison reads (`readItems`): a paragraph the save writes nothing for — emptied, or holding only what is not written — and the empty one the parse gives an empty item hold none. One test for the page's side and the parse's. */
+function holdsWhatIsRead(node: Node): boolean {
+    return node.type.name !== 'paragraph' || readItems(node).length > 0;
+}
+
+/**
+ * Where the model's item `w` and the parse's `g` are the same element but the
+ * address (a link's, an image's path) or the title differs, which it is
+ * (`address`, `title`) and of what; else `null`. An address is compared as the
+ * engine reads a destination (`normalizeLink`), so a spelling the writer chose
+ * for its place — `%20` for a space, `\(` — is the same address; a title by its
+ * text, white space as one space, as everywhere in the comparison.
+ */
+function targetDiffers(w: ReadItem, g: ReadItem, wantMarks: readonly Mark[], gotMarks: readonly Mark[]): ReadCause | null {
+    const linkTarget = (marks: readonly Mark[]): ReadTarget | undefined => {
+        const link = marks.find(m => m.type.name === 'link');
+        return link === undefined ? undefined : { href: String(link.attrs.href ?? ''), title: (link.attrs.title as string | null) ?? null };
+    };
+    const pairs: [ReadTarget | undefined, ReadTarget | undefined, string][] = [[w.target, g.target, 'image'], [linkTarget(wantMarks), linkTarget(gotMarks), 'link']];
+    const md = attrsEngineFor(comparisonDefinition());
+    const title = (t: string | null) => (t ?? '').replace(/\s+/g, ' ');
+    for (const [want, got, noun] of pairs) {
+        if (want === undefined || got === undefined) {
+            continue;
+        }
+        if (md.normalizeLink(want.href) !== md.normalizeLink(got.href)) {
+            return { kind: 'address', noun };
+        }
+        if (title(want.title) !== title(got.title)) {
+            return { kind: 'title', noun };
+        }
+    }
+    return null;
+}
+
 /**
  * Whether the parse reads, at item `i`, one element of `differs`' type over
  * items the model holds in two runs of it — two runs side by side read as one,
- * one of them losing its `{…}` — rather than one run otherwise written.
+ * one of them losing its `{…}` — rather than one run otherwise written. Only
+ * items the model gives the mark count as a run: one it does not, which the
+ * parse's element reaches over, is no second run but text the element took.
  */
-function readAsOne(want: readonly ReadItem[], got: readonly ReadItem[], i: number, differs: Mark): boolean {
+export function readAsOne(want: readonly ReadItem[], got: readonly ReadItem[], i: number, differs: Mark): boolean {
     const read = got[i].marks.find(m => m.type === differs.type);
     if (read === undefined) {
         return false;
@@ -3684,7 +4011,9 @@ function readAsOne(want: readonly ReadItem[], got: readonly ReadItem[], i: numbe
     for (const step of [-1, 1]) {
         for (let k = step < 0 ? i : i + 1; k >= 0 && k < Math.min(want.length, got.length) && got[k].marks.some(m => m.eq(read)); k += step) {
             const model = want[k].marks.find(m => m.type === differs.type);
-            runs.add(model === undefined ? '' : readMarkKey(model));
+            if (model !== undefined) {
+                runs.add(readMarkKey(model));
+            }
         }
     }
     return runs.size > 1;
@@ -3723,7 +4052,9 @@ function comparisonDoc(text: string): Node {
         return known;
     }
     const definition = comparisonDefinition();
-    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition).doc;
+    // Without the typographer the comparison reads with the page's own engine: the tokens `readUnit` read are these.
+    const tokens = definition === currentInlineDefinition() ? unitTokens(text) : undefined;
+    const doc = parseDocument(attrsEngineFor(definition), `${text}\n`, {}, definition, tokens).doc;
     if (comparisonCache.size >= UNIT_READ_CACHE_SIZE) {
         comparisonCache.delete(comparisonCache.keys().next().value as string);
     }
@@ -3733,6 +4064,22 @@ function comparisonDoc(text: string): Node {
 
 /** What `comparisonDoc` read, by the text. */
 const comparisonCache = new Map<string, Node>();
+
+/** The last text `unitTokens` parsed, and its tokens: a part's literals and its comparison ask one after the other. */
+let lastTokens: { text: string; tokens: Token[] } | null = null;
+
+/**
+ * `text` with a line end, as `comparisonDoc` parses it, parsed by the page's
+ * engine with markdown-it-attrs: the one token stream the reads of a part
+ * share (`readUnit`, `comparisonDoc` without the typographer), so text that
+ * holds a `{` is parsed once, not once per read.
+ */
+function unitTokens(text: string): Token[] {
+    if (lastTokens?.text !== text) {
+        lastTokens = { text, tokens: attrsEngineFor(currentInlineDefinition()).parse(`${text}\n`, {}) };
+    }
+    return lastTokens.tokens;
+}
 
 /** The verdict of each part, by the node it is written from, with the text it was given for. */
 let verdictCache = new WeakMap<Node, { key: string; verdict: UnitVerdict | null }>();
@@ -3782,6 +4129,9 @@ function judgedUnit(unit: WrittenUnit): UnitVerdict | null {
     const found = readsBackAsShown(unit);
     if (found !== null && (verdict === null || found.cause.kind === 'merged' || (verdict.lost === null && verdict.mismatch === null))) {
         verdict = { lost: { literal: null, at: found.at, cause: found.cause }, mismatch: found.cause.kind === 'merged' ? null : verdict?.mismatch ?? null, literalLost };
+    } else if (found !== null && verdict !== null && verdict.lost !== null && verdict.lost.literal === null && verdict.lost.cause === undefined) {
+        // Text read as attributes no literal gives is what the comparison found, said as what it found.
+        verdict = { ...verdict, lost: { ...verdict.lost, cause: found.cause }, literalLost };
     }
     if (verdict !== null && verdict.lost === null && verdict.mismatch === null) {
         verdict = null;
@@ -3877,13 +4227,24 @@ function sidebarVerdict(unit: WrittenUnit, read: UnitRead): SidebarMismatch | nu
     return null;
 }
 
-/** Forget every part, read and verdict: the engine or the options they were made with changed. */
-function forgetReadBack(): void {
+/**
+ * Forget every part and verdict, and with `reads` every read: the engine they
+ * were made with changed. A change of the write options changes what a part
+ * writes, not what a text reads as, so the reads by text stay (`reads` false).
+ */
+function forgetReadBack(reads = true): void {
     unitsCache = new WeakMap();
     itemCache = new WeakMap();
     wrappedCache = new WeakMap();
     verdictCache = new WeakMap();
+    startCache = new WeakMap();
+    keptOut = new WeakMap();
+    if (!reads) {
+        return;
+    }
     unitReadCache.clear();
+    lastTokens = null;
+    frontMatterCache.clear();
     seamCache.clear();
     comparisonCache.clear();
     orderVerdictCache.clear();
@@ -4267,17 +4628,19 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
     let prev: { node: Node; body: string; remarked: boolean } | null = null;
     const endsLine = (text: string) => text.endsWith('\n') || text.endsWith('\r');
     const lines = (text: string) => (text.match(/\n/g) ?? []).length;
-    /** Whether a node is written by rule: an editable node an edit cleared the `src` of. */
-    const byRule = (node: Node): boolean => {
-        const src = node.attrs.src as string | null | undefined;
-        return node.type.name !== 'front_matter' && !SOURCE_NODES.has(node.type.name) && (src === null || src === undefined);
-    };
+    const byRule = writtenByRule;
     /** A node's text: its `src`, or its serialization with the document's `eol` and a final one. */
     // Each block as written, its unreadable emoji as text (`withReadEmoji`), made once per node.
     const asWritten = new Map<Node, Node>();
+    // Each body written once: the start (`writtenStart`) and the loop ask for the same ones.
+    const bodies = new Map<Node, string>();
     const bodyOf = (node: Node): string => {
         if (!byRule(node)) {
             return (node.attrs.src as string | null | undefined) ?? '';
+        }
+        const known = bodies.get(node);
+        if (known !== undefined) {
+            return known;
         }
         let written = asWritten.get(node);
         if (written === undefined) {
@@ -4285,8 +4648,12 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
             asWritten.set(node, written);
         }
         const text = withBlockSuffix(written, serializer.serialize(editorSchema.topNodeType.create(null, [written])));
-        return text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
+        const body = text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
+        bodies.set(node, body);
+        return body;
     };
+    // The block that opens the file, and what it is written as: the one answer the verdict reads too.
+    const start = writtenStart(doc, bodyOf);
     /**
      * A seam the parser does not read as two blocks, mended by the first rung
      * it does: one blank line, two, then (a list after a list of its kind) the
@@ -4345,6 +4712,10 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
             }
         } else {
             sep = (node.attrs.gap as string | null | undefined) ?? '';
+            if (start !== null && start.index === index && start.node !== node) {
+                remarked = true;
+                body = bodyOf(start.node);
+            }
         }
         out += sep;
         blocks.push({ start: out.length, body });
@@ -4356,4 +4727,251 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
         out += eol;
     }
     return { text: out + tail, blocks };
+}
+
+/**
+ * Whether the host's front-matter rule, which the page's engine does not run,
+ * takes the file whose text begins with `text` for one with front matter. The
+ * rule decides on the file's first line alone — its `-` at the file's start,
+ * then a run of them on that line, in a list item too — and closes what it
+ * opens at the end of the file if nothing else does, so only that line is
+ * read. The last few answers are kept, until the engine changes.
+ */
+function readsFrontMatter(text: string): boolean {
+    // The rule reads nothing unless the file's first character is its `-` (markdown-it-front-matter's own first test).
+    if (!text.startsWith('-')) {
+        return false;
+    }
+    const line = text.split(/\r?\n/, 1)[0];
+    const known = frontMatterCache.get(line);
+    if (known !== undefined) {
+        return known;
+    }
+    const reads = frontMatterEngineFor(currentInlineDefinition()).parse(line, {}).some(token => token.type === 'front_matter');
+    if (frontMatterCache.size >= 16) {
+        frontMatterCache.delete(frontMatterCache.keys().next().value as string);
+    }
+    frontMatterCache.set(line, reads);
+    return reads;
+}
+
+/** What `readsFrontMatter` answered, by the first line. */
+const frontMatterCache = new Map<string, boolean>();
+
+/** Whether `node` is written by rule: an editable node an edit cleared the `src` of; else as the file spells it. */
+function writtenByRule(node: Node): boolean {
+    const src = node.attrs.src as string | null | undefined;
+    return node.type.name !== 'front_matter' && !SOURCE_NODES.has(node.type.name) && (src === null || src === undefined);
+}
+
+/**
+ * How the save starts a document (`writtenStart`): the index of its first
+ * top-level block that writes a body, the node that block is written from —
+ * itself, or the spelling that keeps it out of the host's front matter — and
+ * whether the host would still read front matter there.
+ */
+interface WrittenStart {
+    index: number;
+    node: Node;
+    frontMatter: boolean;
+}
+
+/**
+ * How the save starts `doc`, a block written as `bodyOf` writes it (the
+ * save's writer, or the verdict's: the same rules): the one place the save
+ * (`serializeLayout`) and its verdict (`unwritableInNote`, `unitBefore`,
+ * `frontMatterTakeover`) learn which block opens the file and what it is
+ * written as. `null` for a document that opens with its front matter, or
+ * writes nothing.
+ *
+ * The host's front-matter rule, which only the host's engine runs, decides on
+ * the file's first line and runs inside a list item at that line too: a `-`
+ * list whose first item's text has `---` after its first character
+ * (`- x---`), or a `---` rule, would open front matter that runs to the end of
+ * the file. Only such a block, written by rule, or one kept as the file
+ * spells it whose text opens with `-`, can put the rule's `-` first; a list is
+ * judged by its first item alone, as the rule is. A list or rule that would be
+ * read so is written with another bullet — one the list after it does not
+ * open with, so the seam after it holds — or the rule with `***`, `___`, each
+ * only where the engine reads the block so written back as the same block
+ * (`readsAsBlock`); where none does, as it is, and the edit filter refuses
+ * the edit (`frontMatterTakeover`).
+ */
+function writtenStart(doc: Node, bodyOf: (node: Node) => string): WrittenStart | null {
+    for (let index = 0; index < doc.childCount; index++) {
+        const node = doc.child(index);
+        if (node.type.name === 'front_matter') {
+            return null;
+        }
+        // Only a paragraph, or a block kept as spelled, can write nothing: an emptied one, an injected block.
+        if ((node.type.name === 'paragraph' || !writtenByRule(node)) && bodyOf(node) === '') {
+            continue;
+        }
+        const lead = (node.attrs.gap as string | null | undefined) ?? '';
+        if (!writtenByRule(node)) {
+            return { index, node, frontMatter: readsFrontMatter(lead + bodyOf(node)) };
+        }
+        const list = node.type.name === 'bullet_list';
+        if (!list && node.type.name !== 'horizontal_rule') {
+            return { index, node, frontMatter: false };
+        }
+        const firstLine = (n: Node) => bodyOf(list && n.childCount > 1 ? n.copy(n.content.cut(0, (n.firstChild as Node).nodeSize)) : n);
+        if (!readsFrontMatter(lead + firstLine(node))) {
+            return { index, node, frontMatter: false };
+        }
+        let variants: Node[];
+        if (list) {
+            let after: string | undefined;
+            for (let j = index + 1; j < doc.childCount && after === undefined; j++) {
+                const body = bodyOf(doc.child(j));
+                after = body === '' ? undefined : listMarkerOf(body, false)?.marker ?? '';
+            }
+            const bullets = ['*', '+'].sort((a, b) => Number(a === after) - Number(b === after));
+            variants = bullets.map(bullet => respelledBlock(node, 'bullet', bullet));
+        } else {
+            variants = ['***', '___'].map(markup => respelledBlock(node, 'markup', markup));
+        }
+        // Remembered by the respelled node (`respelledBlock`): a list the edit left alone is not written whole again to ask.
+        const holds = (variant: Node): boolean => {
+            let known = keptOut.get(variant);
+            if (known === undefined) {
+                known = !readsFrontMatter(lead + firstLine(variant)) && readsAsBlock(variant, bodyOf(variant));
+                keptOut.set(variant, known);
+            }
+            return known;
+        };
+        const kept = variants.find(holds);
+        return kept === undefined ? { index, node, frontMatter: true } : { index, node: kept, frontMatter: false };
+    }
+    return null;
+}
+
+/**
+ * `node` with its attribute `name` set to `value` — another bullet, another
+ * rule — made once per node and spelling, so a block an edit left alone is
+ * the same respelled node from one transaction to the next, its parts and its
+ * read remembered (`unitsOf`, `readsAsBlock`).
+ */
+function respelledBlock(node: Node, name: 'bullet' | 'markup', value: string): Node {
+    let made = respellings.get(node);
+    if (made === undefined) {
+        made = new Map();
+        respellings.set(node, made);
+    }
+    const key = `${name}=${value}`;
+    let variant = made.get(key);
+    if (variant === undefined) {
+        variant = node.type.create({ ...node.attrs, [name]: value }, node.content, node.marks);
+        made.set(key, variant);
+    }
+    return variant;
+}
+
+/** Whether a respelled opening block keeps out of front matter and reads back as the same block (`writtenStart`), by the respelled node; forgotten with the parts. */
+let keptOut = new WeakMap<Node, boolean>();
+
+/** What `respelledBlock` made, by the node. */
+const respellings = new WeakMap<Node, Map<string, Node>>();
+
+/**
+ * Whether the engine reads `body`, `node` as written, as one block of the same
+ * shape: its type, and every block in it by type, in order — a list's items
+ * and what each holds, a rule among them too. What a respelled first block is
+ * held to (`writtenStart`): `* ***` is a rule, not an item.
+ */
+function readsAsBlock(node: Node, body: string): boolean {
+    // An empty paragraph is written as nothing and read as nothing, as everywhere in the comparison (`holdsWhatIsRead`).
+    const shape = (n: Node): string => {
+        if (n.isTextblock || n.isLeaf) {
+            return n.type.name;
+        }
+        const children: string[] = [];
+        n.forEach(child => {
+            if (!child.isTextblock || holdsWhatIsRead(child)) {
+                children.push(shape(child));
+            }
+        });
+        return `${n.type.name}(${children.join(',')})`;
+    };
+    const read = comparisonDoc(body.replace(/\r?\n$/, ''));
+    return read.childCount === 1 && shape(read.child(0)) === shape(node);
+}
+
+/** A block as the verdict writes it, as the save does but for the document's line ending: its `src`, or its serialization and a final line end. */
+function verdictBody(node: Node): string {
+    if (!writtenByRule(node)) {
+        return (node.attrs.src as string | null | undefined) ?? '';
+    }
+    const text = withBlockSuffix(node, currentWriter().serialize(editorSchema.topNodeType.create(null, [node])));
+    return text === '' ? '' : `${text.replace(/\r\n?/g, '\n')}\n`;
+}
+
+/** What `writtenStart` answered for a document, with the verdict's writer. */
+let startCache = new WeakMap<Node, WrittenStart | null>();
+
+/** `writtenStart` of `doc` with the verdict's writer, remembered by the document. */
+function verdictStart(doc: Node): WrittenStart | null {
+    let start = startCache.get(doc);
+    if (start === undefined) {
+        start = writtenStart(doc, verdictBody);
+        startCache.set(doc, start);
+    }
+    return start;
+}
+
+/**
+ * The node the save writes `node`, the top-level block of `doc` at `offset`,
+ * from (`writtenStart`): what the verdict reads. Told by where it stands, not
+ * by which object it is — a block the edit filter writes may be a copy — and,
+ * where the opening block is respelled, `node` is given the same spelling.
+ */
+function asWrittenIn(doc: Node, node: Node, offset: number): Node {
+    if (doc.firstChild === null || doc.firstChild.type.name === 'front_matter' || offset >= doc.content.size) {
+        return node;
+    }
+    const start = verdictStart(doc);
+    if (start === null || doc.resolve(offset).index(0) !== start.index || start.node === doc.child(start.index)) {
+        return node;
+    }
+    // The respelled node itself where `node` is the very block it was made from, so its parts are remembered (`unitsOf`).
+    if (node === doc.child(start.index)) {
+        return start.node;
+    }
+    if (node.type !== start.node.type) {
+        return node;
+    }
+    let copy = respelledCopies.get(node);
+    if (copy?.of !== start.node) {
+        copy = { of: start.node, node: node.type.create({ ...node.attrs, bullet: start.node.attrs.bullet, markup: start.node.attrs.markup }, node.content, node.marks) };
+        respelledCopies.set(node, copy);
+    }
+    return copy.node;
+}
+
+/** A copy of a block the edit filter writes, given the respelling of the opening block it stands for (`asWrittenIn`), by the block. */
+const respelledCopies = new WeakMap<Node, { of: Node; node: Node }>();
+
+/**
+ * Why an edit is refused after which the host would read the start of the
+ * file as front matter the page does not show — a source block the edit left
+ * at the file's start, say a rule's `---` after the front matter above it was
+ * deleted, or a first block no other spelling keeps out of it
+ * (`writtenStart`) — or `null`. With `before`, the document the edit
+ * started from, asked only where the blocks up to the one that opened it are
+ * not the very ones they were: an edit that left them reads as it did.
+ */
+export function frontMatterTakeover(doc: Node, before?: Node): string | null {
+    const was = before === undefined ? undefined : verdictStart(before);
+    // A document that wrote nothing has no opening block to keep: any of its blocks may open the file now.
+    if (before !== undefined && was !== undefined && (was !== null || before.firstChild?.type.name === 'front_matter')) {
+        const keep = was === null ? 1 : was.index + 1;
+        let same = 0;
+        while (same < keep && same < doc.childCount && same < before.childCount && doc.child(same) === before.child(same)) {
+            same++;
+        }
+        if (same === keep) {
+            return null;
+        }
+    }
+    return verdictStart(doc)?.frontMatter === true ? causeReason({ kind: 'block', noun: 'front matter' }) : null;
 }

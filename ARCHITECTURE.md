@@ -646,15 +646,24 @@ project's oracle (`readsBackAsShown`, Daniel, 2026-10-14): every part the save w
 again is parsed whole by the page's engine without its typographer (`comparisonDefinition`:
 the typographer only rewrites the text of tokens once the inline rules have read them, so it
 changes no mark, literal or element, while the model holds the text as typed), remembered
-by the text (`comparisonParse`), and each of its textblocks
+by the text (`comparisonDoc`; without the typographer it reads the very tokens the literals'
+read does, `unitTokens`, so a text is parsed once), and each of its textblocks
 compared with the model's, character by character — the same characters that are not
 white space, the same atoms, each with the same marks and literals. Only what is known
 to be harmless is not compared: white space (the writer moves it out of a run, the parser
 trims a line), a hard break's marks (the writer drops them), Req Explorer's decoration
 (not written), a bare address linkify reads on one side only (the writer writes
-`[url](url)` where it must), emphasis' delimiter (the writer writes `*x*` where `_x_`
-would not be read, as before a letter) and a link's address or an image's path (the
-element's own, spelled as its place needs). Where the two
+`[url](url)` where it must) and emphasis' delimiter (the writer writes `*x*` where `_x_`
+would not be read, as before a letter). A link's address and an image's path are compared
+as the engine reads a destination (`normalizeLink`), their title by its text
+(`targetDiffers`): the writer percent-encodes what a destination cannot hold raw (a space,
+`<`, a backslash), escapes the `&` of a character reference, and writes a title's line
+break as `&#10;`, so either reads back; where it would not, the cause is `address` or
+`title`. Before the characters, the textblocks themselves (`blockDiffers`, Daniel's brief of
+2026-10-15): where the parse holds another number or kind of them than the page shows — a
+paragraph read as a code block, a heading, two paragraphs — the cause is `block`, named by
+what is read instead; a paragraph the save writes nothing for (an emptied item) counts on
+neither side. Where the two
 differ, the edit is refused, with the cause the comparison can tell (`ReadCause`), named at
 the textblock it was found in: two runs of one element read as one — only where the parse
 reads one element over items the model holds in two runs (`readAsOne`); else a literal's own
@@ -663,9 +672,32 @@ verdict names it — (`` `foo``abc`{.x} ``, `**foo****abc**{.x}`,
 italic) or made, or other text; a parse that throws is a refusal (`unread`), never a broken
 keystroke. A copy's literal asks the literals alone (`literalsReadBack(block, false)`): what the
 comparison finds elsewhere in a block is no reason to drop a `{…}` that reads back. It is not gated on a `{`: no model of what could go wrong
-decides whether to ask. A part whose parse holds another number of textblocks than the
-model is left to the other checks, which name a block's literal or a sidebar better; the
-atoms' own checks (an emoji made code, an embed) speak before it, as they name the cause.
+decides whether to ask. The textblocks are paired in order, of one kind each; a block the
+parse holds that the editor shows as its source (an emoji it cannot place) stands for as many
+of the shown ones as it must, and only those go uncompared — the rest of the part is
+compared, and what made that block is the atoms' own checks' to name; where more than one
+distinct pairing holds, the part reads back if it does under any of them (`pairingsDiffer`),
+and past eight, which shown one it took cannot be told, and nothing is compared. Where none
+holds, the cause is named at the furthest point a pairing reaches. A row's cells one more
+or less stay the tables' (the writer pads a row, the plugin repairs one). The atoms' own checks
+(an emoji made code, an embed) and a note's speak before a `block` cause, which the attribute
+fields therefore leave to the edit filter (`literalsReadBackRefusal`). Where a safe spelling
+exists the writer uses it instead: a tab and blank lines at a paragraph's start are not
+written (`wrapInline`), a run of `_` is written bare only where the engine's own delimiter
+scan finds it can neither open nor close (`underscoreRunsEscaped`), and a document's first `-`
+list or `---` rule that the host's front-matter rule — which only the host's engine runs,
+inside a list item at the first line too — would read as front matter is written with another
+bullet or rule — only where the engine reads the block so written back as the same block,
+every item and a rule among them (`readsAsBlock`). One function says which block opens the
+file and what it is written as (`writtenStart`, asked of the page's engine with that rule,
+`frontMatterEngineFor`): the save asks it, and so does the verdict, for the part after the
+edit and for the one before it (`unitBefore`). Only a `-` list or a rule written by rule, or a
+block kept as spelled whose text opens with `-`, can put the rule's `-` first, and a list is
+judged by its first item, as the rule is. The edit filter refuses a start no spelling keeps
+out of front matter — a source block's `---` left at the top once the front matter above it
+is deleted (`frontMatterTakeover`) — asked only where the blocks up to the one that opened
+the file are not the very ones they were. And a list item that is a rule is written with a
+character its marker is not (`* ---`, `- ***`): `* ***` is a rule that ends the list.
 Its cost per keystroke, measured on 1500–3000-line documents, is about 0.3 ms at the
 median and 1 ms at the 90th percentile over master's. The literal and sidebar reads run
 where the text holds a `{`, a `$` or an `@`, or the model holds a literal (one written on

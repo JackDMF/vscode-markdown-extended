@@ -1,9 +1,22 @@
 import { Mark, Node } from 'prosemirror-model';
 import { parseDocument, serializeDocument } from '../../../src/editor';
 import { editorSchema as S } from '../../../src/editor/schema';
-import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { DEFAULT_INLINE_ENGINE, currentInlineDefinition } from '../../../src/editor/inlineEngine';
+import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { literalNotReadBack, setInlineEngine } from '../../../src/editor/serialize';
 import { hostEngine, touched } from './helpers';
+
+/** The host's engine with the typographer off and on, built once each. */
+const hosts = new Map<boolean, MarkdownIt>();
+
+function hostFor(typographer: boolean): MarkdownIt {
+    let md = hosts.get(typographer);
+    if (md === undefined) {
+        md = hostEngine([], typographer);
+        hosts.set(typographer, md);
+    }
+    return md;
+}
 
 /**
  * The brute-force round trip of inline formatting: runs of text side by side,
@@ -56,12 +69,17 @@ export interface SweepCase {
     literals: { run: number; mark: number; literal: string }[];
 }
 
-/** The two-run cases: every pair of mark sets, without a literal, with one on a mark of the second run, or of the first. */
-export function* twoRunCases(): Generator<SweepCase> {
+/**
+ * The two-run cases: every pair of mark sets, without a literal, with one on a
+ * mark of the second run, or of the first — over `texts`: by default text the
+ * typographer rewrites, or two words (`foo`, `abc`: `foo_abc_{.x}` glues the
+ * delimiter to a letter).
+ */
+export function* twoRunCases(texts: readonly [string, string] = ["don't", 'a...(c)']): Generator<SweepCase> {
     const sets = markSets();
     for (const a of sets) {
         for (const b of sets) {
-            const runs = [{ text: "don't", marks: a }, { text: 'a...(c)', marks: b }];
+            const runs = [{ text: texts[0], marks: a }, { text: texts[1], marks: b }];
             yield { runs, literals: [] };
             for (const i of b) {
                 if (takesLiteral(POOL[i][0])) {
@@ -111,15 +129,17 @@ export function* threeRunCases(): Generator<SweepCase> {
  * A paragraph's inline content as the comparison sees it: each character that
  * is not white space with the marks it carries — type, literal, address. White
  * space is the writer's to move, emphasis' delimiter the writer's to choose.
+ * With `typographed`, the text typed again where the typographer replaced it:
+ * a read with the typographer on is compared with the model as typed.
  */
-function signature(p: Node): string {
+function signature(p: Node, typographed = false): string {
     const out: string[] = [];
     p.descendants(child => {
         if (!child.isText) {
             return;
         }
         const key = child.marks.map(m => `${m.type.name}${m.attrs.literal ?? ''}${m.attrs.href ? `<${String(m.attrs.href)}>` : ''}`).sort().join('+');
-        for (const ch of child.text ?? '') {
+        for (const ch of typographed ? asTyped(child.text ?? '') : child.text ?? '') {
             if (/\S/.test(ch)) {
                 out.push(`${ch}[${key}]`);
             }
@@ -128,14 +148,19 @@ function signature(p: Node): string {
     return out.join(' ');
 }
 
+/** What markdown-it's typographer makes of what the cases type, typed again. */
+const TYPOGRAPHED: Readonly<Record<string, string>> = { '’': '\'', '‘': '\'', '“': '"', '”': '"', '…': '...', '©': '(c)', '–': '--', '—': '---' };
+
+function asTyped(text: string): string {
+    return [...text].map(ch => TYPOGRAPHED[ch] ?? ch).join('');
+}
+
 /** What the save does with a case: what it writes, whether its verdict refuses it, and whether the written text reads back as the model. */
 export interface Judged {
     written: string;
     refused: boolean;
     readsBack: boolean;
 }
-
-const md = hostEngine();
 
 /** The case judged, or `null` where the schema refuses its marks together. */
 export function judge(c: SweepCase): Judged | null {
@@ -149,8 +174,12 @@ export function judge(c: SweepCase): Judged | null {
     }
     const written = serializeDocument({ doc: S.nodes.doc.create(null, [p]), eol: '\n', tail: '' }, { defaultWrap: 400 }).trim();
     const refused = literalNotReadBack(p) !== null;
-    const first = parseDocument(md, `${written}\n`, {}).doc.child(0);
-    const readsBack = first.type.name === 'paragraph' && signature(first) === signature(S.nodes.paragraph.create(null, p.content));
+    // Read back by the host's engine as it builds it for the setting the verdict judged with — the
+    // typographer as it is set, its front-matter rule and registry — not by the page's engine the verdict
+    // reads with: the sweep can contradict it.
+    const definition = currentInlineDefinition();
+    const first = parseDocument(hostFor(definition.typographer), `${written}\n`, {}).doc.child(0);
+    const readsBack = first.type.name === 'paragraph' && signature(first, definition.typographer) === signature(S.nodes.paragraph.create(null, p.content));
     return { written, refused, readsBack };
 }
 

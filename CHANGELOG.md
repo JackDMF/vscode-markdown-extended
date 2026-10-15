@@ -1,5 +1,23 @@
 # Change Log
 
+## Unreleased
+
+### 🐛 Fixes
+
+- A link address, image path or title holding `\`, `<`, `&` or a line break now saves as shown.
+- Text an edit would turn into a code block, a heading or a second paragraph is refused instead of saved.
+- A tab or blank line typed at a paragraph's start no longer turns it into a code block.
+- A file starting with a `-` list or a rule is no longer saved as front matter.
+- A rule as a list item no longer saves as a rule that ends the list.
+- Bold given to `foo` in `foo__abc__`, or typing `__init__` or `größe__x__ü`, now saves as shown.
+- An edit that would leave the file starting with text read as front matter is refused.
+- Span with class refused over emphasis gives the editor's real reason, not a `$` pairing.
+
+### ⚠️ Limits
+
+- A tab or blank line at a paragraph's start is not saved.
+- A list or rule at a file's start may be saved with `*`, `+` or `***` instead of `-`/`---`.
+
 ## v4.6.0 — Attributes on Every Inline Element
 
 ### ✨ Features
