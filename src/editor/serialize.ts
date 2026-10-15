@@ -251,12 +251,14 @@ function backslashedAt(text: string, at: readonly number[]): string {
 }
 
 /**
- * `escaped`, the library's escape of `text`, with every `_` of a run of them
- * escaped unless the run stands between two letters or digits of `text`. The
- * library leaves a `_` unescaped between two word characters, `_` among them,
- * so a run was escaped at its outer ends only: `__abc__` after a closing `**`
- * came out `\__abc_\_`, which reads as an emphasis between two underscores. A
- * run inside a word (`snake__case`) can neither open nor close one.
+ * `escaped`, the library's escape of `text`, with each run of `_` written
+ * whole: bare where the engine reads the bare run, where it stands in `text`,
+ * as a delimiter that can neither open nor close (`scanDelims`, the very test
+ * its emphasis rule makes — `snake__case`, `größe__x`), escaped every one
+ * otherwise, and at either end of `text`, whose neighbour is not known here.
+ * The library decided by `\w`, `_` among it and `é` not, and so escaped a run
+ * at its outer ends only: `__abc__` after a closing `**` came out
+ * `\__abc_\_`, which reads as an emphasis between two underscores.
  */
 function underscoreRunsEscaped(text: string, escaped: string): string {
     if (!text.includes('_')) {
@@ -264,19 +266,27 @@ function underscoreRunsEscaped(text: string, escaped: string): string {
     }
     // Whether each `_` of `text`, in order, is to be escaped.
     const escapes: boolean[] = [];
+    let state: DelimiterScan | null = null;
     for (const run of text.matchAll(/_+/g)) {
-        const before = text[run.index - 1];
-        const after = text[run.index + run[0].length];
-        const inWord = before !== undefined && after !== undefined && ALPHANUMERIC.test(before) && ALPHANUMERIC.test(after);
-        escapes.push(...Array<boolean>(run[0].length).fill(!inWord));
+        const end = run.index + run[0].length;
+        let inert = false;
+        if (run.index > 0 && end < text.length) {
+            const md = currentInlineEngine();
+            state ??= new (md.inline as unknown as { State: new (src: string, md: MarkdownIt, env: object, tokens: Token[]) => DelimiterScan }).State(text, md, {}, []);
+            const read = state.scanDelims(run.index, false);
+            inert = !read.can_open && !read.can_close;
+        }
+        escapes.push(...Array<boolean>(run[0].length).fill(!inert));
     }
     // Each `_` of `text` stands in `escaped` once, in order, with the library's backslash or without.
     let out = '';
     let k = 0;
     for (let i = 0; i < escaped.length; i++) {
         const ch = escaped[i];
-        if (ch === '\\' && i + 1 < escaped.length) {
-            k += escaped[i + 1] === '_' ? 1 : 0;
+        if (ch === '\\' && escaped[i + 1] === '_') {
+            out += escapes[k++] ? '\\_' : '_';
+            i++;
+        } else if (ch === '\\' && i + 1 < escaped.length) {
             out += ch + escaped[++i];
         } else if (ch === '_') {
             out += escapes[k++] ? '\\_' : '_';
@@ -285,6 +295,11 @@ function underscoreRunsEscaped(text: string, escaped: string): string {
         }
     }
     return out;
+}
+
+/** markdown-it's inline state, as far as `underscoreRunsEscaped` asks it: whether a run of delimiters at `start` can open or close. */
+interface DelimiterScan {
+    scanDelims(start: number, canSplitWord: boolean): { can_open: boolean; can_close: boolean };
 }
 
 /** Whether the UTF-16 unit `code` is a hold marker (`HOLD_OPEN`, `HOLD_CLOSE`). */

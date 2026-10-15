@@ -22,6 +22,13 @@ suite('Editor inline round trip: the verdict agrees with the engine (a subset of
         assert.deepStrictEqual({ corrupt: tally.corrupt, overRefused: tally.overRefused }, { corrupt: [], overRefused: [] });
     });
 
+    test('German words side by side, every 25th case: a delimiter glued to an umlaut or ß (größe_übel_{.x})', function () {
+        this.timeout(60000);
+        const tally = sweep(twoRunCases(['größe', 'übel']), 25, 2);
+        assert.ok(tally.cases > 500, `${tally.cases} cases`);
+        assert.deepStrictEqual({ corrupt: tally.corrupt, overRefused: tally.overRefused }, { corrupt: [], overRefused: [] });
+    });
+
     test('three runs side by side, every 400th case', function () {
         this.timeout(60000);
         const tally = sweep(threeRunCases(), 400);

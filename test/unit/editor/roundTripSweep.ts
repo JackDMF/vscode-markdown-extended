@@ -1,9 +1,22 @@
 import { Mark, Node } from 'prosemirror-model';
 import { parseDocument, serializeDocument } from '../../../src/editor';
 import { editorSchema as S } from '../../../src/editor/schema';
-import { DEFAULT_INLINE_ENGINE, attrsEngineFor, currentInlineDefinition } from '../../../src/editor/inlineEngine';
+import { DEFAULT_INLINE_ENGINE, currentInlineDefinition } from '../../../src/editor/inlineEngine';
+import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { literalNotReadBack, setInlineEngine } from '../../../src/editor/serialize';
-import { touched } from './helpers';
+import { hostEngine, touched } from './helpers';
+
+/** The host's engine with the typographer off and on, built once each. */
+const hosts = new Map<boolean, MarkdownIt>();
+
+function hostFor(typographer: boolean): MarkdownIt {
+    let md = hosts.get(typographer);
+    if (md === undefined) {
+        md = hostEngine([], typographer);
+        hosts.set(typographer, md);
+    }
+    return md;
+}
 
 /**
  * The brute-force round trip of inline formatting: runs of text side by side,
@@ -161,9 +174,11 @@ export function judge(c: SweepCase): Judged | null {
     }
     const written = serializeDocument({ doc: S.nodes.doc.create(null, [p]), eol: '\n', tail: '' }, { defaultWrap: 400 }).trim();
     const refused = literalNotReadBack(p) !== null;
-    // Read back by an engine of the verdict's own definition, the typographer as it is set: the sweep can contradict it.
+    // Read back by the host's engine as it builds it for the setting the verdict judged with — the
+    // typographer as it is set, its front-matter rule and registry — not by the page's engine the verdict
+    // reads with: the sweep can contradict it.
     const definition = currentInlineDefinition();
-    const first = parseDocument(attrsEngineFor(definition), `${written}\n`, {}, definition).doc.child(0);
+    const first = parseDocument(hostFor(definition.typographer), `${written}\n`, {}).doc.child(0);
     const readsBack = first.type.name === 'paragraph' && signature(first, definition.typographer) === signature(S.nodes.paragraph.create(null, p.content));
     return { written, refused, readsBack };
 }

@@ -285,6 +285,8 @@ suite('Editor read-back oracle: a run of underscores', () => {
         for (const [source, word, type, wanted] of [
             ['A foo__abc__ y.\n', 'foo', editorSchema.marks.strong.create({ markup: '**' }), 'A **foo**\\_\\_abc\\_\\_ y.\n'],
             ['foo__abc__\n', 'foo', editorSchema.marks.em.create({ markup: '*' }), '*foo*\\_\\_abc\\_\\_\n'],
+            ['Die größe__maße__ü bleibt.\n', 'Die', editorSchema.marks.strong.create({ markup: '**' }), '**Die** größe__maße__ü bleibt.\n'],
+            ['A Straße__abc__ y.\n', 'A', editorSchema.marks.em.create({ markup: '*' }), '*A* Straße__abc\\_\\_ y.\n'],
         ] as const) {
             const state = stateOf(source);
             const at = posOf(state.doc, word);
@@ -299,7 +301,12 @@ suite('Editor read-back oracle: a run of underscores', () => {
 
     test('a run inside a word stays as it is; one at a word\'s edge is escaped whole', () => {
         const state = stateOf('A y.\n');
-        for (const [typed, wanted] of [['snake__case ', 'A snake__case y.\n'], ['__init__ ', 'A \\_\\_init\\_\\_ y.\n'], ['a_b ', 'A a_b y.\n']]) {
+        // Which runs the engine reads inside a word is asked of it: ASCII, Latin-1, umlauts and ß, CJK and digits alike.
+        for (const [typed, wanted] of [
+            ['snake__case ', 'A snake__case y.\n'], ['__init__ ', 'A \\_\\_init\\_\\_ y.\n'], ['a_b ', 'A a_b y.\n'],
+            ['é__abc__é ', 'A é__abc__é y.\n'], ['größe__x__ü ', 'A größe__x__ü y.\n'], ['中__abc__中 ', 'A 中__abc__中 y.\n'], ['1__a__2 ', 'A 1__a__2 y.\n'],
+            ['Maße__ ', 'A Maße\\_\\_ y.\n'],
+        ]) {
             const tr = state.tr.insertText(typed, posOf(state.doc, 'y'));
             assert.strictEqual(noteRefusal(tr), null, typed);
             const written = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
