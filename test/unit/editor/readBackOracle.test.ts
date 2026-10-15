@@ -268,6 +268,45 @@ suite('Editor read-back oracle: the textblocks themselves', () => {
     });
 });
 
+suite('Editor read-back oracle: a run of underscores', () => {
+    /** The text of `text`'s first textblock with each character's marks, as the host's engine reads it. */
+    function marked(doc: Node): string {
+        let out = '';
+        doc.descendants(node => {
+            if (node.isText) {
+                out += `${node.text ?? ''}[${node.marks.map(m => m.type.name).join(',')}]`;
+            }
+        });
+        return out;
+    }
+
+    test('bold given to foo in foo__abc__ is applied, and the underscores read back as text', () => {
+        for (const [source, word, type, wanted] of [
+            ['A foo__abc__ y.\n', 'foo', editorSchema.marks.strong.create({ markup: '**' }), 'A **foo**\\_\\_abc\\_\\_ y.\n'],
+            ['foo__abc__\n', 'foo', editorSchema.marks.em.create({ markup: '*' }), '*foo*\\_\\_abc\\_\\_\n'],
+        ] as const) {
+            const state = stateOf(source);
+            const at = posOf(state.doc, word);
+            const tr = state.tr.addMark(at, at + word.length, type);
+            assert.strictEqual(noteRefusal(tr), null, source);
+            const next = state.apply(tr);
+            const written = serializeDocument({ doc: next.doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+            assert.strictEqual(written, wanted);
+            assert.strictEqual(marked(parseDocument(hostEngine(), written, {}).doc), marked(next.doc));
+        }
+    });
+
+    test('a run inside a word stays as it is; one at a word\'s edge is escaped whole', () => {
+        const state = stateOf('A y.\n');
+        for (const [typed, wanted] of [['snake__case ', 'A snake__case y.\n'], ['__init__ ', 'A \\_\\_init\\_\\_ y.\n'], ['a_b ', 'A a_b y.\n']]) {
+            const tr = state.tr.insertText(typed, posOf(state.doc, 'y'));
+            assert.strictEqual(noteRefusal(tr), null, typed);
+            const written = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+            assert.strictEqual(written, wanted);
+        }
+    });
+});
+
 suite('Editor read-back oracle: the targeted check', () => {
     teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
 

@@ -250,6 +250,43 @@ function backslashedAt(text: string, at: readonly number[]): string {
     return written + text.slice(last);
 }
 
+/**
+ * `escaped`, the library's escape of `text`, with every `_` of a run of them
+ * escaped unless the run stands between two letters or digits of `text`. The
+ * library leaves a `_` unescaped between two word characters, `_` among them,
+ * so a run was escaped at its outer ends only: `__abc__` after a closing `**`
+ * came out `\__abc_\_`, which reads as an emphasis between two underscores. A
+ * run inside a word (`snake__case`) can neither open nor close one.
+ */
+function underscoreRunsEscaped(text: string, escaped: string): string {
+    if (!text.includes('_')) {
+        return escaped;
+    }
+    // Whether each `_` of `text`, in order, is to be escaped.
+    const escapes: boolean[] = [];
+    for (const run of text.matchAll(/_+/g)) {
+        const before = text[run.index - 1];
+        const after = text[run.index + run[0].length];
+        const inWord = before !== undefined && after !== undefined && ALPHANUMERIC.test(before) && ALPHANUMERIC.test(after);
+        escapes.push(...Array<boolean>(run[0].length).fill(!inWord));
+    }
+    // Each `_` of `text` stands in `escaped` once, in order, with the library's backslash or without.
+    let out = '';
+    let k = 0;
+    for (let i = 0; i < escaped.length; i++) {
+        const ch = escaped[i];
+        if (ch === '\\' && i + 1 < escaped.length) {
+            k += escaped[i + 1] === '_' ? 1 : 0;
+            out += ch + escaped[++i];
+        } else if (ch === '_') {
+            out += escapes[k++] ? '\\_' : '_';
+        } else {
+            out += ch;
+        }
+    }
+    return out;
+}
+
 /** Whether the UTF-16 unit `code` is a hold marker (`HOLD_OPEN`, `HOLD_CLOSE`). */
 function isHold(code: number): boolean {
     return code === HOLD_OPEN.charCodeAt(0) || code === HOLD_CLOSE.charCodeAt(0);
@@ -788,7 +825,7 @@ export class OrderedInlineState extends LibraryState {
      * (`escapedTexts`). A text holding no shortcut is written as escaped.
      */
     esc(str: string, startOfLine = false): string {
-        const escaped = super.esc(str, startOfLine);
+        const escaped = underscoreRunsEscaped(str, super.esc(str, startOfLine));
         if (!SHORTCUT_PRETEST.test(escaped)) {
             return escaped;
         }
