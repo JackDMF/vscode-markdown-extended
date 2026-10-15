@@ -379,6 +379,20 @@ suite('Editor read-back oracle: the merge review', () => {
         // Kept out by another bullet, or refused: never saved as front matter.
         assert.ok(refusal !== null || !host.content.content.some(n => n.type.name === 'front_matter'), `${refusal} ${JSON.stringify(written)}`);
         assert.strictEqual(frontMatterTakeover(tr.doc, state.doc), frontMatterTakeover(tr.doc));
+        // A block no spelling keeps out of front matter — one kept as the file spells it — coming to open such a file: refused.
+        const kept = editorSchema.nodes.raw_block.create({ src: '---\nfoo\n', gap: '', html: '<hr>' });
+        const pasted = state.tr.replaceWith(second, second + state.doc.child(1).nodeSize, kept);
+        assert.strictEqual(noteRefusal(pasted), causeReason({ kind: 'block', noun: 'front matter' }));
+        assert.strictEqual(frontMatterTakeover(pasted.doc, state.doc), causeReason({ kind: 'block', noun: 'front matter' }));
+    });
+
+    test('three source blocks side by side in a long part take what they take as one: a changed paragraph is still refused', () => {
+        const shown = Array.from({ length: 30 }, (_, k) => p(`P${k}`));
+        const read = [raw(), raw(), raw(), ...shown.slice(1).map((n, k) => p(k === 14 ? 'changed' : n.textContent))];
+        const found = blockDiffers(shown, doc(...read), shown[0]);
+        assert.ok(found !== null && 'pairings' in found, 'compared');
+        assert.strictEqual(found.pairings.length, 1);
+        assert.deepStrictEqual(pairingsDiffer(found.pairings)?.cause, { kind: 'text', noun: '' });
     });
 
     test('a list item that is a rule is written with a character its list\'s marker is not', () => {

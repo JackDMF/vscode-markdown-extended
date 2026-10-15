@@ -3874,7 +3874,8 @@ function blockKind(node: Node): string {
  */
 export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node): { pairings: [Node, Node][][] } | { cause: ReadCause; at: Node } | null {
     const blocks = readBlocks(doc);
-    const reads = blocks.filter(b => b.kind !== 'other');
+    // A run of source blocks side by side takes what it takes as one: one read, so each way through is one pairing.
+    const reads = blocks.filter(b => b.kind !== 'other').filter((b, k, all) => b.kind !== 'source' || all[k - 1]?.kind !== 'source');
     // Whether a pairing of shown[i..] with reads[j..] holds (1, else 0, two or more paths counted as 2): a source block takes none of them or one more.
     const memo = new Map<number, number>();
     const ways = (i: number, j: number): number => {
@@ -3893,16 +3894,15 @@ export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node):
         return known;
     };
     if (ways(0, 0) > 0) {
-        // Every distinct pairing — which shown textblock each read one pairs with — up to a few: two source
-        // blocks side by side share what they take in more ways than they pair differently.
-        const pairings = new Map<string, [Node, Node][]>();
-        let paths = 0;
+        // Every pairing — which shown textblock each read one pairs with — up to a few: with the runs of
+        // source blocks made one, each way through is a pairing of its own.
+        const pairings: [Node, Node][][] = [];
         const collect = (i: number, j: number, pairs: readonly [number, number][]): void => {
-            if (pairings.size > PAIRINGS_COMPARED || ++paths > 64 * PAIRINGS_COMPARED || ways(i, j) === 0) {
+            if (pairings.length > PAIRINGS_COMPARED || ways(i, j) === 0) {
                 return;
             }
             if (j === reads.length) {
-                pairings.set(pairs.map(([a, b]) => `${a}:${b}`).join(' '), pairs.map(([a, b]): [Node, Node] => [shown[a], reads[b].node]));
+                pairings.push(pairs.map(([a, b]): [Node, Node] => [shown[a], reads[b].node]));
                 return;
             }
             if (reads[j].kind === 'source') {
@@ -3915,8 +3915,8 @@ export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node):
             }
         };
         collect(0, 0, []);
-        // Too many to tell apart, or too many ways to count them: nothing compared, the atoms' own checks speak.
-        return pairings.size > PAIRINGS_COMPARED || paths > 64 * PAIRINGS_COMPARED ? null : { pairings: [...pairings.values()] };
+        // Too many to tell apart: nothing compared, the atoms' own checks speak.
+        return pairings.length > PAIRINGS_COMPARED ? null : { pairings };
     }
     const cell = (node: Node) => node.type.name === 'table_cell' || node.type.name === 'table_header';
     const texts = blocks.filter(b => b.kind === 'text');
@@ -4238,6 +4238,7 @@ function forgetReadBack(reads = true): void {
     wrappedCache = new WeakMap();
     verdictCache = new WeakMap();
     startCache = new WeakMap();
+    keptOut = new WeakMap();
     if (!reads) {
         return;
     }
@@ -4826,15 +4827,51 @@ function writtenStart(doc: Node, bodyOf: (node: Node) => string): WrittenStart |
                 after = body === '' ? undefined : listMarkerOf(body, false)?.marker ?? '';
             }
             const bullets = ['*', '+'].sort((a, b) => Number(a === after) - Number(b === after));
-            variants = bullets.map(bullet => node.type.create({ ...node.attrs, bullet }, node.content, node.marks));
+            variants = bullets.map(bullet => respelledBlock(node, 'bullet', bullet));
         } else {
-            variants = ['***', '___'].map(markup => node.type.create({ ...node.attrs, markup }, null, node.marks));
+            variants = ['***', '___'].map(markup => respelledBlock(node, 'markup', markup));
         }
-        const kept = variants.find(variant => !readsFrontMatter(lead + firstLine(variant)) && readsAsBlock(variant, bodyOf(variant)));
+        // Remembered by the respelled node (`respelledBlock`): a list the edit left alone is not written whole again to ask.
+        const holds = (variant: Node): boolean => {
+            let known = keptOut.get(variant);
+            if (known === undefined) {
+                known = !readsFrontMatter(lead + firstLine(variant)) && readsAsBlock(variant, bodyOf(variant));
+                keptOut.set(variant, known);
+            }
+            return known;
+        };
+        const kept = variants.find(holds);
         return kept === undefined ? { index, node, frontMatter: true } : { index, node: kept, frontMatter: false };
     }
     return null;
 }
+
+/**
+ * `node` with its attribute `name` set to `value` — another bullet, another
+ * rule — made once per node and spelling, so a block an edit left alone is
+ * the same respelled node from one transaction to the next, its parts and its
+ * read remembered (`unitsOf`, `readsAsBlock`).
+ */
+function respelledBlock(node: Node, name: 'bullet' | 'markup', value: string): Node {
+    let made = respellings.get(node);
+    if (made === undefined) {
+        made = new Map();
+        respellings.set(node, made);
+    }
+    const key = `${name}=${value}`;
+    let variant = made.get(key);
+    if (variant === undefined) {
+        variant = node.type.create({ ...node.attrs, [name]: value }, node.content, node.marks);
+        made.set(key, variant);
+    }
+    return variant;
+}
+
+/** Whether a respelled opening block keeps out of front matter and reads back as the same block (`writtenStart`), by the respelled node; forgotten with the parts. */
+let keptOut = new WeakMap<Node, boolean>();
+
+/** What `respelledBlock` made, by the node. */
+const respellings = new WeakMap<Node, Map<string, Node>>();
 
 /**
  * Whether the engine reads `body`, `node` as written, as one block of the same
@@ -4896,8 +4933,23 @@ function asWrittenIn(doc: Node, node: Node, offset: number): Node {
     if (start === null || doc.resolve(offset).index(0) !== start.index || start.node === doc.child(start.index)) {
         return node;
     }
-    return node.type === start.node.type ? node.type.create({ ...node.attrs, bullet: start.node.attrs.bullet, markup: start.node.attrs.markup }, node.content, node.marks) : node;
+    // The respelled node itself where `node` is the very block it was made from, so its parts are remembered (`unitsOf`).
+    if (node === doc.child(start.index)) {
+        return start.node;
+    }
+    if (node.type !== start.node.type) {
+        return node;
+    }
+    let copy = respelledCopies.get(node);
+    if (copy?.of !== start.node) {
+        copy = { of: start.node, node: node.type.create({ ...node.attrs, bullet: start.node.attrs.bullet, markup: start.node.attrs.markup }, node.content, node.marks) };
+        respelledCopies.set(node, copy);
+    }
+    return copy.node;
 }
+
+/** A copy of a block the edit filter writes, given the respelling of the opening block it stands for (`asWrittenIn`), by the block. */
+const respelledCopies = new WeakMap<Node, { of: Node; node: Node }>();
 
 /**
  * Why an edit is refused after which the host would read the start of the
