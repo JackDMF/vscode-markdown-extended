@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.7.0 — Saves That Read Back as Shown
 
 ### 🐛 Fixes
 
