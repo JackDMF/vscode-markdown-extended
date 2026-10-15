@@ -132,7 +132,7 @@ function preprocessInline(md: EngineWithOptions, env: Environment, children: rea
             continue;
         }
         if (mark !== undefined) {
-            out.push(synthetic('inline_atom', { html: md.renderer.renderInline([child], md.options, env), mark }));
+            out.push(synthetic('inline_atom', { html: md.renderer.renderInline([copyToken(child as unknown as Token)], md.options, env), mark }));
             continue;
         }
         out.push(child as unknown as StreamToken);
@@ -188,6 +188,14 @@ function liftRequirementPrefix(
     return { children: [rest, ...children.slice(1)], prefix };
 }
 
+/** A token with its attributes and children copied, so writing to it leaves `token` as it was. */
+function copyToken(token: Token): Token {
+    const copy = Object.assign(Object.create(Object.getPrototypeOf(token) as object) as Token, token);
+    copy.attrs = token.attrs === null ? null : token.attrs.map(([name, value]) => [name, value]);
+    copy.children = token.children === null ? null : token.children.map(copyToken);
+    return copy;
+}
+
 /**
  * Parse the file into the editor's document.
  *
@@ -202,8 +210,9 @@ function liftRequirementPrefix(
  * literals the parse finds are judged with it (`groupSourceBlocks`), as the
  * page judges the literals it writes, so both answer alike under any setting.
  *
- * `parsed`, where given, is `md.parse(text, env)` already made — read, never
- * changed, by the page's save, which asks the same text of its tokens too.
+ * `parsed`, where given, is `md.parse(text, env)` already made, which the
+ * page's save reads too: a block rendered from it is rendered from a copy, as
+ * a renderer may write to the tokens it renders (an image's `alt`).
  *
  * Throws when the document cannot be represented without losing a byte; the
  * caller then keeps the text editor.
@@ -221,7 +230,8 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
 
     const render = (block: SourceBlock): string => {
         const [start, end] = block.tokenRange;
-        return start < end ? md.renderer.render(tokens.slice(start, end), engine.options, env) : '';
+        const slice = tokens.slice(start, end);
+        return start < end ? md.renderer.render(parsed === undefined ? slice : slice.map(copyToken), engine.options, env) : '';
     };
 
     // Attributes MarkdownParser cannot derive from a token alone: the source

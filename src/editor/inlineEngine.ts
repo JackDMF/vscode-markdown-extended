@@ -261,7 +261,7 @@ export function createInlineEngine(definition: InlineEngineDefinition, withFront
 
 /** The definition the page reads with now (`setCurrentInlineDefinition`), and the engines built from it, made when first asked. */
 let currentDefinition: InlineEngineDefinition = DEFAULT_INLINE_ENGINE;
-let currentEngines: { inline: MarkdownIt | null; attrs: MarkdownIt | null } = { inline: null, attrs: null };
+let currentEngines: { inline: MarkdownIt | null; attrs: MarkdownIt | null; frontMatter: MarkdownIt | null } = { inline: null, attrs: null, frontMatter: null };
 
 /**
  * Read with the engine `definition` describes from now on — the host's, which
@@ -275,7 +275,7 @@ export function setCurrentInlineDefinition(definition: InlineEngineDefinition): 
         return false;
     }
     currentDefinition = definition;
-    currentEngines = { inline: null, attrs: null };
+    currentEngines = { inline: null, attrs: null, frontMatter: null };
     return true;
 }
 
@@ -318,6 +318,10 @@ const frontMatterEngines = new Map<string, MarkdownIt>();
  * taken for front matter (`serializeLayout`).
  */
 export function frontMatterEngineFor(definition: InlineEngineDefinition): MarkdownIt {
+    if (definition === currentDefinition) {
+        currentEngines.frontMatter ??= createInlineEngine(currentDefinition, true);
+        return currentEngines.frontMatter;
+    }
     const key = JSON.stringify(definition);
     let md = frontMatterEngines.get(key);
     if (md === undefined) {

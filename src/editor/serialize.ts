@@ -1497,7 +1497,9 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
     // Whether `[from, to)` lies outside the edit's range: only written again beside it.
     const outside = (from: number, to: number) => to <= start || from >= Math.max(end, start + 1);
     for (const block of blocks) {
-        for (const [index, unit] of unitsOf(block.node).entries()) {
+        // The document's first block is read as it is written: with the bullet that keeps it out of front matter.
+        const written = block.offset === 0 ? firstAsWritten(doc, block.node) : block.node;
+        for (const [index, unit] of unitsOf(written).entries()) {
             if (origin?.rewritten === undefined && outside(block.offset + unit.from, block.offset + unit.to)) {
                 continue;
             }
@@ -3732,21 +3734,18 @@ function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | n
     const doc = comparisonDoc(unit.text);
     // A paragraph the save writes nothing for — emptied, or holding only what is not written — the parser never
     // reads; nor is the empty one the parse gives an empty item a textblock read.
-    const written = (node: Node) => node.type.name !== 'paragraph' || writtenOf(node).text.trim() !== '';
-    const parsed = inlineTextblocks(doc, 0).map(t => t.node).filter(written);
-    const shown = unit.textblocks.map(t => t.node).filter(written);
-    const block = blockDiffers(shown, parsed, doc, unit.textblocks[0].node);
-    if (block !== null) {
-        return block;
-    }
-    // Textblocks the comparison leaves to the other checks (`blockDiffers`): nothing to pair item by item.
-    if (parsed.length !== shown.length) {
+    const shown = unit.textblocks.map(t => t.node).filter(node => node.type.name !== 'paragraph' || writtenOf(node).text.trim() !== '');
+    const block = blockDiffers(shown, doc, unit.textblocks[0].node);
+    if (block === null) {
         return null;
     }
-    for (let k = 0; k < parsed.length; k++) {
-        const want = readItems(shown[k]);
-        const got = readItems(parsed[k]);
-        const at = shown[k];
+    if ('cause' in block) {
+        return block;
+    }
+    for (const [shownBlock, parsedBlock] of block.pairs) {
+        const want = readItems(shownBlock);
+        const got = readItems(parsedBlock);
+        const at = shownBlock;
         for (let i = 0; i < Math.max(want.length, got.length); i++) {
             const w = want[i];
             const g = got[i];
@@ -3778,7 +3777,7 @@ function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | n
 
 /** What a block the parse reads instead of a textblock the page shows is called in a reason (`blockDiffers`). */
 const READ_BLOCK_NOUNS: Readonly<Record<string, string>> = {
-    paragraph: 'more than one block',
+    paragraph: 'a paragraph',
     heading: 'a heading',
     table_cell: 'a table',
     table_header: 'a table',
@@ -3787,48 +3786,112 @@ const READ_BLOCK_NOUNS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Where the textblocks the parse of a part holds (`parsed`, in `doc`) are not
- * the ones the page shows (`shown`) — another number of them, or another kind
- * (a heading's level counts) — the cause (`block`), named by what is read
- * instead: the textblock there, or, where the parse holds fewer, the first
- * block of it that holds no inline text (a code block, a rule); anchored at
- * the textblock it was found at, else at `fallback`. `null` where they agree
- * — and where the parse holds a block the editor shows as its source (an
- * emoji it cannot place, a construct it does not edit): what made it is the
- * atoms' own checks' to name (`noteRefusal`), as before this comparison.
+ * A block the parse of a part reads, in order (`readBlocks`): a textblock
+ * whose inline content it reads (`text`), a block the editor shows as its
+ * source (`source`: an emoji it cannot place, a construct it does not edit),
+ * or another holding no inline text (`other`: a code block, a rule).
  */
-function blockDiffers(shown: readonly Node[], parsed: readonly Node[], doc: Node, fallback: Node): { cause: ReadCause; at: Node } | null {
-    const kind = (node: Node) => (node.type.name === 'heading' ? `heading${String(node.attrs.level)}` : node.type.name);
-    for (let k = 0; k < Math.max(shown.length, parsed.length); k++) {
+interface ReadBlock {
+    node: Node;
+    kind: 'text' | 'source' | 'other';
+}
+
+/** The blocks `doc`, a part's parse, reads (`ReadBlock`), but the empty paragraph the parse gives an empty item. */
+function readBlocks(doc: Node): ReadBlock[] {
+    const out: ReadBlock[] = [];
+    doc.descendants(node => {
+        if (node.isTextblock && INLINE_TEXTBLOCKS.has(node.type.name)) {
+            if (node.type.name !== 'paragraph' || node.content.size > 0) {
+                out.push({ node, kind: 'text' });
+            }
+            return false;
+        }
+        if (SOURCE_NODES.has(node.type.name)) {
+            out.push({ node, kind: 'source' });
+            return false;
+        }
+        if (node.isTextblock || node.isLeaf) {
+            out.push({ node, kind: 'other' });
+            return false;
+        }
+        return true;
+    });
+    return out;
+}
+
+/** A textblock's kind as `blockDiffers` compares it: its type, and a heading's level. */
+function blockKind(node: Node): string {
+    return node.type.name === 'heading' ? `heading${String(node.attrs.level)}` : node.type.name;
+}
+
+/**
+ * The textblocks the page shows (`shown`) paired with those the parse of the
+ * part (`doc`) reads, in order and of one kind each (a heading's level
+ * counts); a block the editor shows as its source stands for as many of the
+ * shown ones as it must, none of them compared — only that block is left to
+ * the atoms' own checks, which name what made it (`noteRefusal`), the rest of
+ * the part is compared. Where no pairing holds, the cause (`block`), named by
+ * what is read instead and anchored at the textblock it was found at, else
+ * at `fallback`; `null` — nothing to compare — where the difference is a
+ * row's cells, one more or less or a header among them, which the table
+ * writer pads and the tables plugin repairs.
+ */
+export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node): { pairs: [Node, Node][] } | { cause: ReadCause; at: Node } | null {
+    const blocks = readBlocks(doc);
+    const reads = blocks.filter(b => b.kind !== 'other');
+    // Whether shown[i..] pairs with reads[j..]: a source block takes none of them or one more.
+    const memo = new Map<number, boolean>();
+    const holds = (i: number, j: number): boolean => {
+        if (j === reads.length) {
+            return i === shown.length;
+        }
+        const key = i * (reads.length + 1) + j;
+        let known = memo.get(key);
+        if (known === undefined) {
+            const read = reads[j];
+            known = read.kind === 'source'
+                ? holds(i, j + 1) || (i < shown.length && holds(i + 1, j))
+                : i < shown.length && blockKind(shown[i]) === blockKind(read.node) && holds(i + 1, j + 1);
+            memo.set(key, known);
+        }
+        return known;
+    };
+    if (holds(0, 0)) {
+        const pairs: [Node, Node][] = [];
+        for (let i = 0, j = 0; j < reads.length;) {
+            if (reads[j].kind === 'source') {
+                if (holds(i, j + 1)) {
+                    j++;
+                } else {
+                    i++;
+                }
+            } else {
+                pairs.push([shown[i++], reads[j++].node]);
+            }
+        }
+        return { pairs };
+    }
+    // The first place they part, the source blocks left out.
+    const texts = blocks.filter(b => b.kind === 'text');
+    for (let k = 0; k < Math.max(shown.length, texts.length); k++) {
         const want = shown[k] as Node | undefined;
-        const got = parsed[k] as Node | undefined;
-        if (want !== undefined && got !== undefined && kind(want) === kind(got)) {
+        const got = texts[k] as ReadBlock | undefined;
+        if (want !== undefined && got !== undefined && blockKind(want) === blockKind(got.node)) {
             continue;
         }
-        // A row's cells, one more or less or a header among them, are the table writer's to pad and the tables plugin's to repair.
         const cell = (node: Node | undefined) => node === undefined || node.type.name === 'table_cell' || node.type.name === 'table_header';
-        if (cell(want) && cell(got)) {
+        if (cell(want) && cell(got?.node)) {
             return null;
         }
-        let source = false;
-        doc.descendants(node => {
-            source ||= SOURCE_NODES.has(node.type.name);
-            return !source;
-        });
-        if (source) {
-            return null;
+        const at = want ?? shown[shown.length - 1] ?? fallback;
+        if (got !== undefined && texts.length > shown.length && blockKind(got.node) === 'paragraph') {
+            return { cause: { kind: 'block', noun: 'more than one block' }, at };
         }
-        let instead = got;
-        if (instead === undefined) {
-            doc.descendants(node => {
-                if (instead === undefined && (node.type.name === 'code_block' || (node.isBlock && node.isLeaf))) {
-                    instead = node;
-                }
-                return instead === undefined;
-            });
-        }
+        // What is read where the shown one would be: the textblock there, else the block that took its place.
+        const from = k === 0 ? 0 : blocks.indexOf(texts[k - 1]) + 1;
+        const instead = got?.node ?? blocks.slice(from).find(b => b.kind !== 'text')?.node;
         const noun = (instead === undefined ? undefined : READ_BLOCK_NOUNS[instead.type.name]) ?? 'another kind of block';
-        return { cause: { kind: 'block', noun }, at: want ?? shown[shown.length - 1] ?? fallback };
+        return { cause: { kind: 'block', noun }, at };
     }
     return null;
 }
@@ -4110,6 +4173,7 @@ function forgetReadBack(reads = true): void {
     }
     unitReadCache.clear();
     lastTokens = null;
+    frontMatterCache.clear();
     seamCache.clear();
     comparisonCache.clear();
     orderVerdictCache.clear();
@@ -4572,9 +4636,9 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
         } else {
             sep = (node.attrs.gap as string | null | undefined) ?? '';
             if (byRule(node)) {
-                const written = body;
-                body = outOfFrontMatter(node, sep, body, bodyOf, () => bodyAfter(index));
-                remarked = body !== written;
+                const asWritten = outOfFrontMatter(node, sep, bodyOf, () => bodyAfter(index));
+                remarked = asWritten !== node;
+                body = remarked ? bodyOf(asWritten) : body;
             }
         }
         out += sep;
@@ -4589,40 +4653,50 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
     return { text: out + tail, blocks };
 }
 
-/** Whether the host's front-matter rule, which the page's engine does not run, takes the first lines of `text` for front matter; the last few answers kept. */
+/**
+ * Whether the host's front-matter rule, which the page's engine does not run,
+ * takes the file whose text begins with `text` for one with front matter. The
+ * rule decides on the file's first line alone — its `-` at the file's start,
+ * then a run of them on that line, in a list item too — and closes what it
+ * opens at the end of the file if nothing else does, so only that line is
+ * read. The last few answers are kept, until the engine changes.
+ */
 function readsFrontMatter(text: string): boolean {
     // The rule reads nothing unless the file's first character is its `-` (markdown-it-front-matter's own first test).
     if (!text.startsWith('-')) {
         return false;
     }
-    const known = frontMatterCache.get(text);
+    const line = text.split(/\r?\n/, 1)[0];
+    const known = frontMatterCache.get(line);
     if (known !== undefined) {
         return known;
     }
-    const reads = frontMatterEngineFor(currentInlineDefinition()).parse(text, {}).some(token => token.type === 'front_matter');
+    const reads = frontMatterEngineFor(currentInlineDefinition()).parse(line, {}).some(token => token.type === 'front_matter');
     if (frontMatterCache.size >= 16) {
         frontMatterCache.delete(frontMatterCache.keys().next().value as string);
     }
-    frontMatterCache.set(text, reads);
+    frontMatterCache.set(line, reads);
     return reads;
 }
 
-/** What `readsFrontMatter` answered, by the text. */
+/** What `readsFrontMatter` answered, by the first line. */
 const frontMatterCache = new Map<string, boolean>();
 
 /**
- * `body`, the document's first block `node` written after `lead`, as a body
- * the host does not take for front matter: its rule runs inside a list item
- * at the file's first line too, so a `-` list whose first item's text has
- * `---` after its first character (`- x---`), or a `---` rule, would open
- * front matter that runs to the end of the file. Written again, as `bodyOf`
- * writes a block, with another bullet — one the list after it (`next`) does
- * not open with, so the seam after it holds — or the rule with `***`, `___`;
- * where none holds, as it was.
+ * The document's first block `node`, written after `lead` as `bodyOf` writes
+ * a block, as the node it is written from: itself, unless the host would take
+ * it for front matter — its rule runs inside a list item at the file's first
+ * line too, so a `-` list whose first item's text has `---` after its first
+ * character (`- x---`), or a `---` rule, would open front matter that runs to
+ * the end of the file. Then the same block with another bullet — one the list
+ * after it (`next`) does not open with, so the seam after it holds — or the
+ * rule with `***`, `___`; where none holds, itself, and the edit filter
+ * refuses it (`frontMatterTakeover`). The one place the save's writer and its
+ * verdict (`unwritableInNote`) learn what the first block is written as.
  */
-function outOfFrontMatter(node: Node, lead: string, body: string, bodyOf: (node: Node) => string, next: () => string | null): string {
-    if (!readsFrontMatter(lead + body)) {
-        return body;
+function outOfFrontMatter(node: Node, lead: string, bodyOf: (node: Node) => string, next: () => string | null): Node {
+    if (!readsFrontMatter(lead + bodyOf(node))) {
+        return node;
     }
     let variants: Node[] = [];
     if (node.type.name === 'bullet_list') {
@@ -4632,11 +4706,59 @@ function outOfFrontMatter(node: Node, lead: string, body: string, bodyOf: (node:
     } else if (node.type.name === 'horizontal_rule') {
         variants = ['***', '___'].map(markup => node.type.create({ ...node.attrs, markup }, null, node.marks));
     }
-    for (const variant of variants) {
-        const text = bodyOf(variant);
-        if (!readsFrontMatter(lead + text)) {
+    return variants.find(variant => !readsFrontMatter(lead + bodyOf(variant))) ?? node;
+}
+
+/**
+ * The node the save writes `node`, the first block of `doc`, from
+ * (`outOfFrontMatter`, as `serializeLayout` asks it): what the verdict reads.
+ * A block kept as the file spells it is itself.
+ */
+function firstAsWritten(doc: Node, node: Node): Node {
+    const src = node.attrs.src as string | null | undefined;
+    if ((src !== null && src !== undefined) || SOURCE_NODES.has(node.type.name) || node.type.name === 'front_matter') {
+        return node;
+    }
+    const body = (n: Node) => withBlockSuffix(n, currentWriter().serialize(editorSchema.topNodeType.create(null, [n])));
+    const next = doc.childCount > 1 && doc.child(0) === node ? doc.child(1) : null;
+    const nextText = () => (next === null ? null : (next.attrs.src as string | null | undefined) ?? body(next));
+    return outOfFrontMatter(node, (node.attrs.gap as string | null | undefined) ?? '', body, nextText);
+}
+
+/**
+ * The text a document's first lines are written as: its first block that
+ * writes a body, after its gap, as the save writes it (`serializeLayout`, the
+ * front-matter dodge included). `''` for a document that writes nothing.
+ */
+function documentStart(doc: Node): string {
+    let end = 0;
+    for (let j = 0; j < doc.childCount; j++) {
+        end += doc.child(j).nodeSize;
+        const text = serializeLayout({ doc: doc.copy(doc.content.cut(0, end)), eol: '\n', tail: '' }, writeOptions, false).text;
+        if (text.trim() !== '') {
             return text;
         }
     }
-    return body;
+    return '';
+}
+
+/**
+ * Why an edit is refused after which the host would read the start of the
+ * file as front matter the page does not show — a source block the edit left
+ * at the file's start, say a rule's `---` after the front matter above it was
+ * deleted, or a first block no other spelling keeps out of it
+ * (`outOfFrontMatter`) — or `null`. A document that opens with its front
+ * matter is read as the page shows it.
+ */
+export function frontMatterTakeover(doc: Node): string | null {
+    const first = doc.firstChild;
+    if (first === null || first.type.name === 'front_matter') {
+        return null;
+    }
+    // A first block kept as the file spells it, not opening with the rule's `-`, decides without a write.
+    const src = first.attrs.src as string | null | undefined;
+    if (typeof src === 'string' && src !== '' && !`${(first.attrs.gap as string | null | undefined) ?? ''}${src}`.startsWith('-')) {
+        return null;
+    }
+    return readsFrontMatter(documentStart(doc)) ? causeReason({ kind: 'block', noun: 'front matter' }) : null;
 }

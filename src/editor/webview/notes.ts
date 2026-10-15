@@ -35,7 +35,7 @@ import { Mapping } from 'prosemirror-transform';
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
-import { RAW_TEXT_MARKS, causeReason, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
+import { RAW_TEXT_MARKS, causeReason, frontMatterTakeover, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
 import { showHint } from './hint';
 import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
@@ -374,7 +374,9 @@ function filterRefusal(tr: Transaction, range: { from: number; to: number }): st
     // where an atom's own check names the cause (an emoji made code), that reason is the better one.
     return unwritableInNote(written.doc, from, to, origin, false)
         ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to) ?? unplacedRefusal(tr, written.rewritten, mapping)
-        ?? unwritableInNote(written.doc, from, to, origin, true);
+        ?? unwritableInNote(written.doc, from, to, origin, true)
+        // And the file's start as written, read with the host's front-matter rule, which no part's read runs.
+        ?? frontMatterTakeover(written.doc);
 }
 
 /** Whether the ways out of an unplaced atom are being tried (`unplacedRefusal`): a way out is no edit to try them for again. */

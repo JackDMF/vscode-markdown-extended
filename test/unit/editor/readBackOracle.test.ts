@@ -4,7 +4,9 @@ import { Node } from 'prosemirror-model';
 import { fidelityPlugin, parseDocument, serializeDocument } from '../../../src/editor';
 import { DEFAULT_INLINE_ENGINE, attrsEngineFor, currentInlineDefinition } from '../../../src/editor/inlineEngine';
 import { editorSchema } from '../../../src/editor/schema';
-import { causeReason, literalLostReason, literalNotReadBack, literalsReadBack, readAsOne, setInlineEngine } from '../../../src/editor/serialize';
+import {
+    blockDiffers, causeReason, frontMatterTakeover, literalLostReason, literalNotReadBack, literalsReadBack, readAsOne, setInlineEngine,
+} from '../../../src/editor/serialize';
 import { noteRefusal } from '../../../src/editor/webview/notes';
 import {
     EditorObject, LITERAL_READ_WITH_BLOCK_REFUSAL, applySpanRefusal, applySpanTransaction, changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, literalAlreadyLostRefusal, objectAtSelection, sameObject,
@@ -312,6 +314,56 @@ suite('Editor read-back oracle: a run of underscores', () => {
             const written = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
             assert.strictEqual(written, wanted);
         }
+    });
+});
+
+suite('Editor read-back oracle: the merge review', () => {
+    teardown(() => setInlineEngine(DEFAULT_INLINE_ENGINE));
+
+    const p = (text: string) => editorSchema.nodes.paragraph.create(null, text === '' ? [] : [editorSchema.text(text)]);
+    const doc = (...blocks: Node[]) => editorSchema.topNodeType.create(null, blocks);
+    const raw = () => editorSchema.nodes.raw_block.create({ src: 'x\n', html: '<p>x</p>' });
+    /** `found` is the block cause `expected.cause`, anchored at `expected.at` — by identity: a node is not compared deeply. */
+    const assertCause = (found: ReturnType<typeof blockDiffers>, expected: { cause: { kind: string; noun: string }; at: Node }) => {
+        assert.ok(found !== null && 'cause' in found, 'a cause');
+        assert.deepStrictEqual(found.cause, expected.cause);
+        assert.ok(found.at === expected.at, 'anchored at the textblock it was found at');
+    };
+
+    test('a block the editor shows as its source stands for the textblocks it took; the rest of the part is compared', () => {
+        const a = p('A'), b = p('B');
+        const pairs = blockDiffers([a, b], doc(raw(), p('B')), a);
+        assert.ok(pairs !== null && 'pairs' in pairs);
+        assert.deepStrictEqual(pairs.pairs.map(([shown, read]) => [shown.textContent, read.textContent]), [['B', 'B']]);
+        // Beside it, another kind of textblock than the page shows is still a difference.
+        const h = editorSchema.nodes.heading.create({ level: 2 }, [editorSchema.text('H')]);
+        const heading = editorSchema.nodes.heading.create({ level: 2 }, [editorSchema.text('H')]);
+        assertCause(blockDiffers([a, h], doc(raw(), heading, p('C')), a), { cause: { kind: 'block', noun: 'a heading' }, at: a });
+        const tail = blockDiffers([a, b], doc(p('A'), raw()), a);
+        assert.ok(tail !== null && 'pairs' in tail && tail.pairs.length === 1);
+    });
+
+    test('a block read as another kind is named by what is read where it stood, not by the count', () => {
+        const heading = editorSchema.nodes.heading.create({ level: 1 }, [editorSchema.text('H')]);
+        assertCause(blockDiffers([heading], doc(p('H')), heading), { cause: { kind: 'block', noun: 'a paragraph' }, at: heading });
+        const a = p('A'), b = p('B');
+        const code = editorSchema.nodes.code_block.create(null, [editorSchema.text('A')]);
+        assertCause(blockDiffers([a], doc(code), a), { cause: { kind: 'block', noun: 'a code block' }, at: a });
+        // The block that took B's place, after A — not the first code block anywhere.
+        const read = blockDiffers([a, b], doc(code, p('A'), editorSchema.nodes.horizontal_rule.create()), a);
+        assertCause(read, { cause: { kind: 'block', noun: 'a rule' }, at: b });
+    });
+
+    test('an edit after which the host would read the file\'s start as front matter is refused', () => {
+        for (const source of ['---\na: 1\n---\n---\n\nText.\n', '---\na: 1\n---\n- x---y\n']) {
+            // The host's engine: only it reads front matter.
+            const state = EditorState.create({ doc: parseDocument(hostEngine(), source, {}).doc, plugins: [fidelityPlugin()] });
+            assert.strictEqual(state.doc.child(0).type.name, 'front_matter');
+            const tr = state.tr.delete(0, state.doc.child(0).nodeSize);
+            assert.strictEqual(noteRefusal(tr), causeReason({ kind: 'block', noun: 'front matter' }), source);
+            assert.strictEqual(frontMatterTakeover(tr.doc), causeReason({ kind: 'block', noun: 'front matter' }));
+        }
+        assert.strictEqual(frontMatterTakeover(stateOf('- a\n').doc), null);
     });
 });
 
