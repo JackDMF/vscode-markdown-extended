@@ -4,7 +4,7 @@
 
 ### 🐛 Fixes
 
-- A link address, image path or title holding `\`, `<`, `&amp;` or a line break now saves as shown.
+- A link address, image path or title holding `\`, `<`, `&` or a line break now saves as shown.
 - Text an edit would turn into a code block, a heading or a second paragraph is refused instead of saved.
 - A tab or blank line typed at a paragraph's start no longer turns it into a code block.
 - A file starting with a `-` list or a rule is no longer saved as front matter.
