@@ -672,16 +672,24 @@ verdict names it — (`` `foo``abc`{.x} ``, `**foo****abc**{.x}`,
 italic) or made, or other text; a parse that throws is a refusal (`unread`), never a broken
 keystroke. A copy's literal asks the literals alone (`literalsReadBack(block, false)`): what the
 comparison finds elsewhere in a block is no reason to drop a `{…}` that reads back. It is not gated on a `{`: no model of what could go wrong
-decides whether to ask. Two kinds of block difference stay the other checks': a row's cells
-one more or less (the table writer pads a row, the tables plugin repairs one) and a parse
-holding a block the editor shows as its source (an emoji it cannot place); and the atoms'
-own checks (an emoji made code, an embed) and a note's speak before a `block` cause, which
-the attribute fields therefore leave to the edit filter (`literalsReadBackRefusal`). Where a
-safe spelling exists the writer uses it instead: a tab and blank lines at a paragraph's start
-are not written (`wrapInline`), and a document's first `-` list or `---` rule that the host's
-front-matter rule — which only the host's engine runs, inside a list item at the first line
-too — would read as front matter is written with another bullet or rule
-(`outOfFrontMatter`, asked of the page's engine with that rule, `frontMatterEngineFor`).
+decides whether to ask. The textblocks are paired in order, of one kind each; a block the
+parse holds that the editor shows as its source (an emoji it cannot place) stands for as many
+of the shown ones as it must, and only those go uncompared — the rest of the part is
+compared, and what made that block is the atoms' own checks' to name. A row's cells one more
+or less stay the tables' (the writer pads a row, the plugin repairs one). The atoms' own checks
+(an emoji made code, an embed) and a note's speak before a `block` cause, which the attribute
+fields therefore leave to the edit filter (`literalsReadBackRefusal`). Where a safe spelling
+exists the writer uses it instead: a tab and blank lines at a paragraph's start are not
+written (`wrapInline`), a run of `_` is written bare only where the engine's own delimiter
+scan finds it can neither open nor close (`underscoreRunsEscaped`), and a document's first `-`
+list or `---` rule that the host's front-matter rule — which only the host's engine runs,
+inside a list item at the first line too — would read as front matter is written with another
+bullet or rule (`outOfFrontMatter`, asked of the page's engine with that rule,
+`frontMatterEngineFor`). That one function says what the first block is written as, to the
+save and to the verdict, which reads that block's parts as written; and the edit filter
+reads the file's first line as written with the rule (`frontMatterTakeover`), so a start no
+spelling keeps out of front matter — a source block's `---` left at the top once the front
+matter above it is deleted — is refused.
 Its cost per keystroke, measured on 1500–3000-line documents, is about 0.3 ms at the
 median and 1 ms at the 90th percentile over master's. The literal and sidebar reads run
 where the text holds a `{`, a `$` or an `@`, or the model holds a literal (one written on
