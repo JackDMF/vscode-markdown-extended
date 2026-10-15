@@ -338,9 +338,37 @@ suite('Editor read-back oracle: the merge review', () => {
         // Beside it, another kind of textblock than the page shows is still a difference.
         const h = editorSchema.nodes.heading.create({ level: 2 }, [editorSchema.text('H')]);
         const heading = editorSchema.nodes.heading.create({ level: 2 }, [editorSchema.text('H')]);
-        assertCause(blockDiffers([a, h], doc(raw(), heading, p('C')), a), { cause: { kind: 'block', noun: 'a heading' }, at: a });
+        assertCause(blockDiffers([a, h], doc(raw(), heading, p('C')), a), { cause: { kind: 'block', noun: 'more than one block' }, at: h });
         const tail = blockDiffers([a, b], doc(p('A'), raw()), a);
         assert.ok(tail !== null && 'pairs' in tail && tail.pairs.length === 1);
+        // Two source blocks around one paragraph: which shown one each took cannot be told — nothing compared, the atoms' checks speak.
+        assert.strictEqual(blockDiffers([a, b], doc(raw(), p('X'), raw()), a), null);
+    });
+
+    test('a list item that is a rule is written with a character its list\'s marker is not', () => {
+        const li = (...content: Node[]) => editorSchema.nodes.list_item.create(null, content);
+        for (const [bullet, wanted] of [['*', '* a\n\n* ---\n'], ['-', '- a\n\n- ***\n'], ['+', '+ a\n\n+ ***\n']] as const) {
+            const list = editorSchema.nodes.bullet_list.create({ bullet }, [li(p('a')), li(editorSchema.nodes.horizontal_rule.create({ markup: bullet === '-' ? '---' : '***' }))]);
+            const written = serializeDocument({ doc: doc(touched(list)), eol: '\n', tail: '' }, { defaultWrap: 80 });
+            assert.strictEqual(written, wanted);
+            const back = parseDocument(hostEngine(), written, {}).doc;
+            assert.strictEqual(back.childCount, 1, written);
+            assert.strictEqual(back.child(0).childCount, 2, written);
+            assert.strictEqual(back.child(0).child(1).firstChild?.type.name, 'horizontal_rule', written);
+        }
+    });
+
+    test('a first list kept out of front matter by another bullet still reads back as the same list', () => {
+        const li = (...content: Node[]) => editorSchema.nodes.list_item.create(null, content);
+        const list = editorSchema.nodes.bullet_list.create({ bullet: '-' }, [li(p('x---')), li(editorSchema.nodes.horizontal_rule.create({ markup: '***' }))]);
+        // The intro above it emptied: the list opens the file.
+        const state = EditorState.create({ doc: doc(p('Intro'), list), plugins: [fidelityPlugin()] });
+        const tr = state.tr.delete(1, 1 + 'Intro'.length);
+        assert.strictEqual(noteRefusal(tr), null);
+        const written = serializeDocument({ doc: state.apply(tr).doc, eol: '\n', tail: '' }, { defaultWrap: 80 });
+        assert.strictEqual(written, '* x---\n\n* ---\n');
+        const back = parseDocument(hostEngine(), written, {}).doc;
+        assert.deepStrictEqual(back.content.content.map(n => `${n.type.name}(${n.childCount})`), ['bullet_list(2)']);
     });
 
     test('a block read as another kind is named by what is read where it stood, not by the count', () => {

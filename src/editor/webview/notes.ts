@@ -376,7 +376,7 @@ function filterRefusal(tr: Transaction, range: { from: number; to: number }): st
         ?? unwritableEmbed(tr.doc, range.from, range.to) ?? unwritableEmoji(tr.doc, range.from, range.to) ?? unplacedRefusal(tr, written.rewritten, mapping)
         ?? unwritableInNote(written.doc, from, to, origin, true)
         // And the file's start as written, read with the host's front-matter rule, which no part's read runs.
-        ?? frontMatterTakeover(written.doc);
+        ?? frontMatterTakeover(written.doc, before);
 }
 
 /** Whether the ways out of an unplaced atom are being tried (`unplacedRefusal`): a way out is no edit to try them for again. */

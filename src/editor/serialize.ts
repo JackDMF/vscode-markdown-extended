@@ -1498,7 +1498,7 @@ export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, ori
     const outside = (from: number, to: number) => to <= start || from >= Math.max(end, start + 1);
     for (const block of blocks) {
         // The document's first block is read as it is written: with the bullet that keeps it out of front matter.
-        const written = block.offset === 0 ? firstAsWritten(doc, block.node) : block.node;
+        const written = asWrittenIn(doc, block.node);
         for (const [index, unit] of unitsOf(written).entries()) {
             if (origin?.rewritten === undefined && outside(block.offset + unit.from, block.offset + unit.to)) {
                 continue;
@@ -2083,7 +2083,7 @@ function unitBefore(origin: EditOrigin, block: { node: Node; offset: number; cop
     if (block.copyOf !== undefined && block.copyOf !== null) {
         oldOffset = block.copyOf;
         oldBlock = origin.doc.nodeAt(oldOffset);
-        oldUnit = oldBlock === null ? undefined : unitsOf(oldBlock)[index];
+        oldUnit = oldBlock === null ? undefined : unitsOf(asWrittenIn(origin.doc, oldBlock))[index];
     } else {
         const pos = Math.min(origin.mapping.invert().map(block.offset + unit.from + 1, -1), origin.doc.content.size);
         const $old = origin.doc.resolve(pos);
@@ -2092,7 +2092,7 @@ function unitBefore(origin: EditOrigin, block: { node: Node; offset: number; cop
         }
         oldOffset = $old.depth === 0 ? pos : $old.before(1);
         oldBlock = origin.doc.nodeAt(oldOffset);
-        oldUnit = oldBlock === null ? undefined : unitsOf(oldBlock).find(u => u.from <= pos - oldOffset && pos - oldOffset < u.to);
+        oldUnit = oldBlock === null ? undefined : unitsOf(asWrittenIn(origin.doc, oldBlock)).find(u => u.from <= pos - oldOffset && pos - oldOffset < u.to);
     }
     const verdict = oldUnit === undefined ? null : unitVerdict(oldUnit);
     if (oldUnit === undefined || verdict === null) {
@@ -2506,7 +2506,13 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
             state.closeBlock(node);
         },
         horizontal_rule(state, node) {
-            state.write(String(node.attrs.markup || '---'));
+            // On a line a list item's marker opened, a rule of the marker's own character is read as a
+            // rule that ends the list (`* ***`, `- ---`): it is written with another character.
+            state.write('');
+            const st = internals(state);
+            const line = st.out.slice(st.out.lastIndexOf('\n') + 1);
+            const markup = String(node.attrs.markup || '---');
+            state.write([markup, '***', '---', '___'].find(m => !line.includes(m[0])) ?? markup);
             state.closeBlock(node);
         },
         table(state, node) {
@@ -3734,7 +3740,7 @@ function readsBackAsShown(unit: WrittenUnit): { cause: ReadCause; at: Node } | n
     const doc = comparisonDoc(unit.text);
     // A paragraph the save writes nothing for — emptied, or holding only what is not written — the parser never
     // reads; nor is the empty one the parse gives an empty item a textblock read.
-    const shown = unit.textblocks.map(t => t.node).filter(node => node.type.name !== 'paragraph' || writtenOf(node).text.trim() !== '');
+    const shown = unit.textblocks.map(t => t.node).filter(holdsWhatIsRead);
     const block = blockDiffers(shown, doc, unit.textblocks[0].node);
     if (block === null) {
         return null;
@@ -3801,7 +3807,7 @@ function readBlocks(doc: Node): ReadBlock[] {
     const out: ReadBlock[] = [];
     doc.descendants(node => {
         if (node.isTextblock && INLINE_TEXTBLOCKS.has(node.type.name)) {
-            if (node.type.name !== 'paragraph' || node.content.size > 0) {
+            if (holdsWhatIsRead(node)) {
                 out.push({ node, kind: 'text' });
             }
             return false;
@@ -3830,37 +3836,44 @@ function blockKind(node: Node): string {
  * counts); a block the editor shows as its source stands for as many of the
  * shown ones as it must, none of them compared — only that block is left to
  * the atoms' own checks, which name what made it (`noteRefusal`), the rest of
- * the part is compared. Where no pairing holds, the cause (`block`), named by
- * what is read instead and anchored at the textblock it was found at, else
- * at `fallback`; `null` — nothing to compare — where the difference is a
- * row's cells, one more or less or a header among them, which the table
- * writer pads and the tables plugin repairs.
+ * the part is compared. Where more than one pairing holds (two source blocks,
+ * paragraphs between them), which shown one a source block took cannot be
+ * told: `null`, nothing compared, the atoms' own checks speak. Where none
+ * holds, the cause (`block`) at the furthest point a pairing reaches, named
+ * by what is read there instead and anchored at the shown textblock there,
+ * else at `fallback` — but for a table's row, whose cells, one more or less
+ * or a header among them, the table writer pads and the tables plugin
+ * repairs in the same dispatch: `null`.
  */
 export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node): { pairs: [Node, Node][] } | { cause: ReadCause; at: Node } | null {
     const blocks = readBlocks(doc);
     const reads = blocks.filter(b => b.kind !== 'other');
-    // Whether shown[i..] pairs with reads[j..]: a source block takes none of them or one more.
-    const memo = new Map<number, boolean>();
-    const holds = (i: number, j: number): boolean => {
+    // How many pairings of shown[i..] with reads[j..] hold, up to two: a source block takes none of them or one more.
+    const memo = new Map<number, number>();
+    const ways = (i: number, j: number): number => {
         if (j === reads.length) {
-            return i === shown.length;
+            return i === shown.length ? 1 : 0;
         }
         const key = i * (reads.length + 1) + j;
         let known = memo.get(key);
         if (known === undefined) {
             const read = reads[j];
             known = read.kind === 'source'
-                ? holds(i, j + 1) || (i < shown.length && holds(i + 1, j))
-                : i < shown.length && blockKind(shown[i]) === blockKind(read.node) && holds(i + 1, j + 1);
+                ? Math.min(2, ways(i, j + 1) + (i < shown.length ? ways(i + 1, j) : 0))
+                : i < shown.length && blockKind(shown[i]) === blockKind(read.node) ? ways(i + 1, j + 1) : 0;
             memo.set(key, known);
         }
         return known;
     };
-    if (holds(0, 0)) {
+    const held = ways(0, 0);
+    if (held > 1) {
+        return null;
+    }
+    if (held === 1) {
         const pairs: [Node, Node][] = [];
         for (let i = 0, j = 0; j < reads.length;) {
             if (reads[j].kind === 'source') {
-                if (holds(i, j + 1)) {
+                if (ways(i, j + 1) > 0) {
                     j++;
                 } else {
                     i++;
@@ -3871,29 +3884,51 @@ export function blockDiffers(shown: readonly Node[], doc: Node, fallback: Node):
         }
         return { pairs };
     }
-    // The first place they part, the source blocks left out.
+    const cell = (node: Node) => node.type.name === 'table_cell' || node.type.name === 'table_header';
     const texts = blocks.filter(b => b.kind === 'text');
-    for (let k = 0; k < Math.max(shown.length, texts.length); k++) {
-        const want = shown[k] as Node | undefined;
-        const got = texts[k] as ReadBlock | undefined;
-        if (want !== undefined && got !== undefined && blockKind(want) === blockKind(got.node)) {
+    if (shown.length > 0 && texts.length > 0 && shown.every(cell) && texts.every(b => cell(b.node))) {
+        return null;
+    }
+    // The furthest point a pairing reaches, the most shown textblocks paired first.
+    let far = { i: 0, j: 0 };
+    const seen = new Set<number>();
+    const walk = [far];
+    while (walk.length > 0) {
+        const at = walk.pop() as { i: number; j: number };
+        const key = at.i * (reads.length + 1) + at.j;
+        if (seen.has(key)) {
             continue;
         }
-        const cell = (node: Node | undefined) => node === undefined || node.type.name === 'table_cell' || node.type.name === 'table_header';
-        if (cell(want) && cell(got?.node)) {
-            return null;
+        seen.add(key);
+        if (at.i > far.i || (at.i === far.i && at.j > far.j)) {
+            far = at;
         }
-        const at = want ?? shown[shown.length - 1] ?? fallback;
-        if (got !== undefined && texts.length > shown.length && blockKind(got.node) === 'paragraph') {
-            return { cause: { kind: 'block', noun: 'more than one block' }, at };
+        const read = reads[at.j] as ReadBlock | undefined;
+        if (read?.kind === 'source') {
+            walk.push({ i: at.i, j: at.j + 1 });
+            if (at.i < shown.length) {
+                walk.push({ i: at.i + 1, j: at.j });
+            }
+        } else if (read !== undefined && at.i < shown.length && blockKind(shown[at.i]) === blockKind(read.node)) {
+            walk.push({ i: at.i + 1, j: at.j + 1 });
         }
-        // What is read where the shown one would be: the textblock there, else the block that took its place.
-        const from = k === 0 ? 0 : blocks.indexOf(texts[k - 1]) + 1;
-        const instead = got?.node ?? blocks.slice(from).find(b => b.kind !== 'text')?.node;
-        const noun = (instead === undefined ? undefined : READ_BLOCK_NOUNS[instead.type.name]) ?? 'another kind of block';
-        return { cause: { kind: 'block', noun }, at };
     }
-    return null;
+    const want = shown[far.i] as Node | undefined;
+    const got = reads.slice(far.j).find(b => b.kind === 'text');
+    const anchor = want ?? shown[shown.length - 1] ?? fallback;
+    if (got !== undefined && want === undefined && blockKind(got.node) === 'paragraph') {
+        return { cause: { kind: 'block', noun: 'more than one block' }, at: anchor };
+    }
+    // What is read where the shown one would be: the textblock there, else the block that took its place.
+    const after = far.j === 0 ? 0 : blocks.indexOf(reads[far.j - 1]) + 1;
+    const instead = got?.node ?? blocks.slice(after).find(b => b.kind !== 'text')?.node;
+    const noun = (instead === undefined ? undefined : READ_BLOCK_NOUNS[instead.type.name]) ?? 'another kind of block';
+    return { cause: { kind: 'block', noun }, at: anchor };
+}
+
+/** Whether a textblock holds anything the comparison reads (`readItems`): a paragraph the save writes nothing for — emptied, or holding only what is not written — and the empty one the parse gives an empty item hold none. One test for the page's side and the parse's. */
+function holdsWhatIsRead(node: Node): boolean {
+    return node.type.name !== 'paragraph' || readItems(node).length > 0;
 }
 
 /**
@@ -4168,6 +4203,7 @@ function forgetReadBack(reads = true): void {
     itemCache = new WeakMap();
     wrappedCache = new WeakMap();
     verdictCache = new WeakMap();
+    startCache = new WeakMap();
     if (!reads) {
         return;
     }
@@ -4557,17 +4593,19 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
     let prev: { node: Node; body: string; remarked: boolean } | null = null;
     const endsLine = (text: string) => text.endsWith('\n') || text.endsWith('\r');
     const lines = (text: string) => (text.match(/\n/g) ?? []).length;
-    /** Whether a node is written by rule: an editable node an edit cleared the `src` of. */
-    const byRule = (node: Node): boolean => {
-        const src = node.attrs.src as string | null | undefined;
-        return node.type.name !== 'front_matter' && !SOURCE_NODES.has(node.type.name) && (src === null || src === undefined);
-    };
+    const byRule = writtenByRule;
     /** A node's text: its `src`, or its serialization with the document's `eol` and a final one. */
     // Each block as written, its unreadable emoji as text (`withReadEmoji`), made once per node.
     const asWritten = new Map<Node, Node>();
+    // Each body written once: the start (`writtenStart`) and the loop ask for the same ones.
+    const bodies = new Map<Node, string>();
     const bodyOf = (node: Node): string => {
         if (!byRule(node)) {
             return (node.attrs.src as string | null | undefined) ?? '';
+        }
+        const known = bodies.get(node);
+        if (known !== undefined) {
+            return known;
         }
         let written = asWritten.get(node);
         if (written === undefined) {
@@ -4575,8 +4613,12 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
             asWritten.set(node, written);
         }
         const text = withBlockSuffix(written, serializer.serialize(editorSchema.topNodeType.create(null, [written])));
-        return text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
+        const body = text === '' ? '' : text.replace(/\r?\n/g, eol) + eol;
+        bodies.set(node, body);
+        return body;
     };
+    // The block that opens the file, and what it is written as: the one answer the verdict reads too.
+    const start = writtenStart(doc, bodyOf);
     /**
      * A seam the parser does not read as two blocks, mended by the first rung
      * it does: one blank line, two, then (a list after a list of its kind) the
@@ -4635,10 +4677,9 @@ export function serializeLayout(parsed: { doc: Node; eol: '\n' | '\r\n'; tail: s
             }
         } else {
             sep = (node.attrs.gap as string | null | undefined) ?? '';
-            if (byRule(node)) {
-                const asWritten = outOfFrontMatter(node, sep, bodyOf, () => bodyAfter(index));
-                remarked = asWritten !== node;
-                body = remarked ? bodyOf(asWritten) : body;
+            if (start !== null && start.index === index && start.node !== node) {
+                remarked = true;
+                body = bodyOf(start.node);
             }
         }
         out += sep;
@@ -4682,64 +4723,126 @@ function readsFrontMatter(text: string): boolean {
 /** What `readsFrontMatter` answered, by the first line. */
 const frontMatterCache = new Map<string, boolean>();
 
-/**
- * The document's first block `node`, written after `lead` as `bodyOf` writes
- * a block, as the node it is written from: itself, unless the host would take
- * it for front matter — its rule runs inside a list item at the file's first
- * line too, so a `-` list whose first item's text has `---` after its first
- * character (`- x---`), or a `---` rule, would open front matter that runs to
- * the end of the file. Then the same block with another bullet — one the list
- * after it (`next`) does not open with, so the seam after it holds — or the
- * rule with `***`, `___`; where none holds, itself, and the edit filter
- * refuses it (`frontMatterTakeover`). The one place the save's writer and its
- * verdict (`unwritableInNote`) learn what the first block is written as.
- */
-function outOfFrontMatter(node: Node, lead: string, bodyOf: (node: Node) => string, next: () => string | null): Node {
-    if (!readsFrontMatter(lead + bodyOf(node))) {
-        return node;
-    }
-    let variants: Node[] = [];
-    if (node.type.name === 'bullet_list') {
-        const after = listMarkerOf(next() ?? '', false)?.marker;
-        const bullets = ['*', '+'].sort((a, b) => Number(a === after) - Number(b === after));
-        variants = bullets.map(bullet => node.type.create({ ...node.attrs, bullet }, node.content, node.marks));
-    } else if (node.type.name === 'horizontal_rule') {
-        variants = ['***', '___'].map(markup => node.type.create({ ...node.attrs, markup }, null, node.marks));
-    }
-    return variants.find(variant => !readsFrontMatter(lead + bodyOf(variant))) ?? node;
-}
-
-/**
- * The node the save writes `node`, the first block of `doc`, from
- * (`outOfFrontMatter`, as `serializeLayout` asks it): what the verdict reads.
- * A block kept as the file spells it is itself.
- */
-function firstAsWritten(doc: Node, node: Node): Node {
+/** Whether `node` is written by rule: an editable node an edit cleared the `src` of; else as the file spells it. */
+function writtenByRule(node: Node): boolean {
     const src = node.attrs.src as string | null | undefined;
-    if ((src !== null && src !== undefined) || SOURCE_NODES.has(node.type.name) || node.type.name === 'front_matter') {
-        return node;
-    }
-    const body = (n: Node) => withBlockSuffix(n, currentWriter().serialize(editorSchema.topNodeType.create(null, [n])));
-    const next = doc.childCount > 1 && doc.child(0) === node ? doc.child(1) : null;
-    const nextText = () => (next === null ? null : (next.attrs.src as string | null | undefined) ?? body(next));
-    return outOfFrontMatter(node, (node.attrs.gap as string | null | undefined) ?? '', body, nextText);
+    return node.type.name !== 'front_matter' && !SOURCE_NODES.has(node.type.name) && (src === null || src === undefined);
 }
 
 /**
- * The text a document's first lines are written as: its first block that
- * writes a body, after its gap, as the save writes it (`serializeLayout`, the
- * front-matter dodge included). `''` for a document that writes nothing.
+ * How the save starts a document (`writtenStart`): the index of its first
+ * top-level block that writes a body, the node that block is written from —
+ * itself, or the spelling that keeps it out of the host's front matter — and
+ * whether the host would still read front matter there.
  */
-function documentStart(doc: Node): string {
-    let end = 0;
-    for (let j = 0; j < doc.childCount; j++) {
-        end += doc.child(j).nodeSize;
-        const text = serializeLayout({ doc: doc.copy(doc.content.cut(0, end)), eol: '\n', tail: '' }, writeOptions, false).text;
-        if (text.trim() !== '') {
-            return text;
+interface WrittenStart {
+    index: number;
+    node: Node;
+    frontMatter: boolean;
+}
+
+/**
+ * How the save starts `doc`, a block written as `bodyOf` writes it (the
+ * save's writer, or the verdict's: the same rules): the one place the save
+ * (`serializeLayout`) and its verdict (`unwritableInNote`, `unitBefore`,
+ * `frontMatterTakeover`) learn which block opens the file and what it is
+ * written as. `null` for a document that opens with its front matter, or
+ * writes nothing.
+ *
+ * The host's front-matter rule, which only the host's engine runs, decides on
+ * the file's first line and runs inside a list item at that line too: a `-`
+ * list whose first item's text has `---` after its first character
+ * (`- x---`), or a `---` rule, would open front matter that runs to the end of
+ * the file. Only such a block, written by rule, or one kept as the file
+ * spells it whose text opens with `-`, can put the rule's `-` first; a list is
+ * judged by its first item alone, as the rule is. A list or rule that would be
+ * read so is written with another bullet — one the list after it does not
+ * open with, so the seam after it holds — or the rule with `***`, `___`, each
+ * only where the engine reads the block so written back as the same block
+ * (`readsAsBlock`); where none does, as it is, and the edit filter refuses
+ * the edit (`frontMatterTakeover`).
+ */
+function writtenStart(doc: Node, bodyOf: (node: Node) => string): WrittenStart | null {
+    for (let index = 0; index < doc.childCount; index++) {
+        const node = doc.child(index);
+        if (node.type.name === 'front_matter') {
+            return null;
         }
+        // Only a paragraph, or a block kept as spelled, can write nothing: an emptied one, an injected block.
+        if ((node.type.name === 'paragraph' || !writtenByRule(node)) && bodyOf(node) === '') {
+            continue;
+        }
+        const lead = (node.attrs.gap as string | null | undefined) ?? '';
+        if (!writtenByRule(node)) {
+            return { index, node, frontMatter: readsFrontMatter(lead + bodyOf(node)) };
+        }
+        const list = node.type.name === 'bullet_list';
+        if (!list && node.type.name !== 'horizontal_rule') {
+            return { index, node, frontMatter: false };
+        }
+        const firstLine = (n: Node) => bodyOf(list && n.childCount > 1 ? n.copy(n.content.cut(0, (n.firstChild as Node).nodeSize)) : n);
+        if (!readsFrontMatter(lead + firstLine(node))) {
+            return { index, node, frontMatter: false };
+        }
+        let variants: Node[];
+        if (list) {
+            let after: string | undefined;
+            for (let j = index + 1; j < doc.childCount && after === undefined; j++) {
+                const body = bodyOf(doc.child(j));
+                after = body === '' ? undefined : listMarkerOf(body, false)?.marker ?? '';
+            }
+            const bullets = ['*', '+'].sort((a, b) => Number(a === after) - Number(b === after));
+            variants = bullets.map(bullet => node.type.create({ ...node.attrs, bullet }, node.content, node.marks));
+        } else {
+            variants = ['***', '___'].map(markup => node.type.create({ ...node.attrs, markup }, null, node.marks));
+        }
+        const kept = variants.find(variant => !readsFrontMatter(lead + firstLine(variant)) && readsAsBlock(variant, bodyOf(variant)));
+        return kept === undefined ? { index, node, frontMatter: true } : { index, node: kept, frontMatter: false };
     }
-    return '';
+    return null;
+}
+
+/**
+ * Whether the engine reads `body`, `node` as written, as one block of the same
+ * shape: its type, and every block in it by type, in order — a list's items
+ * and what each holds, a rule among them too. What a respelled first block is
+ * held to (`writtenStart`): `* ***` is a rule, not an item.
+ */
+function readsAsBlock(node: Node, body: string): boolean {
+    const shape = (n: Node): string => (n.isTextblock || n.isLeaf ? n.type.name : `${n.type.name}(${Array.from({ length: n.childCount }, (_, i) => shape(n.child(i))).join(',')})`);
+    const read = comparisonDoc(body.replace(/\r?\n$/, ''));
+    return read.childCount === 1 && shape(read.child(0)) === shape(node);
+}
+
+/** A block as the verdict writes it, as the save does but for the document's line ending: its `src`, or its serialization and a final line end. */
+function verdictBody(node: Node): string {
+    if (!writtenByRule(node)) {
+        return (node.attrs.src as string | null | undefined) ?? '';
+    }
+    const text = withBlockSuffix(node, currentWriter().serialize(editorSchema.topNodeType.create(null, [node])));
+    return text === '' ? '' : `${text.replace(/\r\n?/g, '\n')}\n`;
+}
+
+/** What `writtenStart` answered for a document, with the verdict's writer. */
+let startCache = new WeakMap<Node, WrittenStart | null>();
+
+/** `writtenStart` of `doc` with the verdict's writer, remembered by the document. */
+function verdictStart(doc: Node): WrittenStart | null {
+    let start = startCache.get(doc);
+    if (start === undefined) {
+        start = writtenStart(doc, verdictBody);
+        startCache.set(doc, start);
+    }
+    return start;
+}
+
+/** The node the save writes `node`, a top-level block of `doc`, from (`writtenStart`): what the verdict reads. */
+function asWrittenIn(doc: Node, node: Node): Node {
+    if (doc.firstChild === null || doc.firstChild.type.name === 'front_matter') {
+        return node;
+    }
+    const start = verdictStart(doc);
+    return start !== null && doc.child(start.index) === node ? start.node : node;
 }
 
 /**
@@ -4747,18 +4850,21 @@ function documentStart(doc: Node): string {
  * file as front matter the page does not show — a source block the edit left
  * at the file's start, say a rule's `---` after the front matter above it was
  * deleted, or a first block no other spelling keeps out of it
- * (`outOfFrontMatter`) — or `null`. A document that opens with its front
- * matter is read as the page shows it.
+ * (`writtenStart`) — or `null`. With `before`, the document the edit
+ * started from, asked only where the blocks up to the one that opened it are
+ * not the very ones they were: an edit that left them reads as it did.
  */
-export function frontMatterTakeover(doc: Node): string | null {
-    const first = doc.firstChild;
-    if (first === null || first.type.name === 'front_matter') {
-        return null;
+export function frontMatterTakeover(doc: Node, before?: Node): string | null {
+    if (before !== undefined) {
+        const was = verdictStart(before);
+        const keep = was === null ? 1 : was.index + 1;
+        let same = 0;
+        while (same < keep && same < doc.childCount && same < before.childCount && doc.child(same) === before.child(same)) {
+            same++;
+        }
+        if (same === keep) {
+            return null;
+        }
     }
-    // A first block kept as the file spells it, not opening with the rule's `-`, decides without a write.
-    const src = first.attrs.src as string | null | undefined;
-    if (typeof src === 'string' && src !== '' && !`${(first.attrs.gap as string | null | undefined) ?? ''}${src}`.startsWith('-')) {
-        return null;
-    }
-    return readsFrontMatter(documentStart(doc)) ? causeReason({ kind: 'block', noun: 'front matter' }) : null;
+    return verdictStart(doc)?.frontMatter === true ? causeReason({ kind: 'block', noun: 'front matter' }) : null;
 }
