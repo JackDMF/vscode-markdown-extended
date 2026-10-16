@@ -720,10 +720,14 @@ img.mep-pending-range {
     overflow: hidden;
     text-overflow: ellipsis;
     font-size: 11px;
-    /* Mixed toward the widget's ground: Light Modern's description colour is its text colour. */
-    color: color-mix(in srgb, var(--vscode-descriptionForeground, GrayText) 75%, var(--vscode-editorWidget-background, Canvas));
+    color: var(--vscode-descriptionForeground, GrayText);
     cursor: default;
     user-select: none;
+}
+/* Light Modern's description colour is its text colour: mixed toward the widget's ground there
+   (4.5:1 still, at 11px). Dark and High Contrast mute it already, and a mix fell under 4.5:1. */
+.vscode-light .mep-object-label {
+    color: color-mix(in srgb, var(--vscode-descriptionForeground, GrayText) 75%, var(--vscode-editorWidget-background, Canvas));
 }
 /* A title the bar's room hid (`fit`) takes its divider with it. */
 .mep-object-label[hidden] + .mep-object-separator { display: none; }

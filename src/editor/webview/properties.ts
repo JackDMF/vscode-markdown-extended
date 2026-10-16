@@ -102,11 +102,18 @@ function remember(key: string, expanded: boolean): void {
     }
 }
 
-function button(className: string, text: string, label?: string): HTMLButtonElement {
+/**
+ * A panel button: `label` names it for a screen reader and, as its tooltip, for the eye —
+ * but not where its text already says it (`titled` false: "+ Add").
+ */
+function button(className: string, text: string, label?: string, titled = true): HTMLButtonElement {
     const b = element('button', className, text);
     b.type = 'button';
     if (label) {
         b.setAttribute('aria-label', label);
+        if (titled) {
+            b.title = label;
+        }
     }
     return b;
 }
@@ -594,7 +601,7 @@ export class PropertiesView implements NodeView, SourceEditor {
             });
             box.append(input);
         } else {
-            const add = button('mep-prop-chip mep-prop-chip-add', '+ Add', `Add to ${property.key}`);
+            const add = button('mep-prop-chip mep-prop-chip-add', '+ Add', `Add to ${property.key}`, false);
             add.dataset.slot = `add-button:${index}`;
             add.addEventListener('click', () => {
                 this.flushDirty();
@@ -623,7 +630,7 @@ export class PropertiesView implements NodeView, SourceEditor {
         const adding = this.adding;
         if (adding === null) {
             // "+ Add", as every list's: its row says what it adds; the screen reader hears it.
-            const add = button('mep-prop-add-button', '+ Add', 'Add property');
+            const add = button('mep-prop-add-button', '+ Add', 'Add property', false);
             add.dataset.slot = 'add:button';
             add.addEventListener('click', () => {
                 this.flushDirty();

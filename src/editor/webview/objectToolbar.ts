@@ -630,7 +630,7 @@ class ObjectBar {
             label.append(' ', code);
         }
         // What the object is, on a rest: the title is a label, not a control — no focus, no press.
-        this.tips.attach(label, () => plainTip(presentation.title));
+        this.tips.attach(label, () => (presentation.title === '' ? null : plainTip(presentation.title)));
         this.fitted = '';
         this.name = barName(presentation.label, presentation.code);
         this.el.setAttribute('aria-label', barDescription(this.name, presentation.verbs.filter(v => !v.refusal).length));

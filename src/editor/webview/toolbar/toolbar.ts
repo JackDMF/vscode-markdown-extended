@@ -58,7 +58,7 @@ import {
 import { ariaKeyshortcuts } from '../../keys';
 import { Tip, plainTip } from '../../tips';
 import { macKeys } from '../hint';
-import { Tooltips } from '../tooltip';
+import { Tooltips, describeAs } from '../tooltip';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertPropertiesTransaction, insertSourceTransaction, insertWrapperTransaction, isCurrent,
     markActive, markRefusal, toggleMarkup, wrapSourceTransaction,
@@ -589,11 +589,7 @@ class ToolbarView implements PluginView {
             if (tool.el.classList.contains('mep-menu-item')) {
                 // A menu entry shows its word and syntax, and its card the construct and the refusal: no hover.
                 // A refused one says why to a screen reader.
-                if (note) {
-                    tool.el.setAttribute('aria-description', note);
-                } else {
-                    tool.el.removeAttribute('aria-description');
-                }
+                describeAs(tool.el, note);
                 // A named entry says one name: the selection's, or — the row locked — its resting one.
                 if (tool.action.named) {
                     relabel(tool.el, s.label ?? tool.action.label);
@@ -945,11 +941,7 @@ class ToolbarView implements PluginView {
         // A menu entry has no hover; a refused one says why to a screen reader.
         for (const item of this.formatItems) {
             setState(item, !busy, false);
-            if (busy) {
-                item.setAttribute('aria-description', EXPORT_BUSY_REFUSAL);
-            } else {
-                item.removeAttribute('aria-description');
-            }
+            describeAs(item, busy ? EXPORT_BUSY_REFUSAL : null);
         }
     }
 
@@ -1744,6 +1736,7 @@ class ToolbarView implements PluginView {
             return;
         }
         this.bubble.hidden = true;
+        this.tips.hide(this.bubble);
     }
 
     /**
@@ -1767,6 +1760,7 @@ class ToolbarView implements PluginView {
             && sel.$from.parent.inlineContent && sel.$to.parent.inlineContent && !sel.$from.parent.type.spec.code;
         if (!focused || !inText) {
             this.bubble.hidden = true;
+            this.tips.hide(this.bubble);
             return;
         }
         this.bubble.hidden = false;

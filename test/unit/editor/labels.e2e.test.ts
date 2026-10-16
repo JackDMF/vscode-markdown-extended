@@ -245,6 +245,32 @@ suite('Editor labels, menus and states (e2e)', () => {
         });
     });
 
+    test('the bubble hidden by an update takes its hover with it', async function () {
+        this.timeout(20000);
+        await applyTheme(page, LIGHT_MODERN);
+        await showDocument();
+        await page.focus('.ProseMirror');
+        await page.evaluate(() => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const at = (node.textContent ?? '').indexOf('local replica');
+                if (at >= 0) {
+                    (document.getSelection() as Selection).setBaseAndExtent(node, at + 1, node, at + 10);
+                    return;
+                }
+            }
+        });
+        await page.waitForSelector('.mep-bubble:not([hidden])');
+        await pointTo('.mep-bubble [data-action="attrs-bubble"]', 700);
+        assert.strictEqual(await page.$eval('.mep-tooltip', el => (el as HTMLElement).hidden), false, 'the hover shows');
+        // No key, no press: the selection collapses, the update hides the bubble.
+        await page.evaluate(() => (document.getSelection() as Selection).collapseToStart());
+        await delay(250);
+        assert.deepStrictEqual(await page.evaluate(() => [(document.querySelector('.mep-bubble') as HTMLElement).hidden, (document.querySelector('.mep-tooltip') as HTMLElement).hidden]), [true, true]);
+        await page.mouse.move(WIDE - 10, 790);
+    });
+
     test('05 a bar\'s title is a small muted label with a divider after it; Alt+Enter focuses Edit…', async function () {
         this.timeout(40000);
         await eachTheme('05-bar-1280', async theme => {
@@ -279,6 +305,24 @@ suite('Editor labels, menus and states (e2e)', () => {
                 getComputedStyle(bar.querySelector('.mep-object-verb') as HTMLElement).color,
             ]);
             assert.notStrictEqual(titleColour, verbColour, `${theme.name}: the title is not drawn as a verb`);
+            // 11px needs 4.5:1 on the widget's ground, and more than a refused verb (its colour at 40 %).
+            const ratios = await page.$eval(BAR, bar => {
+                const rgb = (c: string): number[] => {
+                    const m = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(c);
+                    return m ? [1, 2, 3].map(i => Number(m[i]) * 255) : (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+                };
+                const lum = (c: number[]) => {
+                    const [r, g, b] = c.map(v => v / 255).map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+                    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                };
+                const contrast = (a: number[], b: number[]) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+                const ground = rgb(getComputedStyle(bar).backgroundColor);
+                const title = rgb(getComputedStyle(bar.querySelector('.mep-object-label') as HTMLElement).color);
+                const verb = rgb(getComputedStyle(bar.querySelector('.mep-object-verb') as HTMLElement).color);
+                const refused = verb.map((v, i) => v * 0.4 + ground[i] * 0.6);
+                return { title: contrast(title, ground), refused: contrast(refused, ground) };
+            });
+            assert.ok(ratios.title >= 4.5 && ratios.title > ratios.refused, `${theme.name}: ${JSON.stringify(ratios)}`);
         });
     });
 
@@ -326,13 +370,20 @@ suite('Editor labels, menus and states (e2e)', () => {
 
     test('08 Annotation: the notes, then the footnote after a divider', async function () {
         this.timeout(40000);
-        await eachTheme('08-menu-annotation-1280', async () => {
+        await eachTheme('08-menu-annotation-1280', async theme => {
             await clickText(page, 'payload', 2);
             await openByClick('annotation');
             const entries = await page.$eval(panel('annotation'), p => Array.from(p.children).map(c => (c as HTMLElement).dataset.action ?? (c.getAttribute('role') === 'separator' ? '—' : '?')));
             assert.deepStrictEqual(entries, ['sidenote', 'marginal-note', 'left-sidebar', 'right-sidebar', '—', 'footnote-reference']);
             assert.deepStrictEqual(await page.$$eval(`${panel('annotation')} .mep-entry-label`, els => els.map(e => e.textContent)), ['Sidenote', 'Marginal note', 'Left sidebar', 'Right sidebar', 'Footnote']);
             await pointTo(`${panel('annotation')} [data-action="sidenote"]`, 400);
+            if (theme === HC_DARK) {
+                const card = await page.$eval('.mep-preview-card:not([hidden])', el => {
+                    const note = getComputedStyle(el.querySelector('.sidenote') as HTMLElement);
+                    return [note.color === getComputedStyle(el).color, note.backgroundColor];
+                });
+                assert.deepStrictEqual(card, [true, 'rgba(0, 0, 0, 0)'], 'HC: the note is the card\'s text on the card\'s ground');
+            }
         });
     });
 
@@ -458,6 +509,13 @@ suite('Editor labels, menus and states (e2e)', () => {
         });
         assert.deepStrictEqual(placed, { shown: true, beside: true, top: 0 }, 'beside the entry, at its top');
         await shot('16-set-verb-entry-hover-1280-light.png');
+        // The pointer crossing the menu moves the focus (`followPointer`): that focus is the pointer's, no hover before the rest.
+        const second = await (await page.$(`${BAR} .mep-object-menu .mep-menu-item:nth-child(2)`))?.boundingBox();
+        assert.ok(second);
+        await page.mouse.move(second.x + second.width / 2, second.y + second.height / 2, { steps: 3 });
+        await delay(100);
+        const crossed = await page.evaluate(() => [(document.activeElement as HTMLElement).dataset.entry, (document.querySelector('.mep-tooltip') as HTMLElement).hidden]);
+        assert.deepStrictEqual(crossed[1], true, `no hover at once under the pointer: ${JSON.stringify(crossed)}`);
         await page.keyboard.press('Escape');
         await page.keyboard.press('Escape');
     });
