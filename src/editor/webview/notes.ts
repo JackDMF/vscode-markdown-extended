@@ -449,19 +449,20 @@ export function refusableRange(tr: Transaction): { from: number; to: number } | 
 /**
  * A reference ProseMirror made itself — a note that a delete or a paste cut
  * open needs a `note_ref` before its body, and `createAndFill` leaves the
- * anchor at its default — given its kind's anchor class, as `noteRef` would;
- * `null` where every reference has one.
+ * anchor at its default — given its kind's anchor class, as `noteRef` would,
+ * by steps added to `tr`; whether there was one to give.
  */
-function anchorRepair(state: EditorState): Transaction | null {
-    let tr = null as Transaction | null;
+function repairAnchors(state: EditorState, tr: Transaction): boolean {
+    let repaired = false;
     state.doc.descendants((node, pos, parent) => {
         if (node.type === nodes.note_ref && node.attrs.anchor === null && parent) {
             const anchor = noteRef(parent.type.name === 'marginal_note' ? 'marginal_note' : 'sidenote').attrs.anchor as string;
-            tr = (tr ?? state.tr).setNodeAttribute(pos, 'anchor', anchor);
+            tr.setNodeAttribute(pos, 'anchor', anchor);
+            repaired = true;
         }
         return true;
     });
-    return tr ? asRepair(tr) : null;
+    return repaired;
 }
 
 /**
@@ -497,13 +498,15 @@ export function notesPlugin(embedInput: Plugin): Plugin {
             };
         },
         appendTransaction(transactions, oldState, newState) {
-            // Attributes only: the positions the selection fix reads stay the same.
-            const anchored = transactions.some(tr => tr.docChanged) ? anchorRepair(newState) : null;
-            if (!transactions.some(tr => tr.selectionSet)) {
-                return anchored;
+            // One repair transaction: the selection first, while its document is
+            // still `newState`'s, then the attribute steps (which move no position).
+            const tr = newState.tr;
+            const fixed = transactions.some(t => t.selectionSet) ? normalizedSelection(newState, oldState.selection) : null;
+            if (fixed) {
+                tr.setSelection(fixed);
             }
-            const fixed = normalizedSelection(newState, oldState.selection);
-            return fixed ? asRepair((anchored ?? newState.tr).setSelection(fixed)) : anchored;
+            const anchored = transactions.some(t => t.docChanged) && repairAnchors(newState, tr);
+            return fixed || anchored ? asRepair(tr) : null;
         },
         props: {
             handleDOMEvents: {

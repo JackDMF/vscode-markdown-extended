@@ -865,6 +865,10 @@ rather than a second heading, so the id and the anchor are never written twice.
 
 ### Limits
 
+- **A paragraph opening with a sidebar starts one space in.** With `$left$` in the margin,
+  the space after it stays at the start of the line in the editor, which shows the text's
+  spaces as written (ProseMirror's `white-space: pre-wrap`); the preview and exports
+  collapse it.
 - **What stays source-edited.** A table using markdown-it-multimd-table's extensions and
   raw HTML are edited as Markdown in a source block, and a document the editor cannot show
   without loss is never written to: the editor says so and offers the text editor instead.

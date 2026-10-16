@@ -275,6 +275,11 @@ suite('Note Styles (e2e)', () => {
         assert.deepStrictEqual([between.padding, between.overflow], [['26px', '26px'], 0], 'two-sided at 1100px: no lane');
         const wide = await measure(preview(TWO_SIDED), 'light', 1250, 'screen');
         assert.deepStrictEqual([wide.padding, wide.overflow], [['250px', '250px'], 0], 'two-sided at 1250px');
+        // A stylesheet laying out its own margin: no lane, and the page keeps markdown.css's gutter.
+        for (const zero of ['0', '0px']) {
+            const own = await measure(pageOf(TWO_SIDED, `<style>:root { --mep-note-lane: ${zero}; }</style>`, previewStyles), 'light', 1600, 'screen');
+            assert.deepStrictEqual(own.padding, ['26px', '26px'], `--mep-note-lane: ${zero}`);
+        }
     });
 
     test('a paragraph that opens with a sidebar starts at the column\'s edge in the margin layout: the space after it collapses', async function () {

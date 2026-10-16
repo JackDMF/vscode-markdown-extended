@@ -387,7 +387,12 @@ const formatting: ToolbarAction[] = [
 // ---------------------------------------------------------------------------
 
 function noteAction(id: string, label: string, node: NoteNodeName, open: string, close: string, sample: SampleSpec, preview: ActionPreview, syntaxText: string, bubble: boolean): ToolbarAction {
-    const glyph = typeof sample.children?.[0] === 'string' ? sample.children[0] : 'text';
+    // The glyph's text, a note's inside its anchor.
+    const textOf = (spec: SampleSpec): string | undefined => {
+        const first = spec.children?.[0];
+        return typeof first === 'string' ? first : first ? textOf(first) : undefined;
+    };
+    const glyph = textOf(sample) ?? 'text';
     return {
         id, place: { menu: 'annotation' }, label, syntax: `${open}${syntaxText}${close}`, sample,
         apply: { kind: 'wrap-node', node }, example: `${open}${glyph}${close}`, preview, ...(bubble ? { bubble: true as const } : {}),

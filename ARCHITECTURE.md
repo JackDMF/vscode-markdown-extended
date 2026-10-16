@@ -400,7 +400,8 @@ conversion, a paste — goes through `noteRef` or the parse. The attribute defau
 position; a test holds the sources to `noteRef`, and parse-of-serialize to the same
 node. A reference ProseMirror makes itself — closing a note that a delete or a paste
 cut open, `createAndFill` leaves the attribute at its default — is given its kind's
-anchor by the notes plugin's `appendTransaction` (`anchorRepair`). The editor's reference also carries `data-mep-note-ref`, which no stylesheet of
+anchor by the notes plugin's `appendTransaction` (`repairAnchors`), in the same repair
+transaction as its selection fix, the selection set first. The editor's reference also carries `data-mep-note-ref`, which no stylesheet of
 the preview names, by which a copy made here is known on paste. Mirroring the DOM is
 what lets every stylesheet written for the preview style the note being edited
 unchanged, the margin layout included; a page test at 1400px compares the computed
@@ -418,8 +419,11 @@ and the host's re-sync — and, when the html element's computed padding changed
 update, scrolls by how far the line holding the selection head (mapped through the
 transaction) moved. The padding is read, not the document counted, so the stylesheet's
 own decision (its media queries, `:has()`, a reader's `--mep-note-lane: 0`) is the one
-the editor follows. Only a transaction whose steps change a range holding a note or a
-sidebar (`touchesNote`) is measured, so typing in plain text costs nothing; and a line
+the editor follows; with the lane at 0 the notes still switch between margin and text,
+so the first note's computed float is read beside the padding. Only a transaction one
+of whose steps made or removed a whole note or sidebar — or an atom whose rendering
+holds one, which `:has()` counts too — is measured (`touchesNote`), so typing, in plain
+text or in a note, costs nothing; and a line
 that was off screen before the update has no place to keep — ProseMirror's own
 scrolling is left as it is.
 

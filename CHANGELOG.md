@@ -13,7 +13,12 @@
 - Stylesheet authors: `:root { --mep-note-lane: 0 }` keeps your own margin layout; `.sn-anchor` carries the underline.
 - Stylesheet authors: set `--md-note-width` and gaps on `:root`, not `body`; the margin lane reads them there.
 - Note colours derive from the text colour; `--md-note-opacity` mutes by colour, not transparency.
+- Stylesheet authors: override note colours, `--md-note-text` and the bar width on `body`, not `:root`.
 - In the Visual Editor, adding the first note or removing the last keeps the reference line in place.
+
+### ⚠️ Limits
+
+- In the Visual Editor, a paragraph opening with a `$left$` sidebar in the margin starts one space in.
 
 ## v4.7.0 — Saves That Read Back as Shown
 

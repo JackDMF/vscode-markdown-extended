@@ -61,6 +61,22 @@
 /* ============================================================================
    Custom Properties
    ============================================================================ */
+
+/* The lanes are lengths, registered as such: a stylesheet's
+   `:root { --mep-note-lane: 0 }` then means 0px. Unregistered, the bare 0
+   would make `calc(var(--md-page-gutter) + 0)` invalid, and the page would
+   lose its own gutter with the lane. */
+@property --mep-note-lane {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+@property --mep-note-lane-left {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
 :root {
   /* Margin geometry. Widths are absolute, not percentages: a note needs exactly
      `width + gap` of lane, which is what the lane below reserves. */
@@ -81,7 +97,6 @@
 
   --md-note-font-size: 0.9em;
   --md-note-opacity: 0.85;           /* how much of the text colour a note keeps */
-  --md-note-border-width: 3px;
   --md-note-padding: 0.05em 0.45em;
 }
 
@@ -90,16 +105,18 @@
    any reader theme, with no --vscode-* variable. The bar keeps at least 3:1
    against the page and against the tint.
 
-   These sit on `body`, not `:root`: custom properties inherit from the NEAREST
-   ancestor that sets them, so a `:root` rule in your own stylesheet could never
-   beat a `body` rule in this one. Override them on `body` and your declaration -
-   loaded after this file - wins:
+   These, and the bar's width, sit on `body`, not `:root`: custom properties
+   inherit from the NEAREST ancestor that sets them, so a `:root` rule in your
+   own stylesheet could never beat a `body` rule in this one. Override them on
+   `body` and your declaration - loaded after this file - wins, on screen and
+   in print alike:
 
-     body { --md-note-surface: transparent; --md-note-border: transparent; } */
+     body { --md-note-surface: transparent; --md-note-border-width: 0; } */
 body {
   --md-note-text: color-mix(in srgb, currentColor calc(var(--md-note-opacity) * 100%), transparent);
   --md-note-surface: color-mix(in srgb, currentColor 7%, transparent);
   --md-note-border: color-mix(in srgb, currentColor 72%, transparent);
+  --md-note-border-width: 3px;
   --md-anchor-line: color-mix(in srgb, currentColor 60%, transparent);
 }
 

@@ -187,11 +187,21 @@ suite('Editor notes: the reference carries its kind\'s anchor, which the Markdow
         }
     });
 
-    test('the margin lane is measured only for a change that makes, edits or removes a note or a sidebar', () => {
+    test('a refilled reference and a caret put between the note\'s parts are both repaired, in one transaction that applies', () => {
+        const state = stateOf('Alpha ++beta|body text++ gamma.\n');
+        const note = posOf(state.doc, 'beta') - 2;
+        const tr = state.tr.delete(note + 1, note + 1 + (state.doc.nodeAt(note)?.child(0).nodeSize ?? 0) + 3);
+        tr.setSelection(TextSelection.create(tr.doc, note + 1 + (tr.doc.nodeAt(note)?.child(0).nodeSize ?? 0)));
+        const after = state.applyTransaction(tr).state;
+        assert.strictEqual(after.doc.nodeAt(note)?.child(0).attrs.anchor, 'sn-anchor');
+        assert.notStrictEqual(noteContextAt(after.selection.$head), null, 'the caret is in a part');
+    });
+
+    test('the margin lane is measured only for a change that makes or removes a note or a sidebar', () => {
         const state = stateOf('Alpha beta ++ref|body++ gamma.\n\nPlain $side$ text.\n\nOther words.\n');
         assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'Other'))), false, 'typing in plain text');
         assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'beta'))), false, 'typing beside a note, outside it');
-        assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'body'))), true, 'typing in a note');
+        assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'body'))), false, 'typing in a note: it stays a note');
         const wrapped = select(stateOf('Alpha beta gamma.\n'), 'beta');
         let made: Transaction | undefined;
         wrapInNote('sidenote')(wrapped, tr => {
@@ -201,6 +211,14 @@ suite('Editor notes: the reference carries its kind\'s anchor, which the Markdow
         const note = posOf(state.doc, 'ref') - 2;
         assert.strictEqual(touchesNote(state.tr.delete(note, note + (state.doc.nodeAt(note)?.nodeSize ?? 0))), true, 'removing it');
         assert.strictEqual(touchesNote(state.tr.delete(posOf(state.doc, 'side') - 1, posOf(state.doc, 'side') + 5)), true, 'removing a sidebar');
+        // A paragraph nesting notes stays a source block; its rendering holds the notes the stylesheet counts.
+        const nested = stateOf('Before.\n\nA ++a|see !!b|c!!++ z.\n');
+        const block = nested.doc.child(1);
+        assert.strictEqual(block.type.name, 'raw_block');
+        assert.ok(/class="sn-ref/.test(block.attrs.html as string), 'its rendering holds a note');
+        const start = nested.doc.child(0).nodeSize;
+        assert.strictEqual(touchesNote(nested.tr.delete(start, start + block.nodeSize)), true, 'removing a source block holding notes');
+        assert.strictEqual(touchesNote(nested.tr.insertText('x', 1)), false, 'typing beside it');
     });
 
     test('no source but the schema makes a reference by hand: every other place goes through noteRef, which sets the anchor', () => {

@@ -267,6 +267,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
             const action = TOOLBAR_ACTIONS.find(a => a.id === id);
             assert.ok(action && anchorOf(action.sample), `${id}: the glyph`);
             assert.ok(action.preview?.nodes.some(anchorOf), `${id}: the card`);
+            assert.ok(/^(\+\+sidenote|!!marginal)\|note/.test(action.example), `${id}: the example reads the glyph's text: ${action.example}`);
         }
     });
 

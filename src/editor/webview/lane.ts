@@ -18,21 +18,38 @@ import { Transaction } from 'prosemirror-state';
 import { Mappable } from 'prosemirror-transform';
 import { EditorView } from 'prosemirror-view';
 import { NOTE_NODES } from '../schema';
+import { NOTE_SYNTAX } from '../../syntax/markers';
 
-/** Whether `doc` holds a note or a sidebar between `from` and `to`, or around them. */
+/** The classes the stylesheet's `:has()` counts as a note or a sidebar on the page. */
+const NOTE_CLASSES = [NOTE_SYNTAX.sidenote.noteClass, NOTE_SYNTAX.marginalNote.noteClass, NOTE_SYNTAX.leftSidebar.cssClass, NOTE_SYNTAX.rightSidebar.cssClass];
+
+/** A class attribute in rendered HTML naming one of them: a source block's or an injected atom's notes. */
+const NOTE_IN_HTML = new RegExp(`class="(?:[^"]*\\s)?(?:${NOTE_CLASSES.join('|')})(?:\\s[^"]*)?"`);
+
+/** Whether `node` is, or draws, a note or a sidebar of the page. */
+function isNoteOnPage(node: Node): boolean {
+    return NOTE_NODES.has(node.type.name) || (typeof node.attrs.html === 'string' && NOTE_IN_HTML.test(node.attrs.html));
+}
+
+/**
+ * Whether `doc` holds a note or a sidebar lying wholly between `from` and
+ * `to`: one a step made or removed. A note the range only reaches into — the
+ * text typed in it — is a note before and after.
+ */
 function noteBetween(doc: Node, from: number, to: number): boolean {
     let found = false;
-    doc.nodesBetween(Math.max(0, from), Math.min(doc.content.size, to), node => {
-        found ||= NOTE_NODES.has(node.type.name);
+    doc.nodesBetween(Math.max(0, from), Math.min(doc.content.size, to), (node, pos) => {
+        found ||= pos >= from && pos + node.nodeSize <= to && isNoteOnPage(node);
         return !found;
     });
     return found;
 }
 
 /**
- * Whether `tr` can open or close the lane: one of its steps changed a range
- * that holds a note or a sidebar, before the step or after it. Only the
- * document's notes decide the lane, so typing in plain text is not measured.
+ * Whether `tr` can open or close the lane: one of its steps made or removed a
+ * note or a sidebar — or an atom whose rendering holds one, which the
+ * stylesheet's `:has()` counts as well. Only those decide the lane, so typing,
+ * in plain text or in a note, is not measured.
  */
 export function touchesNote(tr: Transaction): boolean {
     return tr.steps.some((step, i) => {
@@ -46,10 +63,16 @@ export function touchesNote(tr: Transaction): boolean {
     });
 }
 
-/** The html element's padding-left / padding-right as computed: the lane as the stylesheet decides it. */
+/**
+ * The layout as the stylesheet decides it: the html element's padding-left /
+ * padding-right (the lane), and whether the document's first note floats —
+ * a stylesheet with `--mep-note-lane: 0` reserves nothing, and its notes still
+ * flip between the margin and the text.
+ */
 function laneEdges(): string {
     const style = getComputedStyle(document.documentElement);
-    return `${style.paddingLeft} ${style.paddingRight}`;
+    const note = document.querySelector(`.ProseMirror :is(${NOTE_CLASSES.map(c => `.${c}`).join(', ')})`);
+    return `${style.paddingLeft} ${style.paddingRight} ${note ? getComputedStyle(note).float : 'none'}`;
 }
 
 /** The top of the line holding `pos` on screen, or `null` where it cannot be measured. */

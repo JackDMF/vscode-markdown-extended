@@ -294,4 +294,34 @@ suite('Editor margin lane (e2e)', () => {
         assert.strictEqual(await lanePadding(), '250px');
         assert.strictEqual(await page.evaluate(() => window.scrollY), 0, 'the page stays where it was');
     });
+
+    test('with a stylesheet\'s own margin (--mep-note-lane: 0) a switch between margin and text keeps the line too', async function () {
+        this.timeout(30000);
+        await page.addStyleTag({ content: ':root { --mep-note-lane: 0; }' });
+        try {
+            await at(1100);
+            await showDocument(ONE_SIDED, 'Offline Sync');
+            assert.strictEqual(await lanePadding(), '26px', 'the stylesheet reserves nothing');
+            assert.strictEqual(await page.$eval('.ProseMirror .sidenote', el => getComputedStyle(el).float), 'right', 'one side: in the margin');
+            await page.evaluate(() => {
+                const p = Array.from(document.querySelectorAll('.ProseMirror p')).find(x => (x.textContent ?? '').startsWith('The last open point')) as HTMLElement;
+                window.scrollTo(0, p.getBoundingClientRect().top + window.scrollY - 400);
+            });
+            await delay(80);
+            await selectText('the batch size');
+            const before = await textTop('The last open point');
+            await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
+            await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden])');
+            await page.click('.mep-menu [data-action="left-sidebar"]');
+            await delay(150);
+            assert.strictEqual(await page.$eval('.ProseMirror .sidenote', el => getComputedStyle(el).float), 'none', 'both sides at 1100: every note in the text');
+            near(await textTop('The last open point'), before, 'the line after the notes moved into the text');
+        } finally {
+            await page.evaluate(() => document.querySelectorAll('style').forEach(s => {
+                if (s.textContent === ':root { --mep-note-lane: 0; }') {
+                    s.remove();
+                }
+            }));
+        }
+    });
 });
