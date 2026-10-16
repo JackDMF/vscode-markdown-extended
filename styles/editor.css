@@ -618,20 +618,13 @@ img.mep-pending-range {
 
 .mep-preview-card[hidden] { display: none; }
 
-/* High Contrast and forced colours: a note in the card is the text on the card's own
-   ground with its bar — the notes stylesheet's light surface held the HC white text
-   at no contrast at all. */
+/* High Contrast: a note in the card is the text on the card's own ground with its
+   bar — the notes stylesheet's light surface held the HC white text at no contrast
+   at all. (Forced colours repaint it as Canvas and CanvasText themselves.) */
 .vscode-high-contrast .mep-preview-card :is(.sidenote, .mnote, .left-sidebar, .right-sidebar) {
     color: inherit;
     background: transparent;
     border-left-color: var(--vscode-contrastBorder, CanvasText);
-}
-@media (forced-colors: active) {
-    .mep-preview-card :is(.sidenote, .mnote, .left-sidebar, .right-sidebar) {
-        color: CanvasText;
-        background: Canvas;
-        border-left-color: CanvasText;
-    }
 }
 
 .mep-preview-body > :first-child { margin-top: 0; }
