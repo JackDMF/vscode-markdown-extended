@@ -557,8 +557,8 @@ the note (no husk), at the start of one with text selects it. The toolbar's note
 are toggles (`toggleNote`): inside a note of their kind they unwrap it (`unwrapNote`) — the
 note node replaced, in one step, by its reference's inline content or a sidebar's, the
 note's own marks added to it, the caret at its end — and they show as active there. The
-same `unwrapNote` is the object toolbar's **Remove note, keep text** (below): two paths to
-one verb, one transaction.
+same `unwrapNote` is the object toolbar's **Delete note** and **Remove sidebar, keep text**
+(below): two paths to one verb, one transaction.
 
 ### Attributes, containers and admonitions
 
@@ -1770,8 +1770,15 @@ otherwise stand at its position and be the one deleted. Four surfaces used to an
 question with four predicates, and the row's Bold applied to the hidden selection behind
 an open box.
 `Alt+Enter` (a `handleKeyDown` prop, which no other keymap
-binds) skips the delay and focuses the first verb; the arrow keys move between verbs
-(wrapping), `Enter` chooses, `Esc` returns the focus to the text.
+binds) skips the delay and focuses the first verb that opens something in place — a field, a
+choice, a menu, a source box — and is not refused: never *Open*, never a verb that acts at
+once, never another extension's, never Remove or Delete (`firstFocus`, `verbs.ts`; Daniel,
+2026-10-16). A bar with no such verb — an emoji, a wiki embed, a badge, a requirement heading,
+a note whose *Edit source* is refused — takes the focus itself: it is a `role="toolbar"`
+whose `aria-label` names the object, its count of verbs and the keys (*Emoji :rocket:, 2
+actions, arrow keys to choose*), and `Enter` or `↓` moves into its first verb; running one is
+a second `Enter`. The arrow keys move between verbs (wrapping), `Enter` chooses, `Esc`
+returns the focus to the text.
 
 **Where it sits** (`place`). *A block's bar covers no text where it can help it, and never moves
 layout* (Daniel, 2026-09-29, after the table screenshots showed a bar over the paragraph above its
@@ -1822,10 +1829,29 @@ scrolls with the text; it is placed again on scroll and resize.
 (multimd) table's shows for the pointer and sits at the column's right edge above it — one kind
 of thing, two triggers and two places.
 
-**The verbs** say what remains (*Remove note, keep text*), and are each one transaction in
+**One model for every bar** (`src/editor/verbs.ts`, no DOM, no ProseMirror — the host's
+schema and the objects' refusals quote its verb names). Each verb has a *slot*, and the slots
+stand in one order: Open (*Show in text editor* fills it too) · Edit… · the object's type verbs
+(Row/Column/Align, Convert…, Type) · Attributes… · Edit source · other extensions' actions
+(lenses, code actions) · divider · Remove/Delete. `arrange` sorts every bar's verbs by it,
+stable within a slot, and draws the dividers the rule gives — before the first other
+extension's verb when one of the object's own precedes it, before the verb that destroys —
+keeping only a divider a presentation sets for a group of its own (a table's, before
+*Attributes…*). **Remove keeps, Delete destroys** (VS Code's convention, Daniel 2026-10-15):
+a Remove says what stays (*Remove link, keep text*), a Delete is where the content goes
+(*Delete image*, *Delete note* — a note's own text goes with it). `wording` builds a verb's
+label, its short form and its hint from a verb word and a noun, so the three cannot drift.
+In a narrow editor a verb drops the noun its bar's title already names (*Delete*, *Edit…*,
+*Remove, keep content*) before the title truncates, and the title truncates to a stub only if
+the bar is still too wide; verbs never truncate (`ObjectBar.fit`, run as the bar is placed;
+where the title does not name the noun — a span's *Remove attributes, keep text* — there is
+no short form). A *Delete* whose file stays (an image, a wiki embed, a snippet's directive)
+says so in its tooltip (`FILE_STAYS`).
+
+**The verbs** say what remains or what goes, and are each one transaction in
 `objects.ts` (or `notes.ts`), one history event:
 
-- note — *Remove note, keep text* (`unwrapNote`); *Convert to marginal note* / *Convert to
+- note — *Delete note* (a sidebar: *Remove sidebar, keep text*; `unwrapNote`); *Convert to marginal note* / *Convert to
   sidenote*, *Move to right* / *Move to left* (`convertNoteTransaction`: the counterpart
   node built from the same reference, body content and marks; the two have the same
   structure, so the selection is put back at the same positions); *Edit source*. A
@@ -1835,25 +1861,25 @@ of thing, two triggers and two places.
 - link — *Open* (`openLink`, the Ctrl+click path), *Edit link…* (the address in the field,
   prefilled, completing as `Ctrl+K`'s does — below, *Links and images*; the mark replaced
   over its run with the new `href`, the title kept, `markup` cleared: a bare URL's text is
-  the old address, which the bare form would write as the link), *Remove link* (the mark
-  removed, the text kept);
-- image — *Edit image…* (two fields in turn, the alt text and then the path, which completes
+  the old address, which the bare form would write as the link), *Remove link, keep text*
+  (the mark removed, the text kept);
+- image — *Open file* (`openLink` with the `src`, resolved on the host as a followed link
+  is), *Edit image…* (two fields in turn, the alt text and then the path, which completes
   with image files; `setNodeMarkup`, the title and the literal kept), *Attributes…* (the
-  node's `literal`, `setNodeMarkup`, still selected), *Open file* (`openLink` with the
-  `src`, resolved on the host as a followed link is), *Remove image*; its label carries the
+  node's `literal`, `setNodeMarkup`, still selected), *Delete image*; its label carries the
   literal (`Presentation.code`);
 - span — *Attributes…* (the mark replaced over its run with the new literal),
   *Remove attributes, keep text*;
 - styled run (emphasis, code, a key … with a literal) — *Attributes…*, *Remove attributes,
   keep formatting*; a bare holder (only from `Alt+Enter`) — *Attributes…*;
-- any object holding the element the caret is in — after its own verbs, separated,
+- any object holding the element the caret is in — beside its own *Attributes…*,
   *Attributes of Bold…* (`holderInside`);
-- container — *Change name/info* (first word the name, the rest the info, verbatim; a
+- container — *Edit classes…* (the whole `:::` line: first word the name, the rest the info, verbatim; a
   trailing `{…}` refused, since markdown-it-attrs would take it off the info),
   *Attributes…* (refused, with the reason: the container's renderer drops a literal),
   *Remove container, keep content* (`unwrapTransaction`: the blocks lifted, the caret kept);
-- admonition — *Change type* (the inline choice, a `<select>` of `ADMONITION_TYPES`),
-  *Edit title* (empty: no title bar), *Attributes…* (refused: the plugin gives a literal on
+- admonition — *Edit title…* (empty: no title bar), *Type* (the inline choice, a `<select>`
+  of `ADMONITION_TYPES`, with the dropdown chevron), *Attributes…* (refused: the plugin gives a literal on
   the `!!!` line to the title bar), *Remove admonition, keep content*; both changes clear
   `header`;
 - block with attributes — *Attributes…* (the literal replaced in place, its placement
@@ -1866,23 +1892,30 @@ of thing, two triggers and two places.
   verb may be a **set-verb**, a menu of related actions that opens under it (`Verb.menu`),
   in the formatting toolbar's menu chrome, keyboard-navigable, the current value of a
   choice marked;
-- source block — *Edit source* (`editRawSourceAt`), *Show in text editor*, *Delete block*;
+- source block — *Show in text editor*, *Edit source* (`editRawSourceAt`), *Delete block*;
   labelled *Source · multimd table* or *Source · table* when it is a table the editor
   leaves as source;
-- expansion — *Open snippet* (only with `mark.path`), *Show in text editor*, *Delete
-  directive* (the node deleted, and with it the one line it writes);
+- expansion — *Open snippet* (only with `mark.path`), *Show in text editor*, *Change
+  snippet…*, *Delete directive* (the node deleted, and with it the one line it writes);
+- emoji, wiki embed — *Convert to text* (its tooltip names the text it becomes:
+  *Convert to text (`:rocket:`)*), *Delete emoji* / *Delete embed*;
 - badge, other injected content — the label alone; the front matter no bar of its own (its verbs are the
   properties panel's header), only other extensions' actions when there are some;
 - heading — the label alone (*Requirement FRS-…* for a requirement heading), and so no bar
   at all unless another extension offers code actions for it (below).
 
 Every object that is a whole top-level block (`isTopLevelBlock`) carries, after its own
-verbs and a separator, the code actions other extensions offer for its lines — see the next
-section.
+verbs and a divider, before the one that destroys, the code actions other extensions offer
+for its lines — see the next section.
 
-A verb whose result is a disappearance — a removal, a deletion — announces it in the caret
-hint (`webview/hint.ts`: *Note removed — Ctrl+Z*, `Cmd+Z` on macOS), in a neutral tone, for
-3 s. The hint is the one the notes plugin shows a refusal in; one element, two tones
+A verb whose result is a disappearance — a removal, a deletion, a conversion to text —
+announces it in the caret hint, in one pattern, *<Object> <past participle> — <undo key>*
+(`undoHint` in `webview/hint.ts`: *Note deleted — Ctrl+Z*, *Emoji converted to text —
+Ctrl+Z*), in a neutral tone, for 3 s. The key is the page keymap's own undo binding
+(`UNDO_BINDING` in `src/editor/keys.ts`, bound in `plugins.ts`), named as the platform names
+it (`Cmd+Z` on macOS): the key a hint names is the key that undoes, by construction. The host
+cannot supply another — VS Code's `undo` does not reach the page, and no extension API reads a
+command's keybinding. The hint is the one the notes plugin shows a refusal in; one element, two tones
 (`data-tone`), so the page has one place beside the caret where it speaks.
 
 **The inline field** (`webview/inlineField.ts`) is one reusable component for every place a
