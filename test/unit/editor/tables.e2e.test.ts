@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { CELL_BREAK_REFUSAL } from '../../../src/editor/serialize';
-import { closeEditorPage, clickText, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot as saveShot, vscodeMarkdownCss, MOD, UNDO } from './pageHarness';
+import { closeEditorPage, clickText, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot as saveShot, MOD, UNDO } from './pageHarness';
 import { LIGHT_MODERN, applyTheme } from './themes';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
@@ -165,7 +165,6 @@ suite('Editor pipe tables (e2e)', () => {
         this.timeout(60000);
         editor = await openEditorPage({
             width: 1280, height: 800,
-            stylesheets: [vscodeMarkdownCss()],
             styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'],
         });
         if (!editor) {

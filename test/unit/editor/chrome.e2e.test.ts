@@ -5,7 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import type { WebviewMessage } from '../../../src/editor/protocol';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import {
-    EXTENSION_ID, EditorPage, clickText, closeEditorPage, computedColour as computed, delay, openEditorPage, shot as saveShot, showDiagnostics, vscodeMarkdownCss,
+    EXTENSION_ID, EditorPage, clickText, closeEditorPage, computedColour as computed, delay, openEditorPage, shot as saveShot, showDiagnostics,
 } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
@@ -87,7 +87,6 @@ suite('Editor chrome (e2e)', () => {
         this.timeout(60000);
         editor = await openEditorPage({
             width: 1280, height: 800,
-            stylesheets: [vscodeMarkdownCss()],
             styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'],
         });
         if (!editor) {

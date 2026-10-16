@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, showDiagnostics, MOD, SHOTS_DIR, editCommand, vscodeMarkdownCss } from './pageHarness';
+import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, showDiagnostics, MOD, SHOTS_DIR, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, RowBoxes, assertReasonShown, assertRowFree, assertRowLocked, rowBoxes } from './rowLock';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
@@ -136,10 +136,11 @@ suite('Editor properties panel (e2e)', () => {
 
     suiteSetup(async function () {
         this.timeout(60000);
-        // VS Code's `markdown.css`, as the real page loads it (`html.ts`): with the webview's
-        // defaults alone the body's top would be 0, a page VS Code never shows, and the
-        // properties panel would sit under the row's lock line.
-        editor = await openEditorPage({ width: 1280, height: 800, stylesheets: [vscodeMarkdownCss()] });
+        // Without the built-in Markdown extension's stylesheets: the webview's defaults alone
+        // leave the body's top at 0, so the page's own top room is all that keeps the panel's
+        // header clear of the row and its lock line — what a disabled extension, or a
+        // stylesheet setting `body { padding-top: 0 }`, leaves.
+        editor = await openEditorPage({ width: 1280, height: 800, builtinMarkdown: false });
         if (!editor) {
             this.skip();
         }
@@ -779,10 +780,15 @@ suite('Editor properties panel (e2e)', () => {
                     return { header: header.top, active: active.top, chrome: line ? line.getBoundingClientRect().bottom : row.bottom, below: line !== null };
                 });
 
-                // The toggle, pressed and released as a person does: the room comes after the release.
+                // The toggle, pressed and released as a person does: the line and its room come after the release.
                 const toggle = await centre('.mep-properties .mep-props-toggle');
-                await page.mouse.click(toggle.x, toggle.y, { delay: 60 });
+                await page.mouse.move(toggle.x, toggle.y);
+                await page.mouse.down();
+                await shot(page, `lockroom-${width}-held.png`);
+                await delay(60);
+                await page.mouse.up();
                 await delay(150);
+                await shot(page, `lockroom-${width}-released.png`);
                 assert.deepStrictEqual(await clicks(), ['mep-props-toggle'], `${width}px: the toggle's click landed`);
                 let at = await headerAgainst();
                 assert.ok(at.below, `${width}px: the reason on its own line`);

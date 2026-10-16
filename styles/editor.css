@@ -444,9 +444,14 @@ img.mep-pending-range {
 
 /* The sample's box spans the entry's sample column, so a block sample without
    content of its own (the rule's <hr>) has a width to be drawn at. A block
-   sample loses its margins; `fitSamples` scales it into the entry. */
+   sample loses its margins; `fitSamples` scales it into the entry. So do its
+   first and last child: their margins collapse through it into the centred
+   box, and VS Code's `markdown.css` keeps a paragraph's bottom margin but not
+   its top one — the quote's sample stood off-centre, cut at the top. */
 .mep-entry-sample .mep-sample { display: block; width: 100%; }
 .mep-entry-sample .mep-sample > * { margin: 0 !important; }
+.mep-entry-sample .mep-sample > * > :first-child { margin-top: 0 !important; }
+.mep-entry-sample .mep-sample > * > :last-child { margin-bottom: 0 !important; }
 
 .mep-entry-label { color: inherit; }
 
@@ -1385,6 +1390,8 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
     border-bottom: 1px solid var(--mep-chrome-border);
 }
+/* Come while a button is held, the line waits for its room unseen — measured, not over the page (`toolbar.ts`, `placeLock`). */
+.mep-toolbar.mep-row-lock-below.mep-row-lock-waiting > .mep-row-lock { visibility: hidden; }
 .mep-row-lock-text {
     padding: 1px 8px;
     border-radius: 3px;

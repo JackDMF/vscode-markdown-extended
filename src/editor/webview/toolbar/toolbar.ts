@@ -120,6 +120,9 @@ const LOCK_FLASH_MS = 900;
 /** On the row while the lock's reason does not fit beside the tools: it stands on a line of its own under them (`editor.css`). */
 const LOCK_BELOW_CLASS = 'mep-row-lock-below';
 
+/** On the row while that line waits for its room — a button is held (`settleRoom`): laid out, not shown (`editor.css`). */
+const LOCK_WAIT_CLASS = 'mep-row-lock-waiting';
+
 /** Draw a sample: the element the parser makes, with its classes, attributes and content. */
 export function renderSample(spec: SampleSpec): HTMLElement {
     const node = document.createElement(spec.tag);
@@ -550,7 +553,11 @@ class ToolbarView implements PluginView {
      * so it holds for any tool set and font. The tools and the count never
      * move; the line goes with the lock. The page makes room for the line
      * (`settleRoom`) — and the bars, which keep clear of the chrome, are
-     * placed again — when it comes or goes.
+     * placed again — when it comes or goes. A line that comes while a button
+     * is held waits for its room, unseen (`LOCK_WAIT_CLASS`): shown before it,
+     * it would stand over the page's top and take the release — and so the
+     * click — from what was pressed there, however little room the page's own
+     * stylesheets leave above it.
      */
     private placeLock(): void {
         const was = this.row.classList.contains(LOCK_BELOW_CLASS);
@@ -558,6 +565,7 @@ class ToolbarView implements PluginView {
         const note = this.lockNote;
         const below = !note.hidden && note.scrollWidth > note.clientWidth + 1;
         this.row.classList.toggle(LOCK_BELOW_CLASS, below);
+        this.row.classList.toggle(LOCK_WAIT_CLASS, below && this.pointerHeld && this.room < 0.5);
         if (below !== was) {
             this.chromeMoved();
         }
@@ -580,6 +588,8 @@ class ToolbarView implements PluginView {
         if (this.destroyed || this.pointerHeld) {
             return;
         }
+        // The line comes with its room, never before it.
+        this.row.classList.remove(LOCK_WAIT_CLASS);
         const want = this.row.classList.contains(LOCK_BELOW_CLASS) ? this.lockNote.getBoundingClientRect().height : 0;
         if (Math.abs(want - this.room) < 0.5) {
             return;
@@ -1076,6 +1086,14 @@ class ToolbarView implements PluginView {
             const zoom = Math.min(1, r.height > 0 ? box.height / r.height : 1, r.width > 0 ? box.width / r.width : 1);
             if (zoom < 1) {
                 sample.style.setProperty('zoom', zoom.toFixed(3));
+                // A zoomed box is laid out again, and its line boxes round: a tall sample
+                // (a code block's padding and lines) can still stand a pixel out. Measured
+                // once more and shrunk by what is left over.
+                const z = sample.getBoundingClientRect();
+                const over = Math.max(z.height > 0 ? z.height / box.height : 0, z.width > 0 ? z.width / box.width : 0);
+                if (over > 1) {
+                    sample.style.setProperty('zoom', (Math.floor(zoom / over * 1000) / 1000).toFixed(3));
+                }
             }
         }
     }

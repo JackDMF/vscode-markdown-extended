@@ -1,5 +1,12 @@
 # Change Log
 
+## Unreleased
+
+### 🐛 Fixes
+
+- A click at the top of a narrow editor no longer misses: the lock's reason line appears after the click.
+- The Quote and Code block samples in the Block type menu now fit their entries instead of being cut off.
+
 ## v4.7.0 — Saves That Read Back as Shown
 
 ### 🐛 Fixes

@@ -5,7 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { closeEditorPage, computedColour, delay, EditorPage, EXTENSION_ID, openEditorPage, shot } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
-import { installedWebviewDefaultStyles, WEBVIEW_DEFAULT_STYLES, WEBVIEW_DEFAULT_STYLES_ID } from './webviewDefaults';
+import { installedWebviewDefaultStyles, WEBVIEW_DEFAULT_STYLES, WEBVIEW_DEFAULT_STYLES_ID, webviewPageFile } from './webviewDefaults';
 
 /** A link, a footnote reference and the footnote's back-link: all three are `<a>`, the reference inside `sup.footnote-ref`. */
 const LINKS = 'A [link](https://example.com) and a claim that needs a source.[^1]\n\n[^1]: The source.\n';
@@ -36,24 +36,13 @@ suite('Editor webview defaults (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
+    // The extension host always has an installed VS Code: a page or a pattern that moved is a
+    // failure to look at, never a skip — the harness would fall back to a copy nobody checks.
     test('the copy is the default stylesheet of the VS Code the tests run in', function () {
         const installed = installedWebviewDefaultStyles();
-        if (installed === undefined) {
-            this.skip();
-        }
-        assert.strictEqual(squeeze(WEBVIEW_DEFAULT_STYLES), squeeze(installed as string));
-    });
-
-    test('the defaults are the head\'s first element, as VS Code prepends them', async function () {
-        if (!editor) {
-            this.skip();
-        }
-        const first = await page.evaluate(() => {
-            const element = document.head.firstElementChild;
-            return { tag: element?.tagName, id: element?.id, text: element?.textContent ?? '' };
-        });
-        assert.deepStrictEqual({ tag: first.tag, id: first.id }, { tag: 'STYLE', id: WEBVIEW_DEFAULT_STYLES_ID });
-        assert.strictEqual(squeeze(first.text), squeeze(WEBVIEW_DEFAULT_STYLES));
+        assert.ok(installed !== undefined, 'no "defaultStyles.textContent = `...`" in ' + webviewPageFile()
+            + ': VS Code moved its webview defaults; find them again and update webviewDefaults.ts');
+        assert.strictEqual(squeeze(WEBVIEW_DEFAULT_STYLES), squeeze(installed));
     });
 
     test('a link, a footnote reference and its back-link take the theme\'s link colour', async function () {
@@ -61,6 +50,12 @@ suite('Editor webview defaults (e2e)', () => {
         if (!editor) {
             this.skip();
         }
+        // The defaults stand where VS Code prepends them: first in the head.
+        const first = await page.evaluate(() => {
+            const element = document.head.firstElementChild;
+            return { tag: element?.tagName, id: element?.id };
+        });
+        assert.deepStrictEqual(first, { tag: 'STYLE', id: WEBVIEW_DEFAULT_STYLES_ID });
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, LINKS, {})), version: 1, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror .footnote-backref') !== null);

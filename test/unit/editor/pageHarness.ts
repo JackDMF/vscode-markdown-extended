@@ -5,7 +5,8 @@ import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import * as vscode from 'vscode';
 import { DiagnosticEntry, HostMessage, WebviewMessage } from '../../../src/editor/protocol';
-import { WEBVIEW_DEFAULT_STYLES, WEBVIEW_DEFAULT_STYLES_ID } from './webviewDefaults';
+import { LIGHT_MODERN, applyTheme } from './themes';
+import { WEBVIEW_DEFAULT_STYLES_ID, webviewDefaultStyles } from './webviewDefaults';
 
 export const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
 
@@ -100,16 +101,6 @@ export function editCommand(key: string, shift = false): puppeteer.KeyPressOptio
     return command ? { commands: [command] } : undefined;
 }
 
-/**
- * The page bundle (`dist/editor-webview.js`) loaded into headless Chromium, with
- * `acquireVsCodeApi` replaced by a recorder, VS Code's webview default styles
- * at the head of the page as VS Code puts them there, and `styles/editor.css`
- * beside it.
- *
- * `undefined` when there is no bundle or no browser — the suite then skips, as
- * the other e2e tests do: a browser already available (`MTE_E2E_CHROME`, or
- * the one Puppeteer installed) is used, and nothing is downloaded.
- */
 export interface EditorPageOptions {
     /** The viewport width; 1200 unless given. */
     width?: number;
@@ -117,8 +108,16 @@ export interface EditorPageOptions {
     height?: number;
     /** Stylesheets of this extension's `styles/` to load before `editor.css`, as the preview's cascade would. */
     styles?: readonly string[];
-    /** Stylesheets by absolute path, loaded first: VS Code's own `markdown.css`, which the preview's cascade starts with. */
+    /** More stylesheets by absolute path, after the built-in Markdown extension's and before `styles`. */
     stylesheets?: readonly string[];
+    /**
+     * Whether VS Code's built-in Markdown extension is there, as it is unless
+     * disabled: the page then starts its cascade with that extension's
+     * `markdown.css` and `highlight.css` (`html.ts`). `false` is the page
+     * without them — what a disabled extension, or a stylesheet undoing them,
+     * leaves: the webview's defaults alone.
+     */
+    builtinMarkdown?: boolean;
 }
 
 /** VS Code's preview stylesheet, from the VS Code the tests run in: the first sheet of the preview's cascade. */
@@ -126,6 +125,29 @@ export function vscodeMarkdownCss(): string {
     return path.join(vscode.env.appRoot, 'extensions', 'markdown-language-features', 'media', 'markdown.css');
 }
 
+/** VS Code's preview stylesheet for code, the second sheet of the preview's cascade. */
+function vscodeHighlightCss(): string {
+    return path.join(vscode.env.appRoot, 'extensions', 'markdown-language-features', 'media', 'highlight.css');
+}
+
+/**
+ * The body's font variables as the host writes them with the Markdown
+ * preview's settings at their defaults (`html.ts`, `fontVariables`): no
+ * `fontFamily`, `fontSize` 14, `lineHeight` 1.6.
+ */
+const BODY_FONT_VARIABLES = '--markdown-font-size: 14px; --markdown-line-height: 1.6;';
+
+/**
+ * The page bundle (`dist/editor-webview.js`) loaded into headless Chromium, with
+ * `acquireVsCodeApi` replaced by a recorder, in the page the host writes
+ * (`html.ts`) as VS Code shows it: the webview's default styles at the head
+ * (`webviewDefaults.ts`), Light Modern's variables (`themes.ts`), then the built-in Markdown extension's stylesheets,
+ * `stylesheets` and `styles`, the codicon font and `styles/editor.css` last.
+ *
+ * `undefined` when there is no bundle or no browser — the suite then skips, as
+ * the other e2e tests do: a browser already available (`MTE_E2E_CHROME`, or
+ * the one Puppeteer installed) is used, and nothing is downloaded.
+ */
 export async function openEditorPage(options: EditorPageOptions = {}): Promise<EditorPage | undefined> {
     const extensionPath = vscode.extensions.getExtension(EXTENSION_ID)?.extensionPath;
     const bundle = extensionPath ? path.join(extensionPath, 'dist', 'editor-webview.js') : '';
@@ -155,16 +177,19 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
     page.on('pageerror', error => errors.push(String(error)));
     // VS Code's own webview defaults first, as it prepends them to every webview's head (`webviewDefaults.ts`).
     await page.setContent(
-        `<!DOCTYPE html><html><head><style id="${WEBVIEW_DEFAULT_STYLES_ID}">${WEBVIEW_DEFAULT_STYLES}</style><meta charset="UTF-8"></head>`
-        + '<body class="markdown-body vscode-body vscode-light"><div id="mep-editor" class="mep-editor"></div>'
+        `<!DOCTYPE html><html><head><style id="${WEBVIEW_DEFAULT_STYLES_ID}">${webviewDefaultStyles()}</style><meta charset="UTF-8"></head>`
+        + `<body class="markdown-body vscode-body vscode-light" style="${BODY_FONT_VARIABLES}"><div id="mep-editor" class="mep-editor"></div>`
         + '<script>window.posted = []; window.acquireVsCodeApi = () => ({ postMessage: m => window.posted.push(m) });</script>'
         + '</body></html>',
         { waitUntil: 'load' },
     );
-    for (const sheet of options.stylesheets ?? []) {
-        if (fs.existsSync(sheet)) {
-            await page.addStyleTag({ path: sheet });
-        }
+    // A webview always has its theme's variables: Light Modern, which the body's class names, until a test applies another.
+    await applyTheme(page, LIGHT_MODERN);
+    const builtin = options.builtinMarkdown === false ? [] : [vscodeMarkdownCss(), vscodeHighlightCss()];
+    for (const sheet of [...builtin, ...options.stylesheets ?? []]) {
+        // A sheet that is not there is a page the host never writes: refused, not left out.
+        assert.ok(fs.existsSync(sheet), `no stylesheet at ${sheet}`);
+        await page.addStyleTag({ path: sheet });
     }
     for (const sheet of options.styles ?? []) {
         await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', sheet) });
