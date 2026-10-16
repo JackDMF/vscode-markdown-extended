@@ -115,30 +115,30 @@ suite('Editor emoji atom (e2e)', () => {
         assert.deepStrictEqual(drawn, { text: '😃', title: 'Emoji :) — kept as written', editable: 'false', font: true, colour: true, background: 'rgba(0, 0, 0, 0)', padding: '0px' });
     });
 
-    test('a click selects it with the focus outline, the bar names it by its spelling, and Remove emoji takes it out whole', async function () {
+    test('a click selects it with the focus outline, the bar names it by its spelling, and Delete emoji takes it out whole', async function () {
         this.timeout(15000);
         await showDocument('Glad to see you :) here.\n', 'Glad');
         await pickAtom();
         const outline = await page.$eval('.ProseMirror .mep-emoji', el => ({ selected: el.classList.contains('ProseMirror-selectednode'), style: getComputedStyle(el).outlineStyle }));
         assert.deepStrictEqual(outline, { selected: true, style: 'solid' });
         assert.strictEqual(await page.$eval('.ProseMirror .mep-emoji', el => getComputedStyle(el).cursor), 'default');
-        assert.deepStrictEqual(await barState(), { object: 'emoji', label: 'Emoji :)', title: 'Emoji :) — kept as written', code: ':)', verbs: ['edit-emoji-as-text', 'remove-emoji'] });
+        assert.deepStrictEqual(await barState(), { object: 'emoji', label: 'Emoji :)', title: 'Emoji :) — kept as written', code: ':)', verbs: ['convert-emoji-to-text', 'delete-emoji'] });
         const fonts = await page.$eval(`${BAR} .mep-object-label-code`, el => ({ code: getComputedStyle(el).fontFamily, background: getComputedStyle(el).backgroundColor }));
         assert.ok(/Consolas|monospace/.test(fonts.code), fonts.code);
         assert.strictEqual(fonts.background, 'rgba(0, 0, 0, 0)', 'no chip');
-        await clickVerb('remove-emoji');
+        await clickVerb('delete-emoji');
         await settle();
         assert.strictEqual(await atoms(), 0);
         // The two spaces it stood between are written as one, as a changed paragraph's run of spaces is.
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you here.\n');
     });
 
-    test('Edit as text makes it its spelling with the caret after it, saved escaped; Ctrl+Z gives the atom back', async function () {
+    test('Convert to text makes it its spelling with the caret after it, saved escaped; Ctrl+Z gives the atom back', async function () {
         this.timeout(20000);
         await showDocument('Glad to see you :) here.\n', 'Glad');
         await pickAtom();
-        await clickVerb('edit-emoji-as-text');
-        assert.deepStrictEqual(await hint(), { text: `:) is text now — ${UNDO}`, tone: 'neutral', shown: true });
+        await clickVerb('convert-emoji-to-text');
+        assert.deepStrictEqual(await hint(), { text: `Emoji converted to text — ${UNDO}`, tone: 'neutral', shown: true });
         await settle();
         assert.strictEqual(await atoms(), 0);
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you \\:) here.\n');
@@ -264,7 +264,7 @@ suite('Editor emoji atom (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'Glad to see you k here.\n');
     });
 
-    test('Alt+Enter beside an emoji, before or after it, selects it and opens its bar on its first verb', async function () {
+    test('Alt+Enter beside an emoji, before or after it, selects it and opens its bar, the focus on the bar itself', async function () {
         this.timeout(20000);
         for (const step of [null, 'ArrowLeft'] as const) {
             await showDocument('Glad to see you :) here.\n', 'Glad');
@@ -277,7 +277,7 @@ suite('Editor emoji atom (e2e)', () => {
             await page.keyboard.up('Alt');
             await page.waitForSelector(`${BAR}[data-object="emoji"]`, { timeout: 2000 });
             assert.strictEqual(await selected(), true, `${step ?? 'after'}: selected`);
-            assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.verb), 'edit-emoji-as-text');
+            assert.strictEqual(await page.evaluate(() => document.activeElement?.classList.contains('mep-object-toolbar')), true, `${step ?? 'after'}: the bar itself has the focus — no verb of an emoji's opens in place`);
             await page.keyboard.press('Escape');
         }
         // Elsewhere Alt+Enter keeps its meaning: in plain text it opens nothing.
@@ -290,7 +290,7 @@ suite('Editor emoji atom (e2e)', () => {
         assert.strictEqual(await page.$(BAR), null);
     });
 
-    test('its states, shot in light and dark: rest, a second paragraph\'s emoji clicked, the arrow keys, Alt+Enter, Edit as text, the hint', async function () {
+    test('its states, shot in light and dark: rest, a second paragraph\'s emoji clicked, the arrow keys, Alt+Enter, Convert to text, the hint', async function () {
         this.timeout(90000);
         const themes: [Theme, string][] = [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']];
         const two = 'A first paragraph, there to stand above the second one.\n\nGlad to see you :) here, and :smile: there.\n';
@@ -314,10 +314,10 @@ suite('Editor emoji atom (e2e)', () => {
             await page.waitForSelector(`${BAR}[data-object="emoji"]`, { timeout: 2000 });
             await delay(600);
             await shot(page, `emoji-${name}-4-alt-enter-bar.png`);
-            await clickVerb('edit-emoji-as-text');
+            await clickVerb('convert-emoji-to-text');
             await delay(200);
-            assert.strictEqual((await hint()).text, `:) is text now — ${UNDO}`);
-            await shot(page, `emoji-${name}-5-edit-as-text.png`);
+            assert.strictEqual((await hint()).text, `Emoji converted to text — ${UNDO}`);
+            await shot(page, `emoji-${name}-5-convert-to-text.png`);
             await clearHint();
             await showDocument(two, 'Glad');
             await caretAfterAtom();

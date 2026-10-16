@@ -38,6 +38,7 @@ import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
 import { RAW_TEXT_MARKS, causeReason, frontMatterTakeover, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
 import { showHint } from './hint';
+import { VERB } from '../verbs';
 import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
 
 const nodes = editorSchema.nodes;
@@ -387,7 +388,7 @@ let tryingWaysOut = false;
  * holding an emoji atom the judge cannot place (`unplacedEmoji`), or `null`:
  * whether it still reads as that emoji cannot be told, so it is neither kept
  * nor made text. The reason names the atom, the cause where it is a smiley in
- * superscript, and the ways out that are open — Edit as text and Remove emoji
+ * superscript, and the ways out that are open — Convert to text and Delete emoji
  * on that atom, each tried, as the object bar would, on the document the edit
  * started from (`mapping`, from there to the written one).
  */
@@ -407,10 +408,10 @@ function unplacedRefusal(tr: Transaction, rewritten: readonly { node: Node; offs
                 const state = EditorState.create({ doc: tr.before });
                 const asText = emojiAsTextTransaction(state, at, at + 1);
                 if (asText !== null && noteRefusal(asText) === null && emojiTextStillRead(state, asText, at) === null) {
-                    ways.push('Edit as text');
+                    ways.push(VERB.convertToText);
                 }
                 if (noteRefusal(state.tr.delete(at, at + 1)) === null) {
-                    ways.push('Remove emoji');
+                    ways.push(VERB.deleteEmoji);
                 }
             }
         } finally {

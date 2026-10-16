@@ -46,6 +46,7 @@ import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, 
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
+import { VERB } from '../verbs';
 
 const nodes = editorSchema.nodes;
 
@@ -1122,10 +1123,10 @@ export const BLOCK_NAMES: Readonly<Record<string, string>> = {
  * `:::` line (`markdownItContainer.ts`), but the container node has no slot for
  * one, so a container written with one stays a source block (`blocks.ts`).
  */
-export const CONTAINER_ATTRS_REFUSAL = 'A container\'s {…} is not edited here: the preview gives a literal on its ::: line to the container, but the editor has no place for it — a container written with one is a source block, edited as Markdown. Its classes here are its name and info (Change name/info).';
+export const CONTAINER_ATTRS_REFUSAL = `A container's {…} is not edited here: the preview gives a literal on its ::: line to the container, but the editor has no place for it — a container written with one is a source block, edited as Markdown. Its classes here are its name and info (${VERB.editClasses}).`;
 
 /** Why an admonition is given no literal: the plugin hands it to the title bar. */
-export const ADMONITION_ATTRS_REFUSAL = 'An admonition takes no {…}: markdown-it-attrs gives a literal on its !!! line to the title bar, not to the box. Its class is its type (Change type).';
+export const ADMONITION_ATTRS_REFUSAL = `An admonition takes no {…}: markdown-it-attrs gives a literal on its !!! line to the title bar, not to the box. Its class is its type (${VERB.type} on its bar).`;
 
 /** Why an indented code block is given no literal: it has no opening line. */
 export const INDENTED_CODE_ATTRS_REFUSAL = 'An indented code block has no opening line to carry a {…}: make it a fenced one first.';

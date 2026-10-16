@@ -657,6 +657,14 @@ img.mep-pending-range {
 .mep-object-verb[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 .mep-object-verb[aria-disabled="true"]:hover { background: transparent; outline: none; }
 
+/*
+ * A bar too wide for the editor (decision #7, round 2): its verbs drop the noun
+ * the title names first (`ObjectBar.fit`, which marks the bar `data-tight`),
+ * then the title truncates — never below a stub that still shows it is there;
+ * verbs never truncate. A bar that fits keeps its title's own width.
+ */
+.mep-object-toolbar[data-tight] > .mep-object-label { min-width: 42px; }
+
 /* The error banner's one button: a secondary button, as the workbench draws one in a notification. */
 .mep-error-button {
     font: inherit;

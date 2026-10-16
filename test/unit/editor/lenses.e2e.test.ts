@@ -343,7 +343,7 @@ suite('Editor code actions as object verbs (e2e)', () => {
         assert.strictEqual(await page.$(BAR), null);
     });
 
-    test('a source block\'s bar has its own verbs, a separator, then the actions', async function () {
+    test('a source block\'s bar has its own verbs, a separator, the actions, then a separator and Delete block', async function () {
         this.timeout(10000);
         const table = await page.$('.ProseMirror > .mep-raw-block');
         const box = await table?.boundingBox();
@@ -355,7 +355,7 @@ suite('Editor code actions as object verbs (e2e)', () => {
         await (editor as EditorPage).send({ type: 'actions', requestId: (request as { requestId: number }).requestId, blockIndex: 3, items: [{ id: 'b.0', title: 'Fix table', kind: 'quickfix' }] });
         await page.waitForSelector(`${BAR} [data-verb="code-action:b.0"]`, { visible: true, timeout: 2000 });
         assert.deepStrictEqual((await barState()).children, [
-            'mep-object-label', 'edit-source', 'show-in-text-editor', 'delete-block', 'mep-object-separator', 'code-action:b.0',
+            'mep-object-label', 'show-in-text-editor', 'edit-source', 'mep-object-separator', 'code-action:b.0', 'mep-object-separator', 'delete-block',
         ]);
     });
 
@@ -718,10 +718,10 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         assert.deepStrictEqual(await (editor as EditorPage).edits(), [], 'Enter on the badge is not typed into the heading');
     });
 
-    test('the heading\'s bar carries the action, then the lenses with no element and the foreign one beside them, then the code actions', async function () {
+    test('the heading\'s bar carries the action, then the lenses with no element and the foreign one beside them, then the code actions, all in the one actions slot', async function () {
         this.timeout(10000);
         const children = await headingBar([{ id: 'c.0', title: 'Quick fix', kind: 'quickfix' }]);
-        assert.deepStrictEqual(children, ['mep-object-label', 'lens:a.0', 'lens:l.1', 'lens:f.1', 'mep-object-separator', 'code-action:c.0']);
+        assert.deepStrictEqual(children, ['mep-object-label', 'lens:a.0', 'lens:l.1', 'lens:f.1', 'code-action:c.0']);
         const before = (await runs()).length;
         await clickCentre(`${BAR} [data-verb="lens:a.0"]`);
         await clickCentre(`${BAR} [data-verb="lens:l.1"]`);
@@ -828,7 +828,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
             { id: 'c.1', title: '$(x)', kind: '' },
             { id: 'c.2', title: '\\$(y) escaped', kind: '' },
         ]);
-        assert.deepStrictEqual(children, ['mep-object-label', 'lens:k.0', 'mep-object-separator', 'code-action:c.0', 'code-action:c.1', 'code-action:c.2']);
+        assert.deepStrictEqual(children, ['mep-object-label', 'lens:k.0', 'code-action:c.0', 'code-action:c.1', 'code-action:c.2']);
         const verb = (id: string) => page.$eval(`${BAR} [data-verb="code-action:${id}"]`, el => ({
             kids: Array.from(el.childNodes, n => n.nodeType === Node.TEXT_NODE ? `#text ${n.textContent}` : (n as HTMLElement).className),
             title: (el as HTMLElement).title,

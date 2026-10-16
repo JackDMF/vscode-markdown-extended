@@ -91,8 +91,8 @@ suite('Editor inline attributes (e2e)', () => {
         await showDocument('Screenshot of the setup: ![Screenshot](img/setup.png){.hero width=300}\n\nAfter it.\n', 'Screenshot of');
         assert.strictEqual(await page.$eval('.ProseMirror img', el => el.getAttribute('width')), '300');
         await clickImage();
-        assert.deepStrictEqual(await verbs(), [['edit-image', 'Edit image…'], ['image-attributes', 'Attributes…'], ['open-image', 'Open file'], ['remove-image', 'Remove image']]);
-        assert.strictEqual(await page.$eval(BAR, el => el.getAttribute('aria-label')), 'Image {.hero width=300}');
+        assert.deepStrictEqual(await verbs(), [['open-image', 'Open file'], ['edit-image', 'Edit image…'], ['image-attributes', 'Attributes…'], ['delete-image', 'Delete image']]);
+        assert.strictEqual(await page.$eval(BAR, el => el.getAttribute('aria-label')), 'Image {.hero width=300}, 4 actions, arrow keys to choose');
         await shot(page, 'inline-attrs-01-image-bar-light.png');
         await applyTheme(page, DARK_MODERN);
         await delay(100);
@@ -171,14 +171,14 @@ suite('Editor inline attributes (e2e)', () => {
         await shot(page, 'inline-attrs-08-alt-enter-bare-bar.png');
     });
 
-    test('a table\'s bar with the separated Attributes of Bold…', async function () {
+    test('a table\'s bar with Attributes of Bold… beside its Attributes…', async function () {
         this.timeout(20000);
         await showDocument('| Name | Kind |\n| ---- | ---- |\n| **Alpha** | first |\n\nAfter it.\n', 'Alpha');
         await clickText(page, 'Alpha', 2);
         await pressAlt('Enter');
         const shown = await verbs();
-        assert.deepStrictEqual(shown[shown.length - 1], ['inline-attributes', 'Attributes of Bold…']);
-        assert.ok(await page.$(`${BAR} .mep-object-separator + [data-verb="inline-attributes"]`), 'after a separator');
+        assert.deepStrictEqual(shown.map(v => v[0]), ['row', 'column', 'align', 'block-attributes', 'inline-attributes', 'edit-source', 'delete-table']);
+        assert.ok(await page.$(`${BAR} [data-verb="block-attributes"] + [data-verb="inline-attributes"]`), 'in the Attributes slot, no separator of its own');
         await shot(page, 'inline-attrs-09-table-bar-strong.png');
     });
 

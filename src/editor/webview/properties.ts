@@ -34,7 +34,7 @@ import {
 import { lockLineHeight } from './clearance';
 import { CompletionListView } from './completionList';
 import { DeclaredControl, panelRole } from './focusPlace';
-import { undoKey } from './hint';
+import { undoHint } from './hint';
 import { EditorPort, SourceEditor, element, isUndoRedo } from './nodeViews';
 
 type GetPos = () => number | undefined;
@@ -340,7 +340,7 @@ export class PropertiesView implements NodeView, SourceEditor {
     private removeRow(index: number, key: string): void {
         this.flushDirty();
         if (this.apply(index, key, removeProperty)) {
-            this.port.changeHint(`Removed ${key} — ${undoKey()}`, this.header);
+            this.port.changeHint(undoHint(`Removed ${key}`), this.header);
             this.focusAfterRemoval(index);
         }
     }
@@ -611,7 +611,7 @@ export class PropertiesView implements NodeView, SourceEditor {
     private removeItemAt(index: number, key: string, at: number, item: string): void {
         const eol = eolOf(this.node.attrs.src as string);
         if (this.apply(index, key, (body, ref) => removeItem(body, ref, at, eol))) {
-            this.port.changeHint(`Removed ${item} — ${undoKey()}`, this.header);
+            this.port.changeHint(undoHint(`Removed ${item}`), this.header);
         } else {
             // An anchored item an alias elsewhere names, and the like: the model refuses rather than break the YAML.
             this.port.hint(`${item} cannot be removed here — edit ${key} as source`, this.header);

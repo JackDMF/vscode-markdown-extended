@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### ✨ Changes
+
+- Every object bar orders its verbs alike: Open, Edit…, type verbs, Attributes…, Edit source, other extensions' actions, then Remove/Delete.
+- Delete destroys, Remove keeps: "Delete image", "Delete emoji", "Delete embed", "Delete note"; "Remove link, keep text".
+- The destroying verb stands last on every bar, after a divider.
+- Emoji and wiki-embed bars say "Convert to text"; the tooltip names the text it becomes.
+- "Delete image", "Delete embed" and "Delete directive" say in their tooltip that the file stays.
+- Container bar: "Edit classes…"; admonition bar: "Edit title…" and "Type" with a chevron.
+- An image's bar starts with "Open file"; a source block's with "Show in text editor".
+- Alt+Enter focuses the first verb that opens in place — never Open, never Delete or Remove.
+- A bar with no such verb takes the focus itself; Enter or ↓ moves into its first verb.
+- A bar's accessible name says the object, its action count and "arrow keys to choose".
+- Every undo hint reads alike: "Image deleted — Ctrl+Z", "Link removed — Ctrl+Z", "Emoji converted to text — Ctrl+Z".
+- In a narrow editor a verb drops its noun ("Delete", "Edit…") before the bar's title truncates; verbs never truncate.
+
 ### 🐛 Fixes
 
 - A click at the top of a narrow editor no longer misses: the lock's reason line appears after the click.

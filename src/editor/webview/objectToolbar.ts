@@ -15,8 +15,11 @@
  * pointer across a paragraph jumps. Two bars exist so the two triggers never
  * fight: one follows the selection, one the pointer, and the pointer's stays
  * hidden while it would show what the selection's already shows. `Alt+Enter`
- * opens the bar of the object at the caret at once, the focus on its first verb;
- * the arrow keys move, `Enter` chooses, `Esc` returns to the text.
+ * opens the bar of the object at the caret at once, the focus on the first verb
+ * that opens something in place and changes nothing yet (`firstFocus`,
+ * `verbs.ts`) — never Open, never Remove or Delete — else on the bar itself,
+ * where `Enter` or `↓` moves into its verbs; the arrow keys move, `Enter`
+ * chooses, `Esc` returns to the text.
  *
  * **Where it sits.** Above the object's first line — at an inline object's
  * start, at a block's right edge (`Anchor`); below its last line when above is
@@ -25,9 +28,14 @@
  * selection bubble takes the room above. It is `position: absolute` inside the
  * editor's mount, as the bubble is, so it scrolls with the text.
  *
- * **The verbs say what remains** ("Remove note, keep text"), and a verb whose
- * result is a disappearance announces it in the caret hint ("Note removed —
- * Ctrl+Z"): otherwise nothing visible happens but something going.
+ * **One model for every bar** (`verbs.ts`): each verb has a slot, and the
+ * slots stand in one order — Open · Edit… · type verbs · Attributes… · Edit
+ * source · other extensions' actions · divider · Remove/Delete. **Remove
+ * keeps, Delete destroys**, and a Remove says what stays ("Remove link, keep
+ * text"); a verb whose result is a disappearance announces it in the caret
+ * hint, one pattern for all ("Note deleted — Ctrl+Z", `undoHint`): otherwise
+ * nothing visible happens but something going. In a narrow editor a verb
+ * drops the noun its bar's title names before the title truncates (`fit`).
  *
  * Buttons act on `mousedown` + `preventDefault`, as the formatting toolbar's
  * do, so the editor keeps its focus and its selection.
@@ -39,7 +47,8 @@ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
-import { HintTone, applyKey, showChangeHint, showHint, undoKey } from './hint';
+import { HintTone, applyKey, showChangeHint, showHint, undoHint } from './hint';
+import { FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, firstFocus, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
@@ -53,7 +62,7 @@ import {
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
-import { ATTRIBUTES_REMOVED_HINT, attributesStep, holderAttributesStep } from './attributes';
+import { attributesStep, holderAttributesStep } from './attributes';
 import { currentReadsAttrs } from '../inlineEngine';
 import { CHROME_MOVED, Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
@@ -131,7 +140,13 @@ export interface Verb {
     id: string;
     /** As its owner titled it: `$(icon)` references are drawn as icons, and `lensLabel` gives the plain text. */
     label: string;
+    /** The label without the noun the bar's title already names (`Delete`, `Edit…`), drawn when the bar is too narrow for its title (`ObjectBar.fit`). */
+    short?: string;
     title: string;
+    /** Where it stands on the bar (`verbs.ts`): its order, its divider, whether `Alt+Enter` may focus it. */
+    slot: Slot;
+    /** A `run` verb that opens a source box in place (a source block's, a table's Edit source): it opens in place, as a field does. */
+    box?: true;
     /** Why it cannot be chosen here, shown in its tooltip; `null` when it can. */
     refusal?: string | null;
     /** A verb that runs at once. */
@@ -147,10 +162,23 @@ export interface Verb {
      * the arrow keys, `Enter` choosing and `Esc` closing it.
      */
     menu?: readonly MenuEntry[];
-    /** Drawn after a separator: the first of another extension's lenses, or of its code actions, or a group of the object's own. */
+    /** Drawn after a separator: set by `arrange` (`verbs.ts`) — before other extensions' verbs, before the destroying verb — or by a presentation for a group of its own (a table's Attributes…). */
     separated?: boolean;
     /** What its field edits, when it is not the bar's object: the element inside it (`withInlineAttributes`), drawn while the field is open. */
     target?: { from: number; to: number };
+}
+
+/** A verb's button drawn with `text` — its label or its short form — and the dropdown chevron where it opens a list. */
+function drawVerbLabel(el: HTMLElement, verb: Verb, text: string): void {
+    el.replaceChildren(...lensLabelNodes(text));
+    if (verb.menu || verb.choice) {
+        el.append(chevronNode());
+    }
+}
+
+/** A verb as the bars' model reads it (`verbs.ts`): whether it opens in place is read from which of its ways it has. */
+function slotted(verb: Verb): Slotted {
+    return { slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box) };
 }
 
 /** One entry of a set-verb's menu. */
@@ -330,51 +358,62 @@ function filterRefusal(tr: Transaction | null, none: string): string | null {
     return tr === null ? none : noteRefusal(tr) ?? tableRefusal(tr);
 }
 
-/** What the verbs of a wiki embed do: the bar gives them, the verbs only say which. */
+/** What the verbs of an atom do: the bar gives them, the verbs only say which — and what the undo hint says they did (`done`). */
 export interface EmbedActions {
-    asText(): void;
-    remove(): void;
+    asText(done: string): void;
+    remove(done: string): void;
 }
 
-/** What sets an atom's two verbs apart (`atomVerbs`): their ids, labels and titles, and Edit as text's transaction and refusal. */
+/** What sets an atom's two verbs apart (`atomVerbs`): the atom's noun and spelling, and Convert to text's transaction and refusal. */
 interface AtomVerbTexts {
-    asText: { id: string; title: string };
-    remove: { id: string; label: string; title: string };
+    /** What the verbs call it (`emoji`, `embed`), as `wording` builds their labels and hints from it; the ids follow. */
+    noun: string;
+    /** As the file spells it: Convert to text's tooltip names the text it becomes. */
+    spelling: string;
+    /** Delete's tooltip, where it says more than the label. */
+    removeTitle?: string;
     /** Why neither can be chosen where there is no such atom. */
     none: string;
     /** The atom as text, or `null` where `[from, to)` is no such atom. */
     asTextTransaction(state: EditorState, from: number, to: number): Transaction | null;
-    /** Why Edit as text is refused besides the filters, if it is: `tr` makes the atom at `from` text. */
+    /** Why Convert to text is refused besides the filters, if it is: `tr` makes the atom at `from` text. */
     asTextRefusal?(state: EditorState, tr: Transaction, from: number): string | null;
 }
 
 /**
- * The verbs of an atom `object` — a wiki embed, an emoji: Edit as text and
- * Remove, each with the reason it cannot be chosen in `state`, if there is
+ * The verbs of an atom `object` — a wiki embed, an emoji: Convert to text and
+ * Delete, each with the reason it cannot be chosen in `state`, if there is
  * one. Refused as the notes' and the tables' filters would refuse it: the text
  * takes the atom's marks, and an attribute span over it that holds a note
  * marker (or `|` in a cell) is allowed over an atom and not over text.
  */
 function atomVerbs(state: EditorState, object: EditorObject, actions: EmbedActions, texts: AtomVerbTexts): Verb[] {
     const place = `${object.from}:${object.to}`;
+    const asText = wording({ verb: 'Convert to text', noun: texts.noun });
+    const remove = wording({ verb: 'Delete', noun: texts.noun });
+    const asTextId = `convert-${texts.noun}-to-text`;
+    const removeId = `delete-${texts.noun}`;
     return [
         {
-            id: texts.asText.id,
-            label: 'Edit as text',
-            title: texts.asText.title,
-            refusal: refusalOnce(state, `${texts.asText.id}@${place}`, () => {
+            id: asTextId,
+            label: asText.label,
+            title: `${asText.label} (\`${texts.spelling}\`)`,
+            slot: 'type',
+            refusal: refusalOnce(state, `${asTextId}@${place}`, () => {
                 const tr = texts.asTextTransaction(state, object.from, object.to);
                 // The atom's own reason first: it names why its text would read otherwise, which the filters only find.
                 return tr === null ? texts.none : texts.asTextRefusal?.(state, tr, object.from) ?? filterRefusal(tr, texts.none);
             }),
-            run: () => actions.asText(),
+            run: () => actions.asText(asText.done),
         },
         {
-            id: texts.remove.id,
-            label: texts.remove.label,
-            title: texts.remove.title,
-            refusal: refusalOnce(state, `${texts.remove.id}@${place}`, () => filterRefusal(deleteObjectTransaction(state, object), texts.none)),
-            run: () => actions.remove(),
+            id: removeId,
+            label: remove.label,
+            short: remove.short,
+            title: texts.removeTitle ?? `The ${texts.noun} goes from the text.`,
+            slot: 'destroy',
+            refusal: refusalOnce(state, `${removeId}@${place}`, () => filterRefusal(deleteObjectTransaction(state, object), texts.none)),
+            run: () => actions.remove(remove.done),
         },
     ];
 }
@@ -382,8 +421,9 @@ function atomVerbs(state: EditorState, object: EditorObject, actions: EmbedActio
 /** The verbs of the wiki embed `object`, each with the reason it cannot be chosen in `state`, if there is one. */
 export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
     return atomVerbs(state, object, actions, {
-        asText: { id: 'edit-wiki-embed-as-text', title: 'Make it plain text, ![[name]], to edit its name; delete the last ] and type it again to make it an embed.' },
-        remove: { id: 'remove-wiki-embed', label: 'Remove embed', title: 'The embed goes from the text.' },
+        noun: 'embed',
+        spelling: object.kind === 'wiki_embed' ? object.node.attrs.source as string : '',
+        removeTitle: FILE_STAYS,
         none: 'There is no embed here.',
         asTextTransaction: embedAsTextTransaction,
     });
@@ -391,14 +431,13 @@ export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions
 
 /**
  * The verbs of the emoji atom `object`, each with the reason it cannot be
- * chosen in `state`, if there is one: as an embed's, and Edit as text where
+ * chosen in `state`, if there is one: as an embed's, and Convert to text where
  * its characters would still read as an emoji (`emojiTextStillRead`).
  */
 export function emojiVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
-    const source = object.kind === 'emoji' ? object.node.attrs.source as string : '';
     return atomVerbs(state, object, actions, {
-        asText: { id: 'edit-emoji-as-text', title: `Makes it the characters ${source} — they stay text and are saved as text; ${undoKey()} brings the emoji back.` },
-        remove: { id: 'remove-emoji', label: 'Remove emoji', title: 'The emoji goes from the text.' },
+        noun: 'emoji',
+        spelling: object.kind === 'emoji' ? object.node.attrs.source as string : '',
         none: 'There is no emoji here.',
         asTextTransaction: emojiAsTextTransaction,
         asTextRefusal: emojiTextStillRead,
@@ -491,10 +530,62 @@ class ObjectBar {
         delete this.el.dataset.object;
     }
 
-    /** The focus on the first verb that can be chosen, or on the bar itself when it has none (so `Esc` still returns). */
+    /**
+     * `Alt+Enter`'s focus (`firstFocus`, `verbs.ts`): the first verb that opens
+     * something in place and is not refused — else the bar itself, named for
+     * the screen reader by its object, its count and its keys, `Enter` or `↓`
+     * moving into its first verb (and `Esc` still returning).
+     */
     focusFirst(): void {
-        const first = this.buttons.find(b => !b.verb.refusal);
+        const first = this.buttons[firstFocus(this.buttons.map(b => slotted(b.verb)))];
         (first?.el ?? this.el).focus({ preventScroll: true });
+    }
+
+    /**
+     * The bar fitted to its mount (`max-width: 100%`): every verb at its full
+     * label, then — where the title would be cut — every verb that has a short
+     * form at it, the noun the title already names dropped (`Delete`,
+     * `Edit…`, `Remove, keep content`); the title truncates only if the bar is
+     * still too wide. Verbs never truncate (`flex: none`). It starts from the
+     * full labels every time, so a bar grown wider again gets them back. Not
+     * while a field is open: the verbs are not drawn then.
+     */
+    fit(): void {
+        const label = this.el.querySelector<HTMLElement>(':scope > .mep-object-label');
+        if (this.field || this.el.hidden || label === null) {
+            return;
+        }
+        const shortens = this.buttons.filter(b => b.verb.short !== undefined && b.verb.short !== b.verb.label);
+        for (const b of shortens) {
+            if (b.el.dataset.short !== undefined) {
+                drawVerbLabel(b.el, b.verb, b.verb.label);
+                delete b.el.dataset.short;
+                b.el.removeAttribute('aria-label');
+            }
+        }
+        delete this.el.dataset.tight;
+        // Measured at the mount's left edge: an absolute box's room is what lies right of its `left`, and `place` sets it after.
+        const left = this.el.style.left;
+        this.el.style.left = '0px';
+        const cut = () => label.scrollWidth > label.clientWidth + 1;
+        if (cut()) {
+            // The verbs that can drop their noun do.
+            for (const b of shortens) {
+                drawVerbLabel(b.el, b.verb, b.verb.short as string);
+                b.el.dataset.short = b.verb.short;
+                // Named in full for a screen reader: the short form leans on the title.
+                b.el.setAttribute('aria-label', b.verb.label);
+            }
+            if (cut()) {
+                // Still too wide: the title truncates, to a stub that still shows it is there (`editor.css`) —
+                // unless the stub itself would push the verbs past the bar's edge: then the title gives way further.
+                this.el.dataset.tight = '';
+                if (this.el.scrollWidth > this.el.clientWidth + 1) {
+                    delete this.el.dataset.tight;
+                }
+            }
+        }
+        this.el.style.left = left;
     }
 
     private render(presentation: Presentation): void {
@@ -510,7 +601,7 @@ class ObjectBar {
             label.append(' ', code);
         }
         label.title = presentation.title;
-        this.el.setAttribute('aria-label', presentation.code === undefined ? presentation.label : `${presentation.label} ${presentation.code}`);
+        this.el.setAttribute('aria-label', barDescription(barName(presentation.label, presentation.code), presentation.verbs.length));
         this.buttons = presentation.verbs.map(verb => {
             const el = document.createElement('button');
             el.type = 'button';
@@ -777,6 +868,10 @@ class ObjectBar {
                 if (index >= 0) {
                     e.preventDefault();
                     this.choose(enabled[index].verb);
+                } else if (e.key === 'Enter' && document.activeElement === this.el) {
+                    // The bar itself has the focus (`focusFirst`): Enter moves into its first verb, as ↓ does; choosing one is a second Enter.
+                    e.preventDefault();
+                    move(1);
                 }
                 break;
             case 'Escape':
@@ -1154,6 +1249,8 @@ class ObjectToolbarView implements PluginView {
      * caret's line. Where none is free, below.
      */
     private place(bar: ObjectBar, object: EditorObject): void {
+        // Its width first: the places below are found for the bar as it will be drawn.
+        bar.fit();
         if (isBlockPlaced(object)) {
             this.placeBlock(bar, object);
             return;
@@ -1317,14 +1414,14 @@ class ObjectToolbarView implements PluginView {
         const to = moved.map(offered.to, -1);
         if (to <= from) {
             if (removes && hint !== undefined) {
-                showChangeHint(this.view, `${hint} — ${undoKey()}`);
+                showChangeHint(this.view, undoHint(hint));
             }
             return;
         }
         const before = this.view.state;
         const current = currentObject(before, { ...offered, from, to });
         if (current !== null && make(current) && this.view.state !== before && hint !== undefined) {
-            showChangeHint(this.view, `${hint} — ${undoKey()}`);
+            showChangeHint(this.view, undoHint(hint));
         }
     }
 
@@ -1333,40 +1430,41 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * The object's own verbs, then — for a whole top-level block — the lenses
-     * other extensions put on it as verbs (`lenses.ts`), then the code actions
+     * The object's own verbs and — for a whole top-level block — the lenses
+     * other extensions put on it as verbs (`lenses.ts`) and the code actions
      * they offer for its lines, as the text editor's light bulb would offer
-     * them there; each group after a separator. While the block's own control
-     * has the focus — its source box, the properties panel — only its own
-     * verbs: the control is the edit, and another extension's command would
-     * run on what the box has not applied yet.
+     * them there, in the slots' order with the slots' dividers (`arrange`,
+     * `verbs.ts`): other extensions' verbs after the object's own, before the
+     * one that destroys. While the block's own control has the focus — its
+     * source box, the properties panel — only its own verbs: the control is
+     * the edit, and another extension's command would run on what the box has
+     * not applied yet.
      */
     private present(object: EditorObject): Presentation {
         const own = this.withInlineAttributes(object, this.ownPresentation(object));
         if (!isTopLevelBlock(this.view.state, object) || this.holdsFocusedControl(object)) {
-            return own;
+            return { ...own, verbs: arrange(own.verbs) };
         }
-        const lenses = this.lensVerbs(this.host.lensesAt(object.from), own.verbs.length > 0);
-        const before = own.verbs.length + lenses.length;
-        const actions = this.host.codeActionsAt(object.from).map((item, k): Verb => {
+        const lenses = this.lensVerbs(this.host.lensesAt(object.from));
+        const actions = this.host.codeActionsAt(object.from).map((item): Verb => {
             const name = lensName(item.title);
             return {
                 id: `code-action:${item.id}`,
                 label: item.title,
                 title: item.kind ? `${name} (${item.kind}, from another extension)` : `${name} (from another extension)`,
+                slot: 'actions',
                 refusal: item.refusal ?? null,
-                separated: k === 0 && before > 0,
                 run: () => {
                     this.view.focus();
                     this.host.runCodeAction(item.id);
                 },
             };
         });
-        return lenses.length + actions.length === 0 ? own : { ...own, verbs: [...own.verbs, ...lenses, ...actions] };
+        return { ...own, verbs: arrange([...own.verbs, ...lenses, ...actions]) };
     }
 
     /**
-     * The object's own verbs and, after a separator, **Attributes of Bold…**
+     * The object's own verbs and, beside its Attributes…, **Attributes of Bold…**
      * for the element inside it the caret is in — bold in a table's cell, code
      * in a link (`holderInside`, the rule the menu reads) — whose field is the
      * one every route opens (`holderAttributesStep`), headed by the element.
@@ -1384,7 +1482,7 @@ class ObjectToolbarView implements PluginView {
             id: 'inline-attributes',
             label: `${name}…`,
             title: `The ${names.noun}'s {…}, written right after it: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).`,
-            separated: true,
+            slot: 'attributes',
             field: step,
             target: { from: inside.object.from, to: inside.object.to },
         };
@@ -1397,7 +1495,7 @@ class ObjectToolbarView implements PluginView {
      * verb, a choice of them. A lens without a command is shown, and refused:
      * it is what the other extension shows there, and runs nothing.
      */
-    private lensVerbs(items: readonly LensItem[], separated: boolean): Verb[] {
+    private lensVerbs(items: readonly LensItem[]): Verb[] {
         const run = (id: string) => {
             this.view.focus();
             this.host.runLens(id);
@@ -1409,6 +1507,7 @@ class ObjectToolbarView implements PluginView {
                 id: `lens:${id ?? `text-${k}`}`,
                 label: item.title,
                 title: `${item.tooltip ?? label} (from another extension)`,
+                slot: 'actions',
                 refusal: id === undefined ? 'The extension that shows it gave it no command.' : null,
                 run: () => {
                     if (id !== undefined) {
@@ -1423,6 +1522,7 @@ class ObjectToolbarView implements PluginView {
                 id: 'lens-overflow',
                 label: 'Actions',
                 title: 'More from other extensions',
+                slot: 'actions',
                 refusal: rest.length === 0 ? 'None of the others runs anything.' : null,
                 choice: {
                     value: '',
@@ -1438,9 +1538,6 @@ class ObjectToolbarView implements PluginView {
                 },
             });
         }
-        if (verbs.length > 0 && separated) {
-            verbs[0] = { ...verbs[0], separated: true };
-        }
         return verbs;
     }
 
@@ -1453,23 +1550,29 @@ class ObjectToolbarView implements PluginView {
                 const name = object.node.type.name as NoteNodeName;
                 const sidebar = isSidebar(name);
                 const source = noteSource(object.node);
+                // A sidebar's text stays in the sentence (Remove); a note's own text goes, its reference staying (Delete).
+                const remove = sidebar ? wording({ verb: 'Remove', noun: 'sidebar', keeps: ', keep text' }) : wording({ verb: 'Delete', noun: 'note' });
+                const removeId = sidebar ? 'remove-note' : 'delete-note';
                 return {
                     label: NOTE_LABELS[name],
                     title: sidebar ? 'A sidebar: its text is set beside the main text.' : 'A note: its reference is in the sentence, its text beside it.',
                     verbs: [
                         {
-                            id: 'remove-note',
-                            label: sidebar ? 'Remove sidebar, keep text' : 'Remove note, keep text',
+                            id: removeId,
+                            label: remove.label,
+                            short: remove.short,
                             title: sidebar
                                 ? 'The sidebar goes; its text stays in the sentence, with its formatting.'
                                 : 'The note goes; its reference stays in the sentence, with its formatting. The note\'s own text is dropped.',
+                            slot: 'destroy',
                             refusal: refusalOnce(view.state, `remove-note@${object.from}:${object.to}`, () => unwrapNoteRefusal(view.state, name)),
-                            run: () => this.act(object, () => unwrapNote(name)(view.state, dispatch), sidebar ? 'Sidebar removed' : 'Note removed'),
+                            run: () => this.act(object, () => unwrapNote(name)(view.state, dispatch), remove.done),
                         },
                         {
                             id: 'convert-note',
                             label: CONVERT_LABELS[name],
                             title: `Make it a ${NOTE_LABELS[NOTE_CONVERSION[name]].toLowerCase()}, its text kept.`,
+                            slot: 'type',
                             refusal: refusalOnce(view.state, `convert-note@${object.from}:${object.to}`, () => convertNoteRefusal(view.state, object.from)),
                             run: () => this.act(object, current => {
                                 const tr = convertNoteTransaction(view.state, current.from);
@@ -1481,8 +1584,9 @@ class ObjectToolbarView implements PluginView {
                         },
                         {
                             id: 'edit-source',
-                            label: 'Edit source',
+                            label: VERB.editSource,
                             title: `Edit ${source} as Markdown (Enter to apply, Esc to cancel).`,
+                            slot: 'source',
                             refusal: source.includes('\n') ? 'It holds a line break, which a one-line field cannot show: edit it in the text editor.' : null,
                             field: { value: source, label: 'Markdown', commit: value => this.commitNoteSource(object, source, value) },
                         },
@@ -1491,16 +1595,20 @@ class ObjectToolbarView implements PluginView {
             }
             case 'link': {
                 const href = object.mark.attrs.href as string;
+                const edit = wording({ verb: 'Edit', noun: 'link', opens: true });
+                const remove = wording({ verb: 'Remove', noun: 'link', keeps: ', keep text' });
                 return {
                     label: 'Link',
                     title: href,
                     verbs: [
-                        { id: 'open-link', label: 'Open', title: `Open ${href} (as Ctrl+click does).`, run: () => host.openLink(href) },
+                        { id: 'open-link', label: wording({ verb: 'Open', noun: '' }).label, title: `Open ${href} (as Ctrl+click does).`, slot: 'open', run: () => host.openLink(href) },
                         {
                             // The field Ctrl+K and Insert → Link… open in a link, with the same completion.
                             id: 'edit-link',
-                            label: 'Edit link…',
+                            label: edit.label,
+                            short: edit.short,
                             title: 'Link the text to another address: a file, a #heading, a web address (Enter to apply, Esc to cancel).',
+                            slot: 'edit',
                             field: {
                                 value: href,
                                 label: 'Address',
@@ -1514,11 +1622,13 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(object, 'link-attributes', 'Attributes…', 'The link\'s {…}, written after its (…): {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).'),
+                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, 'The link\'s {…}, written after its (…): {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).'),
                         {
                             id: 'remove-link',
-                            label: 'Remove link',
+                            label: remove.label,
+                            short: remove.short,
                             title: 'The link goes; its text stays.',
+                            slot: 'destroy',
                             refusal: refusalOnce(view.state, `remove-link@${object.from}:${object.to}`, () => removeLinkRefusal(view.state, object)),
                             run: () => this.act(object, current => {
                                 if (current.kind !== 'link') {
@@ -1526,7 +1636,7 @@ class ObjectToolbarView implements PluginView {
                                 }
                                 dispatch(removeLinkTransaction(view.state, current));
                                 return true;
-                            }, 'Link removed'),
+                            }, remove.done),
                         },
                     ],
                 };
@@ -1536,6 +1646,9 @@ class ObjectToolbarView implements PluginView {
                 const alt = (object.node.attrs.alt as string | null) ?? '';
                 const literal = (object.node.attrs.literal as string | null) ?? null;
                 const image = literalObjectOf(object) as LiteralObject;
+                const open = wording({ verb: 'Open', noun: 'file' });
+                const edit = wording({ verb: 'Edit', noun: 'image', opens: true });
+                const remove = wording({ verb: 'Delete', noun: 'image' });
                 return {
                     label: 'Image',
                     // The literal is read with the label: in its title, and after it, as an emoji's spelling is.
@@ -1544,8 +1657,10 @@ class ObjectToolbarView implements PluginView {
                     verbs: [
                         {
                             id: 'edit-image',
-                            label: 'Edit image…',
+                            label: edit.label,
+                            short: edit.short,
                             title: 'Its alt text, then its path, each in the field (Enter to go on and apply, Esc to cancel).',
+                            slot: 'edit',
                             field: {
                                 value: alt,
                                 label: 'Alt text',
@@ -1563,14 +1678,16 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(image, 'image-attributes', 'Attributes…', 'The image\'s {…}, written after its (…): {.class}, {#id}, {width=300}; {} removes it (Enter to apply, Esc to cancel).'),
-                        { id: 'open-image', label: 'Open file', title: `Open ${src} (as Ctrl+click on a link does).`, run: () => host.openLink(src) },
+                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, 'The image\'s {…}, written after its (…): {.class}, {#id}, {width=300}; {} removes it (Enter to apply, Esc to cancel).'),
+                        { id: 'open-image', label: open.label, short: open.short, title: `Open ${src} (as Ctrl+click on a link does).`, slot: 'open', run: () => host.openLink(src) },
                         {
-                            id: 'remove-image',
-                            label: 'Remove image',
-                            title: 'The image goes from the text.',
-                            refusal: refusalOnce(view.state, `remove-image@${object.from}:${object.to}`, () => deleteObjectRefusal(view.state, object)),
-                            run: () => this.remove(object, 'Image removed'),
+                            id: 'delete-image',
+                            label: remove.label,
+                            short: remove.short,
+                            title: FILE_STAYS,
+                            slot: 'destroy',
+                            refusal: refusalOnce(view.state, `delete-image@${object.from}:${object.to}`, () => deleteObjectRefusal(view.state, object)),
+                            run: () => this.remove(object, remove.done),
                         },
                     ],
                 };
@@ -1583,22 +1700,26 @@ class ObjectToolbarView implements PluginView {
                     commit: value => this.commitLiteral(step, object, value, current =>
                         current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null),
                 };
+                // The title says Span, not attributes: the verb keeps its noun however narrow the bar.
+                const remove = wording({ verb: 'Remove', noun: 'attributes', keeps: ', keep text', titled: false });
                 return {
                     label: 'Span',
                     title: `[text]${literal}: a span with these attributes.`,
                     verbs: [
                         {
                             id: 'edit-attributes',
-                            label: 'Attributes…',
+                            label: VERB.attributes,
                             title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
+                            slot: 'attributes',
                             field: step,
                         },
                         {
                             id: 'remove-attributes',
-                            label: 'Remove attributes, keep text',
+                            label: remove.label,
                             title: 'The span goes; its text stays, with its formatting.',
+                            slot: 'destroy',
                             refusal: refusalOnce(view.state, `remove-attributes@${object.from}:${object.to}`, () => removeSpanRefusal(view.state, object)),
-                            run: () => this.apply(object, current => (current.kind === 'span' ? removeSpanTransaction(view.state, current) : null), 'Attributes removed'),
+                            run: () => this.apply(object, current => (current.kind === 'span' ? removeSpanTransaction(view.state, current) : null), remove.done),
                         },
                     ],
                 };
@@ -1610,25 +1731,28 @@ class ObjectToolbarView implements PluginView {
                 return {
                     label: names.label,
                     title: `\`${text}\`: ${names.noun} — Attributes… gives it a {…}`,
-                    verbs: [this.markAttributesVerb(object, 'edit-attributes', 'Attributes…', `Give the ${names.noun} a {…}, written right after it: {.class}, {#id}, {key=value} (Enter to apply, Esc to cancel).`)],
+                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Give the ${names.noun} a {…}, written right after it: {.class}, {#id}, {key=value} (Enter to apply, Esc to cancel).`)],
                 };
             }
             case 'styled': {
                 const literal = object.mark.attrs.literal as string;
                 const name = holderNames(inlineHolderOf(object)).label;
+                // The title names the formatting, not its attributes: no short form.
+                const remove = wording({ verb: 'Remove', noun: 'attributes', keeps: ', keep formatting', titled: false });
                 return {
                     label: name,
                     // The literal is read with the label, as an image's is (`Code {.k}`).
                     code: literal,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
                     verbs: [
-                        this.markAttributesVerb(object, 'edit-attributes', 'Attributes…', `Change the ${name.toLowerCase()}'s {…}; {} removes it (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Change the ${name.toLowerCase()}'s {…}; {} removes it (Enter to apply, Esc to cancel).`),
                         {
                             id: 'remove-attributes',
-                            label: 'Remove attributes, keep formatting',
+                            label: remove.label,
                             title: `The {…} goes; the text stays ${name.toLowerCase()}.`,
+                            slot: 'destroy',
                             refusal: refusalOnce(view.state, `remove-attributes@${object.from}:${object.to}`, () => changeInlineLiteralRefusal(view.state, object, '')),
-                            run: () => this.apply(object, current => (current.kind === 'styled' ? changeInlineLiteralTransaction(view.state, current, '') : null), ATTRIBUTES_REMOVED_HINT),
+                            run: () => this.apply(object, current => (current.kind === 'styled' ? changeInlineLiteralTransaction(view.state, current, '') : null), remove.done),
                         },
                     ],
                 };
@@ -1636,17 +1760,20 @@ class ObjectToolbarView implements PluginView {
             case 'container': {
                 const name = object.node.attrs.name as string;
                 const info = object.node.attrs.info as string;
+                const remove = wording({ verb: 'Remove', noun: 'container', keeps: ', keep content' });
                 return {
                     label: name === '' ? 'Container' : `Container ${name}`,
                     title: `A block with the class "${containerClass(name, info)}".`,
                     verbs: [
                         {
-                            id: 'change-name',
-                            label: 'Change name/info',
-                            title: 'What follows ::: — the classes the block gets (Enter to apply, Esc to cancel).',
+                            // The field holds the whole ::: line, name and info: the classes the div gets (Daniel, 2026-10-16).
+                            id: 'edit-classes',
+                            label: VERB.editClasses,
+                            title: 'What follows ::: — its name and info, the classes the block gets (Enter to apply, Esc to cancel).',
+                            slot: 'edit',
                             field: {
                                 value: `${name}${info}`,
-                                label: 'Name and info',
+                                label: 'Classes',
                                 commit: value => {
                                     if (containerNameOf(value) === null) {
                                         this.view.focus();
@@ -1660,9 +1787,11 @@ class ObjectToolbarView implements PluginView {
                         this.attributesVerb(object),
                         {
                             id: 'remove-container',
-                            label: 'Remove container, keep content',
+                            label: remove.label,
+                            short: remove.short,
                             title: 'The container goes; its blocks stay where it stood.',
-                            run: () => this.apply(object, current => unwrapTransaction(view.state, current.from), 'Container removed'),
+                            slot: 'destroy',
+                            run: () => this.apply(object, current => unwrapTransaction(view.state, current.from), remove.done),
                         },
                     ],
                 };
@@ -1670,14 +1799,16 @@ class ObjectToolbarView implements PluginView {
             case 'admonition': {
                 const type = object.node.attrs.type as string;
                 const title = object.node.attrs.title as string;
+                const remove = wording({ verb: 'Remove', noun: 'admonition', keeps: ', keep content' });
                 return {
                     label: `Admonition ${type}`,
                     title: title === '' ? `A ${type} admonition without a title.` : `A ${type} admonition: ${title}`,
                     verbs: [
                         {
                             id: 'change-type',
-                            label: 'Change type',
+                            label: VERB.type,
                             title: 'Another of the plugin\'s types: another colour and icon.',
+                            slot: 'type',
                             choice: {
                                 value: type,
                                 label: 'Type',
@@ -1687,8 +1818,9 @@ class ObjectToolbarView implements PluginView {
                         },
                         {
                             id: 'edit-title',
-                            label: 'Edit title',
+                            label: wording({ verb: 'Edit', noun: 'title', opens: true, titled: false }).label,
                             title: 'The title bar\'s text; empty for no title bar (Enter to apply, Esc to cancel).',
+                            slot: 'edit',
                             field: {
                                 value: title,
                                 label: 'Title',
@@ -1698,9 +1830,11 @@ class ObjectToolbarView implements PluginView {
                         this.attributesVerb(object),
                         {
                             id: 'remove-admonition',
-                            label: 'Remove admonition, keep content',
+                            label: remove.label,
+                            short: remove.short,
                             title: 'The admonition goes; its blocks stay where it stood.',
-                            run: () => this.apply(object, current => unwrapTransaction(view.state, current.from), 'Admonition removed'),
+                            slot: 'destroy',
+                            run: () => this.apply(object, current => unwrapTransaction(view.state, current.from), remove.done),
                         },
                     ],
                 };
@@ -1720,14 +1854,14 @@ class ObjectToolbarView implements PluginView {
                     label: 'Wiki embed',
                     title: `${object.node.attrs.source as string}: kept as written, for the extension that renders embeds (Foam).`,
                     verbs: wikiEmbedVerbs(view.state, object, {
-                        asText: () => this.act(object, current => {
+                        asText: done => this.act(object, current => {
                             const tr = embedAsTextTransaction(this.view.state, current.from, current.to);
                             if (tr !== null) {
                                 this.view.dispatch(tr);
                             }
                             return tr !== null;
-                        }, 'Embed is text'),
-                        remove: () => this.remove(object, 'Embed removed'),
+                        }, done),
+                        remove: done => this.remove(object, done),
                     }),
                 };
             case 'emoji': {
@@ -1737,14 +1871,14 @@ class ObjectToolbarView implements PluginView {
                     code: source,
                     title: `Emoji ${source} — kept as written`,
                     verbs: emojiVerbs(view.state, object, {
-                        asText: () => this.act(object, current => {
+                        asText: done => this.act(object, current => {
                             const tr = emojiAsTextTransaction(this.view.state, current.from, current.to);
                             if (tr !== null) {
                                 this.view.dispatch(tr);
                             }
                             return tr !== null;
-                        }, `${source} is text now`),
-                        remove: () => this.remove(object, 'Emoji removed'),
+                        }, done),
+                        remove: done => this.remove(object, done),
                     }),
                 };
             }
@@ -1761,20 +1895,23 @@ class ObjectToolbarView implements PluginView {
                 const editing = this.holdsFocusedControl(object);
                 const editSource: Verb = {
                     id: 'edit-source',
-                    label: 'Edit source',
+                    label: VERB.editSource,
                     title: `Edit this block as Markdown (${applyKey()} to apply, Esc to cancel).`,
+                    slot: 'source',
+                    box: true,
                     run: () => {
                         if (currentObject(view.state, object)) {
                             editRawSourceAt(view, object.from);
                         }
                     },
                 };
+                const remove = wording({ verb: 'Delete', noun: 'block' });
                 return {
                     ...rawBlockLabel(object.node.attrs.construct as string | null),
                     verbs: [
-                        ...(editing ? [] : [editSource]),
                         this.showInTextEditor(object),
-                        { id: 'delete-block', label: 'Delete block', title: 'The block goes from the file.', run: () => this.remove(object, 'Block deleted') },
+                        ...(editing ? [] : [editSource]),
+                        { id: 'delete-block', label: remove.label, short: remove.short, title: 'The block goes from the file.', slot: 'destroy', run: () => this.remove(object, remove.done) },
                     ],
                 };
             }
@@ -1791,14 +1928,20 @@ class ObjectToolbarView implements PluginView {
                 const snippet = typeof mark?.snippet === 'string' ? mark.snippet : '';
                 const path = mark?.path;
                 const verbs: Verb[] = [];
+                const open = wording({ verb: 'Open', noun: 'snippet' });
+                const change = wording({ verb: 'Change', noun: 'snippet', opens: true });
+                const remove = wording({ verb: 'Delete', noun: 'directive' });
                 if (typeof path === 'string' && !mark?.missing) {
-                    verbs.push({ id: 'open-snippet', label: 'Open snippet', title: path, run: () => host.openSnippet(path) });
+                    verbs.push({ id: 'open-snippet', label: open.label, short: open.short, title: path, slot: 'open', run: () => host.openSnippet(path) });
                 }
-                // Offered on a missing snippet too: choosing another is how it is mended.
+                // Offered on a missing snippet too: choosing another is how it is mended. It asks
+                // the host for a choice, so nothing opens in place: `Alt+Enter` does not land on it.
                 verbs.push({
                     id: 'change-snippet',
-                    label: 'Change snippet…',
+                    label: change.label,
+                    short: change.short,
                     title: 'Choose another snippet for this directive from the ones the extensions offer.',
+                    slot: 'edit',
                     refusal: host.includesOffered() ? null : NO_INCLUDES_REFUSAL,
                     run: () => {
                         if (currentObject(view.state, object)) {
@@ -1810,10 +1953,11 @@ class ObjectToolbarView implements PluginView {
                     this.showInTextEditor(object),
                     {
                         id: 'delete-directive',
-                        label: 'Delete directive',
-                        // The line is named, not spelled: its syntax is the extension's that resolves it.
-                        title: `The directive line of ${snippet} goes from the file, and the snippet with it; the snippet's own file stays.`,
-                        run: () => this.remove(object, 'Directive deleted'),
+                        label: remove.label,
+                        short: remove.short,
+                        title: FILE_STAYS,
+                        slot: 'destroy',
+                        run: () => this.remove(object, remove.done),
                     },
                 );
                 return {
@@ -1853,6 +1997,7 @@ class ObjectToolbarView implements PluginView {
     private tablePresentation(object: Extract<EditorObject, { kind: NodeObjectKind }>): Presentation {
         const view = this.view;
         const state = view.state;
+        const remove = wording({ verb: 'Delete', noun: 'table' });
         const columns = object.node.firstChild?.childCount ?? 0;
         const rows = object.node.childCount;
         const entry = (id: string, label: string, title: string, make: () => Transaction | null, more: Partial<MenuEntry> = {}, hint?: string): MenuEntry => ({
@@ -1870,7 +2015,7 @@ class ObjectToolbarView implements PluginView {
             title: `A pipe table: ${columns} ${columns === 1 ? 'column' : 'columns'}, a header row and ${rows - 1} ${rows === 2 ? 'row' : 'rows'} under it.`,
             verbs: [
                 {
-                    id: 'row', label: 'Row', title: 'Insert a row next to the caret\'s, or delete it.',
+                    id: 'row', label: 'Row', slot: 'type', title: 'Insert a row next to the caret\'s, or delete it.',
                     menu: [
                         entry('insert-row-above', 'Insert above', 'A new row above the caret\'s; above the header row it is the new header.', () => addRowTransaction(view.state, 'above')),
                         entry('insert-row-below', 'Insert below', 'A new row below the caret\'s. Tab in the last cell adds one too.', () => addRowTransaction(view.state, 'below'), { keys: 'Tab at end' }),
@@ -1879,7 +2024,7 @@ class ObjectToolbarView implements PluginView {
                     ],
                 },
                 {
-                    id: 'column', label: 'Column', title: 'Insert a column next to the caret\'s (tinted), or delete it.',
+                    id: 'column', label: 'Column', slot: 'type', title: 'Insert a column next to the caret\'s (tinted), or delete it.',
                     menu: [
                         entry('insert-column-left', 'Insert left', 'A new column left of the caret\'s.', () => addColumnTransaction(view.state, 'left')),
                         entry('insert-column-right', 'Insert right', 'A new column right of the caret\'s.', () => addColumnTransaction(view.state, 'right')),
@@ -1887,17 +2032,19 @@ class ObjectToolbarView implements PluginView {
                     ],
                 },
                 {
-                    id: 'align', label: 'Align', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
+                    id: 'align', label: 'Align', slot: 'type', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
                     menu: [alignEntry('left', 'Left', ':--'), alignEntry('center', 'Center', ':-:'), alignEntry('right', 'Right', '--:')],
                 },
                 { ...this.attributesVerb(object), separated: true },
                 {
                     id: 'edit-source',
-                    label: 'Edit source',
+                    label: VERB.editSource,
                     title: `Edit this table as Markdown (${applyKey()} to apply, Esc to cancel).`,
+                    slot: 'source',
+                    box: true,
                     run: () => this.editTableSource(object),
                 },
-                { id: 'delete-table', label: 'Delete table', title: 'The table goes from the file.', run: () => this.remove(object, 'Table deleted') },
+                { id: 'delete-table', label: remove.label, short: remove.short, title: 'The table goes from the file.', slot: 'destroy', run: () => this.remove(object, remove.done) },
             ],
         };
     }
@@ -1912,7 +2059,8 @@ class ObjectToolbarView implements PluginView {
         const refused = 'refusal' in found;
         return {
             id: 'block-attributes',
-            label: 'Attributes…',
+            label: VERB.attributes,
+            slot: 'attributes',
             title: 'The block\'s {…}: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).',
             refusal: refused ? found.refusal : null,
             field: refused ? undefined : attributesStep(this.view, found),
@@ -1925,7 +2073,7 @@ class ObjectToolbarView implements PluginView {
      * route shares (`holderAttributesStep`).
      */
     private markAttributesVerb(object: LiteralObject, id: string, label: string, title: string): Verb {
-        return { id, label, title, field: holderAttributesStep(this.view, inlineHolderOf(object)) };
+        return { id, label, title, slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)) };
     }
 
     /** A table's **Edit source**: the table becomes a source block holding its text, the source box open (`tableSourceTransaction`). */
@@ -1942,7 +2090,7 @@ class ObjectToolbarView implements PluginView {
     }
 
     private showInTextEditor(object: EditorObject): Verb {
-        return { id: 'show-in-text-editor', label: 'Show in text editor', title: 'Open the text editor beside, at this block.', run: () => this.host.openSourceAt(object.from) };
+        return { id: 'show-in-text-editor', label: VERB.showInTextEditor, title: 'Open the text editor beside, at this block.', slot: 'open', run: () => this.host.openSourceAt(object.from) };
     }
 
     /** Run a verb that is one transaction on the object as it is now; nothing when it makes none. */

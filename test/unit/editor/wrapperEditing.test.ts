@@ -139,7 +139,7 @@ suite('Editor containers and admonitions: the toolbar, the keys and the object v
         assert.strictEqual(state.selection.$from.parent.textContent, 'One.', 'the caret stays in the text it was in');
     });
 
-    test('Change name/info renames the container, the info kept verbatim; a trailing {…} is refused', () => {
+    test('Edit classes… renames the container, the info kept verbatim; a trailing {…} is refused', () => {
         let state = stateOf('::: box\nText.\n:::\n');
         const at = firstOf(state.doc, 'container').pos;
         state = apply(state, changeContainerTransaction(state, at, 'panel wide'));

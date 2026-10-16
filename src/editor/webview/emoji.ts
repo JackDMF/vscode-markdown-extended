@@ -4,6 +4,7 @@ import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, fidelityPlan, isRepair } 
 import { editorSchema } from '../schema';
 import { emojiBeyondAtoms, unreadEmojiAsText } from '../serialize';
 import { HINT_PARAGRAPH_META, showParagraphHint, undoKey } from './hint';
+import { VERB } from '../verbs';
 
 /**
  * An emoji the file holds is an atom (`emoji`), written back as it was
@@ -111,8 +112,8 @@ export function emojiTextStillRead(state: EditorState, tr: Transaction, from: nu
         inNote ||= NOTE_PLACES.has($before.node(d).type.name);
     }
     return inNote
-        ? `Inside a note, ${source} is still read as an emoji; Remove emoji works.`
-        : `Here, ${source} would still be read as an emoji; Remove emoji works.`;
+        ? `Inside a note, ${source} is still read as an emoji; ${VERB.deleteEmoji} works.`
+        : `Here, ${source} would still be read as an emoji; ${VERB.deleteEmoji} works.`;
 }
 
 /**

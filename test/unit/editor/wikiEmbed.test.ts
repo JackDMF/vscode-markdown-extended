@@ -691,7 +691,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         }
     });
 
-    test('the embed\'s bar disables Edit as text and Remove embed with the reason where the notes\' filter would refuse them — an attribute span with a note marker in its literal, inside a note — and offers both elsewhere', () => {
+    test('the embed\'s bar disables Convert to text and Delete embed with the reason where the notes\' filter would refuse them — an attribute span with a note marker in its literal, inside a note — and offers both elsewhere', () => {
         const bar = (state: EditorState) => {
             const [at] = embedPositions(state.doc);
             const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
@@ -708,11 +708,11 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         // The span over the atom itself: its text would be unwritable, the atom's removal leaves no span.
         const over = spanned('X $![[x]]$ y.\n', '{title="p$q"}', at => at);
         const [asText, remove] = bar(over);
-        assert.deepStrictEqual([asText.id, remove.id], ['edit-wiki-embed-as-text', 'remove-wiki-embed']);
-        assert.ok(asText.refusal?.startsWith(marker), `Edit as text: ${asText.refusal}`);
+        assert.deepStrictEqual([asText.id, remove.id], ['convert-embed-to-text', 'delete-embed']);
+        assert.ok(asText.refusal?.startsWith(marker), `Convert to text: ${asText.refusal}`);
         const [at] = embedPositions(over.doc);
         assert.strictEqual(noteRefusal(over.tr.delete(at, at + 1)), null, 'the filters let the atom go');
-        assert.strictEqual(remove.refusal, null, 'Remove embed is offered');
+        assert.strictEqual(remove.refusal, null, 'Delete embed is offered');
 
         // The span over the text beside it, in a note the filters would refuse a change to: both verbs carry the reason.
         const beside = spanned('X $a![[x]]$ y.\n', '{title="p$q"}', at => at - 1);
@@ -819,10 +819,10 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         const html = copiedHtml(plugin(), inline(text('see '), embed('![[x]]')));
         assert.ok(html.includes('title="Wiki embed"'), html);
         assert.ok(html.includes('data-mep-wiki-embed="![[x]]"'), html);
-        assert.ok(!html.includes('Backspace') && !html.includes('Edit as text'), html);
+        assert.ok(!html.includes('Backspace') && !html.includes('Convert to text'), html);
         // In the editor itself the tooltip is the long one.
         const inEditor = (DOMSerializer.fromSchema(schema).serializeNode(embed('![[x]]'), { document: fakeDocument as unknown as Document }) as unknown as FakeNode).html();
-        assert.ok(inEditor.includes('Edit as text'), inEditor);
+        assert.ok(inEditor.includes('Convert to text'), inEditor);
     });
 
     test('the editor\'s own HTML copy is known by its marker in any Visual Editor; its plain text by the last copy made here, which a drag does not replace', async () => {
