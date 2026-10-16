@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, showDiagnostics, MOD, SHOTS_DIR, editCommand } from './pageHarness';
+import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, showDiagnostics, MOD, SHOTS_DIR, editCommand, vscodeMarkdownCss } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, RowBoxes, assertReasonShown, assertRowFree, assertRowLocked, rowBoxes } from './rowLock';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
@@ -136,7 +136,10 @@ suite('Editor properties panel (e2e)', () => {
 
     suiteSetup(async function () {
         this.timeout(60000);
-        editor = await openEditorPage({ width: 1280, height: 800 });
+        // VS Code's `markdown.css`, as the real page loads it (`html.ts`): with the webview's
+        // defaults alone the body's top would be 0, a page VS Code never shows, and the
+        // properties panel would sit under the row's lock line.
+        editor = await openEditorPage({ width: 1280, height: 800, stylesheets: [vscodeMarkdownCss()] });
         if (!editor) {
             this.skip();
         }

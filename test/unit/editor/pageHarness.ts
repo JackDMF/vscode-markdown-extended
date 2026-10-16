@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import * as vscode from 'vscode';
 import { DiagnosticEntry, HostMessage, WebviewMessage } from '../../../src/editor/protocol';
+import { WEBVIEW_DEFAULT_STYLES, WEBVIEW_DEFAULT_STYLES_ID } from './webviewDefaults';
 
 export const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
 
@@ -101,7 +102,9 @@ export function editCommand(key: string, shift = false): puppeteer.KeyPressOptio
 
 /**
  * The page bundle (`dist/editor-webview.js`) loaded into headless Chromium, with
- * `acquireVsCodeApi` replaced by a recorder, and `styles/editor.css` beside it.
+ * `acquireVsCodeApi` replaced by a recorder, VS Code's webview default styles
+ * at the head of the page as VS Code puts them there, and `styles/editor.css`
+ * beside it.
  *
  * `undefined` when there is no bundle or no browser — the suite then skips, as
  * the other e2e tests do: a browser already available (`MTE_E2E_CHROME`, or
@@ -150,8 +153,9 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
     await page.setViewport({ width: options.width ?? 1200, height: options.height ?? 900 });
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(String(error)));
+    // VS Code's own webview defaults first, as it prepends them to every webview's head (`webviewDefaults.ts`).
     await page.setContent(
-        '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
+        `<!DOCTYPE html><html><head><style id="${WEBVIEW_DEFAULT_STYLES_ID}">${WEBVIEW_DEFAULT_STYLES}</style><meta charset="UTF-8"></head>`
         + '<body class="markdown-body vscode-body vscode-light"><div id="mep-editor" class="mep-editor"></div>'
         + '<script>window.posted = []; window.acquireVsCodeApi = () => ({ postMessage: m => window.posted.push(m) });</script>'
         + '</body></html>',
