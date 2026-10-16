@@ -29,6 +29,8 @@
 - Note colours derive from the text colour; `--md-note-opacity` mutes by colour, not transparency.
 - Stylesheet authors: override note colours, `--md-note-text` and the bar width on `body`, not `:root`.
 - In the Visual Editor, adding the first note or removing the last keeps the reference line in place.
+- In High Contrast a note is untinted page text; its bar and underline take the contrast border.
+- A bar grown past the text column stops short of the notes' margin lane.
 - The row's marks say their name, delimiter, element and shortcut in an editor hover, not a native tooltip.
 - The row's, bubble's and bars' tooltips are the editor's hover: after a pause, at once on keyboard focus.
 - Screen readers hear "Italic, asterisk" and the shortcut; no control of the row, bubble or bars carries a title.

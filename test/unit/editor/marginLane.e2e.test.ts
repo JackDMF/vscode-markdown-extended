@@ -5,7 +5,7 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { PREVIEW_CARD_CLASS } from '../../../src/editor/webview/toolbar/actions';
 import { hostEngine } from './helpers';
 import { closeEditorPage, delay, EditorPage, MOD, openEditorPage, settle, shot } from './pageHarness';
-import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
+import { DARK_MODERN, HC_DARK, LIGHT_MODERN, applyTheme } from './themes';
 import { NOTE_SAMPLE_ONE_SIDED as ONE_SIDED, NOTE_SAMPLE_TWO_SIDED as TWO_SIDED } from './noteSample';
 
 /** Long enough to scroll, and no note in it: the lane closed until one is made. */
@@ -135,6 +135,37 @@ suite('Editor margin lane (e2e)', () => {
             }
         }
         await applyTheme(page, LIGHT_MODERN);
+    });
+
+    test('in High Contrast a note is the page\'s text on the page\'s ground, its bar and underline in the contrast border', async function () {
+        this.timeout(30000);
+        await showDocument(TWO_SIDED, 'Offline Sync');
+        await applyTheme(page, HC_DARK);
+        try {
+            for (const width of [1280, 900]) {
+                await at(width);
+                await page.evaluate(() => window.scrollTo(0, 0));
+                const look = await page.evaluate(w => {
+                    const probe = document.createElement('span');
+                    probe.style.color = 'var(--vscode-contrastBorder)';
+                    document.body.append(probe);
+                    const border = getComputedStyle(probe).color;
+                    probe.remove();
+                    const note = getComputedStyle(document.querySelector('.ProseMirror .sidenote') as HTMLElement);
+                    const anchor = getComputedStyle(document.querySelector('.ProseMirror .sn-anchor') as HTMLElement);
+                    return {
+                        text: note.color === getComputedStyle(document.body).color,
+                        tint: note.backgroundColor,
+                        bar: w === 900 ? note.borderLeftColor === border : true,
+                        underline: anchor.textDecorationColor === border,
+                    };
+                }, width);
+                assert.deepStrictEqual(look, { text: true, tint: 'rgba(0, 0, 0, 0)', bar: true, underline: true }, `High Contrast at ${width}px`);
+                await shot(page, `hc-${width}.png`);
+            }
+        } finally {
+            await applyTheme(page, LIGHT_MODERN);
+        }
     });
 
     test('a two-sided document switches together: inline at 1100, where one side would fit; both lanes from 1200', async function () {

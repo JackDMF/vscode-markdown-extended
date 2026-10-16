@@ -1123,7 +1123,9 @@ the column narrows instead of a note leaving the window, and nothing scrolls sid
 Below the threshold, and in PDF and image export, a note reads inline in its sentence:
 a tinted run in the text colour with a bar on its left, wrapped like the text around it.
 Print drops the tint when background graphics are off; the bar is a border and prints
-darker, so the note still stands out. In both layouts the reference carries a dotted
+darker, so the note still stands out. In a High Contrast theme a note is the page's own
+text on the page's ground, untinted, its bar and underline in the theme's contrast
+border. In both layouts the reference carries a dotted
 underline that ties it to its note, and pointing at either tints both — which finds the
 reference of a note pushed down by the one above it.
 

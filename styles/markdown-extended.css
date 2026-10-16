@@ -120,6 +120,17 @@ body {
   --md-anchor-line: color-mix(in srgb, currentColor 60%, transparent);
 }
 
+/* High Contrast: no tint and no muting - the note's text on the page's own
+   ground, in the page's own colour, the bar and the underline in the theme's
+   contrast border, as VS Code draws its own widgets there. At the weight of
+   the rule above (`:where`), so a reader's `body` rule still wins. */
+body:where(.vscode-high-contrast, .vscode-high-contrast-light) {
+  --md-note-text: currentColor;
+  --md-note-surface: transparent;
+  --md-note-border: var(--vscode-contrastBorder, currentColor);
+  --md-anchor-line: var(--vscode-contrastBorder, currentColor);
+}
+
 /* ============================================================================
    The anchor - both layouts
    ============================================================================ */
