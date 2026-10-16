@@ -33,7 +33,7 @@ export interface Theme {
     name: string;
     /** The body's class, as VS Code sets it: `vscode-light`, `vscode-dark`, `vscode-high-contrast`. */
     bodyClass: string;
-    /** The body's `data-vscode-theme-id`, as VS Code sets it: the theme's id (`Default Light Modern`). */
+    /** The body's `data-vscode-theme-id`, as VS Code sets it: the theme's id (`Light Modern`; before VS Code 1.142 `Default Light Modern`). */
     id: string;
     variables: Record<string, string>;
 }
@@ -69,7 +69,7 @@ export interface HostSettings {
 export const LIGHT_MODERN: Theme = {
     name: 'Light Modern',
     bodyClass: 'vscode-light',
-    id: 'Default Light Modern',
+    id: 'Light Modern',
     variables: {
         ...FONTS,
         'foreground': '#3b3b3b',

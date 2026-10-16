@@ -972,10 +972,10 @@ This extension provides powerful annotation features with full markdown support:
 
 ```markdown
 Sidenotes sit in the margin instead of breaking the line.++[1]|Notes carry
-**full markdown**: links, `code` and emphasis.++ On a narrow page they fall
-back to a readable block, so nothing is pushed off the edge.
+**full markdown**: links, `code` and emphasis.++ On a narrow page they run
+inline in their sentence, so nothing is pushed off the edge.
 
-Marginal notes behave the same way but render bold.!![*]|Good for short asides.!!
+Marginal notes behave the same way, and render bold in the margin.!![*]|Good for short asides.!!
 
 $A left sidebar, for context that runs alongside the text.$
 
@@ -1174,7 +1174,7 @@ body {
 | `--md-note-border-width` | `3px` | Left bar width; set to `0` to drop the bar |
 | `--md-note-padding` | `0.05em 0.45em` | Padding inside the inline run |
 | `--md-anchor-line` | derived from the text colour, 60 % | Colour of the reference's dotted underline |
-| `--mep-note-lane` | `--md-note-width` + `--md-note-gap` | Room reserved beside the column for right-side notes; on `:root` |
+| `--mep-note-lane` | the larger of `--md-note-width` + `--md-note-gap` and `--md-sidebar-width` + `--md-sidebar-gap` | Room reserved beside the column for right-side notes; on `:root` |
 | `--mep-note-lane-left` | `--mep-note-lane` | The same for left sidebars; on `:root` |
 | `--md-page-gutter` | `26px` | The padding the page already gives `<html>` (VS Code's `markdown.css`), which the lane adds to; on `:root` |
 

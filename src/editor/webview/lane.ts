@@ -76,18 +76,26 @@ function laneEdges(): string {
 }
 
 /**
- * Where the right lane begins, in viewport coordinates — the inner edge of
- * `<html>`'s padding-right where it holds more than the page's own gutter
- * (`--md-page-gutter`) — or `null` while no lane is reserved there. The same
- * fact `laneEdges` reads: a floating layer (an object bar) stays left of it,
- * since past it stand the notes.
+ * Where the notes in the right lane begin, in viewport coordinates, or `null`
+ * while no lane is reserved there. Open is the fact `laneEdges` reads:
+ * `<html>`'s padding-right holding more than the page's own gutter
+ * (`--md-page-gutter`). Where the notes begin is not that padding's edge but
+ * the stylesheet's own geometry: the column (the body's content box) plus the
+ * nearer of the note and sidebar gaps. A floating layer (an object bar) stays
+ * left of it.
  */
 export function rightLaneEdge(): number | null {
     const root = document.documentElement;
-    const style = getComputedStyle(root);
-    const padding = parseFloat(style.paddingRight) || 0;
-    const gutter = parseFloat(style.getPropertyValue('--md-page-gutter')) || 0;
-    return padding > gutter ? root.clientWidth - padding : null;
+    const rootStyle = getComputedStyle(root);
+    const padding = parseFloat(rootStyle.paddingRight) || 0;
+    const gutter = parseFloat(rootStyle.getPropertyValue('--md-page-gutter')) || 0;
+    if (padding <= gutter) {
+        return null;
+    }
+    const body = getComputedStyle(document.body);
+    const column = document.body.getBoundingClientRect().right - (parseFloat(body.paddingRight) || 0) - (parseFloat(body.borderRightWidth) || 0);
+    const gaps = ['--md-note-gap', '--md-sidebar-gap'].map(name => parseFloat(body.getPropertyValue(name))).filter(n => !isNaN(n));
+    return column + (gaps.length > 0 ? Math.min(...gaps) : 0);
 }
 
 /** The top of the line holding `pos` on screen, or `null` where it cannot be measured. */

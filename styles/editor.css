@@ -618,14 +618,10 @@ img.mep-pending-range {
 
 .mep-preview-card[hidden] { display: none; }
 
-/* High Contrast: a note in the card is the text on the card's own ground with its
-   bar — the notes stylesheet's light surface held the HC white text at no contrast
-   at all. (Forced colours repaint it as Canvas and CanvasText themselves.) */
-.vscode-high-contrast .mep-preview-card :is(.sidenote, .mnote, .left-sidebar, .right-sidebar) {
-    color: inherit;
-    background: transparent;
-    border-left-color: var(--vscode-contrastBorder, CanvasText);
-}
+/* High Contrast: a note in the card is the text on the card's own ground, its bar in
+   the contrast border — as everywhere in the document, by markdown-extended.css's
+   High Contrast variables on `body`, which a reader's own `body` rule still beats.
+   No rule here: one would beat the reader too. */
 
 .mep-preview-body > :first-child { margin-top: 0; }
 .mep-preview-body > :last-child { margin-bottom: 0; }
@@ -727,8 +723,9 @@ img.mep-pending-range {
 /* Light Modern's description colour is its text colour: mixed toward the widget's ground there
    (4.5:1 still, at 11px). Every other theme mutes it already — Dark Modern, High Contrast, and
    light themes such as Light+ (#717171 on #f3f3f3) — and a mix fell under 4.5:1; so the theme
-   is named by its id (`data-vscode-theme-id`, which VS Code sets on the webview's body). */
-body[data-vscode-theme-id="Default Light Modern"] .mep-object-label {
+   is named by its id (`data-vscode-theme-id`, which VS Code sets on the webview's body): `Light Modern`
+   since VS Code 1.142, `Default Light Modern` before. */
+body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Light Modern"]) .mep-object-label {
     color: color-mix(in srgb, var(--vscode-descriptionForeground, GrayText) 75%, var(--vscode-editorWidget-background, Canvas));
 }
 /* A title the bar's room hid (`fit`) takes its divider with it. */

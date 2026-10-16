@@ -322,6 +322,21 @@ suite('Editor labels, menus and states (e2e)', () => {
         // The theme's own pair, #717171 on #f3f3f3, is 4.40:1 — the 4.5:1 an 11px label needs is not the mix's to give back (open: Daniel).
         assert.ok(plus.title >= 4.39 && plus.title > plus.refused, `Light+: ${JSON.stringify(plus)}`);
         await closeMenus();
+        // Light Modern under the id VS Code gave it before 1.142: mixed all the same.
+        await applyTheme(page, { ...LIGHT_MODERN, id: 'Default Light Modern' });
+        await showDocument();
+        await clickText(page, 'API reference', 3);
+        await page.keyboard.down('Alt');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Alt');
+        await page.waitForSelector(`${BAR}[data-object="link"]`);
+        await delay(150);
+        const [oldTitle, oldVerb] = await page.$eval(BAR, bar => [
+            getComputedStyle(bar.querySelector('.mep-object-label') as HTMLElement).color,
+            getComputedStyle(bar.querySelector('.mep-object-verb') as HTMLElement).color,
+        ]);
+        assert.notStrictEqual(oldTitle, oldVerb, 'Default Light Modern: the title is mixed, not the verbs\' colour');
+        await closeMenus();
         await applyTheme(page, LIGHT_MODERN);
     });
 

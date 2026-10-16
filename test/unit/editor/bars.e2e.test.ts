@@ -559,29 +559,29 @@ suite('Editor object bars (e2e)', () => {
     });
 
     test('a block bar grown past the column stops short of a reserved margin lane: the notes there stay uncovered', async function () {
-        this.timeout(20000);
+        this.timeout(30000);
         // A wide lane, so the column is narrower than the table's bar: the bar must grow, and the lane is where it would.
-        await page.addStyleTag({ content: ':root { --md-note-width: 500px; }' });
-        try {
-            await openRow({ ...(rows.find(r => r.slug === 'table') as Row), source: 'Intro with a ++note|beside the column++ here.\n\n| a | b |\n| - | - |\n| one | two |\n', marker: 'one' });
-            await viewport(1000);
-            const placed = await page.$eval(BAR, bar => {
-                const root = document.documentElement;
-                const lane = root.clientWidth - parseFloat(getComputedStyle(root).paddingRight);
-                const note = (document.querySelector('.ProseMirror .sidenote') as HTMLElement).getBoundingClientRect();
-                return { right: bar.getBoundingClientRect().right, lane, noteLeft: note.left, float: getComputedStyle(document.querySelector('.ProseMirror .sidenote') as HTMLElement).float };
-            });
-            assert.strictEqual(placed.float, 'right', 'the note is in the margin');
-            assert.ok((await fitted()).pastColumn, `the table's bar is wider than the column (${JSON.stringify(await fitted())})`);
-            assert.ok(placed.right <= placed.lane - 4 + 0.5, `the bar ends 4px short of the lane: ${JSON.stringify(placed)}`);
-            assert.ok(placed.right <= placed.noteLeft, `the bar covers no note: ${JSON.stringify(placed)}`);
-        } finally {
-            await page.evaluate(() => document.querySelectorAll('style').forEach(s => {
-                if (s.textContent === ':root { --md-note-width: 500px; }') {
-                    s.remove();
-                }
-            }));
-            await viewport(WIDE);
+        // Then a narrow gap: the notes begin close to the column, well inside <html>'s padding.
+        for (const sheet of [':root { --md-note-width: 500px; }', ':root { --md-note-width: 500px; --md-note-gap: 8px; }']) {
+            await page.addStyleTag({ content: sheet });
+            try {
+                await openRow({ ...(rows.find(r => r.slug === 'table') as Row), source: 'Intro with a ++note|beside the column++ here.\n\n| a | b |\n| - | - |\n| one | two |\n', marker: 'one' });
+                await viewport(1000);
+                const placed = await page.$eval(BAR, bar => {
+                    const note = document.querySelector('.ProseMirror .sidenote') as HTMLElement;
+                    return { right: bar.getBoundingClientRect().right, noteLeft: note.getBoundingClientRect().left, float: getComputedStyle(note).float };
+                });
+                assert.strictEqual(placed.float, 'right', `${sheet}: the note is in the margin`);
+                assert.ok((await fitted()).pastColumn, `${sheet}: the table's bar is wider than the column (${JSON.stringify(await fitted())})`);
+                assert.ok(placed.right <= placed.noteLeft - 4 + 0.5, `${sheet}: the bar ends 4px short of the notes: ${JSON.stringify(placed)}`);
+            } finally {
+                await page.evaluate(s => document.querySelectorAll('style').forEach(el => {
+                    if (el.textContent === s) {
+                        el.remove();
+                    }
+                }), sheet);
+                await viewport(WIDE);
+            }
         }
     });
 

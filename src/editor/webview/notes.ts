@@ -451,18 +451,38 @@ export function refusableRange(tr: Transaction): { from: number; to: number } | 
  * A reference ProseMirror made itself — a note that a delete or a paste cut
  * open needs a `note_ref` before its body, and `createAndFill` leaves the
  * anchor at its default — given its kind's anchor class, as `noteRef` would,
- * by steps added to `tr`; whether there was one to give.
+ * by steps added to `tr`; whether there was one to give. Only the ranges the
+ * `transactions` changed are walked (as they stand in `state`, after them all):
+ * a reference anywhere else was there before them, and had its anchor.
  */
-function repairAnchors(state: EditorState, tr: Transaction): boolean {
-    let repaired = false;
-    state.doc.descendants((node, pos, parent) => {
-        if (node.type === nodes.note_ref && node.attrs.anchor === null && parent) {
-            const anchor = noteRef(parent.type.name === 'marginal_note' ? 'marginal_note' : 'sidenote').attrs.anchor as string;
-            tr.setNodeAttribute(pos, 'anchor', anchor);
-            repaired = true;
-        }
-        return true;
+function repairAnchors(state: EditorState, transactions: readonly Transaction[], tr: Transaction): boolean {
+    const ranges: [number, number][] = [];
+    transactions.forEach((t, k) => {
+        t.mapping.maps.forEach((map, i) => {
+            map.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
+                // Into the state after every transaction: the rest of this one's steps, then the later transactions.
+                let from = t.mapping.slice(i + 1).map(newStart, -1);
+                let to = t.mapping.slice(i + 1).map(newEnd, 1);
+                for (const later of transactions.slice(k + 1)) {
+                    from = later.mapping.map(from, -1);
+                    to = later.mapping.map(to, 1);
+                }
+                ranges.push([from, to]);
+            });
+        });
     });
+    let repaired = false;
+    const size = state.doc.content.size;
+    for (const [from, to] of ranges) {
+        state.doc.nodesBetween(Math.max(0, from), Math.min(size, to), (node, pos, parent) => {
+            if (node.type === nodes.note_ref && node.attrs.anchor === null && parent && tr.doc.nodeAt(pos)?.attrs.anchor === null) {
+                const anchor = noteRef(parent.type.name === 'marginal_note' ? 'marginal_note' : 'sidenote').attrs.anchor as string;
+                tr.setNodeAttribute(pos, 'anchor', anchor);
+                repaired = true;
+            }
+            return true;
+        });
+    }
     return repaired;
 }
 
@@ -506,7 +526,7 @@ export function notesPlugin(embedInput: Plugin): Plugin {
             if (fixed) {
                 tr.setSelection(fixed);
             }
-            const anchored = transactions.some(t => t.docChanged) && repairAnchors(newState, tr);
+            const anchored = transactions.some(t => t.docChanged) && repairAnchors(newState, transactions, tr);
             return fixed || anchored ? asRepair(tr) : null;
         },
         props: {

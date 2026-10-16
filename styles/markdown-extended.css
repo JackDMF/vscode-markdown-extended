@@ -263,7 +263,8 @@ body:where(.vscode-high-contrast, .vscode-high-contrast-light) {
     margin: 0 0 0.5em var(--md-sidebar-offset); padding: 0;
     background-color: transparent; border-left: 0;
   }
-  body::after { content: ""; display: block; clear: both; }
+  /* Only a page holding notes of its own: a card's, a sample's or a hover's note clears nothing. */
+  :where(html:has(:is(.sidenote, .mnote, .left-sidebar, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) > body::after { content: ""; display: block; clear: both; }
 }
 
 /* ============================================================================
