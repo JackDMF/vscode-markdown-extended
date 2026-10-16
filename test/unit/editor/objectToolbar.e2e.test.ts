@@ -922,7 +922,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await pressAlt('Enter');
         assert.deepStrictEqual(await barState(), { object: 'holder', label: 'Code', verbs: ['edit-attributes'] });
         assert.deepStrictEqual(await active(), { verb: 'edit-attributes', editor: false, field: false });
-        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => (el as HTMLElement).title), '`x`: inline code — Attributes… gives it a {…}');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => (el.getAttribute('aria-description') ?? '')), '`x`: inline code — Attributes… gives it a {…}');
         await page.keyboard.press('Enter');
         assert.strictEqual((await active()).field, true);
         await page.evaluate(() => {
@@ -997,7 +997,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
 
     test('a verb that would glue a sidebar to a letter is disabled with the reason, and a click on it says no success', async function () {
         this.timeout(15000);
-        const verbState = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        const verbState = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? '') }));
         // Right sidebars: VS Code's math extension, on in the test instance, claims every `$` first.
         await showDocument('A [styled]{.c}@y@ word.\n', 'styled');
         await clickBefore('styled', 2);

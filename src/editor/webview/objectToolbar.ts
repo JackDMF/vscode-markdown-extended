@@ -50,7 +50,7 @@ import { editRawSourceAt } from './nodeViews';
 import { HintTone, applyKey, showChangeHint, showHint, undoHint } from './hint';
 import { FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, firstFocus, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
-import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
+import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
 import { clearPendingRange, showPendingRange } from './pendingRange';
@@ -75,6 +75,8 @@ import {
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
+import { plainTip } from '../tips';
+import { Tooltips } from './tooltip';
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -191,6 +193,14 @@ function drawVerbLabel(el: HTMLElement, verb: Verb, text: string): void {
     }
 }
 
+/** A divider of a bar: after its title, and where `arrange` (`verbs.ts`) divides its verbs. */
+function barSeparator(): HTMLElement {
+    const separator = document.createElement('span');
+    separator.className = 'mep-object-separator';
+    separator.setAttribute('role', 'separator');
+    return separator;
+}
+
 /** A verb as the bars' model reads it (`verbs.ts`): whether it opens in place is read from which of its ways it has. */
 function slotted(verb: Verb): Slotted {
     return { slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box) };
@@ -237,13 +247,6 @@ function barless(object: EditorObject, presentation: Presentation): boolean {
     // the bar once the block has others (lenses, code actions) or a literal.
     return 'node' in object && literalOf(object.node) === null && verbs.every(v => v.id === 'block-attributes');
 }
-
-const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = {
-    sidenote: 'Sidenote',
-    marginal_note: 'Marginal note',
-    left_sidebar: 'Left sidebar',
-    right_sidebar: 'Right sidebar',
-};
 
 const CONVERT_LABELS: Readonly<Record<NoteNodeName, string>> = {
     sidenote: 'Convert to marginal note',
@@ -483,7 +486,7 @@ class ObjectBar {
     /** A set-verb's open menu: its panel, the verb's button, its entries. */
     private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
 
-    constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents) {
+    constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents, private readonly tips: Tooltips) {
         this.el = document.createElement('div');
         this.el.className = 'mep-object-toolbar';
         this.el.dataset.trigger = trigger;
@@ -538,6 +541,7 @@ class ObjectBar {
 
     hide(): void {
         this.closeMenu(false);
+        this.tips.hide();
         if (this.field) {
             this.field.dispose();
             this.events.fieldDropped();
@@ -611,6 +615,7 @@ class ObjectBar {
 
     private render(presentation: Presentation): void {
         this.closeMenu(false);
+        this.tips.hide();
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
@@ -621,7 +626,8 @@ class ObjectBar {
             code.textContent = presentation.code;
             label.append(' ', code);
         }
-        label.title = presentation.title;
+        // What the object is, on a rest: the title is a label, not a control — no focus, no press.
+        this.tips.attach(label, () => plainTip(presentation.title));
         this.fitted = '';
         this.name = barName(presentation.label, presentation.code);
         this.el.setAttribute('aria-label', barDescription(this.name, presentation.verbs.length));
@@ -640,7 +646,7 @@ class ObjectBar {
                 el.setAttribute('aria-label', lensName(verb.label));
             }
             el.tabIndex = -1;
-            el.title = verb.refusal ? `${verb.title}\n${verb.refusal}` : verb.title;
+            this.tips.attach(el, () => plainTip(verb.title, verb.refusal));
             el.setAttribute('aria-disabled', String(Boolean(verb.refusal)));
             if (verb.menu) {
                 el.setAttribute('aria-haspopup', 'menu');
@@ -652,15 +658,8 @@ class ObjectBar {
             });
             return { verb, el };
         });
-        this.el.replaceChildren(label, ...this.buttons.flatMap(b => {
-            if (!b.verb.separated) {
-                return [b.el];
-            }
-            const separator = document.createElement('span');
-            separator.className = 'mep-object-separator';
-            separator.setAttribute('role', 'separator');
-            return [separator, b.el];
-        }));
+        // The title, then a divider: it names the object, it is not the first verb (whose own divider that one is).
+        this.el.replaceChildren(label, barSeparator(), ...this.buttons.flatMap((b, i) => b.verb.separated && i > 0 ? [barSeparator(), b.el] : [b.el]));
     }
 
     private choose(verb: Verb): void {
@@ -717,7 +716,8 @@ class ObjectBar {
                 keys.textContent = entry.keys;
                 el.append(keys);
             }
-            el.title = entry.refusal ? `${entry.title}\n${entry.refusal}` : entry.title;
+            // A set-verb's entry says what it does on a rest (it has no preview card).
+            this.tips.attach(el, () => plainTip(entry.title, entry.refusal), 'beside');
             if (entry.refusal) {
                 el.classList.add('mep-disabled');
                 el.setAttribute('aria-disabled', 'true');
@@ -856,7 +856,8 @@ class ObjectBar {
         }
         this.fitted = '';
         const aside = 'options' in spec ? [] : fieldAside(spec);
-        this.el.replaceChildren(...(label ? [label] : []), field.el, ...aside);
+        this.tips.hide();
+        this.el.replaceChildren(...(label ? [label, barSeparator()] : []), field.el, ...aside);
         field.focus();
         if (this.object) {
             this.events.fieldOpened(this.object, verb.target);
@@ -962,8 +963,10 @@ class ObjectToolbarView implements PluginView {
                 }
             }, 0),
         };
-        this.selectionBar = new ObjectBar('selection', events);
-        this.hoverBar = new ObjectBar('hover', events);
+        // One hover for the bars and the formatting row (`tooltip.ts`).
+        const tips = Tooltips.for(this.mount);
+        this.selectionBar = new ObjectBar('selection', events, tips);
+        this.hoverBar = new ObjectBar('hover', events, tips);
         this.mount.append(this.selectionBar.el, this.hoverBar.el);
 
         this.listen(document, 'mousemove', e => this.pointerAt(e.target as Element | null));

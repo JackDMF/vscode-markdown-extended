@@ -276,7 +276,7 @@ suite('Editor pipe tables (e2e)', () => {
         await barFor('first');
         assert.deepStrictEqual(await barState(), { object: 'table', label: 'Table', verbs: ['row', 'column', 'align', 'block-attributes', 'edit-source', 'delete-table'] });
         const layout = await page.$eval(BAR, bar => Array.from(bar.children).map(c => (c as HTMLElement).dataset.verb ?? c.className));
-        assert.deepStrictEqual(layout, ['mep-object-label', 'row', 'column', 'align', 'mep-object-separator', 'block-attributes', 'edit-source', 'mep-object-separator', 'delete-table']);
+        assert.deepStrictEqual(layout, ['mep-object-label', 'mep-object-separator', 'row', 'column', 'align', 'mep-object-separator', 'block-attributes', 'edit-source', 'mep-object-separator', 'delete-table']);
         await page.waitForSelector('.mep-table-column', { timeout: 1000 });
         const tinted = await page.$$eval('.ProseMirror .mep-table-column', els => els.map(e => e.textContent));
         assert.deepStrictEqual(tinted, ['Kind', 'first', 'second'], 'the caret\'s column, every row of it');

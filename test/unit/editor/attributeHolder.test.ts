@@ -8,6 +8,7 @@ import {
 } from '../../../src/editor/webview/objects';
 import { INLINE_ATTRS_LOCK, TOOLBAR_ACTIONS } from '../../../src/editor/webview/toolbar/actions';
 import { evaluate } from '../../../src/editor/webview/toolbar/toolbar';
+import { Tip, tipText } from '../../../src/editor/tips';
 import { hostEngine, readText, repoRoot } from './helpers';
 
 function stateOf(text: string): EditorState {
@@ -144,10 +145,12 @@ suite('Editor attribute holder: the bubble\'s {…}', () => {
 
     test('within one element\'s run it names that element; across runs, a span; in a source block, why not', () => {
         const inCode = evaluate(bubble, at(stateOf('A `xy` b.\n'), 'xy', 0, 1), false);
-        assert.deepStrictEqual(inCode, { enabled: true, active: true, reason: null, tooltip: 'Attributes of Code… — `code`{.class}', ariaLabel: 'Attributes of Code…' });
+        // Never "on": it is no toggle; what it targets is its name.
+        assert.deepStrictEqual(inCode, { enabled: true, active: false, reason: null, tip: { parts: ['Attributes of Code… — ', { code: '`code`{.class}' }] }, ariaLabel: 'Attributes of Code…' });
+        assert.strictEqual(tipText(inCode.tip as Tip), 'Attributes of Code… — `code`{.class}');
         assert.strictEqual(evaluate(bubble, at(stateOf('A **xy** b.\n'), 'xy', 0, 1), false).ariaLabel, 'Attributes of Bold…');
         const across = evaluate(bubble, at(stateOf('A *b* c.\n'), 'b', 0, 3), false);
-        assert.deepStrictEqual(across, { enabled: true, active: false, reason: null, tooltip: 'Span with class — [text]{.class}', ariaLabel: 'Span with class' });
+        assert.deepStrictEqual(across, { enabled: true, active: false, reason: null, tip: { parts: ['Span with class… — ', { code: '[text]{.class}' }] }, ariaLabel: 'Span with class…' });
         const raw = stateOf('<div>raw</div>\n\nText.\n');
         const locked = evaluate(bubble, raw.apply(raw.tr.setSelection(NodeSelection.create(raw.doc, 0))), false);
         assert.strictEqual(locked.enabled, false);

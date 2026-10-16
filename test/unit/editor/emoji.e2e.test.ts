@@ -59,7 +59,8 @@ suite('Editor emoji atom (e2e)', () => {
     const barState = () => page.$eval(BAR, bar => ({
         object: (bar as HTMLElement).dataset.object,
         label: bar.querySelector('.mep-object-label')?.textContent,
-        title: (bar.querySelector('.mep-object-label') as HTMLElement | null)?.title,
+        // What the title's hover says (`tooltip.ts`).
+        title: bar.querySelector('.mep-object-label')?.getAttribute('aria-description'),
         code: bar.querySelector('.mep-object-label .mep-object-label-code')?.textContent,
         verbs: Array.from(bar.querySelectorAll('button[data-verb]')).map(v => (v as HTMLElement).dataset.verb),
     }));

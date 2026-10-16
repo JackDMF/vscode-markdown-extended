@@ -182,7 +182,7 @@ suite('Editor notes and links (e2e)', () => {
         });
         await delay(150);
         // A sidebar's end is found by the inline parser, which skips a code span whole: Code stays enabled there.
-        const button = await page.$eval('.mep-toolbar [data-action="code"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        const button = await page.$eval('.mep-toolbar [data-action="code"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? '') }));
         assert.notStrictEqual(button.disabled, 'true', button.title);
     });
 
@@ -245,7 +245,7 @@ suite('Editor notes and links (e2e)', () => {
         // Right sidebars: VS Code's math extension claims every `$` first.
         await showDocument('Alpha ++beta|the body++@y@ gamma.\n', 'Alpha');
         await clickBefore('body', 1);
-        const face = await page.$eval('.mep-toolbar .mep-menu-face[data-menu="annotation"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        const face = await page.$eval('.mep-toolbar .mep-menu-face[data-menu="annotation"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? '') }));
         // Its only entry that applies there is Sidenote, which removes the note: refused, the menu is too, with that reason.
         assert.strictEqual(face.disabled, 'true', face.title);
         assert.ok(face.title.endsWith(SIDEBAR_GLUED_BEFORE), face.title);

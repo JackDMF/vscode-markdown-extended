@@ -553,6 +553,14 @@ export function notePasteTransaction(state: EditorState, slice: Slice): Transact
 
 export type NoteNodeName = 'sidenote' | 'marginal_note' | 'left_sidebar' | 'right_sidebar';
 
+/** What each is called — on its bar (`objectToolbar.ts`) and in the Annotation menu (`actions.ts`). */
+export const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = {
+    sidenote: 'Sidenote',
+    marginal_note: 'Marginal note',
+    left_sidebar: 'Left sidebar',
+    right_sidebar: 'Right sidebar',
+};
+
 export const NOTE_LOCK = 'Select text in a paragraph or heading, outside any note, to add this.';
 export const NESTED_NOTE_LOCK = 'A note cannot hold another note: the text is already in one.';
 

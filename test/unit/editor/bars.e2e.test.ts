@@ -7,7 +7,7 @@ import { lensRows } from '../../../src/editor/host/lenses';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { FILE_STAYS } from '../../../src/editor/verbs';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, shot, MOD, UNDO } from './pageHarness';
+import { closeEditorPage, delay, describedTip, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, shot, MOD, UNDO } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 
 /** The selection's object toolbar, shown. */
@@ -136,6 +136,10 @@ suite('Editor object bars (e2e)', () => {
         const verbs: [string, string, boolean, boolean][] = [];
         let divider = false;
         for (const child of Array.from(bar.children)) {
+            // The title's own divider (#11) divides no verbs.
+            if (child.classList.contains('mep-object-separator') && child.previousElementSibling?.classList.contains('mep-object-label')) {
+                continue;
+            }
             if (child.classList.contains('mep-object-separator')) {
                 divider = true;
             } else if (child instanceof HTMLButtonElement) {
@@ -171,8 +175,8 @@ suite('Editor object bars (e2e)', () => {
         };
     });
 
-    /** A verb's tooltip, read in one place: the hover surface may replace `title` (#6), and then only this changes. */
-    const tooltipOf = (id: string) => page.$eval(`${BAR} [data-verb="${id}"]`, el => (el as HTMLElement).title);
+    /** A verb's tooltip, read in one place: what its hover says (`describedTip`). */
+    const tooltipOf = (id: string) => describedTip(page, `${BAR} [data-verb="${id}"]`);
 
     const hint = () => page.$eval('.mep-hint', el => ({ text: el.textContent ?? '', shown: !(el as HTMLElement).hidden }));
 
@@ -399,7 +403,8 @@ suite('Editor object bars (e2e)', () => {
             label: 'Requirement FRS-RXE-040',
             verbs: [['lens:a.0', 'Show trace', false, false], ['lens:a.1', 'Open in matrix', false, false], ['lens:a.2', 'Add test', false, false], ['lens-overflow', 'Actions', false, false]],
             focus: 'bar',
-            narrow: { short: [], titleCut: true, pastColumn: true },
+            // At the title's 11px (#11) it fits whole at 520 px; the bar still stands past the column.
+            narrow: { short: [], pastColumn: true },
         },
         {
             n: 21, slug: 'block-attrs', source: 'A paragraph with attributes.\n{.lead}\n\nAfter.\n', marker: 'paragraph',

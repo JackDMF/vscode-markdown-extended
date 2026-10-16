@@ -300,15 +300,30 @@ img.mep-pending-range {
 .mep-menu-face[aria-expanded="true"] {
     background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground, transparent));
 }
-.mep-tool:focus-visible { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: -1px; }
-
-/* A row button that is on: a toggle's pressed state, as the workbench's option toggles draw it. */
-.mep-tool.mep-active {
-    color: var(--vscode-inputOption-activeForeground, inherit);
-    border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, Highlight));
-    background: var(--vscode-inputOption-activeBackground, transparent);
+/* High Contrast: a face whose menu is open is marked solid, as a toggle that is on — not the dashed hover. */
+.vscode-high-contrast .mep-menu-face[aria-expanded="true"] {
+    outline: 1px solid var(--vscode-inputOption-activeBorder, var(--vscode-contrastActiveBorder, Highlight));
+    outline-offset: -1px;
 }
 
+/* Keyboard focus: the workbench's focus ring, drawn OUTSIDE the control, so it
+   never lands on the on-state's border — in Light Modern both are #005fb8, and
+   drawn in one place "on" and "focused" were one picture. The row's 26px inside
+   holds the 22px control and the ring's 2px above and below it. */
+.mep-tool:focus-visible { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: 1px; }
+
+/* A row button that is on: a toggle's pressed state, as the workbench's option
+   toggles draw it — fill and border. `contrastActiveBorder` only as the border's
+   fallback: in HC Dark it is the focus colour, and a second ring in it read as focus. */
+.mep-tool.mep-active {
+    color: var(--vscode-inputOption-activeForeground, inherit);
+    border-color: var(--vscode-inputOption-activeBorder, var(--vscode-contrastActiveBorder, Highlight));
+    background: var(--vscode-inputOption-activeBackground, transparent);
+}
+/* Hovered, an on control keeps its fill: the tint would hide that it is on. */
+.mep-tool.mep-active:hover { background: var(--vscode-inputOption-activeBackground, transparent); }
+
+/* Disabled: the whole control at 40 %, and it takes no hover. */
 .mep-tool.mep-disabled,
 .mep-menu-item.mep-disabled { opacity: 0.4; cursor: default; }
 .mep-tool.mep-disabled:hover { background: none; outline: none; }
@@ -372,15 +387,26 @@ img.mep-pending-range {
     position: fixed;
     z-index: 30;
     box-sizing: border-box;
-    min-width: 240px;
-    max-width: 360px;
+    min-width: 260px;
+    max-width: 380px;
     max-height: 70vh;
     overflow-y: auto;
     padding: 4px;
     font-family: var(--vscode-font-family, sans-serif);
     font-size: var(--vscode-font-size, 13px);
     color: var(--vscode-menu-foreground, var(--vscode-foreground, CanvasText));
-    background: var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas));
+    /* A menu that scrolls says so: a shadow at the edge its entries continue
+       under (a local and a scroll background, the local one covering the shadow
+       where there is nothing more). The workbench's own sign that a view
+       scrolls, `scrollbar.shadow` (unset in HC: its border colour), deepened
+       toward the text — at #ddd on white it was too faint to read. */
+    --mep-scroll-shadow: color-mix(in srgb, var(--vscode-scrollbar-shadow, var(--vscode-contrastBorder, #888)) 50%, color-mix(in srgb, var(--vscode-menu-foreground, CanvasText) 30%, transparent));
+    background:
+        linear-gradient(var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas)) 30%, transparent) center top / 100% 32px no-repeat local,
+        linear-gradient(transparent, var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas)) 70%) center bottom / 100% 32px no-repeat local,
+        linear-gradient(var(--mep-scroll-shadow), transparent) center top / 100% 12px no-repeat scroll,
+        linear-gradient(transparent, var(--mep-scroll-shadow)) center bottom / 100% 12px no-repeat scroll,
+        var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas));
     border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
     border-radius: 5px;
     box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
@@ -388,11 +414,11 @@ img.mep-pending-range {
 
 .mep-menu[hidden] { display: none; }
 
-/* Every entry one height: the sample left, the syntax right. */
+/* Every entry one height: the check, the glyph and the word left, the syntax right. */
 .mep-menu-item {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     box-sizing: border-box;
     height: 30px;
     padding: 0 8px;
@@ -426,7 +452,7 @@ img.mep-pending-range {
     content: "";
     flex: none;
     width: 1em;
-    margin-right: -6px;
+    margin-right: -2px;
     text-align: center;
     color: inherit;
 }
@@ -453,12 +479,82 @@ img.mep-pending-range {
 .mep-entry-sample .mep-sample > * > :first-child { margin-top: 0 !important; }
 .mep-entry-sample .mep-sample > * > :last-child { margin-bottom: 0 !important; }
 
-.mep-entry-label { color: inherit; }
+/* Block type keeps its label drawn as the element (Heading 1 in h1's style) —
+   without the headings' rules, and the code block's padding trimmed so its label
+   reads at its own size (`fitSamples` zooms no lower than 0.75; beyond, the
+   sample is clipped). A sample that paints its own ground (a quote, a code
+   block) keeps the document's text colour on it: the menu selection's white on
+   the quote's light grey could not be read. */
+.mep-entry-sample :is(h1, h2) { border-bottom: 0; padding-bottom: 0; }
+.mep-entry-sample pre { padding: 1px 6px; }
+.mep-entry-sample pre > code { line-height: 20px; }
+.mep-entry-sample .mep-sample > :is(blockquote, pre) { color: var(--vscode-editor-foreground, CanvasText); }
+/* High Contrast: the code block's ground is the menu's own black; its border made the sample a second box. */
+.vscode-high-contrast .mep-entry-sample pre { border-color: transparent; }
 
-/* The syntax column: right, mono, dim — and the selection's colour on the chosen entry. */
+/* The word, at the menu's body size, never truncated; the syntax column takes what is left, and is cut first. */
+.mep-entry-label { color: inherit; }
+.mep-menu-item > .mep-entry-label { flex: none; white-space: nowrap; }
+
+/* The glyph: the real element the entry makes, at its natural size, clipped to
+   its swatch — never zoomed — on the document's ground, so a link or a highlight
+   on the menu's selection colour is still seen as the document draws it. Empty
+   where the element draws nothing of its own (a container). */
+.mep-entry-glyph {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 40px;
+    height: 22px;
+    overflow: clip;
+    white-space: nowrap;
+    font-size: var(--markdown-font-size, 14px);
+    color: var(--vscode-editor-foreground, CanvasText);
+    background: var(--vscode-editor-background, Canvas);
+    border-radius: 3px;
+}
+.mep-entry-glyph:empty { background: none; }
+.mep-entry-glyph .mep-sample > * { margin: 0 !important; width: auto !important; float: none !important; }
+.mep-entry-glyph .mep-sample { display: inline-flex; align-items: center; }
+/* The rule has no content of its own: it needs the width the reset above takes away. */
+.mep-entry-glyph .mep-sample > hr { width: 28px !important; }
+/* A sidebar's glyph stands on its side of the swatch. */
+.mep-entry-glyph:has(.left-sidebar) { justify-content: flex-start; padding-left: 3px; }
+.mep-entry-glyph:has(.right-sidebar) { justify-content: flex-end; padding-right: 3px; }
+.mep-entry-glyph table { font-size: 9px; line-height: 10px; }
+.mep-entry-glyph table :is(th, td) { padding: 0 3px; }
+.mep-entry-glyph ul { padding-left: 14px; }
+.mep-entry-glyph dl dt { font-size: 12px; }
+/* An admonition's glyph: its bar, tint and icon from the stylesheet, its box the glyph's. */
+.mep-entry-glyph .admonition { width: 34px; height: 22px; padding: 0; overflow: hidden; box-shadow: none; }
+.mep-entry-glyph .admonition > .admonition-title {
+    width: 28px;
+    height: 22px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    box-sizing: border-box;
+}
+.mep-entry-glyph .admonition > .admonition-title::before { left: 7px; top: 0; font-size: 16px; line-height: 22px; }
+/* A chrome glyph, where the element draws nothing of its own: the attributes' {…}, the span's [ ]. */
+.mep-entry-glyph.mep-glyph-text {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
+
+/* An admonition alias, under "More types…": the type it is drawn as, dim. */
+.mep-entry-alias { margin-left: 6px; font-size: 12px; color: var(--vscode-descriptionForeground, GrayText); }
+.mep-menu-item:is(:hover, :focus):not(.mep-disabled) .mep-entry-alias { color: inherit; opacity: 0.8; }
+.mep-more-item > .mep-menu-caret { margin-left: auto; }
+
+/* The syntax column: right, mono, dim, cut first — and the selection's colour on the chosen entry. */
 .mep-entry-syntax {
-    flex: 1;
-    min-width: 0;
+    flex: 1 1 0;
+    min-width: 2.5em;
+    padding-left: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -545,14 +641,15 @@ img.mep-pending-range {
 /* ------------------------------------------------------------------------- */
 
 /* The bubble: the five marks, below the row — it belongs to the text, which
-   scrolls under the row. An editor widget, as the find widget is. */
+   scrolls under the row. An editor widget, as the find widget is. Inset 4px,
+   so a control's focus ring, drawn outside it, stays inside the widget. */
 .mep-bubble {
     position: absolute;
     z-index: 15;
     display: flex;
     align-items: center;
     gap: 2px;
-    padding: 2px;
+    padding: 4px;
     font-family: var(--vscode-font-family, sans-serif);
     font-size: calc(var(--vscode-font-size, 13px) - 1px);
     line-height: 20px;
@@ -596,12 +693,21 @@ img.mep-pending-range {
 .mep-object-toolbar[hidden] { display: none; }
 .mep-object-toolbar:focus { outline: 1px solid var(--vscode-focusBorder, Highlight); }
 
+/* The bar's title names the object; it is no control: smaller, muted (less than
+   a refused verb's 40 %), no press, no focus — and a divider after it. */
 .mep-object-label {
-    padding: 0 6px;
+    padding: 0 4px 0 6px;
     overflow: hidden;
     text-overflow: ellipsis;
+    font-size: 11px;
     color: var(--vscode-descriptionForeground, GrayText);
+    cursor: default;
+    user-select: none;
 }
+/* A title the bar's room hid (`fit`) takes its divider with it. */
+.mep-object-label[hidden] + .mep-object-separator { display: none; }
+/* A field's title is never cut: it says what the field edits (`Paragraph · Attributes`). */
+.mep-object-toolbar:has(> .mep-inline-field) > .mep-object-label { flex: none; overflow: visible; text-overflow: clip; }
 
 /* An atom's spelling in its label (`Emoji :)`): the editor's code font, no chip. */
 .mep-object-label-code {
@@ -653,7 +759,8 @@ img.mep-pending-range {
 .mep-object-verb[aria-expanded="true"] {
     background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground, transparent));
 }
-.mep-object-verb:focus { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: -1px; }
+/* Keyboard focus as on the row: the ring outside the control (the bar's 2px inset holds it inside its border). */
+.mep-object-verb:focus-visible { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: 1px; }
 .mep-object-verb[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 .mep-object-verb[aria-disabled="true"]:hover { background: transparent; outline: none; }
 
@@ -1512,4 +1619,58 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     border: 1px solid var(--vscode-inputValidation-warningBorder, #b89500);
     background: var(--vscode-inputValidation-warningBackground, transparent);
     font-family: var(--vscode-font-family, sans-serif);
+}
+
+/* ------------------------------------------------------------------------- */
+/* The controls' hover (`tooltip.ts`): an editor hover widget                */
+/* ------------------------------------------------------------------------- */
+
+/* The row's, the bubble's and the bars' tooltip: the hover's colours, a
+   delimiter or an element in the code font, keys as keybinding labels, a refusal
+   on a line of its own. It never catches the pointer. */
+.mep-tooltip {
+    position: fixed;
+    z-index: 40;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 8px;
+    box-sizing: border-box;
+    max-width: min(480px, 100vw);
+    padding: 3px 8px;
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: 12px;
+    line-height: 20px;
+    white-space: nowrap;
+    color: var(--vscode-editorHoverWidget-foreground, inherit);
+    background: var(--vscode-editorHoverWidget-background, Canvas);
+    border: 1px solid var(--vscode-editorHoverWidget-border, #c8c8c8);
+    border-radius: 3px;
+    box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+    pointer-events: none;
+}
+.mep-tooltip[hidden] { display: none; }
+/* A syntax of several lines (a footnote's) keeps them. */
+.mep-tip-line { white-space: pre; }
+.mep-tip-note { flex-basis: 100%; white-space: pre-wrap; }
+.mep-tooltip code {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    padding: 0 3px;
+    color: var(--vscode-textPreformat-foreground, inherit);
+    background: var(--vscode-textPreformat-background, transparent);
+    border-radius: 3px;
+}
+.mep-tooltip .mep-keys { display: inline-flex; align-items: center; gap: 2px; }
+.mep-tooltip .mep-key {
+    display: inline-block;
+    padding: 0 4px;
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--vscode-keybindingLabel-foreground, inherit);
+    background: var(--vscode-keybindingLabel-background, transparent);
+    border: 1px solid var(--vscode-keybindingLabel-border, transparent);
+    border-bottom-color: var(--vscode-keybindingLabel-bottomBorder, transparent);
+    border-radius: 3px;
+    box-shadow: inset 0 -1px 0 var(--vscode-widget-shadow, transparent);
 }

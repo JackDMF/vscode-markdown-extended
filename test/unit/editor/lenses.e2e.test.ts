@@ -317,8 +317,8 @@ suite('Editor code actions as object verbs (e2e)', () => {
         assert.deepStrictEqual(await barState(), {
             object: 'heading',
             label: 'Requirement FRS-TST-001',
-            // No own verbs, so no separator before the first action.
-            children: ['mep-object-label', 'code-action:a.0', 'code-action:a.1'],
+            // No own verbs, so no separator before the first action: only the title's divider.
+            children: ['mep-object-label', 'mep-object-separator', 'code-action:a.0', 'code-action:a.1'],
         });
         assert.strictEqual(await page.$eval(`${BAR} [data-verb="code-action:a.1"]`, el => el.getAttribute('aria-disabled')), 'true');
 
@@ -355,7 +355,7 @@ suite('Editor code actions as object verbs (e2e)', () => {
         await (editor as EditorPage).send({ type: 'actions', requestId: (request as { requestId: number }).requestId, blockIndex: 3, items: [{ id: 'b.0', title: 'Fix table', kind: 'quickfix' }] });
         await page.waitForSelector(`${BAR} [data-verb="code-action:b.0"]`, { visible: true, timeout: 2000 });
         assert.deepStrictEqual((await barState()).children, [
-            'mep-object-label', 'show-in-text-editor', 'edit-source', 'mep-object-separator', 'code-action:b.0', 'mep-object-separator', 'delete-block',
+            'mep-object-label', 'mep-object-separator', 'show-in-text-editor', 'edit-source', 'mep-object-separator', 'code-action:b.0', 'mep-object-separator', 'delete-block',
         ]);
     });
 
@@ -721,7 +721,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
     test('the heading\'s bar carries the action, then the lenses with no element and the foreign one beside them, then the code actions, all in the one actions slot', async function () {
         this.timeout(10000);
         const children = await headingBar([{ id: 'c.0', title: 'Quick fix', kind: 'quickfix' }]);
-        assert.deepStrictEqual(children, ['mep-object-label', 'lens:a.0', 'lens:l.1', 'lens:f.1', 'code-action:c.0']);
+        assert.deepStrictEqual(children, ['mep-object-label', 'mep-object-separator', 'lens:a.0', 'lens:l.1', 'lens:f.1', 'code-action:c.0']);
         const before = (await runs()).length;
         await clickCentre(`${BAR} [data-verb="lens:a.0"]`);
         await clickCentre(`${BAR} [data-verb="lens:l.1"]`);
@@ -733,7 +733,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         const actions = Array.from({ length: 6 }, (_, k) => ({ id: `x.${k}`, title: `Action ${k}`, surface: 'action' as const, artifact: 'FRS-TST-001' }));
         await send([{ blockIndex: 0, items: actions }]);
         const children = await headingBar();
-        assert.deepStrictEqual(children, ['mep-object-label', 'lens:x.0', 'lens:x.1', 'lens:x.2', 'lens-overflow']);
+        assert.deepStrictEqual(children, ['mep-object-label', 'mep-object-separator', 'lens:x.0', 'lens:x.1', 'lens:x.2', 'lens-overflow']);
         assert.deepStrictEqual(await page.$eval(`${BAR} [data-verb="lens-overflow"]`, el => [el.textContent, el.querySelector('.mep-menu-caret .codicon-chevron-down') !== null]), ['Actions', true]);
         await clickCentre(`${BAR} [data-verb="lens-overflow"]`);
         const options = await page.$$eval(`${BAR} select option`, os => os.map(o => (o as HTMLOptionElement).value));
@@ -790,7 +790,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         await delay(80);
         assert.deepStrictEqual(await targets(), []);
         assert.deepStrictEqual(await rows(), []);
-        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'lens:n.0']);
+        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'mep-object-separator', 'lens:n.0']);
     });
 
     test('a title\'s $(icon) is a codicon span before the text; a title without one is text only; a modifier is ignored; the tooltip is plain text', async function () {
@@ -802,7 +802,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
             { id: 'i.2', title: '$(sync~spin) Syncing', surface: 'action', artifact: 'FRS-TST-001' },
         ] }]);
         await delay(80);
-        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'lens:i.0', 'lens:i.1', 'lens:i.2']);
+        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'mep-object-separator', 'lens:i.0', 'lens:i.1', 'lens:i.2']);
         const verb = (id: string) => page.$eval(`${BAR} [data-verb="lens:${id}"]`, el => ({
             nodes: Array.from(el.childNodes, n => n.nodeType === Node.TEXT_NODE ? `#text ${n.textContent}` : (n as HTMLElement).className),
             text: el.textContent,
@@ -828,7 +828,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
             { id: 'c.1', title: '$(x)', kind: '' },
             { id: 'c.2', title: '\\$(y) escaped', kind: '' },
         ]);
-        assert.deepStrictEqual(children, ['mep-object-label', 'lens:k.0', 'code-action:c.0', 'code-action:c.1', 'code-action:c.2']);
+        assert.deepStrictEqual(children, ['mep-object-label', 'mep-object-separator', 'lens:k.0', 'code-action:c.0', 'code-action:c.1', 'code-action:c.2']);
         const verb = (id: string) => page.$eval(`${BAR} [data-verb="code-action:${id}"]`, el => ({
             kids: Array.from(el.childNodes, n => n.nodeType === Node.TEXT_NODE ? `#text ${n.textContent}` : (n as HTMLElement).className),
             title: (el as HTMLElement).title,
@@ -849,7 +849,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         }]);
         await page.waitForSelector('th.mep-lens-target');
         assert.deepStrictEqual((await targets()).map(t => [t.el, t.lens]), [['th:conflicts-with/out', 'o.0']]);
-        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'lens:o.1']);
+        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'mep-object-separator', 'lens:o.1']);
     });
 
     test('two headings with one readable id: each heading\'s lenses go on its own badge and table', async function () {
@@ -936,7 +936,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         await page.hover(CHIP);
         assert.deepStrictEqual(await dropdownOf(CHIP), { after: '"\u00a0\u25be"', line: 'none', surface: true });
         await page.mouse.move(2, 2);
-        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'lens:a.1', 'lens:a.2']);
+        assert.deepStrictEqual(await headingBar(), ['mep-object-label', 'mep-object-separator', 'lens:a.1', 'lens:a.2']);
         assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Requirement FRS-TST-001');
         assert.deepStrictEqual(await rows(), []);
     });

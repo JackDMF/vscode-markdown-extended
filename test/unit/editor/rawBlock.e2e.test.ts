@@ -430,7 +430,7 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await clickAt(await centre('.mep-raw-block .mep-atom-content table'));
         await page.waitForSelector(SELECTED_BLOCK_BAR);
         assert.ok((await verbsOf(SELECTED_BLOCK_BAR)).includes('lens:l.0'), 'the lens is a verb while the box is closed');
-        assert.match(await page.$eval(`${SELECTED_BLOCK_BAR} [data-verb="edit-source"]`, el => (el as HTMLElement).title), new RegExp(`\\(${MOD_NAME}\\+Enter to apply, Esc to cancel\\)`), 'Edit source names the platform\'s key');
+        assert.match(await page.$eval(`${SELECTED_BLOCK_BAR} [data-verb="edit-source"]`, el => (el.getAttribute('aria-description') ?? '')), new RegExp(`\\(${MOD_NAME}\\+Enter to apply, Esc to cancel\\)`), 'Edit source names the platform\'s key');
         await clickVerb('edit-source');
         await page.waitForSelector('.mep-raw-editor');
         await delay(80);

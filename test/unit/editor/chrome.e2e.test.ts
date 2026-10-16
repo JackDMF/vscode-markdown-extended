@@ -187,9 +187,10 @@ suite('Editor chrome (e2e)', () => {
         await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])');
         await delay(80);
         const first = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.action ?? null);
-        await pointTo('.mep-menu[data-menu="insert"] .mep-menu-item:nth-child(3)');
+        // The fourth child: a separator divides Link… and Image… from the rest.
+        await pointTo('.mep-menu[data-menu="insert"] .mep-menu-item:nth-child(4)');
         const focused = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.action ?? null);
-        const hovered = await page.$eval('.mep-menu[data-menu="insert"] .mep-menu-item:nth-child(3)', el => (el as HTMLElement).dataset.action ?? null);
+        const hovered = await page.$eval('.mep-menu[data-menu="insert"] .mep-menu-item:nth-child(4)', el => (el as HTMLElement).dataset.action ?? null);
         assert.notStrictEqual(first, hovered, 'the focus started elsewhere');
         assert.strictEqual(focused, hovered, 'the focus followed the pointer');
         await page.keyboard.press('Escape');

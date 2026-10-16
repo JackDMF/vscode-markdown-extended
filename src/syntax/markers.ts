@@ -161,20 +161,38 @@ export function sidebarCanClose(marker: string, after: string): boolean {
 export const ADMONITION_MARKER = '!!!';
 
 /**
- * Every admonition type the plugin recognises, in its order; a name outside
- * the list is read as a title of a `note`. Aliases share a look in
- * `styles/markdown-it-admonition.css` (`summary`, `abstract`, `tldr`, …).
+ * The plugin's admonition types by look: each canonical type, then the aliases
+ * that share its rules in `styles/markdown-it-admonition.css` (one selector
+ * list names them together — `admonitionFamilies.test.ts` reads the file).
+ * The toolbar offers the canonical types first and the aliases under
+ * "More types…" (`actions.ts`).
  */
-export const ADMONITION_TYPES: readonly string[] = [
-    'note',
-    'summary', 'abstract', 'tldr',
-    'info', 'todo',
-    'tip', 'hint',
-    'success', 'check', 'done',
-    'question', 'help', 'faq',
-    'warning', 'attention', 'caution',
-    'failure', 'fail', 'missing',
-    'danger', 'error', 'bug',
-    'example', 'snippet',
-    'quote', 'cite',
+export const ADMONITION_FAMILIES: readonly { readonly type: string; readonly aliases: readonly string[] }[] = [
+    { type: 'note', aliases: [] },
+    { type: 'summary', aliases: ['abstract', 'tldr'] },
+    { type: 'info', aliases: ['todo'] },
+    { type: 'tip', aliases: ['hint'] },
+    { type: 'success', aliases: ['check', 'done'] },
+    { type: 'question', aliases: ['help', 'faq'] },
+    { type: 'warning', aliases: ['attention', 'caution'] },
+    { type: 'failure', aliases: ['fail', 'missing'] },
+    { type: 'danger', aliases: ['error', 'bug'] },
+    { type: 'example', aliases: ['snippet'] },
+    { type: 'quote', aliases: ['cite'] },
 ];
+
+/**
+ * Every admonition type the plugin recognises, in its order — the families
+ * flattened, each canonical type before its aliases; a name outside the list
+ * is read as a title of a `note`.
+ */
+export const ADMONITION_TYPES: readonly string[] = ADMONITION_FAMILIES.flatMap(f => [f.type, ...f.aliases]);
+
+/** How a delimiter is spoken: the row's accessible names ("Italic, asterisk"). */
+export const MARKER_NAMES: Readonly<Record<string, string>> = {
+    '*': 'asterisk',
+    '_': 'underscore',
+    '**': 'double asterisk',
+    '__': 'double underscore',
+    '`': 'backtick',
+};

@@ -133,6 +133,8 @@ export const LIGHT_MODERN: Theme = {
         'scrollbarSlider-background': 'rgba(100, 100, 100, 0.4)',
         'scrollbarSlider-hoverBackground': 'rgba(100, 100, 100, 0.7)',
         'scrollbarSlider-activeBackground': 'rgba(0, 0, 0, 0.6)',
+        'scrollbar-shadow': '#dddddd',
+        'textCodeBlock-background': 'rgba(220, 220, 220, 0.4)',
         'editor-findMatchBackground': '#a8ac94',
         'editor-findMatchHighlightBackground': 'rgba(234, 92, 0, 0.33)',
     },
@@ -206,6 +208,8 @@ export const DARK_MODERN: Theme = {
         'scrollbarSlider-background': 'rgba(121, 121, 121, 0.4)',
         'scrollbarSlider-hoverBackground': 'rgba(100, 100, 100, 0.7)',
         'scrollbarSlider-activeBackground': 'rgba(191, 191, 191, 0.4)',
+        'scrollbar-shadow': '#000000',
+        'textCodeBlock-background': 'rgba(10, 10, 10, 0.4)',
         'editor-findMatchBackground': '#9e6a03',
         'editor-findMatchHighlightBackground': 'rgba(234, 92, 0, 0.33)',
     },
@@ -268,6 +272,9 @@ export const HC_DARK: Theme = {
         'scrollbarSlider-background': 'rgba(111, 195, 223, 0.6)',
         'scrollbarSlider-hoverBackground': 'rgba(111, 195, 223, 0.8)',
         'scrollbarSlider-activeBackground': '#6fc3df',
+        // `scrollbar-shadow` is unset in High Contrast; the on-state's border falls back to this.
+        'contrastActiveBorder': '#f38518',
+        'textCodeBlock-background': '#000000',
     },
 };
 

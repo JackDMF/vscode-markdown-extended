@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import * as vscode from 'vscode';
 import { DiagnosticEntry, HostMessage, WebviewMessage } from '../../../src/editor/protocol';
+import { HOVER_DELAY_MS } from '../../../src/editor/webview/hover';
 import { LIGHT_MODERN, applyTheme } from './themes';
 import { WEBVIEW_DEFAULT_STYLES_ID, webviewDefaultStyles } from './webviewDefaults';
 
@@ -64,6 +65,33 @@ export async function clickText(page: puppeteer.Page, needle: string, index = 0)
     const p = await pointAt(page, needle, index);
     await page.mouse.click(p.x, p.y);
     await delay(80);
+}
+
+/**
+ * What a control's tooltip says (`tooltip.ts`): its `aria-description`, which
+ * the hover shows — the reason after a newline — or `''` where it has none.
+ * The one way the suites read a tooltip; no control carries a `title`.
+ */
+export function describedTip(page: puppeteer.Page, selector: string): Promise<string> {
+    return page.$eval(selector, el => el.getAttribute('aria-description') ?? '');
+}
+
+/** The hover the pointer brings after a rest on `selector`: its text (the parts, then the note) and where it stands; `null` where none shows. */
+export async function hoverTip(page: puppeteer.Page, selector: string): Promise<{ text: string; rect: { left: number; top: number; right: number; bottom: number } } | null> {
+    const box = await (await page.$(selector))?.boundingBox();
+    assert.ok(box, `no ${selector}`);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await delay(HOVER_DELAY_MS + 100);
+    return page.evaluate(() => {
+        const tip = document.querySelector('.mep-tooltip') as HTMLElement | null;
+        if (!tip || tip.hidden) {
+            return null;
+        }
+        const r = tip.getBoundingClientRect();
+        const note = tip.querySelector('.mep-tip-note');
+        const line = Array.from(tip.childNodes).filter(n => n !== note).map(n => n.textContent ?? '').join('');
+        return { text: note ? `${line}\n${note.textContent ?? ''}` : line, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } };
+    });
 }
 
 /** A `#rrggbb` colour as the browser computes it (`rgb(r, g, b)`); anything else as given — for comparing with a computed style. */

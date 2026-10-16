@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { REDO_BINDINGS, UNDO_BINDING, bindingMatches, keyLabel } from '../../../src/editor/keys';
+import { REDO_BINDINGS, UNDO_BINDING, ariaKeyshortcuts, bindingMatches, keyLabel } from '../../../src/editor/keys';
 
 /**
  * The key a hint names is the binding the page's keymap binds (`keys.ts`),
@@ -28,5 +28,13 @@ suite('Editor keys: a binding as the platform names it', () => {
         assert.ok(REDO_BINDINGS.some(b => bindingMatches(b, chord('Z', { ctrlKey: true, shiftKey: true }), false)));
         assert.ok(REDO_BINDINGS.some(b => bindingMatches(b, chord('y', { ctrlKey: true }), false)));
         assert.ok(!bindingMatches(UNDO_BINDING, chord('z'), false), 'no modifier, no undo');
+    });
+
+    test('a binding as aria-keyshortcuts spells it: Control or Meta by the platform, a punctuation key by its code name', () => {
+        assert.strictEqual(ariaKeyshortcuts('Mod-i', false), 'Control+I');
+        assert.strictEqual(ariaKeyshortcuts('Mod-i', true), 'Meta+I');
+        assert.strictEqual(ariaKeyshortcuts('Mod-b', false), 'Control+B');
+        assert.strictEqual(ariaKeyshortcuts('Mod-`', false), 'Control+Backquote');
+        assert.strictEqual(ariaKeyshortcuts('Mod-Shift-z', false), 'Control+Shift+Z');
     });
 });

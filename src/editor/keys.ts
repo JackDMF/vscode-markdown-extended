@@ -63,3 +63,30 @@ export function keyLabel(binding: string, mac: boolean): string {
     });
     return [...modifiers, key.length === 1 ? key.toUpperCase() : key].join('+');
 }
+
+/** The `KeyboardEvent.code` names `aria-keyshortcuts` uses for a punctuation key. */
+const ARIA_KEY_NAMES: Readonly<Record<string, string>> = { '`': 'Backquote' };
+
+/**
+ * A binding as `aria-keyshortcuts` spells it — the fourth reader: `Mod-i` →
+ * `Control+I` or `Meta+I` (`mac`), Mod-backtick → `Control+Backquote`.
+ */
+export function ariaKeyshortcuts(binding: string, mac: boolean): string {
+    const parts = binding.split(/-(?!$)/);
+    const key = parts.pop() ?? '';
+    const modifiers = parts.map(m => {
+        switch (m) {
+            case 'Mod':
+                return mac ? 'Meta' : 'Control';
+            case 'Cmd':
+            case 'Meta':
+                return 'Meta';
+            case 'Ctrl':
+            case 'Control':
+                return 'Control';
+            default:
+                return m;
+        }
+    });
+    return [...modifiers, ARIA_KEY_NAMES[key] ?? (key.length === 1 ? key.toUpperCase() : key)].join('+');
+}
