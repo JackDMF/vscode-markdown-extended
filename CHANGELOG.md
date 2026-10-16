@@ -19,6 +19,19 @@
 - A bar too wide for the text column may stand past it, up to the editor's right edge.
 - A removed property's hint reads "lang removed — Ctrl+Z", as the bars' do.
 - Req Explorer's front-matter lens is not drawn in the Visual Editor, whose Properties block already shows and folds the front matter.
+- The row's marks say their name, delimiter, element and shortcut in an editor hover, not a native tooltip.
+- Every tooltip is the editor's hover: after a pause, at once on keyboard focus, never under the pointer.
+- Screen readers hear "Italic, asterisk" and the shortcut; no control of the row, bubble or bars carries a title.
+- Menu entries read glyph · word · syntax; the glyph is the real element at its size, never zoomed.
+- Block type keeps its drawn labels, without the heading rules; the code block sample stays readable.
+- The syntax column truncates first; a word label and a field's title never do.
+- Menus divide their groups as the workbench does.
+- Insert › Admonition lists the eleven canonical types; "More types…" expands the sixteen aliases in place.
+- A menu that scrolls shows it: a shadow at the edge the entries continue under.
+- On is fill and border; hover a tint; keyboard focus a ring outside the control; disabled the whole control dimmed.
+- The bubble's {…} is never drawn as on; its name says what it targets.
+- A bar's title is a small muted label with a divider after it, not a button.
+- Properties: "+ Add" on every list and for a new property, named for screen readers.
 
 ### 🐛 Fixes
 

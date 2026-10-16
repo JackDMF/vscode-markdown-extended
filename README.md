@@ -682,16 +682,22 @@ contrast theme needs nothing of its own. Every control has the same height, and 
 wraps: in a narrow window the row scrolls sideways, so each control stays where you learned
 it. The five marks show their real
 element (the italic, emphasis, bold, strong and code your stylesheets draw) as their
-glyph; everything else is in a menu. Above any text you select, a small bubble offers the
+glyph; rest the pointer on one, or reach it with `Tab`, and the editor's hover names it, its
+delimiter, its element and its key — *Italic (`*`, `<i>`) — Ctrl+I*, *Emphasis (`_`, `<em>`)*,
+*Bold (`**`, `<b>`) — Ctrl+B*, *Strong (`__`, `<strong>`)*, *Code (`` ` ``, `<code>`) — Ctrl+`* —
+and a screen reader hears "Italic, asterisk" and the shortcut. Everything else is in a menu. Above any text you select, a small bubble offers the
 same five marks, the extension's five (highlight, superscript, subscript, strikethrough,
 key), the two notes and **`{…}`**: within one element — code, a link, emphasis … — the
-attributes of that element, the whole of it, as **Attributes of Code…** — marked while it
-targets one, its tooltip and its accessible name saying which; across plain text, **Span
-with class**.
+attributes of that element, the whole of it, as **Attributes of Code…** — its tooltip and
+its accessible name saying which (it is no toggle, so it is never drawn as on); across plain
+text, **Span with class…**.
 
-In a menu, each entry **is** the construct it makes — the very element the preview renders
-from that syntax, drawn by the same stylesheets and scaled to one entry height — with its
-Markdown on the right. Rest the pointer on an entry, or move to it with the arrow keys, and
+In a menu, each entry shows the construct it makes as a small swatch — the very element
+the preview renders from that syntax, drawn by the same stylesheets at its own size — then
+its name, then its Markdown on the right, which is shortened first where the menu is
+narrow; the name never is. The block types draw their name as the block itself (*Heading 1*
+in your heading style). Groups of entries are divided as VS Code's menus divide them, and a
+menu longer than the window shows a shadow at the edge its entries continue under. Rest the pointer on an entry, or move to it with the arrow keys, and
 a card beside the menu shows the construct at full size in a short example, with the
 Markdown beneath. Menus open with `↓`, `Enter` or a click, move with the arrow keys (`→`
 opens a submenu), choose with `Enter` and close with `Esc`.
@@ -703,12 +709,12 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   selection carries what it writes.
 - **Formatting** — highlight (`==mark==`), superscript (`^sup^`), subscript (`~sub~`),
   strikethrough (`~~del~~`) and key (`[[Ctrl]]`), each toggled on the selection like bold;
-  and **Span with class**, which asks for the attributes in a field under the selection —
+  and **Span with class…**, which asks for the attributes in a field under the selection —
   filled in as `{.}` with the caret after the dot, so you type the class name and `Enter` —
   and makes the selection `[text]{.class}`; **Attributes of Code…**, named by the element
   the caret is in as the row names it — *Bold*, *Italic*, *Strong*, *Emphasis*, *Code*, a
-  key, a link, superscript, subscript, a highlight, a span, a selected image — and drawn
-  as that element, its syntax written as it, which asks the same way for that element's
+  key, a link, superscript, subscript, a highlight, a span, a selected image — its syntax
+  written as it, which asks the same way for that element's
   `{…}`, written right after it; where there is none it rests as *Attributes of
   Element…*, disabled, saying where to put the caret. Which
   element that is: a link or a span, else the innermost — code, subscript, superscript, a
@@ -730,8 +736,10 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   selected — a note needs one). A sidebar takes the selected text as its own. A footnote
   is written after the selection with the first free number (`[^2]`), and its definition
   goes below the paragraph with its source open for the text.
-- **Insert** — **Link…** and **Image…** (above, *Links*); horizontal rule; admonition, a submenu of every type the admonition plugin
-  knows, each drawn as its box; container; table, task list, definition list, abbreviation
+- **Insert** — **Link…** and **Image…** (above, *Links*); horizontal rule; admonition, a submenu of the eleven types the admonition plugin
+  draws apart (note, summary, info, tip, success, question, warning, failure, danger,
+  example, quote), each with its colour and icon, then **More types… (16)**, which shows the
+  aliases in place, each naming the type it looks like (*Tldr as Summary*); container; table, task list, definition list, abbreviation
   and table of contents, from the same templates as this extension's snippets where one
   exists; **Include…** (below). An admonition (titled with its type's name) and a container
   (`::: container`) go in as rich text with the caret in their body: type, and it is the body.
@@ -764,7 +772,7 @@ one's text selected, so typing names the column) and two empty rows.
 an abbreviation, the table of contents and the footnote are edited as Markdown: a block one
 is inserted after the current block as a source block with its **Edit source** box open,
 and the footnote's paragraph becomes a source block rendered as the preview renders it.
-The tooltip of each such entry says *edited as source, in a source block*. One `Ctrl+Z`
+The card of each such entry says *edited as source, in a source block*. One `Ctrl+Z`
 takes it back.
 
 **Include… lists what the extension that resolves includes offers.** The snippets and the
@@ -777,7 +785,7 @@ heading and their path. The line you choose goes in after the current block exac
 extension wrote it, and appears at once as the expanded snippet, with **Open snippet** on
 its bar. On an included snippet, **Change snippet…** does the same for its directive line —
 also for a snippet that was not found, which is how that is mended. With no extension
-offering includes both are disabled, and their tooltips say so; Escape in the quick pick
+offering includes both are disabled, and their card and tooltip say so; Escape in the quick pick
 changes nothing. An extension offers includes by exporting `listIncludeChoices` beside its
 `extendMarkdownIt` (ARCHITECTURE.md, *Includes from other extensions*).
 
@@ -798,14 +806,14 @@ monospace, since it *is* the key — and a control that fits the value it holds:
 | Text, a number, nothing | a text field |
 | A date written `YYYY-MM-DD` | the date as text, a calendar button beside it (`Alt+↓` opens it too); a value that is no date is refused, saying so |
 | `true` / `false` | a checkbox |
-| A list of short values (`[a, b]` or `- a` lines) | chips, each with `×`, and **+ add** (`Enter` adds and stays for the next, `Backspace` in the empty field takes the last one back) |
+| A list of short values (`[a, b]` or `- a` lines) | chips, each with `×`, and **+ Add** (`Enter` adds and stays for the next, `Backspace` in the empty field takes the last one back) |
 | `lang` | a text field listing the values `lang` has anywhere in the file under it as you type, as the editor's other completions do |
 | `uid`, or a key ending in `uid`/`id` holding a UUID | read-only, in mono and dimmed; a click copies it |
 | Anything nested — a map, a list of maps, a multi-line text | one row, *5 items, nested · edit as source*, which opens the YAML at that key |
 
 `Enter` applies a row, `Esc` puts it back, `Tab` applies it and goes to the next, and
 leaving a row applies it too — a row shows its value, and a value you typed should not
-silently turn back. A second `Esc` puts the caret in the text below. **+ Add property**, the
+silently turn back. A second `Esc` puts the caret in the text below. **+ Add**, the
 last row, asks for the name and then the value; the value is typed from what you write
 (`2026-10-01`, `true`, `[a, b]`). Every value you can edit has a faint outline, so it reads as a
 field before you point at it; the read-only id has none. Pointing at a row, or tabbing to it,

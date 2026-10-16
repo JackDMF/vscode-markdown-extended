@@ -627,7 +627,14 @@ img.mep-pending-range {
     color: var(--vscode-descriptionForeground, GrayText);
 }
 
-/* Why a disabled entry is disabled, under its syntax: the reason its tooltip gives. */
+/* That the entry writes source: a menu entry has no tooltip, its card says it. */
+.mep-preview-source {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
+
+/* Why a disabled entry is disabled, under its syntax: the reason its `aria-description` gives. */
 .mep-preview-refusal {
     margin-top: 6px;
     padding-left: 8px;
@@ -759,8 +766,10 @@ img.mep-pending-range {
 .mep-object-verb[aria-expanded="true"] {
     background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground, transparent));
 }
-/* Keyboard focus as on the row: the ring outside the control (the bar's 2px inset holds it inside its border). */
-.mep-object-verb:focus-visible { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: 1px; }
+/* Keyboard focus as on the row: the ring outside the control (the bar's 2px inset holds it inside its border).
+   `:focus`, not `:focus-visible`: a verb takes the focus only from the keys (a press keeps it in the text),
+   and Chromium does not count Alt+Enter, a chord, as the keyboard. */
+.mep-object-verb:focus { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: 1px; }
 .mep-object-verb[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 .mep-object-verb[aria-disabled="true"]:hover { background: transparent; outline: none; }
 

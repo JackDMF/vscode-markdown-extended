@@ -3,7 +3,7 @@
  * header `▸ Properties  <n>` with **Edit as source** at its right, collapsed by
  * default and remembered per document; expanded, one row per top-level key —
  * the key in mono, since it *is* the key, and a control typed from its value
- * (`frontMatter.ts` says which) — and a last row, **+ Add property**.
+ * (`frontMatter.ts` says which) — and a last row, **+ Add** (a property).
  *
  * A generic panel for Markdown Extended Pro, never a form of any one tool's: it
  * knows YAML, not what a key means. Every edit is one in-place change of the
@@ -11,7 +11,7 @@
  * transaction — one undo step, posted like any block edit.
  *
  * **Keys.** `Tab` moves between rows (the browser's order: each row's control,
- * the chips' **+ add**, then **+ Add property**); `Enter` commits a row, `Esc`
+ * the chips' **+ Add**, then **+ Add** (a property)); `Enter` commits a row, `Esc`
  * reverts it, and a second `Esc` puts the caret in the text below. A row's
  * value is committed when the focus leaves it too — unlike the inline field,
  * which is gone once it loses the focus: a row stays and shows its value, and a
@@ -125,9 +125,9 @@ export class PropertiesView implements NodeView, SourceEditor {
     /** The source box, while it is open. */
     private area: HTMLTextAreaElement | null = null;
     private untrackArea: (() => void) | null = null;
-    /** The row (by index) of the list whose **+ add** field is open. */
+    /** The row (by index) of the list whose **+ Add** field is open. */
     private addingItem: number | null = null;
-    /** The **+ Add property** row's state while it is open: the name typed, and whether the value is asked now. */
+    /** The **+ Add** (a property) row's state while it is open: the name typed, and whether the value is asked now. */
     private adding: { name: string; value: string; stage: 'name' | 'value' } | null = null;
     /** The rows whose typing is not in the document yet, for a save to commit. */
     private readonly dirty = new Map<string, () => void>();
@@ -518,7 +518,7 @@ export class PropertiesView implements NodeView, SourceEditor {
         return out;
     }
 
-    /** A list as chips, each removable, and **+ add**; the list's own style (flow or block) is the model's to keep. */
+    /** A list as chips, each removable, and **+ Add**; the list's own style (flow or block) is the model's to keep. */
     private chips(property: Property, index: number): HTMLElement {
         const box = element('div', 'mep-prop-chips');
         const items = property.items ?? [];
@@ -595,7 +595,7 @@ export class PropertiesView implements NodeView, SourceEditor {
             });
             box.append(input);
         } else {
-            const add = button('mep-prop-chip mep-prop-chip-add', '+ add', `Add to ${property.key}`);
+            const add = button('mep-prop-chip mep-prop-chip-add', '+ Add', `Add to ${property.key}`);
             add.dataset.slot = `add-button:${index}`;
             add.addEventListener('click', () => {
                 this.flushDirty();
@@ -618,12 +618,13 @@ export class PropertiesView implements NodeView, SourceEditor {
         }
     }
 
-    /** The trailing row: **+ Add property**, then the name, then the value. */
+    /** The trailing row: **+ Add** (a property), then the name, then the value. */
     private addRow(): HTMLElement {
         const row = element('div', 'mep-prop-row mep-prop-add');
         const adding = this.adding;
         if (adding === null) {
-            const add = button('mep-prop-add-button', '+ Add property');
+            // "+ Add", as every list's: its row says what it adds; the screen reader hears it.
+            const add = button('mep-prop-add-button', '+ Add', 'Add property');
             add.dataset.slot = 'add:button';
             add.addEventListener('click', () => {
                 this.flushDirty();

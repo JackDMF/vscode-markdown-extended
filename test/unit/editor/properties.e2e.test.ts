@@ -183,7 +183,7 @@ suite('Editor properties panel (e2e)', () => {
             ['stream', 'text', 'text', '×'],
             ['lang', 'choice', 'text', '×'],
             ['draft', 'boolean', 'checkbox', '×'],
-            ['attendees', 'list', null, 'Daniel×+ add×'],
+            ['attendees', 'list', null, 'Daniel×+ Add×'],
             ['sections', 'source', null, '2 items, nested · edit as source×'],
         ]);
         const values = await page.$$eval('.mep-prop-row .mep-prop-input', els => els.map(el => (el as HTMLInputElement).value));
@@ -304,7 +304,7 @@ suite('Editor properties panel (e2e)', () => {
         assert.deepStrictEqual(changedLines(SOURCE, edit.text), [['draft: true', 'draft: false']]);
     });
 
-    test('chips: + add takes a value with Enter, × removes one with the hint, each in the list\'s flow style', async function () {
+    test('chips: + Add takes a value with Enter, × removes one with the hint, each in the list\'s flow style', async function () {
         this.timeout(15000);
         await showDocument(SOURCE);
         await expand();
@@ -372,10 +372,11 @@ suite('Editor properties panel (e2e)', () => {
         assert.match(await page.$eval(`${row('sections')} .mep-prop-summary`, el => el.textContent ?? ''), /^3 items, nested/);
     });
 
-    test('+ Add property asks for the name, then the value, and writes the key at the end of the YAML', async function () {
+    test('+ Add (a new property) asks for the name, then the value, and writes the key at the end of the YAML', async function () {
         this.timeout(15000);
         await showDocument(SOURCE);
         await expand();
+        assert.deepStrictEqual(await page.$eval('.mep-prop-add-button', el => [el.textContent, el.getAttribute('aria-label')]), ['+ Add', 'Add property'], 'the list\'s word, named for a screen reader');
         await clickAt('.mep-prop-add-button');
         await page.waitForSelector('.mep-prop-add input[data-slot="add:name"]');
         await page.keyboard.type('status');

@@ -49,13 +49,15 @@ export class Tooltips {
         this.el.setAttribute('role', 'tooltip');
         this.el.hidden = true;
         mount.append(this.el);
-        // A key acts — the hover would stand over what it changes; a scroll moves the control from under it.
+        // A key acts — the hover would stand over what it changes. A scroll moves the
+        // control: the hover follows it while it is in the window (the row scrolling a
+        // control focused by Tab into view), and goes once it is not.
         this.listen(document, 'keydown', e => {
             if (!MODIFIERS.has((e as KeyboardEvent).key)) {
                 this.hide();
             }
         }, true);
-        this.listen(window, 'scroll', () => this.hide(), true);
+        this.listen(window, 'scroll', () => this.follow(), true);
         this.listen(window, 'blur', () => this.hide());
     }
 
@@ -98,7 +100,11 @@ export class Tooltips {
         }
     }
 
-    hide(): void {
+    /** Hide the hover — with `within`, only one shown for a control inside it (a bar going leaves the row's hover be). */
+    hide(within?: HTMLElement): void {
+        if (within !== undefined && !(this.owner !== null && within.contains(this.owner))) {
+            return;
+        }
         this.cancel();
         this.owner = null;
         this.el.hidden = true;
@@ -124,6 +130,20 @@ export class Tooltips {
         this.timer = undefined;
     }
 
+    private follow(): void {
+        const owner = this.owner;
+        if (owner === null || this.el.hidden) {
+            this.cancel();
+            return;
+        }
+        const r = owner.getBoundingClientRect();
+        if (r.bottom <= 0 || r.top >= window.innerHeight || r.right <= 0 || r.left >= window.innerWidth) {
+            this.hide();
+        } else {
+            this.show(owner);
+        }
+    }
+
     private hideFor(el: HTMLElement): void {
         if (this.owner === el || this.owner === null) {
             this.hide();
@@ -144,13 +164,13 @@ export class Tooltips {
      * window — above the control where there is no room below; or, `beside`,
      * right of it at its top, left of it where there is no room right. Not
      * while the control's own menu is open (it would stand over the menu) or
-     * the control has left the page.
+     * the control is not drawn (gone, or its bar hidden).
      */
     private show(el: HTMLElement): void {
         this.timer = undefined;
         const attached = this.tips.get(el);
         const tip = attached?.tip() ?? null;
-        if (attached === undefined || tip === null || !el.isConnected || el.getAttribute('aria-expanded') === 'true') {
+        if (attached === undefined || tip === null || el.getClientRects().length === 0 || el.getAttribute('aria-expanded') === 'true') {
             return;
         }
         if (!this.el.isConnected) {

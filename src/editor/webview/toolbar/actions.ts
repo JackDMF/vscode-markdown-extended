@@ -10,8 +10,10 @@
  *   their glyph the real element (`<i>`, `<em>`, `<b>`, `<strong>`, `<code>`)
  *   held to the button's size.
  * - **A menu entry** is where a choice is made, so it carries the fidelity: the
- *   element the parser makes from the syntax (`sample`), drawn by the page's own
- *   cascade and normalized to one entry height, with the syntax beside it.
+ *   element the parser makes from the syntax (`glyph`, else `sample`), drawn by
+ *   the page's own cascade at its natural size and clipped, then its word, then
+ *   its syntax (`column`, else the syntax's first line); a Block type entry draws
+ *   its word as the element (`drawnLabel`).
  * - **The preview card**, on hover or focus, shows the construct at its natural
  *   size in a short example (`preview`), again from the cascade.
  *
@@ -207,8 +209,11 @@ export interface ToolbarAction {
     alias?: string;
 }
 
-/** What a source action's tooltip says: the construct is edited as Markdown in a source block, not as rich text. */
-export const SOURCE_FOOTNOTE = '¹ edited as source, in a source block';
+/** What a source action's card says: the construct is edited as Markdown in a source block, not as rich text. */
+export const SOURCE_NOTE = 'Edited as source, in a source block.';
+
+/** The same as its tooltip's footnote. */
+export const SOURCE_FOOTNOTE = `¹ ${SOURCE_NOTE.charAt(0).toLowerCase()}${SOURCE_NOTE.slice(1, -1)}`;
 
 /** Whether the action writes source the editor shows as a source block, not as rich text. */
 export function isSourceAction(action: ToolbarAction): boolean {

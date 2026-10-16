@@ -1511,12 +1511,26 @@ heavy as frequent ones. So the surfaces now divide the work:
   was cut, and whether a 1.5px underline survived depended on the sub-pixel offset the bar
   stood at: the same bubble showed a user's note style above one line and not above the
   next (2026-09-30). The bubble carries the same five, the
-  extension's five marks and the two notes (`inBubble`).
-- **A menu entry** is where the fidelity lives: the entry is the element the parser makes
-  (`sample`), styled by the cascade, beside its syntax. Every entry has one height; a block
-  sample is scaled into it with `zoom`, measured when the menu opens (`fitSamples`), so the
-  fit holds for whatever the stylesheets make of the element. The admonition types are a
-  submenu of Insert.
+  extension's five marks and the two notes (`inBubble`). A mark is named by its inline
+  holder (`inlineLiterals.ts`: Italic `*`, Emphasis `_`, Bold `**`, Strong `__`, Code) — the
+  name its bar, its field and "Attributes of Bold…" give it — and its key is the action's
+  `key`, which `plugins.ts` binds: its tooltip, the editor's hover (`tooltip.ts`), says
+  "Italic (`*`, `<i>`) — Ctrl+I", its `aria-label` "Italic, asterisk", its
+  `aria-keyshortcuts` the key (wave 1 #6, 2026-10-16). No control of the row, the bubble or
+  the bars carries a `title`.
+- **A menu entry** reads check · glyph · word · syntax: the glyph is the element the entry
+  makes (`glyph`, else `sample`), at its natural size on the document's ground, clipped to
+  40×22 and never zoomed — or chrome text where the element draws nothing (`{…}`, `[ ]`), or
+  nothing; the word never truncates; the syntax column (`column`, else the syntax's first
+  line) is cut first. A Block type entry draws its word as the element instead
+  (`drawnLabel`): "Heading 1" in h1's style, without the headings' rules; such a sample is
+  scaled into the entry with `zoom`, measured when the menu opens (`fitSamples`), but no
+  lower than 0.75 — beyond, it is clipped (the code block's stood at 0.42). Groups are divided
+  (`separated`), as the workbench divides its menus; an entry has no hover — its card shows the
+  construct and the refusal — and a refused one says why in its `aria-description`. The
+  admonition types are a submenu of Insert: the eleven canonical types, then "More types…
+  (16)", which shows the aliases in place, each naming the type it is drawn as ("Tldr as
+  Summary", `alias`), and collapses when the menu closes.
 - **The preview card** shows the hovered or focused entry's `preview` — a sentence or a
   two-row example — at natural size, 300 ms after the pointer or the focus rests on it,
   beside the menu, with the Markdown beneath.
@@ -1538,8 +1552,12 @@ every webview receives, each with a fallback after it:
   (`editorGroupHeader-tabsBorder`, else `-border`, else `widget-border`), no radius, no
   shadow; the workbench font at its size less one; 22px controls with
   `toolbar-hoverBackground` (and `toolbar-hoverOutline`, High Contrast's) on hover,
-  `toolbar-activeBackground` on a face whose menu is open, `focusBorder` for the keyboard's
-  focus; separators in `menu-separatorBackground`, because the tabs' border is the tabs'
+  `toolbar-activeBackground` on a face whose menu is open (High Contrast: a solid
+  `inputOption-activeBorder`), a toggle that is on in `inputOption-activeBackground` and
+  `-activeBorder` (`contrastActiveBorder` only as the border's fallback), kept under the
+  pointer, `focusBorder` for the keyboard's focus as a ring *outside* the control — in Light
+  Modern the on border and the focus ring are one colour, and drawn in one place they were
+  one picture — and a disabled control dimmed whole (wave 1 #11); separators in `menu-separatorBackground`, because the tabs' border is the tabs'
   own colour in both Modern themes and a separator in it would not be seen. A dropdown's
   affordance is the codicon `chevron-down` (`chevronNode` in `lenses.ts`, the one element
   for the row's faces, a submenu's `chevron-right` and an object bar's set-verbs), dim in
@@ -1557,7 +1575,10 @@ every webview receives, each with a fallback after it:
   alike, and `Enter` ran the entry the reader was not looking at.
 - **An object bar and the bubble** are editor widgets: `editorWidget-background`,
   `-foreground`, `-border`, `widget-shadow`, the row's 22px controls — a verb is a toolbar
-  control, no surface at rest — and the inline field in `input-*`. The preview card keeps
+  control, no surface at rest — and the inline field in `input-*`. A bar's title is a label,
+  not a control: 11px in `descriptionForeground`, a divider after it, never focused; a
+  field's title is never cut. The bubble's `{…}` is no toggle and is never drawn on: its name
+  says what it targets ("Attributes of Bold…"). The preview card keeps
   the document's ground inside an editor widget's frame, since what it shows is the
   document's rendering.
 
@@ -1595,7 +1616,16 @@ The layers:
   **sample** (tag, classes, attributes, content: the element the parser makes from that
   syntax), an `apply` kind, an **example** in which the construct renders as its sample,
   and a **preview** (Markdown and the elements it renders as) for the card. Row button,
-  menu entry and card are built from the same entry.
+  menu entry and card are built from the same entry; so is the tooltip (`tipOf`, parts, not a
+  string) and the accessible name (`ariaLabelOf`).
+- **`src/editor/tips.ts`** — a tooltip as data: words, a part in the code font, a key chord,
+  and a note on a second line; `tipText` is the same tip as one string, the control's
+  `aria-description`. No DOM, so `actions.ts` and the tests read it.
+- **`webview/tooltip.ts`** — the one hover the row, the bubble and the bars show (one per
+  mount, `Tooltips.for`): the editor hover's colours, after `HOVER_DELAY_MS` of rest and at
+  once on keyboard focus, gone on a press, a key, the pointer or the focus leaving;
+  `pointer-events: none`. `attach` writes the `aria-description` in the same call, so what
+  is seen and what is heard are one tip.
 - **`commands.ts`** — what each `apply` kind does to an `EditorState`, testable without
   a page. A `mark` button toggles a native mark *with its delimiter*
   (`toggleMarkup`): the mark type excludes itself, so `_` on `*` text replaces the `*`,
@@ -1643,8 +1673,10 @@ The layers:
   the object toolbar asks too).
 
 **The syntax is read from where it is true.** `src/syntax/markers.ts` states the
-inline markers, the note and sidebar markers with their classes, and the admonition
-types. It imports nothing, so the page can load it, and `toggleFormats.ts` (through
+inline markers, the note and sidebar markers with their classes, the admonition
+types — by family, each canonical type with the aliases that share its look
+(`ADMONITION_FAMILIES`; `admonitionFamilies.test.ts` holds them to the selector lists of
+`styles/markdown-it-admonition.css`) — and how each delimiter is spoken (`MARKER_NAMES`). It imports nothing, so the page can load it, and `toggleFormats.ts` (through
 `commands/inlineToggleArgs.ts`), `markdownItSidenote.ts`, `markdownItAdmonition.ts`
 and the action table all import it: the text editor's toggles, the parser and the
 toolbar cannot write one construct two ways. The block markers are the serializer's.

@@ -545,7 +545,7 @@ class ObjectBar {
 
     hide(): void {
         this.closeMenu(false);
-        this.tips.hide();
+        this.tips.hide(this.el);
         if (this.field) {
             this.field.dispose();
             this.events.fieldDropped();
@@ -624,7 +624,7 @@ class ObjectBar {
 
     private render(presentation: Presentation): void {
         this.closeMenu(false);
-        this.tips.hide();
+        this.tips.hide(this.el);
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
@@ -861,7 +861,7 @@ class ObjectBar {
         }
         this.fitted = '';
         const aside = 'options' in spec ? [] : fieldAside(spec);
-        this.tips.hide();
+        this.tips.hide(this.el);
         this.el.replaceChildren(...(label ? [label, barSeparator()] : []), field.el, ...aside);
         field.focus();
         if (this.object) {

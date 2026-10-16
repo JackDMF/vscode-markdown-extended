@@ -194,9 +194,25 @@ suite('Editor stylesheet colours', () => {
             '--vscode-toolbar-hoverOutline', '--vscode-menu-background', '--vscode-menu-foreground', '--vscode-menu-border', '--vscode-menu-selectionBackground',
             '--vscode-menu-selectionForeground', '--vscode-menu-selectionBorder', '--vscode-menu-separatorBackground', '--vscode-widget-shadow',
             '--vscode-editorWidget-background', '--vscode-editorWidget-border', '--vscode-focusBorder',
+            // The hover (`tooltip.ts`), and the states (#11).
+            '--vscode-editorHoverWidget-background', '--vscode-editorHoverWidget-foreground', '--vscode-editorHoverWidget-border',
+            '--vscode-keybindingLabel-background', '--vscode-textPreformat-foreground',
+            '--vscode-inputOption-activeBackground', '--vscode-inputOption-activeBorder', '--vscode-contrastActiveBorder', '--vscode-scrollbar-shadow',
         ]) {
             assert.ok(css.includes(`var(${variable}`), `editor.css reads ${variable}`);
         }
+    });
+
+    test('keyboard focus is a ring outside the control, on the row and on the bars; on is never drawn in the focus colour', () => {
+        const rule = (selector: string) => {
+            const at = css.indexOf(`${selector} {`);
+            assert.ok(at >= 0, `editor.css has ${selector}`);
+            return css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at)).trim().split(/\s*;\s*/).filter(d => d !== '');
+        };
+        assert.ok(rule('.mep-tool:focus-visible').includes('outline-offset: 1px'));
+        assert.ok(rule('.mep-object-verb:focus').includes('outline-offset: 1px'));
+        assert.ok(!rule('.mep-tool.mep-active').some(d => d.includes('focusBorder')), 'the on border falls back to contrastActiveBorder, not the focus colour');
+        assert.ok(rule('.mep-tooltip').includes('pointer-events: none'), 'the hover never catches the pointer');
     });
 
     test('the refused row\'s reason is a pale note on the info tint, and its flash after a refused press the refusal\'s amber', () => {

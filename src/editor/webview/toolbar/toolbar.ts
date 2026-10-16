@@ -9,9 +9,13 @@
  *   the document rather than the selection. It never wraps;
  *   narrow, it scrolls sideways, so every control keeps its place. A mark's
  *   glyph is its real element (`<i>`, `<em>`, …) held to the button's size.
- * - **A menu** lists its entries as real samples — the element the parser makes,
- *   styled by the page's cascade — each normalized to one entry height (a block
- *   sample is scaled down with `zoom` until it fits), the syntax beside it.
+ * - **A menu** lists its entries as glyph · word · syntax — the glyph the element
+ *   the parser makes, styled by the page's cascade, at its natural size and
+ *   clipped; the Block type entries draw their word as the element, zoomed to
+ *   the entry height no lower than `SAMPLE_ZOOM_FLOOR`.
+ * - **The hover** (`tooltip.ts`) names a row or bubble control — a mark's word,
+ *   delimiter, element and key — and says why it is refused; a menu entry has
+ *   none (its card says it).
  * - **The preview card** shows the hovered or focused entry at its natural size,
  *   in a short example, 300 ms after the pointer or the focus reaches it.
  * - **The bubble** offers, over a text selection, the five native marks, the
@@ -48,7 +52,7 @@ import { currentReadsAttrs } from '../../inlineEngine';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    ActionPreview, CLASS_LITERAL, FEWER_TYPES, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
+    ActionPreview, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
     TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, menuOf, submenuOf, tipOf,
 } from './actions';
 import { ariaKeyshortcuts } from '../../keys';
@@ -199,9 +203,9 @@ export function followPointer(panel: HTMLElement, item: HTMLElement): void {
 /**
  * What the inline holder at the selection makes the Formatting entry and the
  * bubble's `{…}` say: its name by its delimiter (`Attributes of Bold…`,
- * `holderNames`), its sample the element the engine renders it as with that
- * name — plain text for an image, which has none to show — and its syntax and
- * card written as it (`example`, `tag` in `inlineLiterals.ts`).
+ * `holderNames`), the element the engine renders it as (`sample` — plain text
+ * for an image, which has none to show), and its syntax and card written as it
+ * (`example`, `tag` in `inlineLiterals.ts`).
  */
 function inlineEntry(inline: InlineHolderAt): { label: string; sample: SampleSpec; syntax: string; preview: ActionPreview } {
     const label = `Attributes of ${holderNames(inline).label}…`;
@@ -1274,7 +1278,7 @@ class ToolbarView implements PluginView {
             }
             const box = holder.getBoundingClientRect();
             const r = sample.getBoundingClientRect();
-            let zoom = Math.min(1, r.height > 0 ? box.height / r.height : 1, r.width > 0 ? box.width / r.width : 1);
+            const zoom = Math.min(1, r.height > 0 ? box.height / r.height : 1, r.width > 0 ? box.width / r.width : 1);
             if (zoom >= 1) {
                 continue;
             }
@@ -1313,6 +1317,12 @@ class ToolbarView implements PluginView {
         const syntax = div('mep-preview-syntax');
         syntax.textContent = elideDataUris(preview.markdown);
         this.card.replaceChildren(body, syntax);
+        // An entry has no tooltip: that it is written as source, the card says.
+        if (isSourceAction(action)) {
+            const source = div('mep-preview-source');
+            source.textContent = SOURCE_NOTE;
+            this.card.append(source);
+        }
         // A disabled entry says why where the eye already is, not only in its tooltip.
         if (!now.enabled && now.reason) {
             const why = div('mep-preview-refusal');
