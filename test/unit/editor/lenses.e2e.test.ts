@@ -806,7 +806,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         const verb = (id: string) => page.$eval(`${BAR} [data-verb="lens:${id}"]`, el => ({
             nodes: Array.from(el.childNodes, n => n.nodeType === Node.TEXT_NODE ? `#text ${n.textContent}` : (n as HTMLElement).className),
             text: el.textContent,
-            title: (el as HTMLElement).title,
+            title: (el.getAttribute('aria-description') ?? ''),
         }));
         const add = await verb('i.0');
         assert.deepStrictEqual(add.nodes, ['codicon codicon-add', '#text Add reference\u2026']);
@@ -831,7 +831,7 @@ suite('Editor lenses on their surfaces (e2e)', () => {
         assert.deepStrictEqual(children, ['mep-object-label', 'mep-object-separator', 'lens:k.0', 'code-action:c.0', 'code-action:c.1', 'code-action:c.2']);
         const verb = (id: string) => page.$eval(`${BAR} [data-verb="code-action:${id}"]`, el => ({
             kids: Array.from(el.childNodes, n => n.nodeType === Node.TEXT_NODE ? `#text ${n.textContent}` : (n as HTMLElement).className),
-            title: (el as HTMLElement).title,
+            title: (el.getAttribute('aria-description') ?? ''),
             name: el.getAttribute('aria-label'),
         }));
         assert.deepStrictEqual(await verb('c.0'), { kids: ['codicon codicon-lightbulb', '#text Quick fix'], title: 'Quick fix (quickfix, from another extension)', name: null });

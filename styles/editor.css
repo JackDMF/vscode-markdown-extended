@@ -401,12 +401,16 @@ img.mep-pending-range {
        scrolls, `scrollbar.shadow` (unset in HC: its border colour), deepened
        toward the text — at #ddd on white it was too faint to read. */
     --mep-scroll-shadow: color-mix(in srgb, var(--vscode-scrollbar-shadow, var(--vscode-contrastBorder, #888)) 50%, color-mix(in srgb, var(--vscode-menu-foreground, CanvasText) 30%, transparent));
-    background:
-        linear-gradient(var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas)) 30%, transparent) center top / 100% 32px no-repeat local,
-        linear-gradient(transparent, var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas)) 70%) center bottom / 100% 32px no-repeat local,
-        linear-gradient(var(--mep-scroll-shadow), transparent) center top / 100% 12px no-repeat scroll,
-        linear-gradient(transparent, var(--mep-scroll-shadow)) center bottom / 100% 12px no-repeat scroll,
-        var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas));
+    background-color: var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas));
+    background-image:
+        linear-gradient(var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas)) 30%, transparent),
+        linear-gradient(transparent, var(--vscode-menu-background, var(--vscode-editorWidget-background, Canvas)) 70%),
+        linear-gradient(var(--mep-scroll-shadow), transparent),
+        linear-gradient(transparent, var(--mep-scroll-shadow));
+    background-position: center top, center bottom, center top, center bottom;
+    background-size: 100% 32px, 100% 32px, 100% 12px, 100% 12px;
+    background-repeat: no-repeat;
+    background-attachment: local, local, scroll, scroll;
     border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
     border-radius: 5px;
     box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
