@@ -325,7 +325,7 @@ suite('Editor properties panel (e2e)', () => {
         edit = await lastEdit();
         assert.ok(edit);
         assert.deepStrictEqual(changedLines(SOURCE, edit.text), [['attendees: [Daniel]', 'attendees: [Jack]']]);
-        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Removed Daniel — (Ctrl|Cmd)\+Z$/);
+        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Daniel removed — (Ctrl|Cmd)\+Z$/);
     });
 
     test('the uid is read-only: a click copies it, and nothing is written', async function () {
@@ -411,7 +411,7 @@ suite('Editor properties panel (e2e)', () => {
         let edit = await lastEdit();
         assert.ok(edit);
         assert.strictEqual(edit.text, SOURCE.replace('lang: en\n', ''));
-        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Removed lang — (Ctrl|Cmd)\+Z$/);
+        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^lang removed — (Ctrl|Cmd)\+Z$/);
         assert.strictEqual(await page.$(row('lang')), null);
         // The focus is on the panel (its toggle, after the row went): the editor's undo.
         await page.focus('.mep-props-toggle');
@@ -467,7 +467,7 @@ suite('Editor properties panel (e2e)', () => {
         const edit = await lastEdit();
         assert.ok(edit);
         assert.strictEqual(edit.text, SOURCE.replace('workshop: 2026-09-29-workshop-visual-editor-next-round\n', ''));
-        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Removed workshop — (Ctrl|Cmd)\+Z$/);
+        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^workshop removed — (Ctrl|Cmd)\+Z$/);
     });
 
     test('typing in one row and then clicking another row\'s × commits the typing and removes that row', async function () {

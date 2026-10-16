@@ -14,8 +14,10 @@
 - Alt+Enter focuses the first verb that opens in place — never Open, never Delete or Remove.
 - A bar with no such verb takes the focus itself; Enter or ↓ moves into its first verb.
 - A bar's accessible name says the object, its action count and "arrow keys to choose".
-- Every undo hint reads alike: "Image deleted — Ctrl+Z", "Link removed — Ctrl+Z", "Emoji converted to text — Ctrl+Z".
-- In a narrow editor a verb drops its noun ("Delete", "Edit…") before the bar's title truncates; verbs never truncate.
+- Every object bar's undo hint reads alike: "Image deleted — Ctrl+Z", "Link removed — Ctrl+Z", "Emoji converted to text — Ctrl+Z".
+- In a narrow editor a verb drops its noun ("Delete", "Edit…"), then the bar's title truncates, down to hidden; verbs never truncate.
+- A bar too wide for the text column may stand past it, up to the editor's right edge.
+- A removed property's hint reads "lang removed — Ctrl+Z", as the bars' do.
 
 ### 🐛 Fixes
 
