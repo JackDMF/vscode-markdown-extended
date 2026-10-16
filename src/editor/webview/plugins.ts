@@ -7,6 +7,7 @@ import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
 import { Command, Plugin } from 'prosemirror-state';
 import { fidelityPlugin } from '../fidelity';
+import { UNDO_BINDING } from '../keys';
 import { emojiKeymap, emojiPlugin } from './emoji';
 import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
@@ -67,7 +68,8 @@ export const splitRequirementHeading: Command = (state, dispatch) => {
 function markdownKeymap(): Plugin {
     const item = nodes.list_item;
     return keymap({
-        'Mod-z': undo,
+        // The binding the undo hints name (`keys.ts`): the key a hint offers is this one.
+        [UNDO_BINDING]: undo,
         'Mod-y': redo,
         'Mod-Shift-z': redo,
         // Backspace right after an input rule fired gives back what was typed.
