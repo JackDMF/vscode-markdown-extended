@@ -551,6 +551,9 @@ suite('Editor atoms with the real mouse (e2e)', () => {
                 for (const width of [1200, 600, 400]) {
                     await page.setViewport({ width, height: 900 });
                     await showBoxes();
+                    // Back at the top: a test before this one leaves the page scrolled, and 'first' would be above the window.
+                    await page.evaluate(() => window.scrollTo(0, 0));
+                    await delay(80);
                     await openEditableTableSource();
                     assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block']);
                     await shot(page, `B1-${name}-${width}-after-open.png`);
