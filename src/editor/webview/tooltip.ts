@@ -97,6 +97,11 @@ export class Tooltips {
         this.listen(window, 'mousemove', () => {
             this.pointerLast = true;
         }, true);
+        // Before any control's own `mouseenter` (a menu entry focused under the pointer, `followPointer`):
+        // the browser sends the pointer's arrival ahead of its move, and capturing on the window runs first.
+        this.listen(window, 'mouseover', () => {
+            this.pointerLast = true;
+        }, true);
         // A scroll moves the control: the hover follows it while it is in the window
         // (the row scrolling a control focused by Tab into view), and goes once it is not.
         this.listen(window, 'scroll', () => this.follow(), true);
@@ -120,6 +125,8 @@ export class Tooltips {
             return;
         }
         el.addEventListener('mouseenter', () => {
+            // The pointer came: a focus it gives now (`followPointer`) is its, not the keyboard's.
+            this.pointerLast = true;
             this.cancel();
             this.pending = el;
             this.timer = setTimeout(() => {

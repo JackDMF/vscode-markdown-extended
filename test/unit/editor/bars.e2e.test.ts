@@ -516,6 +516,48 @@ suite('Editor object bars (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'Launch \\:rocket: now.\n', 'the second Enter ran Convert to text');
     });
 
+    test('a bar without verbs draws its title and no divider after it', async function () {
+        this.timeout(15000);
+        await openRow(rows.find(r => r.slug === 'badge') as Row);
+        assert.deepStrictEqual(await page.$eval(BAR, bar => Array.from(bar.children).map(c => c.className)), ['mep-object-label']);
+    });
+
+    test('a field\'s heading has no hover of the object\'s: the heading says what the field edits', async function () {
+        this.timeout(15000);
+        await openRow(rows.find(r => r.slug === 'link') as Row);
+        assert.notStrictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.getAttribute('aria-description')), null, 'the title has the object\'s hover');
+        await clickVerb('edit-link');
+        await page.waitForSelector(`${BAR} .mep-inline-field`);
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.getAttribute('aria-description')), null, 'the heading has none');
+        await page.keyboard.press('Escape');
+        await delay(100);
+    });
+
+    test('a menu entry\'s hover goes with the bar, and an entry the pointer focuses shows none at once', async function () {
+        this.timeout(20000);
+        const tipShown = () => page.$eval('.mep-tooltip', el => !(el as HTMLElement).hidden);
+        const entryCentre = (index: number) => page.$eval(`${BAR} .mep-object-menu`, (panel, i) => {
+            const r = (panel.querySelectorAll('[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]')[i as number] as HTMLElement).getBoundingClientRect();
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }, index);
+        await openRow({ ...(rows.find(r => r.slug === 'table') as Row), source: 'Intro.\n\n| a | b |\n| - | - |\n| one | two |\n', marker: 'one' });
+        // The keyboard opens Align's menu: the focus is the keyboard's; then the pointer arrives on another entry.
+        await page.focus(`${BAR} [data-verb="align"]`);
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        await delay(100);
+        const second = await entryCentre(1);
+        await page.mouse.move(second.x, second.y);
+        await delay(120);
+        assert.strictEqual(await tipShown(), false, 'an entry focused under the pointer waits for the rest, as a pointed-at control does');
+        await delay(700);
+        assert.strictEqual(await tipShown(), true, 'and shows after it');
+        // The bar goes (the caret leaves the table): its entry's hover goes with it.
+        await clickBefore('Intro', 1);
+        await delay(150);
+        assert.strictEqual(await tipShown(), false, 'no hover left standing beside a menu that is gone');
+    });
+
     test('a block bar grown past the column stops short of a reserved margin lane: the notes there stay uncovered', async function () {
         this.timeout(20000);
         // A wide lane, so the column is narrower than the table's bar: the bar must grow, and the lane is where it would.

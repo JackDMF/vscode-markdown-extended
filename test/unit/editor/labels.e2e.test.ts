@@ -440,9 +440,9 @@ suite('Editor labels, menus and states (e2e)', () => {
             assert.strictEqual(await page.$eval(panel('admonition'), el => !(el as HTMLElement).hidden), true, 'the menu stays open');
             const focus = await page.evaluate(() => {
                 const el = document.activeElement as HTMLElement;
-                return [el.dataset.action, el.querySelector('.mep-entry-alias')?.textContent];
+                return [el.dataset.action, el.querySelector('.mep-entry-alias')?.textContent, el.querySelector('.mep-entry-label')?.textContent];
             });
-            assert.deepStrictEqual(focus, ['admonition-abstract', 'as Summary']);
+            assert.deepStrictEqual(focus, ['admonition-abstract', 'as Summary', 'Abstract as Summary'], 'read as one phrase, a space before the alias');
             const scroll = await page.$eval(panel('admonition'), el => {
                 const r = el.getBoundingClientRect();
                 const f = (document.activeElement as HTMLElement).getBoundingClientRect();

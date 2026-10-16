@@ -623,12 +623,10 @@ class ToolbarView implements PluginView {
     private showLock(reason: string | null): void {
         this.lockNote.hidden = reason === null;
         (this.lockNote.firstElementChild as HTMLElement).textContent = reason ?? '';
+        describeAs(this.row, reason);
         if (reason === null) {
-            this.row.removeAttribute('aria-description');
             this.lockNote.classList.remove(LOCK_FLASH_CLASS);
             clearTimeout(this.flashTimer);
-        } else {
-            this.row.setAttribute('aria-description', reason);
         }
         this.placeLock();
     }
@@ -1067,7 +1065,8 @@ class ToolbarView implements PluginView {
             const label = span('mep-entry-label', action.label);
             const alias = aliasNote(action);
             if (alias !== null) {
-                label.append(span('mep-entry-alias', alias));
+                // A space between, so the entry reads "Abstract as Summary", not "Abstractas Summary"; the margin draws the rest of the gap.
+                label.append(' ', span('mep-entry-alias', alias));
             }
             item.append(glyphOf(action.glyph === undefined ? action.sample : action.glyph), label, column);
         }

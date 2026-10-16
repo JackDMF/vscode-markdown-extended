@@ -543,8 +543,9 @@ class ObjectBar {
     }
 
     hide(): void {
-        this.closeMenu(false);
+        // The hover first, while its control is still in the bar (a menu's entry goes with the menu).
         this.tips.hide(this.el);
+        this.closeMenu(false);
         if (this.field) {
             this.field.dispose();
             this.events.fieldDropped();
@@ -622,8 +623,8 @@ class ObjectBar {
     }
 
     private render(presentation: Presentation): void {
-        this.closeMenu(false);
         this.tips.hide(this.el);
+        this.closeMenu(false);
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
@@ -663,7 +664,8 @@ class ObjectBar {
             return { verb, el };
         });
         // The title, then a divider: it names the object, it is not the first verb (whose own divider that one is).
-        this.el.replaceChildren(label, barSeparator(), ...this.buttons.flatMap((b, i) => b.verb.separated && i > 0 ? [barSeparator(), b.el] : [b.el]));
+        // No verbs, no divider: it would divide the title from nothing.
+        this.el.replaceChildren(label, ...(this.buttons.length > 0 ? [barSeparator()] : []), ...this.buttons.flatMap((b, i) => b.verb.separated && i > 0 ? [barSeparator(), b.el] : [b.el]));
     }
 
     private choose(verb: Verb): void {
@@ -759,6 +761,8 @@ class ObjectBar {
         }
         this.menu = null;
         menu.button.setAttribute('aria-expanded', 'false');
+        // An entry's hover goes with its menu: once the panel is out of the bar, `hide(this.el)` finds it no more.
+        this.tips.hide(menu.panel);
         menu.panel.remove();
         if (focusButton) {
             menu.button.focus({ preventScroll: true });
@@ -854,6 +858,8 @@ class ObjectBar {
             // A prefilled field shows no placeholder: the label says what the value is.
             // The object's name alone: what the field holds (a literal) is not said twice (`Image · Attributes`).
             label.textContent = fieldHeading(this.el.dataset.name ?? '', spec.label);
+            // The heading says it all: the object's hover, attached for the title, would say something else.
+            this.tips.attach(label, () => null);
             // A title `fit` hid for the verbs is the field's heading now, and there are no verbs to count.
             label.hidden = false;
             this.el.setAttribute('aria-label', this.name);

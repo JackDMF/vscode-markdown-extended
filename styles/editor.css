@@ -550,7 +550,7 @@ img.mep-pending-range {
 }
 
 /* An admonition alias, under "More types…": the type it is drawn as, dim. */
-.mep-entry-alias { margin-left: 6px; font-size: 12px; color: var(--vscode-descriptionForeground, GrayText); }
+.mep-entry-alias { margin-left: 3px; font-size: 12px; color: var(--vscode-descriptionForeground, GrayText); }
 .mep-menu-item:is(:hover, :focus):not(.mep-disabled) .mep-entry-alias { color: inherit; opacity: 0.8; }
 .mep-more-item > .mep-menu-caret { margin-left: auto; }
 
