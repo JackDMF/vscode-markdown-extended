@@ -471,7 +471,7 @@ does not read back; one that cannot be placed — an emoji of its kind read with
 place, textblocks that cannot be lined up with the inline tokens read — is neither kept nor
 made text: the edit is refused (`unplacedEmoji`, `unplacedRefusal`), and the page and the file still agree;
 the reason names the atom, a smiley in superscript where that is the cause, and the ways out
-that are open, each tried on the document the edit started from (Edit as text, Remove emoji).
+that are open, each tried on the document the edit started from (Convert to text, Delete emoji).
 A block whose atoms cannot be placed as the file has them opens as a source block
 (`withUnplacedAsSource` in `parse.ts`), as one holding an emoji did before atoms. That
 check reads with the current inline definition (`currentInlineDefinition()`): on the host,
@@ -483,7 +483,7 @@ letter typed against it, a `>:(` an edit moved to a line start, a `:|` in a cell
 transaction appended to it (`emojiPlugin`), in the document the check of the edit reads
 (`writtenEdit`) and in the save (`withReadEmoji`), which reports one the page did not
 catch; once text, the escape above applies to it. An atom under code, superscript or
-subscript is refused (`unwritableEmoji`): its block would be a source block. Edit as text is
+subscript is refused (`unwritableEmoji`): its block would be a source block. Convert to text is
 refused where the characters would still be read as an emoji — the block would read more
 emoji beyond its atoms than before (`emojiTextStillRead`), as in a sidenote, whose plugin
 reads a smiley even escaped. A note's part is parsed apart from its paragraph and joined
@@ -1842,10 +1842,15 @@ a Remove says what stays (*Remove link, keep text*), a Delete is where the conte
 (*Delete image*, *Delete note* — a note's own text goes with it). `wording` builds a verb's
 label, its short form and its hint from a verb word and a noun, so the three cannot drift.
 In a narrow editor a verb drops the noun its bar's title already names (*Delete*, *Edit…*,
-*Remove, keep content*) before the title truncates, and the title truncates to a stub only if
-the bar is still too wide; verbs never truncate (`ObjectBar.fit`, run as the bar is placed;
-where the title does not name the noun — a span's *Remove attributes, keep text* — there is
-no short form). A *Delete* whose file stays (an image, a wiki embed, a snippet's directive)
+*Remove, keep content*) before the title truncates; then the title truncates, down to hidden
+if the verbs need it (narrower than a 42 px stub it says nothing; the bar's `aria-label` still
+names the object); verbs never truncate (`ObjectBar.fit`, run as the bar is placed and only
+when the room or what the bar shows changed; where the title does not name the noun — a
+span's *Remove attributes, keep text* — there is no short form). The bar is a floating
+layer: its room runs from the text column's left edge to the editor's right edge less a
+16 px gutter (`layerRight`), so a bar wider than the column stands past it rather than
+cutting a verb (Daniel, 2026-10-16). Within the actions slot the lenses come first, then the
+code actions, then the **Actions** choice holding the lenses that did not fit. A *Delete* whose file stays (an image, a wiki embed, a snippet's directive)
 says so in its tooltip (`FILE_STAYS`).
 
 **The verbs** say what remains or what goes, and are each one transaction in

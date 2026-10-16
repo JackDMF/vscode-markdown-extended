@@ -478,7 +478,7 @@ const IMAGE_EXAMPLE_SRC = 'images/overview.png';
 /** The image entry's sample: a 24×16 landscape, sky, hill and sun, as a PNG. */
 const SAMPLE_PICTURE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAQCAIAAACDRijCAAAASUlEQVR42mOooBJgAOJ5x99RiAbUoG9HXCCIIoPgpqCZNQwMoloYDcroJ2xQ2IIYXIgEg/CYQoxZUIMImkLQLNIMwmMc1CCqAADnhP+yQhhAvwAAAABJRU5ErkJggg==';
 
-/** The class a new container is given; its object toolbar's Change name/info renames it. */
+/** The class a new container is given; its object toolbar's Edit classes… renames it. */
 export const NEW_CONTAINER_NAME = 'container';
 
 const checkbox = (checked: boolean): SampleSpec => withAttrs(el('input'), checked ? { type: 'checkbox', checked: 'true' } : { type: 'checkbox' });

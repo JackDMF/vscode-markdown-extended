@@ -254,7 +254,7 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
         }
         case 'wrap-node': {
             // Inside a note of its kind the action removes it, like a mark's button,
-            // and is refused where the object bar's Remove note is (`unwrapNoteRefusal`).
+            // and is refused where the object bar's Delete note / Remove sidebar is (`unwrapNoteRefusal`).
             if (inNoteOf(state, apply.node)) {
                 const unwrap = unwrapNoteRefusal(state, apply.node);
                 return { enabled: unwrap === null, active: true, reason: unwrap };

@@ -1418,7 +1418,7 @@ export function unplacedEmoji(blocks: readonly { node: Node; offset: number }[])
 /**
  * How many emoji the page's engine reads in `block` as the save writes it
  * beyond its atoms, part by part (`unitsOf`): typed text that reads as an
- * emoji though escaped, as a sidenote's does. What Edit as text is judged by:
+ * emoji though escaped, as a sidenote's does. What Convert to text is judged by:
  * an atom made text where that count grows would still be an emoji to the
  * preview (`EMOJI_TEXT_STILL_READ`).
  */

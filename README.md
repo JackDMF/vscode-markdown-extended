@@ -455,45 +455,56 @@ are typing on, and never moves the page.
 
 | Object | Its bar shows | Verbs |
 | ------ | ------------- | ----- |
-| Sidenote, marginal note | while the caret is inside, after a moment | **Remove note, keep text** · **Convert to marginal note** / **Convert to sidenote** · **Edit source** |
-| Left or right sidebar | while the caret is inside, after a moment | **Remove sidebar, keep text** · **Move to right** / **Move to left** · **Edit source** |
-| Link | while the caret is in its text, after a moment | **Open** · **Edit link…** · **Attributes…** (its `{…}`; `{}` or empty removes it) · **Remove link** |
+| Sidenote, marginal note | while the caret is inside, after a moment | **Convert to marginal note** / **Convert to sidenote** · **Edit source** · **Delete note** |
+| Left or right sidebar | while the caret is inside, after a moment | **Move to right** / **Move to left** · **Edit source** · **Remove sidebar, keep text** |
+| Link | while the caret is in its text, after a moment | **Open** · **Edit link…** · **Attributes…** (its `{…}`; `{}` or empty removes it) · **Remove link, keep text** |
 | Span (`[text]{…}`) | while the caret is in its text, after a moment | **Attributes…** · **Remove attributes, keep text** |
 | Emphasis, strikethrough, highlight, inline code, superscript, subscript or a key with attributes (`_x_{…}`, `` `x`{…} ``) | while the caret is in its text, after a moment; named as the row names it — *Bold*, *Italic*, *Strong*, *Emphasis*, *Code*, *Key* … — with its `{…}` | **Attributes…** · **Remove attributes, keep formatting** |
 | The same without attributes | only on `Alt+Enter`, never on a caret rest | **Attributes…** (gives it its first `{…}`) |
-| Image | when you click it, after a moment; its label and tooltip show its `{…}` | **Edit image…** (its alt text, then its path) · **Attributes…** (its `{…}`, written after its `(…)`; `{}` or empty removes it) · **Open file** · **Remove image** |
-| Admonition | while the caret is in it, after a moment, or a click on its title | **Change type** (a menu of every type) · **Edit title** · **Attributes…** (disabled: the plugin gives a `{…}` to the title bar) · **Remove admonition, keep content** |
-| Container | while the caret is in it, after a moment | **Change name/info** · **Attributes…** (disabled: the editor keeps no `{…}` on a `:::` line; a container written with one is a source block) · **Remove container, keep content** |
+| Image | when you click it, after a moment; its label and tooltip show its `{…}` | **Open file** · **Edit image…** (its alt text, then its path) · **Attributes…** (its `{…}`, written after its `(…)`; `{}` or empty removes it) · **Delete image** (from this document; the file stays) |
+| Emoji, wiki embed | when you click it, or `Alt+Enter` beside it | **Convert to text** (its tooltip names the text it becomes) · **Delete emoji** / **Delete embed** (the file stays) |
+| Admonition | while the caret is in it, after a moment, or a click on its title | **Edit title…** · **Type** (a menu of every type) · **Attributes…** (disabled: a `{…}` on its `!!!` line styles the title) · **Remove admonition, keep content** |
+| Container | while the caret is in it, after a moment | **Edit classes…** (its name and info, the whole `:::` line) · **Attributes…** (disabled: the editor keeps no `{…}` on a `:::` line; a container written with one is a source block) · **Remove container, keep content** |
 | A block with attributes (`{.lead}`) | while the caret is in it, after a moment | **Attributes…** (`{}` or empty removes them) |
 | Table | while the caret is in it, after a moment; the caret's column is tinted | **Row** (insert above, insert below, delete) · **Column** (insert left, insert right, delete) · **Align** (left, center, right; the current one marked) · **Attributes…** · **Edit source** · **Delete table** |
-| Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected, or its box is open | **Edit source** (not while its box is open) · **Show in text editor** · **Delete block** |
-| Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Change snippet…** · **Show in text editor** · **Delete directive** |
+| Source block — a multimd table, raw HTML, a definition list, … | while the pointer is on it, or it is selected, or its box is open | **Show in text editor** · **Edit source** (not while its box is open) · **Delete block** |
+| Included snippet | while the pointer is on it, or it is selected | **Open snippet** (when Req Explorer names its file) · **Show in text editor** · **Change snippet…** · **Delete directive** (the snippet's file stays) |
 | A status badge, a summary table | as above | its name only |
 | Front matter | — | its verbs are the properties panel's header (below); the bar shows only for other extensions' actions |
 | Heading | while the caret is in it, after a moment — only when another extension offers actions for it, or the heading has attributes | **Attributes…** (not on a requirement heading), then the actions; a requirement heading is named by its id |
 
 A block's bar — a source block, a snippet, the front matter, a heading, a container, an
 admonition, a block with attributes — also offers the **code actions other extensions
-have for that block**, after its own verbs (see below).
+have for that block**, after its own verbs and a divider, before Delete (see below).
+
+Every bar orders its verbs the same way: **Open** (or **Show in text editor**) · **Edit…** ·
+the object's own kind of verbs (**Row**, **Column**, **Align**, **Convert…**, **Type**) ·
+**Attributes…** · **Edit source** · other extensions' actions · a divider · **Remove …** or
+**Delete …**, last. *Remove* keeps something and says what (*Remove link, keep text*);
+*Delete* is where the content goes. In a narrow editor a verb drops the noun the bar's name
+already says (*Delete*, *Edit…*), then the name truncates — down to hidden, if the verbs
+need the room — and the bar may stand past the text, up to the editor's edge; a verb is
+never cut.
 
 A bar whose object holds the element the caret is in — bold in a table's cell, code in a
 link's text, emphasis in a note — adds **Attributes of Bold…** (*of Code…*, *of
-Emphasis…*) after its own verbs, for that element's `{…}`; it is the element the
+Emphasis…*) beside its **Attributes…**, for that element's `{…}`; it is the element the
 Formatting menu names (below).
 
-- **A verb says what remains.** *Remove note, keep text* leaves the note's reference in
-  the sentence, with its formatting (a sidebar leaves its text); the note's own text goes.
-  *Remove link* keeps the linked text. *Delete directive* removes the
+- **A verb says what remains.** *Delete note* leaves the note's reference in the sentence,
+  with its formatting; the note's own text goes. *Remove sidebar, keep text* leaves the
+  sidebar's text. *Remove link, keep text* keeps the linked text. *Delete directive* removes the
   `<!-- include: … -->` line from the file; the snippet's own file stays.
 - **A removal says so.** Something disappearing is easy to miss, so a removal or deletion
-  is announced beside the caret for a moment — *Note removed — Ctrl+Z* — and one `Ctrl+Z`
+  is announced beside the caret for a moment — *Note deleted — Ctrl+Z*, *Link removed —
+  Ctrl+Z*, *Emoji converted to text — Ctrl+Z* — and one `Ctrl+Z`
   brings it back.
-- **Edit source, Edit link…, Edit image…, Attributes…, Edit title, Change
-  name/info** open a one-line field in the bar, filled in: `Enter` applies (or goes on to
+- **Edit source, Edit link…, Edit image…, Attributes…, Edit title…, Edit
+  classes…** open a one-line field in the bar, filled in: `Enter` applies (or goes on to
   the next field — *Edit image…* asks for the alt text, then the path), `Esc` or clicking
   away cancels. A link's address and an image's path complete as you type (below, *Links*). An attribute field takes a `{…}` as markdown-it-attrs reads it
   (`{.a .b}`, `{#id}`, `{key="value"}`) and refuses anything else: the field stays open
-  with what you typed, the reason beside it, until you change it or press `Esc`. **Change type** opens a list of the admonition types instead. A note's field holds its Markdown
+  with what you typed, the reason beside it, until you change it or press `Esc`. **Type** opens a list of the admonition types instead. A note's field holds its Markdown
   (`++reference|note++`); what you type is read by the same parser as the preview, so it
   comes back as a note — of whichever kind its markers now say — or, if it no longer is
   one, as the text you typed. A source block's **Edit source** opens its Markdown in the
@@ -514,7 +525,7 @@ Formatting menu names (below).
 
 | Keys | Does |
 | ---- | ---- |
-| `Alt+Enter` | Opens the bar of the object at the caret, the focus on its first verb; in code, a key, emphasis … with no bar of its own, a bar with **Attributes…** |
+| `Alt+Enter` | Opens the bar of the object at the caret, the focus on its first verb that opens something in place (never Open, Remove or Delete) — else on the bar itself, where `Enter` or `↓` moves into its verbs; in code, a key, emphasis … with no bar of its own, a bar with **Attributes…** |
 | `←` / `→` | Moves between the verbs |
 | `Enter` | Chooses the verb; in a field, applies it |
 | `Esc` | Back to the text; in a field, cancels
@@ -1044,8 +1055,8 @@ a space there. Nor may a bare web address before a sidebar read its marker into 
 `**See (http://e.com)**$x$` are sidebars and editable, while deleting that `)`, or typing
 one into `See http://e.com/($x$` that closes the address's bracket, is refused. With
 `markdown.preview.linkify` off nothing reads an address, and nothing is refused for one. A
-formatting button, **Remove link**, **Remove attributes, keep text**, **Remove image**,
-**Remove note, keep text** or **Remove sidebar, keep text** whose result would do that is
+formatting button, **Remove link, keep text**, **Remove attributes, keep text**, **Delete image**,
+**Delete note** or **Remove sidebar, keep text** whose result would do that is
 disabled, with the reason in its tooltip. A sidebar the file already holds is never in the
 way of editing its paragraph, with one exception: where the line spells a character as a
 character reference the editor would write out as the character, and the sidebar would then
@@ -1334,7 +1345,7 @@ $left sidebar${.my-class}
 
 Renders keyboard shortcuts with proper styling.
 
-**Wiki embeds and links (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key. It is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it, and nothing inside it is read as syntax: `![[x]](y)` is the embed followed by `(y)`, not an image, and a `{…}` right after it stays text. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor an embed is one unit, drawn as its source and written back exactly as it was; typing `![[name]]`, or pasting it from anywhere but the Visual Editor itself, makes one; a paste of the editor's own copy keeps what it carries, also in another document's Visual Editor. Backspace right after typing an embed, or **Edit as text** in its toolbar, makes it text (the caret stays after it); delete the last `]` and type it again to make it an embed. It is drawn in the colour of inline code. A paste as plain text (Ctrl+Shift+V) brings only the text, and two limits follow from that: a plain-text paste of a copy made in any other Visual Editor page (another document's, or this document's before it was reopened) makes embeds like text from outside, and text from outside that is exactly the editor's last copy is taken as that copy and pasted as it was copied. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one.
+**Wiki embeds and links (Foam, Obsidian, Markdown Notes).** A wiki embed, `![[path/to/img.png]]` or `![[note]]` — `![[`, a name with no bracket and no line break, `]]` — is never a key. It is shown as the text it was written as, so the extension that renders embeds (Foam) still finds it, and nothing inside it is read as syntax: `![[x]](y)` is the embed followed by `(y)`, not an image, and a `{…}` right after it stays text. Write `\![[Ctrl]]` for a `!` followed by a key. In the Visual Editor an embed is one unit, drawn as its source and written back exactly as it was; typing `![[name]]`, or pasting it from anywhere but the Visual Editor itself, makes one; a paste of the editor's own copy keeps what it carries, also in another document's Visual Editor. Backspace right after typing an embed, or **Convert to text** in its bar, makes it text (the caret stays after it); delete the last `]` and type it again to make it an embed. It is drawn in the colour of inline code. A paste as plain text (Ctrl+Shift+V) brings only the text, and two limits follow from that: a plain-text paste of a copy made in any other Visual Editor page (another document's, or this document's before it was reopened) makes embeds like text from outside, and text from outside that is exactly the editor's last copy is taken as that copy and pasted as it was copied. A wiki *link*, `[[note]]`, is written exactly like a key, so it is still rendered as one.
 
 ### markdown-it-ib
 

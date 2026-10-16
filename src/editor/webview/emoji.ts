@@ -166,7 +166,7 @@ export function selectEmojiBeside(state: EditorState): Transaction | null {
 
 /**
  * The emoji atom at `[from, to)` as its spelling in text, with the atom's
- * marks and the caret after it — Edit as text, the object bar's verb. It is
+ * marks and the caret after it — Convert to text, the object bar's verb. It is
  * text, and stays text: the save escapes it as typed text (`emojiShortcuts.ts`).
  * `null` when `[from, to)` is not one emoji.
  */

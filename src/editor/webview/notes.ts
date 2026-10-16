@@ -679,7 +679,7 @@ export function unwrapNote(name: NoteNodeName): Command {
 }
 
 /**
- * Why `unwrapNote(name)` is not run here, so Remove note and Remove sidebar
+ * Why `unwrapNote(name)` is not run here, so Delete note and Remove sidebar
  * are disabled with it: the filter's reason for the transaction it would
  * dispatch (`noteRefusal`) — a sidebar's text glued to a letter, a reference's
  * to a sidebar — or that there is no such note at the selection.
