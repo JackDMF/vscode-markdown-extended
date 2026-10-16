@@ -77,6 +77,7 @@ import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
 import { plainTip } from '../tips';
 import { Tooltips } from './tooltip';
+import { rightLaneEdge } from './lane';
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -145,10 +146,14 @@ const TITLE_STUB = 42;
 /**
  * The right edge a bar may reach: the text column's (`base`, the mount), or —
  * a floating layer, it may stand past the column — the editor's right edge
- * less the gutter, whichever is further (Daniel, 2026-10-16).
+ * less the gutter, whichever is further (Daniel, 2026-10-16) — but never into
+ * a margin lane reserved for notes (`rightLaneEdge`): past its edge stand the
+ * notes, and a bar there would cover them. `GAP` short of it.
  */
 function layerRight(base: DOMRect): number {
-    return Math.max(base.right, document.documentElement.clientWidth - BAR_GUTTER);
+    const lane = rightLaneEdge();
+    const edge = document.documentElement.clientWidth - BAR_GUTTER;
+    return Math.max(base.right, lane === null ? edge : Math.min(edge, lane - GAP));
 }
 
 /** One verb as the bar draws it. */

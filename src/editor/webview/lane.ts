@@ -75,6 +75,21 @@ function laneEdges(): string {
     return `${style.paddingLeft} ${style.paddingRight} ${note ? getComputedStyle(note).float : 'none'}`;
 }
 
+/**
+ * Where the right lane begins, in viewport coordinates — the inner edge of
+ * `<html>`'s padding-right where it holds more than the page's own gutter
+ * (`--md-page-gutter`) — or `null` while no lane is reserved there. The same
+ * fact `laneEdges` reads: a floating layer (an object bar) stays left of it,
+ * since past it stand the notes.
+ */
+export function rightLaneEdge(): number | null {
+    const root = document.documentElement;
+    const style = getComputedStyle(root);
+    const padding = parseFloat(style.paddingRight) || 0;
+    const gutter = parseFloat(style.getPropertyValue('--md-page-gutter')) || 0;
+    return padding > gutter ? root.clientWidth - padding : null;
+}
+
 /** The top of the line holding `pos` on screen, or `null` where it cannot be measured. */
 function lineTop(view: EditorView, pos: number): number | null {
     try {

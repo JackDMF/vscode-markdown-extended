@@ -516,7 +516,33 @@ suite('Editor object bars (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'Launch \\:rocket: now.\n', 'the second Enter ran Convert to text');
     });
 
-    // TODO once feat/margin-by-width lands: the same for a grown bar beside a reserved margin lane (a note's body there is content past the column).
+    test('a block bar grown past the column stops short of a reserved margin lane: the notes there stay uncovered', async function () {
+        this.timeout(20000);
+        // A wide lane, so the column is narrower than the table's bar: the bar must grow, and the lane is where it would.
+        await page.addStyleTag({ content: ':root { --md-note-width: 500px; }' });
+        try {
+            await openRow({ ...(rows.find(r => r.slug === 'table') as Row), source: 'Intro with a ++note|beside the column++ here.\n\n| a | b |\n| - | - |\n| one | two |\n', marker: 'one' });
+            await viewport(1000);
+            const placed = await page.$eval(BAR, bar => {
+                const root = document.documentElement;
+                const lane = root.clientWidth - parseFloat(getComputedStyle(root).paddingRight);
+                const note = (document.querySelector('.ProseMirror .sidenote') as HTMLElement).getBoundingClientRect();
+                return { right: bar.getBoundingClientRect().right, lane, noteLeft: note.left, float: getComputedStyle(document.querySelector('.ProseMirror .sidenote') as HTMLElement).float };
+            });
+            assert.strictEqual(placed.float, 'right', 'the note is in the margin');
+            assert.ok((await fitted()).pastColumn, `the table's bar is wider than the column (${JSON.stringify(await fitted())})`);
+            assert.ok(placed.right <= placed.lane - 4 + 0.5, `the bar ends 4px short of the lane: ${JSON.stringify(placed)}`);
+            assert.ok(placed.right <= placed.noteLeft, `the bar covers no note: ${JSON.stringify(placed)}`);
+        } finally {
+            await page.evaluate(() => document.querySelectorAll('style').forEach(s => {
+                if (s.textContent === ':root { --md-note-width: 500px; }') {
+                    s.remove();
+                }
+            }));
+            await viewport(WIDE);
+        }
+    });
+
     test('a block bar grown past the column keeps out of an open card in the part past it: the band checked is the band it stands in', async function () {
         this.timeout(20000);
         // Two rules above the table and nothing below it: room for the bar on both sides — the card takes one, the other is free.
