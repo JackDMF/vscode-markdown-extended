@@ -44,6 +44,22 @@ export function blockIndexForLine(ranges: readonly LineRange[], line: number): n
 const SURFACES: ReadonlySet<string> = new Set<LensSurface>(['status', 'priority', 'links', 'action']);
 
 /**
+ * Surfaces the page renders itself, whose lens is not drawn: Req Explorer's
+ * front-matter lens (`front-matter`, its SPEC §10.4) names and folds what the
+ * Properties block already names and folds.
+ */
+const HIDDEN_SURFACES: ReadonlySet<string> = new Set(['front-matter']);
+
+/** Whether a lens names a surface the page renders itself, so it is left out. */
+export function hidesLens(command: vscode.Command): boolean {
+    const args = command.arguments;
+    const last: unknown = args && args.length > 0 ? args[args.length - 1] : undefined;
+    const hint = typeof last === 'object' && last !== null ? (last as { reqExplorer?: unknown }).reqExplorer : undefined;
+    const surface = typeof hint === 'object' && hint !== null ? (hint as { surface?: unknown }).surface : undefined;
+    return typeof surface === 'string' && HIDDEN_SURFACES.has(surface);
+}
+
+/**
  * The surface a lens names for itself: the last of its command's arguments,
  * when that is an object of the `LensHint` shape — a known surface and an
  * artifact id; `relation` only when it is a string, `direction` only when it
@@ -88,7 +104,7 @@ export function lensRows(lenses: readonly vscode.CodeLens[], ranges: readonly Li
     const byBlock = new Map<number, LensItem[]>();
     const ordered = lenses
         .map((lens, k) => ({ lens, k }))
-        .filter(({ lens }) => lens.command !== undefined && lens.command.title !== '')
+        .filter(({ lens }) => lens.command !== undefined && lens.command.title !== '' && !hidesLens(lens.command))
         .sort((a, b) => a.lens.range.start.line - b.lens.range.start.line
             || a.lens.range.start.character - b.lens.range.start.character
             || a.k - b.k);

@@ -10,7 +10,7 @@ import { CodeActionController } from '../../../src/editor/host/codeActions';
 import {
     IncludeController, IncludePickItem, IncludePicker, IncludeProvider, NO_INCLUDES_MESSAGE, collectIncludeProviders,
 } from '../../../src/editor/host/includes';
-import { blockIndexForLine, lensHintOf, lensRows } from '../../../src/editor/host/lenses';
+import { blockIndexForLine, hidesLens, lensHintOf, lensRows } from '../../../src/editor/host/lenses';
 import { VISUAL_EDITOR_VIEW_TYPE } from '../../../src/editor/host/provider';
 import { SessionHost, SessionWebview, VisualEditorSession, revealInVisualEditor } from '../../../src/editor/host/session';
 import { fillDestination } from '../../../src/editor/host/images';
@@ -623,6 +623,21 @@ suite('Editor host: lens placement', () => {
         assert.ok(side('sideways') && !('direction' in (side('sideways') as object)), 'an unknown side is left out; the lens keeps its relation');
         const withSide = lensRows([lens(4, 'Conflicted by', [{ reqExplorer: { surface: 'links', artifact: 'FRS-TST-001', relation: 'conflicts-with', direction: 'in' } }])], ranges, '2');
         assert.strictEqual(withSide.rows[0].items[0].direction, 'in', 'the side crosses to the page');
+    });
+
+    test('a lens naming a surface the page renders itself is left out; every other lens is kept', () => {
+        const lens = (line: number, title: string, args: unknown[]) => new vscode.CodeLens(
+            new vscode.Range(line, 0, line, 1), { title, command: 'test.lens', arguments: args },
+        );
+        const frontMatter = { reqExplorer: { surface: 'front-matter', artifact: 'FR-AUTHORING' } };
+        const { rows } = lensRows([
+            lens(0, 'metadata for 9 requirements · show', [frontMatter]),
+            lens(4, 'Set status', [{ reqExplorer: { surface: 'status', artifact: 'FRS-TST-001' } }]),
+        ], ranges, '3');
+        assert.deepStrictEqual(rows.flatMap(r => r.items.map(i => i.title)), ['Set status']);
+        assert.strictEqual(hidesLens({ title: 'x', command: 'c', arguments: [frontMatter] }), true);
+        assert.strictEqual(hidesLens({ title: 'x', command: 'c' }), false, 'a lens with no arguments is drawn');
+        assert.strictEqual(hidesLens({ title: 'x', command: 'c', arguments: [frontMatter, 'after'] }), false, 'the hint is the last argument, or none');
     });
 });
 

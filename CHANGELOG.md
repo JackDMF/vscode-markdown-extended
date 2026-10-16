@@ -1,5 +1,11 @@
 # Change Log
 
+## Unreleased
+
+### ✨ Changes
+
+- Req Explorer's front-matter lens is not drawn in the Visual Editor, whose Properties block already shows and folds the front matter.
+
 ## v4.7.0 — Saves That Read Back as Shown
 
 ### 🐛 Fixes
