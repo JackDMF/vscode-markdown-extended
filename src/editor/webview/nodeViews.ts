@@ -2,6 +2,8 @@ import { DOMOutputSpec, DOMSerializer, Node } from 'prosemirror-model';
 import { EditorView, NodeView, ViewMutationRecord } from 'prosemirror-view';
 import type { DeclaredControl } from './focusPlace';
 import { followLinksIn } from './links';
+import { REDO_BINDINGS, UNDO_BINDING, bindingMatches } from '../keys';
+import { macKeys } from './hint';
 
 /** What the node views need from the page around them. */
 export interface EditorPort {
@@ -57,9 +59,9 @@ export function element<K extends keyof HTMLElementTagNameMap>(tag: K, className
     return el;
 }
 
-/** Whether the key event is the platform's undo or redo chord. */
+/** Whether the key event is one the page's keymap undoes or redoes with (`keys.ts`): a source box keeps those for its own text. */
 export function isUndoRedo(e: KeyboardEvent): boolean {
-    return (e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y');
+    return [UNDO_BINDING, ...REDO_BINDINGS].some(binding => bindingMatches(binding, e, macKeys()));
 }
 
 /**

@@ -7,7 +7,7 @@ import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
 import { Command, Plugin } from 'prosemirror-state';
 import { fidelityPlugin } from '../fidelity';
-import { UNDO_BINDING } from '../keys';
+import { REDO_BINDINGS, UNDO_BINDING } from '../keys';
 import { emojiKeymap, emojiPlugin } from './emoji';
 import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
@@ -70,8 +70,7 @@ function markdownKeymap(): Plugin {
     return keymap({
         // The binding the undo hints name (`keys.ts`): the key a hint offers is this one.
         [UNDO_BINDING]: undo,
-        'Mod-y': redo,
-        'Mod-Shift-z': redo,
+        ...Object.fromEntries(REDO_BINDINGS.map(binding => [binding, redo])),
         // Backspace right after an input rule fired gives back what was typed.
         'Backspace': undoInputRule,
         // By mark type, written with the CommonMark delimiters when added; the

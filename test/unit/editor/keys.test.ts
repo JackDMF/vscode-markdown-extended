@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { UNDO_BINDING, keyLabel } from '../../../src/editor/keys';
+import { REDO_BINDINGS, UNDO_BINDING, bindingMatches, keyLabel } from '../../../src/editor/keys';
 
 /**
  * The key a hint names is the binding the page's keymap binds (`keys.ts`),
@@ -16,5 +16,17 @@ suite('Editor keys: a binding as the platform names it', () => {
     test('the undo binding is the one the undo hints name', () => {
         assert.strictEqual(UNDO_BINDING, 'Mod-z');
         assert.strictEqual(keyLabel(UNDO_BINDING, false), 'Ctrl+Z');
+    });
+
+    test('a key event matches the binding it names, Mod by the platform, and no other', () => {
+        const chord = (key: string, m: Partial<Record<'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey', boolean>> = {}) =>
+            ({ key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...m });
+        assert.ok(bindingMatches(UNDO_BINDING, chord('z', { ctrlKey: true }), false));
+        assert.ok(bindingMatches(UNDO_BINDING, chord('z', { metaKey: true }), true));
+        assert.ok(!bindingMatches(UNDO_BINDING, chord('z', { ctrlKey: true }), true), 'Ctrl+Z is no undo on a Mac');
+        assert.ok(!bindingMatches(UNDO_BINDING, chord('Z', { ctrlKey: true, shiftKey: true }), false), 'with Shift it is the redo');
+        assert.ok(REDO_BINDINGS.some(b => bindingMatches(b, chord('Z', { ctrlKey: true, shiftKey: true }), false)));
+        assert.ok(REDO_BINDINGS.some(b => bindingMatches(b, chord('y', { ctrlKey: true }), false)));
+        assert.ok(!bindingMatches(UNDO_BINDING, chord('z'), false), 'no modifier, no undo');
     });
 });
