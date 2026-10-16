@@ -39,5 +39,12 @@ suite('Admonition families: the plugin\'s types grouped as the stylesheet draws 
                 }), `${alias} is drawn as ${family.type}`);
             }
         }
+        const canonical = new Set(ADMONITION_FAMILIES.map(f => f.type));
+        const known = new Set(ADMONITION_FAMILIES.flatMap(f => [f.type, ...f.aliases]));
+        for (const list of lists) {
+            const named = [...names(list)];
+            assert.ok(named.filter(n => canonical.has(n)).length <= 1, `one look per selector list: ${named.join(', ')}`);
+            assert.deepStrictEqual(named.filter(n => !known.has(n)), [], 'every type the stylesheet draws belongs to a family');
+        }
     });
 });

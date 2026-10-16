@@ -68,12 +68,13 @@ export function keyLabel(binding: string, mac: boolean): string {
     return [...modifiers, key.length === 1 ? key.toUpperCase() : key].join('+');
 }
 
-/** The `KeyboardEvent.code` names `aria-keyshortcuts` uses for a punctuation key. */
-const ARIA_KEY_NAMES: Readonly<Record<string, string>> = { '`': 'Backquote' };
+/** The keys `aria-keyshortcuts` cannot write as themselves: `+` joins its keys, and a space separates shortcuts. */
+const ARIA_KEY_NAMES: Readonly<Record<string, string>> = { '+': 'Plus', ' ': 'Space' };
 
 /**
  * A binding as `aria-keyshortcuts` spells it — the fourth reader: `Mod-i` →
- * `Control+I` or `Meta+I` (`mac`), Mod-backtick → `Control+Backquote`.
+ * `Control+I` or `Meta+I` (`mac`), Mod-backtick → ``Control+` `` — key values
+ * (`KeyboardEvent.key`), the backtick as the character.
  */
 export function ariaKeyshortcuts(binding: string, mac: boolean): string {
     const parts = binding.split(/-(?!$)/);

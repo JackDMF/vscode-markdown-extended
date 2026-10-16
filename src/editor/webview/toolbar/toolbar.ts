@@ -203,11 +203,11 @@ export function followPointer(panel: HTMLElement, item: HTMLElement): void {
 /**
  * What the inline holder at the selection makes the Formatting entry and the
  * bubble's `{…}` say: its name by its delimiter (`Attributes of Bold…`,
- * `holderNames`), the element the engine renders it as (`sample` — plain text
- * for an image, which has none to show), and its syntax and card written as it
- * (`example`, `tag` in `inlineLiterals.ts`).
+ * `holderNames`), and its syntax and card written as it — the card drawing the
+ * element the engine renders it as, none for an image (`example`, `tag` in
+ * `inlineLiterals.ts`).
  */
-function inlineEntry(inline: InlineHolderAt): { label: string; sample: SampleSpec; syntax: string; preview: ActionPreview } {
+function inlineEntry(inline: InlineHolderAt): { label: string; syntax: string; preview: ActionPreview } {
     const label = `Attributes of ${holderNames(inline).label}…`;
     const markup = holderMarkup(inline);
     const holder = inline.holder;
@@ -215,7 +215,6 @@ function inlineEntry(inline: InlineHolderAt): { label: string; sample: SampleSpe
     const text = holder.holder === 'code' ? 'code' : holder.holder === 'image' ? 'alt' : 'text';
     return {
         label,
-        sample: tag === undefined ? { tag: 'span', children: [label] } : { tag, className: 'x', children: [label] },
         syntax: holder.example(text, CLASS_LITERAL, markup),
         preview: {
             markdown: `Run ${holder.example('--flag', '{.k}', markup)} now.`,
@@ -264,8 +263,7 @@ export interface ActionState {
     label?: string;
     /** The whole tooltip but its reason, where the selection decides what the action does (the bubble's `{…}`). */
     tip?: Tip;
-    /** What a named entry names — the element (`b` for `Attributes of Bold…`) — its syntax column and its card, where the selection decides it (`**text**{.class}`). */
-    sample?: SampleSpec;
+    /** What a named entry's syntax column and card say, where the selection decides it (`Attributes of Bold…` as `**text**{.class}`). */
     syntax?: string;
     preview?: ActionPreview;
     /** The button's accessible name, where the selection decides what it does (the bubble's `{…}`). */
@@ -398,6 +396,13 @@ function reachable(node: HTMLElement): boolean {
     return !isDisabled(node) && !node.hidden;
 }
 
+/** A divider of a bar (`.mep-object-toolbar`): after its title, and where `arrange` (`verbs.ts`) divides its verbs. */
+export function barSeparator(): HTMLElement {
+    const rule = span('mep-object-separator');
+    rule.setAttribute('role', 'separator');
+    return rule;
+}
+
 function separator(): HTMLElement {
     const rule = div('mep-menu-separator');
     rule.setAttribute('role', 'separator');
@@ -487,8 +492,9 @@ class ToolbarView implements PluginView {
         // Fixed menus would stay where the page scrolled away from; a menu's own
         // scrolling (a long list of admonitions) is not that.
         this.listen(window, 'scroll', e => {
+            // The hover is not: it follows its control (`tooltip.ts`).
             if (!this.layer.contains(e.target as Node)) {
-                this.closeAll();
+                this.closeAll(true);
             }
         }, true);
         this.listen(window, 'resize', () => this.closeAll());
@@ -726,7 +732,7 @@ class ToolbarView implements PluginView {
         clearTimeout(this.flashTimer);
         clearTimeout(this.focusTimer);
         this.closeFieldBar();
-        this.tips.destroy();
+        this.tips.release();
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
         }
@@ -1223,14 +1229,17 @@ class ToolbarView implements PluginView {
         }
     }
 
-    private closeAll(): void {
+    /** Every menu and the card closed, and the hover hidden — but on a scroll (`keepTip`), which the hover follows. */
+    private closeAll(keepTip = false): void {
         for (const menu of this.menus) {
             if (!menu.parent) {
                 this.closeMenu(menu);
             }
         }
         this.hideCard();
-        this.tips.hide();
+        if (!keepTip) {
+            this.tips.hide();
+        }
     }
 
     /** Under its face, or beside its opener; kept inside the window. */
@@ -1688,9 +1697,7 @@ class ToolbarView implements PluginView {
             field.el.dataset.verb = verb;
             label.textContent = fieldHeading(barLabel, step.label);
             // Its title drawn as every bar's: a muted label, a divider after it.
-            const divider = span('mep-object-separator');
-            divider.setAttribute('role', 'separator');
-            bar.replaceChildren(label, divider, field.el, ...fieldAside(step));
+            bar.replaceChildren(label, barSeparator(), field.el, ...fieldAside(step));
             this.fieldBar = { bar, field };
             return field;
         };

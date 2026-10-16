@@ -24,6 +24,11 @@ export function tipText(tip: Tip): string {
     return tip.note ? `${line}\n${tip.note}` : line;
 }
 
+/** The tip without its key chord: what a control whose `aria-keyshortcuts` names the key describes itself with. */
+export function withoutKeys(tip: Tip): Tip {
+    return { ...tip, parts: tip.parts.filter(p => typeof p === 'string' || !('keys' in p)) };
+}
+
 /** A tip of plain words, with its note. */
 export function plainTip(text: string, note?: string | null): Tip {
     return { parts: [text], note: note ?? null };

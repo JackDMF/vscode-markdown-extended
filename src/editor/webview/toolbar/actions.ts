@@ -45,7 +45,7 @@
 import { ADMONITION_FAMILIES, ADMONITION_MARKER, INLINE_MARKERS, KBD_MARKERS, MARKER_NAMES, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
 import { holderNamed, namesOf } from '../../inlineLiterals';
 import { keyLabel } from '../../keys';
-import { Tip, TipPart, tipText } from '../../tips';
+import { Tip, TipPart } from '../../tips';
 import { NOTE_LABELS, NoteNodeName } from '../notes';
 
 /** The menus of the row, left to right after the marks' group. */
@@ -257,8 +257,6 @@ function delimiterOf(action: ToolbarAction): string {
 export interface TipState {
     /** Its name where the selection names it (`Attributes of Paragraph…`); its own otherwise. */
     label?: string;
-    /** The syntax where the selection decides it (`**text**{.class}`). */
-    syntax?: string;
     /** Why it is refused here: the tip's second line. */
     reason?: string | null;
     /** Keys named as on macOS (`macKeys`). */
@@ -275,7 +273,7 @@ export interface TipState {
 export function tipOf(action: ToolbarAction, state: TipState = {}): Tip {
     const label = state.label ?? action.label;
     const note = state.reason ?? null;
-    if (action.apply.kind === 'mark' && state.syntax === undefined) {
+    if (action.apply.kind === 'mark') {
         const parts: TipPart[] = [`${label} (`, { code: delimiterOf(action) }, ', ', { code: `<${action.sample.tag}>` }, ')'];
         if (action.key !== undefined) {
             parts.push({ keys: keyLabel(action.key, state.mac ?? false) });
@@ -283,14 +281,8 @@ export function tipOf(action: ToolbarAction, state: TipState = {}): Tip {
         return { parts, note };
     }
     const source = isSourceAction(action);
-    const written = state.syntax ?? action.syntax;
-    const syntax = written.includes('\n') ? `\n${written}` : ` ${written}`;
+    const syntax = action.syntax.includes('\n') ? `\n${action.syntax}` : ` ${action.syntax}`;
     return { parts: [`${label}${source ? '¹' : ''}:${syntax}${source ? `\n${SOURCE_FOOTNOTE}` : ''}`], note };
-}
-
-/** The action's tooltip as one string (`tipText`): what its `aria-description` says. */
-export function tooltipOf(action: ToolbarAction, label = action.label): string {
-    return tipText(tipOf(action, { label }));
 }
 
 /** The control's accessible name: a mark's word and its delimiter spoken (`Italic, asterisk`); else its label. */

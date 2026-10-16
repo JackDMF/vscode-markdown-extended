@@ -156,8 +156,8 @@ suite('Editor labels, menus and states (e2e)', () => {
             const shown = await hoverTip(page, `${ROW} [data-action="italic"]`);
             assert.ok(shown, 'the hover shows after the rest');
             const description = await describedTip(page, `${ROW} [data-action="italic"]`);
-            assert.strictEqual(shown.text, description, 'the hover says what the control\'s description says');
-            assert.strictEqual(description, `Italic (*, <i>) — ${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+I`);
+            assert.strictEqual(description, 'Italic (*, <i>)', 'the key is aria-keyshortcuts\' to say');
+            assert.strictEqual(shown.text, `${description} — ${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+I`, 'the hover says what the description says, and the key');
             const drawn = await page.$eval('.mep-tooltip', el => ({
                 code: Array.from(el.querySelectorAll('code')).map(c => c.textContent),
                 keys: Array.from(el.querySelectorAll('.mep-key')).map(k => k.textContent),
@@ -258,9 +258,27 @@ suite('Editor labels, menus and states (e2e)', () => {
                 size: getComputedStyle(el).fontSize, colour: getComputedStyle(el).color, cursor: getComputedStyle(el).cursor,
                 next: el.nextElementSibling?.className, focusable: (el as HTMLElement).tabIndex,
             }));
-            assert.deepStrictEqual(title, { size: '11px', colour: computed(theme.variables['descriptionForeground']), cursor: 'default', next: 'mep-object-separator', focusable: -1 });
+            assert.deepStrictEqual({ ...title, colour: undefined }, { size: '11px', colour: undefined, cursor: 'default', next: 'mep-object-separator', focusable: -1 });
             assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.verb), 'edit-link');
             assert.strictEqual((await style(`${BAR} [data-verb="edit-link"]`, 'outline-offset'))['outline-offset'], '1px');
+            // Alt+Enter's focus is the keyboard's: the verb's hover shows at once, ring or no `:focus-visible`.
+            const tip = () => page.$eval('.mep-tooltip', el => ({
+                shown: !(el as HTMLElement).hidden, text: el.textContent ?? '', fits: el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= window.innerWidth,
+            }));
+            const edit = await tip();
+            assert.ok(edit.shown && edit.text.startsWith('Link the text to another address'), JSON.stringify(edit));
+            // The bar's longest tip, Attributes…: wrapped inside its box, inside the window.
+            await page.keyboard.press('ArrowRight');
+            await delay(80);
+            assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.verb), 'link-attributes');
+            const attributes = await tip();
+            assert.ok(attributes.shown && attributes.text.length > 80 && attributes.fits, JSON.stringify(attributes));
+            // Muted, and still clearly darker than a refused verb.
+            const [titleColour, verbColour] = await page.$eval(BAR, bar => [
+                getComputedStyle(bar.querySelector('.mep-object-label') as HTMLElement).color,
+                getComputedStyle(bar.querySelector('.mep-object-verb') as HTMLElement).color,
+            ]);
+            assert.notStrictEqual(titleColour, verbColour, `${theme.name}: the title is not drawn as a verb`);
         });
     });
 
@@ -375,6 +393,73 @@ suite('Editor labels, menus and states (e2e)', () => {
             await page.keyboard.press('Enter');
             await delay(400);
         });
+    });
+
+    test('a hover shown by the focus stays; a rest the pointer broke off shows nothing later', async function () {
+        this.timeout(20000);
+        await applyTheme(page, LIGHT_MODERN);
+        await showDocument();
+        await clickText(page, 'payload', 2);
+        await page.focus(`${ROW} [data-action="emphasis"]`);
+        await page.keyboard.press('Tab');
+        await delay(80);
+        assert.ok((await page.$eval('.mep-tooltip', el => el.textContent ?? '')).startsWith('Bold'), 'the focus shows Bold');
+        // The pointer crosses Strong and leaves before its rest is over.
+        await pointTo(`${ROW} [data-action="strong"]`, 150);
+        await page.mouse.move(WIDE - 10, 790);
+        await delay(800);
+        const shown = await page.$eval('.mep-tooltip', el => [(el as HTMLElement).hidden, el.textContent ?? '']);
+        assert.ok(!String(shown[1]).startsWith('Strong'), `no stray hover: ${JSON.stringify(shown)}`);
+    });
+
+    test('15 the hover follows its control while the row scrolls; 16 a set-verb entry\'s hover stands beside the entry', async function () {
+        this.timeout(30000);
+        await applyTheme(page, LIGHT_MODERN);
+        await page.setViewport({ width: NARROW, height: 640 });
+        try {
+            await showDocument();
+            await clickText(page, 'payload', 2);
+            await page.focus(`${ROW} [data-action="emphasis"]`);
+            await page.keyboard.press('Tab');
+            await delay(80);
+            const before = await page.$eval('.mep-tooltip', el => [(el as HTMLElement).hidden, el.getBoundingClientRect().left]);
+            const faceLeft = async () => (await page.$eval(`${ROW} [data-action="bold"]`, el => el.getBoundingClientRect().left));
+            assert.strictEqual(before[0], false, 'the focus shows Bold\'s hover');
+            await page.$eval(ROW, el => {
+                el.scrollLeft += 80;
+            });
+            await delay(120);
+            const after = await page.$eval('.mep-tooltip', el => [(el as HTMLElement).hidden, el.getBoundingClientRect().left]);
+            assert.strictEqual(after[0], false);
+            assert.ok(Math.abs(Number(after[1]) - Math.max(0, await faceLeft())) < 1 && Number(after[1]) < Number(before[1]), `the hover follows: ${JSON.stringify([before, after])}`);
+            await shot('15-hover-follows-row-scroll-420-light.png');
+        } finally {
+            await page.setViewport({ width: WIDE, height: 800 });
+        }
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        version++;
+        await (editor as EditorPage).send({
+            type: 'document', json: parsedDocumentToJSON(parseDocument(md, '| Name | Value |\n| ---- | ----- |\n| Alpha | 1 |\n| Beta | 2 |\n', {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE,
+        });
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Alpha'));
+        await clickText(page, 'Alpha', 2);
+        await page.keyboard.down('Alt');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Alt');
+        await page.waitForSelector(`${BAR}[data-object="table"]`);
+        await delay(100);
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        await delay(150);
+        const placed = await page.evaluate(() => {
+            const entry = (document.activeElement as HTMLElement).getBoundingClientRect();
+            const tip = document.querySelector('.mep-tooltip') as HTMLElement;
+            return { shown: !tip.hidden, beside: tip.getBoundingClientRect().left >= entry.right - 0.5 || tip.getBoundingClientRect().right <= entry.left + 0.5, top: Math.round(tip.getBoundingClientRect().top - entry.top) };
+        });
+        assert.deepStrictEqual(placed, { shown: true, beside: true, top: 0 }, 'beside the entry, at its top');
+        await shot('16-set-verb-entry-hover-1280-light.png');
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
     });
 
     test('12-14 at 420 px: the menus stay inside the window', async function () {

@@ -107,7 +107,6 @@ function button(className: string, text: string, label?: string): HTMLButtonElem
     b.type = 'button';
     if (label) {
         b.setAttribute('aria-label', label);
-        b.title = label;
     }
     return b;
 }

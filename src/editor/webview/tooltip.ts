@@ -5,15 +5,17 @@
  * drawn from a `Tip` (`tips.ts`). It shows once the pointer has rested on a
  * control for `HOVER_DELAY_MS` — the number the language hover waits too — and
  * at once when the keyboard brings the focus there; it never catches the
- * pointer, and it goes on a press, a key, a scroll, or when the pointer or the
- * focus leaves. No control carries a `title`: the OS tooltip came after the
- * OS's delay, in the OS's font, and could draw neither the code nor the keys.
+ * pointer, and it goes on a press, a key, or when the pointer or the focus
+ * leaves. No control of the row, the bubble or the bars carries a `title`:
+ * the OS tooltip came after the OS's delay, in the OS's font, and could draw
+ * neither the code nor the keys.
  *
  * What the hover shows, the control's `aria-description` says (`tipText`),
  * written by the same call: a screen reader hears the refusal a sighted
- * reader sees, and the two cannot drift apart.
+ * reader sees, and the two cannot drift apart — but for a key the control's
+ * `aria-keyshortcuts` names already, which is not said twice.
  */
-import { Tip, tipText } from '../tips';
+import { Tip, tipText, withoutKeys } from '../tips';
 import { HOVER_DELAY_MS } from './hover';
 
 export const TOOLTIP_CLASS = 'mep-tooltip';
@@ -21,7 +23,7 @@ export const TOOLTIP_CLASS = 'mep-tooltip';
 /** Between the control and its hover. */
 const GAP = 4;
 
-/** The keys that only modify another: none of them hides the hover. */
+/** The keys that only modify another: none of them hides the hover, nor makes a focus the keyboard's. */
 const MODIFIERS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
 
 const byMount = new WeakMap<HTMLElement, Tooltips>();
@@ -29,17 +31,31 @@ const byMount = new WeakMap<HTMLElement, Tooltips>();
 export class Tooltips {
     private readonly el: HTMLElement;
     private readonly tips = new WeakMap<HTMLElement, { tip: () => Tip | null; place: TipPlace }>();
+    /** The control whose hover is shown. */
     private owner: HTMLElement | null = null;
+    /** The control whose rest is being waited for, and the wait. */
+    private pending: HTMLElement | null = null;
     private timer: ReturnType<typeof setTimeout> | undefined;
+    /**
+     * A pointer press came last, not a key: a focus now is the pointer's (a
+     * menu entry taking it under the pointer, `followPointer`) and shows no
+     * hover. Any other focus is the keyboard's — Tab, `Alt+Enter`'s first verb
+     * — whether or not the browser draws it `:focus-visible` (it does not
+     * count a chord).
+     */
+    private pointerDown = false;
+    /** The views that hold it (`for`); the last to `release` it takes it down. */
+    private holders = 0;
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
 
-    /** One per mount, shared by the row, the bubble and the bars. */
+    /** One per mount, shared by the row, the bubble and the bars: each view that takes it releases it (`release`). */
     static for(mount: HTMLElement): Tooltips {
         let tips = byMount.get(mount);
         if (tips === undefined) {
             tips = new Tooltips(mount);
             byMount.set(mount, tips);
         }
+        tips.holders++;
         return tips;
     }
 
@@ -54,8 +70,12 @@ export class Tooltips {
         // control focused by Tab into view), and goes once it is not.
         this.listen(document, 'keydown', e => {
             if (!MODIFIERS.has((e as KeyboardEvent).key)) {
+                this.pointerDown = false;
                 this.hide();
             }
+        }, true);
+        this.listen(document, 'mousedown', () => {
+            this.pointerDown = true;
         }, true);
         this.listen(window, 'scroll', () => this.follow(), true);
         this.listen(window, 'blur', () => this.hide());
@@ -76,13 +96,17 @@ export class Tooltips {
         }
         el.addEventListener('mouseenter', () => {
             this.cancel();
-            this.timer = setTimeout(() => this.show(el), HOVER_DELAY_MS);
+            this.pending = el;
+            this.timer = setTimeout(() => {
+                this.pending = null;
+                this.timer = undefined;
+                this.show(el);
+            }, HOVER_DELAY_MS);
         });
         el.addEventListener('mouseleave', () => this.hideFor(el));
         el.addEventListener('mousedown', () => this.hideFor(el));
         el.addEventListener('focus', () => {
-            if (el.matches(':focus-visible')) {
-                this.cancel();
+            if (!this.pointerDown) {
                 this.show(el);
             }
         });
@@ -100,17 +124,26 @@ export class Tooltips {
         }
     }
 
-    /** Hide the hover — with `within`, only one shown for a control inside it (a bar going leaves the row's hover be). */
+    /** Hide the hover — with `within`, only one shown or waited for by a control inside it (a bar going leaves the row's hover be). */
     hide(within?: HTMLElement): void {
-        if (within !== undefined && !(this.owner !== null && within.contains(this.owner))) {
-            return;
+        if (within !== undefined) {
+            if (this.pending !== null && within.contains(this.pending)) {
+                this.cancel();
+            }
+            if (this.owner === null || !within.contains(this.owner)) {
+                return;
+            }
         }
         this.cancel();
         this.owner = null;
         this.el.hidden = true;
     }
 
-    destroy(): void {
+    /** A view that took it (`for`) is done with it; the last one takes it down. */
+    release(): void {
+        if (--this.holders > 0) {
+            return;
+        }
         this.hide();
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
@@ -128,12 +161,12 @@ export class Tooltips {
     private cancel(): void {
         clearTimeout(this.timer);
         this.timer = undefined;
+        this.pending = null;
     }
 
     private follow(): void {
         const owner = this.owner;
         if (owner === null || this.el.hidden) {
-            this.cancel();
             return;
         }
         const r = owner.getBoundingClientRect();
@@ -144,8 +177,12 @@ export class Tooltips {
         }
     }
 
+    /** `el` lost the pointer or the focus: its wait ends, and its hover goes. */
     private hideFor(el: HTMLElement): void {
-        if (this.owner === el || this.owner === null) {
+        if (this.pending === el) {
+            this.cancel();
+        }
+        if (this.owner === el) {
             this.hide();
         }
     }
@@ -155,7 +192,7 @@ export class Tooltips {
         if (tip === null) {
             el.removeAttribute('aria-description');
         } else {
-            el.setAttribute('aria-description', tipText(tip));
+            el.setAttribute('aria-description', tipText(el.hasAttribute('aria-keyshortcuts') ? withoutKeys(tip) : tip));
         }
     }
 
@@ -164,10 +201,11 @@ export class Tooltips {
      * window — above the control where there is no room below; or, `beside`,
      * right of it at its top, left of it where there is no room right. Not
      * while the control's own menu is open (it would stand over the menu) or
-     * the control is not drawn (gone, or its bar hidden).
+     * the control is not drawn (gone, or its bar hidden). Any other control's
+     * wait ends: one hover at a time.
      */
     private show(el: HTMLElement): void {
-        this.timer = undefined;
+        this.cancel();
         const attached = this.tips.get(el);
         const tip = attached?.tip() ?? null;
         if (attached === undefined || tip === null || el.getClientRects().length === 0 || el.getAttribute('aria-expanded') === 'true') {

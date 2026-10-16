@@ -125,15 +125,16 @@ suite('Editor attribute holder: one rule for what at the selection carries a {�
         assert.deepStrictEqual(contained, { enabled: false, active: false, reason: CONTAINER_ATTRS_REFUSAL, label: 'Attributes of Block…' });
         const code = inline(at(stateOf('A `code` b.\n'), 'code', 1));
         assert.deepStrictEqual({ ...code, preview: undefined }, {
-            enabled: true, active: false, reason: null, label: 'Attributes of Code…', preview: undefined,
-            sample: { tag: 'code', className: 'x', children: ['Attributes of Code…'] }, syntax: '`code`{.class}',
+            enabled: true, active: false, reason: null, label: 'Attributes of Code…', preview: undefined, syntax: '`code`{.class}',
         });
         // Named, drawn and written by the delimiter, as the row names its buttons.
         const bold = inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'b', 0));
-        assert.deepStrictEqual([bold.label, bold.sample?.tag, bold.syntax], ['Attributes of Bold…', 'b', '**text**{.class}']);
+        // The card draws the element: `b` for Bold, `em` for Emphasis.
+        const drawn = (s: ReturnType<typeof inline>) => (s.preview?.nodes[0]?.children?.[1] as { tag: string } | undefined)?.tag;
+        assert.deepStrictEqual([bold.label, drawn(bold), bold.syntax], ['Attributes of Bold…', 'b', '**text**{.class}']);
         assert.strictEqual(inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 's', 0)).label, 'Attributes of Strong…');
         assert.strictEqual(inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'i', 0)).label, 'Attributes of Italic…');
-        assert.deepStrictEqual([inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'e', 0)).label, inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'e', 0)).sample?.tag], ['Attributes of Emphasis…', 'em']);
+        assert.deepStrictEqual([inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'e', 0)).label, drawn(inline(at(stateOf('A **b** and __s__, *i* and _e_.\n'), 'e', 0)))], ['Attributes of Emphasis…', 'em']);
         assert.strictEqual(inline(at(stateOf('A x^2^ b.\n'), '2', 0)).syntax, '^text^{.class}');
         assert.strictEqual(inline(at(stateOf('See [a link](u).\n'), 'link', 1)).label, 'Attributes of Link…');
         assert.deepStrictEqual(inline(at(stateOf('Plain text.\n'), 'text', 1)), { enabled: false, active: false, reason: INLINE_ATTRS_LOCK, label: 'Attributes of Element…' });

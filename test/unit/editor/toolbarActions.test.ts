@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
-    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, submenuOf, tipOf, tooltipOf,
+    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, submenuOf, tipOf,
 } from '../../../src/editor/webview/toolbar/actions';
 import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
 import { tipText } from '../../../src/editor/tips';
@@ -161,6 +161,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                     assert.deepStrictEqual([parsed.attrs.type, parsed.attrs.title], [inserted.attrs.type, inserted.attrs.title]);
                 }
             }
+            const tooltipOf = (a: ToolbarAction) => tipText(tipOf(a));
             if (action.apply.kind === 'mark') {
                 assert.ok(tooltipOf(action).includes(`<${action.sample.tag}>`) && tooltipOf(action).includes(action.syntax.split('text')[0]), 'the tooltip names the delimiter and the element');
             } else {
@@ -271,7 +272,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
     test('a source action says in its tooltip that it is edited as source; a native one does not', () => {
         for (const action of TOOLBAR_ACTIONS) {
             const source = action.apply.kind === 'wrap-source' || action.apply.kind === 'insert-source';
-            assert.strictEqual(tooltipOf(action).includes(SOURCE_FOOTNOTE), source, action.id);
+            assert.strictEqual(tipText(tipOf(action)).includes(SOURCE_FOOTNOTE), source, action.id);
         }
         const sourceIds = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'wrap-source').map(a => a.id);
         assert.deepStrictEqual(sourceIds, ['footnote-reference'], 'of the inline constructs only the footnote is written as source');

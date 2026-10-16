@@ -618,6 +618,22 @@ img.mep-pending-range {
 
 .mep-preview-card[hidden] { display: none; }
 
+/* High Contrast and forced colours: a note in the card is the text on the card's own
+   ground with its bar — the notes stylesheet's light surface held the HC white text
+   at no contrast at all. */
+.vscode-high-contrast .mep-preview-card :is(.sidenote, .mnote, .left-sidebar, .right-sidebar) {
+    color: inherit;
+    background: transparent;
+    border-left-color: var(--vscode-contrastBorder, CanvasText);
+}
+@media (forced-colors: active) {
+    .mep-preview-card :is(.sidenote, .mnote, .left-sidebar, .right-sidebar) {
+        color: CanvasText;
+        background: Canvas;
+        border-left-color: CanvasText;
+    }
+}
+
 .mep-preview-body > :first-child { margin-top: 0; }
 .mep-preview-body > :last-child { margin-bottom: 0; }
 
@@ -711,7 +727,8 @@ img.mep-pending-range {
     overflow: hidden;
     text-overflow: ellipsis;
     font-size: 11px;
-    color: var(--vscode-descriptionForeground, GrayText);
+    /* Mixed toward the widget's ground: Light Modern's description colour is its text colour. */
+    color: color-mix(in srgb, var(--vscode-descriptionForeground, GrayText) 75%, var(--vscode-editorWidget-background, Canvas));
     cursor: default;
     user-select: none;
 }
@@ -1649,7 +1666,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     align-items: center;
     gap: 0 8px;
     box-sizing: border-box;
-    max-width: min(480px, 100vw);
+    max-width: min(480px, calc(100vw - 8px));
     padding: 3px 8px;
     font-family: var(--vscode-font-family, sans-serif);
     font-size: 12px;
@@ -1664,7 +1681,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 }
 .mep-tooltip[hidden] { display: none; }
 /* A syntax of several lines (a footnote's) keeps them. */
-.mep-tip-line { white-space: pre; }
+.mep-tip-line { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mep-tip-note { flex-basis: 100%; white-space: pre-wrap; }
 .mep-tooltip code {
     font-family: var(--vscode-editor-font-family, monospace);

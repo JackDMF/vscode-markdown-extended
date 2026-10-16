@@ -66,7 +66,7 @@ import { attributesStep, holderAttributesStep } from './attributes';
 import { currentReadsAttrs } from '../inlineEngine';
 import { CHROME_MOVED, Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
-import { followPointer, selectionBubbleShown } from './toolbar/toolbar';
+import { barSeparator, followPointer, selectionBubbleShown } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
@@ -191,14 +191,6 @@ function drawVerbLabel(el: HTMLElement, verb: Verb, text: string): void {
     if (verb.menu || verb.choice) {
         el.append(chevronNode());
     }
-}
-
-/** A divider of a bar: after its title, and where `arrange` (`verbs.ts`) divides its verbs. */
-function barSeparator(): HTMLElement {
-    const separator = document.createElement('span');
-    separator.className = 'mep-object-separator';
-    separator.setAttribute('role', 'separator');
-    return separator;
 }
 
 /** A verb as the bars' model reads it (`verbs.ts`): whether it opens in place is read from which of its ways it has. */
@@ -948,6 +940,8 @@ class ObjectToolbarView implements PluginView {
     private destroyed = false;
     /** While `act` moves the focus: what the transactions dispatched meanwhile (a source box's commit) did to positions. */
     private focusMoves: Mapping | null = null;
+    /** The hover the bars share with the formatting row (`tooltip.ts`), released with the view. */
+    private readonly tips: Tooltips;
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -971,9 +965,9 @@ class ObjectToolbarView implements PluginView {
             }, 0),
         };
         // One hover for the bars and the formatting row (`tooltip.ts`).
-        const tips = Tooltips.for(this.mount);
-        this.selectionBar = new ObjectBar('selection', events, tips);
-        this.hoverBar = new ObjectBar('hover', events, tips);
+        this.tips = Tooltips.for(this.mount);
+        this.selectionBar = new ObjectBar('selection', events, this.tips);
+        this.hoverBar = new ObjectBar('hover', events, this.tips);
         this.mount.append(this.selectionBar.el, this.hoverBar.el);
 
         this.listen(document, 'mousemove', e => this.pointerAt(e.target as Element | null));
@@ -1033,6 +1027,7 @@ class ObjectToolbarView implements PluginView {
         }
         this.selectionBar.hide();
         this.selectionBar.el.remove();
+        this.tips.release();
         this.hoverBar.el.remove();
     }
 

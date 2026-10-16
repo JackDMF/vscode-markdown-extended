@@ -30,11 +30,13 @@ suite('Editor keys: a binding as the platform names it', () => {
         assert.ok(!bindingMatches(UNDO_BINDING, chord('z'), false), 'no modifier, no undo');
     });
 
-    test('a binding as aria-keyshortcuts spells it: Control or Meta by the platform, a punctuation key by its code name', () => {
+    test('a binding as aria-keyshortcuts spells it: Control or Meta by the platform, a key by its value, + and space by name', () => {
         assert.strictEqual(ariaKeyshortcuts('Mod-i', false), 'Control+I');
         assert.strictEqual(ariaKeyshortcuts('Mod-i', true), 'Meta+I');
         assert.strictEqual(ariaKeyshortcuts('Mod-b', false), 'Control+B');
-        assert.strictEqual(ariaKeyshortcuts('Mod-`', false), 'Control+Backquote');
+        assert.strictEqual(ariaKeyshortcuts('Mod-`', false), 'Control+`');
+        assert.strictEqual(ariaKeyshortcuts('Mod-+', false), 'Control+Plus');
+        assert.strictEqual(ariaKeyshortcuts('Mod- ', false), 'Control+Space');
         assert.strictEqual(ariaKeyshortcuts('Mod-Shift-z', false), 'Control+Shift+Z');
     });
 });
