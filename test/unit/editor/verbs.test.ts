@@ -132,7 +132,7 @@ suite('Editor object bars: the verbs\' model', () => {
         assert.strictEqual(barName('Sidenote'), 'Sidenote');
         assert.strictEqual(barDescription('Emoji :rocket:', 2), 'Emoji :rocket:, 2 actions, arrow keys to choose');
         assert.strictEqual(barDescription('Bold', 1), 'Bold, 1 action, arrow keys to choose');
-        assert.strictEqual(barDescription('Status badge', 0), 'Status badge, no actions');
+        assert.strictEqual(barDescription('Status badge', 0), 'Status badge, no actions available');
     });
 
     test('an undo hint ends in the key the page\'s keymap undoes with', () => {

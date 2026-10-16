@@ -116,9 +116,13 @@ export function barName(label: string, code?: string): string {
     return code === undefined ? label : `${label} ${code}`;
 }
 
-/** A bar's accessible name: the object, its verbs' count and the keys (`Emoji :rocket:, 2 actions, arrow keys to choose`). */
-export function barDescription(name: string, count: number): string {
-    return count === 0 ? `${name}, no actions` : `${name}, ${count} ${count === 1 ? 'action' : 'actions'}, arrow keys to choose`;
+/**
+ * A bar's accessible name: the object, how many of its verbs can be chosen — a
+ * refused one is still drawn, but is no action to choose — and the keys
+ * (`Emoji :rocket:, 2 actions, arrow keys to choose`; `…, no actions available`).
+ */
+export function barDescription(name: string, enabled: number): string {
+    return enabled === 0 ? `${name}, no actions available` : `${name}, ${enabled} ${enabled === 1 ? 'action' : 'actions'}, arrow keys to choose`;
 }
 
 /** The tooltip of a Delete whose file stays: an image's, an embed's, a snippet directive's. */

@@ -8,6 +8,10 @@
  * reads a command's keybinding.
  *
  * No ProseMirror and no DOM here, so every module can read it.
+ *
+ * Limit: `bindingMatches` compares `e.key` only, so on a non-Latin layout, where
+ * the Z key does not type `z`, it misses the chord ProseMirror's keymap still
+ * finds by `keyCode` (a follow-up).
  */
 
 /** What undoes in the page (`plugins.ts`), in ProseMirror's keymap notation. */
