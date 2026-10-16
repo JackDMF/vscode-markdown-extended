@@ -1151,10 +1151,15 @@ body {
 | `--md-anchor-line` | derived from the text colour, 60 % | Colour of the reference's dotted underline |
 | `--mep-note-lane` | `--md-note-width` + `--md-note-gap` | Room reserved beside the column for right-side notes; on `:root` |
 | `--mep-note-lane-left` | `--mep-note-lane` | The same for left sidebars; on `:root` |
+| `--md-page-gutter` | `26px` | The padding the page already gives `<html>` (VS Code's `markdown.css`), which the lane adds to; on `:root` |
 
-The lane is reserved on `<html>`, so `--mep-note-lane`, `--mep-note-lane-left` and the
-widths and gaps they are made of are declared on `:root`, where your own `:root` rule
-overrides them; the colours stay on `body`.
+The lane is reserved on `<html>`, so `--mep-note-lane`, `--mep-note-lane-left`,
+`--md-page-gutter` and the widths and gaps the lane is made of are declared on `:root`,
+where your own `:root` rule overrides them; a `body` rule cannot reach `<html>`, so a
+note width set there widens the note but not its lane. A theme or export template that
+pads `<html>` otherwise sets `--md-page-gutter` to match. The colours, and the bar's
+width, stay on `body` — in print too, where the bar is darker and at least 0.8mm wide
+unless your `body` rule says otherwise.
 
 Widths are absolute rather than percentages on purpose: a percentage offset grows
 with the content column, so the note can never fit the gutter and exported HTML

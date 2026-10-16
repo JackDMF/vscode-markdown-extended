@@ -25,7 +25,7 @@ import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
 import { lockLineHeight } from './clearance';
-import { keepingLine } from './lane';
+import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
 import { showChangeHint, showHint } from './hint';
@@ -862,8 +862,8 @@ const SCROLL_MARGIN = {
 
 function dispatchTransaction(this: EditorView, tr: Transaction): void {
     const apply = () => this.updateState(this.state.apply(tr));
-    // Only a change to the document can open or close the margin lane.
-    if (tr.docChanged) {
+    // Only a change to a note or a sidebar can open or close the margin lane: typing elsewhere is not measured.
+    if (tr.docChanged && touchesNote(tr)) {
         keepingLine(this, this.state.selection.head, tr.mapping, apply);
     } else {
         apply();

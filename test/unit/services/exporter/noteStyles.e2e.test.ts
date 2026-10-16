@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as puppeteer from 'puppeteer';
+import { vscodeMarkdownCss } from '../../editor/pageHarness';
 
 const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
 
@@ -40,7 +41,9 @@ suite('Note Styles (e2e)', () => {
     /** A left sidebar as well: both sides. */
     const TWO_SIDED = ONE_SIDED + `<p><span class="left-sidebar">Left.</span>Text.</p>`;
 
-    const pageOf = (content: string, extra = '') => `<!DOCTYPE html><html><head><meta charset="UTF-8">${styles}${extra}</head>`
+    let previewStyles: string | undefined;
+
+    const pageOf = (content: string, extra = '', sheets = styles) => `<!DOCTYPE html><html><head><meta charset="UTF-8">${sheets}${extra}</head>`
         + `<body class="markdown-body vscode-body vscode-THEME"><div class="content">${content}</div></body></html>`;
 
     suiteSetup(async function () {
@@ -73,6 +76,9 @@ suite('Note Styles (e2e)', () => {
         styles = [noteCss, themeCss]
             .map(f => `<style>${fs.readFileSync(f, 'utf8')}</style>`)
             .join('\n');
+        // The preview's cascade: VS Code's markdown.css (padding on html and body) first, then this extension's.
+        const markdownCss = vscodeMarkdownCss();
+        previewStyles = fs.existsSync(markdownCss) ? [markdownCss, noteCss].map(f => `<style>${fs.readFileSync(f, 'utf8')}</style>`).join('\n') : undefined;
         browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
     });
 
@@ -253,5 +259,50 @@ suite('Note Styles (e2e)', () => {
         const m = await measure(pageOf(TWO_SIDED), 'light', 800, 'screen');
         assert.ok(m.floats.every(f => f === 'none'), 'notes should run inline at 800px');
         assert.strictEqual(m.overflow, 0, `notes overflow the viewport by ${m.overflow}px`);
+    });
+
+    test('in the preview\'s cascade, after markdown.css\'s own padding on html, the lane is reserved on either tier', async function () {
+        this.timeout(60000);
+        if (!previewStyles) {
+            this.skip();
+        }
+        const preview = (content: string) => pageOf(content, '', previewStyles);
+        for (const width of [960, 1000, 1199]) {
+            const m = await measure(preview(ONE_SIDED), 'light', width, 'screen');
+            assert.deepStrictEqual([m.padding, m.floats, m.overflow], [['26px', '250px'], ['right', 'right', 'right'], 0], `one-sided at ${width}px`);
+        }
+        const between = await measure(preview(TWO_SIDED), 'light', 1100, 'screen');
+        assert.deepStrictEqual([between.padding, between.overflow], [['26px', '26px'], 0], 'two-sided at 1100px: no lane');
+        const wide = await measure(preview(TWO_SIDED), 'light', 1250, 'screen');
+        assert.deepStrictEqual([wide.padding, wide.overflow], [['250px', '250px'], 0], 'two-sided at 1250px');
+    });
+
+    test('a paragraph that opens with a sidebar starts at the column\'s edge in the margin layout: the space after it collapses', async function () {
+        this.timeout(60000);
+        const p = await (browser as puppeteer.Browser).newPage();
+        try {
+            await p.setViewport({ width: 1600, height: 900 });
+            await p.setContent(pageOf(`<h2>Heading</h2><p><span class="left-sidebar">Status</span> On track ${note('r', 'n')}.</p>`, '', previewStyles ?? styles).replace('vscode-THEME', 'vscode-light'));
+            const [column, text] = await p.evaluate(() => {
+                const t = (document.querySelector('p') as HTMLElement).childNodes[1];
+                const range = document.createRange();
+                range.setStart(t, 0);
+                range.setEnd(t, (t.textContent ?? '').length);
+                return [(document.querySelector('h2') as HTMLElement).getBoundingClientRect().left, Array.from(range.getClientRects()).find(r => r.width > 5)?.left ?? -1];
+            });
+            assert.ok(Math.abs(text - column) <= 0.5, `"On track" starts at ${text}, the column at ${column}`);
+        } finally {
+            await p.close();
+        }
+    });
+
+    test('in print a reader who dropped the bar keeps it dropped', async function () {
+        this.timeout(60000);
+        for (const reader of ['body { --md-note-border-width: 0; }', 'body { --md-note-border-width: 0px; }']) {
+            const m = await measure(pageOf(ONE_SIDED, `<style>${reader}</style>`), 'light', 1280, 'print');
+            assert.strictEqual(m.barWidth, 0, reader);
+        }
+        const m = await measure(pageOf(ONE_SIDED, '<style>body { --md-note-border: transparent; }</style>'), 'light', 1280, 'print');
+        assert.strictEqual(parse(m.bar)[3], 0, `a transparent bar stays transparent in print: ${m.bar}`);
     });
 });

@@ -447,6 +447,24 @@ export function refusableRange(tr: Transaction): { from: number; to: number } | 
 }
 
 /**
+ * A reference ProseMirror made itself — a note that a delete or a paste cut
+ * open needs a `note_ref` before its body, and `createAndFill` leaves the
+ * anchor at its default — given its kind's anchor class, as `noteRef` would;
+ * `null` where every reference has one.
+ */
+function anchorRepair(state: EditorState): Transaction | null {
+    let tr = null as Transaction | null;
+    state.doc.descendants((node, pos, parent) => {
+        if (node.type === nodes.note_ref && node.attrs.anchor === null && parent) {
+            const anchor = noteRef(parent.type.name === 'marginal_note' ? 'marginal_note' : 'sidenote').attrs.anchor as string;
+            tr = (tr ?? state.tr).setNodeAttribute(pos, 'anchor', anchor);
+        }
+        return true;
+    });
+    return tr ? asRepair(tr) : null;
+}
+
+/**
  * The plugin that keeps the caret out of the places between a note's parts,
  * inserts typed text itself inside and next to a note (the DOM has no caret
  * position of its own after a note's span, or in an empty part, and the
@@ -479,11 +497,13 @@ export function notesPlugin(embedInput: Plugin): Plugin {
             };
         },
         appendTransaction(transactions, oldState, newState) {
+            // Attributes only: the positions the selection fix reads stay the same.
+            const anchored = transactions.some(tr => tr.docChanged) ? anchorRepair(newState) : null;
             if (!transactions.some(tr => tr.selectionSet)) {
-                return null;
+                return anchored;
             }
             const fixed = normalizedSelection(newState, oldState.selection);
-            return fixed ? asRepair(newState.tr.setSelection(fixed)) : null;
+            return fixed ? asRepair((anchored ?? newState.tr).setSelection(fixed)) : anchored;
         },
         props: {
             handleDOMEvents: {

@@ -6,33 +6,7 @@ import { PREVIEW_CARD_CLASS } from '../../../src/editor/webview/toolbar/actions'
 import { hostEngine } from './helpers';
 import { closeEditorPage, delay, EditorPage, MOD, openEditorPage, settle, shot, vscodeMarkdownCss } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
-
-/** A document with notes on both sides of the page: a left sidebar, sidenotes, a marginal note, a right sidebar. */
-const TWO_SIDED = [
-    '# Offline Sync',
-    '',
-    'The mobile client keeps a **local replica** of the user\'s workspace so that ++field staff|mostly technicians on site, often without signal for a whole shift++ can work *without a connection*. Changes are queued and sent with `POST /sync/batch` once the device is back online; see the API reference for the payload.',
-    '',
-    '$Status$ On track for the November release. The schedule holds !!unless the review slips|Reviews are booked for week 44.!! and the field team has been briefed on the change.',
-    '',
-    '## Conflicts',
-    '',
-    'When two devices edit the same record offline, the server keeps both versions ++and asks the user|The conflict dialog lists both versions side by side, with the device name, the time of each edit and the fields that differ. The user picks one, or merges field by field; nothing is resolved silently, and the losing version stays in the record\'s history for thirty days so that a wrong choice can be undone.++ which one to keep. The rest of this paragraph continues after the reference, so the page shows whether the line is broken at the note or flows on past it to the end of the sentence.',
-    '',
-    '## Goals',
-    '',
-    '- Edits made offline are never lost.',
-    '- A conflict is shown to the user, ++not resolved silently|see the conflict dialog above++, and the choice is logged.',
-    '- Sync completes within **5 seconds** for a typical day\'s work. @Owner: Mia@',
-    '',
-    '## Open tasks',
-    '',
-    'The last open point is the batch size: the client sends ++at most 200 records|Measured on the 2025 test fleet: 200 records per batch kept the median upload under two seconds on 3G, and larger batches timed out on the slowest devices.++ per request.',
-    '',
-].join('\n');
-
-/** The same without its left sidebar: every note on the right, one side of the page. */
-const ONE_SIDED = TWO_SIDED.replace('$Status$ ', '');
+import { NOTE_SAMPLE_ONE_SIDED as ONE_SIDED, NOTE_SAMPLE_TWO_SIDED as TWO_SIDED } from './noteSample';
 
 /** Long enough to scroll, and no note in it: the lane closed until one is made. */
 const LONG = TWO_SIDED
@@ -280,6 +254,44 @@ suite('Editor margin lane (e2e)', () => {
         await page.waitForSelector(`.${PREVIEW_CARD_CLASS}[data-action="sidenote"]:not([hidden])`, { timeout: 2000 });
         assert.ok(await page.$(`.${PREVIEW_CARD_CLASS} .sidenote`), 'the card shows a sidenote');
         assert.strictEqual(await lanePadding(), '26px', 'and the page reserves nothing for it');
+        // The pointer on the entry: its glyph keeps the underline, and takes no pairing tint.
+        const glyph = await page.$eval('.mep-menu [data-action="sidenote"] .sn-anchor', el => {
+            const style = getComputedStyle(el);
+            return [style.textDecorationStyle, style.backgroundColor];
+        });
+        assert.deepStrictEqual(glyph, ['dotted', 'rgba(0, 0, 0, 0)']);
         await page.keyboard.press('Escape');
+    });
+
+    test('between the thresholds, after markdown.css\'s own padding: a one-sided document at 1000px reserves its lane', async function () {
+        this.timeout(20000);
+        await showDocument(ONE_SIDED, 'Offline Sync');
+        await at(1000);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        assert.deepStrictEqual(await layout(), {
+            padding: ['26px', '250px'], floats: ['right'], displays: ['block'], overflow: 0, anchor: ['underline', 'dotted'],
+        });
+        await shot(page, 'margin-light-1000.png');
+    });
+
+    test('a lane opened while the caret\'s line is off screen leaves the scrolling to ProseMirror', async function () {
+        this.timeout(20000);
+        await at(1280);
+        const closing = 'A closing paragraph, long enough to take a line of its own and push the end further down. '.repeat(12);
+        const longer = [LONG, closing, '', 'The very end.', ''].join('\n');
+        await showDocument(longer, 'The very end');
+        assert.strictEqual(await lanePadding(), '26px');
+        await selectText('The very end');
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await delay(100);
+        const caret = await selectionTop();
+        assert.ok(caret > 800, `the caret is below the window: ${caret}, scrolled ${await page.evaluate(() => window.scrollY)}`);
+        version++;
+        const changed = longer.replace('the user\'s workspace', 'the ++user\'s|the person signed in++ workspace');
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(hostEngine(), changed, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
+        await page.waitForSelector('.ProseMirror .sidenote');
+        await delay(150);
+        assert.strictEqual(await lanePadding(), '250px');
+        assert.strictEqual(await page.evaluate(() => window.scrollY), 0, 'the page stays where it was');
     });
 });

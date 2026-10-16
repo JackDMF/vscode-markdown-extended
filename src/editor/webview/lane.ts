@@ -13,8 +13,38 @@
  * the fact as the stylesheet decides it (its media queries, its `:has()`, a
  * reader's `--mep-note-lane: 0`), never counted from the document.
  */
+import { Node } from 'prosemirror-model';
+import { Transaction } from 'prosemirror-state';
 import { Mappable } from 'prosemirror-transform';
 import { EditorView } from 'prosemirror-view';
+import { NOTE_NODES } from '../schema';
+
+/** Whether `doc` holds a note or a sidebar between `from` and `to`, or around them. */
+function noteBetween(doc: Node, from: number, to: number): boolean {
+    let found = false;
+    doc.nodesBetween(Math.max(0, from), Math.min(doc.content.size, to), node => {
+        found ||= NOTE_NODES.has(node.type.name);
+        return !found;
+    });
+    return found;
+}
+
+/**
+ * Whether `tr` can open or close the lane: one of its steps changed a range
+ * that holds a note or a sidebar, before the step or after it. Only the
+ * document's notes decide the lane, so typing in plain text is not measured.
+ */
+export function touchesNote(tr: Transaction): boolean {
+    return tr.steps.some((step, i) => {
+        const before = tr.docs[i];
+        const after = i + 1 < tr.docs.length ? tr.docs[i + 1] : tr.doc;
+        let touched = false;
+        step.getMap().forEach((oldStart, oldEnd, newStart, newEnd) => {
+            touched ||= noteBetween(before, oldStart, oldEnd) || noteBetween(after, newStart, newEnd);
+        });
+        return touched;
+    });
+}
 
 /** The html element's padding-left / padding-right as computed: the lane as the stylesheet decides it. */
 function laneEdges(): string {
@@ -42,7 +72,9 @@ export function keepingLine(view: EditorView, head: number, mapping: Mappable, a
     const edges = laneEdges();
     const before = lineTop(view, head);
     apply();
-    if (before === null || laneEdges() === edges) {
+    // A line that was not on screen has no place to keep: ProseMirror's own
+    // scrolling brings the caret into view, and is left as it is.
+    if (before === null || before < 0 || before >= window.innerHeight || laneEdges() === edges) {
         return;
     }
     const after = lineTop(view, mapping.map(head));

@@ -398,7 +398,9 @@ the classes once, the plugin, `parse.ts`, the toolbar's samples and `noteRef` in
 conversion, a paste — goes through `noteRef` or the parse. The attribute defaults to
 `null` because ProseMirror refuses a required attribute on a node in a required
 position; a test holds the sources to `noteRef`, and parse-of-serialize to the same
-node. The editor's reference also carries `data-mep-note-ref`, which no stylesheet of
+node. A reference ProseMirror makes itself — closing a note that a delete or a paste
+cut open, `createAndFill` leaves the attribute at its default — is given its kind's
+anchor by the notes plugin's `appendTransaction` (`anchorRepair`). The editor's reference also carries `data-mep-note-ref`, which no stylesheet of
 the preview names, by which a copy made here is known on paste. Mirroring the DOM is
 what lets every stylesheet written for the preview style the note being edited
 unchanged, the margin layout included; a page test at 1400px compares the computed
@@ -416,7 +418,10 @@ and the host's re-sync — and, when the html element's computed padding changed
 update, scrolls by how far the line holding the selection head (mapped through the
 transaction) moved. The padding is read, not the document counted, so the stylesheet's
 own decision (its media queries, `:has()`, a reader's `--mep-note-lane: 0`) is the one
-the editor follows; a selection-only transaction is not measured.
+the editor follows. Only a transaction whose steps change a range holding a note or a
+sidebar (`touchesNote`) is measured, so typing in plain text costs nothing; and a line
+that was off screen before the update has no place to keep — ProseMirror's own
+scrolling is left as it is.
 
 **What a note holds** is decided by the plugin: it parses a reference and a body with
 the full inline parser, so every mark may be inside (`note_inline*`: text, images, hard
@@ -1600,14 +1605,16 @@ and `(min-width: 1200px)` (both), and a media query reads the window, not the ca
 wide webview a 360px card's note would float out by its full offset, and the card's
 clipping would make it vanish. Restating the inline rendering in `editor.css` would state
 that form twice. Instead the margin layout excludes descendants of the card and of the
-menus' samples (`:where(:not(:is(.mep-preview-card, .mep-sample) *))`: `:where` keeps a
+menus' samples and of a hover card's section
+(`:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))`: `:where` keeps a
 bare class's specificity, so a reader's later `.sidenote` rule still wins), and the card
 keeps the base rendering — the one statement of the inline form. The same guard stands
-inside every `:has()` that reserves the lane, so neither the card's sample note nor a
-sidebar's glyph in the Annotation menu opens a lane on the page. The classes occur only in
-the editor's page, so the preview and exports are unaffected; `PREVIEW_CARD_CLASS` and
-`SAMPLE_CLASS` name them once, and a test holds the stylesheet's every margin rule to
-them. `display: flow-root; contain: layout
+inside every `:has()` that reserves the lane, so neither the card's sample note, a
+sidebar's glyph in the Annotation menu nor a provider's hover HTML opens a lane on the
+page; a source block's or an injected block's rendering is the document's and is not
+guarded. The classes occur only in the editor's page, so the preview and exports are
+unaffected; `PREVIEW_CARD_CLASS`, `SAMPLE_CLASS` and `HOVER_SECTION_CLASS` name them once,
+and a test holds the stylesheet's every margin rule to them. `display: flow-root; contain: layout
 paint; overflow: hidden` on the card is the second line of defence. The page test runs at
 1400px and requires every element of each Annotation preview to lie inside the card and
 to be visibly in it; with the guard removed the sidenote floats out.

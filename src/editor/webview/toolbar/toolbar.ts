@@ -1063,7 +1063,7 @@ class ToolbarView implements PluginView {
      */
     private fitSamples(menu: Menu): void {
         for (const holder of Array.from(menu.panel.querySelectorAll<HTMLElement>('.mep-entry-sample'))) {
-            const sample = holder.querySelector<HTMLElement>('.mep-sample > *');
+            const sample = holder.querySelector<HTMLElement>(`.${SAMPLE_CLASS} > *`);
             if (!sample) {
                 continue;
             }

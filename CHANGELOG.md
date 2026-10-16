@@ -11,6 +11,7 @@
 - A note's reference is wrapped in `.sn-anchor` / `.mn-anchor` with a dotted underline, in both layouts.
 - Hovering a reference or its note tints both, so a displaced note finds its reference.
 - Stylesheet authors: `:root { --mep-note-lane: 0 }` keeps your own margin layout; `.sn-anchor` carries the underline.
+- Stylesheet authors: set `--md-note-width` and gaps on `:root`, not `body`; the margin lane reads them there.
 - Note colours derive from the text colour; `--md-note-opacity` mutes by colour, not transparency.
 - In the Visual Editor, adding the first note or removing the last keeps the reference line in place.
 

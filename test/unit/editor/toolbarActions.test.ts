@@ -15,6 +15,7 @@ import {
     insertSourceTransaction, insertWrapperTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup, wrapSourceTransaction,
 } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_TYPES } from '../../../src/syntax/markers';
+import { HOVER_SECTION_CLASS } from '../../../src/editor/webview/languageCard';
 import { hostEngine, readText, repoRoot } from './helpers';
 
 /** The opening tags named `tag` in `html`, with their attributes. */
@@ -238,7 +239,7 @@ suite('Editor toolbar: every action makes the element it shows', () => {
 
     test('the preview card\'s class is the one both stylesheets name, and every margin rule keeps out of the card and the menus\' samples', () => {
         const notes = readText(path.join(repoRoot, 'styles', 'markdown-extended.css')).replace(/\/\*[\s\S]*?\*\//g, '');
-        const guard = `:not(:is(.${PREVIEW_CARD_CLASS}, .${SAMPLE_CLASS}) *)`;
+        const guard = `:not(:is(.${PREVIEW_CARD_CLASS}, .${SAMPLE_CLASS}, .${HOVER_SECTION_CLASS}) *)`;
         const noteClass = /\.(?:sidenote|mnote|left-sidebar|right-sidebar)(?![\w-])/;
         const blocks = marginBlocks(notes);
         assert.ok(blocks.length >= 2, 'the margin layout is in min-width media blocks');

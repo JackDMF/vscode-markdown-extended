@@ -74,7 +74,10 @@
   --mep-note-lane: max(calc(var(--md-note-width) + var(--md-note-gap)),
                        calc(var(--md-sidebar-width) + var(--md-sidebar-gap)));
   --mep-note-lane-left: var(--mep-note-lane);
-  --md-page-gutter: 26px;            /* markdown.css's own padding on <html> */
+  /* What the page already pads <html> with, which the lane adds to: VS Code's
+     markdown.css gives html and body `padding: 0 26px`. A theme or an export
+     template with other padding on <html> sets its own on :root. */
+  --md-page-gutter: 26px;
 
   --md-note-font-size: 0.9em;
   --md-note-opacity: 0.85;           /* how much of the text colour a note keeps */
@@ -148,11 +151,14 @@ body {
 /* Print/PDF with background graphics off drops the tint; the bar is a border
    and always prints, so it carries the note alone: darker and a little wider.
    (Not print-color-adjust: exact - that would overrule the reader's own
-   "no background graphics" choice in every document.) */
+   "no background graphics" choice in every document.)
+   A reader's own choice still wins: both are set on `body`, where a later
+   `body { --md-note-border: transparent; --md-note-border-width: 0 }` of
+   theirs overrides them in print as on screen. */
 @media print {
-  .sidenote, .mnote, .left-sidebar, .right-sidebar {
+  body {
     --md-note-border: color-mix(in srgb, currentColor 80%, transparent);
-    border-left-width: max(var(--md-note-border-width), 0.8mm);
+    --md-note-border-width: max(3px, 0.8mm);
   }
 }
 
@@ -161,64 +167,70 @@ body {
    Guard G = "the document uses at most one side" (from 960px);
    from 1200px the same rules apply unguarded.
 
-   Not inside `.mep-preview-card` or `.mep-sample`. The Visual Editor's
-   toolbar shows each note in a preview card about 360px wide, and a media
-   query reads the viewport, not the card: the card's note would float out of
-   it and vanish under its clipping. Its menus draw each sidebar's glyph as a
-   real `.left-sidebar` / `.right-sidebar` inside a `.mep-sample`. Neither may
-   open a lane on the editor's page, so the guard stands on every element rule
-   AND inside every :has(). The classes occur only in the editor's page
-   (PREVIEW_CARD_CLASS and SAMPLE_CLASS in src/editor/webview/toolbar/actions.ts
-   name them, and a test holds this file to those names); the preview and
-   every export never carry them. The guards are wrapped in :where() so the
-   rules keep the specificity of a bare class.
+   Not inside `.mep-preview-card`, `.mep-sample` or `.mep-card-hover`. The
+   Visual Editor's toolbar shows each note in a preview card about 360px wide,
+   and a media query reads the viewport, not the card: the card's note would
+   float out of it and vanish under its clipping. Its menus draw each
+   sidebar's glyph as a real `.left-sidebar` / `.right-sidebar` inside a
+   `.mep-sample`, and a hover card shows HTML a provider wrote. None of them
+   is the document's, none may open a lane on the editor's page, so the guard
+   stands on every element rule AND inside every :has(). The classes occur
+   only in the editor's page (PREVIEW_CARD_CLASS and SAMPLE_CLASS in
+   src/editor/webview/toolbar/actions.ts, HOVER_SECTION_CLASS in
+   src/editor/webview/languageCard.ts name them, and a test holds this file to
+   those names); the preview and every export never carry them. The guards
+   are wrapped in :where() so the rules keep the specificity of a bare class.
+   A source block's or an injected block's rendering IS the document's, and
+   is not guarded: its notes lie as the preview's do.
 
    Keep each selector on one line: a line break between `:where(...)` and
-   `:where(:has...)` would turn into a descendant selector.
+   `:where(:has...)` would turn into a descendant selector. The rules reserving
+   the lane start with a bare `html`: inside :where() it would weigh nothing,
+   and markdown.css's `html, body { padding: 0 26px }` would win.
    ============================================================================ */
 @media screen and (min-width: 960px) {
-  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample) *)))):where(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample) *))) {
+  html:where(:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), :not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))):where(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) {
     padding-right: calc(var(--md-page-gutter) + var(--mep-note-lane));
   }
-  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample) *)))):where(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample) *))) {
+  html:where(:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), :not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))):where(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) {
     padding-left: calc(var(--md-page-gutter) + var(--mep-note-lane-left));
   }
-  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample) *)))) :is(.sidenote, .mnote, .right-sidebar):where(:not(:is(.mep-preview-card, .mep-sample) *)) {
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) :is(.sidenote, .mnote, .right-sidebar):where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
     display: block; float: right; clear: right; width: var(--md-note-width);
     margin: 0 var(--md-note-offset) 0.5em 0; padding: 0;
     background-color: transparent; border-left: 0;
   }
-  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample) *)))) .mnote:where(:not(:is(.mep-preview-card, .mep-sample) *)) { font-weight: bold; }
-  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample) *)))) .right-sidebar:where(:not(:is(.mep-preview-card, .mep-sample) *)) {
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) .mnote:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) { font-weight: bold; }
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) .right-sidebar:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
     width: var(--md-sidebar-width); margin-right: var(--md-sidebar-offset);
   }
-  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample) *)))) .left-sidebar:where(:not(:is(.mep-preview-card, .mep-sample) *)) {
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) .left-sidebar:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
     display: block; float: left; clear: left; width: var(--md-sidebar-width);
     margin: 0 0 0.5em var(--md-sidebar-offset); padding: 0;
     background-color: transparent; border-left: 0;
   }
-  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample) *)))) > body::after {
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) > body::after {
     content: ""; display: block; clear: both;
   }
 }
 
 @media screen and (min-width: 1200px) {
-  html:where(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample) *))) {
+  html:where(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) {
     padding-right: calc(var(--md-page-gutter) + var(--mep-note-lane));
   }
-  html:where(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample) *))) {
+  html:where(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) {
     padding-left: calc(var(--md-page-gutter) + var(--mep-note-lane-left));
   }
-  :is(.sidenote, .mnote, .right-sidebar):where(:not(:is(.mep-preview-card, .mep-sample) *)) {
+  :is(.sidenote, .mnote, .right-sidebar):where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
     display: block; float: right; clear: right; width: var(--md-note-width);
     margin: 0 var(--md-note-offset) 0.5em 0; padding: 0;
     background-color: transparent; border-left: 0;
   }
-  .mnote:where(:not(:is(.mep-preview-card, .mep-sample) *)) { font-weight: bold; }
-  .right-sidebar:where(:not(:is(.mep-preview-card, .mep-sample) *)) {
+  .mnote:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) { font-weight: bold; }
+  .right-sidebar:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
     width: var(--md-sidebar-width); margin-right: var(--md-sidebar-offset);
   }
-  .left-sidebar:where(:not(:is(.mep-preview-card, .mep-sample) *)) {
+  .left-sidebar:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
     display: block; float: left; clear: left; width: var(--md-sidebar-width);
     margin: 0 0 0.5em var(--md-sidebar-offset); padding: 0;
     background-color: transparent; border-left: 0;
@@ -229,11 +241,12 @@ body {
 /* ============================================================================
    Pairing on hover. A note pushed down by the one above it is matched to its
    anchor by pointing at either. Weight of a bare class, screen with a pointer
-   only; print relies on order.
+   only; print relies on order. Not on the Visual Editor's buttons and menu
+   entries (`.mep-sample`): there the pointer is on the control, not the note.
    ============================================================================ */
 @media screen and (hover: hover) {
-  :where(.sn-ref:hover) > :is(.sn-anchor, .sidenote),
-  :where(.mn-ref:hover) > :is(.mn-anchor, .mnote) {
+  :where(.sn-ref:hover:not(.mep-sample *)) > :is(.sn-anchor, .sidenote),
+  :where(.mn-ref:hover:not(.mep-sample *)) > :is(.mn-anchor, .mnote) {
     background-color: color-mix(in srgb, currentColor 14%, transparent);
     border-radius: 2px;
   }

@@ -26,6 +26,7 @@ import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, repoRoot, topChildren, touched } from './helpers';
 import * as fs from 'fs';
 import * as path from 'path';
+import { touchesNote } from '../../../src/editor/webview/lane';
 
 function stateOf(text: string): EditorState {
     const { doc } = parseDocument(hostEngine(), text, {});
@@ -161,6 +162,45 @@ suite('Editor notes: the reference carries its kind\'s anchor, which the Markdow
             assert.strictEqual(text(state), written);
             assert.ok(firstNote(stateOf(text(state))).eq(note), `${name}: parse(serialize(doc)) holds the same note`);
         }
+    });
+
+    test('a reference ProseMirror makes itself, closing a note a delete or a paste cut open, gets its kind\'s anchor too', () => {
+        const anchorsOf = (state: EditorState): unknown[] => {
+            const out: unknown[] = [];
+            state.doc.descendants((node, _pos, parent) => {
+                if (node.type.name === 'note_ref') {
+                    out.push([parent?.type.name, node.attrs.anchor]);
+                }
+            });
+            return out;
+        };
+        for (const [source, from, to] of [
+            ['Alpha ++beta|body text++ gamma.\n', 'Alpha', 'text'],
+            ['Alpha !!beta|body text!! gamma.\n', 'Alpha', 'text'],
+            ['Alpha ++beta|body text++ gamma ++two|more text++.\n', 'body', 'more'],
+        ]) {
+            const state = stateOf(source);
+            const after = state.apply(state.tr.delete(posOf(state.doc, from), posOf(state.doc, to)));
+            for (const [parent, anchor] of anchorsOf(after) as [string, unknown][]) {
+                assert.strictEqual(anchor, parent === 'sidenote' ? 'sn-anchor' : 'mn-anchor', `${source} ${from}…${to}: ${parent}`);
+            }
+        }
+    });
+
+    test('the margin lane is measured only for a change that makes, edits or removes a note or a sidebar', () => {
+        const state = stateOf('Alpha beta ++ref|body++ gamma.\n\nPlain $side$ text.\n\nOther words.\n');
+        assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'Other'))), false, 'typing in plain text');
+        assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'beta'))), false, 'typing beside a note, outside it');
+        assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'body'))), true, 'typing in a note');
+        const wrapped = select(stateOf('Alpha beta gamma.\n'), 'beta');
+        let made: Transaction | undefined;
+        wrapInNote('sidenote')(wrapped, tr => {
+            made = tr;
+        });
+        assert.ok(made && touchesNote(made), 'making a note');
+        const note = posOf(state.doc, 'ref') - 2;
+        assert.strictEqual(touchesNote(state.tr.delete(note, note + (state.doc.nodeAt(note)?.nodeSize ?? 0))), true, 'removing it');
+        assert.strictEqual(touchesNote(state.tr.delete(posOf(state.doc, 'side') - 1, posOf(state.doc, 'side') + 5)), true, 'removing a sidebar');
     });
 
     test('no source but the schema makes a reference by hand: every other place goes through noteRef, which sets the anchor', () => {

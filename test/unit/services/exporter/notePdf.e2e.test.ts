@@ -8,6 +8,7 @@ import * as puppeteer from 'puppeteer';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import MarkdownIt = require('markdown-it');
 import { plugins } from '../../../../src/plugin/plugins';
+import { NOTE_SAMPLE_TWO_SIDED } from '../../editor/noteSample';
 
 const EXTENSION_ID = 'jackdmf.markdown-extended-pro';
 
@@ -28,7 +29,7 @@ suite('Note PDF (e2e)', () => {
         + "const {PDFParse}=require(process.argv[1]);"
         + "new PDFParse({data:new Uint8Array(require('fs').readFileSync(process.argv[2]))})"
         + ".getText().then(r=>process.stdout.write(r.text));";
-    const SOURCE = 'When two devices edit the same record offline, the server keeps both versions ++and asks the user|The conflict dialog lists both versions side by side, with the device name, the time of each edit and the fields that differ.++ which one to keep.\n';
+    const SOURCE = NOTE_SAMPLE_TWO_SIDED;
     let executablePath: string | undefined;
     let styles: string;
 
@@ -73,7 +74,7 @@ suite('Note PDF (e2e)', () => {
         });
     }
 
-    test('printed A4 without backgrounds, the sentence reads reference, note, the rest — in order', async function () {
+    test('printed A4 without backgrounds, the whole document prints and a sentence reads reference, note, the rest — in order', async function () {
         this.timeout(60000);
         const md = new MarkdownIt({ html: true });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -99,7 +100,7 @@ suite('Note PDF (e2e)', () => {
             // then the reference's and the note's — so the reading order is read
             // from the print layout below, the one the PDF was printed from.)
             const folded = (text as string).replace(/\s+/g, ' ');
-            for (const part of ['keeps both versions', 'and asks the user', 'The conflict dialog lists both versions', 'fields that differ.', 'which one to keep.']) {
+            for (const part of ['Offline Sync', 'Status', 'Reviews are booked for week 44.', 'Owner: Mia', 'Open tasks', 'keeps both versions', 'and asks the user', 'The conflict dialog lists both versions', 'can be undone.', 'which one to keep.']) {
                 assert.ok(folded.includes(part), `"${part}" is in the PDF: ${folded}`);
             }
             await page.emulateMediaType('print');
@@ -112,8 +113,8 @@ suite('Note PDF (e2e)', () => {
                     const r = range.getClientRects()[0];
                     return { top: Math.round(r.top), left: r.left };
                 };
-                const anchor = document.querySelector('.sn-anchor') as HTMLElement;
-                const note = document.querySelector('.sidenote') as HTMLElement;
+                const anchor = Array.from(document.querySelectorAll('.sn-anchor')).find(a => a.textContent === 'and asks the user') as HTMLElement;
+                const note = (anchor.parentElement as HTMLElement).querySelector('.sidenote') as HTMLElement;
                 const after = (anchor.parentElement as HTMLElement).nextSibling as globalThis.Node;
                 return {
                     float: getComputedStyle(note).float,
