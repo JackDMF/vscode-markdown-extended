@@ -2,7 +2,9 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { LensRow, WebviewMessage } from '../../../src/editor/protocol';
+import * as vscode from 'vscode';
+import { lensRows } from '../../../src/editor/host/lenses';
+import { WebviewMessage } from '../../../src/editor/protocol';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { FILE_STAYS } from '../../../src/editor/verbs';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, shot, MOD, UNDO } from './pageHarness';
@@ -378,10 +380,16 @@ suite('Editor object bars (e2e)', () => {
                 content[0].content = [{ type: 'text', text: 'Page' }];
             }),
             enter: async () => {
-                const lenses: LensRow[] = [{
-                    blockIndex: 0,
-                    items: ['Show trace', 'Open in matrix', 'Add test', 'Copy link', 'Rename'].map((title, k) => ({ id: `a.${k}`, title, surface: 'action' as const, artifact: 'FRS-RXE-040' })),
-                }];
+                // Through the host's lensRows, as VS Code's lenses reach the page: Req Explorer's front-matter lens
+                // (its surface the page renders itself, a24cc4f) is left out there, and the bar holds the rest.
+                const lens = (title: string, surface: string) => new vscode.CodeLens(
+                    new vscode.Range(0, 0, 0, 1), { title, command: 'test.lens', arguments: [{ reqExplorer: { surface, artifact: 'FRS-RXE-040' } }] },
+                );
+                const { rows: lenses } = lensRows([
+                    lens('metadata for 1 requirement · show', 'front-matter'),
+                    ...['Show trace', 'Open in matrix', 'Add test', 'Copy link', 'Rename'].map(title => lens(title, 'action')),
+                ], [[0, 1], [2, 3]], 'a');
+                assert.deepStrictEqual(lenses.flatMap(r => r.items.map(i => i.title)), ['Show trace', 'Open in matrix', 'Add test', 'Copy link', 'Rename'], 'the front-matter lens is not drawn');
                 await (editor as EditorPage).send({ type: 'lenses', version, blocks: 2, rows: lenses });
                 await delay(150);
                 await clickBefore('Page', 1);
