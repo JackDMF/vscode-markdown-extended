@@ -128,6 +128,14 @@ export function barDescription(name: string, enabled: number): string {
 /** The tooltip of a Delete whose file stays: an image's, an embed's, a snippet directive's. */
 export const FILE_STAYS = 'Delete from this document — the file stays';
 
+/** The way back from an embed made text, one sentence: Convert to text's tooltip and the embed chip's both say it. */
+export const EMBED_WAY_BACK = 'to make it an embed again, delete the last ] and type it again.';
+
+/** The way back from an emoji made text, `undo` the key that undoes (`undoKey`): Convert to text's tooltip says it. */
+export function emojiWayBack(undo: string): string {
+    return `it is saved as text; ${undo} restores the emoji.`;
+}
+
 /** Verb names other surfaces quote: the wiki embed's tooltip, the emoji's and the notes' ways out, the objects' refusals. */
 export const VERB = {
     convertToText: 'Convert to text',

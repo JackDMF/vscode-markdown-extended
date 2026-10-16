@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { lensRows } from '../../../src/editor/host/lenses';
 import { WebviewMessage } from '../../../src/editor/protocol';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { FILE_STAYS } from '../../../src/editor/verbs';
+import { EMBED_WAY_BACK, FILE_STAYS } from '../../../src/editor/verbs';
 import { closeEditorPage, delay, describedTip, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, shot, MOD, UNDO } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 
@@ -578,7 +578,7 @@ suite('Editor object bars (e2e)', () => {
         const embed = rows.find(r => r.slug === 'wiki-embed') as Row;
         await openRow(embed);
         assert.strictEqual(await tooltipOf('delete-embed'), FILE_STAYS);
-        assert.strictEqual(await tooltipOf('convert-embed-to-text'), 'Convert to text ("![[roadmap]]"): delete the last ] and type it again to make it an embed.');
+        assert.strictEqual(await tooltipOf('convert-embed-to-text'), `Convert to text ("![[roadmap]]"); ${EMBED_WAY_BACK}`);
         const snippet = rows.find(r => r.slug === 'snippet') as Row;
         await openRow(snippet);
         assert.strictEqual(await tooltipOf('delete-directive'), FILE_STAYS);

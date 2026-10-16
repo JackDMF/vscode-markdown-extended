@@ -269,7 +269,7 @@ suite('Editor: an emoji atom on the page — its look, its bar and its verbs', (
         assert.deepStrictEqual(verbs.map(v => [v.id, v.label, v.refusal]), [['convert-emoji-to-text', 'Convert to text', null], ['delete-emoji', 'Delete emoji', null]]);
     });
 
-    test('Edit as text: its spelling as text with its marks and the caret after it, saved escaped, undone as one step', () => {
+    test('Convert to text: its spelling as text with its marks and the caret after it, saved escaped, undone as one step', () => {
         const state = stateOf('a *:)* b\n');
         const at = atomAt(state);
         const tr = emojiAsTextTransaction(state, at, at + 1);

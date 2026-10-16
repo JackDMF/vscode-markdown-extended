@@ -15,6 +15,8 @@ import { objectOfNode } from '../../../src/editor/webview/objects';
 import { wikiEmbedVerbs } from '../../../src/editor/webview/objectToolbar';
 import { OWN_COPY, embedAsTextTransaction, inlineForNote, isOwnCopyDom, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
 import { tokenText } from '../../../src/syntax/tokenText';
+import { plainWikiEmbed } from '../../../src/syntax/markers';
+import { EMBED_WAY_BACK } from '../../../src/editor/verbs';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
 import { attrsReadAt } from '../../../src/editor/attrs';
@@ -492,7 +494,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.strictEqual(off.handler(EditorState.create({ doc: paragraph(text('![[x]')) }), ['![[x]]'] as unknown as RegExpMatchArray, 1, 6), null);
     });
 
-    test('Edit as text: the atom becomes its plain text with its marks and the caret after it, is saved as the escaped literal, undone as one step, and made an embed again by retyping the last ]', () => {
+    test('Convert to text: the atom becomes its plain text with its marks and the caret after it, is saved as the escaped literal, undone as one step, and made an embed again by retyping the last ]', () => {
         const em = schema.marks.em.create();
         const parsed = parseDocument(md, 'An ![[ab]] here and *![[c&#124;d]]* too.\n');
         const start = EditorState.create({ doc: parsed.doc, plugins: [history()] });
@@ -561,7 +563,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         return made.doc;
     }
 
-    test('Edit as text and a retyped ] keep the embed in the link, attribute span or marks it was in: at their end, start and middle', () => {
+    test('Convert to text and a retyped ] keep the embed in the link, attribute span or marks it was in: at their end, start and middle', () => {
         // Through the document: the saved text is the source the embed was parsed from.
         for (const source of [
             'See [the ![[x]]](https://e.org) now.\n',
@@ -662,7 +664,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.strictEqual(toggleThenType(paragraph(text('a ![[x]')), schema.marks.code), null, 'code on');
     });
 
-    test('Edit as text is refused where the notes\' and the tables\' filters would refuse its text: an attribute span over the atom whose literal holds a note marker or a cell\'s pipe', () => {
+    test('Convert to text is refused where the notes\' and the tables\' filters would refuse its text: an attribute span over the atom whose literal holds a note marker or a cell\'s pipe', () => {
         const spanned = (source: string, literal: string) => {
             const parsed = parseDocument(md, source);
             const [at] = embedPositions(parsed.doc);
@@ -720,6 +722,20 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
 
         for (const source of ['X $![[x]]$ y.\n', 'Plain ![[x]].\n', '| a |\n| - |\n| ![[x]] |\n']) {
             assert.deepStrictEqual(bar(EditorState.create({ doc: parseDocument(md, source).doc })).map(v => v.refusal), [null, null], source);
+        }
+    });
+
+    test('the embed\'s Convert to text names the text it becomes — in a table cell too — and reads as the way back', () => {
+        for (const source of ['Plain ![[roadmap]].\n', '| a |\n| - |\n| ![[img.png\\|300]] |\n']) {
+            const state = EditorState.create({ doc: parseDocument(md, source).doc });
+            const [at] = embedPositions(state.doc);
+            const node = state.doc.nodeAt(at) as Node;
+            const object = objectOfNode(node, at);
+            assert.ok(object && object.kind === 'wiki_embed');
+            const [asText] = wikiEmbedVerbs(state, object, { asText: () => undefined, remove: () => undefined });
+            // What Convert to text inserts is the plain spelling, not the source's encoding.
+            const inserted = (embedAsTextTransaction(state, at, at + 1) as Transaction).doc.textBetween(at, at + plainWikiEmbed(node.attrs.source as string).length);
+            assert.strictEqual(asText.title, `Convert to text ("${inserted}"); ${EMBED_WAY_BACK}`, source);
         }
     });
 

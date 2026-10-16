@@ -44,11 +44,11 @@ import { EditorState, Plugin, PluginKey, PluginView, TextSelection, Transaction 
 import { CellSelection, isInTable, selectedRect } from 'prosemirror-tables';
 import { Mapping } from 'prosemirror-transform';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
-import { ADMONITION_TYPES } from '../../syntax/markers';
+import { ADMONITION_TYPES, plainWikiEmbed } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
-import { FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, firstFocus, wording } from '../verbs';
+import { EMBED_WAY_BACK, FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
@@ -388,7 +388,7 @@ interface AtomVerbTexts {
     noun: string;
     /** As the file spells it: Convert to text's tooltip names the text it becomes. */
     spelling: string;
-    /** Convert to text's way back, one sentence, after the text it becomes. */
+    /** Convert to text's way back, one sentence after the text it becomes, with the punctuation that joins it (`; …`, `: …`). */
     wayBack: string;
     /** Delete's tooltip, where it says more than the label. */
     removeTitle?: string;
@@ -417,7 +417,7 @@ function atomVerbs(state: EditorState, object: EditorObject, actions: EmbedActio
         {
             id: asTextId,
             label: asText.label,
-            title: `${asText.label} ("${texts.spelling}"): ${texts.wayBack}`,
+            title: `${asText.label} ("${texts.spelling}")${texts.wayBack}`,
             slot: 'type',
             refusal: refusalOnce(state, `${asTextId}@${place}`, () => {
                 const tr = texts.asTextTransaction(state, object.from, object.to);
@@ -442,8 +442,10 @@ function atomVerbs(state: EditorState, object: EditorObject, actions: EmbedActio
 export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions: EmbedActions): Verb[] {
     return atomVerbs(state, object, actions, {
         noun: 'embed',
-        spelling: object.kind === 'wiki_embed' ? object.node.attrs.source as string : '',
-        wayBack: 'delete the last ] and type it again to make it an embed.',
+        // The text it becomes, as Convert to text inserts it (`embedAsTextTransaction`), not the source's encoding.
+        spelling: object.kind === 'wiki_embed' ? plainWikiEmbed(object.node.attrs.source as string) : '',
+        // It reads as the way back: the sentence names the result first.
+        wayBack: `; ${EMBED_WAY_BACK}`,
         removeTitle: FILE_STAYS,
         none: 'There is no embed here.',
         asTextTransaction: embedAsTextTransaction,
@@ -462,7 +464,7 @@ export function emojiVerbs(state: EditorState, object: EditorObject, actions: Em
         none: 'There is no emoji here.',
         asTextTransaction: emojiAsTextTransaction,
         asTextRefusal: emojiTextStillRead,
-        wayBack: `it is saved as text; ${undoKey()} restores the emoji.`,
+        wayBack: `: ${emojiWayBack(undoKey())}`,
     });
 }
 
