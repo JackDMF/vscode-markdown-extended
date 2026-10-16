@@ -277,12 +277,12 @@ suite('Editor toolbar: Export (e2e)', () => {
             label: (el.querySelector('.mep-face-label') as HTMLElement).textContent,
             busy: el.getAttribute('aria-busy'),
             disabled: el.getAttribute('aria-disabled'),
-            title: (el as HTMLElement).title,
+            title: (el.getAttribute('aria-description') ?? ''),
         }));
         const entries = () => page.$$eval(`${PANEL} [data-export]`, els => els.map(el => ({
             id: (el as HTMLElement).dataset.export,
             disabled: el.getAttribute('aria-disabled'),
-            title: (el as HTMLElement).title,
+            title: (el.getAttribute('aria-description') ?? ''),
         })));
         const before = (await posted()).length;
         await page.click(FACE);

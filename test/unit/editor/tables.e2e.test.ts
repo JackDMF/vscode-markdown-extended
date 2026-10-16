@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { CELL_BREAK_REFUSAL } from '../../../src/editor/serialize';
-import { closeEditorPage, clickText, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot as saveShot, vscodeMarkdownCss, MOD, UNDO } from './pageHarness';
+import { closeEditorPage, clickText, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, shot as saveShot, MOD, UNDO } from './pageHarness';
 import { LIGHT_MODERN, applyTheme } from './themes';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
@@ -165,7 +165,6 @@ suite('Editor pipe tables (e2e)', () => {
         this.timeout(60000);
         editor = await openEditorPage({
             width: 1280, height: 800,
-            stylesheets: [vscodeMarkdownCss()],
             styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'],
         });
         if (!editor) {
@@ -271,13 +270,13 @@ suite('Editor pipe tables (e2e)', () => {
         ].join('\n'));
     });
 
-    test('the table\'s bar: Row ▾, Column ▾, Align ▾, a gap, Attributes…, Edit source and Delete table; the caret\'s column tinted while it shows', async function () {
+    test('the table\'s bar: Row ▾, Column ▾, Align ▾, a gap, Attributes…, Edit source, a gap and Delete table; the caret\'s column tinted while it shows', async function () {
         this.timeout(15000);
         await showDocument(DOC, 'Alpha');
         await barFor('first');
         assert.deepStrictEqual(await barState(), { object: 'table', label: 'Table', verbs: ['row', 'column', 'align', 'block-attributes', 'edit-source', 'delete-table'] });
         const layout = await page.$eval(BAR, bar => Array.from(bar.children).map(c => (c as HTMLElement).dataset.verb ?? c.className));
-        assert.deepStrictEqual(layout, ['mep-object-label', 'row', 'column', 'align', 'mep-object-separator', 'block-attributes', 'edit-source', 'delete-table']);
+        assert.deepStrictEqual(layout, ['mep-object-label', 'mep-object-separator', 'row', 'column', 'align', 'mep-object-separator', 'block-attributes', 'edit-source', 'mep-object-separator', 'delete-table']);
         await page.waitForSelector('.mep-table-column', { timeout: 1000 });
         const tinted = await page.$$eval('.ProseMirror .mep-table-column', els => els.map(e => e.textContent));
         assert.deepStrictEqual(tinted, ['Kind', 'first', 'second'], 'the caret\'s column, every row of it');
@@ -555,7 +554,7 @@ suite('Editor pipe tables (e2e)', () => {
         assert.ok(raw);
         await page.mouse.move(raw.x + raw.width / 2, raw.y + raw.height / 2);
         await page.waitForSelector(HOVER_BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(HOVER_BAR), { object: 'raw_block', label: 'Source · multimd table', verbs: ['edit-source', 'show-in-text-editor', 'delete-block'] });
+        assert.deepStrictEqual(await barState(HOVER_BAR), { object: 'raw_block', label: 'Source · multimd table', verbs: ['show-in-text-editor', 'edit-source', 'delete-block'] });
         assert.strictEqual((await barState()).label, 'Table', 'the native table keeps its own bar');
         await delay(100);
         assert.deepStrictEqual(await coveredText(HOVER_BAR), [], 'the source block\'s bar covers no text');

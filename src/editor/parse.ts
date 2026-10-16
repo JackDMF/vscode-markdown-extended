@@ -20,6 +20,7 @@ import { InlineEngineDefinition, definitionOf } from './inlineEngine';
 import { NOTE_NODES, alignOfStyle, editorSchema } from './schema';
 import { endLiteralOf } from './attrs';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
+import { NOTE_SYNTAX } from '../syntax/markers';
 import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 import { unreadEmoji } from './serialize';
@@ -509,10 +510,10 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
         kbd: { mark: 'kbd', getAttrs: tok => ({ literal: inlineLiteral.get(tok) ?? null }) },
         // A note's `_ref_` and `_content_` pairs are its two child nodes.
         sidenote: { block: 'sidenote' },
-        sidenote_ref: { block: 'note_ref' },
+        sidenote_ref: { block: 'note_ref', getAttrs: () => ({ anchor: NOTE_SYNTAX.sidenote.anchorClass }) },
         sidenote_content: { block: 'sidenote_body' },
         marginal_note: { block: 'marginal_note' },
-        marginal_note_ref: { block: 'note_ref' },
+        marginal_note_ref: { block: 'note_ref', getAttrs: () => ({ anchor: NOTE_SYNTAX.marginalNote.anchorClass }) },
         marginal_note_content: { block: 'marginal_note_body' },
         left_sidebar: { block: 'left_sidebar' },
         right_sidebar: { block: 'right_sidebar' },

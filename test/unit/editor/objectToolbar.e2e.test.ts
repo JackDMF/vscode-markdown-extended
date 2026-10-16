@@ -101,7 +101,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$(BAR), null, 'nothing yet');
         await page.waitForSelector(BAR, { timeout: 2000 });
         assert.ok(Date.now() - pressed >= INLINE_DELAY_MS, 'not before the delay');
-        assert.deepStrictEqual(await barState(), { object: 'note', label: 'Sidenote', verbs: ['remove-note', 'convert-note', 'edit-source'] });
+        assert.deepStrictEqual(await barState(), { object: 'note', label: 'Sidenote', verbs: ['convert-note', 'edit-source', 'delete-note'] });
         const geometry = await page.evaluate(sel => {
             const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
             const range = (document.getSelection() as Selection).getRangeAt(0);
@@ -152,14 +152,14 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(geometry.barLeft > geometry.caretRight || geometry.barTop >= geometry.caretBottom, `beside the line or below it: ${JSON.stringify(geometry)}`);
     });
 
-    test('Remove note, keep text posts the sentence with the reference in it, and says so beside the caret', async function () {
+    test('Delete note posts the sentence with the reference in it, and says so beside the caret', async function () {
         this.timeout(15000);
         await showDocument('Alpha ++beta ref|the body++ gamma.\n', 'Alpha');
         await clickBefore('body', 1);
-        await clickVerb('remove-note');
+        await clickVerb('delete-note');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Alpha beta ref gamma.\n');
-        assert.deepStrictEqual(await hint(), { text: `Note removed — ${UNDO}`, tone: 'neutral', shown: true });
+        assert.deepStrictEqual(await hint(), { text: `Note deleted — ${UNDO}`, tone: 'neutral', shown: true });
         assert.strictEqual(await page.$(BAR), null, 'no object at the caret any more');
         await page.keyboard.type('!');
         await settle();
@@ -324,7 +324,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(img);
         await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
         await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
-        assert.deepStrictEqual((await barState()).verbs, ['edit-image', 'image-attributes', 'open-image', 'remove-image']);
+        assert.deepStrictEqual((await barState()).verbs, ['open-image', 'edit-image', 'image-attributes', 'delete-image']);
         await clickVerb('edit-image');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), 'pic', 'the alt text first');
         await page.keyboard.press('Enter');
@@ -372,7 +372,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.deepStrictEqual(await page.$eval('.ProseMirror img', el => ({ width: el.getAttribute('width'), hero: el.classList.contains('hero') })), { width: '300', hero: true });
         assert.strictEqual((await hint()).text, `Attributes set — ${UNDO}`);
         await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
-        assert.strictEqual(await page.$eval(BAR, el => el.getAttribute('aria-label')), 'Image {.hero width=300}');
+        assert.strictEqual(await page.$eval(BAR, el => el.getAttribute('aria-label')), 'Image {.hero width=300}, 4 actions, arrow keys to choose');
 
         await clickVerb('image-attributes');
         assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '{.hero width=300}', 'prefilled with the literal');
@@ -402,7 +402,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'Run `--flag` to skip the cache.\n');
     });
 
-    test('a wiki embed is one unit drawn as its source: a click selects it, its bar names it, and Remove embed takes it out whole', async function () {
+    test('a wiki embed is one unit drawn as its source: a click selects it, its bar names it, and Delete embed takes it out whole', async function () {
         this.timeout(15000);
         await showDocument('An ![[assets/_img.png]] here.\n', 'An');
         const drawn = await page.$eval('.ProseMirror .mep-wiki-embed', el => ({ text: el.textContent, editable: (el as HTMLElement).contentEditable }));
@@ -411,13 +411,13 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(box);
         await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
         await page.waitForSelector(`${BAR}[data-object="wiki_embed"]`, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'wiki_embed', label: 'Wiki embed', verbs: ['edit-wiki-embed-as-text', 'remove-wiki-embed'] });
-        await clickVerb('remove-wiki-embed');
+        assert.deepStrictEqual(await barState(), { object: 'wiki_embed', label: 'Wiki embed', verbs: ['convert-embed-to-text', 'delete-embed'] });
+        await clickVerb('delete-embed');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An here.\n');
     });
 
-    test('Edit as text makes the embed its text with the caret after it, saved escaped; Ctrl+Z gives the atom back, and retyping the last ] makes it again', async function () {
+    test('Convert to text makes the embed its text with the caret after it, saved escaped; Ctrl+Z gives the atom back, and retyping the last ] makes it again', async function () {
         this.timeout(30000);
         const pickEmbed = async () => {
             const box = await (await page.$('.ProseMirror .mep-wiki-embed'))?.boundingBox();
@@ -433,10 +433,10 @@ suite('Editor object toolbar (e2e)', () => {
             await settle();
         };
         await showDocument('An ![[note]] here.\n', 'An');
-        assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => (el as HTMLElement).title.includes('Edit as text')), true, 'the chip\'s tooltip names the way to text');
+        assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => (el as HTMLElement).title.includes('Convert to text')), true, 'the chip\'s tooltip names the way to text');
         await pickEmbed();
-        await clickVerb('edit-wiki-embed-as-text');
-        assert.deepStrictEqual(await hint(), { text: `Embed is text — ${UNDO}`, tone: 'neutral', shown: true });
+        await clickVerb('convert-embed-to-text');
+        assert.deepStrictEqual(await hint(), { text: `Embed converted to text — ${UNDO}`, tone: 'neutral', shown: true });
         await settle();
         assert.strictEqual(await atoms(), 0);
         assert.strictEqual((await lastEdit())?.text, 'An !\\[\\[note\\]\\] here.\n');
@@ -456,7 +456,7 @@ suite('Editor object toolbar (e2e)', () => {
 
         // One Ctrl+Z gives the atom back.
         await pickEmbed();
-        await clickVerb('edit-wiki-embed-as-text');
+        await clickVerb('convert-embed-to-text');
         await settle();
         assert.strictEqual(await atoms(), 0);
         await undo();
@@ -464,7 +464,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'An ![[note]] here.\n');
     });
 
-    test('Edit as text on an embed that ends a link keeps it in the link when the last ] is retyped', async function () {
+    test('Convert to text on an embed that ends a link keeps it in the link when the last ] is retyped', async function () {
         this.timeout(30000);
         const atoms = () => page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length);
         await showDocument('See [the ![[note]]](https://e.org) now.\n', 'See');
@@ -473,7 +473,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.ok(box);
         await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
         await page.waitForSelector(`${BAR}[data-object="wiki_embed"]`, { timeout: 2000 });
-        await clickVerb('edit-wiki-embed-as-text');
+        await clickVerb('convert-embed-to-text');
         await settle();
         assert.strictEqual(await atoms(), 0);
         assert.strictEqual((await lastEdit())?.text, 'See [the !\\[\\[note\\]\\]](https://e.org) now.\n');
@@ -822,7 +822,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.ok(table);
         await page.mouse.move(table.x + table.width / 2, table.y + table.height / 2);
         await page.waitForSelector(HOVER_BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(HOVER_BAR), { object: 'raw_block', label: 'Source · multimd table', verbs: ['edit-source', 'show-in-text-editor', 'delete-block'] });
+        assert.deepStrictEqual(await barState(HOVER_BAR), { object: 'raw_block', label: 'Source · multimd table', verbs: ['show-in-text-editor', 'edit-source', 'delete-block'] });
         assert.strictEqual(await page.$(BAR), null, 'nothing is selected');
 
         const button = await (await page.$(`${HOVER_BAR} [data-verb="delete-block"]`))?.boundingBox();
@@ -839,19 +839,20 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual(await page.$(HOVER_BAR), null, 'the pointer gone, the bar goes');
     });
 
-    test('Alt+Enter opens the bar at once with the focus on its first verb; the arrows move, Enter chooses, Esc returns to the text', async function () {
+    test('Alt+Enter opens the bar at once with the focus on its first verb that opens in place; the arrows move, Enter chooses, Esc returns to the text', async function () {
         this.timeout(15000);
         await showDocument('Alpha ++beta ref|the body++ gamma.\n', 'Alpha');
         await clickBefore('ref', 1);
         await delay(100);
         await pressAlt('Enter');
         assert.ok(await page.$(BAR), 'shown without the delay');
-        assert.deepStrictEqual(await active(), { verb: 'remove-note', editor: false, field: false });
+        assert.deepStrictEqual(await active(), { verb: 'edit-source', editor: false, field: false }, 'Edit source, not Convert, which acts at once, nor Delete');
         await page.keyboard.press('ArrowRight');
-        assert.strictEqual((await active()).verb, 'convert-note');
+        assert.strictEqual((await active()).verb, 'delete-note');
+        await page.keyboard.press('ArrowRight');
+        assert.strictEqual((await active()).verb, 'convert-note', 'the arrows wrap');
         await page.keyboard.press('ArrowLeft');
-        await page.keyboard.press('ArrowLeft');
-        assert.strictEqual((await active()).verb, 'edit-source', 'the arrows wrap');
+        assert.strictEqual((await active()).verb, 'delete-note');
         await page.keyboard.press('Escape');
         await delay(80);
         assert.strictEqual((await active()).editor, true, 'Esc returns to the text');
@@ -860,7 +861,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual((await lastEdit())?.text, 'Alpha ++beta rXef|the body++ gamma.\n', 'the caret is where it was');
 
         await pressAlt('Enter');
-        await page.keyboard.press('ArrowRight');
+        await page.keyboard.press('ArrowLeft');
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Alpha !!beta rXef|the body!! gamma.\n', 'Enter chose Convert to marginal note');
@@ -868,7 +869,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
 
     const verbLabel = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => el.textContent);
 
-    test('Alt+Enter in bold in a table: the table\'s bar, with Attributes of Bold… after its own verbs; its field writes the literal after the bold', async function () {
+    test('Alt+Enter in bold in a table: the table\'s bar, with Attributes of Bold… beside its Attributes…; its field writes the literal after the bold', async function () {
         this.timeout(15000);
         await showDocument('| a | b |\n| - | - |\n| **bold** | c |\n', 'bold');
         await clickBefore('bold', 2);
@@ -876,7 +877,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await pressAlt('Enter');
         const state = await barState();
         assert.strictEqual(state.object, 'table');
-        assert.deepStrictEqual(state.verbs.slice(-2), ['delete-table', 'inline-attributes']);
+        assert.deepStrictEqual(state.verbs, ['row', 'column', 'align', 'block-attributes', 'inline-attributes', 'edit-source', 'delete-table']);
         assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Bold…', 'named as the row names **');
         await clickVerb('inline-attributes');
         assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Table · Attributes of Bold');
@@ -901,14 +902,14 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual(await page.$(BAR), null, 'gone once the caret leaves the bold');
     });
 
-    test('Alt+Enter in code in a link: the link\'s bar, with Attributes of Code… after its own verbs', async function () {
+    test('Alt+Enter in code in a link: the link\'s bar, with Attributes of Code… beside its Attributes…', async function () {
         this.timeout(15000);
         await showDocument('See [the `x` here](u) now.\n', 'See');
         await clickBefore('here', 1);
         await clickBefore('x', 0);
         await delay(100);
         await pressAlt('Enter');
-        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'link-attributes', 'remove-link', 'inline-attributes'] });
+        assert.deepStrictEqual(await barState(), { object: 'link', label: 'Link', verbs: ['open-link', 'edit-link', 'link-attributes', 'inline-attributes', 'remove-link'] });
         assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Code…');
     });
 
@@ -921,7 +922,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await pressAlt('Enter');
         assert.deepStrictEqual(await barState(), { object: 'holder', label: 'Code', verbs: ['edit-attributes'] });
         assert.deepStrictEqual(await active(), { verb: 'edit-attributes', editor: false, field: false });
-        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => (el as HTMLElement).title), '`x`: inline code — Attributes… gives it a {…}');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => (el.getAttribute('aria-description') ?? '')), '`x`: inline code — Attributes… gives it a {…}');
         await page.keyboard.press('Enter');
         assert.strictEqual((await active()).field, true);
         await page.evaluate(() => {
@@ -939,12 +940,12 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.strictEqual((await barState()).label, 'Code {.k}');
     });
 
-    test('the caret in an admonition: Change type from the menu of types, Edit title; the page and the file say both', async function () {
+    test('the caret in an admonition: Type from the menu of types, Edit title…; the page and the file say both', async function () {
         this.timeout(15000);
         await showDocument('Intro.\n\n!!! note "Old title"\n    Body text here.\n\nAfter.\n', 'Body');
         await clickBefore('text here', 1);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'admonition', label: 'Admonition note', verbs: ['change-type', 'edit-title', 'block-attributes', 'remove-admonition'] });
+        assert.deepStrictEqual(await barState(), { object: 'admonition', label: 'Admonition note', verbs: ['edit-title', 'change-type', 'block-attributes', 'remove-admonition'] });
 
         await clickVerb('change-type');
         const choice = `${BAR} select.mep-inline-choice`;
@@ -968,7 +969,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await showDocument('Intro.\n\n::: box\nFirst kept.\n\nSecond kept.\n:::\n\nAfter.\n', 'First');
         await clickBefore('First kept', 2);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'container', label: 'Container box', verbs: ['change-name', 'block-attributes', 'remove-container'] });
+        assert.deepStrictEqual(await barState(), { object: 'container', label: 'Container box', verbs: ['edit-classes', 'block-attributes', 'remove-container'] });
         await clickVerb('remove-container');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Intro.\n\nFirst kept.\n\nSecond kept.\n\nAfter.\n');
@@ -996,7 +997,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
 
     test('a verb that would glue a sidebar to a letter is disabled with the reason, and a click on it says no success', async function () {
         this.timeout(15000);
-        const verbState = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        const verbState = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? '') }));
         // Right sidebars: VS Code's math extension, on in the test instance, claims every `$` first.
         await showDocument('A [styled]{.c}@y@ word.\n', 'styled');
         await clickBefore('styled', 2);
@@ -1014,7 +1015,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
             assert.ok(img);
             await page.mouse.click(img.x + img.width / 2, img.y + img.height / 2);
             await page.waitForSelector(`${BAR}[data-object="image"]`, { timeout: 2000 });
-            const removeImage = await verbState('remove-image');
+            const removeImage = await verbState('delete-image');
             assert.strictEqual(removeImage.disabled, 'true');
             assert.ok(removeImage.title.endsWith(SIDEBAR_GLUED_BEFORE), removeImage.title);
         } finally {
@@ -1025,13 +1026,13 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await showDocument('Alpha ++beta|the body++@y@ gamma.\n', 'Alpha');
         await clickBefore('body', 1);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        const removeNote = await verbState('remove-note');
+        const removeNote = await verbState('delete-note');
         assert.strictEqual(removeNote.disabled, 'true');
         assert.ok(removeNote.title.endsWith(SIDEBAR_GLUED_BEFORE), removeNote.title);
         // Disabled, a click runs nothing: no success is said and nothing is posted.
         const edits = (await (editor as EditorPage).edits()).length;
         const hintBefore = await hint();
-        await clickVerb('remove-note');
+        await clickVerb('delete-note');
         await settle();
         assert.deepStrictEqual(await hint(), hintBefore, 'the hint is as it was: nothing said');
         assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'nothing posted');

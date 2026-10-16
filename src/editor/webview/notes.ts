@@ -34,10 +34,11 @@ import { EditorView } from 'prosemirror-view';
 import { Mapping } from 'prosemirror-transform';
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
-import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
+import { NOTE_NODES, NOTE_PART_NODES, editorSchema, noteRef } from '../schema';
 import { RAW_TEXT_MARKS, causeReason, frontMatterTakeover, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
 import { showHint } from './hint';
+import { VERB } from '../verbs';
 import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
 
 const nodes = editorSchema.nodes;
@@ -387,7 +388,7 @@ let tryingWaysOut = false;
  * holding an emoji atom the judge cannot place (`unplacedEmoji`), or `null`:
  * whether it still reads as that emoji cannot be told, so it is neither kept
  * nor made text. The reason names the atom, the cause where it is a smiley in
- * superscript, and the ways out that are open — Edit as text and Remove emoji
+ * superscript, and the ways out that are open — Convert to text and Delete emoji
  * on that atom, each tried, as the object bar would, on the document the edit
  * started from (`mapping`, from there to the written one).
  */
@@ -407,10 +408,10 @@ function unplacedRefusal(tr: Transaction, rewritten: readonly { node: Node; offs
                 const state = EditorState.create({ doc: tr.before });
                 const asText = emojiAsTextTransaction(state, at, at + 1);
                 if (asText !== null && noteRefusal(asText) === null && emojiTextStillRead(state, asText, at) === null) {
-                    ways.push('Edit as text');
+                    ways.push(VERB.convertToText);
                 }
                 if (noteRefusal(state.tr.delete(at, at + 1)) === null) {
-                    ways.push('Remove emoji');
+                    ways.push(VERB.deleteEmoji);
                 }
             }
         } finally {
@@ -447,6 +448,45 @@ export function refusableRange(tr: Transaction): { from: number; to: number } | 
 }
 
 /**
+ * A reference ProseMirror made itself — a note that a delete or a paste cut
+ * open needs a `note_ref` before its body, and `createAndFill` leaves the
+ * anchor at its default — given its kind's anchor class, as `noteRef` would,
+ * by steps added to `tr`; whether there was one to give. Only the ranges the
+ * `transactions` changed are walked (as they stand in `state`, after them all):
+ * a reference anywhere else was there before them, and had its anchor.
+ */
+function repairAnchors(state: EditorState, transactions: readonly Transaction[], tr: Transaction): boolean {
+    const ranges: [number, number][] = [];
+    transactions.forEach((t, k) => {
+        t.mapping.maps.forEach((map, i) => {
+            map.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
+                // Into the state after every transaction: the rest of this one's steps, then the later transactions.
+                let from = t.mapping.slice(i + 1).map(newStart, -1);
+                let to = t.mapping.slice(i + 1).map(newEnd, 1);
+                for (const later of transactions.slice(k + 1)) {
+                    from = later.mapping.map(from, -1);
+                    to = later.mapping.map(to, 1);
+                }
+                ranges.push([from, to]);
+            });
+        });
+    });
+    let repaired = false;
+    const size = state.doc.content.size;
+    for (const [from, to] of ranges) {
+        state.doc.nodesBetween(Math.max(0, from), Math.min(size, to), (node, pos, parent) => {
+            if (node.type === nodes.note_ref && node.attrs.anchor === null && parent && tr.doc.nodeAt(pos)?.attrs.anchor === null) {
+                const anchor = noteRef(parent.type.name === 'marginal_note' ? 'marginal_note' : 'sidenote').attrs.anchor as string;
+                tr.setNodeAttribute(pos, 'anchor', anchor);
+                repaired = true;
+            }
+            return true;
+        });
+    }
+    return repaired;
+}
+
+/**
  * The plugin that keeps the caret out of the places between a note's parts,
  * inserts typed text itself inside and next to a note (the DOM has no caret
  * position of its own after a note's span, or in an empty part, and the
@@ -479,11 +519,15 @@ export function notesPlugin(embedInput: Plugin): Plugin {
             };
         },
         appendTransaction(transactions, oldState, newState) {
-            if (!transactions.some(tr => tr.selectionSet)) {
-                return null;
+            // One repair transaction: the selection first, while its document is
+            // still `newState`'s, then the attribute steps (which move no position).
+            const tr = newState.tr;
+            const fixed = transactions.some(t => t.selectionSet) ? normalizedSelection(newState, oldState.selection) : null;
+            if (fixed) {
+                tr.setSelection(fixed);
             }
-            const fixed = normalizedSelection(newState, oldState.selection);
-            return fixed ? asRepair(newState.tr.setSelection(fixed)) : null;
+            const anchored = transactions.some(t => t.docChanged) && repairAnchors(newState, transactions, tr);
+            return fixed || anchored ? asRepair(tr) : null;
         },
         props: {
             handleDOMEvents: {
@@ -551,6 +595,14 @@ export function notePasteTransaction(state: EditorState, slice: Slice): Transact
 // ---------------------------------------------------------------------------
 
 export type NoteNodeName = 'sidenote' | 'marginal_note' | 'left_sidebar' | 'right_sidebar';
+
+/** What each is called — on its bar (`objectToolbar.ts`) and in the Annotation menu (`actions.ts`). */
+export const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = {
+    sidenote: 'Sidenote',
+    marginal_note: 'Marginal note',
+    left_sidebar: 'Left sidebar',
+    right_sidebar: 'Right sidebar',
+};
 
 export const NOTE_LOCK = 'Select text in a paragraph or heading, outside any note, to add this.';
 export const NESTED_NOTE_LOCK = 'A note cannot hold another note: the text is already in one.';
@@ -678,7 +730,7 @@ export function unwrapNote(name: NoteNodeName): Command {
 }
 
 /**
- * Why `unwrapNote(name)` is not run here, so Remove note and Remove sidebar
+ * Why `unwrapNote(name)` is not run here, so Delete note and Remove sidebar
  * are disabled with it: the filter's reason for the transaction it would
  * dispatch (`noteRefusal`) — a sidebar's text glued to a letter, a reference's
  * to a sidebar — or that there is no such note at the selection.
@@ -716,7 +768,7 @@ function wrapTransaction(state: EditorState, name: NoteNodeName): Transaction {
     if (name === 'sidenote' || name === 'marginal_note') {
         const refContent = inner.size > 0 ? inner : Fragment.from(text(NOTE_REF_PLACEHOLDER));
         const body = (name === 'sidenote' ? nodes.sidenote_body : nodes.marginal_note_body).create(null, text(NOTE_BODY_PLACEHOLDER));
-        note = nodes[name].create(null, [nodes.note_ref.create(null, refContent), body], marks);
+        note = nodes[name].create(null, [noteRef(name, refContent), body], marks);
         select = start => {
             if (inner.size === 0) {
                 return { from: start + 2, to: start + 2 + refContent.size };

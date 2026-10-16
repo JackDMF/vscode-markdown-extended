@@ -5,6 +5,7 @@ import { history, redo, undo } from 'prosemirror-history';
 import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { createPositionMap } from '../../../src/editor/positions';
+import { noteRef } from '../../../src/editor/schema';
 import { setInlineEngine, tableLines, unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
 import { DEFAULT_INLINE_ENGINE, InlineEngineDefinition, createInlineEngine, currentInlineDefinition, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -15,6 +16,8 @@ import { objectOfNode } from '../../../src/editor/webview/objects';
 import { wikiEmbedVerbs } from '../../../src/editor/webview/objectToolbar';
 import { OWN_COPY, embedAsTextTransaction, inlineForNote, isOwnCopyDom, textWithEmbeds, wikiEmbedInputRule, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
 import { tokenText } from '../../../src/syntax/tokenText';
+import { plainWikiEmbed } from '../../../src/syntax/markers';
+import { EMBED_WAY_BACK } from '../../../src/editor/verbs';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
 import { attrsReadAt } from '../../../src/editor/attrs';
@@ -261,7 +264,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             n.table_row.create(null, [n.table_header.create(null, [text('a')])]),
             n.table_row.create(null, [n.table_cell.create(null, [embed(source)])]),
         ])]);
-        const sidenote = (ref: Node, body: Node) => paragraph(n.sidenote.create(null, [n.note_ref.create(null, [ref]), n.sidenote_body.create(null, [body])]));
+        const sidenote = (ref: Node, body: Node) => paragraph(n.sidenote.create(null, [noteRef('sidenote', [ref]), n.sidenote_body.create(null, [body])]));
         const preview = previewEngine();
         for (const [doc, written, name] of [
             // The table plugin reads any backslash before `|` as its escape.
@@ -404,7 +407,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         });
         assert.deepStrictEqual(map.sourcePositionOf(at + 1), { line: 2, character: 11, approximate: false });
         // A changed note reference writes `&#124;`: the anchors are that spelling, the text after it exact.
-        const note = paragraph(text('A '), n.sidenote.create(null, [n.note_ref.create(null, [embed('![[a|b]]')]), n.sidenote_body.create(null, [text('n')])]), text(' b'));
+        const note = paragraph(text('A '), n.sidenote.create(null, [noteRef('sidenote', [embed('![[a|b]]')]), n.sidenote_body.create(null, [text('n')])]), text(' b'));
         const noteMap = createPositionMap({ doc: note, eol: '\n', tail: '' }, { defaultWrap: 90 });
         assert.strictEqual(noteMap.text, 'A ++![[a&#124;b]]|n++ b\n');
         let inRef = -1;
@@ -460,7 +463,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         // The end of a composition over literal text already there makes nothing.
         assert.strictEqual(type(paragraph(text('Lit ![[x]]')), ''), null);
         // Across a sidenote: the text before the caret spans the note's parts.
-        const crossing = paragraph(text('See ![['), n.sidenote.create(null, [n.note_ref.create(null, [text('r')]), n.sidenote_body.create(null, [text('body]')])]));
+        const crossing = paragraph(text('See ![['), n.sidenote.create(null, [noteRef('sidenote', [text('r')]), n.sidenote_body.create(null, [text('body]')])]));
         assert.strictEqual(type(crossing, ']'), null);
         // Marks: not the code before the `!`, which is no part of the text the atom replaces.
         const code = schema.marks.code.create();
@@ -492,7 +495,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.strictEqual(off.handler(EditorState.create({ doc: paragraph(text('![[x]')) }), ['![[x]]'] as unknown as RegExpMatchArray, 1, 6), null);
     });
 
-    test('Edit as text: the atom becomes its plain text with its marks and the caret after it, is saved as the escaped literal, undone as one step, and made an embed again by retyping the last ]', () => {
+    test('Convert to text: the atom becomes its plain text with its marks and the caret after it, is saved as the escaped literal, undone as one step, and made an embed again by retyping the last ]', () => {
         const em = schema.marks.em.create();
         const parsed = parseDocument(md, 'An ![[ab]] here and *![[c&#124;d]]* too.\n');
         const start = EditorState.create({ doc: parsed.doc, plugins: [history()] });
@@ -561,7 +564,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         return made.doc;
     }
 
-    test('Edit as text and a retyped ] keep the embed in the link, attribute span or marks it was in: at their end, start and middle', () => {
+    test('Convert to text and a retyped ] keep the embed in the link, attribute span or marks it was in: at their end, start and middle', () => {
         // Through the document: the saved text is the source the embed was parsed from.
         for (const source of [
             'See [the ![[x]]](https://e.org) now.\n',
@@ -662,7 +665,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         assert.strictEqual(toggleThenType(paragraph(text('a ![[x]')), schema.marks.code), null, 'code on');
     });
 
-    test('Edit as text is refused where the notes\' and the tables\' filters would refuse its text: an attribute span over the atom whose literal holds a note marker or a cell\'s pipe', () => {
+    test('Convert to text is refused where the notes\' and the tables\' filters would refuse its text: an attribute span over the atom whose literal holds a note marker or a cell\'s pipe', () => {
         const spanned = (source: string, literal: string) => {
             const parsed = parseDocument(md, source);
             const [at] = embedPositions(parsed.doc);
@@ -691,7 +694,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         }
     });
 
-    test('the embed\'s bar disables Edit as text and Remove embed with the reason where the notes\' filter would refuse them — an attribute span with a note marker in its literal, inside a note — and offers both elsewhere', () => {
+    test('the embed\'s bar disables Convert to text and Delete embed with the reason where the notes\' filter would refuse them — an attribute span with a note marker in its literal, inside a note — and offers both elsewhere', () => {
         const bar = (state: EditorState) => {
             const [at] = embedPositions(state.doc);
             const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
@@ -708,11 +711,11 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         // The span over the atom itself: its text would be unwritable, the atom's removal leaves no span.
         const over = spanned('X $![[x]]$ y.\n', '{title="p$q"}', at => at);
         const [asText, remove] = bar(over);
-        assert.deepStrictEqual([asText.id, remove.id], ['edit-wiki-embed-as-text', 'remove-wiki-embed']);
-        assert.ok(asText.refusal?.startsWith(marker), `Edit as text: ${asText.refusal}`);
+        assert.deepStrictEqual([asText.id, remove.id], ['convert-embed-to-text', 'delete-embed']);
+        assert.ok(asText.refusal?.startsWith(marker), `Convert to text: ${asText.refusal}`);
         const [at] = embedPositions(over.doc);
         assert.strictEqual(noteRefusal(over.tr.delete(at, at + 1)), null, 'the filters let the atom go');
-        assert.strictEqual(remove.refusal, null, 'Remove embed is offered');
+        assert.strictEqual(remove.refusal, null, 'Delete embed is offered');
 
         // The span over the text beside it, in a note the filters would refuse a change to: both verbs carry the reason.
         const beside = spanned('X $a![[x]]$ y.\n', '{title="p$q"}', at => at - 1);
@@ -720,6 +723,20 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
 
         for (const source of ['X $![[x]]$ y.\n', 'Plain ![[x]].\n', '| a |\n| - |\n| ![[x]] |\n']) {
             assert.deepStrictEqual(bar(EditorState.create({ doc: parseDocument(md, source).doc })).map(v => v.refusal), [null, null], source);
+        }
+    });
+
+    test('the embed\'s Convert to text names the text it becomes — in a table cell too — and reads as the way back', () => {
+        for (const source of ['Plain ![[roadmap]].\n', '| a |\n| - |\n| ![[img.png\\|300]] |\n']) {
+            const state = EditorState.create({ doc: parseDocument(md, source).doc });
+            const [at] = embedPositions(state.doc);
+            const node = state.doc.nodeAt(at) as Node;
+            const object = objectOfNode(node, at);
+            assert.ok(object && object.kind === 'wiki_embed');
+            const [asText] = wikiEmbedVerbs(state, object, { asText: () => undefined, remove: () => undefined });
+            // What Convert to text inserts is the plain spelling, not the source's encoding.
+            const inserted = (embedAsTextTransaction(state, at, at + 1) as Transaction).doc.textBetween(at, at + plainWikiEmbed(node.attrs.source as string).length);
+            assert.strictEqual(asText.title, `Convert to text ("${inserted}"); ${EMBED_WAY_BACK}`, source);
         }
     });
 
@@ -819,10 +836,10 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         const html = copiedHtml(plugin(), inline(text('see '), embed('![[x]]')));
         assert.ok(html.includes('title="Wiki embed"'), html);
         assert.ok(html.includes('data-mep-wiki-embed="![[x]]"'), html);
-        assert.ok(!html.includes('Backspace') && !html.includes('Edit as text'), html);
+        assert.ok(!html.includes('Backspace') && !html.includes('Convert to text'), html);
         // In the editor itself the tooltip is the long one.
         const inEditor = (DOMSerializer.fromSchema(schema).serializeNode(embed('![[x]]'), { document: fakeDocument as unknown as Document }) as unknown as FakeNode).html();
-        assert.ok(inEditor.includes('Edit as text'), inEditor);
+        assert.ok(inEditor.includes('Convert to text'), inEditor);
     });
 
     test('the editor\'s own HTML copy is known by its marker in any Visual Editor; its plain text by the last copy made here, which a drag does not replace', async () => {

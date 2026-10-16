@@ -90,14 +90,14 @@ suite('Editor includes (e2e)', () => {
         await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])');
     };
     const includeEntry = '.mep-menu [data-action="include"]';
-    const entryState = () => page.$eval(includeEntry, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+    const entryState = () => page.$eval(includeEntry, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? '') }));
 
     /** Select the expansion with a click, and wait for its bar. */
     const selectExpansion = async () => {
         await page.click('.mep-injected-block .mep-atom-content');
         await page.waitForSelector(`${BAR}[data-object="injected_block"]`, { timeout: 2000 });
     };
-    const verbState = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+    const verbState = (verb: string) => page.$eval(`${BAR} [data-verb="${verb}"]`, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? '') }));
 
     suiteSetup(async function () {
         this.timeout(60000);

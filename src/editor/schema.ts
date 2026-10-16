@@ -3,6 +3,7 @@ import { tableNodes } from 'prosemirror-tables';
 import { ADMONITION_TYPES, NOTE_SYNTAX, plainWikiEmbed } from '../syntax/markers';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { domAttrsOf } from './attrs';
+import { EMBED_WAY_BACK, VERB } from './verbs';
 
 /**
  * The rich editor's document model, shared by the extension host (which parses
@@ -180,20 +181,19 @@ function literalOfDOM(dom: HTMLElement): string | null {
 
 /*
  * `markdownItSidenote.ts` renders a note as its reference with the note nested
- * inside it — `<span class="sn-ref">reference<span class="sidenote">note</span></span>`
+ * inside it — `<span class="sn-ref"><span class="sn-anchor">reference</span><span class="sidenote">note</span></span>`
  * — and a sidebar as one span. The editor draws exactly that DOM, so every
  * stylesheet written for the preview (the margin layout, a reader's own
  * `.sidenote` rules) applies to the note being edited, unchanged:
  *
  * - `sidenote` is the `span.sn-ref`, holding two inline nodes: `note_ref`, the
- *   reference, and `sidenote_body`, the `span.sidenote`. The plugin emits no
- *   element for the reference; ProseMirror needs one to hold its content, so
- *   it is a span with no class (only `data-mep-note-ref`, which no stylesheet
- *   of the preview names) and the reference's text sits where the plugin puts
- *   it — first inside the `.sn-ref`, before the note.
- * - `marginal_note` likewise: `span.mn-ref` > `note_ref` + `marginal_note_body`
- *   (`span.mnote`). The two bodies are two types because their class is part
- *   of what they are; the reference is drawn the same in both and is one type.
+ *   reference, and `sidenote_body`, the `span.sidenote`. `note_ref` is the
+ *   plugin's anchor, `span.sn-anchor`, plus `data-mep-note-ref`, which no
+ *   stylesheet of the preview names and by which a copy made here is known.
+ * - `marginal_note` likewise: `span.mn-ref` > `note_ref` (`span.mn-anchor`) +
+ *   `marginal_note_body` (`span.mnote`). The two bodies are two types because
+ *   their class is part of what they are; the reference is one type in both,
+ *   its anchor class an attribute (`noteRef` sets it).
  * - `left_sidebar` and `right_sidebar` are one span each with the content in it.
  *
  * What a note may hold is the plugin's answer. It parses a reference and a
@@ -218,14 +218,14 @@ const NOTE_REF_ATTR = 'data-mep-note-ref';
 const LINK_TITLE_ATTR = 'data-mep-title';
 
 /** A wiki embed's tooltip: what it is, and the two ways to its text and the one way back. */
-const WIKI_EMBED_TITLE = 'Wiki embed — kept as written. Backspace right after typing, or Edit as text, makes it text; delete the last ] and type it again to make it an embed.';
+const WIKI_EMBED_TITLE = `Wiki embed — kept as written. Backspace right after typing, or ${VERB.convertToText}, makes it text; ${EMBED_WAY_BACK}`;
 
 /**
  * A pasted note (the preview's HTML, or the editor's own copy): its `.sidenote`
  * or `.mnote` child is the body, everything else the reference — unwrapped
  * from the editor's own reference span when the copy came from here.
  */
-function noteContent(bodyType: string, bodyClass: string) {
+function noteContent(bodyType: string, bodyClass: string, anchorClass: string) {
     return (dom: globalThis.Node, schema: Schema): Fragment => {
         const element = dom as HTMLElement;
         const doc = element.ownerDocument;
@@ -235,7 +235,8 @@ function noteContent(bodyType: string, bodyClass: string) {
             const el = child.nodeType === 1 ? child as HTMLElement : null;
             if (el?.classList.contains(bodyClass)) {
                 bodyHolder.append(...Array.from(el.cloneNode(true).childNodes));
-            } else if (el?.hasAttribute(NOTE_REF_ATTR)) {
+            } else if (el?.hasAttribute(NOTE_REF_ATTR) || el?.classList.contains(anchorClass)) {
+                // The editor's own reference span, or the preview's anchor: its text is the reference.
                 refHolder.append(...Array.from(el.cloneNode(true).childNodes));
             } else {
                 refHolder.append(child.cloneNode(true));
@@ -243,7 +244,7 @@ function noteContent(bodyType: string, bodyClass: string) {
         }
         const parser = DOMParser.fromSchema(schema);
         return Fragment.from([
-            parser.parse(refHolder, { topNode: schema.nodes.note_ref.create() }),
+            parser.parse(refHolder, { topNode: schema.nodes.note_ref.create({ anchor: anchorClass }) }),
             parser.parse(bodyHolder, { topNode: schema.nodes[bodyType].create() }),
         ]);
     };
@@ -256,21 +257,33 @@ function notePart(className: string | null, extra: Partial<NodeSpec> = {}): Node
         content: 'note_inline*',
         isolating: true,
         ...extra,
-        toDOM(): DOMOutputSpec {
-            return ['span', className === null ? { [NOTE_REF_ATTR]: '' } : { class: className }, 0];
+        toDOM(node): DOMOutputSpec {
+            return ['span', className === null ? { class: node.attrs.anchor, [NOTE_REF_ATTR]: '' } : { class: className }, 0];
         },
     };
 }
 
-function noteNode(refClass: string, bodyType: string, bodyClass: string): NodeSpec {
+function noteNode(refClass: string, bodyType: string, bodyClass: string, anchorClass: string): NodeSpec {
     return {
         inline: true,
         group: 'inline',
         content: `note_ref ${bodyType}`,
         isolating: true,
-        parseDOM: [{ tag: `span.${refClass}`, getContent: noteContent(bodyType, bodyClass) }],
+        parseDOM: [{ tag: `span.${refClass}`, getContent: noteContent(bodyType, bodyClass, anchorClass) }],
         toDOM(): DOMOutputSpec { return ['span', { class: refClass }, 0]; },
     };
+}
+
+/**
+ * A note's reference, carrying the anchor class of its kind: the one way a
+ * `note_ref` is made. The attribute cannot be required: ProseMirror refuses a
+ * node it cannot generate in a required position (`note_ref sidenote_body`),
+ * so it defaults to `null` — a reference drawn without its anchor — and the
+ * tests hold every place that makes one to a parse of what it writes.
+ */
+export function noteRef(kind: 'sidenote' | 'marginal_note', content?: Fragment | Node | Node[] | null): Node {
+    const anchor = (kind === 'sidenote' ? NOTE_SYNTAX.sidenote : NOTE_SYNTAX.marginalNote).anchorClass;
+    return editorSchema.nodes.note_ref.create({ anchor }, content);
 }
 
 const SN = NOTE_SYNTAX.sidenote;
@@ -736,9 +749,9 @@ export const editorSchema = new Schema({
                 return ['span', { class: 'mep-emoji', 'data-mep-emoji': source, 'data-mep-emoji-name': node.attrs.name as string, title: `Emoji ${source} — kept as written` }, node.attrs.glyph as string];
             },
         },
-        sidenote: noteNode(SN.refClass, 'sidenote_body', SN.noteClass),
-        marginal_note: noteNode(MN.refClass, 'marginal_note_body', MN.noteClass),
-        note_ref: notePart(null),
+        sidenote: noteNode(SN.refClass, 'sidenote_body', SN.noteClass, SN.anchorClass),
+        marginal_note: noteNode(MN.refClass, 'marginal_note_body', MN.noteClass, MN.anchorClass),
+        note_ref: notePart(null, { attrs: { anchor: { default: null } } }),
         sidenote_body: notePart(SN.noteClass),
         marginal_note_body: notePart(MN.noteClass),
         left_sidebar: notePart(LS.cssClass, { group: 'inline', parseDOM: [{ tag: `span.${LS.cssClass}` }] }),

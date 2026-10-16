@@ -430,7 +430,7 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await clickAt(await centre('.mep-raw-block .mep-atom-content table'));
         await page.waitForSelector(SELECTED_BLOCK_BAR);
         assert.ok((await verbsOf(SELECTED_BLOCK_BAR)).includes('lens:l.0'), 'the lens is a verb while the box is closed');
-        assert.match(await page.$eval(`${SELECTED_BLOCK_BAR} [data-verb="edit-source"]`, el => (el as HTMLElement).title), new RegExp(`\\(${MOD_NAME}\\+Enter to apply, Esc to cancel\\)`), 'Edit source names the platform\'s key');
+        assert.match(await page.$eval(`${SELECTED_BLOCK_BAR} [data-verb="edit-source"]`, el => (el.getAttribute('aria-description') ?? '')), new RegExp(`\\(${MOD_NAME}\\+Enter to apply, Esc to cancel\\)`), 'Edit source names the platform\'s key');
         await clickVerb('edit-source');
         await page.waitForSelector('.mep-raw-editor');
         await delay(80);
@@ -551,6 +551,9 @@ suite('Editor atoms with the real mouse (e2e)', () => {
                 for (const width of [1200, 600, 400]) {
                     await page.setViewport({ width, height: 900 });
                     await showBoxes();
+                    // Back at the top: a test before this one leaves the page scrolled, and 'first' would be above the window.
+                    await page.evaluate(() => window.scrollTo(0, 0));
+                    await delay(80);
                     await openEditableTableSource();
                     assert.deepStrictEqual(await verbsOf(SELECTED_BLOCK_BAR), ['show-in-text-editor', 'delete-block']);
                     await shot(page, `B1-${name}-${width}-after-open.png`);

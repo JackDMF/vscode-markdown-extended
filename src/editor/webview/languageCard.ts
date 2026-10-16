@@ -13,6 +13,13 @@
  */
 import { lensLabelNodes } from './lenses';
 
+/**
+ * The class of a card's hover section, whose HTML a provider wrote.
+ * `styles/markdown-extended.css` names it beside the toolbar's card and
+ * samples: a note in a hover is no note of the document and opens no lane.
+ */
+export const HOVER_SECTION_CLASS = 'mep-card-hover';
+
 export interface CardHandlers {
     runCommand(id: string): void;
     runAction(id: string): void;
@@ -35,7 +42,7 @@ export interface CardAnchor {
  */
 export function hoverSection(html: string): HTMLElement {
     const section = document.createElement('div');
-    section.className = 'mep-card-section mep-card-hover';
+    section.className = `mep-card-section ${HOVER_SECTION_CLASS}`;
     const template = document.createElement('template');
     template.innerHTML = html;
     for (const a of Array.from(template.content.querySelectorAll('a'))) {
@@ -164,7 +171,7 @@ export class LanguageCard {
             return;
         }
         // Each kind of link only where the page put it: a command in a hover, a fix in a diagnostic.
-        const command = link.closest('.mep-card-hover') ? link.getAttribute('data-mep-command') : null;
+        const command = link.closest(`.${HOVER_SECTION_CLASS}`) ? link.getAttribute('data-mep-command') : null;
         if (command !== null) {
             this.handlers.runCommand(command);
             return;

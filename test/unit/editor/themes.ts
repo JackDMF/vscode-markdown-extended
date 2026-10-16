@@ -18,24 +18,58 @@ import * as puppeteer from 'puppeteer';
  * `toolbar-activeBackground`, `inputOption-activeBackground` or
  * `menu-selectionBackground`: its hover is `toolbar-hoverOutline`, its menu
  * selection `menu-selectionBorder`.
+ *
+ * Also listed: what VS Code's webview default styles read (`webviewDefaults.ts`)
+ * — `textPreformat-*`, `textBlockQuote-*`, `keybindingLabel-*`,
+ * `scrollbarSlider-*`, `editor-findMatch*` — from the theme file where it sets
+ * them, else the colour registry of VS Code 1.142.0
+ * (`out/vs/workbench/workbench.desktop.main.js`, `registerColor`).
+ * `--monaco-monospace-font`, which the defaults' `code` reads, is no webview
+ * variable: the workbench sets it on its own window
+ * (`.monaco-workbench.windows` in `workbench.desktop.main.css`), not in the
+ * webview, so it is unset in the page as in VS Code.
  */
 export interface Theme {
     name: string;
     /** The body's class, as VS Code sets it: `vscode-light`, `vscode-dark`, `vscode-high-contrast`. */
     bodyClass: string;
+    /** The body's `data-vscode-theme-id`, as VS Code sets it: the theme's id (`Light Modern`; before VS Code 1.142 `Default Light Modern`). */
+    id: string;
     variables: Record<string, string>;
 }
 
+/**
+ * The variables VS Code gives every webview whatever the theme, with its
+ * settings at their defaults: VS Code 1.142.0's `getWebviewThemeData`
+ * (`out/vs/workbench/workbench.desktop.main.js`) — the workbench's font for
+ * this platform, `normal` and `13px`; the editor's default font, weight and
+ * size (`EDITOR_FONT_DEFAULTS`); `editor.fontLigatures` off. The webview reads
+ * the platform it runs on, and so does the page's browser here.
+ */
 const FONTS: Record<string, string> = {
-    'font-family': '-apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", sans-serif',
+    'font-family': process.platform === 'win32' ? '"Segoe WPC", "Segoe UI", sans-serif'
+        : process.platform === 'darwin' ? '-apple-system, BlinkMacSystemFont, sans-serif'
+            : 'system-ui, "Ubuntu", "Droid Sans", sans-serif',
+    'font-weight': 'normal',
     'font-size': '13px',
-    'editor-font-family': 'Consolas, "Courier New", monospace',
-    'editor-font-size': '14px',
+    'editor-font-family': process.platform === 'win32' ? 'Consolas, \'Courier New\', monospace'
+        : process.platform === 'darwin' ? 'Menlo, Monaco, \'Courier New\', monospace'
+            : '\'Droid Sans Mono\', monospace',
+    'editor-font-weight': 'normal',
+    'editor-font-size': process.platform === 'darwin' ? '12px' : '14px',
+    'editor-font-feature-settings': '"liga" off, "calt" off',
 };
+
+/** How the page is shown beside its theme: what VS Code's settings give every webview. */
+export interface HostSettings {
+    /** `accessibility.underlineLinks`: `--text-link-decoration` is `underline`, else `none` (the default). */
+    underlineLinks?: boolean;
+}
 
 export const LIGHT_MODERN: Theme = {
     name: 'Light Modern',
     bodyClass: 'vscode-light',
+    id: 'Light Modern',
     variables: {
         ...FONTS,
         'foreground': '#3b3b3b',
@@ -91,12 +125,28 @@ export const LIGHT_MODERN: Theme = {
         'inputValidation-infoBackground': '#d6ecf2',
         'editorInfo-foreground': '#1a85ff',
         'editorIndentGuide-background1': '#d3d3d3',
+        'textPreformat-foreground': '#3b3b3b',
+        'textPreformat-background': 'rgba(0, 0, 0, 0.12)',
+        'textBlockQuote-background': '#f8f8f8',
+        'textBlockQuote-border': '#e5e5e5',
+        'keybindingLabel-background': 'rgba(221, 221, 221, 0.4)',
+        'keybindingLabel-foreground': '#3b3b3b',
+        'keybindingLabel-border': 'rgba(204, 204, 204, 0.4)',
+        'keybindingLabel-bottomBorder': 'rgba(187, 187, 187, 0.4)',
+        'scrollbarSlider-background': 'rgba(100, 100, 100, 0.4)',
+        'scrollbarSlider-hoverBackground': 'rgba(100, 100, 100, 0.7)',
+        'scrollbarSlider-activeBackground': 'rgba(0, 0, 0, 0.6)',
+        'scrollbar-shadow': '#dddddd',
+        'textCodeBlock-background': 'rgba(220, 220, 220, 0.4)',
+        'editor-findMatchBackground': '#a8ac94',
+        'editor-findMatchHighlightBackground': 'rgba(234, 92, 0, 0.33)',
     },
 };
 
 export const DARK_MODERN: Theme = {
     name: 'Dark Modern',
     bodyClass: 'vscode-dark',
+    id: 'Default Dark Modern',
     variables: {
         ...FONTS,
         'foreground': '#cccccc',
@@ -151,6 +201,21 @@ export const DARK_MODERN: Theme = {
         'inputValidation-infoBackground': '#063b49',
         'editorInfo-foreground': '#3794ff',
         'editorIndentGuide-background1': '#404040',
+        'textPreformat-foreground': '#d0d0d0',
+        'textPreformat-background': '#3c3c3c',
+        'textBlockQuote-background': '#2b2b2b',
+        'textBlockQuote-border': '#616161',
+        'keybindingLabel-background': 'rgba(128, 128, 128, 0.17)',
+        'keybindingLabel-foreground': '#cccccc',
+        'keybindingLabel-border': 'rgba(51, 51, 51, 0.6)',
+        'keybindingLabel-bottomBorder': 'rgba(68, 68, 68, 0.6)',
+        'scrollbarSlider-background': 'rgba(121, 121, 121, 0.4)',
+        'scrollbarSlider-hoverBackground': 'rgba(100, 100, 100, 0.7)',
+        'scrollbarSlider-activeBackground': 'rgba(191, 191, 191, 0.4)',
+        'scrollbar-shadow': '#000000',
+        'textCodeBlock-background': 'rgba(10, 10, 10, 0.4)',
+        'editor-findMatchBackground': '#9e6a03',
+        'editor-findMatchHighlightBackground': 'rgba(234, 92, 0, 0.33)',
     },
 };
 
@@ -158,6 +223,7 @@ export const DARK_MODERN: Theme = {
 export const HC_DARK: Theme = {
     name: 'Dark High Contrast',
     bodyClass: 'vscode-high-contrast',
+    id: 'Default High Contrast',
     variables: {
         ...FONTS,
         'contrastBorder': '#6fc3df',
@@ -201,18 +267,49 @@ export const HC_DARK: Theme = {
         'inputValidation-infoBackground': '#000000',
         'editorInfo-foreground': '#3794ff',
         'editorIndentGuide-background1': '#ffffff',
+        // `textPreformat-background`, `textBlockQuote-background` and both find-match colours are `null` in High Contrast.
+        'textPreformat-foreground': '#ffffff',
+        'textBlockQuote-border': '#ffffff',
+        'keybindingLabel-background': 'rgba(0, 0, 0, 0)',
+        'keybindingLabel-foreground': '#ffffff',
+        'keybindingLabel-border': '#6fc3df',
+        'keybindingLabel-bottomBorder': '#6fc3df',
+        'scrollbarSlider-background': 'rgba(111, 195, 223, 0.6)',
+        'scrollbarSlider-hoverBackground': 'rgba(111, 195, 223, 0.8)',
+        'scrollbarSlider-activeBackground': '#6fc3df',
+        // `scrollbar-shadow` is unset in High Contrast; the on-state's border falls back to this.
+        'contrastActiveBorder': '#f38518',
+        'textCodeBlock-background': '#000000',
     },
 };
 
-/** The theme as a stylesheet: its variables on `:root`, and the body painted with them, as a webview's is. */
-export function themeCss(theme: Theme): string {
-    const vars = Object.entries(theme.variables).map(([name, value]) => `    --vscode-${name}: ${value};`).join('\n');
-    return `:root {\n${vars}\n}\nbody {\n    background-color: var(--vscode-editor-background);\n    color: var(--vscode-editor-foreground);\n    font-family: var(--vscode-font-family);\n    font-size: var(--vscode-font-size);\n}`;
+/**
+ * Light+, the older light default: Light Modern's variables with the two the
+ * bar's title reads set as Light+ has them — a description colour that is not
+ * the text colour (`#717171`) on a darker widget ground (`#f3f3f3`).
+ */
+export const LIGHT_PLUS: Theme = {
+    ...LIGHT_MODERN,
+    name: 'Light+',
+    id: 'Default Light+',
+    variables: { ...LIGHT_MODERN.variables, 'descriptionForeground': '#717171', 'editorWidget-background': '#f3f3f3' },
+};
+
+/**
+ * The theme as a stylesheet: its variables and the host's on `:root`, as VS
+ * Code sets them on the webview's `<html>`, and the editor's background behind
+ * the page — VS Code paints it behind the frame, whose body the defaults leave
+ * transparent. The body's colour and font are the defaults' and the page's own.
+ */
+export function themeCss(theme: Theme, settings: HostSettings = {}): string {
+    const vars = Object.entries(theme.variables).map(([name, value]) => `    --vscode-${name}: ${value};`);
+    vars.push(`    --text-link-decoration: ${settings.underlineLinks ? 'underline' : 'none'};`);
+    return `:root {\n${vars.join('\n')}\n}\nhtml {\n    background-color: var(--vscode-editor-background);\n}`;
 }
 
 /** Put `theme` on the page, replacing the one it had: the variables and the body's theme class. */
-export async function applyTheme(page: puppeteer.Page, theme: Theme): Promise<void> {
-    await page.evaluate((css, bodyClass) => {
+export async function applyTheme(page: puppeteer.Page, theme: Theme, settings: HostSettings = {}): Promise<void> {
+    await page.evaluate((css, bodyClass, id) => {
         let style = document.getElementById('mep-test-theme');
         if (!style) {
             style = document.createElement('style');
@@ -222,5 +319,6 @@ export async function applyTheme(page: puppeteer.Page, theme: Theme): Promise<vo
         style.textContent = css;
         document.body.classList.remove('vscode-light', 'vscode-dark', 'vscode-high-contrast');
         document.body.classList.add(bodyClass);
-    }, themeCss(theme), theme.bodyClass);
+        document.body.dataset.vscodeThemeId = id;
+    }, themeCss(theme, settings), theme.bodyClass, theme.id);
 }

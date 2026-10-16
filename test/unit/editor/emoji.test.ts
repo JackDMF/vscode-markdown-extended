@@ -260,16 +260,16 @@ suite('Editor: an emoji atom on the page — its look, its bar and its verbs', (
         assert.strictEqual(attrs.title, 'Emoji :) — kept as written');
     });
 
-    test('it is an object of its own, whose bar offers Edit as text and Remove emoji', () => {
+    test('it is an object of its own, whose bar offers Convert to text and Delete emoji', () => {
         const state = stateOf('a *:)* b\n');
         const at = atomAt(state);
         const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
         assert.ok(object !== null && object.kind === 'emoji');
         const verbs = emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined });
-        assert.deepStrictEqual(verbs.map(v => [v.id, v.label, v.refusal]), [['edit-emoji-as-text', 'Edit as text', null], ['remove-emoji', 'Remove emoji', null]]);
+        assert.deepStrictEqual(verbs.map(v => [v.id, v.label, v.refusal]), [['convert-emoji-to-text', 'Convert to text', null], ['delete-emoji', 'Delete emoji', null]]);
     });
 
-    test('Edit as text: its spelling as text with its marks and the caret after it, saved escaped, undone as one step', () => {
+    test('Convert to text: its spelling as text with its marks and the caret after it, saved escaped, undone as one step', () => {
         const state = stateOf('a *:)* b\n');
         const at = atomAt(state);
         const tr = emojiAsTextTransaction(state, at, at + 1);
@@ -342,7 +342,7 @@ suite('Editor: an atom is judged where it was written, not by its name', () => {
         const typed = state.apply(state.tr.insertText(' :) ', inSup));
         const tr = typed.tr.insertText('Q', atoms(typed)[0][0] + 1);
         // The cause, and the ways out that are open there.
-        assert.strictEqual(noteRefusal(tr), 'Here :) may still read as an emoji beside the :) in superscript; Edit as text or Remove emoji on it first.');
+        assert.strictEqual(noteRefusal(tr), 'Here :) may still read as an emoji beside the :) in superscript; Convert to text or Delete emoji on it first.');
         assert.strictEqual(typed.apply(tr).doc, typed.doc);
         assert.deepStrictEqual(typedAfter('a ++r|x :) y++ b ++s|z :) w++ c\n', 0), { kept: [':)'], saved: 'a ++r|x :)Q y++ b ++s|z :) w++ c\n' });
     });
@@ -383,14 +383,14 @@ suite('Editor: emoji atoms, review 1', () => {
         assert.strictEqual(save(pasted), 'x ++r|bodya :)++ y\n');
     });
 
-    test('Edit as text is refused where the text would still read as an emoji: inside a sidenote', () => {
+    test('Convert to text is refused where the text would still read as an emoji: inside a sidenote', () => {
         for (const [source, refused] of [['a ++r|x :) y++ b\n', true], ['a !!r|x :) y!! b\n', true], ['a $x :) y$ b\n', false], ['a :) b\n', false]] as const) {
             const state = stateOf(source);
             const [at] = atoms(state)[0];
             const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
             assert.ok(object !== null);
             const [asText, remove] = emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined });
-            assert.strictEqual(asText.refusal, refused ? 'Inside a note, :) is still read as an emoji; Remove emoji works.' : null, source);
+            assert.strictEqual(asText.refusal, refused ? 'Inside a note, :) is still read as an emoji; Delete emoji works.' : null, source);
             assert.strictEqual(remove.refusal, null, source);
         }
     });
@@ -472,13 +472,13 @@ suite('Editor: emoji atoms, review 1', () => {
         assert.ok(!html.includes('title='), html);
     });
 
-    test('the bar\'s verb says Edit as text is one way, with the real spelling and undo key', () => {
+    test('the bar\'s Convert to text names the text it becomes, with the real spelling', () => {
         const state = stateOf('a :wave: b\n');
         const [at] = atoms(state)[0];
         const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
         assert.ok(object !== null);
         const [asText] = emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined });
-        assert.strictEqual(asText.title, `Makes it the characters :wave: — they stay text and are saved as text; ${undoKey()} brings the emoji back.`);
+        assert.strictEqual(asText.title, `Convert to text (":wave:"): it is saved as text; ${undoKey()} restores the emoji.`);
     });
 });
 
@@ -520,7 +520,7 @@ suite('Editor: emoji atoms, review 2', () => {
         });
         const typed = sup.apply(sup.tr.insertText(' :) ', inSup));
         // The emoji superscript reads has no known place (its text is read unescaped): never a guess, the edit is refused.
-        assert.strictEqual(noteRefusal(breakFirst(typed)), 'Here :) may still read as an emoji beside the :) in superscript; Edit as text or Remove emoji on it first.');
+        assert.strictEqual(noteRefusal(breakFirst(typed)), 'Here :) may still read as an emoji beside the :) in superscript; Convert to text or Delete emoji on it first.');
         assert.strictEqual(typed.apply(breakFirst(typed)).doc, typed.doc);
     });
 
@@ -564,7 +564,7 @@ suite('Editor: emoji atoms, review 2', () => {
             x = x < 0 && n.isText && n.text === 'x ' ? pos : x;
         });
         const tr = state.tr.delete(x, x + 2);
-        assert.strictEqual(noteRefusal(tr), 'Here >:( may still read as an emoji; Edit as text or Remove emoji on it first.');
+        assert.strictEqual(noteRefusal(tr), 'Here >:( may still read as an emoji; Convert to text or Delete emoji on it first.');
         assert.strictEqual(state.apply(tr).doc, state.doc, 'refused');
         // Where no emoji of its name is read at all, it is text for certain.
         const single = stateOf(`a${BS}\nx >:( b\n`);

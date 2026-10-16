@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { closeEditorPage, EXTENSION_ID, EditorPage, delay, openEditorPage, shot, vscodeMarkdownCss } from './pageHarness';
+import { closeEditorPage, EXTENSION_ID, EditorPage, delay, openEditorPage, shot } from './pageHarness';
 import { DARK_MODERN, applyTheme } from './themes';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
@@ -141,7 +141,7 @@ suite('Bubble samples (e2e)', () => {
 
     suiteSetup(async function () {
         this.timeout(60000);
-        editor = await openEditorPage({ width: 1400, stylesheets: [vscodeMarkdownCss()], styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'] });
+        editor = await openEditorPage({ width: 1400, styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'] });
         if (!editor) {
             this.skip();
         }

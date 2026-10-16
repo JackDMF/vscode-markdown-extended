@@ -23,7 +23,10 @@ import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { createEditorEngine } from '../../../src/editor';
 import { plugins } from '../../../src/plugin/plugins';
-import { hostEngine, topChildren, touched } from './helpers';
+import { hostEngine, repoRoot, topChildren, touched } from './helpers';
+import * as fs from 'fs';
+import * as path from 'path';
+import { touchesNote } from '../../../src/editor/webview/lane';
 
 function stateOf(text: string): EditorState {
     const { doc } = parseDocument(hostEngine(), text, {});
@@ -131,6 +134,118 @@ suite('Editor notes: making one from the toolbar', () => {
         const state = select(stateOf('Alpha ++beta|body++ gamma.\n'), 'body');
         assert.strictEqual(wrapNodeLockReason(state), NESTED_NOTE_LOCK);
         assert.strictEqual(wrapInNote('marginal_note')(state), false);
+    });
+});
+
+suite('Editor notes: the reference carries its kind\'s anchor, which the Markdown never sees', () => {
+    /** The first note of `state`. */
+    const firstNote = (state: EditorState): Node => {
+        let found: Node | undefined;
+        state.doc.descendants(node => {
+            if (!found && (node.type.name === 'sidenote' || node.type.name === 'marginal_note')) {
+                found = node;
+            }
+            return !found;
+        });
+        assert.ok(found, 'a note');
+        return found;
+    };
+
+    test('a note made from the toolbar has the anchor of its kind, and reads back as the same node', () => {
+        for (const [name, anchor, written] of [
+            ['sidenote', 'sn-anchor', 'Alpha ++beta|note++ gamma.\n'],
+            ['marginal_note', 'mn-anchor', 'Alpha !!beta|note!! gamma.\n'],
+        ] as const) {
+            const state = run(select(stateOf(SOURCE), 'beta'), wrapInNote(name));
+            const note = firstNote(state);
+            assert.strictEqual(note.child(0).attrs.anchor, anchor, name);
+            assert.strictEqual(text(state), written);
+            assert.ok(firstNote(stateOf(text(state))).eq(note), `${name}: parse(serialize(doc)) holds the same note`);
+        }
+    });
+
+    test('a reference ProseMirror makes itself, closing a note a delete or a paste cut open, gets its kind\'s anchor too', () => {
+        const anchorsOf = (state: EditorState): unknown[] => {
+            const out: unknown[] = [];
+            state.doc.descendants((node, _pos, parent) => {
+                if (node.type.name === 'note_ref') {
+                    out.push([parent?.type.name, node.attrs.anchor]);
+                }
+            });
+            return out;
+        };
+        for (const [source, from, to] of [
+            ['Alpha ++beta|body text++ gamma.\n', 'Alpha', 'text'],
+            ['Alpha !!beta|body text!! gamma.\n', 'Alpha', 'text'],
+            ['Alpha ++beta|body text++ gamma ++two|more text++.\n', 'body', 'more'],
+        ]) {
+            const state = stateOf(source);
+            const after = state.apply(state.tr.delete(posOf(state.doc, from), posOf(state.doc, to)));
+            for (const [parent, anchor] of anchorsOf(after) as [string, unknown][]) {
+                assert.strictEqual(anchor, parent === 'sidenote' ? 'sn-anchor' : 'mn-anchor', `${source} ${from}…${to}: ${parent}`);
+            }
+        }
+    });
+
+    test('a refilled reference and a caret put between the note\'s parts are both repaired, in one transaction that applies', () => {
+        const state = stateOf('Alpha ++beta|body text++ gamma.\n');
+        const note = posOf(state.doc, 'beta') - 2;
+        const tr = state.tr.delete(note + 1, note + 1 + (state.doc.nodeAt(note)?.child(0).nodeSize ?? 0) + 3);
+        tr.setSelection(TextSelection.create(tr.doc, note + 1 + (tr.doc.nodeAt(note)?.child(0).nodeSize ?? 0)));
+        const after = state.applyTransaction(tr).state;
+        assert.strictEqual(after.doc.nodeAt(note)?.child(0).attrs.anchor, 'sn-anchor');
+        assert.notStrictEqual(noteContextAt(after.selection.$head), null, 'the caret is in a part');
+    });
+
+    test('the margin lane is measured only for a change that makes or removes a note or a sidebar', () => {
+        const state = stateOf('Alpha beta ++ref|body++ gamma.\n\nPlain $side$ text.\n\nOther words.\n');
+        assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'Other'))), false, 'typing in plain text');
+        assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'beta'))), false, 'typing beside a note, outside it');
+        assert.strictEqual(touchesNote(state.tr.insertText('x', posOf(state.doc, 'body'))), false, 'typing in a note: it stays a note');
+        const wrapped = select(stateOf('Alpha beta gamma.\n'), 'beta');
+        let made: Transaction | undefined;
+        wrapInNote('sidenote')(wrapped, tr => {
+            made = tr;
+        });
+        assert.ok(made && touchesNote(made), 'making a note');
+        const note = posOf(state.doc, 'ref') - 2;
+        assert.strictEqual(touchesNote(state.tr.delete(note, note + (state.doc.nodeAt(note)?.nodeSize ?? 0))), true, 'removing it');
+        assert.strictEqual(touchesNote(state.tr.delete(posOf(state.doc, 'side') - 1, posOf(state.doc, 'side') + 5)), true, 'removing a sidebar');
+        // A paragraph nesting notes stays a source block; its rendering holds the notes the stylesheet counts.
+        const nested = stateOf('Before.\n\nA ++a|see !!b|c!!++ z.\n');
+        const block = nested.doc.child(1);
+        assert.strictEqual(block.type.name, 'raw_block');
+        assert.ok(/class="sn-ref/.test(block.attrs.html as string), 'its rendering holds a note');
+        const start = nested.doc.child(0).nodeSize;
+        assert.strictEqual(touchesNote(nested.tr.delete(start, start + block.nodeSize)), true, 'removing a source block holding notes');
+        assert.strictEqual(touchesNote(nested.tr.insertText('x', 1)), false, 'typing beside it');
+    });
+
+    test('no source but the schema makes a reference by hand: every other place goes through noteRef, which sets the anchor', () => {
+        const srcRoot = path.join(repoRoot, 'src');
+        const offenders: string[] = [];
+        const walk = (dir: string) => {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    walk(full);
+                } else if (entry.name.endsWith('.ts') && full !== path.join(srcRoot, 'editor', 'schema.ts')
+                    && /note_ref\.create/.test(fs.readFileSync(full, 'utf8'))) {
+                    offenders.push(path.relative(srcRoot, full));
+                }
+            }
+        };
+        walk(srcRoot);
+        assert.deepStrictEqual(offenders, []);
+    });
+
+    test('a file\'s notes are written back byte for byte, as kept and by rule', () => {
+        const source = 'A ++**r** ef|n *b*++ and !!m|n!! and ++r|n++ end.\n';
+        const state = stateOf(source);
+        assert.deepStrictEqual(topChildren(state.doc).map(n => n.type.name), ['paragraph']);
+        assert.strictEqual(text(state), source, 'as kept');
+        const byRule = state.doc.type.create(null, topChildren(state.doc).map(n => touched(n)));
+        assert.strictEqual(serializeDocument({ doc: byRule, eol: '\n', tail: '' }, { defaultWrap: 90 }), source, 'by rule');
     });
 });
 

@@ -274,8 +274,8 @@ suite('Editor webview (e2e)', () => {
                 verbs: Array.from(bar.querySelectorAll('[data-verb]')).map(v => (v as HTMLElement).dataset.verb),
             }));
         };
-        assert.deepStrictEqual(await barOf(1), { label: 'Snippet gone (not found)', verbs: ['change-snippet', 'show-in-text-editor', 'delete-directive'] });
-        assert.deepStrictEqual(await barOf(0), { label: 'Included snippet legal-notice', verbs: ['open-snippet', 'change-snippet', 'show-in-text-editor', 'delete-directive'] });
+        assert.deepStrictEqual(await barOf(1), { label: 'Snippet gone (not found)', verbs: ['show-in-text-editor', 'change-snippet', 'delete-directive'] });
+        assert.deepStrictEqual(await barOf(0), { label: 'Included snippet legal-notice', verbs: ['open-snippet', 'show-in-text-editor', 'change-snippet', 'delete-directive'] });
         await page.click(`${SELECTED_BAR} [data-verb="open-snippet"]`);
         const open = (await posted()).find((m): m is Extract<WebviewMessage, { type: 'openSnippet' }> => m.type === 'openSnippet');
         assert.strictEqual(open?.path, 'C:\\corpus\\snippets\\legal-notice.md');

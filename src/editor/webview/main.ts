@@ -25,6 +25,7 @@ import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
 import { lockLineHeight } from './clearance';
+import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
 import { showChangeHint, showHint } from './hint';
@@ -860,7 +861,13 @@ const SCROLL_MARGIN = {
 };
 
 function dispatchTransaction(this: EditorView, tr: Transaction): void {
-    this.updateState(this.state.apply(tr));
+    const apply = () => this.updateState(this.state.apply(tr));
+    // Only a change to a note or a sidebar can open or close the margin lane: typing elsewhere is not measured.
+    if (tr.docChanged && touchesNote(tr)) {
+        keepingLine(this, this.state.selection.head, tr.mapping, apply);
+    } else {
+        apply();
+    }
     if (tr.docChanged) {
         scheduleFlush();
     }
@@ -895,8 +902,11 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         // change made elsewhere (a save that trims whitespace is one). Applied
         // past `dispatchTransaction`: it is not an edit to send back. The
         // selection is mapped through the change, so a caret outside the
-        // replaced blocks stays where it was.
-        view.updateState(view.state.apply(resyncTransaction(view.state, doc)));
+        // replaced blocks stays where it was — and its line stays in place on
+        // screen when the change opens or closes the margin lane.
+        const shown = view;
+        const resync = resyncTransaction(shown.state, doc);
+        keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
         sendDeferredActions();
         caretReporter.documentShown();
         // An open list and a card were about the text before.

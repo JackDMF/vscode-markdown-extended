@@ -1,22 +1,50 @@
 /**
  * Markdown Extended - Sidenotes, Marginal Notes, and Sidebar Styling
  *
- * Minimal default formatting for the custom note syntax:
- * - Sidenotes:      ++reference|note content++   -> .sn-ref > .sidenote
- * - Marginal notes: !!reference|note content!!   -> .mn-ref > .mnote
+ * Minimal default formatting for the custom note syntax, read by the preview,
+ * the Visual Editor and every export alike:
+ * - Sidenotes:      ++reference|note content++   -> .sn-ref > .sn-anchor + .sidenote
+ * - Marginal notes: !!reference|note content!!   -> .mn-ref > .mn-anchor + .mnote
  * - Left sidebar:   $content$                    -> .left-sidebar
  * - Right sidebar:  @content@                    -> .right-sidebar
  *
  * STRUCTURE
- * The note span is nested INSIDE the reference span (see markdownItSidenote.ts),
- * so target it as a descendant (`.sn-ref .sidenote`), never as a sibling.
+ *   <span class="sn-ref"><span class="sn-anchor">reference</span><span class="sidenote">note</span></span>
+ *   <span class="mn-ref"><span class="mn-anchor">reference</span><span class="mnote">note</span></span>
+ * The note span is nested INSIDE the reference span, a direct child of it (see
+ * markdownItSidenote.ts), so target it as a child (`.sn-ref > .sidenote`),
+ * never as a sibling. The anchor wraps the reference text alone.
  *
  * LAYOUT MODEL
- * The stacked, in-flow presentation below is the BASE. The floated margin layout
- * is layered on top only at screen widths that can actually hold it (>= 1280px).
- * That ordering is deliberate: print (PDF export), image export and narrow
- * preview panes all have no usable margin, and they get the readable block
- * rendering without any per-medium duplication.
+ * BASE (every medium below the threshold, and print/PDF): the INLINE RUN - the
+ * note is a tinted run with a left bar inside the sentence, wrapped like text
+ * (box-decoration-break: clone repeats bar and padding on every line).
+ * MARGIN (screen, from the threshold): notes float into a lane the default
+ * RESERVES on <html>'s padding, so the column narrows instead of the note
+ * leaving the window. Nothing can scroll sideways.
+ * The anchor carries a dotted underline in both.
+ *
+ * THRESHOLD RULE
+ *   window >= min column 600px + page padding 2 x 52px + one lane per side in use
+ *   one side 928 -> 960px, both sides 1152 -> 1200px; a document switches all
+ *   its notes together. Media queries take no var(): the numbers are literal,
+ *   so a --md-note-width wider than 200px gets a lane that fits later than the
+ *   threshold switches.
+ *
+ * THE LANE - one documented variable per side
+ *   --mep-note-lane       room reserved beside the column for right-side notes
+ *   --mep-note-lane-left  the same for left sidebars (defaults to the right one)
+ * A stylesheet that does its own margin layout sets
+ *   :root { --mep-note-lane: 0 }
+ * and the default reserves nothing on either side (the notes still float out).
+ *
+ * Every rule keeps the weight of a bare class or element (guards in :where()),
+ * so a reader's stylesheet loaded later wins.
+ *
+ * BROWSERS
+ * color-mix(), :has() and :where() need Chromium 111 or later - VS Code's
+ * webview, its preview and the export's renderer all have them. An exported
+ * HTML opened in an older browser gets no lane and floating notes.
  *
  * CUSTOMIZATION
  * Add your own CSS to the "markdown.styles" setting; it loads after this file
@@ -33,63 +61,90 @@
 /* ============================================================================
    Custom Properties
    ============================================================================ */
+
+/* The lanes are lengths, registered as such: a stylesheet's
+   `:root { --mep-note-lane: 0 }` then means 0px. Unregistered, the bare 0
+   would make `calc(var(--md-page-gutter) + 0)` invalid, and the page would
+   lose its own gutter with the lane. */
+@property --mep-note-lane {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+@property --mep-note-lane-left {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
 :root {
-  /* Margin geometry.
-     Widths are absolute, not percentages. A percentage offset scales with the
-     content column, so the note always pushed further out than the surrounding
-     gutter could ever grow - guaranteeing horizontal overflow in HTML export
-     against the centered 820px column of markdown-extended-default.css. With a
-     fixed width the note needs exactly `width + gap` of gutter, which is what
-     the 1280px breakpoint below is derived from (820 + 2 * 224 = 1268). */
+  /* Margin geometry. Widths are absolute, not percentages: a note needs exactly
+     `width + gap` of lane, which is what the lane below reserves. */
   --md-note-width: 200px;
   --md-note-gap: 24px;
   --md-note-offset: calc(-1 * (var(--md-note-width) + var(--md-note-gap)));
-
   --md-sidebar-width: 200px;
   --md-sidebar-gap: 24px;
   --md-sidebar-offset: calc(-1 * (var(--md-sidebar-width) + var(--md-sidebar-gap)));
 
-  /* Typography */
+  --mep-note-lane: max(calc(var(--md-note-width) + var(--md-note-gap)),
+                       calc(var(--md-sidebar-width) + var(--md-sidebar-gap)));
+  --mep-note-lane-left: var(--mep-note-lane);
+  /* What the page already pads <html> with, which the lane adds to: VS Code's
+     markdown.css gives html and body `padding: 0 26px`. A theme or an export
+     template with other padding on <html> sets its own on :root. */
+  --md-page-gutter: 26px;
+
   --md-note-font-size: 0.9em;
-  --md-note-opacity: 0.85;
-
-  --md-note-text: inherit;
-
-  /* Block-rendering box. Set the width to 0 to drop the rule entirely.
-     Colors live on `body` below, for the reason explained there. */
-  --md-note-border-width: 3px;
-  --md-note-padding: 0.5em 1em;
+  --md-note-opacity: 0.85;           /* how much of the text colour a note keeps */
+  --md-note-padding: 0.05em 0.45em;
 }
 
-/* Surface colors for the stacked presentation.
-   Concrete values, because an exported HTML/PDF is a standalone file with no
-   --vscode-* variables to read; they mirror markdown-extended-default.css so a
-   document using the built-in export theme reads as one system. Without the dark
-   variant a dark-theme export painted near-white text on light grey - about
-   1.1:1 contrast, i.e. invisible.
+/* Theme-relative colours, mixed from the text colour: the tint is darker than
+   a light page and LIGHTER than a dark one - in VS Code, in an export, under
+   any reader theme, with no --vscode-* variable. The bar keeps at least 3:1
+   against the page and against the tint.
 
-   These sit on `body`, not `:root`, and the dark variant uses :where() to stay
-   at the same specificity as the line above it. That is what makes them
-   overridable: custom properties inherit from the NEAREST ancestor that sets
-   them, so a `:root` rule in your own stylesheet could never beat a `body` rule
-   in this one, however specific. Override them on `body` and your declaration -
-   loaded after this file - wins in both themes:
+   These, and the bar's width, sit on `body`, not `:root`: custom properties
+   inherit from the NEAREST ancestor that sets them, so a `:root` rule in your
+   own stylesheet could never beat a `body` rule in this one. Override them on
+   `body` and your declaration - loaded after this file - wins, on screen and
+   in print alike:
 
-     body { --md-note-surface: transparent; --md-note-border: transparent; }
-
-   A `body` override also reaches the layout variables declared on :root above,
-   so one block is enough for all of them. */
+     body { --md-note-surface: transparent; --md-note-border-width: 0; } */
 body {
-  --md-note-surface: #f6f8fa;
-  --md-note-border: #d0d7de;
+  --md-note-text: color-mix(in srgb, currentColor calc(var(--md-note-opacity) * 100%), transparent);
+  --md-note-surface: color-mix(in srgb, currentColor 7%, transparent);
+  --md-note-border: color-mix(in srgb, currentColor 72%, transparent);
+  --md-note-border-width: 3px;
+  --md-anchor-line: color-mix(in srgb, currentColor 60%, transparent);
 }
-body:where(.vscode-dark) {
-  --md-note-surface: #161b22;
-  --md-note-border: #30363d;
+
+/* High Contrast: no tint and no muting - the note's text on the page's own
+   ground, in the page's own colour, the bar and the underline in the theme's
+   contrast border, as VS Code draws its own widgets there. At the weight of
+   the rule above (`:where`), so a reader's `body` rule still wins. */
+body:where(.vscode-high-contrast, .vscode-high-contrast-light) {
+  --md-note-text: currentColor;
+  --md-note-surface: transparent;
+  --md-note-border: var(--vscode-contrastBorder, currentColor);
+  --md-anchor-line: var(--vscode-contrastBorder, currentColor);
 }
 
 /* ============================================================================
-   Base presentation - notes as blocks in the text flow
+   The anchor - both layouts
+   ============================================================================ */
+.sn-anchor,
+.mn-anchor {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--md-anchor-line);
+  text-decoration-thickness: max(1px, 0.07em);
+  text-underline-offset: 0.2em;
+}
+
+/* ============================================================================
+   Base presentation - the inline run
    Applies to print/PDF, image export and any screen narrower than the margin
    layout needs.
    ============================================================================ */
@@ -97,16 +152,16 @@ body:where(.vscode-dark) {
 .mnote,
 .left-sidebar,
 .right-sidebar {
-  display: block;
-  box-sizing: border-box;
-  margin: 0.5em 0;
+  display: inline;
+  box-sizing: border-box;   /* as shipped; a stylesheet floating notes at a width relies on it */
+  margin: 0 0.15em;
   padding: var(--md-note-padding);
   font-size: var(--md-note-font-size);
   color: var(--md-note-text);
   background-color: var(--md-note-surface);
   border-left: var(--md-note-border-width) solid var(--md-note-border);
-  break-inside: avoid;
-  page-break-inside: avoid;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 /* References stay inline in both layouts. */
@@ -116,67 +171,112 @@ body:where(.vscode-dark) {
   vertical-align: baseline;
 }
 
-.mnote {
-  font-weight: bold;
-}
-
 .left-sidebar,
 .right-sidebar {
   font-style: italic;
 }
 
+/* Print/PDF with background graphics off drops the tint; the bar is a border
+   and always prints, so it carries the note alone: darker and a little wider.
+   (Not print-color-adjust: exact - that would overrule the reader's own
+   "no background graphics" choice in every document.)
+   A reader's own choice still wins: both are set on `body`, where a later
+   `body { --md-note-border: transparent; --md-note-border-width: 0 }` of
+   theirs overrides them in print as on screen. */
+@media print {
+  body {
+    --md-note-border: color-mix(in srgb, currentColor 80%, transparent);
+    --md-note-border-width: max(3px, 0.8mm);
+  }
+}
+
 /* ============================================================================
-   Margin layout - floated notes
-   Engaged only when the viewport can hold the content column plus a full note
-   on either side. Print never matches `screen`, so PDF export keeps the base.
+   Margin layout - reserved lanes, engaged only when they fit.
+   Guard G = "the document uses at most one side" (from 960px);
+   from 1200px the same rules apply unguarded.
 
-   Not inside `.mep-preview-card`. The Visual Editor's toolbar shows each note
-   in a preview card about 360px wide, and a media query reads the viewport,
-   not the card: in a webview wider than 1280px the card's note would float
-   out of it by the full offset and vanish under its clipping. The card keeps
-   the base rendering above instead - the one statement of the stacked form,
-   not a copy of it in the editor's stylesheet. The class occurs only in the
-   editor's page (PREVIEW_CARD_CLASS in src/editor/webview/toolbar/actions.ts
-   names it, and a test holds this file to that name); the preview and every
-   export never carry it, so for them nothing changes. The guard is wrapped in
-   :where() so the rules keep the specificity of a bare class: a reader's own
-   `.sidenote { ... }` loaded later still wins, as it did before.
+   Not inside `.mep-preview-card`, `.mep-sample` or `.mep-card-hover`. The
+   Visual Editor's toolbar shows each note in a preview card about 360px wide,
+   and a media query reads the viewport, not the card: the card's note would
+   float out of it and vanish under its clipping. Its menus draw each
+   sidebar's glyph as a real `.left-sidebar` / `.right-sidebar` inside a
+   `.mep-sample`, and a hover card shows HTML a provider wrote. None of them
+   is the document's, none may open a lane on the editor's page, so the guard
+   stands on every element rule AND inside every :has(). The classes occur
+   only in the editor's page (PREVIEW_CARD_CLASS and SAMPLE_CLASS in
+   src/editor/webview/toolbar/actions.ts, HOVER_SECTION_CLASS in
+   src/editor/webview/languageCard.ts name them, and a test holds this file to
+   those names); the preview and every export never carry them. The guards
+   are wrapped in :where() so the rules keep the specificity of a bare class.
+   A source block's or an injected block's rendering IS the document's, and
+   is not guarded: its notes lie as the preview's do.
+
+   Keep each selector on one line: a line break between `:where(...)` and
+   `:where(:has...)` would turn into a descendant selector. The rules reserving
+   the lane start with a bare `html`: inside :where() it would weigh nothing,
+   and markdown.css's `html, body { padding: 0 26px }` would win.
    ============================================================================ */
-@media screen and (min-width: 1280px) {
-  .sidenote:where(:not(.mep-preview-card *)),
-  .mnote:where(:not(.mep-preview-card *)),
-  .left-sidebar:where(:not(.mep-preview-card *)),
-  .right-sidebar:where(:not(.mep-preview-card *)) {
-    margin-top: 0;
-    margin-bottom: 0;
-    padding: 0;
-    background-color: transparent;
-    border-left: 0;
-    opacity: var(--md-note-opacity);
+@media screen and (min-width: 960px) {
+  html:where(:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), :not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))):where(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) {
+    padding-right: calc(var(--md-page-gutter) + var(--mep-note-lane));
   }
-
-  .sidenote:where(:not(.mep-preview-card *)),
-  .mnote:where(:not(.mep-preview-card *)) {
-    float: right;
-    clear: right;
-    width: var(--md-note-width);
-    margin-right: var(--md-note-offset);
-    margin-left: 0;
+  html:where(:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), :not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))):where(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) {
+    padding-left: calc(var(--md-page-gutter) + var(--mep-note-lane-left));
   }
-
-  .left-sidebar:where(:not(.mep-preview-card *)) {
-    float: left;
-    clear: left;
-    width: var(--md-sidebar-width);
-    margin-left: var(--md-sidebar-offset);
-    margin-right: 0;
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) :is(.sidenote, .mnote, .right-sidebar):where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
+    display: block; float: right; clear: right; width: var(--md-note-width);
+    margin: 0 var(--md-note-offset) 0.5em 0; padding: 0;
+    background-color: transparent; border-left: 0;
   }
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) .mnote:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) { font-weight: bold; }
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) .right-sidebar:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
+    width: var(--md-sidebar-width); margin-right: var(--md-sidebar-offset);
+  }
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) .left-sidebar:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
+    display: block; float: left; clear: left; width: var(--md-sidebar-width);
+    margin: 0 0 0.5em var(--md-sidebar-offset); padding: 0;
+    background-color: transparent; border-left: 0;
+  }
+  :where(html:not(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))), html:not(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)))) > body::after {
+    content: ""; display: block; clear: both;
+  }
+}
 
-  .right-sidebar:where(:not(.mep-preview-card *)) {
-    float: right;
-    clear: right;
-    width: var(--md-sidebar-width);
-    margin-right: var(--md-sidebar-offset);
-    margin-left: 0;
+@media screen and (min-width: 1200px) {
+  html:where(:has(:is(.sidenote, .mnote, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) {
+    padding-right: calc(var(--md-page-gutter) + var(--mep-note-lane));
+  }
+  html:where(:has(.left-sidebar:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) {
+    padding-left: calc(var(--md-page-gutter) + var(--mep-note-lane-left));
+  }
+  :is(.sidenote, .mnote, .right-sidebar):where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
+    display: block; float: right; clear: right; width: var(--md-note-width);
+    margin: 0 var(--md-note-offset) 0.5em 0; padding: 0;
+    background-color: transparent; border-left: 0;
+  }
+  .mnote:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) { font-weight: bold; }
+  .right-sidebar:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
+    width: var(--md-sidebar-width); margin-right: var(--md-sidebar-offset);
+  }
+  .left-sidebar:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *)) {
+    display: block; float: left; clear: left; width: var(--md-sidebar-width);
+    margin: 0 0 0.5em var(--md-sidebar-offset); padding: 0;
+    background-color: transparent; border-left: 0;
+  }
+  /* Only a page holding notes of its own: a card's, a sample's or a hover's note clears nothing. */
+  :where(html:has(:is(.sidenote, .mnote, .left-sidebar, .right-sidebar):not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))) > body::after { content: ""; display: block; clear: both; }
+}
+
+/* ============================================================================
+   Pairing on hover. A note pushed down by the one above it is matched to its
+   anchor by pointing at either. Weight of a bare class, screen with a pointer
+   only; print relies on order. Not on the Visual Editor's buttons and menu
+   entries (`.mep-sample`): there the pointer is on the control, not the note.
+   ============================================================================ */
+@media screen and (hover: hover) {
+  :where(.sn-ref:hover:not(.mep-sample *)) > :is(.sn-anchor, .sidenote),
+  :where(.mn-ref:hover:not(.mep-sample *)) > :is(.mn-anchor, .mnote) {
+    background-color: color-mix(in srgb, currentColor 14%, transparent);
+    border-radius: 2px;
   }
 }

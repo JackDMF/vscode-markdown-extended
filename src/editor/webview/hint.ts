@@ -4,7 +4,7 @@
  *
  * Two tones. A **refusal** says why an edit was not applied (`notesPlugin`'s
  * filter); a **neutral** one announces the result of a verb that leaves
- * nothing visible behind but a disappearance ("Note removed — Ctrl+Z", the
+ * nothing visible behind but a disappearance ("Note deleted — Ctrl+Z", the
  * object toolbar). Both are the same element: one place beside the caret where
  * the page speaks, not two that could stand on each other. A hint that reports
  * a change of the document, with the key that undoes it (`showChangeHint`), is
@@ -16,6 +16,7 @@
  */
 import { EditorState, Plugin, PluginKey } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { UNDO_BINDING, keyLabel } from '../keys';
 
 export type HintTone = 'refusal' | 'neutral';
 
@@ -128,9 +129,17 @@ export function macKeys(): boolean {
     return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 }
 
-/** The key that undoes, as the platform names it, for a hint that offers the undo. */
+/** The key that undoes — the page keymap's own binding (`keys.ts`) — as the platform names it, for a hint that offers the undo. */
 export function undoKey(): string {
-    return macKeys() ? 'Cmd+Z' : 'Ctrl+Z';
+    return keyLabel(UNDO_BINDING, macKeys());
+}
+
+/**
+ * The one pattern of a hint that reports a change and offers its undo:
+ * "<Object> <past participle> — <undo key>" (`Image deleted — Ctrl+Z`).
+ */
+export function undoHint(done: string): string {
+    return `${done} — ${undoKey()}`;
 }
 
 /** The key that applies a source box, as the platform names it. */

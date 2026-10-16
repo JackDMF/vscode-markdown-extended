@@ -8,13 +8,16 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
-    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, elideDataUris, inBubble, inRow, isSourceAction, menuOf, submenuOf, tooltipOf,
+    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, submenuOf, tipOf,
 } from '../../../src/editor/webview/toolbar/actions';
+import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
+import { tipText } from '../../../src/editor/tips';
 import {
     ALL_LOCK, ATOM_LOCK, GAP_LOCK, NODE_LOCK, REQUIREMENT_HEADING_LOCK, TABLE_LOCK, WHOLE_LOCK, blockCommand, blockLockReason, freeFootnoteLabel,
     insertSourceTransaction, insertWrapperTransaction, insertionPoint, markActive, toggleMarkType, toggleMarkup, wrapSourceTransaction,
 } from '../../../src/editor/webview/toolbar/commands';
-import { ADMONITION_TYPES } from '../../../src/syntax/markers';
+import { ADMONITION_FAMILIES, ADMONITION_TYPES } from '../../../src/syntax/markers';
+import { HOVER_SECTION_CLASS } from '../../../src/editor/webview/languageCard';
 import { hostEngine, readText, repoRoot } from './helpers';
 
 /** The opening tags named `tag` in `html`, with their attributes. */
@@ -46,6 +49,52 @@ function assertRendersSample(html: string, spec: SampleSpec, context: string): v
             assertRendersSample(html, child, context);
         }
     }
+}
+
+/** The index of the bracket closing the one at `open` in `text`. */
+function closingOf(text: string, open: number): number {
+    const pair: Record<string, string> = { '(': ')', '{': '}' };
+    const close = pair[text[open]];
+    let depth = 0;
+    for (let i = open; i < text.length; i++) {
+        if (text[i] === text[open]) {
+            depth++;
+        } else if (text[i] === close && --depth === 0) {
+            return i;
+        }
+    }
+    throw new Error(`unclosed ${text[open]} at ${open}`);
+}
+
+/** The bodies of the stylesheet's `@media screen and (min-width: …)` blocks: the margin layout. */
+function marginBlocks(css: string): string[] {
+    return [...css.matchAll(/@media screen and \(min-width:[^{]*\{/g)].map(m => {
+        const open = (m.index ?? 0) + m[0].length - 1;
+        return css.slice(open + 1, closingOf(css, open));
+    });
+}
+
+/** The selector of every rule in a block of rules. */
+function ruleSelectors(block: string): string[] {
+    const out: string[] = [];
+    for (let at = 0, open = block.indexOf('{'); open >= 0; at = closingOf(block, open) + 1, open = block.indexOf('{', at)) {
+        out.push(block.slice(at, open).trim());
+    }
+    return out;
+}
+
+/** A selector without its `:has(…)` arguments, and those arguments. */
+function splitHas(selector: string): { outside: string; inside: string[] } {
+    const inside: string[] = [];
+    let outside = '';
+    let at = 0;
+    for (let found = selector.indexOf(':has(', at); found >= 0; found = selector.indexOf(':has(', at)) {
+        const close = closingOf(selector, found + 4);
+        outside += selector.slice(at, found);
+        inside.push(selector.slice(found + 5, close));
+        at = close + 1;
+    }
+    return { outside: outside + selector.slice(at), inside };
 }
 
 function schemaTagOf(action: ToolbarAction): string {
@@ -159,7 +208,12 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                     assert.deepStrictEqual([parsed.attrs.type, parsed.attrs.title], [inserted.attrs.type, inserted.attrs.title]);
                 }
             }
-            assert.ok(tooltipOf(action).includes(action.syntax.split('\n')[0]), 'the tooltip names the syntax');
+            const tooltipOf = (a: ToolbarAction) => tipText(tipOf(a));
+            if (action.apply.kind === 'mark') {
+                assert.ok(tooltipOf(action).includes(`<${action.sample.tag}>`) && tooltipOf(action).includes(action.syntax.split('text')[0]), 'the tooltip names the delimiter and the element');
+            } else {
+                assert.ok(tooltipOf(action).includes(action.syntax.split('\n')[0]), 'the tooltip names the syntax');
+            }
         });
     }
 
@@ -190,11 +244,38 @@ suite('Editor toolbar: every action makes the element it shows', () => {
             ['link', 'image', 'horizontal-rule', 'table', 'container', 'task-list', 'definition-list', 'abbreviation', 'table-of-contents', 'include', 'properties']);
     });
 
-    test('the preview card\'s class is the one both stylesheets name', () => {
-        const notes = readText(path.join(repoRoot, 'styles', 'markdown-extended.css'));
-        const guard = `:where(:not(.${PREVIEW_CARD_CLASS} *))`;
-        assert.strictEqual(notes.split(guard).length - 1, 8, 'every selector of the margin layout keeps out of the card');
+    test('the preview card\'s class is the one both stylesheets name, and every margin rule keeps out of the card and the menus\' samples', () => {
+        const notes = readText(path.join(repoRoot, 'styles', 'markdown-extended.css')).replace(/\/\*[\s\S]*?\*\//g, '');
+        const guard = `:not(:is(.${PREVIEW_CARD_CLASS}, .${SAMPLE_CLASS}, .${HOVER_SECTION_CLASS}) *)`;
+        const noteClass = /\.(?:sidenote|mnote|left-sidebar|right-sidebar)(?![\w-])/;
+        const blocks = marginBlocks(notes);
+        assert.ok(blocks.length >= 2, 'the margin layout is in min-width media blocks');
+        let rules = 0;
+        for (const block of blocks) {
+            for (const selector of ruleSelectors(block)) {
+                rules++;
+                const { outside, inside } = splitHas(selector);
+                for (const argument of inside) {
+                    assert.ok(argument.includes(guard), `a :has() that a card's sample note would satisfy: ${selector}`);
+                }
+                if (noteClass.test(outside)) {
+                    assert.ok(outside.includes(guard), `a margin rule that reaches the card's sample note: ${selector}`);
+                }
+            }
+        }
+        assert.ok(rules > 0);
         assert.ok(readText(path.join(repoRoot, 'styles', 'editor.css')).includes(`.${PREVIEW_CARD_CLASS} {`));
+    });
+
+    test('a note\'s glyph and its preview card draw the reference as the document does: in its anchor', () => {
+        const anchorOf = (spec: SampleSpec | string): boolean =>
+            typeof spec !== 'string' && (/^(?:sn|mn)-anchor$/.test(spec.className ?? '') || (spec.children ?? []).some(anchorOf));
+        for (const id of ['sidenote', 'marginal-note']) {
+            const action = TOOLBAR_ACTIONS.find(a => a.id === id);
+            assert.ok(action && anchorOf(action.sample), `${id}: the glyph`);
+            assert.ok(action.preview?.nodes.some(anchorOf), `${id}: the card`);
+            assert.ok(/^(\+\+sidenote|!!marginal)\|note/.test(action.example), `${id}: the example reads the glyph's text: ${action.example}`);
+        }
     });
 
     test('the card prints a data: URI elided, and only the printed line: the Markdown rendered keeps it', () => {
@@ -211,15 +292,61 @@ suite('Editor toolbar: every action makes the element it shows', () => {
             [['*', 'i'], ['_', 'em'], ['**', 'b'], ['__', 'strong']]);
     });
 
-    test('the admonition menu lists exactly the plugin\'s types', () => {
-        const listed = TOOLBAR_ACTIONS.filter(a => submenuOf(a) === 'admonition').map(a => a.id.replace(/^admonition-/, ''));
-        assert.deepStrictEqual(listed, [...ADMONITION_TYPES]);
+    test('the admonition menu lists exactly the plugin\'s types: the canonical ones first, then each alias naming its type', () => {
+        const entries = TOOLBAR_ACTIONS.filter(a => submenuOf(a) === 'admonition');
+        const listed = entries.map(a => a.id.replace(/^admonition-/, ''));
+        assert.deepStrictEqual([...listed].sort(), [...ADMONITION_TYPES].sort());
+        assert.deepStrictEqual(listed, [...ADMONITION_FAMILIES.map(f => f.type), ...ADMONITION_FAMILIES.flatMap(f => f.aliases)]);
+        assert.deepStrictEqual(entries.filter(a => a.alias !== undefined).map(a => [a.label, a.alias]).slice(0, 2), [['Abstract', 'summary'], ['Tldr', 'summary']]);
+        assert.deepStrictEqual(entries.filter(a => a.separated).map(a => a.id), ['admonition-abstract'], 'the aliases are a group of their own');
+        assert.ok(entries.every(a => a.column === `!!! ${a.id.replace(/^admonition-/, '')}`), 'the column names the type, not the title it writes');
+    });
+
+    test('the row\'s marks are named and tagged by their inline holders, and name their delimiter, element and key', () => {
+        const row = TOOLBAR_ACTIONS.filter(inRow);
+        for (const a of row) {
+            assert.ok(a.apply.kind === 'mark');
+            const holder = holderNamed(a.apply.mark);
+            assert.ok(holder?.tag);
+            const delimiter = a.syntax.split('text')[0];
+            assert.strictEqual(a.label, namesOf(holder, delimiter).label, a.id);
+            assert.strictEqual(a.sample.tag, holder.tag(delimiter), a.id);
+        }
+        assert.deepStrictEqual(row.map(a => tipText(tipOf(a))), [
+            'Italic (*, <i>) — Ctrl+I',
+            'Emphasis (_, <em>)',
+            'Bold (**, <b>) — Ctrl+B',
+            'Strong (__, <strong>)',
+            'Code (`, <code>) — Ctrl+`',
+        ]);
+        assert.strictEqual(tipText(tipOf(row[0], { mac: true })), 'Italic (*, <i>) — Cmd+I');
+        assert.deepStrictEqual(row.map(ariaLabelOf), ['Italic, asterisk', 'Emphasis, underscore', 'Bold, double asterisk', 'Strong, double underscore', 'Code, backtick']);
+        assert.deepStrictEqual(TOOLBAR_ACTIONS.filter(a => a.key !== undefined).map(a => [a.id, a.key]), [['italic', 'Mod-i'], ['bold', 'Mod-b'], ['code', 'Mod-`']], 'only marks carry a key');
+        assert.strictEqual(tipText(tipOf(row[2], { reason: 'Not here.' })), 'Bold (**, <b>) — Ctrl+B\nNot here.', 'a refusal is the second line');
+    });
+
+    test('every menu entry draws its label as the element, or has its glyph decided; chrome glyphs are {…} or [ ]', () => {
+        for (const a of TOOLBAR_ACTIONS.filter(x => menuOf(x) !== null)) {
+            if (a.drawnLabel) {
+                assert.strictEqual(menuOf(a), 'block-type', `${a.id}: only the block types draw their label`);
+                continue;
+            }
+            assert.notStrictEqual(menuOf(a), 'block-type', `${a.id}: a block type draws its label`);
+            if (a.glyph !== undefined && a.glyph !== null && 'text' in a.glyph) {
+                assert.ok(['{…}', '[ ]'].includes(a.glyph.text), `${a.id}: ${a.glyph.text}`);
+            }
+        }
+        const byMenu = (menu: string) => TOOLBAR_ACTIONS.filter(a => menuOf(a) === menu && submenuOf(a) === null && a.separated).map(a => a.id);
+        assert.deepStrictEqual(byMenu('formatting'), ['span-class']);
+        assert.deepStrictEqual(byMenu('annotation'), ['footnote-reference']);
+        assert.deepStrictEqual(byMenu('insert'), ['horizontal-rule', 'task-list', 'include']);
+        assert.deepStrictEqual(TOOLBAR_ACTIONS.filter(a => a.glyph === null).map(a => a.id), ['container', 'table-of-contents', 'include', 'properties']);
     });
 
     test('a source action says in its tooltip that it is edited as source; a native one does not', () => {
         for (const action of TOOLBAR_ACTIONS) {
             const source = action.apply.kind === 'wrap-source' || action.apply.kind === 'insert-source';
-            assert.strictEqual(tooltipOf(action).includes(SOURCE_FOOTNOTE), source, action.id);
+            assert.strictEqual(tipText(tipOf(action)).includes(SOURCE_FOOTNOTE), source, action.id);
         }
         const sourceIds = TOOLBAR_ACTIONS.filter(a => a.apply.kind === 'wrap-source').map(a => a.id);
         assert.deepStrictEqual(sourceIds, ['footnote-reference'], 'of the inline constructs only the footnote is written as source');

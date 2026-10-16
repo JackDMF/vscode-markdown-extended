@@ -384,19 +384,48 @@ content. `blocks.ts` lists their tokens as editable, `parse.ts` maps them, `seri
 writes them with the delimiters from `src/syntax/markers.ts`.
 
 **A note mirrors the plugin's DOM.** `markdownItSidenote.ts` renders a sidenote as
-`span.sn-ref`, holding the reference's text and then `span.sidenote` — the note nested in
-its reference, which `markdown-extended.css` targets as a descendant. The schema draws
-exactly that: `sidenote` is the `span.sn-ref`, its content `note_ref sidenote_body`, the
-body the `span.sidenote` (`marginal_note` likewise, with `span.mn-ref` and
-`marginal_note_body` as `span.mnote`); `left_sidebar` and `right_sidebar` are the one
-span each. The plugin emits no element for the reference, and ProseMirror needs one to
-hold content, so `note_ref` is a span with no class — only `data-mep-note-ref`, which no
-stylesheet of the preview names. Mirroring the DOM is what lets every stylesheet written
-for the preview style the note being edited unchanged, the margin layout included; a
-page test at 1400px compares the computed style of each note in the editor with the
-engine's own rendering, and `inline.test.ts` draws the schema through `DOMSerializer`
-and requires the engine's HTML, the reference's span apart. The two bodies are two types
-because their class is part of what they are.
+`span.sn-ref` holding `span.sn-anchor` (the reference's text) and then `span.sidenote` —
+the note nested in its reference, a direct child of it, which `markdown-extended.css`
+targets as such. The anchor exists so a stylesheet can mark the reference (the dotted
+underline, the hover tint) without styling the note. The schema draws exactly that:
+`sidenote` is the `span.sn-ref`, its content `note_ref sidenote_body`, the reference the
+`span.sn-anchor`, the body the `span.sidenote` (`marginal_note` likewise, with
+`span.mn-ref`, `span.mn-anchor` and `marginal_note_body` as `span.mnote`);
+`left_sidebar` and `right_sidebar` are the one span each. `note_ref` is one type for both
+kinds, its anchor class an attribute: `NOTE_SYNTAX` in `src/syntax/markers.ts` states
+the classes once, the plugin, `parse.ts`, the toolbar's samples and `noteRef` in
+`schema.ts` read them there, and every place that makes a reference — a wrap, a
+conversion, a paste — goes through `noteRef` or the parse. The attribute defaults to
+`null` because ProseMirror refuses a required attribute on a node in a required
+position; a test holds the sources to `noteRef`, and parse-of-serialize to the same
+node. A reference ProseMirror makes itself — closing a note that a delete or a paste
+cut open, `createAndFill` leaves the attribute at its default — is given its kind's
+anchor by the notes plugin's `appendTransaction` (`repairAnchors`), in the same repair
+transaction as its selection fix, the selection set first. The editor's reference also carries `data-mep-note-ref`, which no stylesheet of
+the preview names, by which a copy made here is known on paste. Mirroring the DOM is
+what lets every stylesheet written for the preview style the note being edited
+unchanged, the margin layout included; a page test at 1400px compares the computed
+style of each note in the editor with the engine's own rendering, and `inline.test.ts`
+draws the schema through `DOMSerializer` and requires the engine's HTML, the editor's
+marker apart. The anchor is an attribute and a class, never read by the serializer: the
+Markdown a note writes is its parts' content, byte for byte as before. The two bodies
+are two types because their class is part of what they are.
+
+**The margin lane keeps the line in place.** The lane is `<html>`'s padding, reserved by
+`markdown-extended.css` once the document holds a note and the window is wide enough, so
+the column narrows and every line above the caret rewraps when the first note is added
+or the last removed. `lane.ts` wraps both state updates of the page — `dispatchTransaction`
+and the host's re-sync — and, when the html element's computed padding changed across the
+update, scrolls by how far the line holding the selection head (mapped through the
+transaction) moved. The padding is read, not the document counted, so the stylesheet's
+own decision (its media queries, `:has()`, a reader's `--mep-note-lane: 0`) is the one
+the editor follows; with the lane at 0 the notes still switch between margin and text,
+so the first note's computed float is read beside the padding. Only a transaction one
+of whose steps made or removed a whole note or sidebar — or an atom whose rendering
+holds one, which `:has()` counts too — is measured (`touchesNote`), so typing, in plain
+text or in a note, costs nothing; and a line
+that was off screen before the update has no place to keep — ProseMirror's own
+scrolling is left as it is.
 
 **What a note holds** is decided by the plugin: it parses a reference and a body with
 the full inline parser, so every mark may be inside (`note_inline*`: text, images, hard
@@ -471,7 +500,7 @@ does not read back; one that cannot be placed — an emoji of its kind read with
 place, textblocks that cannot be lined up with the inline tokens read — is neither kept nor
 made text: the edit is refused (`unplacedEmoji`, `unplacedRefusal`), and the page and the file still agree;
 the reason names the atom, a smiley in superscript where that is the cause, and the ways out
-that are open, each tried on the document the edit started from (Edit as text, Remove emoji).
+that are open, each tried on the document the edit started from (Convert to text, Delete emoji).
 A block whose atoms cannot be placed as the file has them opens as a source block
 (`withUnplacedAsSource` in `parse.ts`), as one holding an emoji did before atoms. That
 check reads with the current inline definition (`currentInlineDefinition()`): on the host,
@@ -483,7 +512,7 @@ letter typed against it, a `>:(` an edit moved to a line start, a `:|` in a cell
 transaction appended to it (`emojiPlugin`), in the document the check of the edit reads
 (`writtenEdit`) and in the save (`withReadEmoji`), which reports one the page did not
 catch; once text, the escape above applies to it. An atom under code, superscript or
-subscript is refused (`unwritableEmoji`): its block would be a source block. Edit as text is
+subscript is refused (`unwritableEmoji`): its block would be a source block. Convert to text is
 refused where the characters would still be read as an emoji — the block would read more
 emoji beyond its atoms than before (`emojiTextStillRead`), as in a sidenote, whose plugin
 reads a smiley even escaped. A note's part is parsed apart from its paragraph and joined
@@ -557,8 +586,8 @@ the note (no husk), at the start of one with text selects it. The toolbar's note
 are toggles (`toggleNote`): inside a note of their kind they unwrap it (`unwrapNote`) — the
 note node replaced, in one step, by its reference's inline content or a sidebar's, the
 note's own marks added to it, the caret at its end — and they show as active there. The
-same `unwrapNote` is the object toolbar's **Remove note, keep text** (below): two paths to
-one verb, one transaction.
+same `unwrapNote` is the object toolbar's **Delete note** and **Remove sidebar, keep text**
+(below): two paths to one verb, one transaction.
 
 ### Attributes, containers and admonitions
 
@@ -1511,12 +1540,26 @@ heavy as frequent ones. So the surfaces now divide the work:
   was cut, and whether a 1.5px underline survived depended on the sub-pixel offset the bar
   stood at: the same bubble showed a user's note style above one line and not above the
   next (2026-09-30). The bubble carries the same five, the
-  extension's five marks and the two notes (`inBubble`).
-- **A menu entry** is where the fidelity lives: the entry is the element the parser makes
-  (`sample`), styled by the cascade, beside its syntax. Every entry has one height; a block
-  sample is scaled into it with `zoom`, measured when the menu opens (`fitSamples`), so the
-  fit holds for whatever the stylesheets make of the element. The admonition types are a
-  submenu of Insert.
+  extension's five marks and the two notes (`inBubble`). A mark is named by its inline
+  holder (`inlineLiterals.ts`: Italic `*`, Emphasis `_`, Bold `**`, Strong `__`, Code) — the
+  name its bar, its field and "Attributes of Bold…" give it — and its key is the action's
+  `key`, which `plugins.ts` binds: its tooltip, the editor's hover (`tooltip.ts`), says
+  "Italic (`*`, `<i>`) — Ctrl+I", its `aria-label` "Italic, asterisk", its
+  `aria-keyshortcuts` the key (wave 1 #6, 2026-10-16). No control of the row, the bubble or
+  the bars carries a `title`.
+- **A menu entry** reads check · glyph · word · syntax: the glyph is the element the entry
+  makes (`glyph`, else `sample`), at its natural size on the document's ground, clipped to
+  40×22 and never zoomed — or chrome text where the element draws nothing (`{…}`, `[ ]`), or
+  nothing; the word never truncates; the syntax column (`column`, else the syntax's first
+  line) is cut first. A Block type entry draws its word as the element instead
+  (`drawnLabel`): "Heading 1" in h1's style, without the headings' rules; such a sample is
+  scaled into the entry with `zoom`, measured when the menu opens (`fitSamples`), but no
+  lower than 0.75 — beyond, it is clipped (the code block's stood at 0.42). Groups are divided
+  (`separated`), as the workbench divides its menus; an entry has no hover — its card shows the
+  construct and the refusal — and a refused one says why in its `aria-description`. The
+  admonition types are a submenu of Insert: the eleven canonical types, then "More types…
+  (16)", which shows the aliases in place, each naming the type it is drawn as ("Tldr as
+  Summary", `alias`), and collapses when the menu closes.
 - **The preview card** shows the hovered or focused entry's `preview` — a sentence or a
   two-row example — at natural size, 300 ms after the pointer or the focus rests on it,
   beside the menu, with the Markdown beneath.
@@ -1538,8 +1581,12 @@ every webview receives, each with a fallback after it:
   (`editorGroupHeader-tabsBorder`, else `-border`, else `widget-border`), no radius, no
   shadow; the workbench font at its size less one; 22px controls with
   `toolbar-hoverBackground` (and `toolbar-hoverOutline`, High Contrast's) on hover,
-  `toolbar-activeBackground` on a face whose menu is open, `focusBorder` for the keyboard's
-  focus; separators in `menu-separatorBackground`, because the tabs' border is the tabs'
+  `toolbar-activeBackground` on a face whose menu is open (High Contrast: a solid
+  `inputOption-activeBorder`), a toggle that is on in `inputOption-activeBackground` and
+  `-activeBorder` (`contrastActiveBorder` only as the border's fallback), kept under the
+  pointer, `focusBorder` for the keyboard's focus as a ring *outside* the control — in Light
+  Modern the on border and the focus ring are one colour, and drawn in one place they were
+  one picture — and a disabled control dimmed whole (wave 1 #11); separators in `menu-separatorBackground`, because the tabs' border is the tabs'
   own colour in both Modern themes and a separator in it would not be seen. A dropdown's
   affordance is the codicon `chevron-down` (`chevronNode` in `lenses.ts`, the one element
   for the row's faces, a submenu's `chevron-right` and an object bar's set-verbs), dim in
@@ -1557,7 +1604,10 @@ every webview receives, each with a fallback after it:
   alike, and `Enter` ran the entry the reader was not looking at.
 - **An object bar and the bubble** are editor widgets: `editorWidget-background`,
   `-foreground`, `-border`, `widget-shadow`, the row's 22px controls — a verb is a toolbar
-  control, no surface at rest — and the inline field in `input-*`. The preview card keeps
+  control, no surface at rest — and the inline field in `input-*`. A bar's title is a label,
+  not a control: 11px in `descriptionForeground`, a divider after it, never focused; a
+  field's title is never cut. The bubble's `{…}` is no toggle and is never drawn on: its name
+  says what it targets ("Attributes of Bold…"). The preview card keeps
   the document's ground inside an editor widget's frame, since what it shows is the
   document's rendering.
 
@@ -1575,15 +1625,21 @@ variables VS Code supplies for Light Modern, Dark Modern and Dark High Contrast
 defaults), and `chrome.e2e.test.ts` checks the row, a menu, the bars and the bubble in them.
 
 **Why a card needs the notes stylesheet's help.** The notes' margin layout in
-`styles/markdown-extended.css` is gated by `@media screen and (min-width: 1280px)`, and a
-media query reads the window, not the card: in a wide webview a 360px card's note would
-float out by its full offset, and the card's clipping would make it vanish. Restating the
-stacked rendering in `editor.css` would state that form twice. Instead the margin layout
-excludes descendants of the card (`:where(:not(.mep-preview-card *))`: `:where` keeps a bare
-class's specificity, so a reader's later `.sidenote` rule still wins), and the card keeps
-the base rendering — the one statement of the stacked form. The class occurs only in the
-editor's page, so the preview and exports are unaffected; `PREVIEW_CARD_CLASS` names it
-once, and a test holds both stylesheets to that name. `display: flow-root; contain: layout
+`styles/markdown-extended.css` is gated by `@media screen and (min-width: 960px)` (one side)
+and `(min-width: 1200px)` (both), and a media query reads the window, not the card: in a
+wide webview a 360px card's note would float out by its full offset, and the card's
+clipping would make it vanish. Restating the inline rendering in `editor.css` would state
+that form twice. Instead the margin layout excludes descendants of the card and of the
+menus' samples and of a hover card's section
+(`:where(:not(:is(.mep-preview-card, .mep-sample, .mep-card-hover) *))`: `:where` keeps a
+bare class's specificity, so a reader's later `.sidenote` rule still wins), and the card
+keeps the base rendering — the one statement of the inline form. The same guard stands
+inside every `:has()` that reserves the lane, so neither the card's sample note, a
+sidebar's glyph in the Annotation menu nor a provider's hover HTML opens a lane on the
+page; a source block's or an injected block's rendering is the document's and is not
+guarded. The classes occur only in the editor's page, so the preview and exports are
+unaffected; `PREVIEW_CARD_CLASS`, `SAMPLE_CLASS` and `HOVER_SECTION_CLASS` name them once,
+and a test holds the stylesheet's every margin rule to them. `display: flow-root; contain: layout
 paint; overflow: hidden` on the card is the second line of defence. The page test runs at
 1400px and requires every element of each Annotation preview to lie inside the card and
 to be visibly in it; with the guard removed the sidenote floats out.
@@ -1595,7 +1651,16 @@ The layers:
   **sample** (tag, classes, attributes, content: the element the parser makes from that
   syntax), an `apply` kind, an **example** in which the construct renders as its sample,
   and a **preview** (Markdown and the elements it renders as) for the card. Row button,
-  menu entry and card are built from the same entry.
+  menu entry and card are built from the same entry; so is the tooltip (`tipOf`, parts, not a
+  string) and the accessible name (`ariaLabelOf`).
+- **`src/editor/tips.ts`** — a tooltip as data: words, a part in the code font, a key chord,
+  and a note on a second line; `tipText` is the same tip as one string, the control's
+  `aria-description`. No DOM, so `actions.ts` and the tests read it.
+- **`webview/tooltip.ts`** — the one hover the row, the bubble and the bars show (one per
+  mount, `Tooltips.for`): the editor hover's colours, after `HOVER_DELAY_MS` of rest and at
+  once on keyboard focus, gone on a press, a key, the pointer or the focus leaving;
+  `pointer-events: none`. `attach` writes the `aria-description` in the same call, so what
+  is seen and what is heard are one tip.
 - **`commands.ts`** — what each `apply` kind does to an `EditorState`, testable without
   a page. A `mark` button toggles a native mark *with its delimiter*
   (`toggleMarkup`): the mark type excludes itself, so `_` on `*` text replaces the `*`,
@@ -1643,8 +1708,10 @@ The layers:
   the object toolbar asks too).
 
 **The syntax is read from where it is true.** `src/syntax/markers.ts` states the
-inline markers, the note and sidebar markers with their classes, and the admonition
-types. It imports nothing, so the page can load it, and `toggleFormats.ts` (through
+inline markers, the note and sidebar markers with their classes, the admonition
+types — by family, each canonical type with the aliases that share its look
+(`ADMONITION_FAMILIES`; `admonitionFamilies.test.ts` holds them to the selector lists of
+`styles/markdown-it-admonition.css`) — and how each delimiter is spoken (`MARKER_NAMES`). It imports nothing, so the page can load it, and `toggleFormats.ts` (through
 `commands/inlineToggleArgs.ts`), `markdownItSidenote.ts`, `markdownItAdmonition.ts`
 and the action table all import it: the text editor's toggles, the parser and the
 toolbar cannot write one construct two ways. The block markers are the serializer's.
@@ -1770,8 +1837,15 @@ otherwise stand at its position and be the one deleted. Four surfaces used to an
 question with four predicates, and the row's Bold applied to the hidden selection behind
 an open box.
 `Alt+Enter` (a `handleKeyDown` prop, which no other keymap
-binds) skips the delay and focuses the first verb; the arrow keys move between verbs
-(wrapping), `Enter` chooses, `Esc` returns the focus to the text.
+binds) skips the delay and focuses the first verb that opens something in place — a field, a
+choice, a menu, a source box — and is not refused: never *Open*, never a verb that acts at
+once, never another extension's, never Remove or Delete (`firstFocus`, `verbs.ts`; Daniel,
+2026-10-16). A bar with no such verb — an emoji, a wiki embed, a badge, a requirement heading,
+a note whose *Edit source* is refused — takes the focus itself: it is a `role="toolbar"`
+whose `aria-label` names the object, how many of its verbs can be chosen and the keys (*Emoji
+:rocket:, 2 actions, arrow keys to choose*; *…, no actions available*), and `Enter` or `↓` moves into its first verb; running one is
+a second `Enter`. The arrow keys move between verbs (wrapping), `Enter` chooses, `Esc`
+returns the focus to the text.
 
 **Where it sits** (`place`). *A block's bar covers no text where it can help it, and never moves
 layout* (Daniel, 2026-09-29, after the table screenshots showed a bar over the paragraph above its
@@ -1822,10 +1896,36 @@ scrolls with the text; it is placed again on scroll and resize.
 (multimd) table's shows for the pointer and sits at the column's right edge above it — one kind
 of thing, two triggers and two places.
 
-**The verbs** say what remains (*Remove note, keep text*), and are each one transaction in
+**One model for every bar** (`src/editor/verbs.ts`, no DOM, no ProseMirror — the host's
+schema and the objects' refusals quote its verb names). Each verb has a *slot*, and the slots
+stand in one order: Open (*Show in text editor* fills it too) · Edit… · the object's type verbs
+(Row/Column/Align, Convert…, Type) · Attributes… · Edit source · other extensions' actions
+(lenses, code actions) · divider · Remove/Delete. `arrange` sorts every bar's verbs by it,
+stable within a slot, and draws the dividers the rule gives — before the first other
+extension's verb when one of the object's own precedes it, before the verb that destroys —
+keeping only a divider a presentation sets for a group of its own (a table's, before
+*Attributes…*). **Remove keeps, Delete destroys** (VS Code's convention, Daniel 2026-10-15):
+a Remove says what stays (*Remove link, keep text*), a Delete is where the content goes
+(*Delete image*, *Delete note* — a note's own text goes with it). `wording` builds a verb's
+label, its short form and its hint from a verb word and a noun, so the three cannot drift.
+In a narrow editor a verb drops the noun its bar's title already names (*Delete*, *Edit…*,
+*Remove, keep content*) before the title truncates; then the title truncates, down to hidden
+if the verbs need it (narrower than a 42 px stub it says nothing; the bar's `aria-label` still
+names the object); verbs never truncate (`ObjectBar.fit`, run as the bar is placed and only
+when the room or what the bar shows changed; where the title does not name the noun — a
+span's *Remove attributes, keep text* — there is no short form). The bar is a floating
+layer: its room runs from the text column's left edge to the editor's right edge less a
+16 px gutter (`layerRight`), so a bar wider than the column stands past it rather than
+cutting a verb (Daniel, 2026-10-16); a block bar's candidate places are pushed back into that
+room before `firstFree` checks them, so the band checked is the band it stands in. A font
+loaded late (`document.fonts` `loadingdone`) makes the bars fit again. Within the actions slot the lenses come first, then the
+code actions, then the **Actions** choice holding the lenses that did not fit. A *Delete* whose file stays (an image, a wiki embed, a snippet's directive)
+says so in its tooltip (`FILE_STAYS`).
+
+**The verbs** say what remains or what goes, and are each one transaction in
 `objects.ts` (or `notes.ts`), one history event:
 
-- note — *Remove note, keep text* (`unwrapNote`); *Convert to marginal note* / *Convert to
+- note — *Delete note* (a sidebar: *Remove sidebar, keep text*; `unwrapNote`); *Convert to marginal note* / *Convert to
   sidenote*, *Move to right* / *Move to left* (`convertNoteTransaction`: the counterpart
   node built from the same reference, body content and marks; the two have the same
   structure, so the selection is put back at the same positions); *Edit source*. A
@@ -1835,25 +1935,25 @@ of thing, two triggers and two places.
 - link — *Open* (`openLink`, the Ctrl+click path), *Edit link…* (the address in the field,
   prefilled, completing as `Ctrl+K`'s does — below, *Links and images*; the mark replaced
   over its run with the new `href`, the title kept, `markup` cleared: a bare URL's text is
-  the old address, which the bare form would write as the link), *Remove link* (the mark
-  removed, the text kept);
-- image — *Edit image…* (two fields in turn, the alt text and then the path, which completes
+  the old address, which the bare form would write as the link), *Remove link, keep text*
+  (the mark removed, the text kept);
+- image — *Open file* (`openLink` with the `src`, resolved on the host as a followed link
+  is), *Edit image…* (two fields in turn, the alt text and then the path, which completes
   with image files; `setNodeMarkup`, the title and the literal kept), *Attributes…* (the
-  node's `literal`, `setNodeMarkup`, still selected), *Open file* (`openLink` with the
-  `src`, resolved on the host as a followed link is), *Remove image*; its label carries the
+  node's `literal`, `setNodeMarkup`, still selected), *Delete image*; its label carries the
   literal (`Presentation.code`);
 - span — *Attributes…* (the mark replaced over its run with the new literal),
   *Remove attributes, keep text*;
 - styled run (emphasis, code, a key … with a literal) — *Attributes…*, *Remove attributes,
   keep formatting*; a bare holder (only from `Alt+Enter`) — *Attributes…*;
-- any object holding the element the caret is in — after its own verbs, separated,
+- any object holding the element the caret is in — beside its own *Attributes…*,
   *Attributes of Bold…* (`holderInside`);
-- container — *Change name/info* (first word the name, the rest the info, verbatim; a
+- container — *Edit classes…* (the whole `:::` line: first word the name, the rest the info, verbatim; a
   trailing `{…}` refused, since markdown-it-attrs would take it off the info),
   *Attributes…* (refused, with the reason: the container's renderer drops a literal),
   *Remove container, keep content* (`unwrapTransaction`: the blocks lifted, the caret kept);
-- admonition — *Change type* (the inline choice, a `<select>` of `ADMONITION_TYPES`),
-  *Edit title* (empty: no title bar), *Attributes…* (refused: the plugin gives a literal on
+- admonition — *Edit title…* (empty: no title bar), *Type* (the inline choice, a `<select>`
+  of `ADMONITION_TYPES`, with the dropdown chevron), *Attributes…* (refused: the plugin gives a literal on
   the `!!!` line to the title bar), *Remove admonition, keep content*; both changes clear
   `header`;
 - block with attributes — *Attributes…* (the literal replaced in place, its placement
@@ -1866,23 +1966,30 @@ of thing, two triggers and two places.
   verb may be a **set-verb**, a menu of related actions that opens under it (`Verb.menu`),
   in the formatting toolbar's menu chrome, keyboard-navigable, the current value of a
   choice marked;
-- source block — *Edit source* (`editRawSourceAt`), *Show in text editor*, *Delete block*;
+- source block — *Show in text editor*, *Edit source* (`editRawSourceAt`), *Delete block*;
   labelled *Source · multimd table* or *Source · table* when it is a table the editor
   leaves as source;
-- expansion — *Open snippet* (only with `mark.path`), *Show in text editor*, *Delete
-  directive* (the node deleted, and with it the one line it writes);
+- expansion — *Open snippet* (only with `mark.path`), *Show in text editor*, *Change
+  snippet…*, *Delete directive* (the node deleted, and with it the one line it writes);
+- emoji, wiki embed — *Convert to text* (its tooltip names the text it becomes:
+  *Convert to text (`:rocket:`)*), *Delete emoji* / *Delete embed*;
 - badge, other injected content — the label alone; the front matter no bar of its own (its verbs are the
   properties panel's header), only other extensions' actions when there are some;
 - heading — the label alone (*Requirement FRS-…* for a requirement heading), and so no bar
   at all unless another extension offers code actions for it (below).
 
 Every object that is a whole top-level block (`isTopLevelBlock`) carries, after its own
-verbs and a separator, the code actions other extensions offer for its lines — see the next
-section.
+verbs and a divider, before the one that destroys, the code actions other extensions offer
+for its lines — see the next section.
 
-A verb whose result is a disappearance — a removal, a deletion — announces it in the caret
-hint (`webview/hint.ts`: *Note removed — Ctrl+Z*, `Cmd+Z` on macOS), in a neutral tone, for
-3 s. The hint is the one the notes plugin shows a refusal in; one element, two tones
+A verb whose result is a disappearance — a removal, a deletion, a conversion to text —
+announces it in the caret hint, in one pattern, *<Object> <past participle> — <undo key>*
+(`undoHint` in `webview/hint.ts`: *Note deleted — Ctrl+Z*, *Emoji converted to text —
+Ctrl+Z*), in a neutral tone, for 3 s. The key is the page keymap's own undo binding
+(`UNDO_BINDING` in `src/editor/keys.ts`, bound in `plugins.ts`), named as the platform names
+it (`Cmd+Z` on macOS): the key a hint names is the key that undoes, by construction. The host
+cannot supply another — VS Code's `undo` does not reach the page, and no extension API reads a
+command's keybinding. The hint is the one the notes plugin shows a refusal in; one element, two tones
 (`data-tone`), so the page has one place beside the caret where it speaks.
 
 **The inline field** (`webview/inlineField.ts`) is one reusable component for every place a

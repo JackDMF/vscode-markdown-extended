@@ -10,9 +10,9 @@ import { hostEngine } from './helpers';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, MOD } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 
-/** Narrower than the notes' 1280px breakpoint: the notes render stacked, in the text flow, where a click reaches them. */
-const NARROW = 1000;
-/** Wider than it: the notes float into the margin, as in a wide preview. */
+/** Narrower than the one-sided margin threshold (960px): the notes run inline in the text flow, where a click reaches them. */
+const NARROW = 900;
+/** Wider than the two-sided one (1200px): the notes float into the margin, as in a wide preview. */
 const WIDE = 1400;
 
 type OpenLink = Extract<WebviewMessage, { type: 'openLink' }>;
@@ -182,7 +182,7 @@ suite('Editor notes and links (e2e)', () => {
         });
         await delay(150);
         // A sidebar's end is found by the inline parser, which skips a code span whole: Code stays enabled there.
-        const button = await page.$eval('.mep-toolbar [data-action="code"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        const button = await page.$eval('.mep-toolbar [data-action="code"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? '') }));
         assert.notStrictEqual(button.disabled, 'true', button.title);
     });
 
@@ -245,7 +245,7 @@ suite('Editor notes and links (e2e)', () => {
         // Right sidebars: VS Code's math extension claims every `$` first.
         await showDocument('Alpha ++beta|the body++@y@ gamma.\n', 'Alpha');
         await clickBefore('body', 1);
-        const face = await page.$eval('.mep-toolbar .mep-menu-face[data-menu="annotation"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        const face = await page.$eval('.mep-toolbar .mep-menu-face[data-menu="annotation"]', el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? '') }));
         // Its only entry that applies there is Sidenote, which removes the note: refused, the menu is too, with that reason.
         assert.strictEqual(face.disabled, 'true', face.title);
         assert.ok(face.title.endsWith(SIDEBAR_GLUED_BEFORE), face.title);
@@ -372,5 +372,32 @@ suite('Editor notes and links (e2e)', () => {
         await (editor as EditorPage).send({ type: 'revealAnchor', anchor: 'the-end', line: text.split('\n').indexOf('## The end {#the-end}') });
         await delay(150);
         assert.ok(await page.evaluate(() => window.scrollY > 0), 'the page scrolled');
+    });
+
+    test('a note pasted as the preview draws it, as it was drawn before the anchor, or as the editor copies it, is the same note', async function () {
+        this.timeout(20000);
+        for (const html of [
+            '<span class="sn-ref" data-sn="1"><span class="sn-anchor">r</span><span class="sidenote">n</span></span>',
+            '<span class="sn-ref">r<span class="sidenote">n</span></span>',
+            '<span class="sn-ref"><span class="sn-anchor" data-mep-note-ref="">r</span><span class="sidenote">n</span></span>',
+        ]) {
+            await showDocument('Alpha gamma.\n', 'Alpha');
+            await page.focus('.ProseMirror');
+            await page.evaluate(() => {
+                const root = document.querySelector('.ProseMirror p') as HTMLElement;
+                const text = root.firstChild as globalThis.Node;
+                (document.getSelection() as Selection).collapse(text, 'Alpha '.length);
+            });
+            await delay(150);
+            await page.evaluate(h => {
+                const data = new DataTransfer();
+                data.setData('text/html', h);
+                data.setData('text/plain', 'r');
+                (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+            }, html);
+            await settle();
+            assert.strictEqual((await lastEdit())?.text, 'Alpha ++r|n++gamma.\n', html);
+            assert.strictEqual(await page.$eval('.ProseMirror .sn-ref > .sn-anchor', el => el.textContent), 'r', `${html}: drawn with its anchor`);
+        }
     });
 });

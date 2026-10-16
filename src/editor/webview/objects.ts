@@ -43,9 +43,10 @@ import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLitera
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
-import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
+import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
+import { VERB } from '../verbs';
 
 const nodes = editorSchema.nodes;
 
@@ -400,7 +401,8 @@ export function convertNoteTransaction(state: EditorState, pos: number): Transac
     let next: Node;
     if (target === 'sidenote' || target === 'marginal_note') {
         const body = (target === 'sidenote' ? nodes.sidenote_body : nodes.marginal_note_body).create(null, node.child(1).content);
-        next = nodes[target].create(null, [node.child(0), body], node.marks);
+        // The reference is made again: its anchor class is the target's.
+        next = nodes[target].create(null, [noteRef(target, node.child(0).content), body], node.marks);
     } else {
         next = nodes[target].create(null, node.content, node.marks);
     }
@@ -1122,10 +1124,10 @@ export const BLOCK_NAMES: Readonly<Record<string, string>> = {
  * `:::` line (`markdownItContainer.ts`), but the container node has no slot for
  * one, so a container written with one stays a source block (`blocks.ts`).
  */
-export const CONTAINER_ATTRS_REFUSAL = 'A container\'s {…} is not edited here: the preview gives a literal on its ::: line to the container, but the editor has no place for it — a container written with one is a source block, edited as Markdown. Its classes here are its name and info (Change name/info).';
+export const CONTAINER_ATTRS_REFUSAL = `A container's {…} is not edited here: the preview gives a literal on its ::: line to the container, but the editor has no place for it — a container written with one is a source block, edited as Markdown. Its classes here are its name and info (${VERB.editClasses}).`;
 
 /** Why an admonition is given no literal: the plugin hands it to the title bar. */
-export const ADMONITION_ATTRS_REFUSAL = 'An admonition takes no {…}: markdown-it-attrs gives a literal on its !!! line to the title bar, not to the box. Its class is its type (Change type).';
+export const ADMONITION_ATTRS_REFUSAL = `An admonition takes no {…}: on its !!! line, {…} styles the title, not the box. Its class is its type — choose it under ${VERB.type}▾ on the admonition's bar.`;
 
 /** Why an indented code block is given no literal: it has no opening line. */
 export const INDENTED_CODE_ATTRS_REFUSAL = 'An indented code block has no opening line to carry a {…}: make it a fenced one first.';
