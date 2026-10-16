@@ -40,7 +40,8 @@
  * (`fidelity.ts`), and a list item's at any depth.
  */
 import { EditorView } from 'prosemirror-view';
-import { showChangeHint, undoKey } from './hint';
+import { showChangeHint, undoHint } from './hint';
+import { wording } from '../verbs';
 import { FieldStep, refusedStep } from './inlineField';
 import {
     AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, literalObjectOf, literalOf,
@@ -59,7 +60,8 @@ export const ATTRIBUTES_FIELD_KEYS = '↵ set · Esc cancel · {.class #id key=v
 
 /** What the caret hint says once a literal is set or removed: the change is on the page, the way back is named. */
 export const ATTRIBUTES_SET_HINT = 'Attributes set';
-export const ATTRIBUTES_REMOVED_HINT = 'Attributes removed';
+/** As the bars' Remove attributes words it (`verbs.ts`): one hint, whichever route removed them. */
+export const ATTRIBUTES_REMOVED_HINT = wording({ verb: 'Remove', noun: 'attributes' }).done;
 
 /**
  * The field step for `target`: its literal prefilled (selected, so typing
@@ -97,7 +99,7 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
             const before = view.state;
             view.dispatch(made.tr);
             if (view.state !== before) {
-                showChangeHint(view, `${made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT} — ${undoKey()}`);
+                showChangeHint(view, undoHint(made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
             }
         },
     };
@@ -144,7 +146,7 @@ export function holderAttributesStep(view: EditorView, at: InlineHolderAt, label
             const before = view.state;
             view.dispatch(tr);
             if (view.state !== before) {
-                showChangeHint(view, `${removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT} — ${undoKey()}`);
+                showChangeHint(view, undoHint(removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
             }
         },
     };

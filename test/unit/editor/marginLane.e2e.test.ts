@@ -4,7 +4,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { PREVIEW_CARD_CLASS } from '../../../src/editor/webview/toolbar/actions';
 import { hostEngine } from './helpers';
-import { closeEditorPage, delay, EditorPage, MOD, openEditorPage, settle, shot, vscodeMarkdownCss } from './pageHarness';
+import { closeEditorPage, delay, EditorPage, MOD, openEditorPage, settle, shot } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 import { NOTE_SAMPLE_ONE_SIDED as ONE_SIDED, NOTE_SAMPLE_TWO_SIDED as TWO_SIDED } from './noteSample';
 
@@ -92,8 +92,8 @@ suite('Editor margin lane (e2e)', () => {
         throw new Error(`no "${n}" in the document`);
     }, needle);
     const lanePadding = () => page.evaluate(() => getComputedStyle(document.documentElement).paddingRight);
-    const near = (actual: number, expected: number, what: string) =>
-        assert.ok(Math.abs(actual - expected) <= 1, `${what}: ${actual} instead of ${expected} (±1px)`);
+    const near = (actual: number, expected: number, what: string, within = 1) =>
+        assert.ok(Math.abs(actual - expected) <= within, `${what}: ${actual} instead of ${expected} (±${within}px)`);
     const pressWith = async (modifier: puppeteer.KeyInput, key: puppeteer.KeyInput) => {
         await page.keyboard.down(modifier);
         await page.keyboard.press(key);
@@ -102,7 +102,7 @@ suite('Editor margin lane (e2e)', () => {
 
     suiteSetup(async function () {
         this.timeout(60000);
-        editor = await openEditorPage({ width: 1280, height: 800, stylesheets: [vscodeMarkdownCss()], styles: ['markdown-extended.css'] });
+        editor = await openEditorPage({ width: 1280, height: 800, styles: ['markdown-extended.css'] });
         if (!editor) {
             this.skip();
         }
@@ -315,7 +315,8 @@ suite('Editor margin lane (e2e)', () => {
             await page.click('.mep-menu [data-action="left-sidebar"]');
             await delay(150);
             assert.strictEqual(await page.$eval('.ProseMirror .sidenote', el => getComputedStyle(el).float), 'none', 'both sides at 1100: every note in the text');
-            near(await textTop('The last open point'), before, 'the line after the notes moved into the text');
+            // Within a few pixels, not one: the sidebar made in this line, a padded inline run, makes the line itself a little taller.
+            near(await textTop('The last open point'), before, 'the line after the notes moved into the text', 4);
         } finally {
             await page.evaluate(() => document.querySelectorAll('style').forEach(s => {
                 if (s.textContent === ':root { --mep-note-lane: 0; }') {

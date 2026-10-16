@@ -134,7 +134,7 @@ suite('Editor focus outside the declared controls (e2e)', () => {
         await page.waitForSelector(`${SELECTION_BAR}[data-object="raw_block"]`);
         await tab();
         assert.deepStrictEqual(await active(), { tag: 'a', lens: null });
-        assert.deepStrictEqual(await verbsOf(`${SELECTION_BAR}[data-object="raw_block"]`), ['edit-source', 'show-in-text-editor', 'delete-block']);
+        assert.deepStrictEqual(await verbsOf(`${SELECTION_BAR}[data-object="raw_block"]`), ['show-in-text-editor', 'edit-source', 'delete-block']);
     });
 
     test('Ctrl+K: while the row\'s own link field has the focus, the selection\'s bar is not shown beside it', async function () {

@@ -3,6 +3,7 @@ import { tableNodes } from 'prosemirror-tables';
 import { ADMONITION_TYPES, NOTE_SYNTAX, plainWikiEmbed } from '../syntax/markers';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { domAttrsOf } from './attrs';
+import { EMBED_WAY_BACK, VERB } from './verbs';
 
 /**
  * The rich editor's document model, shared by the extension host (which parses
@@ -217,7 +218,7 @@ const NOTE_REF_ATTR = 'data-mep-note-ref';
 const LINK_TITLE_ATTR = 'data-mep-title';
 
 /** A wiki embed's tooltip: what it is, and the two ways to its text and the one way back. */
-const WIKI_EMBED_TITLE = 'Wiki embed — kept as written. Backspace right after typing, or Edit as text, makes it text; delete the last ] and type it again to make it an embed.';
+const WIKI_EMBED_TITLE = `Wiki embed — kept as written. Backspace right after typing, or ${VERB.convertToText}, makes it text; ${EMBED_WAY_BACK}`;
 
 /**
  * A pasted note (the preview's HTML, or the editor's own copy): its `.sidenote`

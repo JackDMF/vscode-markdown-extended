@@ -9,9 +9,13 @@
  *   the document rather than the selection. It never wraps;
  *   narrow, it scrolls sideways, so every control keeps its place. A mark's
  *   glyph is its real element (`<i>`, `<em>`, …) held to the button's size.
- * - **A menu** lists its entries as real samples — the element the parser makes,
- *   styled by the page's cascade — each normalized to one entry height (a block
- *   sample is scaled down with `zoom` until it fits), the syntax beside it.
+ * - **A menu** lists its entries as glyph · word · syntax — the glyph the element
+ *   the parser makes, styled by the page's cascade, at its natural size and
+ *   clipped; the Block type entries draw their word as the element, zoomed to
+ *   the entry height no lower than `SAMPLE_ZOOM_FLOOR`.
+ * - **The hover** (`tooltip.ts`) names a row or bubble control — a mark's word,
+ *   delimiter, element and key — and says why it is refused; a menu entry has
+ *   none (its card says it).
  * - **The preview card** shows the hovered or focused entry at its natural size,
  *   in a short example, 300 ms after the pointer or the focus reaches it.
  * - **The bubble** offers, over a text selection, the five native marks, the
@@ -48,9 +52,13 @@ import { currentReadsAttrs } from '../../inlineEngine';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    ActionPreview, CLASS_LITERAL, INLINE_ATTRS_LOCK, MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS,
-    ToolbarAction, ToolbarMenu, ToolbarSubmenu, elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
+    ActionPreview, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
+    TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, menuOf, submenuOf, tipOf,
 } from './actions';
+import { ariaKeyshortcuts } from '../../keys';
+import { Tip, plainTip } from '../../tips';
+import { macKeys } from '../hint';
+import { Tooltips, describeAs } from '../tooltip';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertPropertiesTransaction, insertSourceTransaction, insertWrapperTransaction, isCurrent,
     markActive, markRefusal, toggleMarkup, wrapSourceTransaction,
@@ -117,8 +125,21 @@ const PREVIEW_DELAY_MS = 300;
 const LOCK_FLASH_CLASS = 'mep-row-lock-flash';
 const LOCK_FLASH_MS = 900;
 
+/** The keys that only modify a press or another key: none of them ends a press's wait (`placeLock`). */
+const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
+
+/**
+ * The least a Block type sample is zoomed to fit its entry (`fitSamples`):
+ * below it a label stops being read — the code block's stood at 0.42 — so
+ * what still stands out is clipped instead.
+ */
+const SAMPLE_ZOOM_FLOOR = 0.75;
+
 /** On the row while the lock's reason does not fit beside the tools: it stands on a line of its own under them (`editor.css`). */
 const LOCK_BELOW_CLASS = 'mep-row-lock-below';
+
+/** On the row while that line, brought by a press, waits for its room until the release (`settleRoom`): laid out, not shown (`editor.css`), no chrome yet (`clearance.ts`). */
+const LOCK_WAIT_CLASS = 'mep-row-lock-waiting';
 
 /** Draw a sample: the element the parser makes, with its classes, attributes and content. */
 export function renderSample(spec: SampleSpec): HTMLElement {
@@ -138,6 +159,22 @@ export function renderSample(spec: SampleSpec): HTMLElement {
 function sampleHolder(spec: SampleSpec): HTMLElement {
     const holder = span(SAMPLE_CLASS);
     holder.append(renderSample(spec));
+    return holder;
+}
+
+/** A menu entry's swatch: the element at its natural size (clipped by `editor.css`), chrome text, or empty. */
+function glyphOf(glyph: SampleSpec | { text: string } | null): HTMLElement {
+    const holder = span('mep-entry-glyph');
+    holder.setAttribute('aria-hidden', 'true');
+    if (glyph === null) {
+        return holder;
+    }
+    if ('tag' in glyph) {
+        holder.append(sampleHolder(glyph));
+    } else {
+        holder.classList.add('mep-glyph-text');
+        holder.textContent = glyph.text;
+    }
     return holder;
 }
 
@@ -166,11 +203,11 @@ export function followPointer(panel: HTMLElement, item: HTMLElement): void {
 /**
  * What the inline holder at the selection makes the Formatting entry and the
  * bubble's `{…}` say: its name by its delimiter (`Attributes of Bold…`,
- * `holderNames`), its sample the element the engine renders it as with that
- * name — plain text for an image, which has none to show — and its syntax and
- * card written as it (`example`, `tag` in `inlineLiterals.ts`).
+ * `holderNames`), and its syntax and card written as it — the card drawing the
+ * element the engine renders it as, none for an image (`example`, `tag` in
+ * `inlineLiterals.ts`).
  */
-function inlineEntry(inline: InlineHolderAt): { label: string; sample: SampleSpec; syntax: string; preview: ActionPreview } {
+function inlineEntry(inline: InlineHolderAt): { label: string; syntax: string; preview: ActionPreview } {
     const label = `Attributes of ${holderNames(inline).label}…`;
     const markup = holderMarkup(inline);
     const holder = inline.holder;
@@ -178,7 +215,6 @@ function inlineEntry(inline: InlineHolderAt): { label: string; sample: SampleSpe
     const text = holder.holder === 'code' ? 'code' : holder.holder === 'image' ? 'alt' : 'text';
     return {
         label,
-        sample: tag === undefined ? { tag: 'span', children: [label] } : { tag, className: 'x', children: [label] },
         syntax: holder.example(text, CLASS_LITERAL, markup),
         preview: {
             markdown: `Run ${holder.example('--flag', '{.k}', markup)} now.`,
@@ -187,13 +223,11 @@ function inlineEntry(inline: InlineHolderAt): { label: string; sample: SampleSpe
     };
 }
 
-/** The sample an entry draws, replaced when what the selection makes it draw changed (`ActionState.sample`). */
-function resample(item: HTMLElement, spec: SampleSpec): void {
-    const holder = item.querySelector<HTMLElement>(`.${SAMPLE_CLASS}`);
-    const key = JSON.stringify(spec);
-    if (holder !== null && holder.dataset.drawn !== key) {
-        holder.dataset.drawn = key;
-        holder.replaceChildren(renderSample(spec));
+/** The word an entry shows, where the selection names it (`Attributes of Bold…`, `ActionState.label`); its glyph, `{…}`, stays. */
+function relabel(item: HTMLElement, label: string): void {
+    const word = item.querySelector('.mep-entry-label');
+    if (word !== null && word.textContent !== label) {
+        word.textContent = label;
     }
 }
 
@@ -204,6 +238,9 @@ function resyntax(item: HTMLElement, syntax: string): void {
         column.textContent = syntax;
     }
 }
+
+/** What the span's entry, and the bubble's `{…}` outside an element, are called (`actions.ts`). */
+const SPAN_LABEL = TOOLBAR_ACTIONS.find(a => a.apply.kind === 'attr-span')?.label ?? 'Span with class…';
 
 /** Why Span with class makes no span where its literal alone is fine: the note around it, or the block read whole, would not hold it. */
 const SPAN_REFUSED = 'These attributes cannot be given to this text here.';
@@ -224,10 +261,9 @@ export interface ActionState {
      * its sample's text and its tooltip's name, where the action's own label is only the resting form.
      */
     label?: string;
-    /** The whole tooltip, where the selection decides what the action does (the bubble's `{…}`). */
-    tooltip?: string;
-    /** What a named entry draws as its sample, its syntax column and its card, where the selection decides it (`Attributes of Bold…` as `**text**{.class}`). */
-    sample?: SampleSpec;
+    /** The whole tooltip but its reason, where the selection decides what the action does (the bubble's `{…}`). */
+    tip?: Tip;
+    /** What a named entry's syntax column and card say, where the selection decides it (`Attributes of Bold…` as `**text**{.class}`). */
     syntax?: string;
     preview?: ActionPreview;
     /** The button's accessible name, where the selection decides what it does (the bubble's `{…}`). */
@@ -245,7 +281,7 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
         }
         case 'wrap-node': {
             // Inside a note of its kind the action removes it, like a mark's button,
-            // and is refused where the object bar's Remove note is (`unwrapNoteRefusal`).
+            // and is refused where the object bar's Delete note / Remove sidebar is (`unwrapNoteRefusal`).
             if (inNoteOf(state, apply.node)) {
                 const unwrap = unwrapNoteRefusal(state, apply.node);
                 return { enabled: unwrap === null, active: true, reason: unwrap };
@@ -298,13 +334,13 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
             // Within one element's run, its attributes — the one the menu and its bar name
             // (`attributeHolderAt`) — else an attribute span made of the selection.
             const inline = currentReadsAttrs() && !state.selection.empty ? attributeHolderAt(state).inline : null;
+            // Never drawn as on: it is no toggle. What it targets is its name and its tooltip.
             if (inline !== null) {
-                // Marked while it targets an element, so what it does is seen without the tooltip.
                 const entry = inlineEntry(inline);
-                return { enabled: true, active: true, reason: null, tooltip: `${entry.label} — ${entry.syntax}`, ariaLabel: entry.label };
+                return { enabled: true, active: false, reason: null, tip: { parts: [`${entry.label} — `, { code: entry.syntax }] }, ariaLabel: entry.label };
             }
             const reason = spanLockReason(state);
-            return { enabled: reason === null, active: false, reason, tooltip: `Span with class — [text]${CLASS_LITERAL}`, ariaLabel: 'Span with class' };
+            return { enabled: reason === null, active: false, reason, tip: { parts: [`${SPAN_LABEL} — `, { code: `[text]${CLASS_LITERAL}` }] }, ariaLabel: SPAN_LABEL };
         }
         case 'insert-link': {
             const reason = objectAtSelection(state)?.kind === 'link' ? null : insertLockReason(state, LINK_LOCK);
@@ -341,6 +377,8 @@ interface Menu {
     opener?: HTMLElement;
     parent?: Menu;
     children: Menu[];
+    /** "More types…": the entry that shows the entries kept behind it (`ToolbarAction.alias`) in place, and those entries. */
+    more?: { item: HTMLElement; hidden: HTMLElement[]; count: number };
 }
 
 function setState(node: HTMLElement, enabled: boolean, active: boolean): void {
@@ -351,6 +389,24 @@ function setState(node: HTMLElement, enabled: boolean, active: boolean): void {
 
 function isDisabled(node: HTMLElement): boolean {
     return node.getAttribute('aria-disabled') === 'true';
+}
+
+/** An entry the keys may move to: offered, and shown (an alias waits under "More types…" until it is pressed). */
+function reachable(node: HTMLElement): boolean {
+    return !isDisabled(node) && !node.hidden;
+}
+
+/** A divider of a bar (`.mep-object-toolbar`): after its title, and where `arrange` (`verbs.ts`) divides its verbs. */
+export function barSeparator(): HTMLElement {
+    const rule = span('mep-object-separator');
+    rule.setAttribute('role', 'separator');
+    return rule;
+}
+
+function separator(): HTMLElement {
+    const rule = div('mep-menu-separator');
+    rule.setAttribute('role', 'separator');
+    return rule;
 }
 
 class ToolbarView implements PluginView {
@@ -374,15 +430,26 @@ class ToolbarView implements PluginView {
     private flashTimer: ReturnType<typeof setTimeout> | undefined;
     /** A pointer button is down: the page does not move under it (`settleRoom`). */
     private pointerHeld = false;
+    /**
+     * The pointer is what acts: a main button went down and no key came since.
+     * A press whose release was lost leaves `pointerHeld` set until a blur or a
+     * move; a lock a key brings meanwhile is no press's, and its line shows.
+     */
+    private pressing = false;
     /** The height the page keeps free under the row for the reason's line (`settleRoom`). */
     private room = 0;
     /** Watches the row and its status for a size that changes where the reason fits (`placeLock`). */
     private rowSize: ResizeObserver | undefined;
     /** The update a focus move asked for, while it waits. */
     private focusTimer: ReturnType<typeof setTimeout> | undefined;
+    /** The hover of the row's controls and the bubble's (`tooltip.ts`), shared with the bars. */
+    private readonly tips: Tooltips;
+    /** What each control's hover says now, written by `update`. */
+    private readonly tipOfControl = new WeakMap<HTMLElement, Tip | null>();
 
     constructor(private readonly view: EditorView, private readonly host: ToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
+        this.tips = Tooltips.for(this.mount);
         this.layer = div('mep-toolbar-layer');
         this.card = div(`${PREVIEW_CARD_CLASS}`);
         this.card.hidden = true;
@@ -425,8 +492,9 @@ class ToolbarView implements PluginView {
         // Fixed menus would stay where the page scrolled away from; a menu's own
         // scrolling (a long list of admonitions) is not that.
         this.listen(window, 'scroll', e => {
+            // The hover is not: it follows its control (`tooltip.ts`).
             if (!this.layer.contains(e.target as Node)) {
-                this.closeAll();
+                this.closeAll(true);
             }
         }, true);
         this.listen(window, 'resize', () => this.closeAll());
@@ -438,10 +506,24 @@ class ToolbarView implements PluginView {
         this.listen(document, 'pointerdown', e => {
             if ((e as PointerEvent).button === 0) {
                 this.pointerHeld = true;
+                this.pressing = true;
             }
+        }, true);
+        // A key acts, not the press: a line still waiting on one shows now (its room
+        // follows when the press ends, as before). Not a modifier, nor a key's repeat:
+        // one held from before the press (a Shift-click) repeats while the button is
+        // down, and would show the line over what is pressed.
+        this.listen(document, 'keydown', e => {
+            const key = e as KeyboardEvent;
+            if (key.repeat || MODIFIER_KEYS.has(key.key)) {
+                return;
+            }
+            this.pressing = false;
+            this.endLockWait();
         }, true);
         const released = () => {
             this.pointerHeld = false;
+            this.pressing = false;
             setTimeout(() => this.settleRoom(), 0);
         };
         this.listen(document, 'pointerup', released, true);
@@ -452,6 +534,7 @@ class ToolbarView implements PluginView {
         const lost = () => {
             if (this.pointerHeld) {
                 this.pointerHeld = false;
+                this.pressing = false;
                 this.settleRoom();
             }
         };
@@ -498,18 +581,24 @@ class ToolbarView implements PluginView {
             }
             return s;
         };
+        const mac = macKeys();
         for (const tool of this.tools) {
             const s = stateOf(tool.action);
             setState(tool.el, s.enabled, s.active);
-            // A named entry's sample and tooltip say one name: the selection's, or — the row locked — its resting one.
-            const label = s.label ?? (tool.action.named ? tool.action.label : undefined);
-            const tooltip = s.tooltip ?? (s.syntax === undefined ? tooltipOf(tool.action, label) : `${label as string}: ${s.syntax}`);
-            tool.el.title = s.enabled || !s.reason ? tooltip : `${tooltip}\n${s.reason}`;
-            if (tool.action.named && label !== undefined) {
-                // Its resting form is plain text for the inline entry (no element to draw), the block's own element for the block's.
-                resample(tool.el, s.sample ?? (tool.action.apply.kind === 'inline-attrs' ? { tag: 'span', children: [label] } : { ...tool.action.sample, children: [label] }));
-                resyntax(tool.el, s.syntax ?? tool.action.syntax.split('\n')[0]);
+            const note = s.enabled ? null : s.reason;
+            if (tool.el.classList.contains('mep-menu-item')) {
+                // A menu entry shows its word and syntax, and its card the construct and the refusal: no hover.
+                // A refused one says why to a screen reader.
+                describeAs(tool.el, note);
+                // A named entry says one name: the selection's, or — the row locked — its resting one.
+                if (tool.action.named) {
+                    relabel(tool.el, s.label ?? tool.action.label);
+                    resyntax(tool.el, s.syntax ?? tool.action.column ?? tool.action.syntax.split('\n')[0]);
+                }
+                continue;
             }
+            this.tipOfControl.set(tool.el, s.tip ? { ...s.tip, note } : tipOf(tool.action, { label: s.label, reason: note, mac }));
+            this.tips.refresh(tool.el);
             if (s.ariaLabel !== undefined) {
                 tool.el.setAttribute('aria-label', s.ariaLabel);
             }
@@ -550,7 +639,11 @@ class ToolbarView implements PluginView {
      * so it holds for any tool set and font. The tools and the count never
      * move; the line goes with the lock. The page makes room for the line
      * (`settleRoom`) — and the bars, which keep clear of the chrome, are
-     * placed again — when it comes or goes.
+     * placed again — when it comes or goes. A line that comes while a button
+     * is held waits for its room, unseen (`LOCK_WAIT_CLASS`): shown before it,
+     * it would stand over the page's top and take the release — and so the
+     * click — from what was pressed there, however little room the page's own
+     * stylesheets leave above it.
      */
     private placeLock(): void {
         const was = this.row.classList.contains(LOCK_BELOW_CLASS);
@@ -558,10 +651,22 @@ class ToolbarView implements PluginView {
         const note = this.lockNote;
         const below = !note.hidden && note.scrollWidth > note.clientWidth + 1;
         this.row.classList.toggle(LOCK_BELOW_CLASS, below);
-        if (below !== was) {
+        // Only a line a press brings waits: one a key brings shows at once, a held button or not.
+        const waiting = below && this.pressing && this.pointerHeld && this.room < 0.5;
+        this.row.classList.toggle(LOCK_WAIT_CLASS, waiting);
+        // A waiting line is no chrome yet (`lockLineHeight`): the bars are placed once, with its room.
+        if (below !== was && !waiting) {
             this.chromeMoved();
         }
         this.settleRoom();
+    }
+
+    /** A line waiting for its room shows now, and what keeps clear of the chrome is placed against it. */
+    private endLockWait(): void {
+        if (this.row.classList.contains(LOCK_WAIT_CLASS)) {
+            this.row.classList.remove(LOCK_WAIT_CLASS);
+            this.chromeMoved();
+        }
     }
 
     /**
@@ -580,6 +685,8 @@ class ToolbarView implements PluginView {
         if (this.destroyed || this.pointerHeld) {
             return;
         }
+        // The line comes with its room, never before it.
+        this.row.classList.remove(LOCK_WAIT_CLASS);
         const want = this.row.classList.contains(LOCK_BELOW_CLASS) ? this.lockNote.getBoundingClientRect().height : 0;
         if (Math.abs(want - this.room) < 0.5) {
             return;
@@ -621,6 +728,7 @@ class ToolbarView implements PluginView {
         clearTimeout(this.flashTimer);
         clearTimeout(this.focusTimer);
         this.closeFieldBar();
+        this.tips.release();
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
         }
@@ -680,9 +788,7 @@ class ToolbarView implements PluginView {
         menu.alignEnd = true;
         for (const entry of EXPORT_ENTRIES) {
             if (entry.separated) {
-                const rule = div('mep-menu-separator');
-                rule.setAttribute('role', 'separator');
-                menu.panel.append(rule);
+                menu.panel.append(separator());
             }
             const item = this.entry(menu);
             item.dataset.export = entry.id;
@@ -728,6 +834,12 @@ class ToolbarView implements PluginView {
         button.setAttribute('role', 'button');
         button.tabIndex = 0;
         button.append(sampleHolder(action.sample));
+        // Named for a screen reader by its word and its delimiter spoken ("Italic, asterisk"), its key as ARIA spells it.
+        button.setAttribute('aria-label', ariaLabelOf(action));
+        if (action.key !== undefined) {
+            button.setAttribute('aria-keyshortcuts', ariaKeyshortcuts(action.key, macKeys()));
+        }
+        this.tips.attach(button, () => this.tipOfControl.get(button) ?? null);
         const tool = { action, el: button };
         button.addEventListener('click', e => {
             e.preventDefault();
@@ -756,6 +868,7 @@ class ToolbarView implements PluginView {
         face.setAttribute('aria-expanded', 'false');
         face.tabIndex = 0;
         face.append(span('mep-face-label', label), chevronNode());
+        this.tips.attach(face, () => this.tipOfControl.get(face) ?? null);
         menu.face = face;
         face.addEventListener('click', e => {
             e.preventDefault();
@@ -803,7 +916,8 @@ class ToolbarView implements PluginView {
         (face.querySelector('.mep-face-label') as HTMLElement).textContent = label;
         setState(face, enabled, false);
         const title = menu.id === 'block-type' && label !== MENU_LABELS[menu.id] ? `${MENU_LABELS[menu.id]}: ${label}` : label;
-        face.title = reason === null ? title : `${title}\n${reason}`;
+        this.tipOfControl.set(face, plainTip(title, reason));
+        this.tips.refresh(face);
         if (!enabled && !menu.panel.hidden) {
             this.closeAll();
         }
@@ -822,10 +936,12 @@ class ToolbarView implements PluginView {
         setState(face, refusal === null, false);
         (face.querySelector('.mep-face-label') as HTMLElement).textContent = busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL;
         face.setAttribute('aria-busy', String(busy));
-        face.title = [busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL, refusal ?? (busy ? EXPORT_BUSY_REFUSAL : note)].filter(Boolean).join('\n');
+        this.tipOfControl.set(face, plainTip(busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL, refusal ?? (busy ? EXPORT_BUSY_REFUSAL : note)));
+        this.tips.refresh(face);
+        // A menu entry has no hover; a refused one says why to a screen reader.
         for (const item of this.formatItems) {
             setState(item, !busy, false);
-            item.title = busy ? EXPORT_BUSY_REFUSAL : '';
+            describeAs(item, busy ? EXPORT_BUSY_REFUSAL : null);
         }
     }
 
@@ -859,9 +975,70 @@ class ToolbarView implements PluginView {
                 }
                 continue;
             }
-            panel.append(this.menuEntry(menu, action));
+            if (action.separated) {
+                panel.append(separator());
+            }
+            // The aliases wait behind "More types…", drawn where their group starts.
+            if (action.alias !== undefined && menu.more === undefined) {
+                panel.append(this.moreEntry(menu, actions.filter(a => a.alias !== undefined).length));
+            }
+            const item = this.menuEntry(menu, action);
+            if (action.alias !== undefined) {
+                item.hidden = true;
+                menu.more?.hidden.push(item);
+            }
+            panel.append(item);
         }
         return menu;
+    }
+
+    /**
+     * "More types… (16)": pressed — a click, `Enter` or `Space` — the entries
+     * behind it show in place, the focus goes to the first of them and it is
+     * scrolled into view, and it reads "Fewer types"; pressed again, they go.
+     * The menu closes with them hidden (`closeMenu`).
+     */
+    private moreEntry(menu: Menu, count: number): HTMLElement {
+        const item = this.entry(menu);
+        item.classList.add('mep-more-item');
+        item.dataset.more = 'collapsed';
+        item.setAttribute('aria-expanded', 'false');
+        const glyph = span('mep-entry-glyph');
+        glyph.setAttribute('aria-hidden', 'true');
+        item.append(glyph, span('mep-entry-label', MORE_TYPES(count)), chevronNode('down'));
+        menu.more = { item, hidden: [], count };
+        item.addEventListener('click', e => {
+            e.preventDefault();
+            this.toggleMore(menu);
+        });
+        item.addEventListener('mouseenter', () => {
+            this.hideCard();
+            followPointer(menu.panel, item);
+        });
+        return item;
+    }
+
+    private toggleMore(menu: Menu, expand = menu.more?.item.dataset.more !== 'expanded'): void {
+        const more = menu.more;
+        if (!more) {
+            return;
+        }
+        more.item.dataset.more = expand ? 'expanded' : 'collapsed';
+        more.item.setAttribute('aria-expanded', String(expand));
+        (more.item.querySelector('.mep-entry-label') as HTMLElement).textContent = expand ? FEWER_TYPES : MORE_TYPES(more.count);
+        more.item.querySelector('.mep-menu-caret')?.replaceWith(chevronNode(expand ? 'up' : 'down'));
+        for (const item of more.hidden) {
+            item.hidden = !expand;
+        }
+        if (menu.panel.hidden) {
+            return;
+        }
+        this.place(menu);
+        if (expand) {
+            const first = more.hidden.find(reachable);
+            first?.focus({ preventScroll: true });
+            first?.scrollIntoView({ block: 'nearest' });
+        }
     }
 
     private entry(menu: Menu): HTMLElement {
@@ -872,12 +1049,28 @@ class ToolbarView implements PluginView {
         return item;
     }
 
+    /**
+     * An entry: the check (`::before`), the glyph — the element it makes at its
+     * natural size, clipped to its swatch, never zoomed (`ToolbarAction.glyph`)
+     * — the word, which never truncates, and the syntax, which truncates first.
+     * A Block type entry draws its word as the element instead (`drawnLabel`).
+     */
     private menuEntry(menu: Menu, action: ToolbarAction): HTMLElement {
         const item = this.entry(menu);
         item.dataset.action = action.id;
-        const sample = span('mep-entry-sample');
-        sample.append(sampleHolder(action.sample));
-        item.append(sample, span('mep-entry-syntax', action.syntax.split('\n')[0]));
+        const column = span('mep-entry-syntax', action.column ?? action.syntax.split('\n')[0]);
+        if (action.drawnLabel) {
+            const sample = span('mep-entry-sample');
+            sample.append(sampleHolder(action.sample));
+            item.append(sample, column);
+        } else {
+            const label = span('mep-entry-label', action.label);
+            const alias = aliasNote(action);
+            if (alias !== null) {
+                label.append(span('mep-entry-alias', alias));
+            }
+            item.append(glyphOf(action.glyph === undefined ? action.sample : action.glyph), label, column);
+        }
         const tool = { action, el: item };
         menu.tools.push(tool);
         this.tools.push(tool);
@@ -903,9 +1096,8 @@ class ToolbarView implements PluginView {
         item.dataset.submenu = child.id;
         item.setAttribute('aria-haspopup', 'menu');
         item.setAttribute('aria-expanded', 'false');
-        const label = span('mep-entry-sample');
-        label.append(span('mep-entry-label', MENU_LABELS[child.id]));
-        item.append(label, span('mep-entry-syntax', SUBMENU_SYNTAX[child.id as ToolbarSubmenu]), chevronNode('right'));
+        item.append(glyphOf(SUBMENU_GLYPH[child.id as ToolbarSubmenu]), span('mep-entry-label', MENU_LABELS[child.id]),
+            span('mep-entry-syntax', SUBMENU_SYNTAX[child.id as ToolbarSubmenu]), chevronNode('right'));
         child.opener = item;
         item.addEventListener('mouseenter', () => {
             this.hideCard();
@@ -930,7 +1122,7 @@ class ToolbarView implements PluginView {
             const count = menu.items.length;
             for (let i = 1; i <= count; i++) {
                 const next = menu.items[(((index + step * i) % count) + count) % count];
-                if (!isDisabled(next)) {
+                if (reachable(next)) {
                     next.focus({ preventScroll: true });
                     return;
                 }
@@ -954,6 +1146,9 @@ class ToolbarView implements PluginView {
                 stop();
                 if (child) {
                     this.openMenu(child, true);
+                } else if (focused === menu.more?.item) {
+                    // Not a command: the menu stays open, its hidden entries shown in place.
+                    this.toggleMore(menu);
                 } else if (focused && menu.commands.has(focused)) {
                     this.runCommand(menu, focused);
                 } else {
@@ -998,8 +1193,9 @@ class ToolbarView implements PluginView {
         (menu.face ?? menu.opener)?.setAttribute('aria-expanded', 'true');
         this.fitSamples(menu);
         this.place(menu);
+        this.tips.hide();
         if (focusFirst) {
-            menu.items.find(i => !isDisabled(i))?.focus({ preventScroll: true });
+            menu.items.find(reachable)?.focus({ preventScroll: true });
         }
     }
 
@@ -1010,6 +1206,9 @@ class ToolbarView implements PluginView {
         if (!menu.panel.hidden) {
             menu.panel.hidden = true;
             (menu.face ?? menu.opener)?.setAttribute('aria-expanded', 'false');
+            // It opens again at rest: the canonical entries, the rest behind "More types…".
+            this.toggleMore(menu, false);
+            menu.panel.scrollTop = 0;
         }
         if (this.card.dataset.menu === menu.id) {
             this.hideCard();
@@ -1022,13 +1221,17 @@ class ToolbarView implements PluginView {
         }
     }
 
-    private closeAll(): void {
+    /** Every menu and the card closed, and the hover hidden — but on a scroll (`keepTip`), which the hover follows. */
+    private closeAll(keepTip = false): void {
         for (const menu of this.menus) {
             if (!menu.parent) {
                 this.closeMenu(menu);
             }
         }
         this.hideCard();
+        if (!keepTip) {
+            this.tips.hide();
+        }
     }
 
     /** Under its face, or beside its opener; kept inside the window. */
@@ -1056,10 +1259,13 @@ class ToolbarView implements PluginView {
     }
 
     /**
-     * Every entry is one height. A block sample (a heading, an admonition box, a
-     * table) is scaled down with `zoom` until it fits the entry; an inline one
-     * keeps its natural size and is clipped to the entry. Measured when the menu
-     * opens, so it holds for whatever the stylesheets make of the sample.
+     * Every entry is one height. A Block type sample — the entry's label drawn
+     * as the element (`drawnLabel`) — is scaled down with `zoom` until it fits
+     * the entry, but never below `SAMPLE_ZOOM_FLOOR`: what still stands out is
+     * clipped (`editor.css`). An inline one keeps its natural size and is
+     * clipped to the entry, as every glyph is (`.mep-entry-glyph`, never
+     * zoomed). Measured when the menu opens, so it holds for whatever the
+     * stylesheets make of the sample.
      */
     private fitSamples(menu: Menu): void {
         for (const holder of Array.from(menu.panel.querySelectorAll<HTMLElement>('.mep-entry-sample'))) {
@@ -1074,9 +1280,11 @@ class ToolbarView implements PluginView {
             const box = holder.getBoundingClientRect();
             const r = sample.getBoundingClientRect();
             const zoom = Math.min(1, r.height > 0 ? box.height / r.height : 1, r.width > 0 ? box.width / r.width : 1);
-            if (zoom < 1) {
-                sample.style.setProperty('zoom', zoom.toFixed(3));
+            if (zoom >= 1) {
+                continue;
             }
+            // Rounded down, never up into a box a hair too big; never below the floor.
+            sample.style.setProperty('zoom', String(Math.max(SAMPLE_ZOOM_FLOOR, Math.floor(zoom * 1000) / 1000)));
         }
     }
 
@@ -1110,6 +1318,12 @@ class ToolbarView implements PluginView {
         const syntax = div('mep-preview-syntax');
         syntax.textContent = elideDataUris(preview.markdown);
         this.card.replaceChildren(body, syntax);
+        // An entry has no tooltip: that it is written as source, the card says.
+        if (isSourceAction(action)) {
+            const source = div('mep-preview-source');
+            source.textContent = SOURCE_NOTE;
+            this.card.append(source);
+        }
         // A disabled entry says why where the eye already is, not only in its tooltip.
         if (!now.enabled && now.reason) {
             const why = div('mep-preview-refusal');
@@ -1474,7 +1688,8 @@ class ToolbarView implements PluginView {
             });
             field.el.dataset.verb = verb;
             label.textContent = fieldHeading(barLabel, step.label);
-            bar.replaceChildren(label, field.el, ...fieldAside(step));
+            // Its title drawn as every bar's: a muted label, a divider after it.
+            bar.replaceChildren(label, barSeparator(), field.el, ...fieldAside(step));
             this.fieldBar = { bar, field };
             return field;
         };
@@ -1521,6 +1736,7 @@ class ToolbarView implements PluginView {
             return;
         }
         this.bubble.hidden = true;
+        this.tips.hide(this.bubble);
     }
 
     /**
@@ -1544,6 +1760,7 @@ class ToolbarView implements PluginView {
             && sel.$from.parent.inlineContent && sel.$to.parent.inlineContent && !sel.$from.parent.type.spec.code;
         if (!focused || !inText) {
             this.bubble.hidden = true;
+            this.tips.hide(this.bubble);
             return;
         }
         this.bubble.hidden = false;

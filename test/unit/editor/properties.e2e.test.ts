@@ -136,7 +136,11 @@ suite('Editor properties panel (e2e)', () => {
 
     suiteSetup(async function () {
         this.timeout(60000);
-        editor = await openEditorPage({ width: 1280, height: 800 });
+        // Without the built-in Markdown extension's stylesheets: the webview's defaults alone
+        // leave the body's top at 0, so the page's own top room is all that keeps the panel's
+        // header clear of the row and its lock line — what a disabled extension, or a
+        // stylesheet setting `body { padding-top: 0 }`, leaves.
+        editor = await openEditorPage({ width: 1280, height: 800, builtinMarkdown: false });
         if (!editor) {
             this.skip();
         }
@@ -179,7 +183,7 @@ suite('Editor properties panel (e2e)', () => {
             ['stream', 'text', 'text', '×'],
             ['lang', 'choice', 'text', '×'],
             ['draft', 'boolean', 'checkbox', '×'],
-            ['attendees', 'list', null, 'Daniel×+ add×'],
+            ['attendees', 'list', null, 'Daniel×+ Add×'],
             ['sections', 'source', null, '2 items, nested · edit as source×'],
         ]);
         const values = await page.$$eval('.mep-prop-row .mep-prop-input', els => els.map(el => (el as HTMLInputElement).value));
@@ -300,7 +304,7 @@ suite('Editor properties panel (e2e)', () => {
         assert.deepStrictEqual(changedLines(SOURCE, edit.text), [['draft: true', 'draft: false']]);
     });
 
-    test('chips: + add takes a value with Enter, × removes one with the hint, each in the list\'s flow style', async function () {
+    test('chips: + Add takes a value with Enter, × removes one with the hint, each in the list\'s flow style', async function () {
         this.timeout(15000);
         await showDocument(SOURCE);
         await expand();
@@ -321,7 +325,7 @@ suite('Editor properties panel (e2e)', () => {
         edit = await lastEdit();
         assert.ok(edit);
         assert.deepStrictEqual(changedLines(SOURCE, edit.text), [['attendees: [Daniel]', 'attendees: [Jack]']]);
-        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Removed Daniel — (Ctrl|Cmd)\+Z$/);
+        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Daniel removed — (Ctrl|Cmd)\+Z$/);
     });
 
     test('the uid is read-only: a click copies it, and nothing is written', async function () {
@@ -368,10 +372,11 @@ suite('Editor properties panel (e2e)', () => {
         assert.match(await page.$eval(`${row('sections')} .mep-prop-summary`, el => el.textContent ?? ''), /^3 items, nested/);
     });
 
-    test('+ Add property asks for the name, then the value, and writes the key at the end of the YAML', async function () {
+    test('+ Add (a new property) asks for the name, then the value, and writes the key at the end of the YAML', async function () {
         this.timeout(15000);
         await showDocument(SOURCE);
         await expand();
+        assert.deepStrictEqual(await page.$eval('.mep-prop-add-button', el => [el.textContent, el.getAttribute('aria-label')]), ['+ Add', 'Add property'], 'the list\'s word, named for a screen reader');
         await clickAt('.mep-prop-add-button');
         await page.waitForSelector('.mep-prop-add input[data-slot="add:name"]');
         await page.keyboard.type('status');
@@ -407,7 +412,7 @@ suite('Editor properties panel (e2e)', () => {
         let edit = await lastEdit();
         assert.ok(edit);
         assert.strictEqual(edit.text, SOURCE.replace('lang: en\n', ''));
-        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Removed lang — (Ctrl|Cmd)\+Z$/);
+        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^lang removed — (Ctrl|Cmd)\+Z$/);
         assert.strictEqual(await page.$(row('lang')), null);
         // The focus is on the panel (its toggle, after the row went): the editor's undo.
         await page.focus('.mep-props-toggle');
@@ -463,7 +468,7 @@ suite('Editor properties panel (e2e)', () => {
         const edit = await lastEdit();
         assert.ok(edit);
         assert.strictEqual(edit.text, SOURCE.replace('workshop: 2026-09-29-workshop-visual-editor-next-round\n', ''));
-        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Removed workshop — (Ctrl|Cmd)\+Z$/);
+        assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^workshop removed — (Ctrl|Cmd)\+Z$/);
     });
 
     test('typing in one row and then clicking another row\'s × commits the typing and removes that row', async function () {
@@ -710,6 +715,8 @@ suite('Editor properties panel (e2e)', () => {
                 const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
                 return {
                     line: line !== null,
+                    // `:not([hidden])` holds for a line waiting unseen for its room too: shown is visible.
+                    visible: line !== null && getComputedStyle(line).visibility === 'visible',
                     chrome: line ? line.getBoundingClientRect().bottom : row.bottom,
                     panel: (document.querySelector('.mep-properties') as HTMLElement).getBoundingClientRect().top,
                     room: getComputedStyle(document.querySelector('.mep-editor') as HTMLElement).paddingTop,
@@ -722,7 +729,7 @@ suite('Editor properties panel (e2e)', () => {
             await page.keyboard.press('Tab');
             await delay(150);
             let at = await layout();
-            assert.ok(at.line && at.focus === 'mep-props-toggle', JSON.stringify(at));
+            assert.ok(at.line && at.visible && at.focus === 'mep-props-toggle', JSON.stringify(at));
             await page.evaluate(() => window.dispatchEvent(new Event('blur')));
             await delay(100);
             at = await layout();
@@ -776,10 +783,30 @@ suite('Editor properties panel (e2e)', () => {
                     return { header: header.top, active: active.top, chrome: line ? line.getBoundingClientRect().bottom : row.bottom, below: line !== null };
                 });
 
-                // The toggle, pressed and released as a person does: the room comes after the release.
+                // The toggle, pressed and released as a person does: the line and its room come after the release.
                 const toggle = await centre('.mep-properties .mep-props-toggle');
-                await page.mouse.click(toggle.x, toggle.y, { delay: 60 });
+                // While held: the line waits unseen, and nothing under the row moves — the header, nor a bar or the bubble.
+                const held = () => page.evaluate(() => {
+                    const line = document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+                    const floating = Array.from(document.querySelectorAll<HTMLElement>('.mep-object-toolbar, .mep-bubble'))
+                        .filter(el => !el.hidden && el.getClientRects().length > 0)
+                        .map(el => `${el.className}@${el.getBoundingClientRect().top}`);
+                    return {
+                        line: line ? getComputedStyle(line).visibility : 'none',
+                        header: (document.querySelector('.mep-properties .mep-props-header') as HTMLElement).getBoundingClientRect().top,
+                        floating,
+                    };
+                });
+                await page.mouse.move(toggle.x, toggle.y);
+                const unpressed = await held();
+                await page.mouse.down();
+                await delay(60);
+                await shot(page, `lockroom-${width}-held.png`);
+                const during = await held();
+                assert.deepStrictEqual(during, { ...unpressed, line: 'hidden' }, `${width}px: held, the line waits unseen and nothing under the row moves`);
+                await page.mouse.up();
                 await delay(150);
+                await shot(page, `lockroom-${width}-released.png`);
                 assert.deepStrictEqual(await clicks(), ['mep-props-toggle'], `${width}px: the toggle's click landed`);
                 let at = await headerAgainst();
                 assert.ok(at.below, `${width}px: the reason on its own line`);
@@ -811,6 +838,60 @@ suite('Editor properties panel (e2e)', () => {
                 assert.strictEqual(after.room, '35px', `${width}px: the room is given back`);
             }
         } finally {
+            await page.setViewport({ width: 1280, height: 800 });
+        }
+    });
+
+    test('a modifier held from before the press does not show the waiting line: its repeats are no key; a real key shows it, and the release places the bars once', async function () {
+        this.timeout(30000);
+        try {
+            await page.setViewport({ width: 600, height: 800 });
+            await showDocument(BOXES);
+            await clickText(page, 'some words', 2);
+            const state = () => page.evaluate(() => {
+                const line = document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+                return {
+                    line: line ? getComputedStyle(line).visibility : 'none',
+                    header: (document.querySelector('.mep-properties .mep-props-header') as HTMLElement).getBoundingClientRect().top,
+                };
+            });
+            // What keeps clear of the chrome is placed again on each of these.
+            await page.evaluate(() => {
+                const w = window as unknown as { chromeMoved: number };
+                w.chromeMoved = 0;
+                document.querySelector('.mep-editor')?.addEventListener('mep-chrome-moved', () => w.chromeMoved++);
+            });
+            const moved = () => page.evaluate(() => (window as unknown as { chromeMoved: number }).chromeMoved);
+
+            const toggle = await centre('.mep-properties .mep-props-toggle');
+            await page.mouse.move(toggle.x, toggle.y);
+            const unpressed = await state();
+            // Shift held from before the press (a Shift-click); the keyboard repeats it while the button is down.
+            await page.keyboard.down('Shift');
+            await page.mouse.down();
+            await delay(60);
+            for (let i = 0; i < 3; i++) {
+                await page.keyboard.down('Shift');
+                await delay(30);
+            }
+            assert.deepStrictEqual(await state(), { ...unpressed, line: 'hidden' }, 'a modifier\'s repeats leave the line waiting and the page where it was');
+            assert.strictEqual(await moved(), 0, 'nothing is placed against a waiting line');
+
+            // A real key during the press: the key acts, and the line shows.
+            await page.keyboard.press('KeyX');
+            await delay(60);
+            assert.strictEqual((await state()).line, 'visible', 'a real key shows the line');
+            const beforeRelease = await moved();
+            await page.mouse.up();
+            await page.keyboard.up('Shift');
+            await delay(150);
+            assert.strictEqual(await moved() - beforeRelease, 1, 'the release places the bars once, with the line\'s room');
+        } finally {
+            // Nothing held over into the next test, whatever failed.
+            await page.mouse.up().catch(() => undefined);
+            await page.keyboard.up('Shift').catch(() => undefined);
+            await page.keyboard.press('Escape');
+            await page.keyboard.press('Escape');
             await page.setViewport({ width: 1280, height: 800 });
         }
     });

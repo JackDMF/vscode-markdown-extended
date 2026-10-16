@@ -34,7 +34,7 @@ export function rowState(page: puppeteer.Page) {
         tools: Array.from(row.querySelectorAll('[aria-disabled]')).map(el => ({
             id: (el as HTMLElement).dataset.action ?? (el as HTMLElement).dataset.menu ?? el.className,
             disabled: el.getAttribute('aria-disabled') === 'true',
-            title: (el as HTMLElement).title,
+            title: (el.getAttribute('aria-description') ?? ''),
             // What it acts on (`RowScope`): only Export says, the whole document.
             document: (el as HTMLElement).dataset.scope === 'document',
         })),

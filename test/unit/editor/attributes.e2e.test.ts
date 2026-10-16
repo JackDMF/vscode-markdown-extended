@@ -140,7 +140,7 @@ suite('Editor Attributes… (e2e)', () => {
         await page.waitForSelector('.mep-menu[data-menu="formatting"]:not([hidden])');
     };
 
-    const entryState = () => page.$eval(ENTRY, el => ({ disabled: el.getAttribute('aria-disabled') === 'true', title: (el as HTMLElement).title }));
+    const entryState = () => page.$eval(ENTRY, el => ({ disabled: el.getAttribute('aria-disabled') === 'true', title: (el.getAttribute('aria-description') ?? '') }));
 
     const clickVerb = async (verb: string) => {
         const button = await page.waitForSelector(`${BAR} [data-verb="${verb}"]`, { visible: true, timeout: 2000 });
@@ -177,7 +177,7 @@ suite('Editor Attributes… (e2e)', () => {
         await clickAt('configurable', 3);
         await openFormatting();
         const entry = await page.$eval(ENTRY, el => ({
-            label: el.querySelector('.mep-sample')?.textContent,
+            label: el.querySelector('.mep-entry-label')?.textContent,
             previous: (el.previousElementSibling as HTMLElement | null)?.dataset.action,
             disabled: el.getAttribute('aria-disabled'),
         }));
@@ -285,7 +285,7 @@ suite('Editor Attributes… (e2e)', () => {
         await showDocument('Run `x` now, or plain words.\n\nThe last paragraph.\n');
         await clickAt('plain words', 2);
         await openFormatting();
-        const plain = await page.$eval(INLINE, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title, label: el.querySelector('.mep-sample')?.textContent }));
+        const plain = await page.$eval(INLINE, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? ''), label: el.querySelector('.mep-entry-label')?.textContent }));
         assert.strictEqual(plain.disabled, 'true');
         assert.strictEqual(plain.label, 'Attributes of Element…', 'its resting name');
         assert.ok(plain.title.includes(INLINE_ATTRS_LOCK), plain.title);
@@ -294,7 +294,7 @@ suite('Editor Attributes… (e2e)', () => {
 
         await clickAt('x', 0);
         await openFormatting();
-        const inCode = await page.$eval(INLINE, el => ({ disabled: el.getAttribute('aria-disabled'), label: el.querySelector('.mep-sample')?.textContent }));
+        const inCode = await page.$eval(INLINE, el => ({ disabled: el.getAttribute('aria-disabled'), label: el.querySelector('.mep-entry-label')?.textContent }));
         assert.deepStrictEqual(inCode, { disabled: 'false', label: 'Attributes of Code…' });
         await page.hover(INLINE);
         await shot('08-formatting-inline-enabled.png');

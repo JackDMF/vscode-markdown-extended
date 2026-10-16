@@ -7,12 +7,14 @@ import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
 import { Command, Plugin } from 'prosemirror-state';
 import { fidelityPlugin } from '../fidelity';
+import { REDO_BINDINGS, UNDO_BINDING } from '../keys';
 import { emojiKeymap, emojiPlugin } from './emoji';
 import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
 import { tableKeymap, tablesPlugins } from './tables';
+import { TOOLBAR_ACTIONS } from './toolbar/actions';
 import { toggleMarkType } from './toolbar/commands';
 import { wikiEmbedInputRules, wikiEmbedPastePlugin } from './wikiEmbeds';
 import { admonitionTitlesPlugin, wrapperKeymap } from './wrappers';
@@ -64,19 +66,32 @@ export const splitRequirementHeading: Command = (state, dispatch) => {
     return splitBlockAs(() => ({ type: nodes.paragraph }))(state, dispatch);
 };
 
+/** The row marks' keys (`ToolbarAction.key`), each toggling its mark by type. */
+function markBindings(): Record<string, Command> {
+    const bindings: Record<string, Command> = {};
+    for (const action of TOOLBAR_ACTIONS) {
+        if (action.key !== undefined && action.apply.kind === 'mark') {
+            const type = marks[action.apply.mark];
+            bindings[action.key] = action.apply.markup === null ? toggleMark(type) : toggleMarkType(type, action.apply.markup);
+        }
+    }
+    return bindings;
+}
+
 function markdownKeymap(): Plugin {
     const item = nodes.list_item;
     return keymap({
-        'Mod-z': undo,
-        'Mod-y': redo,
-        'Mod-Shift-z': redo,
+        // The binding the undo hints name (`keys.ts`): the key a hint offers is this one.
+        [UNDO_BINDING]: undo,
+        ...Object.fromEntries(REDO_BINDINGS.map(binding => [binding, redo])),
         // Backspace right after an input rule fired gives back what was typed.
         'Backspace': undoInputRule,
-        // By mark type, written with the CommonMark delimiters when added; the
-        // toolbar's buttons toggle one delimiter each (toolbar/commands.ts).
-        'Mod-b': toggleMarkType(marks.strong, '**'),
-        'Mod-i': toggleMarkType(marks.em, '*'),
-        'Mod-`': toggleMark(marks.code),
+        // By mark type, written with the delimiter of the row's mark that names
+        // the key when added (`Mod-b` Bold `**`, `Mod-i` Italic `*`, Mod-backtick
+        // Code); the toolbar's buttons toggle one delimiter each
+        // (toolbar/commands.ts). The binding is the action's `key`, the one
+        // its tooltip and `aria-keyshortcuts` name (`actions.ts`).
+        ...markBindings(),
         'Enter': chainCommands(splitListItem(item), splitRequirementHeading),
         'Tab': sinkListItem(item),
         'Shift-Tab': liftListItem(item),

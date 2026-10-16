@@ -181,7 +181,7 @@ export function lensLabelNodes(title: string): globalThis.Node[] {
  * `.mep-menu-caret` the stylesheet dims. One element for all of them, so the
  * row, the menus and the bars cannot draw it three ways.
  */
-export function chevronNode(direction: 'down' | 'right' = 'down'): HTMLElement {
+export function chevronNode(direction: 'down' | 'up' | 'right' = 'down'): HTMLElement {
     const holder = document.createElement('span');
     holder.className = 'mep-menu-caret';
     holder.setAttribute('aria-hidden', 'true');

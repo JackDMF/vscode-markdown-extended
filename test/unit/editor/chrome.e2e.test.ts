@@ -5,7 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import type { WebviewMessage } from '../../../src/editor/protocol';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import {
-    EXTENSION_ID, EditorPage, clickText, closeEditorPage, computedColour as computed, delay, openEditorPage, shot as saveShot, showDiagnostics, vscodeMarkdownCss,
+    EXTENSION_ID, EditorPage, clickText, closeEditorPage, computedColour as computed, delay, openEditorPage, shot as saveShot, showDiagnostics,
 } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
@@ -87,7 +87,6 @@ suite('Editor chrome (e2e)', () => {
         this.timeout(60000);
         editor = await openEditorPage({
             width: 1280, height: 800,
-            stylesheets: [vscodeMarkdownCss()],
             styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'],
         });
         if (!editor) {
@@ -188,9 +187,10 @@ suite('Editor chrome (e2e)', () => {
         await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])');
         await delay(80);
         const first = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.action ?? null);
-        await pointTo('.mep-menu[data-menu="insert"] .mep-menu-item:nth-child(3)');
+        // The fourth child: a separator divides Link… and Image… from the rest.
+        await pointTo('.mep-menu[data-menu="insert"] .mep-menu-item:nth-child(4)');
         const focused = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.action ?? null);
-        const hovered = await page.$eval('.mep-menu[data-menu="insert"] .mep-menu-item:nth-child(3)', el => (el as HTMLElement).dataset.action ?? null);
+        const hovered = await page.$eval('.mep-menu[data-menu="insert"] .mep-menu-item:nth-child(4)', el => (el as HTMLElement).dataset.action ?? null);
         assert.notStrictEqual(first, hovered, 'the focus started elsewhere');
         assert.strictEqual(focused, hovered, 'the focus followed the pointer');
         await page.keyboard.press('Escape');

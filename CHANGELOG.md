@@ -4,6 +4,20 @@
 
 ### ✨ Changes
 
+- Every object bar orders its verbs alike: Open, Edit…, type verbs, Attributes…, Edit source, other extensions' actions, then Remove/Delete.
+- Delete destroys, Remove keeps: "Delete image", "Delete emoji", "Delete embed", "Delete note"; "Remove link, keep text".
+- The destroying verb stands last on every bar, after a divider.
+- Emoji and wiki-embed bars say "Convert to text"; the tooltip names the text it becomes.
+- "Delete image", "Delete embed" and "Delete directive" say in their tooltip that the file stays.
+- Container bar: "Edit classes…"; admonition bar: "Edit title…" and "Type" with a chevron.
+- An image's bar starts with "Open file"; a source block's with "Show in text editor".
+- Alt+Enter focuses the first verb that opens in place — never Open, never Delete or Remove.
+- A bar with no such verb takes the focus itself; Enter or ↓ moves into its first verb.
+- A bar's accessible name says the object, how many actions can be chosen, and "arrow keys to choose".
+- Every object bar's undo hint reads alike: "Image deleted — Ctrl+Z", "Link removed — Ctrl+Z", "Emoji converted to text — Ctrl+Z".
+- In a narrow editor a verb drops its noun ("Delete", "Edit…"), then the bar's title truncates, down to hidden; verbs never truncate.
+- A bar too wide for the text column may stand past it, up to the editor's right edge.
+- A removed property's hint reads "lang removed — Ctrl+Z", as the bars' do.
 - Req Explorer's front-matter lens is not drawn in the Visual Editor, whose Properties block already shows and folds the front matter.
 - Notes move into the margin by available width: from 960 px (one side) or 1200 px (both), inline below.
 - The margin lane is reserved beside the column, so a note never leaves the window or scrolls sideways.
@@ -15,6 +29,24 @@
 - Note colours derive from the text colour; `--md-note-opacity` mutes by colour, not transparency.
 - Stylesheet authors: override note colours, `--md-note-text` and the bar width on `body`, not `:root`.
 - In the Visual Editor, adding the first note or removing the last keeps the reference line in place.
+- The row's marks say their name, delimiter, element and shortcut in an editor hover, not a native tooltip.
+- The row's, bubble's and bars' tooltips are the editor's hover: after a pause, at once on keyboard focus.
+- Screen readers hear "Italic, asterisk" and the shortcut; no control of the row, bubble or bars carries a title.
+- Menu entries read glyph · word · syntax; the glyph is the real element at its size, never zoomed.
+- Block type keeps its drawn labels, without the heading rules; the code block sample stays readable.
+- The syntax column truncates first; a word label and a field's title never do.
+- Menus divide their groups as the workbench does.
+- Insert › Admonition lists the eleven canonical types; "More types…" expands the sixteen aliases in place.
+- A menu that scrolls shows it: a shadow at the edge the entries continue under.
+- On is fill and border; hover a tint; keyboard focus a ring outside the control; disabled the whole control dimmed.
+- The bubble's {…} is never drawn as on; its name says what it targets.
+- A bar's title is a small muted label with a divider after it, not a button.
+- Properties: "+ Add" on every list and for a new property, named for screen readers.
+
+### 🐛 Fixes
+
+- A click at the top of a narrow editor no longer misses: the lock's reason line appears after the click.
+- The Quote and Code block samples in the Block type menu now fit their entries instead of being cut off.
 
 ### ⚠️ Limits
 

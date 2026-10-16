@@ -38,6 +38,7 @@ import { NOTE_NODES, NOTE_PART_NODES, editorSchema, noteRef } from '../schema';
 import { RAW_TEXT_MARKS, causeReason, frontMatterTakeover, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
 import { showHint } from './hint';
+import { VERB } from '../verbs';
 import { inlineForNote, runWikiEmbedInput } from './wikiEmbeds';
 
 const nodes = editorSchema.nodes;
@@ -387,7 +388,7 @@ let tryingWaysOut = false;
  * holding an emoji atom the judge cannot place (`unplacedEmoji`), or `null`:
  * whether it still reads as that emoji cannot be told, so it is neither kept
  * nor made text. The reason names the atom, the cause where it is a smiley in
- * superscript, and the ways out that are open — Edit as text and Remove emoji
+ * superscript, and the ways out that are open — Convert to text and Delete emoji
  * on that atom, each tried, as the object bar would, on the document the edit
  * started from (`mapping`, from there to the written one).
  */
@@ -407,10 +408,10 @@ function unplacedRefusal(tr: Transaction, rewritten: readonly { node: Node; offs
                 const state = EditorState.create({ doc: tr.before });
                 const asText = emojiAsTextTransaction(state, at, at + 1);
                 if (asText !== null && noteRefusal(asText) === null && emojiTextStillRead(state, asText, at) === null) {
-                    ways.push('Edit as text');
+                    ways.push(VERB.convertToText);
                 }
                 if (noteRefusal(state.tr.delete(at, at + 1)) === null) {
-                    ways.push('Remove emoji');
+                    ways.push(VERB.deleteEmoji);
                 }
             }
         } finally {
@@ -575,6 +576,14 @@ export function notePasteTransaction(state: EditorState, slice: Slice): Transact
 
 export type NoteNodeName = 'sidenote' | 'marginal_note' | 'left_sidebar' | 'right_sidebar';
 
+/** What each is called — on its bar (`objectToolbar.ts`) and in the Annotation menu (`actions.ts`). */
+export const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = {
+    sidenote: 'Sidenote',
+    marginal_note: 'Marginal note',
+    left_sidebar: 'Left sidebar',
+    right_sidebar: 'Right sidebar',
+};
+
 export const NOTE_LOCK = 'Select text in a paragraph or heading, outside any note, to add this.';
 export const NESTED_NOTE_LOCK = 'A note cannot hold another note: the text is already in one.';
 
@@ -701,7 +710,7 @@ export function unwrapNote(name: NoteNodeName): Command {
 }
 
 /**
- * Why `unwrapNote(name)` is not run here, so Remove note and Remove sidebar
+ * Why `unwrapNote(name)` is not run here, so Delete note and Remove sidebar
  * are disabled with it: the filter's reason for the transaction it would
  * dispatch (`noteRefusal`) — a sidebar's text glued to a letter, a reference's
  * to a sidebar — or that there is no such note at the selection.

@@ -10,8 +10,10 @@
  *   their glyph the real element (`<i>`, `<em>`, `<b>`, `<strong>`, `<code>`)
  *   held to the button's size.
  * - **A menu entry** is where a choice is made, so it carries the fidelity: the
- *   element the parser makes from the syntax (`sample`), drawn by the page's own
- *   cascade and normalized to one entry height, with the syntax beside it.
+ *   element the parser makes from the syntax (`glyph`, else `sample`), drawn by
+ *   the page's own cascade at its natural size and clipped, then its word, then
+ *   its syntax (`column`, else the syntax's first line); a Block type entry draws
+ *   its word as the element (`drawnLabel`).
  * - **The preview card**, on hover or focus, shows the construct at its natural
  *   size in a short example (`preview`), again from the cascade.
  *
@@ -40,8 +42,11 @@
  * element" is checked, not assumed. **Include…** has no example: its syntax is
  * the offering extension's, and what it makes is whatever the snippet holds.
  */
-import { ADMONITION_MARKER, ADMONITION_TYPES, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
-import type { NoteNodeName } from '../notes';
+import { ADMONITION_FAMILIES, ADMONITION_MARKER, INLINE_MARKERS, KBD_MARKERS, MARKER_NAMES, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
+import { holderNamed, namesOf } from '../../inlineLiterals';
+import { keyLabel } from '../../keys';
+import { Tip, TipPart } from '../../tips';
+import { NOTE_LABELS, NoteNodeName } from '../notes';
 
 /** The menus of the row, left to right after the marks' group. */
 export type ToolbarMenu = 'block-type' | 'formatting' | 'annotation' | 'insert';
@@ -189,10 +194,34 @@ export interface ToolbarAction {
      * shown while the row is locked, sample and tooltip alike.
      */
     named?: true;
+    /**
+     * The page keymap's binding for it, in ProseMirror's notation (`Mod-i`):
+     * `plugins.ts` binds it, and the tooltip and `aria-keyshortcuts` name it —
+     * one string, so the key a tooltip names is the key that does it.
+     */
+    key?: string;
+    /**
+     * What a menu entry draws in its swatch before the word: the element
+     * (absent: `sample`), chrome text where the element draws nothing of its own
+     * (`{…}`, `[ ]`), or nothing (`null`). `sample` stays what the entry makes,
+     * as the fidelity test reads it.
+     */
+    glyph?: SampleSpec | { text: string } | null;
+    /** The entry's label is its sample, drawn as the element (the Block type entries: Heading 1 in h1's style). */
+    drawnLabel?: true;
+    /** The first entry of a group of its menu: drawn after a separator, as the workbench divides its menus. */
+    separated?: true;
+    /** What the syntax column shows, where the syntax is too long for it (`[text](url)`); absent, the syntax's first line. Tooltip and card keep `syntax`. */
+    column?: string;
+    /** An admonition alias's canonical type (`summary` on `tldr`): the entry reads "Tldr  as Summary", under "More types…". */
+    alias?: string;
 }
 
-/** What a source action's tooltip says: the construct is edited as Markdown in a source block, not as rich text. */
-export const SOURCE_FOOTNOTE = '¹ edited as source, in a source block';
+/** What a source action's card says: the construct is edited as Markdown in a source block, not as rich text. */
+export const SOURCE_NOTE = 'Edited as source, in a source block.';
+
+/** The same as its tooltip's footnote. */
+export const SOURCE_FOOTNOTE = `¹ ${SOURCE_NOTE.charAt(0).toLowerCase()}${SOURCE_NOTE.slice(1, -1)}`;
 
 /** Whether the action writes source the editor shows as a source block, not as rich text. */
 export function isSourceAction(action: ToolbarAction): boolean {
@@ -226,16 +255,48 @@ export function elideDataUris(markdown: string): string {
     return markdown.replace(/\(data:([^,)\s]*),[^)\s]*\)/g, '(data:$1,…)');
 }
 
+/** What a mark is written with, as its tooltip shows it: the delimiter (`**`), or both where they differ (`[[…]]`). */
+function delimiterOf(action: ToolbarAction): string {
+    const [open, close = ''] = action.syntax.split('text');
+    return open === close ? open : `${open}…${close}`;
+}
+
+/** What the selection makes an action's tooltip say, and what the platform names the keys. */
+export interface TipState {
+    /** Its name where the selection names it (`Attributes of Paragraph…`); its own otherwise. */
+    label?: string;
+    /** Why it is refused here: the tip's second line. */
+    reason?: string | null;
+    /** Keys named as on macOS (`macKeys`). */
+    mac?: boolean;
+}
+
 /**
- * The action's tooltip: its name — `label` where the selection names it
- * (`Attributes of Paragraph…`), its own otherwise — the syntax it writes, and
- * the source footnote where it applies.
+ * The action's tooltip, as parts (`tips.ts`). A mark names itself, its
+ * delimiter and its element, then its key where the page binds one —
+ * `Italic (*, <i>) — Ctrl+I`; any other action its name, the syntax it writes
+ * and the source footnote where it applies. The reason it is refused, if any,
+ * is the second line.
  */
-export function tooltipOf(action: ToolbarAction, label = action.label): string {
+export function tipOf(action: ToolbarAction, state: TipState = {}): Tip {
+    const label = state.label ?? action.label;
+    const note = state.reason ?? null;
+    if (action.apply.kind === 'mark') {
+        const parts: TipPart[] = [`${label} (`, { code: delimiterOf(action) }, ', ', { code: `<${action.sample.tag}>` }, ')'];
+        if (action.key !== undefined) {
+            parts.push({ keys: keyLabel(action.key, state.mac ?? false) });
+        }
+        return { parts, note };
+    }
     const source = isSourceAction(action);
-    const renders = action.apply.kind === 'mark' ? ` — rendered as <${action.sample.tag}>` : '';
     const syntax = action.syntax.includes('\n') ? `\n${action.syntax}` : ` ${action.syntax}`;
-    return `${label}${source ? '¹' : ''}:${syntax}${renders}${source ? `\n${SOURCE_FOOTNOTE}` : ''}`;
+    return { parts: [`${label}${source ? '¹' : ''}:${syntax}${source ? `\n${SOURCE_FOOTNOTE}` : ''}`], note };
+}
+
+/** The control's accessible name: a mark's word and its delimiter spoken (`Italic, asterisk`); else its label. */
+export function ariaLabelOf(action: ToolbarAction): string {
+    const spoken = action.apply.kind === 'mark' ? MARKER_NAMES[delimiterOf(action)] : undefined;
+    return spoken === undefined ? action.label : `${action.label}, ${spoken}`;
 }
 
 /** An element: `el('p', 'text', el('b', 'bold'), 'more')`; a class goes in the tag as `tag.class1.class2`. */
@@ -256,21 +317,31 @@ function withLabel(text: string, label = '1'): string {
 // The row: the five native marks
 // ---------------------------------------------------------------------------
 
-function markAction(id: string, label: string, mark: 'em' | 'strong' | 'code', marker: string, markup: string | null, tag: string, glyph: string): ToolbarAction {
+/**
+ * A row mark, named and tagged by its inline holder (`inlineLiterals.ts`) as
+ * its bar, its field and "Attributes of Bold…" name it — one name per
+ * delimiter and element, read, not written again. Its glyph is its tag.
+ */
+function markAction(id: string, mark: 'em' | 'strong' | 'code', marker: string, markup: string | null, key?: string): ToolbarAction {
+    const holder = holderNamed(mark);
+    if (holder === undefined || holder.tag === undefined) {
+        throw new Error(`no inline holder for ${mark}`);
+    }
+    const tag = holder.tag(marker);
     return {
-        id, place: { row: true }, label, syntax: `${marker}text${marker}`, sample: el(tag, glyph),
-        apply: { kind: 'mark', mark, markup }, example: `${marker}${glyph}${marker}`,
+        id, place: { row: true }, label: namesOf(holder, marker).label, syntax: `${marker}text${marker}`, sample: el(tag, tag),
+        apply: { kind: 'mark', mark, markup }, example: `${marker}${tag}${marker}`, ...(key === undefined ? {} : { key }),
     };
 }
 
 const marks: ToolbarAction[] = [
     // `markdown-it-ib` renders the four emphasis delimiters as four elements, so
     // the row offers all four and a stylesheet can tell them apart.
-    markAction('italic', 'Italic', 'em', INLINE_MARKERS.italics, INLINE_MARKERS.italics, 'i', 'i'),
-    markAction('emphasis', 'Emphasis', 'em', INLINE_MARKERS.underline, INLINE_MARKERS.underline, 'em', 'em'),
-    markAction('bold', 'Bold', 'strong', INLINE_MARKERS.bold, INLINE_MARKERS.bold, 'b', 'b'),
-    markAction('strong', 'Strong', 'strong', INLINE_MARKERS.strong, INLINE_MARKERS.strong, 'strong', 'strong'),
-    markAction('code', 'Inline code', 'code', INLINE_MARKERS.codeInline, null, 'code', 'code'),
+    markAction('italic', 'em', INLINE_MARKERS.italics, INLINE_MARKERS.italics, 'Mod-i'),
+    markAction('emphasis', 'em', INLINE_MARKERS.underline, INLINE_MARKERS.underline),
+    markAction('bold', 'strong', INLINE_MARKERS.bold, INLINE_MARKERS.bold, 'Mod-b'),
+    markAction('strong', 'strong', INLINE_MARKERS.strong, INLINE_MARKERS.strong),
+    markAction('code', 'code', INLINE_MARKERS.codeInline, null, 'Mod-`'),
 ];
 
 // ---------------------------------------------------------------------------
@@ -281,7 +352,7 @@ const UNDER = 'A line of text under it.';
 
 const blockTypes: ToolbarAction[] = [
     {
-        id: 'paragraph', place: { menu: 'block-type' }, label: 'Paragraph', syntax: 'text, a blank line around it',
+        id: 'paragraph', place: { menu: 'block-type' }, label: 'Paragraph', syntax: 'text, a blank line around it', column: 'text', drawnLabel: true,
         sample: el('p', 'Paragraph'), apply: { kind: 'block', node: 'paragraph' }, example: 'Paragraph',
         preview: { markdown: 'A paragraph of text.\n\nAnother one below it.', nodes: [el('p', 'A paragraph of text.'), el('p', 'Another one below it.')] },
     },
@@ -289,29 +360,29 @@ const blockTypes: ToolbarAction[] = [
         const marker = '#'.repeat(level);
         const label = `Heading ${level}`;
         return {
-            id: `heading-${level}`, place: { menu: 'block-type' }, label, syntax: `${marker} text`,
+            id: `heading-${level}`, place: { menu: 'block-type' }, label, syntax: `${marker} text`, drawnLabel: true,
             sample: el(`h${level}`, label), apply: { kind: 'block', node: 'heading', level }, example: `${marker} ${label}`,
             preview: { markdown: `${marker} ${label}\n\n${UNDER}`, nodes: [el(`h${level}`, label), el('p', UNDER)] },
         };
     }),
     {
-        id: 'blockquote', place: { menu: 'block-type' }, label: 'Quote', syntax: '> text',
+        id: 'blockquote', place: { menu: 'block-type' }, label: 'Quote', syntax: '> text', drawnLabel: true,
         sample: el('blockquote', el('p', 'Quote')), apply: { kind: 'block', node: 'blockquote' }, example: '> Quote',
         preview: { markdown: '> A quoted line,\n> and the next.', nodes: [el('blockquote', el('p', 'A quoted line,\nand the next.'))] },
     },
     {
-        id: 'bullet-list', place: { menu: 'block-type' }, label: 'Bullet list', syntax: '- text',
-        sample: el('ul', el('li', 'Item')), apply: { kind: 'block', node: 'bullet_list' }, example: '- Item',
+        id: 'bullet-list', place: { menu: 'block-type' }, label: 'Bullet list', syntax: '- text', drawnLabel: true,
+        sample: el('ul', el('li', 'Bullet list')), apply: { kind: 'block', node: 'bullet_list' }, example: '- Bullet list',
         preview: { markdown: '- First item\n- Second item', nodes: [el('ul', el('li', 'First item'), el('li', 'Second item'))] },
     },
     {
-        id: 'ordered-list', place: { menu: 'block-type' }, label: 'Numbered list', syntax: '1. text',
-        sample: el('ol', el('li', 'Item')), apply: { kind: 'block', node: 'ordered_list' }, example: '1. Item',
+        id: 'ordered-list', place: { menu: 'block-type' }, label: 'Numbered list', syntax: '1. text', drawnLabel: true,
+        sample: el('ol', el('li', 'Numbered list')), apply: { kind: 'block', node: 'ordered_list' }, example: '1. Numbered list',
         preview: { markdown: '1. First item\n2. Second item', nodes: [el('ol', el('li', 'First item'), el('li', 'Second item'))] },
     },
     {
-        id: 'code-block', place: { menu: 'block-type' }, label: 'Code block', syntax: '```\ncode\n```',
-        sample: el('pre', el('code', 'code')), apply: { kind: 'block', node: 'code_block' }, example: '```\ncode\n```',
+        id: 'code-block', place: { menu: 'block-type' }, label: 'Code block', syntax: '```\ncode\n```', drawnLabel: true,
+        sample: el('pre', el('code', 'Code block')), apply: { kind: 'block', node: 'code_block' }, example: '```\nCode block\n```',
         preview: { markdown: '```\nconst answer = 42;\n```', nodes: [el('pre', el('code', 'const answer = 42;'))] },
     },
 ];
@@ -320,11 +391,16 @@ const blockTypes: ToolbarAction[] = [
 // Formatting — the extension's inline marks, toggled like the native ones
 // ---------------------------------------------------------------------------
 
-function formatAction(id: string, label: string, mark: MarkTarget, open: string, close: string, sample: SampleSpec, preview: ActionPreview): ToolbarAction {
-    const glyph = typeof sample.children?.[0] === 'string' ? sample.children[0] : 'text';
+/** A Formatting entry, named by its inline holder (`inlineLiterals.ts`) as its bar and "Attributes of …" name it. */
+function formatAction(id: string, mark: MarkTarget, open: string, close: string, sample: SampleSpec, glyph: SampleSpec, preview: ActionPreview): ToolbarAction {
+    const text = typeof sample.children?.[0] === 'string' ? sample.children[0] : 'text';
+    const label = holderNamed(mark)?.label;
+    if (label === undefined) {
+        throw new Error(`no inline holder for ${mark}`);
+    }
     return {
-        id, place: { menu: 'formatting' }, label, syntax: `${open}text${close}`, sample,
-        apply: { kind: 'mark', mark, markup: null }, example: `${open}${glyph}${close}`, preview, bubble: true,
+        id, place: { menu: 'formatting' }, label, syntax: `${open}text${close}`, sample, glyph,
+        apply: { kind: 'mark', mark, markup: null }, example: `${open}${text}${close}`, preview, bubble: true,
     };
 }
 
@@ -344,26 +420,27 @@ const BLOCK_LITERAL_EXAMPLE = '{.x}';
 export const INLINE_ATTRS_LOCK = 'Put the caret in code, a key, a link, emphasis, superscript, subscript, a highlight or a span, or select an image. Alt+Enter opens its bar.';
 
 const formatting: ToolbarAction[] = [
-    formatAction('mark', 'Highlight', 'mark', M.mark, M.mark, el('mark', 'mark'),
+    formatAction('mark', 'mark', M.mark, M.mark, el('mark', 'mark'), el('mark', 'ab'),
         { markdown: `Highlight ${M.mark}the point${M.mark} of a sentence.`, nodes: [el('p', 'Highlight ', el('mark', 'the point'), ' of a sentence.')] }),
-    formatAction('superscript', 'Superscript', 'sup', M.superscript, M.superscript, el('sup', 'sup'),
+    formatAction('superscript', 'sup', M.superscript, M.superscript, el('sup', 'sup'), el('span', 'x', el('sup', '2')),
         { markdown: `2${M.superscript}10${M.superscript} is 1024.`, nodes: [el('p', '2', el('sup', '10'), ' is 1024.')] }),
-    formatAction('subscript', 'Subscript', 'sub', M.subscript, M.subscript, el('sub', 'sub'),
+    formatAction('subscript', 'sub', M.subscript, M.subscript, el('sub', 'sub'), el('span', 'H', el('sub', '2')),
         { markdown: `Water is H${M.subscript}2${M.subscript}O.`, nodes: [el('p', 'Water is H', el('sub', '2'), 'O.')] }),
-    formatAction('strikethrough', 'Strikethrough', 'strike', M.strikethrough, M.strikethrough, el('s', 'strike'),
+    formatAction('strikethrough', 'strike', M.strikethrough, M.strikethrough, el('s', 'strike'), el('s', 'ab'),
         { markdown: `The ${M.strikethrough}old${M.strikethrough} new wording.`, nodes: [el('p', 'The ', el('s', 'old'), ' new wording.')] }),
-    formatAction('kbd', 'Key', 'kbd', KBD_MARKERS.open, KBD_MARKERS.close, el('kbd', 'Ctrl'),
+    formatAction('kbd', 'kbd', KBD_MARKERS.open, KBD_MARKERS.close, el('kbd', 'Ctrl'), el('kbd', 'Ctrl'),
         { markdown: `Press ${KBD_MARKERS.open}Ctrl+S${KBD_MARKERS.close} to save.`, nodes: [el('p', 'Press ', el('kbd', 'Ctrl+S'), ' to save.')] }),
     {
         // markdown-it-bracketed-spans with markdown-it-attrs: the class a stylesheet names.
-        id: 'span-class', place: { menu: 'formatting' }, label: 'Span with class', syntax: `[text]${CLASS_LITERAL}`,
+        // It opens a field, as Link… and Image… do; its glyph the brackets it writes.
+        id: 'span-class', place: { menu: 'formatting' }, label: 'Span with class…', syntax: `[text]${CLASS_LITERAL}`, glyph: { text: '[ ]' }, separated: true,
         sample: el('span.class', 'span'), apply: { kind: 'attr-span' }, example: `[span]${CLASS_LITERAL}`,
         preview: { markdown: 'A [styled phrase]{.lead} in a sentence.', nodes: [el('p', 'A ', el('span.lead', 'styled phrase'), ' in a sentence.')] },
     },
     {
         // markdown-it-attrs on the inline element at the caret: written right after it. Named
         // by the element (`Attributes of Link…`); the label here is its resting form.
-        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Element…', syntax: `…${CLASS_LITERAL}`,
+        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Element…', syntax: `…${CLASS_LITERAL}`, glyph: { text: '{…}' },
         sample: el('code.x', 'Attributes…'), apply: { kind: 'inline-attrs' }, example: `\`Attributes…\`${BLOCK_LITERAL_EXAMPLE}`,
         preview: {
             markdown: 'Run `--flag`{.k} to skip the cache.',
@@ -373,7 +450,7 @@ const formatting: ToolbarAction[] = [
     {
         // markdown-it-attrs on the block at the caret: written where the plugin reads it for that block.
         // Named by the block (`Attributes of Paragraph…`); refused, `Attributes of Block…`.
-        id: 'block-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`,
+        id: 'block-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`, glyph: { text: '{…}' },
         sample: el('p.x', 'Attributes…'), apply: { kind: 'block-attrs' }, example: `Attributes… ${BLOCK_LITERAL_EXAMPLE}`,
         preview: {
             markdown: 'A paragraph with a class of its own. {.lead}',
@@ -386,16 +463,18 @@ const formatting: ToolbarAction[] = [
 // Annotations — notes and sidebars, edited in place; the footnote as source
 // ---------------------------------------------------------------------------
 
-function noteAction(id: string, label: string, node: NoteNodeName, open: string, close: string, sample: SampleSpec, preview: ActionPreview, syntaxText: string, bubble: boolean): ToolbarAction {
-    // The glyph's text, a note's inside its anchor.
+/** A note or sidebar entry, named as its bar names it (`NOTE_LABELS`); its glyph the reference's element on two letters (a note's inside its anchor), its column the syntax with `text` for the reference. */
+function noteAction(id: string, node: NoteNodeName, open: string, close: string, sample: SampleSpec, preview: ActionPreview, syntaxText: string, bubble: boolean, glyph: SampleSpec = { ...sample, children: ['ab'] }): ToolbarAction {
+    // The sample's text, a note's inside its anchor.
     const textOf = (spec: SampleSpec): string | undefined => {
         const first = spec.children?.[0];
         return typeof first === 'string' ? first : first ? textOf(first) : undefined;
     };
-    const glyph = textOf(sample) ?? 'text';
+    const text = textOf(sample) ?? 'text';
     return {
-        id, place: { menu: 'annotation' }, label, syntax: `${open}${syntaxText}${close}`, sample,
-        apply: { kind: 'wrap-node', node }, example: `${open}${glyph}${close}`, preview, ...(bubble ? { bubble: true as const } : {}),
+        id, place: { menu: 'annotation' }, label: NOTE_LABELS[node], syntax: `${open}${syntaxText}${close}`, sample,
+        glyph, ...(syntaxText === 'text' ? {} : { column: `${open}text${close}` }),
+        apply: { kind: 'wrap-node', node }, example: `${open}${text}${close}`, preview, ...(bubble ? { bubble: true as const } : {}),
     };
 }
 
@@ -427,18 +506,18 @@ function sidebarPreview(marker: string, cssClass: string): ActionPreview {
 }
 
 const annotations: ToolbarAction[] = [
-    noteAction('sidenote', 'Sidenote', 'sidenote', SN.marker, `${NOTE_SEPARATOR}note${SN.marker}`,
-        noteGlyph(SN, 'sidenote'), notePreview(SN), 'reference', true),
-    noteAction('marginal-note', 'Marginal note', 'marginal_note', MN.marker, `${NOTE_SEPARATOR}note${MN.marker}`,
-        noteGlyph(MN, 'marginal'), notePreview(MN), 'reference', true),
-    noteAction('left-sidebar', 'Left sidebar', 'left_sidebar', LS.marker, LS.marker, el(`span.${LS.cssClass}`, 'left'), sidebarPreview(LS.marker, LS.cssClass), 'text', false),
-    noteAction('right-sidebar', 'Right sidebar', 'right_sidebar', RS.marker, RS.marker, el(`span.${RS.cssClass}`, 'right'), sidebarPreview(RS.marker, RS.cssClass), 'text', false),
+    noteAction('sidenote', 'sidenote', SN.marker, `${NOTE_SEPARATOR}note${SN.marker}`,
+        noteGlyph(SN, 'sidenote'), notePreview(SN), 'reference', true, noteGlyph(SN, 'ab')),
+    noteAction('marginal-note', 'marginal_note', MN.marker, `${NOTE_SEPARATOR}note${MN.marker}`,
+        noteGlyph(MN, 'marginal'), notePreview(MN), 'reference', true, noteGlyph(MN, 'ab')),
+    noteAction('left-sidebar', 'left_sidebar', LS.marker, LS.marker, el(`span.${LS.cssClass}`, 'left'), sidebarPreview(LS.marker, LS.cssClass), 'text', false),
+    noteAction('right-sidebar', 'right_sidebar', RS.marker, RS.marker, el(`span.${RS.cssClass}`, 'right'), sidebarPreview(RS.marker, RS.cssClass), 'text', false),
     {
         // A footnote label cannot hold the selected prose (no spaces), and a
         // reference without a definition renders as its literal text; so the
         // reference goes after the selection with the first free number, and
         // its definition is a source block of its own below the paragraph.
-        id: 'footnote-reference', place: { menu: 'annotation' }, label: 'Footnote', syntax: `text[^1] … [^1]: ${FOOTNOTE_TEXT}`,
+        id: 'footnote-reference', place: { menu: 'annotation' }, label: 'Footnote', syntax: `text[^1] … [^1]: ${FOOTNOTE_TEXT}`, column: 'text[^1]', separated: true,
         sample: el('sup.footnote-ref', el('a', '[1]')),
         apply: { kind: 'wrap-source', open: '', close: `[^${FOOTNOTE_LABEL}]`, placeholder: '', definition: `[^${FOOTNOTE_LABEL}]: ${FOOTNOTE_TEXT}` },
         example: withLabel(`text[^${FOOTNOTE_LABEL}]\n\n[^${FOOTNOTE_LABEL}]: ${FOOTNOTE_TEXT}`),
@@ -456,8 +535,11 @@ const annotations: ToolbarAction[] = [
 // Insert — new blocks: the rule, admonitions and the container in place, the rest as source
 // ---------------------------------------------------------------------------
 
-function insertAction(id: string, label: string, template: string, sample: SampleSpec, preview: ActionPreview, example = template): ToolbarAction {
-    return { id, place: { menu: 'insert' }, label, syntax: template, sample, apply: { kind: 'insert-source', template }, example, preview };
+/** How a menu entry is drawn beside what it does (`glyph`, `separated`, `column`). */
+type EntryLook = Pick<ToolbarAction, 'glyph' | 'separated' | 'column'>;
+
+function insertAction(id: string, label: string, template: string, sample: SampleSpec, preview: ActionPreview, example = template, look: EntryLook = {}): ToolbarAction {
+    return { id, place: { menu: 'insert' }, label, syntax: template, sample, apply: { kind: 'insert-source', template }, example, preview, ...look };
 }
 
 function titleOf(type: string): string {
@@ -496,7 +578,7 @@ const IMAGE_EXAMPLE_SRC = 'images/overview.png';
 /** The image entry's sample: a 24×16 landscape, sky, hill and sun, as a PNG. */
 const SAMPLE_PICTURE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAQCAIAAACDRijCAAAASUlEQVR42mOooBJgAOJ5x99RiAbUoG9HXCCIIoPgpqCZNQwMoloYDcroJ2xQ2IIYXIgEg/CYQoxZUIMImkLQLNIMwmMc1CCqAADnhP+yQhhAvwAAAABJRU5ErkJggg==';
 
-/** The class a new container is given; its object toolbar's Change name/info renames it. */
+/** The class a new container is given; its object toolbar's Edit classes… renames it. */
 export const NEW_CONTAINER_NAME = 'container';
 
 const checkbox = (checked: boolean): SampleSpec => withAttrs(el('input'), checked ? { type: 'checkbox', checked: 'true' } : { type: 'checkbox' });
@@ -506,7 +588,7 @@ const insert: ToolbarAction[] = [
         // A mark on text, made native; the address is asked for in the inline field.
         // The sample carries no href: VS Code's webview follows a clicked <a href> from
         // its window, whatever the menu entry does with the click.
-        id: 'link', place: { menu: 'insert' }, label: 'Link…', syntax: `[text](${LINK_EXAMPLE_HREF})`,
+        id: 'link', place: { menu: 'insert' }, label: 'Link…', syntax: `[text](${LINK_EXAMPLE_HREF})`, column: '[text](url)',
         sample: el('a', 'link'), apply: { kind: 'insert-link' },
         example: `[link](${LINK_EXAMPLE_HREF})`,
         preview: {
@@ -518,7 +600,7 @@ const insert: ToolbarAction[] = [
         // A real <img> showing a real picture: a small one inline, as `data:`
         // (which the CSP admits and markdown-it passes for PNG), so the entry's
         // example renders the very element the entry draws.
-        id: 'image', place: { menu: 'insert' }, label: 'Image…', syntax: `![alt](${IMAGE_EXAMPLE_SRC})`,
+        id: 'image', place: { menu: 'insert' }, label: 'Image…', syntax: `![alt](${IMAGE_EXAMPLE_SRC})`, column: '![alt](path)',
         sample: withAttrs(el('img'), { src: SAMPLE_PICTURE }), apply: { kind: 'insert-image' },
         example: `![image](${SAMPLE_PICTURE})`,
         preview: {
@@ -527,7 +609,7 @@ const insert: ToolbarAction[] = [
         },
     },
     {
-        id: 'horizontal-rule', place: { menu: 'insert' }, label: 'Horizontal rule', syntax: '---',
+        id: 'horizontal-rule', place: { menu: 'insert' }, label: 'Horizontal rule', syntax: '---', separated: true,
         sample: el('hr'),
         // Not first in the example: `---` opening a document is front matter.
         // The toolbar puts a rule after the current block, never first.
@@ -535,11 +617,20 @@ const insert: ToolbarAction[] = [
         preview: { markdown: 'Above the rule.\n\n---\n\nBelow it.', nodes: [el('p', 'Above the rule.'), el('hr'), el('p', 'Below it.')] },
     },
     // Native since stage 3: an admonition node, its title the type's name, the caret in its body.
-    ...ADMONITION_TYPES.map((type): ToolbarAction => ({
+    // The canonical type of each look first, then the aliases (`ADMONITION_FAMILIES`), which the
+    // submenu keeps under "More types…": the first of them opens that group.
+    ...[
+        ...ADMONITION_FAMILIES.map(f => ({ type: f.type, alias: undefined as string | undefined })),
+        ...ADMONITION_FAMILIES.flatMap(f => f.aliases.map(type => ({ type, alias: f.type as string | undefined }))),
+    ].map(({ type, alias }, i): ToolbarAction => ({
         id: `admonition-${type}`,
         place: { menu: 'insert', submenu: 'admonition' },
         label: titleOf(type),
+        ...(alias === undefined ? {} : { alias }),
+        ...(i === ADMONITION_FAMILIES.length ? { separated: true as const } : {}),
         syntax: `${ADMONITION_MARKER} ${type} "${titleOf(type)}"`,
+        column: `${ADMONITION_MARKER} ${type}`,
+        glyph: el(`div.admonition.${type}`, el('p.admonition-title')),
         sample: el(`div.admonition.${type}`, el('p.admonition-title', titleOf(type))),
         apply: { kind: 'insert-wrapper', node: 'admonition', type, title: titleOf(type) },
         example: `${ADMONITION_MARKER} ${type} "${titleOf(type)}"\n    Text`,
@@ -550,7 +641,7 @@ const insert: ToolbarAction[] = [
     })),
     {
         // Native: a pipe table edited in place, the first header cell's text selected.
-        id: 'table', place: { menu: 'insert' }, label: 'Table', syntax: NEW_TABLE_MARKDOWN,
+        id: 'table', place: { menu: 'insert' }, label: 'Table', syntax: NEW_TABLE_MARKDOWN, column: '| A | B |',
         sample: el('table', el('tr', el('th', 'A'), el('th', 'B')), el('tr', el('td', '1'), el('td', '2'))),
         apply: { kind: 'insert-table', ...NEW_TABLE }, example: NEW_TABLE_MARKDOWN,
         preview: {
@@ -562,7 +653,8 @@ const insert: ToolbarAction[] = [
     },
     {
         // Native since stage 3: a container node, the caret in its body.
-        id: 'container', place: { menu: 'insert' }, label: 'Container', syntax: `::: ${NEW_CONTAINER_NAME}\n…\n:::`,
+        // No glyph: a div draws nothing of its own.
+        id: 'container', place: { menu: 'insert' }, label: 'Container', syntax: `::: ${NEW_CONTAINER_NAME}\n…\n:::`, column: '::: name', glyph: null,
         sample: el(`div.${NEW_CONTAINER_NAME}`, 'container'),
         apply: { kind: 'insert-wrapper', node: 'container', name: NEW_CONTAINER_NAME },
         example: `::: ${NEW_CONTAINER_NAME}\nText\n:::`,
@@ -573,10 +665,12 @@ const insert: ToolbarAction[] = [
     },
     insertAction('task-list', 'Task list', '- [ ] Task',
         el('ul', el('li', checkbox(false), el('label', 'Task'))),
-        { markdown: '- [ ] An open task\n- [x] A done one', nodes: [el('ul', el('li', checkbox(false), el('label', 'An open task')), el('li', checkbox(true), el('label', 'A done one')))] }),
+        { markdown: '- [ ] An open task\n- [x] A done one', nodes: [el('ul', el('li', checkbox(false), el('label', 'An open task')), el('li', checkbox(true), el('label', 'A done one')))] },
+        undefined, { separated: true, column: '- [ ] text', glyph: el('ul', el('li', checkbox(false))) }),
     insertAction('definition-list', 'Definition list', 'Term\n:   Definition',
         el('dl', el('dt', 'Term'), el('dd', 'Definition')),
-        { markdown: 'Apple\n:   A pomaceous fruit.', nodes: [el('dl', el('dt', 'Apple'), el('dd', 'A pomaceous fruit.'))] }),
+        { markdown: 'Apple\n:   A pomaceous fruit.', nodes: [el('dl', el('dt', 'Apple'), el('dd', 'A pomaceous fruit.'))] },
+        undefined, { column: 'Term ↵ : text', glyph: el('dl', el('dt', 'Term')) }),
     insertAction('abbreviation', 'Abbreviation', '*[HTML]: HyperText Markup Language',
         withAttrs(el('abbr', 'HTML'), { title: 'HyperText Markup Language' }),
         {
@@ -584,19 +678,20 @@ const insert: ToolbarAction[] = [
             nodes: [el('p', 'The ', withAttrs(el('abbr', 'HTML'), { title: 'HyperText Markup Language' }), ' specification.')],
         },
         // The definition renders nothing; the abbreviation shows where it is used.
-        '*[HTML]: HyperText Markup Language\n\nHTML'),
+        '*[HTML]: HyperText Markup Language\n\nHTML', { column: '*[HTML]: …' }),
     insertAction('table-of-contents', 'Table of contents', '[[TOC]]',
         el('div.table-of-contents', el('ul', el('li', 'Contents'))),
         {
             markdown: '[[TOC]]\n\n## First section\n\n## Second section',
             nodes: [el('div.table-of-contents', el('ul', el('li', el('a', 'First section')), el('li', el('a', 'Second section'))))],
         },
-        // A table of contents lists the headings after it.
-        '[[TOC]]\n\n# Contents'),
+        // A table of contents lists the headings after it. No glyph: a list of links is no picture of it.
+        '[[TOC]]\n\n# Contents', { glyph: null }),
     {
         // The directive's syntax belongs to the extension that resolves it:
         // there is no example to render here, only the line it will offer.
-        id: 'include', place: { menu: 'insert' }, label: 'Include…', syntax: INCLUDE_SYNTAX,
+        // No glyph and no column: what it makes is the snippet's, its line the provider's.
+        id: 'include', place: { menu: 'insert' }, label: 'Include…', syntax: INCLUDE_SYNTAX, glyph: null, column: '', separated: true,
         sample: el('p', 'Snippet'), apply: { kind: 'insert-include' }, example: '',
         preview: {
             markdown: 'The text of a snippet, shown where its directive line stands.',
@@ -606,7 +701,7 @@ const insert: ToolbarAction[] = [
     {
         // Front matter renders nothing in the preview: the entry claims no
         // example, and the panel it opens is the editor's own chrome.
-        id: 'properties', place: { menu: 'insert' }, label: 'Properties', syntax: PROPERTIES_SYNTAX,
+        id: 'properties', place: { menu: 'insert' }, label: 'Properties', syntax: PROPERTIES_SYNTAX, glyph: null, column: '--- key: value ---',
         sample: el('p', 'Properties'), apply: { kind: 'insert-properties' }, example: '',
         preview: {
             markdown: 'Keys and values at the top of the file, as YAML front matter, edited in the properties panel.',
@@ -646,3 +741,17 @@ export const MENU_LABELS: Readonly<Record<ToolbarMenu | ToolbarSubmenu, string>>
 export const SUBMENU_SYNTAX: Readonly<Record<ToolbarSubmenu, string>> = {
     admonition: `${ADMONITION_MARKER} type`,
 };
+
+/** What the submenu's entry in its parent draws in its swatch: an admonition's bar and icon, without a title. */
+export const SUBMENU_GLYPH: Readonly<Record<ToolbarSubmenu, SampleSpec>> = {
+    admonition: el('div.admonition.note', el('p.admonition-title')),
+};
+
+/** What an alias's entry says after its word: the type it is drawn as (`as Summary`); `null` for any other entry. */
+export function aliasNote(action: ToolbarAction): string | null {
+    return action.alias === undefined ? null : `as ${titleOf(action.alias)}`;
+}
+
+/** The entry that shows the admonition aliases (`alias`) in place, and what it says while they show. */
+export const MORE_TYPES = (count: number): string => `More types… (${count})`;
+export const FEWER_TYPES = 'Fewer types';

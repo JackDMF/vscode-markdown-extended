@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { PREVIEW_CARD_CLASS, TOOLBAR_ACTIONS, menuOf } from '../../../src/editor/webview/toolbar/actions';
 import { ALL_LOCK, REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/toolbar/commands';
-import { ADMONITION_TYPES } from '../../../src/syntax/markers';
+import { ADMONITION_FAMILIES, ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, MOD } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
@@ -176,14 +176,17 @@ suite('Editor toolbar (e2e)', () => {
         for (const menu of ['block-type', 'formatting', 'annotation', 'insert']) {
             await openMenu(menu);
             const entries = await page.$$eval(`${panel(menu)} .mep-menu-item`, items => items.map(item => {
-                const holder = item.querySelector('.mep-entry-sample') as HTMLElement;
+                // A Block type entry draws its label as the element; every other one has a glyph, clipped, never zoomed.
+                const holder = (item.querySelector('.mep-entry-sample') ?? item.querySelector('.mep-entry-glyph')) as HTMLElement;
                 const sample = holder.querySelector('.mep-sample > *') as HTMLElement | null;
                 const h = holder.getBoundingClientRect();
                 const s = sample?.getBoundingClientRect();
-                const block = sample !== null && !getComputedStyle(sample).display.startsWith('inline');
+                const block = holder.classList.contains('mep-entry-sample') && sample !== null && !getComputedStyle(sample).display.startsWith('inline');
                 return {
                     height: (item as HTMLElement).offsetHeight,
-                    fits: !block || !s || (s.top >= h.top - 0.5 && s.bottom <= h.bottom + 0.5 && s.right <= h.right + 0.5),
+                    // Scaled into the entry, or — at the zoom's floor — clipped by it.
+                    fits: !block || !s || (s.top >= h.top - 0.5 && s.bottom <= h.bottom + 0.5 && s.right <= h.right + 0.5) || (sample?.style.zoom === '0.75' && getComputedStyle(holder).overflow === 'hidden'),
+                    zoom: sample?.style.zoom ?? '',
                     syntax: item.querySelector('.mep-entry-syntax')?.textContent ?? '',
                     id: (item as HTMLElement).dataset.action ?? (item as HTMLElement).dataset.submenu,
                 };
@@ -191,7 +194,9 @@ suite('Editor toolbar (e2e)', () => {
             assert.strictEqual(new Set(entries.map(e => e.height)).size, 1, `${menu}: ${JSON.stringify(entries.map(e => e.height))}`);
             for (const e of entries) {
                 assert.ok(e.fits, `${menu}/${e.id}: a block sample is scaled into its entry`);
-                assert.ok(e.syntax.length > 0, `${menu}/${e.id} names its syntax`);
+                assert.ok(e.zoom === '' || Number(e.zoom) >= 0.75, `${menu}/${e.id}: zoomed no lower than 0.75 (${e.zoom})`);
+                // Include… names none: its line is the offering extension's.
+                assert.ok(e.syntax.length > 0 || e.id === 'include', `${menu}/${e.id} names its syntax`);
             }
             await page.keyboard.press('Escape');
             await page.mouse.click(WIDE - 20, 880);
@@ -304,7 +309,7 @@ suite('Editor toolbar (e2e)', () => {
         this.timeout(10000);
         await showDocument(SOURCE);
         await selectText('Page');
-        const locked = await page.$eval(face('block-type'), el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title, text: el.textContent }));
+        const locked = await page.$eval(face('block-type'), el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? ''), text: el.textContent }));
         assert.strictEqual(locked.disabled, 'true');
         assert.ok(locked.title.includes(REQUIREMENT_HEADING_LOCK), locked.title);
         assert.strictEqual(locked.text, 'Heading 2', 'still named while locked');
@@ -319,7 +324,7 @@ suite('Editor toolbar (e2e)', () => {
         await selectText('beta');
         await pressWith(MOD, 'a');
         await delay(100);
-        const locked = await page.$eval(face('block-type'), el => ({ disabled: el.getAttribute('aria-disabled'), title: (el as HTMLElement).title }));
+        const locked = await page.$eval(face('block-type'), el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? '') }));
         assert.strictEqual(locked.disabled, 'true');
         assert.ok(locked.title.includes(ALL_LOCK), locked.title);
 
@@ -399,7 +404,7 @@ suite('Editor toolbar (e2e)', () => {
         const bubbleWidth = () => page.$eval('.mep-bubble', el => el.getBoundingClientRect().width);
         await showDocument('Alpha `xy` and *b* c here.\n');
         await selectText('x');
-        const inCode = { title: await page.$eval(BUBBLE_TOOL, el => (el as HTMLElement).title), width: await bubbleWidth() };
+        const inCode = { title: await page.$eval(BUBBLE_TOOL, el => (el.getAttribute('aria-description') ?? '')), width: await bubbleWidth() };
         assert.ok(inCode.title.startsWith('Attributes of Code…'), inCode.title);
         await page.click(BUBBLE_TOOL);
         await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true });
@@ -423,7 +428,7 @@ suite('Editor toolbar (e2e)', () => {
             (document.getSelection() as Selection).setBaseAndExtent(b, 0, after, 2);
         });
         await delay(150);
-        const across = { title: await page.$eval(BUBBLE_TOOL, el => (el as HTMLElement).title), width: await bubbleWidth() };
+        const across = { title: await page.$eval(BUBBLE_TOOL, el => (el.getAttribute('aria-description') ?? '')), width: await bubbleWidth() };
         assert.ok(across.title.startsWith('Span with class'), across.title);
         assert.strictEqual(across.width, inCode.width, 'the bubble keeps its width');
         await page.click(BUBBLE_TOOL);
@@ -446,8 +451,10 @@ suite('Editor toolbar (e2e)', () => {
     test('Insert → Admonition lists exactly the plugin\'s types; one is inserted in place, and typed text is its indented body', async function () {
         this.timeout(10000);
         await showDocument(SOURCE);
+        // Hidden entries counted too: the aliases wait under "More types…".
         const listed = await page.$$eval(`${panel('admonition')} [data-action]`, els => els.map(el => (el as HTMLElement).dataset.action));
-        assert.deepStrictEqual(listed, ADMONITION_TYPES.map(t => `admonition-${t}`));
+        assert.deepStrictEqual([...listed].sort(), ADMONITION_TYPES.map(t => `admonition-${t}`).sort());
+        assert.deepStrictEqual(listed, [...ADMONITION_FAMILIES.map(f => f.type), ...ADMONITION_FAMILIES.flatMap(f => f.aliases)].map(t => `admonition-${t}`), 'the canonical types first');
 
         await selectText('beta');
         await openMenu('insert');

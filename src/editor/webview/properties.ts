@@ -3,7 +3,7 @@
  * header `▸ Properties  <n>` with **Edit as source** at its right, collapsed by
  * default and remembered per document; expanded, one row per top-level key —
  * the key in mono, since it *is* the key, and a control typed from its value
- * (`frontMatter.ts` says which) — and a last row, **+ Add property**.
+ * (`frontMatter.ts` says which) — and a last row, **+ Add** (a property).
  *
  * A generic panel for Markdown Extended Pro, never a form of any one tool's: it
  * knows YAML, not what a key means. Every edit is one in-place change of the
@@ -11,7 +11,7 @@
  * transaction — one undo step, posted like any block edit.
  *
  * **Keys.** `Tab` moves between rows (the browser's order: each row's control,
- * the chips' **+ add**, then **+ Add property**); `Enter` commits a row, `Esc`
+ * the chips' **+ Add**, then **+ Add** (a property)); `Enter` commits a row, `Esc`
  * reverts it, and a second `Esc` puts the caret in the text below. A row's
  * value is committed when the focus leaves it too — unlike the inline field,
  * which is gone once it loses the focus: a row stays and shows its value, and a
@@ -34,7 +34,7 @@ import {
 import { lockLineHeight } from './clearance';
 import { CompletionListView } from './completionList';
 import { DeclaredControl, panelRole } from './focusPlace';
-import { undoKey } from './hint';
+import { undoHint } from './hint';
 import { EditorPort, SourceEditor, element, isUndoRedo } from './nodeViews';
 
 type GetPos = () => number | undefined;
@@ -102,12 +102,18 @@ function remember(key: string, expanded: boolean): void {
     }
 }
 
-function button(className: string, text: string, label?: string): HTMLButtonElement {
+/**
+ * A panel button: `label` names it for a screen reader and, as its tooltip, for the eye —
+ * but not where its text already says it (`titled` false: "+ Add").
+ */
+function button(className: string, text: string, label?: string, titled = true): HTMLButtonElement {
     const b = element('button', className, text);
     b.type = 'button';
     if (label) {
         b.setAttribute('aria-label', label);
-        b.title = label;
+        if (titled) {
+            b.title = label;
+        }
     }
     return b;
 }
@@ -125,9 +131,9 @@ export class PropertiesView implements NodeView, SourceEditor {
     /** The source box, while it is open. */
     private area: HTMLTextAreaElement | null = null;
     private untrackArea: (() => void) | null = null;
-    /** The row (by index) of the list whose **+ add** field is open. */
+    /** The row (by index) of the list whose **+ Add** field is open. */
     private addingItem: number | null = null;
-    /** The **+ Add property** row's state while it is open: the name typed, and whether the value is asked now. */
+    /** The **+ Add** (a property) row's state while it is open: the name typed, and whether the value is asked now. */
     private adding: { name: string; value: string; stage: 'name' | 'value' } | null = null;
     /** The rows whose typing is not in the document yet, for a save to commit. */
     private readonly dirty = new Map<string, () => void>();
@@ -340,7 +346,7 @@ export class PropertiesView implements NodeView, SourceEditor {
     private removeRow(index: number, key: string): void {
         this.flushDirty();
         if (this.apply(index, key, removeProperty)) {
-            this.port.changeHint(`Removed ${key} — ${undoKey()}`, this.header);
+            this.port.changeHint(undoHint(`${key} removed`), this.header);
             this.focusAfterRemoval(index);
         }
     }
@@ -518,7 +524,7 @@ export class PropertiesView implements NodeView, SourceEditor {
         return out;
     }
 
-    /** A list as chips, each removable, and **+ add**; the list's own style (flow or block) is the model's to keep. */
+    /** A list as chips, each removable, and **+ Add**; the list's own style (flow or block) is the model's to keep. */
     private chips(property: Property, index: number): HTMLElement {
         const box = element('div', 'mep-prop-chips');
         const items = property.items ?? [];
@@ -595,7 +601,7 @@ export class PropertiesView implements NodeView, SourceEditor {
             });
             box.append(input);
         } else {
-            const add = button('mep-prop-chip mep-prop-chip-add', '+ add', `Add to ${property.key}`);
+            const add = button('mep-prop-chip mep-prop-chip-add', '+ Add', `Add to ${property.key}`, false);
             add.dataset.slot = `add-button:${index}`;
             add.addEventListener('click', () => {
                 this.flushDirty();
@@ -611,19 +617,20 @@ export class PropertiesView implements NodeView, SourceEditor {
     private removeItemAt(index: number, key: string, at: number, item: string): void {
         const eol = eolOf(this.node.attrs.src as string);
         if (this.apply(index, key, (body, ref) => removeItem(body, ref, at, eol))) {
-            this.port.changeHint(`Removed ${item} — ${undoKey()}`, this.header);
+            this.port.changeHint(undoHint(`${item} removed`), this.header);
         } else {
             // An anchored item an alias elsewhere names, and the like: the model refuses rather than break the YAML.
             this.port.hint(`${item} cannot be removed here — edit ${key} as source`, this.header);
         }
     }
 
-    /** The trailing row: **+ Add property**, then the name, then the value. */
+    /** The trailing row: **+ Add** (a property), then the name, then the value. */
     private addRow(): HTMLElement {
         const row = element('div', 'mep-prop-row mep-prop-add');
         const adding = this.adding;
         if (adding === null) {
-            const add = button('mep-prop-add-button', '+ Add property');
+            // "+ Add", as every list's: its row says what it adds; the screen reader hears it.
+            const add = button('mep-prop-add-button', '+ Add', 'Add property', false);
             add.dataset.slot = 'add:button';
             add.addEventListener('click', () => {
                 this.flushDirty();
