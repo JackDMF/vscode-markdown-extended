@@ -375,7 +375,7 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['open-snippet', 'Open snippet', false, false], ['show-in-text-editor', 'Show in text editor', false, false], ['change-snippet', 'Change snippet…', false, false], ['delete-directive', 'Delete directive', false, true]],
             // Change snippet… asks the host for a choice: nothing opens in place, so the bar takes the focus.
             focus: 'bar',
-            narrow: { short: [['open-snippet', 'Open'], ['change-snippet', 'Change…'], ['delete-directive', 'Delete']], pastColumn: true },
+            narrow: { short: [['open-snippet', 'Open'], ['change-snippet', 'Change…']], titleCut: true, pastColumn: true },
         },
         {
             n: 20, slug: 'requirement-heading', marker: 'Intro',
@@ -467,13 +467,14 @@ suite('Editor object bars (e2e)', () => {
         await openRow(row);
 
         const wide = await drawn();
-        const count = row.verbs.length;
+        const count = row.verbs.filter(v => !v[2]).length;
         assert.deepStrictEqual({ label: wide.label, verbs: wide.verbs }, { label: row.label, verbs: row.verbs }, `${row.slug}: the bar as the sketch has it`);
         assert.strictEqual(wide.focus, row.focus, `${row.slug}: where Alt+Enter puts the focus`);
-        assert.strictEqual(wide.aria, count === 0 ? `${row.label}, no actions` : `${row.label}, ${count} ${count === 1 ? 'action' : 'actions'}, arrow keys to choose`);
+        assert.strictEqual(wide.aria, count === 0 ? `${row.label}, no actions available` : `${row.label}, ${count} ${count === 1 ? 'action' : 'actions'}, arrow keys to choose`);
         const wideFit = await fitted();
         assert.deepStrictEqual(wideFit.short, [], `${row.slug}: nothing shortened at ${WIDE} px`);
         assert.strictEqual(wideFit.titleCut, false, `${row.slug}: the title whole at ${WIDE} px`);
+        assert.strictEqual(wideFit.pastColumn, false, `${row.slug}: a bar that fits the text column stays within it (${JSON.stringify(wideFit)})`);
         await shot(page, name(row, WIDE, 'light'));
         await applyTheme(page, DARK_MODERN);
         await shot(page, name(row, WIDE, 'dark'));
@@ -515,6 +516,36 @@ suite('Editor object bars (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, 'Launch \\:rocket: now.\n', 'the second Enter ran Convert to text');
     });
 
+    // TODO once feat/margin-by-width lands: the same for a grown bar beside a reserved margin lane (a note's body there is content past the column).
+    test('a block bar grown past the column keeps out of an open card in the part past it: the band checked is the band it stands in', async function () {
+        this.timeout(20000);
+        // Two rules above the table and nothing below it: room for the bar on both sides — the card takes one, the other is free.
+        await openRow({ ...(rows.find(r => r.slug === 'table') as Row), source: 'Intro.\n\n***\n\n***\n\n| a | b |\n| - | - |\n| one | two |\n', marker: 'one' });
+        await viewport(NARROW);
+        assert.ok((await fitted()).pastColumn, 'the table\'s bar is wider than the column at 520 px');
+        // A card (as a hover would open) exactly over the part of the bar past the column.
+        const card = await page.evaluate(sel => {
+            const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+            const mount = (document.querySelector(sel) as HTMLElement).parentElement as HTMLElement;
+            const base = mount.getBoundingClientRect();
+            const el = document.createElement('div');
+            el.className = 'mep-language-card';
+            el.id = 'test-card';
+            Object.assign(el.style, { position: 'absolute', left: `${base.width}px`, top: `${bar.top - base.top}px`, width: `${bar.right - base.right}px`, height: `${bar.height}px` });
+            mount.append(el);
+            return el.getBoundingClientRect().toJSON() as DOMRect;
+        }, BAR);
+        try {
+            await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+            await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            const bar = await page.$eval(BAR, el => el.getBoundingClientRect().toJSON() as DOMRect);
+            const overlaps = bar.left < card.right && card.left < bar.right && bar.top < card.bottom && card.top < bar.bottom;
+            assert.ok(!overlaps, `the bar moved off the card: bar ${JSON.stringify(bar)}, card ${JSON.stringify(card)}`);
+        } finally {
+            await page.evaluate(() => document.getElementById('test-card')?.remove());
+        }
+    });
+
     test('narrower still, the title hides once cut below the stub; the bar\'s name still says the object, and no verb is cut', async function () {
         this.timeout(20000);
         await openRow(rows.find(r => r.slug === 'link-in-bold') as Row);
@@ -547,13 +578,13 @@ suite('Editor object bars (e2e)', () => {
         const embed = rows.find(r => r.slug === 'wiki-embed') as Row;
         await openRow(embed);
         assert.strictEqual(await tooltipOf('delete-embed'), FILE_STAYS);
-        assert.strictEqual(await tooltipOf('convert-embed-to-text'), 'Convert to text (`![[roadmap]]`)');
+        assert.strictEqual(await tooltipOf('convert-embed-to-text'), 'Convert to text ("![[roadmap]]"): delete the last ] and type it again to make it an embed.');
         const snippet = rows.find(r => r.slug === 'snippet') as Row;
         await openRow(snippet);
         assert.strictEqual(await tooltipOf('delete-directive'), FILE_STAYS);
         const emoji = rows.find(r => r.slug === 'emoji') as Row;
         await openRow(emoji);
-        assert.strictEqual(await tooltipOf('convert-emoji-to-text'), 'Convert to text (`:rocket:`)');
+        assert.strictEqual(await tooltipOf('convert-emoji-to-text'), `Convert to text (":rocket:"): it is saved as text; ${UNDO} restores the emoji.`);
     });
 
     /** Each verb that leaves nothing to see: its hint, in the one pattern, and the key it names pressed — the document is back. */

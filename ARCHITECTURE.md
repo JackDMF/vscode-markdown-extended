@@ -1775,8 +1775,8 @@ choice, a menu, a source box — and is not refused: never *Open*, never a verb 
 once, never another extension's, never Remove or Delete (`firstFocus`, `verbs.ts`; Daniel,
 2026-10-16). A bar with no such verb — an emoji, a wiki embed, a badge, a requirement heading,
 a note whose *Edit source* is refused — takes the focus itself: it is a `role="toolbar"`
-whose `aria-label` names the object, its count of verbs and the keys (*Emoji :rocket:, 2
-actions, arrow keys to choose*), and `Enter` or `↓` moves into its first verb; running one is
+whose `aria-label` names the object, how many of its verbs can be chosen and the keys (*Emoji
+:rocket:, 2 actions, arrow keys to choose*; *…, no actions available*), and `Enter` or `↓` moves into its first verb; running one is
 a second `Enter`. The arrow keys move between verbs (wrapping), `Enter` chooses, `Esc`
 returns the focus to the text.
 
@@ -1849,7 +1849,9 @@ when the room or what the bar shows changed; where the title does not name the n
 span's *Remove attributes, keep text* — there is no short form). The bar is a floating
 layer: its room runs from the text column's left edge to the editor's right edge less a
 16 px gutter (`layerRight`), so a bar wider than the column stands past it rather than
-cutting a verb (Daniel, 2026-10-16). Within the actions slot the lenses come first, then the
+cutting a verb (Daniel, 2026-10-16); a block bar's candidate places are pushed back into that
+room before `firstFree` checks them, so the band checked is the band it stands in. A font
+loaded late (`document.fonts` `loadingdone`) makes the bars fit again. Within the actions slot the lenses come first, then the
 code actions, then the **Actions** choice holding the lenses that did not fit. A *Delete* whose file stays (an image, a wiki embed, a snippet's directive)
 says so in its tooltip (`FILE_STAYS`).
 

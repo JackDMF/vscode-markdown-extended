@@ -478,7 +478,7 @@ suite('Editor: emoji atoms, review 1', () => {
         const object = objectOfNode(state.doc.nodeAt(at) as Node, at);
         assert.ok(object !== null);
         const [asText] = emojiVerbs(state, object, { asText: () => undefined, remove: () => undefined });
-        assert.strictEqual(asText.title, 'Convert to text (`:wave:`)');
+        assert.strictEqual(asText.title, `Convert to text (":wave:"): it is saved as text; ${undoKey()} restores the emoji.`);
     });
 });
 
