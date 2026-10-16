@@ -33,6 +33,8 @@ export interface Theme {
     name: string;
     /** The body's class, as VS Code sets it: `vscode-light`, `vscode-dark`, `vscode-high-contrast`. */
     bodyClass: string;
+    /** The body's `data-vscode-theme-id`, as VS Code sets it: the theme's id (`Default Light Modern`). */
+    id: string;
     variables: Record<string, string>;
 }
 
@@ -67,6 +69,7 @@ export interface HostSettings {
 export const LIGHT_MODERN: Theme = {
     name: 'Light Modern',
     bodyClass: 'vscode-light',
+    id: 'Default Light Modern',
     variables: {
         ...FONTS,
         'foreground': '#3b3b3b',
@@ -143,6 +146,7 @@ export const LIGHT_MODERN: Theme = {
 export const DARK_MODERN: Theme = {
     name: 'Dark Modern',
     bodyClass: 'vscode-dark',
+    id: 'Default Dark Modern',
     variables: {
         ...FONTS,
         'foreground': '#cccccc',
@@ -219,6 +223,7 @@ export const DARK_MODERN: Theme = {
 export const HC_DARK: Theme = {
     name: 'Dark High Contrast',
     bodyClass: 'vscode-high-contrast',
+    id: 'Default High Contrast',
     variables: {
         ...FONTS,
         'contrastBorder': '#6fc3df',
@@ -279,6 +284,18 @@ export const HC_DARK: Theme = {
 };
 
 /**
+ * Light+, the older light default: Light Modern's variables with the two the
+ * bar's title reads set as Light+ has them — a description colour that is not
+ * the text colour (`#717171`) on a darker widget ground (`#f3f3f3`).
+ */
+export const LIGHT_PLUS: Theme = {
+    ...LIGHT_MODERN,
+    name: 'Light+',
+    id: 'Default Light+',
+    variables: { ...LIGHT_MODERN.variables, 'descriptionForeground': '#717171', 'editorWidget-background': '#f3f3f3' },
+};
+
+/**
  * The theme as a stylesheet: its variables and the host's on `:root`, as VS
  * Code sets them on the webview's `<html>`, and the editor's background behind
  * the page — VS Code paints it behind the frame, whose body the defaults leave
@@ -292,7 +309,7 @@ export function themeCss(theme: Theme, settings: HostSettings = {}): string {
 
 /** Put `theme` on the page, replacing the one it had: the variables and the body's theme class. */
 export async function applyTheme(page: puppeteer.Page, theme: Theme, settings: HostSettings = {}): Promise<void> {
-    await page.evaluate((css, bodyClass) => {
+    await page.evaluate((css, bodyClass, id) => {
         let style = document.getElementById('mep-test-theme');
         if (!style) {
             style = document.createElement('style');
@@ -302,5 +319,6 @@ export async function applyTheme(page: puppeteer.Page, theme: Theme, settings: H
         style.textContent = css;
         document.body.classList.remove('vscode-light', 'vscode-dark', 'vscode-high-contrast');
         document.body.classList.add(bodyClass);
-    }, themeCss(theme, settings), theme.bodyClass);
+        document.body.dataset.vscodeThemeId = id;
+    }, themeCss(theme, settings), theme.bodyClass, theme.id);
 }

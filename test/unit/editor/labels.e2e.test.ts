@@ -8,7 +8,7 @@ import { ADMONITION_FAMILIES } from '../../../src/syntax/markers';
 import {
     EXTENSION_ID, EditorPage, clickText, closeEditorPage, computedColour as computed, delay, describedTip, hoverTip, openEditorPage, shot as saveShot,
 } from './pageHarness';
-import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
+import { DARK_MODERN, HC_DARK, LIGHT_MODERN, LIGHT_PLUS, Theme, applyTheme } from './themes';
 
 /** The sketch's document (`wave1-sketches/labels/sketch.js`, `DOC`), as Markdown, and a source block to lock the row with. */
 const SOURCE = [
@@ -305,25 +305,42 @@ suite('Editor labels, menus and states (e2e)', () => {
                 getComputedStyle(bar.querySelector('.mep-object-verb') as HTMLElement).color,
             ]);
             assert.notStrictEqual(titleColour, verbColour, `${theme.name}: the title is not drawn as a verb`);
-            // 11px needs 4.5:1 on the widget's ground, and more than a refused verb (its colour at 40 %).
-            const ratios = await page.$eval(BAR, bar => {
-                const rgb = (c: string): number[] => {
-                    const m = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(c);
-                    return m ? [1, 2, 3].map(i => Number(m[i]) * 255) : (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
-                };
-                const lum = (c: number[]) => {
-                    const [r, g, b] = c.map(v => v / 255).map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-                    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                };
-                const contrast = (a: number[], b: number[]) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
-                const ground = rgb(getComputedStyle(bar).backgroundColor);
-                const title = rgb(getComputedStyle(bar.querySelector('.mep-object-label') as HTMLElement).color);
-                const verb = rgb(getComputedStyle(bar.querySelector('.mep-object-verb') as HTMLElement).color);
-                const refused = verb.map((v, i) => v * 0.4 + ground[i] * 0.6);
-                return { title: contrast(title, ground), refused: contrast(refused, ground) };
-            });
+            const ratios = await titleRatios();
             assert.ok(ratios.title >= 4.5 && ratios.title > ratios.refused, `${theme.name}: ${JSON.stringify(ratios)}`);
         });
+        // Light+, whose description colour is muted already: drawn as it is, not mixed further.
+        await applyTheme(page, LIGHT_PLUS);
+        await showDocument();
+        await clickText(page, 'API reference', 3);
+        await page.keyboard.down('Alt');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Alt');
+        await page.waitForSelector(`${BAR}[data-object="link"]`);
+        await delay(150);
+        const plus = await titleRatios();
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => getComputedStyle(el).color), 'rgb(113, 113, 113)', 'Light+: the description colour as the theme gives it, not mixed');
+        // The theme's own pair, #717171 on #f3f3f3, is 4.40:1 — the 4.5:1 an 11px label needs is not the mix's to give back (open: Daniel).
+        assert.ok(plus.title >= 4.39 && plus.title > plus.refused, `Light+: ${JSON.stringify(plus)}`);
+        await closeMenus();
+        await applyTheme(page, LIGHT_MODERN);
+    });
+
+    /** The bar's title against the widget's ground, and a refused verb's (its colour at 40 %): 11px needs 4.5:1, and more than the refused verb. */
+    const titleRatios = () => page.$eval(BAR, bar => {
+        const rgb = (c: string): number[] => {
+            const m = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(c);
+            return m ? [1, 2, 3].map(i => Number(m[i]) * 255) : (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+        };
+        const lum = (c: number[]) => {
+            const [r, g, b] = c.map(v => v / 255).map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        const contrast = (a: number[], b: number[]) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+        const ground = rgb(getComputedStyle(bar).backgroundColor);
+        const title = rgb(getComputedStyle(bar.querySelector('.mep-object-label') as HTMLElement).color);
+        const verb = rgb(getComputedStyle(bar.querySelector('.mep-object-verb') as HTMLElement).color);
+        const refused = verb.map((v, i) => v * 0.4 + ground[i] * 0.6);
+        return { title: contrast(title, ground), refused: contrast(refused, ground) };
     });
 
     test('06 Block type keeps its drawn labels without the heading rules; the code block reads at its own size', async function () {

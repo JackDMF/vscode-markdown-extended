@@ -725,8 +725,10 @@ img.mep-pending-range {
     user-select: none;
 }
 /* Light Modern's description colour is its text colour: mixed toward the widget's ground there
-   (4.5:1 still, at 11px). Dark and High Contrast mute it already, and a mix fell under 4.5:1. */
-.vscode-light .mep-object-label {
+   (4.5:1 still, at 11px). Every other theme mutes it already — Dark Modern, High Contrast, and
+   light themes such as Light+ (#717171 on #f3f3f3) — and a mix fell under 4.5:1; so the theme
+   is named by its id (`data-vscode-theme-id`, which VS Code sets on the webview's body). */
+body[data-vscode-theme-id="Default Light Modern"] .mep-object-label {
     color: color-mix(in srgb, var(--vscode-descriptionForeground, GrayText) 75%, var(--vscode-editorWidget-background, Canvas));
 }
 /* A title the bar's room hid (`fit`) takes its divider with it. */
