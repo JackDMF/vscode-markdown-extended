@@ -5,6 +5,14 @@
 ### ✨ Changes
 
 - Req Explorer's front-matter lens is not drawn in the Visual Editor, whose Properties block already shows and folds the front matter.
+- Notes move into the margin by available width: from 960 px (one side) or 1200 px (both), inline below.
+- The margin lane is reserved beside the column, so a note never leaves the window or scrolls sideways.
+- Below the threshold a note reads inline in its sentence: tinted, with a left bar; print keeps the bar.
+- A note's reference is wrapped in `.sn-anchor` / `.mn-anchor` with a dotted underline, in both layouts.
+- Hovering a reference or its note tints both, so a displaced note finds its reference.
+- Stylesheet authors: `:root { --mep-note-lane: 0 }` keeps your own margin layout; `.sn-anchor` carries the underline.
+- Note colours derive from the text colour; `--md-note-opacity` mutes by colour, not transparency.
+- In the Visual Editor, adding the first note or removing the last keeps the reference line in place.
 
 ## v4.7.0 — Saves That Read Back as Shown
 

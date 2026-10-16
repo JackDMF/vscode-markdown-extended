@@ -18,8 +18,8 @@ const SOURCE = [
 ].join('\n');
 
 /**
- * Wider than the 1280px breakpoint of the notes' margin layout
- * (`styles/markdown-extended.css`), on purpose: the preview card must hold its
+ * Wider than the notes' margin thresholds (960px one side, 1200px both;
+ * `styles/markdown-extended.css`), on purpose: the preview card must hold its
  * notes where the page's own notes would float into the margin.
  */
 const WIDE = 1400;

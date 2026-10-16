@@ -43,7 +43,7 @@ import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLitera
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
-import { SUFFIX_NODES, WRAPPER_NODES, editorSchema } from '../schema';
+import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 
@@ -400,7 +400,8 @@ export function convertNoteTransaction(state: EditorState, pos: number): Transac
     let next: Node;
     if (target === 'sidenote' || target === 'marginal_note') {
         const body = (target === 'sidenote' ? nodes.sidenote_body : nodes.marginal_note_body).create(null, node.child(1).content);
-        next = nodes[target].create(null, [node.child(0), body], node.marks);
+        // The reference is made again: its anchor class is the target's.
+        next = nodes[target].create(null, [noteRef(target, node.child(0).content), body], node.marks);
     } else {
         next = nodes[target].create(null, node.content, node.marks);
     }

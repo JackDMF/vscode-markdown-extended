@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { noteRef } from '../../../src/editor/schema';
 import { OrderedInlineState, SIDEBAR_GLUED_AFTER, SIDEBAR_GLUED_BEFORE, SIDEBAR_GLUED_URL, setInlineEngine, unwritableInNote } from '../../../src/editor/serialize';
 import { MarkdownSerializerState } from 'prosemirror-markdown';
 import { drawInline } from './fakeDom';
@@ -23,9 +24,8 @@ function written(content: Node[], attrs: Record<string, unknown> = {}): string {
 }
 
 const t = (s: string, ...marks: ReturnType<typeof schema.mark>[]) => schema.text(s, marks);
-const ref = (...content: Node[]) => schema.nodes.note_ref.create(null, content);
-const sidenote = (r: Node[], body: Node[]) => schema.nodes.sidenote.create(null, [ref(...r), schema.nodes.sidenote_body.create(null, body)]);
-const marginal = (r: Node[], body: Node[]) => schema.nodes.marginal_note.create(null, [ref(...r), schema.nodes.marginal_note_body.create(null, body)]);
+const sidenote = (r: Node[], body: Node[]) => schema.nodes.sidenote.create(null, [noteRef('sidenote', r), schema.nodes.sidenote_body.create(null, body)]);
+const marginal = (r: Node[], body: Node[]) => schema.nodes.marginal_note.create(null, [noteRef('marginal_note', r), schema.nodes.marginal_note_body.create(null, body)]);
 
 /**
  * A structure of the document for comparing: each node as `type(children)`,
@@ -42,9 +42,9 @@ function shape(node: Node): string {
     return `${marks}${node.type.name}(${inner.join(' ')})`;
 }
 
-/** The inline content of a textblock as the editor draws it, with the reference's own wrapper removed — the plugin emits none. */
+/** The inline content of a textblock as the editor draws it, without the reference's editor-only marker — the plugin's anchor span stays. */
 function drawn(block: Node): string {
-    return drawInline(block.content).html().replace(/<span data-mep-note-ref="">((?:(?!<\/?span).)*)<\/span>/g, '$1');
+    return drawInline(block.content).html().replace(/(<span class="(?:sn|mn)-anchor") data-mep-note-ref=""/g, '$1');
 }
 
 suite('Editor inline constructs: parsed as rich text', () => {

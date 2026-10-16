@@ -48,7 +48,7 @@ import { currentReadsAttrs } from '../../inlineEngine';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    ActionPreview, CLASS_LITERAL, INLINE_ATTRS_LOCK, MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS,
+    ActionPreview, CLASS_LITERAL, INLINE_ATTRS_LOCK, MENU_LABELS, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_SYNTAX, SampleSpec, TOOLBAR_ACTIONS,
     ToolbarAction, ToolbarMenu, ToolbarSubmenu, elideDataUris, inBubble, inRow, menuOf, submenuOf, tooltipOf,
 } from './actions';
 import {
@@ -136,7 +136,7 @@ export function renderSample(spec: SampleSpec): HTMLElement {
 }
 
 function sampleHolder(spec: SampleSpec): HTMLElement {
-    const holder = span('mep-sample');
+    const holder = span(SAMPLE_CLASS);
     holder.append(renderSample(spec));
     return holder;
 }
@@ -189,7 +189,7 @@ function inlineEntry(inline: InlineHolderAt): { label: string; sample: SampleSpe
 
 /** The sample an entry draws, replaced when what the selection makes it draw changed (`ActionState.sample`). */
 function resample(item: HTMLElement, spec: SampleSpec): void {
-    const holder = item.querySelector<HTMLElement>('.mep-sample');
+    const holder = item.querySelector<HTMLElement>(`.${SAMPLE_CLASS}`);
     const key = JSON.stringify(spec);
     if (holder !== null && holder.dataset.drawn !== key) {
         holder.dataset.drawn = key;

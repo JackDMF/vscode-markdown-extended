@@ -3,6 +3,7 @@ import { Node } from 'prosemirror-model';
 import { closeHistory, history, undo } from 'prosemirror-history';
 import { EditorState, Transaction } from 'prosemirror-state';
 import { fidelityPlugin, parseDocument, serializeDocument } from '../../../src/editor';
+import { parsedDocumentFromJSON, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { resyncTransaction } from '../../../src/editor/webview/resync';
 import { hostEngine } from './helpers';
 
@@ -97,5 +98,23 @@ suite('Editor webview: re-sync from the host', () => {
         page.apply(resyncTransaction(page.state, parseDocument(md, elsewhere).doc));
         assert.strictEqual(undo(page.state, tr => page.apply(tr)), false);
         assert.strictEqual(page.write(), elsewhere);
+    });
+
+    test('a host document holding notes, sent through JSON as the page receives it, equals the page\'s, anchors included', () => {
+        const withNotes = SOURCE.replace('Second paragraph.', 'Second ++paragraph|a sidenote++ and !!more|a marginal note!!.');
+        const host = parseDocument(md, withNotes);
+        const received = parsedDocumentFromJSON(JSON.parse(JSON.stringify(parsedDocumentToJSON(host))));
+        assert.ok(received.doc.eq(host.doc));
+        const page = session();
+        page.apply(resyncTransaction(page.state, received.doc));
+        assert.ok(page.state.doc.eq(host.doc));
+        const anchors: string[] = [];
+        page.state.doc.descendants(node => {
+            if (node.type.name === 'note_ref') {
+                anchors.push(node.attrs.anchor);
+            }
+        });
+        assert.deepStrictEqual(anchors, ['sn-anchor', 'mn-anchor']);
+        assert.strictEqual(page.write(), withNotes);
     });
 });

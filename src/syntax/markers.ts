@@ -113,11 +113,13 @@ export const NOTE_SEPARATOR = '|';
 
 /**
  * Sidenotes, marginal notes and sidebars (`markdownItSidenote.ts`): the marker
- * that opens and closes each, and the classes the rendered spans carry.
+ * that opens and closes each, and the classes the rendered spans carry. A
+ * note renders as `span.<refClass> > span.<anchorClass> + span.<noteClass>`:
+ * the anchor wraps the reference text, the note stays a direct child.
  */
 export const NOTE_SYNTAX = {
-    sidenote: { marker: '++', refClass: 'sn-ref', noteClass: 'sidenote' },
-    marginalNote: { marker: '!!', refClass: 'mn-ref', noteClass: 'mnote' },
+    sidenote: { marker: '++', refClass: 'sn-ref', anchorClass: 'sn-anchor', noteClass: 'sidenote' },
+    marginalNote: { marker: '!!', refClass: 'mn-ref', anchorClass: 'mn-anchor', noteClass: 'mnote' },
     leftSidebar: { marker: '$', cssClass: 'left-sidebar' },
     rightSidebar: { marker: '@', cssClass: 'right-sidebar' },
 } as const;

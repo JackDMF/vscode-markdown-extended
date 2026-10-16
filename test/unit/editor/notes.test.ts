@@ -23,7 +23,9 @@ import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { createEditorEngine } from '../../../src/editor';
 import { plugins } from '../../../src/plugin/plugins';
-import { hostEngine, topChildren, touched } from './helpers';
+import { hostEngine, repoRoot, topChildren, touched } from './helpers';
+import * as fs from 'fs';
+import * as path from 'path';
 
 function stateOf(text: string): EditorState {
     const { doc } = parseDocument(hostEngine(), text, {});
@@ -131,6 +133,61 @@ suite('Editor notes: making one from the toolbar', () => {
         const state = select(stateOf('Alpha ++beta|body++ gamma.\n'), 'body');
         assert.strictEqual(wrapNodeLockReason(state), NESTED_NOTE_LOCK);
         assert.strictEqual(wrapInNote('marginal_note')(state), false);
+    });
+});
+
+suite('Editor notes: the reference carries its kind\'s anchor, which the Markdown never sees', () => {
+    /** The first note of `state`. */
+    const firstNote = (state: EditorState): Node => {
+        let found: Node | undefined;
+        state.doc.descendants(node => {
+            if (!found && (node.type.name === 'sidenote' || node.type.name === 'marginal_note')) {
+                found = node;
+            }
+            return !found;
+        });
+        assert.ok(found, 'a note');
+        return found;
+    };
+
+    test('a note made from the toolbar has the anchor of its kind, and reads back as the same node', () => {
+        for (const [name, anchor, written] of [
+            ['sidenote', 'sn-anchor', 'Alpha ++beta|note++ gamma.\n'],
+            ['marginal_note', 'mn-anchor', 'Alpha !!beta|note!! gamma.\n'],
+        ] as const) {
+            const state = run(select(stateOf(SOURCE), 'beta'), wrapInNote(name));
+            const note = firstNote(state);
+            assert.strictEqual(note.child(0).attrs.anchor, anchor, name);
+            assert.strictEqual(text(state), written);
+            assert.ok(firstNote(stateOf(text(state))).eq(note), `${name}: parse(serialize(doc)) holds the same note`);
+        }
+    });
+
+    test('no source but the schema makes a reference by hand: every other place goes through noteRef, which sets the anchor', () => {
+        const srcRoot = path.join(repoRoot, 'src');
+        const offenders: string[] = [];
+        const walk = (dir: string) => {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    walk(full);
+                } else if (entry.name.endsWith('.ts') && full !== path.join(srcRoot, 'editor', 'schema.ts')
+                    && /note_ref\.create/.test(fs.readFileSync(full, 'utf8'))) {
+                    offenders.push(path.relative(srcRoot, full));
+                }
+            }
+        };
+        walk(srcRoot);
+        assert.deepStrictEqual(offenders, []);
+    });
+
+    test('a file\'s notes are written back byte for byte, as kept and by rule', () => {
+        const source = 'A ++**r** ef|n *b*++ and !!m|n!! and ++r|n++ end.\n';
+        const state = stateOf(source);
+        assert.deepStrictEqual(topChildren(state.doc).map(n => n.type.name), ['paragraph']);
+        assert.strictEqual(text(state), source, 'as kept');
+        const byRule = state.doc.type.create(null, topChildren(state.doc).map(n => touched(n)));
+        assert.strictEqual(serializeDocument({ doc: byRule, eol: '\n', tail: '' }, { defaultWrap: 90 }), source, 'by rule');
     });
 });
 

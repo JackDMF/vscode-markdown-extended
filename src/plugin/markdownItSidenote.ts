@@ -125,8 +125,10 @@ interface NoteConfig {
   closeMarker: string;
   /** CSS class for note content */
   cssClass: string;
-  /** CSS class for reference text */
+  /** CSS class for the outer span holding the reference and the note */
   refClass: string;
+  /** CSS class for the span wrapping the reference text */
+  anchorClass: string;
 }
 
 /**
@@ -205,7 +207,8 @@ const marginNoteConfig: NoteConfig = {
     openMarkerCode: MN_TOKEN_CODE,
     closeMarker: NOTE_SYNTAX.marginalNote.marker,
     cssClass: NOTE_SYNTAX.marginalNote.noteClass,
-    refClass: NOTE_SYNTAX.marginalNote.refClass
+    refClass: NOTE_SYNTAX.marginalNote.refClass,
+    anchorClass: NOTE_SYNTAX.marginalNote.anchorClass
 };
 
 /**
@@ -218,7 +221,8 @@ const sideNoteConfig: NoteConfig = {
     openMarkerCode: SN_TOKEN_CODE,
     closeMarker: NOTE_SYNTAX.sidenote.marker,
     cssClass: NOTE_SYNTAX.sidenote.noteClass,
-    refClass: NOTE_SYNTAX.sidenote.refClass
+    refClass: NOTE_SYNTAX.sidenote.refClass,
+    anchorClass: NOTE_SYNTAX.sidenote.anchorClass
 };
 
 /**
@@ -272,13 +276,15 @@ function registerRendererRules(md: MarkdownIt, config: RenderConfig): void {
     // Type guard: Check if this is a NoteConfig (has refClass)
     if ('refClass' in config) {
         // Note type (sidenote or marginal_note)
-        // Structure: <span class="ref"><ref text><span class="note"><note content></span></span>
+        // Structure: <span class="ref"><span class="anchor"><ref text></span><span class="note"><note content></span></span>
         // The note span is nested INSIDE the reference span, not a sibling of it — CSS should
-        // target it as a descendant (e.g. `.sn-ref .sidenote`), never as `.sn-ref + .sidenote`.
+        // target it as a child (e.g. `.sn-ref > .sidenote`), never as `.sn-ref + .sidenote`.
+        // The anchor wraps the reference text alone, so a stylesheet can mark the reference
+        // (the dotted underline) without styling the note.
         // The reference (outer) span carries any markdown-it-attrs attributes added via {.class}
         md.renderer.rules[`${type}_open`] = (tokens, idx) => `<span${renderOpenTagAttrs(tokens[idx], config.refClass)}${renderPosition(tokens[idx])}>`;
-        md.renderer.rules[`${type}_ref_open`] = () => ''; // No additional wrapper
-        md.renderer.rules[`${type}_ref_close`] = () => ''; // No additional wrapper
+        md.renderer.rules[`${type}_ref_open`] = () => `<span class="${config.anchorClass}">`;
+        md.renderer.rules[`${type}_ref_close`] = () => '</span>';
         md.renderer.rules[`${type}_content_open`] = () => `<span class="${config.cssClass}">`;
         md.renderer.rules[`${type}_content_close`] = () => '</span>';
         md.renderer.rules[`${type}_close`] = () => '</span>';

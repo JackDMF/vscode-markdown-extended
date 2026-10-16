@@ -736,9 +736,10 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   If the file changes outside the editor at the moment you export, the export takes the
   file's text without your last edit, as **Export to File** from the command palette does.
 
-In the card, notes and sidebars are shown stacked, as they render below the margin
-layout's 1280px breakpoint, however wide the window: a card is too narrow for a margin,
-so the notes stylesheet leaves its margin layout out of it.
+In the card, notes and sidebars are shown inline in their sentence, as they render below
+the margin layout's threshold, however wide the window: a card is too narrow for a
+margin, so the notes stylesheet leaves its margin layout out of it — and a note shown in
+the card or a sidebar's glyph in the menu reserves no margin on the page.
 
 **Why emphasis is four buttons.** This extension renders `*a*` as `<i>`, `_b_` as `<em>`,
 `**c**` as `<b>` and `__d__` as `<strong>` (`markdown-it-ib`), so a stylesheet can give
@@ -973,9 +974,12 @@ This is main text with ++reference text|This is the sidenote content with **mark
 `++text|note++` creates a lettered sidenote, `!!text|note!!` one with a symbol:
 
 ```html
-<span class="sn-ref" data-sn="3">text<span class="sidenote">note</span></span>
-<span class="mn-ref">text<span class="mnote">note</span></span>
+<span class="sn-ref" data-sn="3"><span class="sn-anchor">text</span><span class="sidenote">note</span></span>
+<span class="mn-ref"><span class="mn-anchor">text</span><span class="mnote">note</span></span>
 ```
+
+The anchor (`sn-anchor`, `mn-anchor`) wraps the reference text alone, so a stylesheet can mark
+the reference without styling the note; the note stays a direct child of the outer span.
 
 The extension writes structure only. Letters, symbols, colours and placement in the margin
 all come from your stylesheet.
@@ -1081,16 +1085,27 @@ sidebars (`@…@`) work either way.
 
 **CSS Classes:**
 
-- Sidenotes: `.sn-ref` (reference), `.sidenote` (content)
-- Marginal notes: `.mn-ref` (reference), `.mnote` (content)
+- Sidenotes: `.sn-ref` (reference and note), `.sn-anchor` (the reference text), `.sidenote` (content)
+- Marginal notes: `.mn-ref` (reference and note), `.mn-anchor` (the reference text), `.mnote` (content)
 - Sidebars: `.left-sidebar`, `.right-sidebar`
 
 **Layout:**
 
-Notes render as blocks in the text flow by default, and move into the margin only
-when the window is at least 1280px wide — the content column plus a full note on
-either side. Below that, and in PDF and image export, the block rendering is used,
-which keeps the notes readable instead of pushing them off the page.
+The layout follows the width of the window. A document whose notes all stand on the
+right moves them into the margin from 960px; one that also has a `$left$` sidebar from
+1200px, every note on both sides together — never half in the margin, half in the text.
+The margin is a lane reserved beside the column, only when the document has notes, so
+the column narrows instead of a note leaving the window, and nothing scrolls sideways.
+
+Below the threshold, and in PDF and image export, a note reads inline in its sentence:
+a tinted run in the text colour with a bar on its left, wrapped like the text around it.
+Print drops the tint when background graphics are off; the bar is a border and prints
+darker, so the note still stands out. In both layouts the reference carries a dotted
+underline that ties it to its note, and pointing at either tints both — which finds the
+reference of a note pushed down by the one above it.
+
+The Visual Editor uses the same stylesheet: adding the first note of a document, or
+removing the last, opens or closes the lane, and the line you are on keeps its place.
 
 **Customizing Styles:**
 
@@ -1105,14 +1120,17 @@ Your styles load after the extension's and take precedence. Note that setting
 `markdownExtended.export.defaultStyles`), so your file then owns the whole export
 appearance.
 
-Custom properties you can override. Declare them on `body`, **not** `:root` -
+Custom properties you can override. Declare the colours on `body`, **not** `:root` -
 custom properties inherit from the nearest ancestor that sets them, and the note
-colors below are set on `body`, so a `:root` rule in your stylesheet can never
-reach them however specific it is. A single `body` block reaches all of them:
+colours below are set on `body`, so a `:root` rule in your stylesheet can never
+reach them however specific it is. The geometry is set on `:root`, because the lane
+it reserves is `<html>`'s padding:
 
 ```css
-body {
+:root {
   --md-note-width: 260px;
+}
+body {
   --md-note-surface: transparent;
 }
 ```
@@ -1124,24 +1142,45 @@ body {
 | `--md-sidebar-width` | `200px` | Width of `$left$` / `@right@` sidebars |
 | `--md-sidebar-gap` | `24px` | Space between the content column and the sidebar |
 | `--md-note-font-size` | `0.9em` | Font size for all notes and sidebars |
-| `--md-note-opacity` | `0.85` | Opacity in the margin layout |
-| `--md-note-surface` | `#f6f8fa` / `#161b22` | Background of the block rendering (light / dark) |
-| `--md-note-border` | `#d0d7de` / `#30363d` | Left border color of the block rendering |
-| `--md-note-border-width` | `3px` | Left border width; set to `0` to drop the rule |
-| `--md-note-padding` | `0.5em 1em` | Padding inside the block rendering |
+| `--md-note-opacity` | `0.85` | How much of the text colour a note keeps |
+| `--md-note-text` | the text colour at `--md-note-opacity` | Text colour of a note |
+| `--md-note-surface` | derived from the text colour, 7 % | Tint of the inline run |
+| `--md-note-border` | derived from the text colour, 72 % | Colour of the inline run's left bar |
+| `--md-note-border-width` | `3px` | Left bar width; set to `0` to drop the bar |
+| `--md-note-padding` | `0.05em 0.45em` | Padding inside the inline run |
+| `--md-anchor-line` | derived from the text colour, 60 % | Colour of the reference's dotted underline |
+| `--mep-note-lane` | `--md-note-width` + `--md-note-gap` | Room reserved beside the column for right-side notes; on `:root` |
+| `--mep-note-lane-left` | `--mep-note-lane` | The same for left sidebars; on `:root` |
+
+The lane is reserved on `<html>`, so `--mep-note-lane`, `--mep-note-lane-left` and the
+widths and gaps they are made of are declared on `:root`, where your own `:root` rule
+overrides them; the colours stay on `body`.
 
 Widths are absolute rather than percentages on purpose: a percentage offset grows
 with the content column, so the note can never fit the gutter and exported HTML
-ends up with a horizontal scrollbar. If you widen `--md-note-width`, raise the
-`min-width: 1280px` breakpoint in your own CSS to match.
+ends up with a horizontal scrollbar. The lane follows `--md-note-width`; the
+thresholds (960px, 1200px) are literal, since a media query takes no variable, so a
+note much wider than 200px gets a lane that fits later than the switch. A stylesheet
+that lays out its own margin keeps the default from reserving one:
+
+```css
+:root { --mep-note-lane: 0; }
+```
 
 **If you already style these classes yourself**, note what the built-in
 stylesheet contributes that it did not before 3.1.2 - it ships in
 `markdown.previewStyles` now, where previously nothing loaded it. Anything you
-declare still wins, because your styles load after the extension's. What reaches
-you is only what you never declared, and only *below* the 1280px breakpoint: the
-block rendering's background, left border and padding. Above it the margin layout
-already sets all three to nothing. To get the pre-3.1.2 blank slate back:
+declare still wins, because your styles load after the extension's: every rule
+keeps the weight of a bare class. What reaches you is only what you never
+declared: *below* the threshold the inline run's tint, left bar and padding, and in
+both layouts the anchor's dotted underline, which this drops:
+
+```css
+span:is(.sn-anchor, .mn-anchor) { text-decoration: none; }
+```
+
+The margin layout sets tint, bar and padding to nothing. To get the pre-3.1.2 blank
+slate back:
 
 ```css
 body {
@@ -1151,7 +1190,7 @@ body {
 }
 ```
 
-That leaves the layout behaviour - block below 1280px, margin above - and removes
+That leaves the layout behaviour - inline below the threshold, margin above - and removes
 every visual decoration. If you would rather keep your own layout too, set the
 properties directly instead:
 

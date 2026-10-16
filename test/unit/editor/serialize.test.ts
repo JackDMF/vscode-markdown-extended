@@ -13,6 +13,7 @@ import { MarkdownSerializerState } from 'prosemirror-markdown';
 import { Node } from 'prosemirror-model';
 import { EditorState } from 'prosemirror-state';
 import { seamHolds } from '../../../src/editor/serialize';
+import { noteRef } from '../../../src/editor/schema';
 import { DEFAULT_INLINE_ENGINE, createInlineEngine, readAutoLinks } from '../../../src/editor/inlineEngine';
 import emojiShortcuts from 'markdown-it-emoji/lib/data/shortcuts.mjs';
 import { plugins } from '../../../src/plugin/plugins';
@@ -817,7 +818,7 @@ suite('Editor serializer: emoji atoms are written as spelled and judged by the p
             para(text('**'), emoji(':)', 'smiley'), text('**')),
             para(emoji(':)', 'smiley', schema.marks.mark.create())),
             // (A `:|` in a reference is written `:&#124;`, which the notes plugin reads as an emoji even as text: a Limit.)
-            para(text('a '), schema.nodes.sidenote.create(null, [schema.nodes.note_ref.create(null, [text('r '), emoji(':)', 'smiley')]), schema.nodes.sidenote_body.create(null, [text('n '), emoji(':)', 'smiley')])]), text(' b')),
+            para(text('a '), schema.nodes.sidenote.create(null, [noteRef('sidenote', [text('r '), emoji(':)', 'smiley')]), schema.nodes.sidenote_body.create(null, [text('n '), emoji(':)', 'smiley')])]), text(' b')),
             para(text('a '), schema.nodes.left_sidebar.create(null, [text('x '), emoji(':$', 'unamused')]), text(' b')),
         ];
         for (const doc of docs) {

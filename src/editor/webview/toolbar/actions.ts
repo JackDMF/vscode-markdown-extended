@@ -75,6 +75,14 @@ export const FOOTNOTE_LABEL = '{n}';
  */
 export const PREVIEW_CARD_CLASS = 'mep-preview-card';
 
+/**
+ * The class around each sample a button or a menu entry is drawn with.
+ * `styles/markdown-extended.css` names it beside the card's: a sidebar's glyph
+ * in the Annotation menu is a real `.left-sidebar`, and must open no margin
+ * lane on the page.
+ */
+export const SAMPLE_CLASS = 'mep-sample';
+
 /** The schema's marks a toolbar action toggles. */
 export type MarkTarget = 'em' | 'strong' | 'code' | 'mark' | 'sup' | 'sub' | 'strike' | 'kbd';
 
@@ -393,12 +401,17 @@ const RS = NOTE_SYNTAX.rightSidebar;
 
 const FOOTNOTE_TEXT = 'Footnote text';
 
-/** A note inside a sentence, as `markdownItSidenote.ts` renders it: the note nested in its reference. */
-function notePreview(marker: string, refClass: string, noteClass: string): ActionPreview {
+/** A note inside a sentence, as `markdownItSidenote.ts` renders it: the reference's anchor, then the note, nested in the reference span. */
+function notePreview({ marker, refClass, anchorClass, noteClass }: typeof SN | typeof MN): ActionPreview {
     return {
         markdown: `Main text with ${marker}a reference${NOTE_SEPARATOR}The note that goes with it.${marker} that carries on.`,
-        nodes: [el('p', 'Main text with ', el(`span.${refClass}`, 'a reference', el(`span.${noteClass}`, 'The note that goes with it.')), ' that carries on.')],
+        nodes: [el('p', 'Main text with ', el(`span.${refClass}`, el(`span.${anchorClass}`, 'a reference'), el(`span.${noteClass}`, 'The note that goes with it.')), ' that carries on.')],
     };
+}
+
+/** A note's glyph in its menu: the reference as the document draws it, anchor and all. */
+function noteGlyph({ refClass, anchorClass }: typeof SN | typeof MN, label: string): SampleSpec {
+    return el(`span.${refClass}`, el(`span.${anchorClass}`, label));
 }
 
 function sidebarPreview(marker: string, cssClass: string): ActionPreview {
@@ -410,9 +423,9 @@ function sidebarPreview(marker: string, cssClass: string): ActionPreview {
 
 const annotations: ToolbarAction[] = [
     noteAction('sidenote', 'Sidenote', 'sidenote', SN.marker, `${NOTE_SEPARATOR}note${SN.marker}`,
-        el(`span.${SN.refClass}`, 'sidenote'), notePreview(SN.marker, SN.refClass, SN.noteClass), 'reference', true),
+        noteGlyph(SN, 'sidenote'), notePreview(SN), 'reference', true),
     noteAction('marginal-note', 'Marginal note', 'marginal_note', MN.marker, `${NOTE_SEPARATOR}note${MN.marker}`,
-        el(`span.${MN.refClass}`, 'marginal'), notePreview(MN.marker, MN.refClass, MN.noteClass), 'reference', true),
+        noteGlyph(MN, 'marginal'), notePreview(MN), 'reference', true),
     noteAction('left-sidebar', 'Left sidebar', 'left_sidebar', LS.marker, LS.marker, el(`span.${LS.cssClass}`, 'left'), sidebarPreview(LS.marker, LS.cssClass), 'text', false),
     noteAction('right-sidebar', 'Right sidebar', 'right_sidebar', RS.marker, RS.marker, el(`span.${RS.cssClass}`, 'right'), sidebarPreview(RS.marker, RS.cssClass), 'text', false),
     {

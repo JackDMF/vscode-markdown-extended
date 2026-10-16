@@ -452,3 +452,22 @@ suite('Sidenote positions: data-sn is the number behind the letter the styleshee
         assert.strictEqual(open.attrs, null);
     });
 });
+
+suite('Note anchors: the reference text has an element of its own', () => {
+    const md = preview();
+
+    test('a sidenote is span.sn-ref > span.sn-anchor + span.sidenote', () => {
+        assert.strictEqual(md.renderInline('++r|n++'),
+            '<span class="sn-ref" data-sn="1"><span class="sn-anchor">r</span><span class="sidenote">n</span></span>');
+    });
+
+    test('a marginal note is span.mn-ref > span.mn-anchor + span.mnote', () => {
+        assert.strictEqual(md.renderInline('!!r|n!!'),
+            '<span class="mn-ref"><span class="mn-anchor">r</span><span class="mnote">n</span></span>');
+    });
+
+    test('attributes stay on the outer span; the reference\'s markup sits inside the anchor', () => {
+        assert.strictEqual(md.renderInline('++**r**|n++{.x}'),
+            '<span class="sn-ref x" data-sn="1"><span class="sn-anchor"><b>r</b></span><span class="sidenote">n</span></span>');
+    });
+});

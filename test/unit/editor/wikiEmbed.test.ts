@@ -5,6 +5,7 @@ import { history, redo, undo } from 'prosemirror-history';
 import { EditorState, TextSelection, Transaction } from 'prosemirror-state';
 import { EDITABLE_TOP_NODES, ParsedDocument, createEditorEngine, editorSchema, parseDocument, serializeDocument } from '../../../src/editor';
 import { createPositionMap } from '../../../src/editor/positions';
+import { noteRef } from '../../../src/editor/schema';
 import { setInlineEngine, tableLines, unwritableEmbed, unwritableInNote, unwritableInTable } from '../../../src/editor/serialize';
 import { DEFAULT_INLINE_ENGINE, InlineEngineDefinition, createInlineEngine, currentInlineDefinition, inlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
@@ -261,7 +262,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             n.table_row.create(null, [n.table_header.create(null, [text('a')])]),
             n.table_row.create(null, [n.table_cell.create(null, [embed(source)])]),
         ])]);
-        const sidenote = (ref: Node, body: Node) => paragraph(n.sidenote.create(null, [n.note_ref.create(null, [ref]), n.sidenote_body.create(null, [body])]));
+        const sidenote = (ref: Node, body: Node) => paragraph(n.sidenote.create(null, [noteRef('sidenote', [ref]), n.sidenote_body.create(null, [body])]));
         const preview = previewEngine();
         for (const [doc, written, name] of [
             // The table plugin reads any backslash before `|` as its escape.
@@ -404,7 +405,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         });
         assert.deepStrictEqual(map.sourcePositionOf(at + 1), { line: 2, character: 11, approximate: false });
         // A changed note reference writes `&#124;`: the anchors are that spelling, the text after it exact.
-        const note = paragraph(text('A '), n.sidenote.create(null, [n.note_ref.create(null, [embed('![[a|b]]')]), n.sidenote_body.create(null, [text('n')])]), text(' b'));
+        const note = paragraph(text('A '), n.sidenote.create(null, [noteRef('sidenote', [embed('![[a|b]]')]), n.sidenote_body.create(null, [text('n')])]), text(' b'));
         const noteMap = createPositionMap({ doc: note, eol: '\n', tail: '' }, { defaultWrap: 90 });
         assert.strictEqual(noteMap.text, 'A ++![[a&#124;b]]|n++ b\n');
         let inRef = -1;
@@ -460,7 +461,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         // The end of a composition over literal text already there makes nothing.
         assert.strictEqual(type(paragraph(text('Lit ![[x]]')), ''), null);
         // Across a sidenote: the text before the caret spans the note's parts.
-        const crossing = paragraph(text('See ![['), n.sidenote.create(null, [n.note_ref.create(null, [text('r')]), n.sidenote_body.create(null, [text('body]')])]));
+        const crossing = paragraph(text('See ![['), n.sidenote.create(null, [noteRef('sidenote', [text('r')]), n.sidenote_body.create(null, [text('body]')])]));
         assert.strictEqual(type(crossing, ']'), null);
         // Marks: not the code before the `!`, which is no part of the text the atom replaces.
         const code = schema.marks.code.create();

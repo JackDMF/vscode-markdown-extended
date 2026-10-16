@@ -384,19 +384,39 @@ content. `blocks.ts` lists their tokens as editable, `parse.ts` maps them, `seri
 writes them with the delimiters from `src/syntax/markers.ts`.
 
 **A note mirrors the plugin's DOM.** `markdownItSidenote.ts` renders a sidenote as
-`span.sn-ref`, holding the reference's text and then `span.sidenote` — the note nested in
-its reference, which `markdown-extended.css` targets as a descendant. The schema draws
-exactly that: `sidenote` is the `span.sn-ref`, its content `note_ref sidenote_body`, the
-body the `span.sidenote` (`marginal_note` likewise, with `span.mn-ref` and
-`marginal_note_body` as `span.mnote`); `left_sidebar` and `right_sidebar` are the one
-span each. The plugin emits no element for the reference, and ProseMirror needs one to
-hold content, so `note_ref` is a span with no class — only `data-mep-note-ref`, which no
-stylesheet of the preview names. Mirroring the DOM is what lets every stylesheet written
-for the preview style the note being edited unchanged, the margin layout included; a
-page test at 1400px compares the computed style of each note in the editor with the
-engine's own rendering, and `inline.test.ts` draws the schema through `DOMSerializer`
-and requires the engine's HTML, the reference's span apart. The two bodies are two types
-because their class is part of what they are.
+`span.sn-ref` holding `span.sn-anchor` (the reference's text) and then `span.sidenote` —
+the note nested in its reference, a direct child of it, which `markdown-extended.css`
+targets as such. The anchor exists so a stylesheet can mark the reference (the dotted
+underline, the hover tint) without styling the note. The schema draws exactly that:
+`sidenote` is the `span.sn-ref`, its content `note_ref sidenote_body`, the reference the
+`span.sn-anchor`, the body the `span.sidenote` (`marginal_note` likewise, with
+`span.mn-ref`, `span.mn-anchor` and `marginal_note_body` as `span.mnote`);
+`left_sidebar` and `right_sidebar` are the one span each. `note_ref` is one type for both
+kinds, its anchor class an attribute: `NOTE_SYNTAX` in `src/syntax/markers.ts` states
+the classes once, the plugin, `parse.ts`, the toolbar's samples and `noteRef` in
+`schema.ts` read them there, and every place that makes a reference — a wrap, a
+conversion, a paste — goes through `noteRef` or the parse. The attribute defaults to
+`null` because ProseMirror refuses a required attribute on a node in a required
+position; a test holds the sources to `noteRef`, and parse-of-serialize to the same
+node. The editor's reference also carries `data-mep-note-ref`, which no stylesheet of
+the preview names, by which a copy made here is known on paste. Mirroring the DOM is
+what lets every stylesheet written for the preview style the note being edited
+unchanged, the margin layout included; a page test at 1400px compares the computed
+style of each note in the editor with the engine's own rendering, and `inline.test.ts`
+draws the schema through `DOMSerializer` and requires the engine's HTML, the editor's
+marker apart. The anchor is an attribute and a class, never read by the serializer: the
+Markdown a note writes is its parts' content, byte for byte as before. The two bodies
+are two types because their class is part of what they are.
+
+**The margin lane keeps the line in place.** The lane is `<html>`'s padding, reserved by
+`markdown-extended.css` once the document holds a note and the window is wide enough, so
+the column narrows and every line above the caret rewraps when the first note is added
+or the last removed. `lane.ts` wraps both state updates of the page — `dispatchTransaction`
+and the host's re-sync — and, when the html element's computed padding changed across the
+update, scrolls by how far the line holding the selection head (mapped through the
+transaction) moved. The padding is read, not the document counted, so the stylesheet's
+own decision (its media queries, `:has()`, a reader's `--mep-note-lane: 0`) is the one
+the editor follows; a selection-only transaction is not measured.
 
 **What a note holds** is decided by the plugin: it parses a reference and a body with
 the full inline parser, so every mark may be inside (`note_inline*`: text, images, hard
@@ -1575,15 +1595,19 @@ variables VS Code supplies for Light Modern, Dark Modern and Dark High Contrast
 defaults), and `chrome.e2e.test.ts` checks the row, a menu, the bars and the bubble in them.
 
 **Why a card needs the notes stylesheet's help.** The notes' margin layout in
-`styles/markdown-extended.css` is gated by `@media screen and (min-width: 1280px)`, and a
-media query reads the window, not the card: in a wide webview a 360px card's note would
-float out by its full offset, and the card's clipping would make it vanish. Restating the
-stacked rendering in `editor.css` would state that form twice. Instead the margin layout
-excludes descendants of the card (`:where(:not(.mep-preview-card *))`: `:where` keeps a bare
-class's specificity, so a reader's later `.sidenote` rule still wins), and the card keeps
-the base rendering — the one statement of the stacked form. The class occurs only in the
-editor's page, so the preview and exports are unaffected; `PREVIEW_CARD_CLASS` names it
-once, and a test holds both stylesheets to that name. `display: flow-root; contain: layout
+`styles/markdown-extended.css` is gated by `@media screen and (min-width: 960px)` (one side)
+and `(min-width: 1200px)` (both), and a media query reads the window, not the card: in a
+wide webview a 360px card's note would float out by its full offset, and the card's
+clipping would make it vanish. Restating the inline rendering in `editor.css` would state
+that form twice. Instead the margin layout excludes descendants of the card and of the
+menus' samples (`:where(:not(:is(.mep-preview-card, .mep-sample) *))`: `:where` keeps a
+bare class's specificity, so a reader's later `.sidenote` rule still wins), and the card
+keeps the base rendering — the one statement of the inline form. The same guard stands
+inside every `:has()` that reserves the lane, so neither the card's sample note nor a
+sidebar's glyph in the Annotation menu opens a lane on the page. The classes occur only in
+the editor's page, so the preview and exports are unaffected; `PREVIEW_CARD_CLASS` and
+`SAMPLE_CLASS` name them once, and a test holds the stylesheet's every margin rule to
+them. `display: flow-root; contain: layout
 paint; overflow: hidden` on the card is the second line of defence. The page test runs at
 1400px and requires every element of each Annotation preview to lie inside the card and
 to be visibly in it; with the guard removed the sidenote floats out.

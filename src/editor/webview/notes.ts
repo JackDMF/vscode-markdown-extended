@@ -34,7 +34,7 @@ import { EditorView } from 'prosemirror-view';
 import { Mapping } from 'prosemirror-transform';
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
-import { NOTE_NODES, NOTE_PART_NODES, editorSchema } from '../schema';
+import { NOTE_NODES, NOTE_PART_NODES, editorSchema, noteRef } from '../schema';
 import { RAW_TEXT_MARKS, causeReason, frontMatterTakeover, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
 import { showHint } from './hint';
@@ -716,7 +716,7 @@ function wrapTransaction(state: EditorState, name: NoteNodeName): Transaction {
     if (name === 'sidenote' || name === 'marginal_note') {
         const refContent = inner.size > 0 ? inner : Fragment.from(text(NOTE_REF_PLACEHOLDER));
         const body = (name === 'sidenote' ? nodes.sidenote_body : nodes.marginal_note_body).create(null, text(NOTE_BODY_PLACEHOLDER));
-        note = nodes[name].create(null, [nodes.note_ref.create(null, refContent), body], marks);
+        note = nodes[name].create(null, [noteRef(name, refContent), body], marks);
         select = start => {
             if (inner.size === 0) {
                 return { from: start + 2, to: start + 2 + refContent.size };

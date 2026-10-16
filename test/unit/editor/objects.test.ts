@@ -113,8 +113,12 @@ suite('Editor objects: a note\'s verbs', () => {
         assert.strictEqual(text(converted), 'The !!lives *in* here|a **bold** body!! and more.\n');
         assert.strictEqual(converted.selection.head, state.selection.head, 'the caret stays in the body');
         assert.strictEqual(converted.doc.resolve(converted.selection.head).parent.type.name, 'marginal_note_body');
+        assert.strictEqual(converted.doc.nodeAt(note.from)?.child(0).attrs.anchor, 'mn-anchor', 'the reference is the marginal note\'s');
+        assert.ok(parseDocument(hostEngine(), text(converted), {}).doc.nodeAt(note.from)?.eq(converted.doc.nodeAt(note.from) as Node),
+            'the note the page holds is the one the save reads back');
         const back = converted.apply(convertNoteTransaction(converted, note.from) as never);
         assert.strictEqual(text(back), source);
+        assert.strictEqual(back.doc.nodeAt(note.from)?.child(0).attrs.anchor, 'sn-anchor', 'and back the sidenote\'s');
         let undone = converted;
         assert.ok(undo(converted, tr => {
             undone = converted.apply(tr);
