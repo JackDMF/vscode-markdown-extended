@@ -68,11 +68,12 @@ export function rowCeiling(mount: HTMLElement): number {
 /**
  * The height of the line under the formatting row that holds a lock's reason
  * when it does not fit beside the tools (`toolbar.ts`, `placeLock`), while it
- * stands there; else 0. What scrolls something into view below the row keeps
- * this much more room.
+ * stands there; else 0 — also while it waits unseen for its room during a
+ * press (`mep-row-lock-waiting`). What scrolls something into view below the
+ * row keeps this much more room.
  */
 export function lockLineHeight(mount: HTMLElement | null): number {
-    const line = mount?.querySelector(':scope > .mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+    const line = mount?.querySelector(':scope > .mep-toolbar.mep-row-lock-below:not(.mep-row-lock-waiting) > .mep-row-lock:not([hidden])');
     return line ? line.getBoundingClientRect().height : 0;
 }
 

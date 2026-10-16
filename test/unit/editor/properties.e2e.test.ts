@@ -714,6 +714,8 @@ suite('Editor properties panel (e2e)', () => {
                 const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
                 return {
                     line: line !== null,
+                    // `:not([hidden])` holds for a line waiting unseen for its room too: shown is visible.
+                    visible: line !== null && getComputedStyle(line).visibility === 'visible',
                     chrome: line ? line.getBoundingClientRect().bottom : row.bottom,
                     panel: (document.querySelector('.mep-properties') as HTMLElement).getBoundingClientRect().top,
                     room: getComputedStyle(document.querySelector('.mep-editor') as HTMLElement).paddingTop,
@@ -726,7 +728,7 @@ suite('Editor properties panel (e2e)', () => {
             await page.keyboard.press('Tab');
             await delay(150);
             let at = await layout();
-            assert.ok(at.line && at.focus === 'mep-props-toggle', JSON.stringify(at));
+            assert.ok(at.line && at.visible && at.focus === 'mep-props-toggle', JSON.stringify(at));
             await page.evaluate(() => window.dispatchEvent(new Event('blur')));
             await delay(100);
             at = await layout();
@@ -782,10 +784,25 @@ suite('Editor properties panel (e2e)', () => {
 
                 // The toggle, pressed and released as a person does: the line and its room come after the release.
                 const toggle = await centre('.mep-properties .mep-props-toggle');
+                // While held: the line waits unseen, and nothing under the row moves — the header, nor a bar or the bubble.
+                const held = () => page.evaluate(() => {
+                    const line = document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+                    const floating = Array.from(document.querySelectorAll<HTMLElement>('.mep-object-toolbar, .mep-bubble'))
+                        .filter(el => !el.hidden && el.getClientRects().length > 0)
+                        .map(el => `${el.className}@${el.getBoundingClientRect().top}`);
+                    return {
+                        line: line ? getComputedStyle(line).visibility : 'none',
+                        header: (document.querySelector('.mep-properties .mep-props-header') as HTMLElement).getBoundingClientRect().top,
+                        floating,
+                    };
+                });
                 await page.mouse.move(toggle.x, toggle.y);
+                const unpressed = await held();
                 await page.mouse.down();
-                await shot(page, `lockroom-${width}-held.png`);
                 await delay(60);
+                await shot(page, `lockroom-${width}-held.png`);
+                const during = await held();
+                assert.deepStrictEqual(during, { ...unpressed, line: 'hidden' }, `${width}px: held, the line waits unseen and nothing under the row moves`);
                 await page.mouse.up();
                 await delay(150);
                 await shot(page, `lockroom-${width}-released.png`);

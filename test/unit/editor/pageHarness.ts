@@ -120,8 +120,8 @@ export interface EditorPageOptions {
     builtinMarkdown?: boolean;
 }
 
-/** VS Code's preview stylesheet, from the VS Code the tests run in: the first sheet of the preview's cascade. */
-export function vscodeMarkdownCss(): string {
+/** VS Code's preview stylesheet, from the VS Code the tests run in: the first sheet of the preview's cascade, loaded by default (`builtinMarkdown`) and so never by a suite. */
+function vscodeMarkdownCss(): string {
     return path.join(vscode.env.appRoot, 'extensions', 'markdown-language-features', 'media', 'markdown.css');
 }
 
@@ -170,7 +170,25 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         return undefined;
     }
 
+    // Checked before a browser is started: a sheet that is not there is a page the host never writes, refused, not left out.
+    const builtin = options.builtinMarkdown === false ? [] : [vscodeMarkdownCss(), vscodeHighlightCss()];
+    const sheets = [...builtin, ...options.stylesheets ?? []];
+    for (const sheet of sheets) {
+        assert.ok(fs.existsSync(sheet), `no stylesheet at ${sheet}`);
+    }
+
     const browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    try {
+        return await preparePage(browser, bundle, extensionPath as string, sheets, options);
+    } catch (error) {
+        // A page that failed to come up leaves no browser behind.
+        await closeBrowser(browser);
+        throw error;
+    }
+}
+
+/** The page in `browser`: the host's page written, its stylesheets and the bundle loaded. */
+async function preparePage(browser: puppeteer.Browser, bundle: string, extensionPath: string, sheets: readonly string[], options: EditorPageOptions): Promise<EditorPage> {
     const page = await browser.newPage();
     await page.setViewport({ width: options.width ?? 1200, height: options.height ?? 900 });
     const errors: string[] = [];
@@ -185,23 +203,20 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
     );
     // A webview always has its theme's variables: Light Modern, which the body's class names, until a test applies another.
     await applyTheme(page, LIGHT_MODERN);
-    const builtin = options.builtinMarkdown === false ? [] : [vscodeMarkdownCss(), vscodeHighlightCss()];
-    for (const sheet of [...builtin, ...options.stylesheets ?? []]) {
-        // A sheet that is not there is a page the host never writes: refused, not left out.
-        assert.ok(fs.existsSync(sheet), `no stylesheet at ${sheet}`);
+    for (const sheet of sheets) {
         await page.addStyleTag({ path: sheet });
     }
     for (const sheet of options.styles ?? []) {
-        await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', sheet) });
+        await page.addStyleTag({ path: path.join(extensionPath, 'styles', sheet) });
     }
     // The codicon font, before the editor's own sheet as the host links it (`html.ts`): the
     // chevrons and `$(icon)`s are drawn with it. The page has no origin to load the font file
     // from, so it is given inline.
-    const codicons = codiconCss(extensionPath as string);
+    const codicons = codiconCss(extensionPath);
     if (codicons) {
         await page.addStyleTag({ content: codicons });
     }
-    await page.addStyleTag({ path: path.join(extensionPath as string, 'styles', 'editor.css') });
+    await page.addStyleTag({ path: path.join(extensionPath, 'styles', 'editor.css') });
     await page.addScriptTag({ path: bundle });
     assert.deepStrictEqual(errors, [], 'the bundle loads without a page error');
 
@@ -214,28 +229,31 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         send: async message => {
             await page.evaluate(m => window.postMessage(m, '*'), message as unknown as Record<string, unknown>);
         },
-        close: async () => {
-            // On a loaded machine Chromium can take seconds to close, and a
-            // teardown that times out fails the run with every test passed. A
-            // suite closes through `closeEditorPage`, whose hook has
-            // CLOSE_HOOK_MS; what has not closed within the grace is killed,
-            // with its whole process tree, inside that.
-            let closed = false;
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            await Promise.race([
-                browser.close().then(() => {
-                    closed = true;
-                }).catch(() => undefined),
-                new Promise<void>(resolve => {
-                    timer = setTimeout(resolve, CLOSE_GRACE_MS);
-                }),
-            ]);
-            clearTimeout(timer);
-            if (!closed) {
-                killTree(browser.process()?.pid);
-            }
-        },
+        close: () => closeBrowser(browser),
     };
+}
+
+/**
+ * Close `browser`. On a loaded machine Chromium can take seconds to close, and
+ * a teardown that times out fails the run with every test passed. A suite
+ * closes through `closeEditorPage`, whose hook has CLOSE_HOOK_MS; what has not
+ * closed within the grace is killed, with its whole process tree, inside that.
+ */
+async function closeBrowser(browser: puppeteer.Browser): Promise<void> {
+    let closed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+        browser.close().then(() => {
+            closed = true;
+        }).catch(() => undefined),
+        new Promise<void>(resolve => {
+            timer = setTimeout(resolve, CLOSE_GRACE_MS);
+        }),
+    ]);
+    clearTimeout(timer);
+    if (!closed) {
+        killTree(browser.process()?.pid);
+    }
 }
 
 /** `dist/codicons/codicon.css` with its font as a `data:` URI; `undefined` before a build copied it there. */

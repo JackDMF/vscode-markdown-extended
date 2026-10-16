@@ -117,10 +117,13 @@ const PREVIEW_DELAY_MS = 300;
 const LOCK_FLASH_CLASS = 'mep-row-lock-flash';
 const LOCK_FLASH_MS = 900;
 
+/** How often a zoomed menu sample is measured again and shrunk by what still stands out (`fitSamples`). */
+const SAMPLE_FIT_PASSES = 2;
+
 /** On the row while the lock's reason does not fit beside the tools: it stands on a line of its own under them (`editor.css`). */
 const LOCK_BELOW_CLASS = 'mep-row-lock-below';
 
-/** On the row while that line waits for its room — a button is held (`settleRoom`): laid out, not shown (`editor.css`). */
+/** On the row while that line, brought by a press, waits for its room until the release (`settleRoom`): laid out, not shown (`editor.css`), no chrome yet (`clearance.ts`). */
 const LOCK_WAIT_CLASS = 'mep-row-lock-waiting';
 
 /** Draw a sample: the element the parser makes, with its classes, attributes and content. */
@@ -377,6 +380,12 @@ class ToolbarView implements PluginView {
     private flashTimer: ReturnType<typeof setTimeout> | undefined;
     /** A pointer button is down: the page does not move under it (`settleRoom`). */
     private pointerHeld = false;
+    /**
+     * The pointer is what acts: a main button went down and no key came since.
+     * A press whose release was lost leaves `pointerHeld` set until a blur or a
+     * move; a lock a key brings meanwhile is no press's, and its line shows.
+     */
+    private pressing = false;
     /** The height the page keeps free under the row for the reason's line (`settleRoom`). */
     private room = 0;
     /** Watches the row and its status for a size that changes where the reason fits (`placeLock`). */
@@ -441,10 +450,18 @@ class ToolbarView implements PluginView {
         this.listen(document, 'pointerdown', e => {
             if ((e as PointerEvent).button === 0) {
                 this.pointerHeld = true;
+                this.pressing = true;
             }
+        }, true);
+        // A key acts, not the press: a line still waiting on one shows now (its room
+        // follows when the press ends, as before).
+        this.listen(document, 'keydown', () => {
+            this.pressing = false;
+            this.endLockWait();
         }, true);
         const released = () => {
             this.pointerHeld = false;
+            this.pressing = false;
             setTimeout(() => this.settleRoom(), 0);
         };
         this.listen(document, 'pointerup', released, true);
@@ -455,6 +472,7 @@ class ToolbarView implements PluginView {
         const lost = () => {
             if (this.pointerHeld) {
                 this.pointerHeld = false;
+                this.pressing = false;
                 this.settleRoom();
             }
         };
@@ -565,11 +583,22 @@ class ToolbarView implements PluginView {
         const note = this.lockNote;
         const below = !note.hidden && note.scrollWidth > note.clientWidth + 1;
         this.row.classList.toggle(LOCK_BELOW_CLASS, below);
-        this.row.classList.toggle(LOCK_WAIT_CLASS, below && this.pointerHeld && this.room < 0.5);
-        if (below !== was) {
+        // Only a line a press brings waits: one a key brings shows at once, a held button or not.
+        const waiting = below && this.pressing && this.pointerHeld && this.room < 0.5;
+        this.row.classList.toggle(LOCK_WAIT_CLASS, waiting);
+        // A waiting line is no chrome yet (`lockLineHeight`): the bars are placed once, with its room.
+        if (below !== was && !waiting) {
             this.chromeMoved();
         }
         this.settleRoom();
+    }
+
+    /** A line waiting for its room shows now, and what keeps clear of the chrome is placed against it. */
+    private endLockWait(): void {
+        if (this.row.classList.contains(LOCK_WAIT_CLASS)) {
+            this.row.classList.remove(LOCK_WAIT_CLASS);
+            this.chromeMoved();
+        }
     }
 
     /**
@@ -1083,17 +1112,24 @@ class ToolbarView implements PluginView {
             }
             const box = holder.getBoundingClientRect();
             const r = sample.getBoundingClientRect();
-            const zoom = Math.min(1, r.height > 0 ? box.height / r.height : 1, r.width > 0 ? box.width / r.width : 1);
-            if (zoom < 1) {
-                sample.style.setProperty('zoom', zoom.toFixed(3));
-                // A zoomed box is laid out again, and its line boxes round: a tall sample
-                // (a code block's padding and lines) can still stand a pixel out. Measured
-                // once more and shrunk by what is left over.
+            let zoom = Math.min(1, r.height > 0 ? box.height / r.height : 1, r.width > 0 ? box.width / r.width : 1);
+            if (zoom >= 1) {
+                continue;
+            }
+            // Rounded down, never up into a box a hair too big. A zoomed box is laid
+            // out again and its line boxes round: a tall sample (a code block's
+            // padding and lines) can still stand a pixel out — measured again and
+            // shrunk by what is left over, at most twice.
+            zoom = Math.floor(zoom * 1000) / 1000;
+            sample.style.setProperty('zoom', String(zoom));
+            for (let pass = 0; pass < SAMPLE_FIT_PASSES; pass++) {
                 const z = sample.getBoundingClientRect();
-                const over = Math.max(z.height > 0 ? z.height / box.height : 0, z.width > 0 ? z.width / box.width : 0);
-                if (over > 1) {
-                    sample.style.setProperty('zoom', (Math.floor(zoom / over * 1000) / 1000).toFixed(3));
+                const over = Math.max(z.height / box.height, z.width / box.width);
+                if (!(over > 1)) {
+                    break;
                 }
+                zoom = Math.floor(zoom / over * 1000) / 1000;
+                sample.style.setProperty('zoom', String(zoom));
             }
         }
     }

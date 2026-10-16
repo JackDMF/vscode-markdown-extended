@@ -19,6 +19,10 @@ export const WEBVIEW_DEFAULT_STYLES_ID = '_defaultStyles';
  * re-indented. The harness injects the installed VS Code's own
  * (`webviewDefaultStyles`); this copy is the fallback where that cannot be
  * read, and `webviewDefaults.e2e.test.ts` holds it to the installed one.
+ *
+ * The tests run in the newest VS Code, unpinned, on purpose: when a release
+ * changes these defaults that test goes red, and that is the intended alarm —
+ * copy them again from the installed `index.html` and update the version above.
  */
 export const WEBVIEW_DEFAULT_STYLES = `
 @layer vscode-default {
