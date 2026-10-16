@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.8.0 — Bars, Labels and Notes That Fit
 
 ### ✨ Changes
 
