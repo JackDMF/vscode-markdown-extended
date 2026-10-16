@@ -117,6 +117,9 @@ const PREVIEW_DELAY_MS = 300;
 const LOCK_FLASH_CLASS = 'mep-row-lock-flash';
 const LOCK_FLASH_MS = 900;
 
+/** The keys that only modify a press or another key: none of them ends a press's wait (`placeLock`). */
+const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
+
 /** How often a zoomed menu sample is measured again and shrunk by what still stands out (`fitSamples`). */
 const SAMPLE_FIT_PASSES = 2;
 
@@ -454,8 +457,14 @@ class ToolbarView implements PluginView {
             }
         }, true);
         // A key acts, not the press: a line still waiting on one shows now (its room
-        // follows when the press ends, as before).
-        this.listen(document, 'keydown', () => {
+        // follows when the press ends, as before). Not a modifier, nor a key's repeat:
+        // one held from before the press (a Shift-click) repeats while the button is
+        // down, and would show the line over what is pressed.
+        this.listen(document, 'keydown', e => {
+            const key = e as KeyboardEvent;
+            if (key.repeat || MODIFIER_KEYS.has(key.key)) {
+                return;
+            }
             this.pressing = false;
             this.endLockWait();
         }, true);

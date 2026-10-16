@@ -841,6 +841,60 @@ suite('Editor properties panel (e2e)', () => {
         }
     });
 
+    test('a modifier held from before the press does not show the waiting line: its repeats are no key; a real key shows it, and the release places the bars once', async function () {
+        this.timeout(30000);
+        try {
+            await page.setViewport({ width: 600, height: 800 });
+            await showDocument(BOXES);
+            await clickText(page, 'some words', 2);
+            const state = () => page.evaluate(() => {
+                const line = document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
+                return {
+                    line: line ? getComputedStyle(line).visibility : 'none',
+                    header: (document.querySelector('.mep-properties .mep-props-header') as HTMLElement).getBoundingClientRect().top,
+                };
+            });
+            // What keeps clear of the chrome is placed again on each of these.
+            await page.evaluate(() => {
+                const w = window as unknown as { chromeMoved: number };
+                w.chromeMoved = 0;
+                document.querySelector('.mep-editor')?.addEventListener('mep-chrome-moved', () => w.chromeMoved++);
+            });
+            const moved = () => page.evaluate(() => (window as unknown as { chromeMoved: number }).chromeMoved);
+
+            const toggle = await centre('.mep-properties .mep-props-toggle');
+            await page.mouse.move(toggle.x, toggle.y);
+            const unpressed = await state();
+            // Shift held from before the press (a Shift-click); the keyboard repeats it while the button is down.
+            await page.keyboard.down('Shift');
+            await page.mouse.down();
+            await delay(60);
+            for (let i = 0; i < 3; i++) {
+                await page.keyboard.down('Shift');
+                await delay(30);
+            }
+            assert.deepStrictEqual(await state(), { ...unpressed, line: 'hidden' }, 'a modifier\'s repeats leave the line waiting and the page where it was');
+            assert.strictEqual(await moved(), 0, 'nothing is placed against a waiting line');
+
+            // A real key during the press: the key acts, and the line shows.
+            await page.keyboard.press('KeyX');
+            await delay(60);
+            assert.strictEqual((await state()).line, 'visible', 'a real key shows the line');
+            const beforeRelease = await moved();
+            await page.mouse.up();
+            await page.keyboard.up('Shift');
+            await delay(150);
+            assert.strictEqual(await moved() - beforeRelease, 1, 'the release places the bars once, with the line\'s room');
+        } finally {
+            // Nothing held over into the next test, whatever failed.
+            await page.mouse.up().catch(() => undefined);
+            await page.keyboard.up('Shift').catch(() => undefined);
+            await page.keyboard.press('Escape');
+            await page.keyboard.press('Escape');
+            await page.setViewport({ width: 1280, height: 800 });
+        }
+    });
+
     test('the reason stands beside the tools where it fits, else on its own line under the row: whole, covering no tool, nothing moved', async function () {
         this.timeout(60000);
         try {
