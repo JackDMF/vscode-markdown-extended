@@ -18,6 +18,7 @@
 - In a narrow editor a verb drops its noun ("Delete", "Edit…"), then the bar's title truncates, down to hidden; verbs never truncate.
 - A bar too wide for the text column may stand past it, up to the editor's right edge.
 - A removed property's hint reads "lang removed — Ctrl+Z", as the bars' do.
+- Req Explorer's front-matter lens is not drawn in the Visual Editor, whose Properties block already shows and folds the front matter.
 
 ### 🐛 Fixes
 
