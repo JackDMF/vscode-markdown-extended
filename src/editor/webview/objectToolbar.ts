@@ -47,7 +47,7 @@ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
-import { HintTone, applyKey, showChangeHint, showHint, undoHint } from './hint';
+import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
 import { FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, firstFocus, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
 import { NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
@@ -183,7 +183,7 @@ export interface Verb {
     target?: { from: number; to: number };
 }
 
-/** A verb's button drawn with `text` — its label or its short form — and the dropdown chevron where it opens a list. */
+/** A verb's button drawn with `text` — its label or its short form — and, where it opens a list, the workbench's dropdown chevron, as the formatting row's menus carry. */
 function drawVerbLabel(el: HTMLElement, verb: Verb, text: string): void {
     el.replaceChildren(...lensLabelNodes(text));
     if (verb.menu || verb.choice) {
@@ -385,6 +385,8 @@ interface AtomVerbTexts {
     noun: string;
     /** As the file spells it: Convert to text's tooltip names the text it becomes. */
     spelling: string;
+    /** Convert to text's way back, one sentence, after the text it becomes. */
+    wayBack: string;
     /** Delete's tooltip, where it says more than the label. */
     removeTitle?: string;
     /** Why neither can be chosen where there is no such atom. */
@@ -412,7 +414,7 @@ function atomVerbs(state: EditorState, object: EditorObject, actions: EmbedActio
         {
             id: asTextId,
             label: asText.label,
-            title: `${asText.label} (\`${texts.spelling}\`)`,
+            title: `${asText.label} ("${texts.spelling}"): ${texts.wayBack}`,
             slot: 'type',
             refusal: refusalOnce(state, `${asTextId}@${place}`, () => {
                 const tr = texts.asTextTransaction(state, object.from, object.to);
@@ -438,6 +440,7 @@ export function wikiEmbedVerbs(state: EditorState, object: EditorObject, actions
     return atomVerbs(state, object, actions, {
         noun: 'embed',
         spelling: object.kind === 'wiki_embed' ? object.node.attrs.source as string : '',
+        wayBack: 'delete the last ] and type it again to make it an embed.',
         removeTitle: FILE_STAYS,
         none: 'There is no embed here.',
         asTextTransaction: embedAsTextTransaction,
@@ -456,6 +459,7 @@ export function emojiVerbs(state: EditorState, object: EditorObject, actions: Em
         none: 'There is no emoji here.',
         asTextTransaction: emojiAsTextTransaction,
         asTextRefusal: emojiTextStillRead,
+        wayBack: `it is saved as text; ${undoKey()} restores the emoji.`,
     });
 }
 
@@ -475,7 +479,7 @@ class ObjectBar {
     object: EditorObject | null = null;
     private field: InlineField | InlineChoice | null = null;
     private signature = '';
-    /** What the last `fit` was for — the room and the signature — so a scroll frame that changed neither measures nothing. */
+    /** What the last `fit` was for — the room and the signature — so a scroll frame that changed neither measures nothing (`refit` forgets it). */
     private fitted = '';
     /** The object's name as the title shows it (`Emoji :rocket:`): the bar's accessible name while a field stands in for its verbs. */
     private name = '';
@@ -552,7 +556,7 @@ class ObjectBar {
     /**
      * `Alt+Enter`'s focus (`firstFocus`, `verbs.ts`): the first verb that opens
      * something in place and is not refused — else the bar itself, named for
-     * the screen reader by its object, its count and its keys, `Enter` or `↓`
+     * the screen reader by its object, how many verbs can be chosen and its keys, `Enter` or `↓`
      * moving into its first verb (and `Esc` still returning).
      */
     focusFirst(): void {
@@ -609,6 +613,11 @@ class ObjectBar {
         this.el.style.left = left;
     }
 
+    /** Fit again at the next placing, though neither the room nor the bar changed: a font loaded late changed the labels' widths. */
+    refit(): void {
+        this.fitted = '';
+    }
+
     private render(presentation: Presentation): void {
         this.closeMenu(false);
         const label = document.createElement('span');
@@ -624,17 +633,13 @@ class ObjectBar {
         label.title = presentation.title;
         this.fitted = '';
         this.name = barName(presentation.label, presentation.code);
-        this.el.setAttribute('aria-label', barDescription(this.name, presentation.verbs.length));
+        this.el.setAttribute('aria-label', barDescription(this.name, presentation.verbs.filter(v => !v.refusal).length));
         this.buttons = presentation.verbs.map(verb => {
             const el = document.createElement('button');
             el.type = 'button';
             el.className = 'mep-object-verb';
             el.dataset.verb = verb.id;
-            el.replaceChildren(...lensLabelNodes(verb.label));
-            if (verb.menu || verb.choice) {
-                // It opens a list: the workbench's dropdown chevron, as the formatting row's menus carry.
-                el.append(chevronNode());
-            }
+            drawVerbLabel(el, verb, verb.label);
             if ((el.textContent ?? '') === '') {
                 // Only an icon: the button is named by it, not left without a name.
                 el.setAttribute('aria-label', lensName(verb.label));
@@ -977,6 +982,12 @@ class ObjectToolbarView implements PluginView {
         this.listen(window, 'resize', () => this.placeAllInFrame());
         // The lock's line came under the formatting row or went, or the page moved for it: a bar keeps clear of the chrome.
         this.listen(this.mount, CHROME_MOVED, () => this.placeAllInFrame());
+        // A font that loaded after a bar was fitted (the codicons, the editor's code font) changed its labels' widths.
+        this.listen(document.fonts, 'loadingdone', () => {
+            this.selectionBar.refit();
+            this.hoverBar.refit();
+            this.placeAllInFrame();
+        });
         this.refresh();
     }
 
@@ -1282,7 +1293,7 @@ class ObjectToolbarView implements PluginView {
         // A bar that fits the text column keeps to it; only one wider than the column stands past it.
         const right = bar.el.offsetWidth <= base.width ? base.right : layerRight(base);
         if (isBlockPlaced(object)) {
-            this.placeBlock(bar, object, right);
+            this.placeBlock(bar, object, base, right);
             return;
         }
         const el = bar.el;
@@ -1372,10 +1383,9 @@ class ObjectToolbarView implements PluginView {
      * box; a heading or a block with attributes is its text, whose lines in
      * the bar's band must all end before the bar.
      */
-    private placeBlock(bar: ObjectBar, object: EditorObject, layerEdge: number): void {
+    private placeBlock(bar: ObjectBar, object: EditorObject, base: DOMRect, layerEdge: number): void {
         const el = bar.el;
         const view = this.view;
-        const base = this.mount.getBoundingClientRect();
         const width = el.offsetWidth;
         const height = el.offsetHeight;
         const dom = isMarkObject(object) ? null : view.nodeDOM(object.from);
@@ -1395,16 +1405,18 @@ class ObjectToolbarView implements PluginView {
         const insideRight = box.right - (isBlockObject(object) ? ATOM_INSET : 0) - GAP;
         const insideY = box.top + (isBlockObject(object) ? ATOM_INSET : GAP);
         const belowY = this.clearOfLensRows(box.bottom + GAP, height, false);
+        // Each place where the bar will stand: a bar wider than the column is pushed back to the column's
+        // left edge, and the band `firstFree` checks must be that one, not the one right-aligned to the column.
+        const at = (x: number) => Math.max(base.left, Math.min(x, layerEdge - width));
         const ladder: Place[] = [
-            { x: right + GAP, y: top, when: () => right + GAP + width <= columnRight },
-            { x: edge, y: aboveY },
-            ...(textual || object.kind === 'table' ? [] : [{ x: insideRight - width, y: insideY, within: dom }]),
-            { x: edge, y: belowY },
+            { x: at(right + GAP), y: top, when: () => right + GAP + width <= columnRight },
+            { x: at(edge), y: aboveY },
+            ...(textual || object.kind === 'table' ? [] : [{ x: at(insideRight - width), y: insideY, within: dom }]),
+            { x: at(edge), y: belowY },
         ];
         const found = firstFree(view, this.mount, ladder, { width, height });
-        let x = found?.x ?? edge;
+        const x = found?.x ?? at(edge);
         const y = found?.y ?? lastResortY(aboveY, belowY, height, rowCeiling(this.mount));
-        x = Math.max(base.left, Math.min(x, layerEdge - width));
         el.style.left = `${x - base.left}px`;
         el.style.top = `${y - base.top}px`;
     }
@@ -1678,7 +1690,8 @@ class ObjectToolbarView implements PluginView {
                 const alt = (object.node.attrs.alt as string | null) ?? '';
                 const literal = (object.node.attrs.literal as string | null) ?? null;
                 const image = literalObjectOf(object) as LiteralObject;
-                const open = wording({ verb: 'Open', noun: 'file' });
+                // The title says Image, not file: Open keeps its noun.
+                const open = wording({ verb: 'Open', noun: 'file', titled: false });
                 const edit = wording({ verb: 'Edit', noun: 'image', opens: true });
                 const remove = wording({ verb: 'Delete', noun: 'image' });
                 return {
@@ -1962,7 +1975,8 @@ class ObjectToolbarView implements PluginView {
                 const verbs: Verb[] = [];
                 const open = wording({ verb: 'Open', noun: 'snippet' });
                 const change = wording({ verb: 'Change', noun: 'snippet', opens: true });
-                const remove = wording({ verb: 'Delete', noun: 'directive' });
+                // The title names the snippet, not its directive: a bare Delete would read as deleting the snippet's file.
+                const remove = wording({ verb: 'Delete', noun: 'directive', titled: false });
                 if (typeof path === 'string' && !mark?.missing) {
                     verbs.push({ id: 'open-snippet', label: open.label, short: open.short, title: path, slot: 'open', run: () => host.openSnippet(path) });
                 }
