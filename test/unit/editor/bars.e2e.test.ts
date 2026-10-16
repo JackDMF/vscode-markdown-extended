@@ -44,13 +44,11 @@ interface Row {
     verbs: DrawnVerb[];
     /** Where `Alt+Enter` puts the focus: a verb's id, or the bar itself. */
     focus: string | 'bar';
-    /** At 520 px: the verbs drawn in their short form, and with what text; whether the title is cut even so. */
     /**
-     * At 520 px: the verbs drawn in their short form, and with what text; whether the title is cut even so;
-     * `overflows` where even the short forms and no title do not fit the editor's column (open: verbs never
-     * truncate, so they stand past the bar's edge).
+     * At 520 px: the verbs drawn in their short form, and with what text; whether the title is cut even so,
+     * or hidden (cut below the stub, the verbs needing its room); whether the bar stands past the text column.
      */
-    narrow?: { short: [id: string, text: string][]; titleCut?: boolean; overflows?: true };
+    narrow?: { short: [id: string, text: string][]; titleCut?: boolean; titleHidden?: boolean; pastColumn?: boolean };
 }
 
 /**
@@ -159,10 +157,12 @@ suite('Editor object bars (e2e)', () => {
         const buttons = Array.from(bar.querySelectorAll<HTMLButtonElement>('button[data-verb]'));
         return {
             short: buttons.filter(b => b.dataset.short !== undefined).map(b => [b.dataset.verb ?? '', b.textContent ?? ''] as [string, string]),
-            titleCut: label.scrollWidth > label.clientWidth + 1,
-            // The bar inside the editor, and nothing drawn past the bar's own edge.
-            inside: bar.getBoundingClientRect().right <= mount.right + 0.5 && bar.getBoundingClientRect().left >= mount.left - 0.5
+            titleCut: !label.hidden && label.scrollWidth > label.clientWidth + 1,
+            titleHidden: label.hidden,
+            // The bar from the text column's left edge to the editor's right edge less the 16 px gutter, and nothing drawn past its own edge.
+            inside: bar.getBoundingClientRect().right <= document.documentElement.clientWidth - 16 + 0.5 && bar.getBoundingClientRect().left >= mount.left - 0.5
                 && bar.scrollWidth <= bar.clientWidth + 1,
+            pastColumn: bar.getBoundingClientRect().right > mount.right + 0.5,
             verbsWhole: buttons.every(b => b.scrollWidth <= b.clientWidth),
             width: Math.round(bar.getBoundingClientRect().width),
             mount: Math.round(mount.width),
@@ -218,8 +218,8 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['open-link', 'Open', false, false], ['edit-link', 'Edit link…', false, false], ['link-attributes', 'Attributes…', false, false],
                 ['inline-attributes', 'Attributes of Bold…', false, false], ['remove-link', 'Remove link, keep text', false, true]],
             focus: 'edit-link',
-            // At the harness's 520 px the column is 416 px, and the verbs alone are wider: see `overflows`.
-            narrow: { short: [['edit-link', 'Edit…'], ['remove-link', 'Remove, keep text']], titleCut: true, overflows: true },
+            // At the harness's 520 px the column is 416 px and the verbs alone are wider: the bar stands past it.
+            narrow: { short: [['edit-link', 'Edit…'], ['remove-link', 'Remove, keep text']], pastColumn: true },
         },
         {
             n: 3, slug: 'image', source: 'A picture: ![Setup](img/setup.png) here.\n', marker: 'picture',
@@ -312,7 +312,7 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['edit-classes', 'Edit classes…', false, false], ['block-attributes', 'Attributes…', true, false], ['remove-container', 'Remove container, keep content', false, true]],
             focus: 'edit-classes',
             // The title does not name the classes: Edit classes… keeps its noun; Remove drops it.
-            narrow: { short: [['remove-container', 'Remove, keep content']] },
+            narrow: { short: [['remove-container', 'Remove, keep content']], pastColumn: true },
         },
         {
             n: 15, slug: 'admonition', source: '!!! warning "Check the inputs"\n    Body text here.\n', marker: 'Body',
@@ -320,7 +320,7 @@ suite('Editor object bars (e2e)', () => {
             label: 'Admonition warning',
             verbs: [['edit-title', 'Edit title…', false, false], ['change-type', 'Type', false, false], ['block-attributes', 'Attributes…', true, false], ['remove-admonition', 'Remove admonition, keep content', false, true]],
             focus: 'edit-title',
-            narrow: { short: [['remove-admonition', 'Remove, keep content']] },
+            narrow: { short: [['remove-admonition', 'Remove, keep content']], titleCut: true, pastColumn: true },
         },
         {
             n: 16, slug: 'table', source: '| a | b |\n| - | - |\n| one | two |\n', marker: 'one',
@@ -329,7 +329,7 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['row', 'Row', false, false], ['column', 'Column', false, false], ['align', 'Align', false, false], ['block-attributes', 'Attributes…', false, true],
                 ['edit-source', 'Edit source', false, false], ['delete-table', 'Delete table', false, true]],
             focus: 'row',
-            narrow: { short: [['delete-table', 'Delete']], titleCut: true },
+            narrow: { short: [['delete-table', 'Delete']], pastColumn: true },
         },
         {
             n: 18, slug: 'source-block', source: 'Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n', marker: 'Before',
@@ -339,7 +339,7 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['show-in-text-editor', 'Show in text editor', false, false], ['edit-source', 'Edit source', false, false], ['code-action:fix', 'Fix all', false, true], ['delete-block', 'Delete block', false, true]],
             focus: 'edit-source',
             // Delete drops its noun, and the title is still cut: verbs never are.
-            narrow: { short: [['delete-block', 'Delete']], titleCut: true },
+            narrow: { short: [['delete-block', 'Delete']], pastColumn: true },
         },
         {
             n: 19, slug: 'snippet', marker: 'Snippet body', includes: true,
@@ -369,7 +369,7 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['open-snippet', 'Open snippet', false, false], ['show-in-text-editor', 'Show in text editor', false, false], ['change-snippet', 'Change snippet…', false, false], ['delete-directive', 'Delete directive', false, true]],
             // Change snippet… asks the host for a choice: nothing opens in place, so the bar takes the focus.
             focus: 'bar',
-            narrow: { short: [['open-snippet', 'Open'], ['change-snippet', 'Change…'], ['delete-directive', 'Delete']] },
+            narrow: { short: [['open-snippet', 'Open'], ['change-snippet', 'Change…'], ['delete-directive', 'Delete']], pastColumn: true },
         },
         {
             n: 20, slug: 'requirement-heading', marker: 'Intro',
@@ -391,6 +391,7 @@ suite('Editor object bars (e2e)', () => {
             label: 'Requirement FRS-RXE-040',
             verbs: [['lens:a.0', 'Show trace', false, false], ['lens:a.1', 'Open in matrix', false, false], ['lens:a.2', 'Add test', false, false], ['lens-overflow', 'Actions', false, false]],
             focus: 'bar',
+            narrow: { short: [], titleCut: true, pastColumn: true },
         },
         {
             n: 21, slug: 'block-attrs', source: 'A paragraph with attributes.\n{.lead}\n\nAfter.\n', marker: 'paragraph',
@@ -467,12 +468,14 @@ suite('Editor object bars (e2e)', () => {
 
         await viewport(NARROW);
         const narrow = await fitted();
-        assert.strictEqual(!narrow.inside, row.narrow?.overflows === true, `${row.slug}: inside the editor at ${NARROW} px: ${JSON.stringify(narrow)}`);
+        assert.ok(narrow.inside, `${row.slug}: inside the editor at ${NARROW} px, nothing past the bar's edge: ${JSON.stringify(narrow)}`);
         assert.ok(narrow.verbsWhole, `${row.slug}: no verb truncated: ${JSON.stringify(narrow)}`);
         assert.deepStrictEqual(narrow.short, row.narrow?.short ?? [], `${row.slug}: the short forms at ${NARROW} px (${JSON.stringify(narrow)})`);
-        if (row.narrow?.titleCut !== undefined) {
-            assert.strictEqual(narrow.titleCut, row.narrow.titleCut, `${row.slug}: the title at ${NARROW} px`);
-        }
+        assert.deepStrictEqual(
+            { titleCut: narrow.titleCut, titleHidden: narrow.titleHidden, pastColumn: narrow.pastColumn },
+            { titleCut: row.narrow?.titleCut ?? false, titleHidden: row.narrow?.titleHidden ?? false, pastColumn: row.narrow?.pastColumn ?? false },
+            `${row.slug}: the title and the column at ${NARROW} px (${JSON.stringify(narrow)})`,
+        );
         await shot(page, name(row, NARROW, 'light'));
         await applyTheme(page, DARK_MODERN);
         await shot(page, name(row, NARROW, 'dark'));
@@ -497,6 +500,19 @@ suite('Editor object bars (e2e)', () => {
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Launch \\:rocket: now.\n', 'the second Enter ran Convert to text');
+    });
+
+    test('narrower still, the title hides once cut below the stub; the bar\'s name still says the object, and no verb is cut', async function () {
+        this.timeout(20000);
+        await openRow(rows.find(r => r.slug === 'link-in-bold') as Row);
+        await viewport(490);
+        const tight = await fitted();
+        assert.ok(tight.titleHidden, JSON.stringify(tight));
+        assert.ok(tight.inside && tight.verbsWhole, JSON.stringify(tight));
+        assert.strictEqual((await drawn()).aria, 'Link, 5 actions, arrow keys to choose');
+        await shot(page, '91-title-hidden-490-light.png');
+        await viewport(WIDE);
+        assert.strictEqual((await fitted()).titleHidden, false, 'wide again, the title is back');
     });
 
     test('↓ on a focused bar moves into its first verb too', async function () {
@@ -549,6 +565,13 @@ suite('Editor object bars (e2e)', () => {
             assert.match(said.text, /^[A-Z][a-z]+( [a-z]+)* (deleted|removed|converted to text) — (Ctrl|Cmd)\+Z$/);
             assert.strictEqual(said.text, `${u.done} — ${UNDO}`);
             assert.strictEqual(await page.$(`.ProseMirror ${u.back}`), null, `${u.slug}: gone`);
+            if (u.slug === 'image') {
+                // The hint as it shows, for the critique: light, then dark.
+                await shot(page, '90-undo-hint-1280-light.png');
+                await applyTheme(page, DARK_MODERN);
+                await shot(page, '90-undo-hint-1280-dark.png');
+                await applyTheme(page, LIGHT_MODERN);
+            }
             // The page's own modifier is the one the hint names.
             assert.ok(said.text.endsWith(`${MOD === 'Meta' ? 'Cmd' : 'Ctrl'}+Z`), said.text);
             await pressNamed(said.text.split(' — ')[1]);

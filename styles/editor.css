@@ -617,7 +617,7 @@ img.mep-pending-range {
 /* A set-verb's menu (a table's Row, Column, Align) is the formatting toolbar's menu, narrower. */
 .mep-object-menu { min-width: 180px; }
 
-/* Between an object's own verbs and the code actions other extensions offer for it, or between groups of its own. */
+/* Where `arrange` (verbs.ts) divides a bar: before other extensions' verbs, before the verb that destroys, or before a group of the object's own (a table's Attributes…). */
 .mep-object-separator {
     flex: none;
     width: 1px;
@@ -656,14 +656,6 @@ img.mep-pending-range {
 .mep-object-verb:focus { outline: 1px solid var(--vscode-focusBorder, Highlight); outline-offset: -1px; }
 .mep-object-verb[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 .mep-object-verb[aria-disabled="true"]:hover { background: transparent; outline: none; }
-
-/*
- * A bar too wide for the editor (decision #7, round 2): its verbs drop the noun
- * the title names first (`ObjectBar.fit`, which marks the bar `data-tight`),
- * then the title truncates — never below a stub that still shows it is there;
- * verbs never truncate. A bar that fits keeps its title's own width.
- */
-.mep-object-toolbar[data-tight] > .mep-object-label { min-width: 42px; }
 
 /* The error banner's one button: a secondary button, as the workbench draws one in a notification. */
 .mep-error-button {

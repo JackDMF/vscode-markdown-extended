@@ -134,6 +134,21 @@ const HOVER_GRACE_MS = 300;
 /** Between the bar and the line it sits above or below. */
 const GAP = 4;
 
+/** Between a bar grown past the text column and the editor's right edge. */
+const BAR_GUTTER = 16;
+
+/** Narrower than this, a cut title says nothing: `fit` hides it (the bar's `aria-label` still names the object). */
+const TITLE_STUB = 42;
+
+/**
+ * The right edge a bar may reach: the text column's (`base`, the mount), or —
+ * a floating layer, it may stand past the column — the editor's right edge
+ * less the gutter, whichever is further (Daniel, 2026-10-16).
+ */
+function layerRight(base: DOMRect): number {
+    return Math.max(base.right, document.documentElement.clientWidth - BAR_GUTTER);
+}
+
 /** One verb as the bar draws it. */
 export interface Verb {
     /** `data-verb`: what tests and stylesheets name it by. */
@@ -460,6 +475,10 @@ class ObjectBar {
     object: EditorObject | null = null;
     private field: InlineField | InlineChoice | null = null;
     private signature = '';
+    /** What the last `fit` was for — the room and the signature — so a scroll frame that changed neither measures nothing. */
+    private fitted = '';
+    /** The object's name as the title shows it (`Emoji :rocket:`): the bar's accessible name while a field stands in for its verbs. */
+    private name = '';
     private buttons: { verb: Verb; el: HTMLButtonElement }[] = [];
     /** A set-verb's open menu: its panel, the verb's button, its entries. */
     private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
@@ -542,19 +561,26 @@ class ObjectBar {
     }
 
     /**
-     * The bar fitted to its mount (`max-width: 100%`): every verb at its full
-     * label, then — where the title would be cut — every verb that has a short
-     * form at it, the noun the title already names dropped (`Delete`,
-     * `Edit…`, `Remove, keep content`); the title truncates only if the bar is
-     * still too wide. Verbs never truncate (`flex: none`). It starts from the
-     * full labels every time, so a bar grown wider again gets them back. Not
-     * while a field is open: the verbs are not drawn then.
+     * The bar fitted to `room`, the widest it may be — from the text column's
+     * left edge to the editor's right edge less the gutter: a floating layer
+     * may stand past the column (Daniel, 2026-10-16). Every verb at its full
+     * label, then — where the title would be cut — every verb that has a
+     * short form at it, the noun the title already names dropped (`Delete`,
+     * `Edit…`, `Remove, keep content`); then the title truncates, down to
+     * hidden if the verbs need it (narrower than `TITLE_STUB` it says nothing:
+     * the bar's `aria-label` still names the object). Verbs never truncate
+     * (`flex: none`). It starts from the full labels every time, so a bar grown
+     * wider again gets them back — and does nothing where neither the room
+     * nor what the bar shows changed since the last fit. Not while a field is
+     * open: the verbs are not drawn then.
      */
-    fit(): void {
+    fit(room: number): void {
         const label = this.el.querySelector<HTMLElement>(':scope > .mep-object-label');
-        if (this.field || this.el.hidden || label === null) {
+        const key = `${Math.round(room)}|${this.signature}`;
+        if (this.field || this.el.hidden || label === null || key === this.fitted) {
             return;
         }
+        this.fitted = key;
         const shortens = this.buttons.filter(b => b.verb.short !== undefined && b.verb.short !== b.verb.label);
         for (const b of shortens) {
             if (b.el.dataset.short !== undefined) {
@@ -563,7 +589,8 @@ class ObjectBar {
                 b.el.removeAttribute('aria-label');
             }
         }
-        delete this.el.dataset.tight;
+        label.hidden = false;
+        this.el.style.maxWidth = `${Math.floor(room)}px`;
         // Measured at the mount's left edge: an absolute box's room is what lies right of its `left`, and `place` sets it after.
         const left = this.el.style.left;
         this.el.style.left = '0px';
@@ -576,14 +603,8 @@ class ObjectBar {
                 // Named in full for a screen reader: the short form leans on the title.
                 b.el.setAttribute('aria-label', b.verb.label);
             }
-            if (cut()) {
-                // Still too wide: the title truncates, to a stub that still shows it is there (`editor.css`) —
-                // unless the stub itself would push the verbs past the bar's edge: then the title gives way further.
-                this.el.dataset.tight = '';
-                if (this.el.scrollWidth > this.el.clientWidth + 1) {
-                    delete this.el.dataset.tight;
-                }
-            }
+            // Still too wide, and the title cut below a stub that could say anything: it goes.
+            label.hidden = cut() && label.offsetWidth < TITLE_STUB;
         }
         this.el.style.left = left;
     }
@@ -601,7 +622,9 @@ class ObjectBar {
             label.append(' ', code);
         }
         label.title = presentation.title;
-        this.el.setAttribute('aria-label', barDescription(barName(presentation.label, presentation.code), presentation.verbs.length));
+        this.fitted = '';
+        this.name = barName(presentation.label, presentation.code);
+        this.el.setAttribute('aria-label', barDescription(this.name, presentation.verbs.length));
         this.buttons = presentation.verbs.map(verb => {
             const el = document.createElement('button');
             el.type = 'button';
@@ -795,7 +818,7 @@ class ObjectBar {
      * the same place; the bar is redrawn once the last one is in.
      */
     private openField(verb: Verb, spec: NonNullable<Verb['field']> | NonNullable<Verb['choice']>): void {
-        const label = this.el.querySelector('.mep-object-label');
+        const label = this.el.querySelector<HTMLElement>('.mep-object-label');
         const make = 'options' in spec
             ? (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
                 new InlineChoice({ choices: spec.options, value: spec.value, label: spec.label, ...callbacks })
@@ -827,7 +850,11 @@ class ObjectBar {
             // A prefilled field shows no placeholder: the label says what the value is.
             // The object's name alone: what the field holds (a literal) is not said twice (`Image · Attributes`).
             label.textContent = fieldHeading(this.el.dataset.name ?? '', spec.label);
+            // A title `fit` hid for the verbs is the field's heading now, and there are no verbs to count.
+            label.hidden = false;
+            this.el.setAttribute('aria-label', this.name);
         }
+        this.fitted = '';
         const aside = 'options' in spec ? [] : fieldAside(spec);
         this.el.replaceChildren(...(label ? [label] : []), field.el, ...aside);
         field.focus();
@@ -1250,14 +1277,16 @@ class ObjectToolbarView implements PluginView {
      */
     private place(bar: ObjectBar, object: EditorObject): void {
         // Its width first: the places below are found for the bar as it will be drawn.
-        bar.fit();
+        const base = this.mount.getBoundingClientRect();
+        bar.fit(layerRight(base) - base.left);
+        // A bar that fits the text column keeps to it; only one wider than the column stands past it.
+        const right = bar.el.offsetWidth <= base.width ? base.right : layerRight(base);
         if (isBlockPlaced(object)) {
-            this.placeBlock(bar, object);
+            this.placeBlock(bar, object, right);
             return;
         }
         const el = bar.el;
         const view = this.view;
-        const base = this.mount.getBoundingClientRect();
         const anchor = this.anchor(object);
         const width = el.offsetWidth;
         const height = el.offsetHeight;
@@ -1265,7 +1294,7 @@ class ObjectToolbarView implements PluginView {
         const typing = bar === this.selectionBar && sel instanceof TextSelection;
         const caret = typing ? view.coordsAtPos(sel.head) : null;
         const offCaret = (y: number) => () => caret === null || y >= caret.bottom || y + height <= caret.top;
-        const x0 = Math.max(base.left, Math.min(anchor.left ?? base.right - width, base.right - width));
+        const x0 = Math.max(base.left, Math.min(anchor.left ?? right - width, right - width));
         const aboveY = this.clearOfLensRows(anchor.top - GAP - height, height, true);
         const belowY = this.clearOfLensRows(anchor.bottom + GAP, height, false);
         const block = this.textblockDOM(object.from);
@@ -1273,7 +1302,7 @@ class ObjectToolbarView implements PluginView {
         const besideX = lineRight + GAP;
         const places: Place[] = [
             { x: x0, y: aboveY, when: offCaret(aboveY) },
-            { x: besideX, y: anchor.top, when: () => besideX + width <= base.right },
+            { x: besideX, y: anchor.top, when: () => besideX + width <= right },
             { x: x0, y: belowY, when: offCaret(belowY) },
         ];
         const found = firstFree(view, this.mount, places, { width, height });
@@ -1282,7 +1311,7 @@ class ObjectToolbarView implements PluginView {
         if (!found && caret !== null && !offCaret(y)()) {
             y = caret.bottom + GAP;
         }
-        x = Math.max(base.left, Math.min(x, base.right - width));
+        x = Math.max(base.left, Math.min(x, right - width));
         el.style.left = `${x - base.left}px`;
         el.style.top = `${y - base.top}px`;
     }
@@ -1343,7 +1372,7 @@ class ObjectToolbarView implements PluginView {
      * box; a heading or a block with attributes is its text, whose lines in
      * the bar's band must all end before the bar.
      */
-    private placeBlock(bar: ObjectBar, object: EditorObject): void {
+    private placeBlock(bar: ObjectBar, object: EditorObject, layerEdge: number): void {
         const el = bar.el;
         const view = this.view;
         const base = this.mount.getBoundingClientRect();
@@ -1375,7 +1404,7 @@ class ObjectToolbarView implements PluginView {
         const found = firstFree(view, this.mount, ladder, { width, height });
         let x = found?.x ?? edge;
         const y = found?.y ?? lastResortY(aboveY, belowY, height, rowCeiling(this.mount));
-        x = Math.max(base.left, Math.min(x, base.right - width));
+        x = Math.max(base.left, Math.min(x, layerEdge - width));
         el.style.left = `${x - base.left}px`;
         el.style.top = `${y - base.top}px`;
     }
@@ -1460,7 +1489,10 @@ class ObjectToolbarView implements PluginView {
                 },
             };
         });
-        return { ...own, verbs: arrange([...own.verbs, ...lenses, ...actions]) };
+        // Within the actions slot: the lenses, the code actions, then the **Actions** choice holding the lenses that did not fit.
+        const inline = lenses.filter(v => v.id !== 'lens-overflow');
+        const overflow = lenses.filter(v => v.id === 'lens-overflow');
+        return { ...own, verbs: arrange([...own.verbs, ...inline, ...actions, ...overflow]) };
     }
 
     /**
@@ -1565,7 +1597,7 @@ class ObjectToolbarView implements PluginView {
                                 ? 'The sidebar goes; its text stays in the sentence, with its formatting.'
                                 : 'The note goes; its reference stays in the sentence, with its formatting. The note\'s own text is dropped.',
                             slot: 'destroy',
-                            refusal: refusalOnce(view.state, `remove-note@${object.from}:${object.to}`, () => unwrapNoteRefusal(view.state, name)),
+                            refusal: refusalOnce(view.state, `${removeId}@${object.from}:${object.to}`, () => unwrapNoteRefusal(view.state, name)),
                             run: () => this.act(object, () => unwrapNote(name)(view.state, dispatch), remove.done),
                         },
                         {
