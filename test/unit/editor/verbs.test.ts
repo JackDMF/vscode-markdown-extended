@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { FILE_STAYS, Slot, Slotted, Wording, arrange, barDescription, barName, firstFocus, wording } from '../../../src/editor/verbs';
+import { FILE_STAYS, Slot, Slotted, Wording, arrange, barDescription, barName, firstFocus, overflowOrder, wording } from '../../../src/editor/verbs';
 import { undoHint } from '../../../src/editor/webview/hint';
 import { UNDO_BINDING, keyLabel } from '../../../src/editor/keys';
 
@@ -91,6 +91,30 @@ suite('Editor object bars: the verbs\' model', () => {
         for (const row of rows) {
             test(row.name, () => assert.strictEqual(firstFocus(row.verbs), row.focus));
         }
+    });
+
+    suite('overflowOrder: what leaves a bar for its "…" first — destroy, other extensions\', then from the right; never the first focus', () => {
+        const order = (verbs: V[]) => overflowOrder(verbs).map(k => verbs[k].id);
+        test('a table: Delete table, Edit source, Attributes…, Align, Column — Row (first focus) stays', () => {
+            const verbs = [v('row', 'type', true), v('column', 'type', true), v('align', 'type', true), v('block-attributes', 'attributes', true), v('edit-source', 'source', true), v('delete-table', 'destroy', false)];
+            assert.deepStrictEqual(order(verbs), ['delete-table', 'edit-source', 'block-attributes', 'align', 'column']);
+        });
+        test('a link in bold: Remove, Attributes of Bold…, Attributes…, Open — Edit… (first focus) stays', () => {
+            const verbs = [v('open-link', 'open', false), v('edit-link', 'edit', true), v('link-attributes', 'attributes', true), v('bold-attributes', 'attributes', true), v('remove-link', 'destroy', false)];
+            assert.deepStrictEqual(order(verbs), ['remove-link', 'bold-attributes', 'link-attributes', 'open-link']);
+        });
+        test('other extensions\' actions leave before the object\'s own verbs, from the right', () => {
+            const verbs = [v('show-in-text-editor', 'open', false), v('edit-source', 'source', true), v('code-action:a', 'actions', false), v('code-action:b', 'actions', false), v('delete-block', 'destroy', false)];
+            assert.deepStrictEqual(order(verbs), ['delete-block', 'code-action:b', 'code-action:a', 'show-in-text-editor']);
+        });
+        test('a bar with no first focus: everything may leave, the destroying verb first', () => {
+            const verbs = [v('convert-emoji-to-text', 'type', false), v('delete-emoji', 'destroy', false)];
+            assert.deepStrictEqual(order(verbs), ['delete-emoji', 'convert-emoji-to-text']);
+        });
+        test('two destroying verbs keep their order', () => {
+            const verbs = [v('edit', 'edit', true), v('remove-a', 'destroy', false), v('delete-b', 'destroy', false)];
+            assert.deepStrictEqual(order(verbs), ['remove-a', 'delete-b']);
+        });
     });
 
     suite('wording: label, short form, hint', () => {

@@ -728,6 +728,28 @@ export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockType
 /** The row, left to right; hairlines between the groups. */
 export const ROW_LAYOUT: readonly (readonly ('marks' | ToolbarMenu)[])[] = [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']];
 
+/** A control of the row: a mark action's id, or a menu. */
+export type RowControl = ToolbarMenu | string;
+
+const ROW_MENUS = ROW_LAYOUT.flat().filter((g): g is ToolbarMenu => g !== 'marks');
+const ROW_MARKS = TOOLBAR_ACTIONS.filter(inRow).map(a => a.id);
+
+/**
+ * The order controls leave the row for "…" when it is too narrow (Daniel,
+ * 2026-10-19): the three menus — Annotation, Formatting, Insert — then the
+ * marks one at a time from the right. Block type never leaves. The mark order
+ * is `ROW_LAYOUT`'s, reversed — not written twice.
+ */
+export const ROW_OVERFLOW: readonly RowControl[] = ['annotation', 'formatting', 'insert', ...[...ROW_MARKS].reverse()];
+
+/** The order "…" lists what it holds: the marks in row order, then (after a divider) the menus in row order. */
+export function moreOrder(moved: readonly RowControl[]): { marks: string[]; menus: ToolbarMenu[] } {
+    return {
+        marks: ROW_MARKS.filter(id => moved.includes(id)),
+        menus: ROW_MENUS.filter(id => moved.includes(id)),
+    };
+}
+
 /** What a menu's face says (the block-type face says the current type instead, when there is one). */
 export const MENU_LABELS: Readonly<Record<ToolbarMenu | ToolbarSubmenu, string>> = {
     'block-type': 'Block type',

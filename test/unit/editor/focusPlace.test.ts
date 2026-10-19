@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { DeclaredControl, FocusPlace, controlLock, panelRole, placeOf, rowLock } from '../../../src/editor/webview/focusPlace';
+import { DeclaredControl, FocusPlace, controlLock, lockForms, panelRole, placeOf, rowLock } from '../../../src/editor/webview/focusPlace';
+import { applyKey } from '../../../src/editor/webview/hint';
 
 /** An element as `placeOf` reads one: its parent, and `contains` as the DOM answers it (an element contains itself). */
 class FakeElement {
@@ -105,5 +106,17 @@ suite('Editor focus place', () => {
             { refusal: null, note: 'Applies the values typed first; a property not yet added with Enter is left out' },
             free,
         ]);
+    });
+
+    test('the lock\'s two forms: the full reason is controlLock\'s, the short one never longer and never without its keys', () => {
+        const roles = ['source', 'property', 'button'] as const;
+        for (const role of roles) {
+            const forms = lockForms(role);
+            assert.strictEqual(forms.full, controlLock(role));
+            assert.ok(forms.short.length <= forms.full.length, `${role}: short "${forms.short}" longer than "${forms.full}"`);
+        }
+        assert.strictEqual(lockForms('source').short, `Source · ${applyKey()} · Esc`);
+        assert.strictEqual(lockForms('property').short, 'Property · Enter · Esc');
+        assert.strictEqual(lockForms('button').short, 'Focus is outside the text');
     });
 });

@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
-    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, submenuOf, tipOf,
+    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, ROW_OVERFLOW, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, moreOrder, submenuOf, tipOf,
 } from '../../../src/editor/webview/toolbar/actions';
 import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
 import { tipText } from '../../../src/editor/tips';
@@ -594,5 +594,21 @@ suite('Editor toolbar: where a block is inserted, and why the block type is lock
         const table = stateOf('| a | b |\n| - | - |\n| cell | 2 |\n');
         assert.strictEqual(table.doc.firstChild?.type.name, 'table');
         assert.strictEqual(blockLockReason(table.apply(table.tr.setSelection(TextSelection.create(table.doc, posOf(table.doc, 'cell'))))), TABLE_LOCK, 'a cell is no block to retype');
+    });
+});
+
+suite('Editor toolbar: what leaves a narrow row for "…"', () => {
+    const rowMarks = TOOLBAR_ACTIONS.filter(inRow).map(a => a.id);
+
+    test('every row control but Block type leaves exactly once: the three menus first — Annotation, Formatting, Insert — then the marks from the right', () => {
+        assert.deepStrictEqual([...ROW_OVERFLOW], ['annotation', 'formatting', 'insert', ...[...rowMarks].reverse()]);
+        assert.deepStrictEqual([...ROW_OVERFLOW].sort(), [...ROW_LAYOUT.flat().filter(g => g !== 'marks' && g !== 'block-type'), ...rowMarks].sort());
+        assert.ok(!ROW_OVERFLOW.includes('block-type'), 'Block type never leaves');
+        assert.deepStrictEqual(rowMarks, ['italic', 'emphasis', 'bold', 'strong', 'code'], 'so the marks leave as code, strong, b, em, i');
+    });
+
+    test('"…" lists what it holds in row order, marks before menus, whatever order they left in', () => {
+        assert.deepStrictEqual(moreOrder(['annotation', 'formatting', 'insert', 'code', 'strong']), { marks: ['strong', 'code'], menus: ['formatting', 'annotation', 'insert'] });
+        assert.deepStrictEqual(moreOrder([]), { marks: [], menus: [] });
     });
 });

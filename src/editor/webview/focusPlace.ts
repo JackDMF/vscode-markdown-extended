@@ -168,12 +168,24 @@ export function rowLock(place: FocusPlace, scope: RowScope): RowLock {
  * Ctrl+Enter, a property's field with Enter; a button has nothing to apply.
  */
 export function controlLock(role: ControlRole): string {
+    return lockForms(role).full;
+}
+
+/** What the row says while a control has the focus: the whole reason, and its short form for a row too narrow. */
+export interface LockForms {
+    full: string;
+    /** The floor the row shows where `full` does not fit: it never cuts a key (Daniel, 2026-10-19). */
+    short: string;
+}
+
+/** `controlLock`'s reason in both the forms the row may show it in. */
+export function lockForms(role: ControlRole): LockForms {
     switch (role) {
         case 'source':
-            return `Editing source · ${applyKey()} apply · Esc cancel`;
+            return { full: `Editing source · ${applyKey()} apply · Esc cancel`, short: `Source · ${applyKey()} · Esc` };
         case 'property':
-            return 'Editing a property · Enter apply · Esc cancel';
+            return { full: 'Editing a property · Enter apply · Esc cancel', short: 'Property · Enter · Esc' };
         case 'button':
-            return 'Focus is outside the text · Esc or click into the text';
+            return { full: 'Focus is outside the text · Esc or click into the text', short: 'Focus is outside the text' };
     }
 }

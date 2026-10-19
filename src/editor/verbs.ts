@@ -18,6 +18,8 @@
  *   (`hint.ts` `undoHint`): the participle is the verb's, said here.
  * - **Overflow:** where the bar's title names the object, a verb may drop the
  *   noun ("Delete", "Edit…") before the title truncates; verbs never truncate.
+ *   Where even the hidden title leaves no room, verbs move into the bar's "…"
+ *   in `overflowOrder`.
  *
  * No ProseMirror and no DOM here: the host side (`schema.ts`) and the objects'
  * refusals (`webview/objects.ts`) quote the verbs' names from `VERB`.
@@ -65,6 +67,24 @@ export function arrange<V extends Pick<Slotted, 'slot' | 'separated'>>(verbs: re
  */
 export function firstFocus(verbs: readonly Slotted[]): number {
     return verbs.findIndex(v => v.opensInPlace && !v.refusal && v.slot !== 'open' && v.slot !== 'actions' && v.slot !== 'destroy');
+}
+
+/**
+ * The order verbs leave a bar for its "…" when it is too narrow (Daniel,
+ * 2026-10-19): the verbs that destroy first, in their order; then other
+ * extensions' actions, from the right; then the rest from the right — never
+ * the verb `Alt+Enter` focuses (`firstFocus`). Indices into `verbs` as the bar
+ * draws them.
+ */
+export function overflowOrder(verbs: readonly Slotted[]): number[] {
+    const focus = firstFocus(verbs);
+    const indices = verbs.map((_, k) => k).filter(k => k !== focus);
+    const fromRight = [...indices].reverse();
+    return [
+        ...indices.filter(k => verbs[k].slot === 'destroy'),
+        ...fromRight.filter(k => verbs[k].slot === 'actions'),
+        ...fromRight.filter(k => verbs[k].slot !== 'destroy' && verbs[k].slot !== 'actions'),
+    ];
 }
 
 /** A verb built from its verb word and its noun. */
