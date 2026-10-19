@@ -317,7 +317,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
         await (editor as EditorPage).send({
-            type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE, exporting: true,
+            type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE, exporting: 'pdf',
         });
         await delay(100);
         assert.deepStrictEqual(await page.$eval(FACE, el => [(el.querySelector('.mep-face-label') as HTMLElement).textContent, el.getAttribute('aria-busy')]), ['Exporting…', 'true']);

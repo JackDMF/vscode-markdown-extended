@@ -143,12 +143,13 @@ export type HostMessage =
      * engine built from it, so that it refuses an edit after which a sidebar
      * would not read back as it is shown — VS Code's math, when it runs, as
      * a stand-in for its tokenizer, so a left sidebar the math reads is none.
-     * `exporting` says an export the page asked for runs still, and its
-     * absence that none does: the page's Export shows exactly that — a page
-     * loaded again meanwhile shows it running until its `exportDone`, and an
-     * `exportDone` lost on the way keeps it busy no longer than this message.
+     * `exporting` names the format of an export the page asked for that runs
+     * still, and its absence says none does: the page's Export shows exactly
+     * that — a page loaded again meanwhile shows it running, by its format,
+     * until its `exportDone`, and an `exportDone` lost on the way keeps it
+     * busy no longer than this message.
      */
-    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; inline: InlineEngineDefinition; exporting?: true }
+    | { type: 'document'; json: ParsedDocumentJSON; version: number; defaultWrap: number; includes: boolean; inline: InlineEngineDefinition; exporting?: ExportFormatName }
     /** The answer to a `render` request: the raw block's source rendered by the host's engine. */
     | { type: 'rendered'; requestId: number; html: string }
     /** The document cannot be shown without losing a byte; the webview offers the text editor instead. */

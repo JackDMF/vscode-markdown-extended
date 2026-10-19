@@ -83,8 +83,8 @@ export interface ToolbarHost {
     exportDocument(format: ExportFormatName): void;
     /** Open VS Code's Settings at the export's settings. */
     exportSettings(): void;
-    /** Whether an export the page asked for runs still: from the press until the host's `exportDone`. */
-    exportBusy(): boolean;
+    /** The format of an export the page asked for that runs still — from the press until the host's `exportDone` — or `null`. */
+    exporting(): ExportFormatName | null;
 }
 
 interface ExportEntry {
@@ -930,7 +930,7 @@ class ToolbarView implements PluginView {
     private updateDocumentFace(menu: Menu, place: FocusPlace): void {
         const face = menu.face as HTMLElement;
         const { refusal, note } = rowLock(place, menu.scope);
-        const busy = this.host.exportBusy();
+        const busy = this.host.exporting() !== null;
         setState(face, refusal === null, false);
         (face.querySelector('.mep-face-label') as HTMLElement).textContent = busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL;
         face.setAttribute('aria-busy', String(busy));
