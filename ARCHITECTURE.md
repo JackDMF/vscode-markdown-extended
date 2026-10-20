@@ -1530,8 +1530,12 @@ heavy as frequent ones. So the surfaces now divide the work:
 
 - **The row** — `Block type ▾ | i em b strong code | Formatting ▾ Annotation ▾ Insert ▾`
   (`ROW_LAYOUT`) — is one line of controls of one height; menus are a text label and a
-  chevron, hairlines separate the groups, and a narrow window scrolls the row rather than
-  wrapping it, so no control moves. Only the five native marks are in it, their glyph the
+  chevron, hairlines separate the groups, and the row never wraps and never scrolls: where
+  it is too narrow, its controls move into a "…" menu in one decided order (`ROW_OVERFLOW`:
+  Annotation, Formatting, Insert, then the marks from the right; Block type, the count and
+  Export never move), measured by `layoutRow` with the one loop the object bars and the
+  bubble share (`overflow.ts`). A lock's reason stands in the row too — beside the tools, or
+  in the refused tools' place, or its short form (`lockForms`) — so the page never moves. Only the five native marks are in it, their glyph the
   real element held to the button's height and minimum width, so a stylesheet can change
   how the glyph looks but not the row's geometry. The height is the glyph's *border box*,
   and the button clips at its own edge: what a stylesheet draws around the text — a note
