@@ -1711,3 +1711,23 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     border-radius: 3px;
     box-shadow: inset 0 -1px 0 var(--vscode-widget-shadow, transparent);
 }
+
+/* ---- Wave 2 #4: the code block as an object ---------------------------------------------- */
+
+/*
+ * A fenced block's language at its top-right corner (`data-lang`, schema.ts): editor chrome,
+ * not in the file. A pseudo-element, so it is no node, no layer and no target for the
+ * pointer; it stands in markdown.css's 16 px padding above the first line (`pre` is
+ * positioned there), ending where that line starts. None without a language.
+ */
+.ProseMirror pre[data-lang] { position: relative; }
+.ProseMirror pre[data-lang]::before {
+    content: attr(data-lang);
+    position: absolute;
+    top: 2px;
+    right: 8px;
+    font: 11px/14px var(--vscode-font-family, sans-serif);
+    color: var(--vscode-descriptionForeground, GrayText);
+    pointer-events: none;
+    user-select: none;
+}

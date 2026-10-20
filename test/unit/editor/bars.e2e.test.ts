@@ -413,6 +413,25 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['block-attributes', 'Attributes…', false, false]],
             focus: 'block-attributes',
         },
+        {
+            // Wave 2 #4: a fence with a literal is a code block, not a block with attributes.
+            n: 22, slug: 'code-block', source: '```js {.numbered}\nconst a = 1;\n```\n\nAfter.\n', marker: 'const',
+            enter: () => clickBefore('const', 2),
+            label: 'Code block js {.numbered}',
+            verbs: [['language', 'Language…', false, false], ['block-attributes', 'Attributes…', false, false], ['edit-source', 'Edit source', false, false],
+                ['delete-code-block', 'Delete code block', false, true]],
+            focus: 'language',
+            narrow: { short: [['delete-code-block', 'Delete']], titleCut: true, pastColumn: true },
+        },
+        {
+            n: 23, slug: 'code-block-indented', source: 'Text.\n\n    indented code\n\nAfter.\n', marker: 'indented',
+            enter: () => clickBefore('indented', 2),
+            label: 'Indented code block',
+            verbs: [['language', 'Language…', false, false], ['block-attributes', 'Attributes…', false, false], ['edit-source', 'Edit source', false, false],
+                ['delete-code-block', 'Delete code block', false, true]],
+            focus: 'language',
+            narrow: { short: [['delete-code-block', 'Delete']] },
+        },
     ];
 
     /** Show the row's document, enter its object, answer for the host, and open its bar with `Alt+Enter`. */

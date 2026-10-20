@@ -1328,7 +1328,8 @@ export function openingLineRefusal(state: EditorState, pos: number, line: string
     if (!(tr instanceof Transaction)) {
         return tr.refusal;
     }
-    const next = tr.doc.nodeAt(pos)!;
+    // `setNodeMarkup` at `pos` leaves a node there.
+    const next = tr.doc.nodeAt(pos) ?? node;
     const literal = next.attrs.attrsSuffix as string | null;
     // A literal is read on the fence it stands on (`fenceHolder`): asked again when either changes.
     if (literal !== null && (literal !== node.attrs.attrsSuffix || fenceHolder(String(next.attrs.markup)) !== fenceHolder(String(node.attrs.markup)))) {
@@ -1356,7 +1357,7 @@ export function changeOpeningLineTransaction(state: EditorState, pos: number, li
     if (!(tr instanceof Transaction)) {
         return null;
     }
-    const next = tr.doc.nodeAt(pos)!;
+    const next = tr.doc.nodeAt(pos) ?? node;
     const unchanged = (['markup', 'params', 'attrsSuffix'] as const).every(name => next.attrs[name] === node.attrs[name]);
     return unchanged ? null : tr.scrollIntoView();
 }

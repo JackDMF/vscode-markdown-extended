@@ -1783,19 +1783,35 @@ as opposed to text, which is typed:
 | `badge` | an `inline_atom` | the node |
 | `container`, `admonition` | the node | the node |
 | `table` | a pipe table the caret is in, or whose cells are selected across | the node |
+| `code_block` | a fenced or indented code block the caret is in, at any depth — with a literal too | the node |
 | `block_attrs` | a block carrying `attrsSuffix` — not a requirement heading, whose anchor is Req Explorer's | the node |
 | `heading` | a top-level heading that is no `block_attrs` (a requirement heading is one) | the node |
 | `raw_block`, `injected_block`, `front_matter` | the node | the node |
 
 `objectAtSelection` finds the selection's object: a node selected as a whole, else,
 innermost first, the link the selection is in (a caret inside its text or at either end),
-the attribute span, the note both ends of the selection are in, the innermost container or
-admonition holding both ends, the top-level block with an attribute literal, and last the
-top-level heading. A link
+the attribute span, the note both ends of the selection are in, the code block both ends
+are in (at any depth: in a list, a quote or a container it is still the object), the
+innermost container or admonition holding both ends, the top-level block with an attribute
+literal, and last the top-level heading. A link
 in a note's body is the link; text beside a span in an admonition is the admonition. A verb never acts on the object it was drawn for: it looks it
 up again (`currentObject` — the same kind at the same position, still there), so an edit
 arriving from the host between drawing and clicking cannot make a verb act on something
 else.
+
+**A code block's opening line** (`fences.ts`, pure). The fence, the info string and the
+`{…}` after them are composed, read back and refused in one module: the serializer writes
+the line through `openingLineOf` and `minimumFence`, the bar's Edit source shows it and
+commits it through `parseOpeningLine` (no fence, a fence shorter than a run inside, a
+backtick after backticks are refused; the literal then meets `literalRefusal`), and
+Language… changes only the info string's first word (`withLanguage`). One rule, two
+behaviours: a typed fence too short for the content is refused, while a block whose
+content grew a run after its fence was set is still written with a longer fence, silently.
+An indented block has no opening line; Language…, Attributes… and Edit source fence it on
+apply (`DEFAULT_FENCE`, lengthened as needed), and the hint says "Code block fenced". The
+completions come from `languages.ts`, generated from the installed highlight.js by
+`npm run languages` and pinned by `languages.test.ts`. The language shows at rest as a
+corner tag, `pre[data-lang]::before` — a pseudo-element, so no node, no layer, inert.
 
 **The triggers.** The last three objects are *block* objects and show their bar while the
 pointer is on them or they are selected, at once — as the source block's toolbar did. The

@@ -14,6 +14,16 @@
 - The caret hint keeps clear of open layers and the margin lane, flipping above the caret's line when needed.
 - A hovered block shows a cue while another layer is up; its bar shows once the slot is free.
 - Menus open 4 px from their opener, like every layer.
+- A fenced or indented code block has a bar: Language…, Attributes…, Edit source, Delete code block.
+- Language… is a field with completions: this document's languages first, then every language the preview highlights.
+- Language… changes only the first word of the fence's info string; the rest and the {…} stay.
+- Edit source on a code block edits its opening line — fence, info string, attributes — in the bar.
+- An opening line without a fence, or with one shorter than a run inside, is refused with the reason.
+- Language… and Attributes… fence an indented block on apply: "Code block fenced — Ctrl+Z".
+- Edit source on an indented block opens empty with a ``` placeholder; Enter fences it.
+- A code block in a list, quote or container has the bar too; Attributes… there says why not.
+- A fenced block shows its language as a muted tag in its top-right corner, in the editor only.
+- Alt+Enter with nothing to act on says so in a hint, and the caret stays.
 
 ## v4.8.0 — Bars, Labels and Notes That Fit
 

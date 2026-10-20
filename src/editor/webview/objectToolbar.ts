@@ -9,7 +9,7 @@
  * **The triggers.** A block object (a source block, injected content, the front
  * matter) shows its bar while the pointer is on it or it is selected. A caret
  * object (a note, a link, a span, an image, a badge, a container, an admonition,
- * a block with attributes) shows its bar once the caret or the
+ * a code block at any depth, a block with attributes) shows its bar once the caret or the
  * selection has rested inside it for `INLINE_DELAY_MS`, and hides it the moment
  * the caret leaves; the pointer does not show it — an inline bar following the
  * pointer across a paragraph jumps. Two bars exist so the two triggers never
@@ -24,7 +24,9 @@
  * that opens something in place and changes nothing yet (`firstFocus`,
  * `verbs.ts`) — never Open, never Remove or Delete — else on the bar itself,
  * where `Enter` or `↓` moves into its verbs; the arrow keys move, `Enter`
- * chooses, `Esc` returns to the text.
+ * chooses, `Esc` returns to the text. With nothing to act on, `Alt+Enter` is
+ * taken all the same and says so in a neutral hint, the caret staying
+ * (`NO_TARGET_HINT`).
  *
  * **Where it sits.** Where the one placement policy puts every layer
  * (`placement.ts`): below its object — an inline object's last line, a
@@ -51,9 +53,10 @@ import { Mapping } from 'prosemirror-transform';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES, plainWikiEmbed } from '../../syntax/markers';
 import { containerClass } from '../schema';
+import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompletions, languageOf, openingLineOf } from '../fences';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
-import { EMBED_WAY_BACK, FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, wording } from '../verbs';
+import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
@@ -64,7 +67,7 @@ import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
-    removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
+    removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
 import { attributesStep, holderAttributesStep } from './attributes';
@@ -1858,6 +1861,24 @@ class ObjectToolbarView implements PluginView {
             }
             case 'table':
                 return this.tablePresentation(object);
+            case 'code_block': {
+                const indented = object.node.attrs.markup === '';
+                const code = [languageOf(object.node.attrs.params as string), (object.node.attrs.attrsSuffix as string | null) ?? ''].filter(Boolean).join(' ');
+                const remove = wording({ verb: 'Delete', noun: 'code block' });
+                return {
+                    label: indented ? 'Indented code block' : 'Code block',
+                    code: code === '' ? undefined : code,
+                    title: indented
+                        ? 'An indented code block: it has no opening line until Language…, Attributes… or Edit source fences it.'
+                        : 'A fenced code block: its language and its {…} stand on its opening line.',
+                    verbs: [
+                        this.languageVerb(object),
+                        this.attributesVerb(object),
+                        this.openingLineVerb(object),
+                        { id: 'delete-code-block', label: remove.label, short: remove.short, title: 'The block goes from the file.', slot: 'destroy', run: () => this.remove(object, remove.done) },
+                    ],
+                };
+            }
             case 'block_attrs': {
                 const literal = (object.node.attrs.attrsSuffix as string | null) ?? '';
                 return {
@@ -2073,16 +2094,97 @@ class ObjectToolbarView implements PluginView {
      * reason, on a container and an admonition, whose renderers drop a literal.
      */
     private attributesVerb(object: EditorObject): Verb {
-        const found = isMarkObject(object) ? { refusal: NO_BLOCK_ATTRS_REFUSAL } : attributesTargetOf(object.node, object.from);
+        // A code block is an object at any depth; its literal is written only at the top level.
+        const nested = object.kind === 'code_block' && this.view.state.doc.resolve(object.from).depth > 0;
+        const found = isMarkObject(object) ? { refusal: NO_BLOCK_ATTRS_REFUSAL } : attributesTargetOf(object.node, object.from, nested);
         const refused = 'refusal' in found;
+        const fences = object.kind === 'code_block' && object.node.attrs.markup === '' ? ' Setting one makes the block fenced.' : '';
         return {
             id: 'block-attributes',
             label: VERB.attributes,
             slot: 'attributes',
-            title: 'The block\'s {…}: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).',
+            title: `The block's {…}: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).${fences}`,
             refusal: refused ? found.refusal : null,
             field: refused ? undefined : attributesStep(this.view, found),
         };
+    }
+
+    /**
+     * A code block's **Language…**: the first word of its info string in a
+     * field, the document's languages offered first, then every language the
+     * preview highlights (`languageCompletions`); any word is taken, `''`
+     * removes it, the rest of the info string and the `{…}` stay. On an
+     * indented block it fences it (`changeLanguageTransaction`), and the hint
+     * says so — the one change a look at the bar's title would not explain.
+     */
+    private languageVerb(object: Extract<EditorObject, { node: unknown }>): Verb {
+        const indented = object.node.attrs.markup === '';
+        const step: FieldStep = {
+            value: languageOf(object.node.attrs.params as string),
+            label: 'Language',
+            keys: '↵ set · Esc cancel · empty: no language',
+            complete: query => Promise.resolve(languageCompletions(this.view.state.doc, query)),
+            commit: value => this.commitCodeBlock(step, object, value, changeLanguageTransaction),
+        };
+        return {
+            id: 'language',
+            label: VERB.language,
+            slot: 'type',
+            title: indented
+                ? `Language — setting one makes the block fenced (${DEFAULT_FENCE}); its text stays.`
+                : 'The fence\'s language — the first word of its info string; the rest stays.',
+            field: step,
+        };
+    }
+
+    /**
+     * A code block's **Edit source**: its opening line — fence, info string,
+     * `{…}` — in the bar's field, read back and refused in one place
+     * (`commitOpeningLine`). An indented block's opens empty, the fence a new
+     * block gets as its placeholder: `Enter` fences it.
+     */
+    private openingLineVerb(object: Extract<EditorObject, { node: unknown }>): Verb {
+        const attrs = object.node.attrs as { markup: string; params: string; attrsSuffix: string | null };
+        const indented = attrs.markup === '';
+        const step: FieldStep = {
+            value: openingLineOf(attrs),
+            label: 'Opening line',
+            placeholder: indented ? INDENTED_PLACEHOLDER : undefined,
+            keys: '↵ set · Esc cancel · fence, info, {…}',
+            commit: value => this.commitCodeBlock(step, object, value, commitOpeningLine),
+        };
+        return { id: 'edit-source', label: VERB.editSource, slot: 'source', title: 'Edit source — opening line (fence, language, attributes)', field: step };
+    }
+
+    /**
+     * A code block's field committed through `make`: refused — the field kept
+     * open with what was typed and why (`refusedStep`) — else applied on the
+     * block as it is once the focus is back (`act`), the hint said only when
+     * it fenced an indented block.
+     */
+    private commitCodeBlock(
+        step: FieldStep,
+        object: EditorObject,
+        value: string,
+        make: (state: EditorState, pos: number, value: string) => { tr: Transaction; fenced: boolean } | { refusal: string } | null,
+    ): FieldStep | void {
+        const current = currentObject(this.view.state, object);
+        const asked = current === null ? null : make(this.view.state, current.from, value);
+        if (asked !== null && 'refusal' in asked) {
+            return refusedStep(step, value, asked.refusal);
+        }
+        this.act(object, now => {
+            const made = make(this.view.state, now.from, value);
+            if (made === null || 'refusal' in made) {
+                return false;
+            }
+            const before = this.view.state;
+            this.view.dispatch(made.tr);
+            if (made.fenced && this.view.state !== before) {
+                showChangeHint(this.view, undoHint(FENCED_DONE));
+            }
+            return true;
+        });
     }
 
     /**
@@ -2220,6 +2322,11 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
                 const opened = toolbarViews.get(view)?.openFromKeyboard() ?? false;
                 if (opened) {
                     event.preventDefault();
+                } else if (view.state.selection instanceof TextSelection) {
+                    // Nothing to act on: the key is taken and says so, the caret stays (#4).
+                    showHint(view, NO_TARGET_HINT, 'neutral');
+                    event.preventDefault();
+                    return true;
                 }
                 return opened;
             },
