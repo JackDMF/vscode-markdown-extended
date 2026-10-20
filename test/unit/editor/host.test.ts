@@ -1456,7 +1456,7 @@ suite('Editor host: Export from the toolbar', () => {
             // The page is loaded again (a webview reload): its document says an export runs.
             s.webview.send({ type: 'ready' });
             await s.session.settled();
-            assert.strictEqual(s.webview.documents().pop()?.exporting, true, 'the reloaded page is told an export runs');
+            assert.strictEqual(s.webview.documents().pop()?.exporting, 'pdf', 'the reloaded page is told which export runs');
             s.finish();
             await until(() => s.done()[1], 2000);
             assert.deepStrictEqual(s.done(), ['busy', 'settled']);

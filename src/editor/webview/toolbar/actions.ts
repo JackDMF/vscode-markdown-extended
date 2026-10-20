@@ -542,7 +542,8 @@ function insertAction(id: string, label: string, template: string, sample: Sampl
     return { id, place: { menu: 'insert' }, label, syntax: template, sample, apply: { kind: 'insert-source', template }, example, preview, ...look };
 }
 
-function titleOf(type: string): string {
+/** An admonition type as the Insert menu and the bars spell it: `warning` → `Warning`. */
+export function titleOf(type: string): string {
     return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
@@ -727,6 +728,48 @@ export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockType
 
 /** The row, left to right; hairlines between the groups. */
 export const ROW_LAYOUT: readonly (readonly ('marks' | ToolbarMenu)[])[] = [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']];
+
+/** A control of the row: a mark action's id, or a menu. */
+export type RowControl = ToolbarMenu | string;
+
+const ROW_MENUS = ROW_LAYOUT.flat().filter((g): g is ToolbarMenu => g !== 'marks');
+const ROW_MARKS = TOOLBAR_ACTIONS.filter(inRow).map(a => a.id);
+
+/**
+ * The order controls leave the row for "…" when it is too narrow (Daniel,
+ * 2026-10-19): the three menus — Annotation, Formatting, Insert — then the
+ * marks one at a time from the right. Block type never leaves. The mark order
+ * is `ROW_LAYOUT`'s, reversed — not written twice.
+ */
+export const ROW_OVERFLOW: readonly RowControl[] = ['annotation', 'formatting', 'insert', ...[...ROW_MARKS].reverse()];
+
+/** The order "…" lists what it holds: the marks in row order, then (after a divider) the menus in row order. */
+export function moreOrder(moved: readonly RowControl[]): { marks: string[]; menus: ToolbarMenu[] } {
+    return {
+        marks: ROW_MARKS.filter(id => moved.includes(id)),
+        menus: ROW_MENUS.filter(id => moved.includes(id)),
+    };
+}
+
+const BUBBLE_ITEMS = TOOLBAR_ACTIONS.filter(inBubble).map(a => a.id);
+
+/**
+ * The order the bubble's controls leave it for its "…" where it is too
+ * narrow (Daniel, 2026-10-20: the bubble gets the row's overflow), derived as
+ * the row's is: what the bubble adds to the row's marks leaves first — the
+ * extension's marks, the notes and Attributes — from the right, as the row's
+ * menus leave before its marks; then the row's own marks, from the right, in
+ * `ROW_OVERFLOW`'s order. The marks with keys stay longest.
+ */
+export const BUBBLE_OVERFLOW: readonly string[] = [
+    ...BUBBLE_ITEMS.filter(id => !ROW_MARKS.includes(id)).reverse(),
+    ...ROW_OVERFLOW.filter(id => ROW_MARKS.includes(id)),
+];
+
+/** Whether a bubble control is one of the row's marks: "…" lists those first, the rest after a divider. */
+export function isRowMark(id: string): boolean {
+    return ROW_MARKS.includes(id);
+}
 
 /** What a menu's face says (the block-type face says the current type instead, when there is one). */
 export const MENU_LABELS: Readonly<Record<ToolbarMenu | ToolbarSubmenu, string>> = {

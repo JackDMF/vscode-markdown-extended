@@ -24,7 +24,6 @@ import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
-import { lockLineHeight } from './clearance';
 import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
@@ -686,8 +685,8 @@ function commitForSending(): void {
     }
 }
 
-/** An export the page asked for runs: from the press until the host's `exportDone`. One at a time. */
-let exporting = false;
+/** The format of an export the page asked for that runs: from the press until the host's `exportDone`. One at a time. */
+let exporting: ExportFormatName | null = null;
 
 /**
  * **Export** in the toolbar: what the open boxes hold committed and the
@@ -697,13 +696,13 @@ let exporting = false;
  * busy until the host's `exportDone`.
  */
 function exportDocument(format: ExportFormatName): void {
-    if (!view || exporting) {
+    if (!view || exporting !== null) {
         return;
     }
     commitForSending();
     flush();
     post({ type: 'export', format });
-    setExporting(true);
+    setExporting(format);
 }
 
 /**
@@ -714,17 +713,18 @@ function exportDocument(format: ExportFormatName): void {
  */
 function exportFinished(outcome: 'settled' | 'refused' | 'busy'): void {
     if (outcome === 'busy') {
-        setExporting(true);
+        // Export stays busy with the format the page shows; the host's next `document` names the running one.
+        setExporting(exporting);
         return;
     }
-    setExporting(false);
+    setExporting(null);
     if (outcome === 'refused' && view) {
         showHint(view, 'Not exported: this format is not offered.', 'refusal');
     }
 }
 
-/** Whether an export runs, and the toolbar's Export face drawn for it. */
-function setExporting(running: boolean): void {
+/** Which export runs, if any, and the toolbar's Export face drawn for it. */
+function setExporting(running: ExportFormatName | null): void {
     exporting = running;
     if (view) {
         refreshToolbar(view);
@@ -811,7 +811,7 @@ const plugins = [
         pickImage: chosen => askFiles({ type: 'pickImage' }, chosen),
         exportDocument,
         exportSettings: () => post({ type: 'exportSettings' }),
-        exportBusy: () => exporting,
+        exporting: () => exporting,
     }),
     objectToolbarPlugin({
         openSourceAt: pos => post({ type: 'openSource', line: lineAt(pos) }),
@@ -846,15 +846,9 @@ const plugins = [
     }, placeDrop),
 ];
 
-/**
- * Room above the caret for the formatting row fixed at the top when ProseMirror
- * scrolls the selection into view — and for the lock's line under it while it
- * stands there (`lockLineHeight`): read each time ProseMirror scrolls.
- */
+/** Room above the caret for the formatting row fixed at the top when ProseMirror scrolls the selection into view. */
 const SCROLL_MARGIN = {
-    get top(): number {
-        return 64 + lockLineHeight(mount);
-    },
+    top: 64,
     bottom: 8,
     left: 8,
     right: 8,
@@ -1047,7 +1041,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             // The host's word on whether an export runs: a page loaded again during one
             // learns it here, and an `exportDone` lost on the way cannot keep the face busy
             // past the next document.
-            setExporting(msg.exporting === true);
+            setExporting(msg.exporting ?? null);
             break;
         case 'rendered':
             applyRendered(msg.requestId, msg.html);

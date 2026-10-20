@@ -13,6 +13,7 @@
  */
 import { Plugin, PluginView } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { MODIFIER_KEYS } from '../keys';
 import { PositionMap, SourceRange, holdsText } from '../positions';
 import type { CodeActionItem, DiagnosticEntry, HostMessage, WebviewMessage } from '../protocol';
 import { completionOpen } from './completion';
@@ -114,8 +115,6 @@ interface Shown {
     hoverHtml: string;
     anchor: CardAnchor;
 }
-
-const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
 
 class PointerCard implements PluginView {
     private readonly card: LanguageCard;

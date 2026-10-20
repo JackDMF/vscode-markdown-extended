@@ -267,10 +267,18 @@ async function preparePage(browser: puppeteer.Browser, bundle: string, extension
  * `INERT_MS` (`placement.ts`): a person cannot aim at it sooner, a script
  * can. `page.click` and `page.mouse.click` wait first until no layer is inert
  * — as a person would — so the suites click what they meant to. A test of the
- * inert time itself presses with `page.mouse.down`/`up`, which do not wait.
+ * inert time itself presses with `page.mouse.down`/`up`, which do not wait. A
+ * layer still inert after 2 s is a layer whose inert time never ended — the
+ * click fails, saying so, instead of landing on a layer a person could not use.
  */
 function clickAsAPerson(page: puppeteer.Page): void {
-    const settled = () => page.waitForFunction(() => document.querySelector('.mep-layer[data-inert]') === null, { timeout: 2000, polling: 20 }).catch(() => undefined);
+    const settled = async () => {
+        try {
+            await page.waitForFunction(() => document.querySelector('.mep-layer[data-inert]') === null, { timeout: 2000, polling: 20 });
+        } catch {
+            throw new Error('layer still inert after 2 s');
+        }
+    };
     const click = page.click.bind(page);
     page.click = async (selector: string, options?: Readonly<puppeteer.ClickOptions>) => {
         await settled();

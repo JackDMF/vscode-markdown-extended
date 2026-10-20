@@ -2,7 +2,7 @@
  * What counts as content (Daniel, 2026-09-29): the one fact a floating layer
  * keeps off — a character of a textblock, a table's cell, an image, an atom,
  * another extension's lens row — and where the chrome over the page ends
- * (`rowCeiling`, the lock's line). Where a layer goes is `placement.ts`'s:
+ * (`rowCeiling`). Where a layer goes is `placement.ts`'s:
  * its policy reads this oracle to break a tie between below and above.
  *
  * DOM geometry only, read from the view.
@@ -32,32 +32,20 @@ export const PROBING_CLASS = 'mep-probing';
 const OCCUPIED = '.ProseMirror > table td, .ProseMirror > table th, img:not(.ProseMirror-separator), .mep-atom, .mep-inline-atom, .mep-lens-row';
 
 /**
- * The bottom of the formatting row (fixed at the editor's top) in `mount` —
- * with the line under it that holds a lock's reason, while it does — nothing
- * is placed under it.
+ * The bottom of the formatting row (fixed at the editor's top) in `mount`:
+ * nothing is placed under it. The row's lock note stands in the row, so the
+ * row is all the chrome there is (wave 2 #2).
  */
 export function rowCeiling(mount: HTMLElement): number {
     const row = mount.querySelector(':scope > .mep-toolbar');
-    return Math.max(0, row ? row.getBoundingClientRect().bottom : 0) + lockLineHeight(mount);
+    return Math.max(0, row ? row.getBoundingClientRect().bottom : 0);
 }
 
 /**
- * The height of the line under the formatting row that holds a lock's reason
- * when it does not fit beside the tools (`toolbar.ts`, `placeLock`), while it
- * stands there; else 0 — also while it waits unseen for its room during a
- * press (`mep-row-lock-waiting`). What scrolls something into view below the
- * row keeps this much more room.
+ * Dispatched on the mount when the chrome over the page grew or shrank or the page moved under it: bars placed against it are placed again.
+ * Since the lock's note stands in the row (wave 2 #2) the row never changes height, and nothing sends it; the slot (`placement.ts`) still listens.
  */
-export function lockLineHeight(mount: HTMLElement | null): number {
-    const line = mount?.querySelector(':scope > .mep-toolbar.mep-row-lock-below:not(.mep-row-lock-waiting) > .mep-row-lock:not([hidden])');
-    return line ? line.getBoundingClientRect().height : 0;
-}
-
-/** Dispatched on the mount when the chrome over the page grew or shrank (the lock's line) or the page moved under it: bars placed against it are placed again. */
 export const CHROME_MOVED = 'mep-chrome-moved';
-
-/** The custom property on the mount that holds the room the page keeps for the lock's line (`editor.css`). */
-export const LOCK_ROOM_PROPERTY = '--mep-lock-room';
 
 /**
  * Whether anything the page shows as content lies in `band`: a character of a

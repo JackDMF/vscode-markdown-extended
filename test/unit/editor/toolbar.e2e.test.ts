@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { PREVIEW_CARD_CLASS, TOOLBAR_ACTIONS, menuOf } from '../../../src/editor/webview/toolbar/actions';
+import { PREVIEW_CARD_CLASS, ROW_OVERFLOW, TOOLBAR_ACTIONS, menuOf } from '../../../src/editor/webview/toolbar/actions';
 import { ALL_LOCK, REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/toolbar/commands';
 import { ADMONITION_FAMILIES, ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, MOD } from './pageHarness';
@@ -112,12 +112,12 @@ suite('Editor toolbar (e2e)', () => {
         await selectText('Second');
         const row = await page.evaluate(() => {
             const bar = document.querySelector('.mep-toolbar') as HTMLElement;
-            const controls = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool'));
+            const controls = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool')).filter(c => c.offsetParent !== null);
             return {
-                groups: Array.from(bar.querySelectorAll(':scope > .mep-row-group')).map(g => Array.from(g.children).map(c => (c as HTMLElement).dataset.action ?? `menu:${(c as HTMLElement).dataset.menu}`)),
+                groups: Array.from(bar.querySelectorAll(':scope > .mep-row-group:not(.mep-row-more)')).map(g => Array.from(g.children).map(c => (c as HTMLElement).dataset.action ?? `menu:${(c as HTMLElement).dataset.menu}`)),
                 heights: [...new Set(controls.map(c => c.offsetHeight))],
                 tops: [...new Set(controls.map(c => Math.round(c.getBoundingClientRect().top)))],
-                faces: Array.from(bar.querySelectorAll('.mep-menu-face')).map(f => ({ text: f.textContent, samples: f.querySelectorAll('.mep-sample').length, chevron: f.querySelector(':scope > .mep-menu-caret > .codicon-chevron-down') !== null })),
+                faces: Array.from(bar.querySelectorAll('.mep-menu-face:not(.mep-more-face)')).map(f => ({ text: f.textContent, samples: f.querySelectorAll('.mep-sample').length, chevron: f.querySelector(':scope > .mep-menu-caret > .codicon-chevron-down') !== null })),
                 fixed: getComputedStyle(bar).position === 'fixed' && bar.nextElementSibling?.classList.contains('ProseMirror'),
             };
         });
@@ -138,42 +138,38 @@ suite('Editor toolbar (e2e)', () => {
         assert.deepStrictEqual(marks, ['i', 'em', 'b', 'strong', 'code'], 'a mark\'s glyph is its real element');
     });
 
-    test('narrow, the row scrolls sideways instead of wrapping, keeps its height, draws no scrollbar over its controls, and scrolls by the wheel', async function () {
+    test('narrow, the row never scrolls: it keeps its height and one line, and what does not fit is in "…" (ROW_OVERFLOW)', async function () {
         this.timeout(10000);
         try {
             await page.setViewport({ width: 420, height: 900 });
-            await delay(100);
+            await delay(150);
             const narrow = await page.evaluate(() => {
                 const bar = document.querySelector('.mep-toolbar') as HTMLElement;
                 const row = bar.getBoundingClientRect();
-                const tools = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool'));
-                // From the window, not `offsetTop`: Export's is measured from the sticky end it stands in.
+                const tools = Array.from(bar.querySelectorAll<HTMLElement>('.mep-tool')).filter(c => c.offsetParent !== null);
                 const tops = tools.map(c => Math.round(c.getBoundingClientRect().top));
-                // Inside the row's box above its edge: no scrollbar laid out under them takes their height.
                 const inside = tools.every(c => {
                     const r = c.getBoundingClientRect();
-                    return r.top >= row.top && r.bottom <= row.bottom - 1 && r.height === 22;
+                    return r.top >= row.top && r.bottom <= row.bottom - 1 && r.height === 22 && r.left >= row.left && r.right <= row.right;
                 });
-                return { height: bar.offsetHeight, scrolls: bar.scrollWidth > bar.clientWidth, lines: new Set(tops).size, inside, gutter: bar.offsetHeight - bar.clientHeight };
+                const moved = Array.from(bar.querySelectorAll<HTMLElement>('.mep-mark-tool[hidden], .mep-menu-face[hidden]:not(.mep-more-face)')).map(c => c.dataset.action ?? c.dataset.menu);
+                const more = bar.querySelector<HTMLElement>('.mep-more-face') as HTMLElement;
+                return { height: bar.offsetHeight, scrolls: bar.scrollWidth > bar.clientWidth, lines: new Set(tops).size, inside, moved, more: more.offsetParent !== null };
             });
-            assert.deepStrictEqual(narrow, { height: 27, scrolls: true, lines: 1, inside: true, gutter: 1 }, 'the only thing under the controls is the 1px edge');
-            const box = await (await page.$('.mep-toolbar'))?.boundingBox();
-            assert.ok(box);
-            await page.mouse.move(box.x + 100, box.y + box.height / 2);
-            await page.mouse.wheel({ deltaY: 120 });
-            await delay(100);
-            assert.ok(await page.$eval('.mep-toolbar', el => el.scrollLeft) > 0, 'a vertical wheel scrolls the row sideways');
-            await page.$eval('.mep-toolbar', el => {
-                el.scrollLeft = 0;
-            });
+            assert.strictEqual(narrow.scrolls, false, 'the row never scrolls');
+            assert.deepStrictEqual({ height: narrow.height, lines: narrow.lines, inside: narrow.inside, more: narrow.more }, { height: 27, lines: 1, inside: true, more: true });
+            assert.ok(narrow.moved.length > 0, 'something moved at 420');
+            assert.deepStrictEqual([...narrow.moved].sort(), ROW_OVERFLOW.slice(0, narrow.moved.length).map(String).sort(), 'what moved is a prefix of ROW_OVERFLOW');
         } finally {
             await page.setViewport({ width: WIDE, height: 900 });
         }
+        await delay(150);
+        assert.strictEqual(await page.$eval('.mep-more-face', el => (el as HTMLElement).offsetParent === null), true, 'wide again, "…" is gone');
     });
 
     test('every action is in its place once; menu entries are one height, samples fitted into them', async function () {
         this.timeout(15000);
-        const inMenus = await page.$$eval('.mep-menu [data-action]', els => els.map(e => (e as HTMLElement).dataset.action));
+        const inMenus = await page.$$eval('.mep-menu:not([data-menu="more"]):not([data-menu="bubble-more"]) [data-action]', els => els.map(e => (e as HTMLElement).dataset.action));
         assert.deepStrictEqual([...inMenus].sort(), TOOLBAR_ACTIONS.filter(a => menuOf(a) !== null).map(a => a.id).sort(), 'every action but the row\'s and the bubble\'s own is in a menu');
         for (const menu of ['block-type', 'formatting', 'annotation', 'insert']) {
             await openMenu(menu);

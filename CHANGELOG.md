@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Every floating layer — bars, bubble, fields, menus, cards, hints — follows one rule: below, else above.
+- With text on both sides, an inline object's bar goes above; block bars and the bubble stay below.
 - A layer never covers the caret's line, the formatting row or another open layer.
 - A layer stands at its object's start and stops at the editor's edge, 4 px short of the margin lane.
 - One floating layer at a time: a selection shows the bubble, a caret rest the bar, a field replaces its bar.
@@ -14,6 +15,21 @@
 - The caret hint keeps clear of open layers and the margin lane, flipping above the caret's line when needed.
 - A hovered block shows a cue while another layer is up; its bar shows once the slot is free.
 - Menus open 4 px from their opener, like every layer.
+- The formatting row never scrolls: controls that do not fit move into a "…" menu; Export and the count stay.
+- Controls leave the row by priority — Annotation, Formatting, Insert, then marks from the right; Block type never.
+- A mark in "…" keeps glyph, word, syntax and key; on, a check and a dot on "…" show it.
+- Menus moved into "…" open as submenus; "…" names its contents for a screen reader.
+- The row's lock note stands in the row: beside the tools, else in the refused tools' place, else short.
+- The page no longer moves when the row locks or unlocks.
+- A lock nobody ran into says "Focus is outside the text" where it fits; else the tools only dim.
+- Export busy names the format: "Exporting PDF…", or "PDF…" in a narrow row; the tooltip says it whole.
+- The Export face spins while an export runs; a still glyph under reduced motion.
+- In the Export menu the running format carries the spinner; the others say which export they wait for.
+- A narrow object bar moves verbs into "…": Delete or Remove first, then other extensions' actions, then from the right.
+- The verb Alt+Enter focuses never leaves its bar; in "…" every verb has its full label, the destroying one last.
+- A bar whose title is hidden still names its object on hover and to a screen reader.
+- Admonition bars read "Warning admonition", shortened to "Warning" before the title truncates.
+- The selection's bubble never spills past the window: what does not fit moves into its own "…".
 - A fenced or indented code block has a bar: Language…, Attributes…, Edit source, Delete code block.
 - Language… is a field with completions: this document's languages first, then every language the preview highlights.
 - Language… changes only the first word of the fence's info string; the rest and the {…} stay.

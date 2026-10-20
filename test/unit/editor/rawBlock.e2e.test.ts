@@ -307,7 +307,14 @@ suite('Editor atoms with the real mouse (e2e)', () => {
     /** The editable table's Edit source: the table becomes a source block, its box open. */
     const openEditableTableSource = async () => {
         await clickText(page, 'first', 2);
-        const button = await page.waitForSelector(`${SELECTION_BAR}[data-object="table"] [data-verb="edit-source"]`, { visible: true });
+        const bar = `${SELECTION_BAR}[data-object="table"]`;
+        await page.waitForSelector(`${bar} [data-verb="edit-source"]`);
+        // A bar too narrow for it has Edit source in its "…" (wave 2 #2).
+        const moved = await page.$eval(`${bar} [data-verb="edit-source"]`, el => (el as HTMLElement).hidden);
+        if (moved) {
+            await clickAt(await centre(`${bar} .mep-object-more`));
+        }
+        const button = await page.waitForSelector(moved ? `${bar} .mep-object-menu [data-entry="edit-source"]` : `${bar} [data-verb="edit-source"]`, { visible: true });
         const box = await button?.boundingBox();
         assert.ok(box);
         await clickAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
@@ -474,11 +481,8 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         assert.ok((await lastEdit())?.text.includes('| South | 5 | 6 |'), 'the typing is in the document');
     });
 
-    /** The bottom of the chrome over the page: the row, and the line under it while the reason stands there. */
-    const chromeBottom = () => page.evaluate(() => {
-        const line = document.querySelector('.mep-toolbar.mep-row-lock-below > .mep-row-lock:not([hidden])');
-        return (line ?? document.querySelector('.mep-toolbar') as Element).getBoundingClientRect().bottom;
-    });
+    /** The bottom of the chrome over the page: the row — the lock's reason stands in it (wave 2 #2), never under it. */
+    const chromeBottom = () => page.evaluate(() => (document.querySelector('.mep-toolbar') as Element).getBoundingClientRect().bottom);
 
     const FILLER = Array.from({ length: 40 }, (_, i) => `Filler paragraph ${i}.`).join('\n\n');
     const SCROLLED = `${FILLER}\n\n<div>target block<br>second line<br>third line</div>\n\n${FILLER}\n`;
@@ -507,7 +511,7 @@ suite('Editor atoms with the real mouse (e2e)', () => {
             await delay(200);
             const opened = await page.evaluate(() => (document.querySelector('.mep-raw-editor') as HTMLElement).getBoundingClientRect().top);
             const chrome = await chromeBottom();
-            assert.ok(opened >= chrome - 0.5, `the box's first line is below the line (${opened} < ${chrome})`);
+            assert.ok(opened >= chrome - 0.5, `the box's first line is below the row (${opened} < ${chrome})`);
             const gapOpen = opened - chrome;
 
             await page.keyboard.press('Escape');
@@ -519,7 +523,7 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         }
     });
 
-    test('the window narrowed with a box open: the line comes under the row and the box\'s bar is placed below it', async function () {
+    test('the window narrowed with a box open: the reason stands in the row and the box\'s bar is placed below the row', async function () {
         this.timeout(20000);
         try {
             await page.setViewport({ width: 1200, height: 700 });
@@ -532,8 +536,9 @@ suite('Editor atoms with the real mouse (e2e)', () => {
             await delay(400);
             const bar = await page.$eval(SELECTED_BLOCK_BAR, el => el.getBoundingClientRect().top);
             const chrome = await chromeBottom();
-            assert.ok(await page.$('.mep-toolbar.mep-row-lock-below'), 'the reason went under the row');
-            assert.ok(bar >= chrome - 0.5, `the bar stands below the line (${bar} < ${chrome})`);
+            const lock = await page.$eval('.mep-toolbar .mep-row-lock', el => ({ shown: !(el as HTMLElement).hidden, bottom: el.getBoundingClientRect().bottom }));
+            assert.ok(lock.shown && lock.bottom <= chrome + 0.5, `the reason stands in the row: ${JSON.stringify(lock)}`);
+            assert.ok(bar >= chrome - 0.5, `the bar stands below the row (${bar} < ${chrome})`);
             await page.keyboard.press('Escape');
         } finally {
             await page.setViewport({ width: 1200, height: 900 });

@@ -20,6 +20,9 @@ export const UNDO_BINDING = 'Mod-z';
 /** What redoes in the page (`plugins.ts`). */
 export const REDO_BINDINGS: readonly string[] = ['Mod-y', 'Mod-Shift-z'];
 
+/** The keys that only modify another: none of them acts, hides a hover, or types — one set for every reader (the bars, the row, the tooltips, the language card). */
+export const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
+
 /** The keys of a keyboard event a binding is matched against. */
 export interface KeyChord {
     key: string;
@@ -27,6 +30,31 @@ export interface KeyChord {
     metaKey: boolean;
     shiftKey: boolean;
     altKey: boolean;
+}
+
+/** A keyboard event as far as `typesText` reads it. */
+export interface TypingKey extends KeyChord {
+    /** Absent in a fake event: AltGr is then not told from Ctrl+Alt. */
+    getModifierState?(key: string): boolean;
+}
+
+/**
+ * Whether a key going down is meant to change the text: a character or an
+ * editing key (Backspace, Enter), not a modifier on its own, not a shortcut
+ * (Ctrl or Cmd, not both), not an Alt command (Alt+Enter, Alt+arrow). A
+ * character made with Alt — Option on a Mac, AltGr on a German layout, which a
+ * Windows browser reports as Ctrl+Alt with the AltGraph state on (`{ } [ ] @ \ ~`)
+ * — is typing: a one-character key.
+ */
+export function typesText(e: TypingKey): boolean {
+    if (MODIFIER_KEYS.has(e.key)) {
+        return false;
+    }
+    const altGraph = e.getModifierState?.('AltGraph') === true;
+    if (!altGraph && e.ctrlKey !== e.metaKey) {
+        return false;
+    }
+    return e.altKey || altGraph ? e.key.length === 1 : true;
 }
 
 /**

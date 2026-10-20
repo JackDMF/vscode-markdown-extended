@@ -200,8 +200,6 @@ img.mep-pending-range {
     --mep-row-height: 27px;
     /* The space between the row's edge and the document's first block. */
     --mep-row-gap: 8px;
-    /* The room kept for the lock's line under the row while it stands there (`toolbar.ts`, `settleRoom`). */
-    --mep-lock-room: 0px;
     /* The row's bottom edge, as the workbench draws the edge under its tabs. */
     --mep-chrome-border: var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-editorGroupHeader-border, var(--vscode-widget-border, transparent)));
     /*
@@ -218,16 +216,14 @@ img.mep-pending-range {
  * document that begins with a table, a fence or a container does not sit
  * against the row's edge: the row stands over the page, not in it.
  */
-.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-lock-room) + var(--mep-row-gap)); }
+.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-row-gap)); }
 
 /*
  * The row: full width, fixed at the top of the editor as the workbench's rows
  * are under the tabs — the page's own padding does not inset it. One line,
- * every control 22px. Narrow, it scrolls sideways rather than wrapping, so
- * every control keeps its place — without a scrollbar, which would be laid
- * out inside the row's height and clip the controls: the wheel scrolls it
- * (`toolbar.ts`), and a control that takes the keyboard's focus is scrolled
- * into view.
+ * every control 22px. It never wraps and never scrolls: narrow, what does not
+ * fit moves into "…" (`toolbar.ts`, `layoutRow`) — the menus first, then the
+ * marks from the right — and the count and Export stay at its right end.
  */
 .mep-toolbar {
     position: fixed;
@@ -242,9 +238,7 @@ img.mep-pending-range {
     height: var(--mep-row-height);
     margin: 0;
     padding: 0 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
+    overflow: hidden;
     font-family: var(--vscode-font-family, sans-serif);
     font-size: calc(var(--vscode-font-size, 13px) - 1px);
     line-height: 20px;
@@ -253,7 +247,31 @@ img.mep-pending-range {
     border-bottom: 1px solid var(--mep-chrome-border);
 }
 
-.mep-toolbar::-webkit-scrollbar { display: none; }
+/* A control moved into "…", and a group all of whose controls moved: `.mep-tool`'s own display would beat the UA's `[hidden]`. */
+.mep-tool[hidden],
+.mep-row-group[hidden] { display: none; }
+
+/* "…": the row's last tool, right after the last control left in it — no divider of its own. */
+.mep-row-more { padding-left: 0; }
+.mep-row-more::before { display: none; }
+.mep-more-face { position: relative; justify-content: center; min-width: 26px; padding: 0 4px; }
+.mep-more-face > .mep-face-icon { margin-right: 0; }
+.mep-more-face > .mep-face-icon > .codicon { font-size: 16px; }
+/*
+ * A mark in "…" that is on: a 6px dot on "…" (the check inside says which),
+ * in the workbench's colour for an option that is on; High Contrast outlines it.
+ */
+.mep-more-face.mep-has-on::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, Highlight));
+}
+.vscode-high-contrast .mep-more-face.mep-has-on::after { outline: 1px solid var(--vscode-contrastBorder, CanvasText); }
 
 .mep-row-group {
     display: flex;
@@ -382,7 +400,7 @@ img.mep-pending-range {
 /* Menus: the workbench's context menu                                       */
 /* ------------------------------------------------------------------------- */
 
-/* Menus and the card sit outside the scrolling row, positioned from their face. */
+/* Menus and the card sit outside the row, which clips what hangs out of it, positioned from their face. */
 .mep-menu {
     position: fixed;
     z-index: 30;
@@ -567,7 +585,24 @@ img.mep-pending-range {
     font-size: 12px;
     color: var(--vscode-descriptionForeground, GrayText);
 }
-.mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail) { color: inherit; opacity: 0.8; }
+.mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail, .mep-entry-key) { color: inherit; opacity: 0.8; }
+
+/*
+ * "…" (`toolbar.ts`, `layoutRow`): as wide as its longest entry, within the
+ * menus' bounds and the window. A moved mark keeps its key, after its syntax,
+ * never cut: where the menu is capped, the syntax goes first.
+ */
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) > :is(.mep-menu-item, .mep-menu-separator)[hidden] { display: none; }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) { width: max-content; max-width: min(380px, calc(100vw - 8px)); }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) .mep-entry-syntax { min-width: 0; }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) .mep-submenu-item > .mep-menu-caret { margin-left: auto; }
+.mep-entry-key {
+    flex: none;
+    padding-left: 10px;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
 
 /* A command's entry (Export's): its name in plain text, and how it is made beside it, right and dim. */
 .mep-menu[data-menu="export"] > .mep-menu-item > .mep-entry-label { flex: none; white-space: nowrap; }
@@ -757,6 +792,17 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 
 /* A set-verb's menu (a table's Row, Column, Align) is the formatting toolbar's menu, narrower. */
 .mep-object-menu { min-width: 180px; }
+/* In a bar's "…": a moved set-verb's entry opens its own menu, the chevron at the right. */
+.mep-object-menu .mep-entry-label { flex: none; }
+.mep-object-menu .mep-menu-item > .mep-menu-caret { margin-left: auto; }
+
+/* A verb moved into the bar's "…" (`objectToolbar.ts`, `fit`), and its divider: `.mep-object-verb`'s own display would beat the UA's `[hidden]`. */
+.mep-object-verb[hidden],
+.mep-object-separator[hidden] { display: none; }
+/* "…": a verb button at the bar's right end, the codicon at the row's "…" size. */
+.mep-object-more { padding: 0 4px; }
+.mep-object-more > .mep-face-icon { display: inline-flex; align-items: center; }
+.mep-object-more > .mep-face-icon > .codicon { font-size: 16px; line-height: 1; }
 
 /* Where `arrange` (verbs.ts) divides a bar: before other extensions' verbs, before the verb that destroys, or before a group of the object's own (a table's Attributes…). */
 .mep-object-separator {
@@ -1383,7 +1429,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 
 /* A block brought into view (a followed link's fragment) stands below the formatting row, not under it; so does an element inside one found by its id. */
 .mep-editor .ProseMirror > *,
-.mep-editor .ProseMirror [id] { scroll-margin-top: calc(64px + var(--mep-lock-room)); }
+.mep-editor .ProseMirror [id] { scroll-margin-top: 64px; }
 
 /* ------------------------------------------------------------------------- */
 /* The document cannot be shown without loss                                 */
@@ -1457,20 +1503,15 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
  * The formatting row's right end: what is about the document as a whole —
  * what the page says of it (the diagnostics count, in `-said`), then Export,
  * with the row's divider before Export whenever anything stands before it:
- * the count, or the lock's reason beside the tools. Pinned to the right while
- * the row scrolls sideways; Export keeps it shown without a count.
+ * the count, or the lock's reason beside the tools. It never leaves the row
+ * (`layoutRow` moves the tools before it); Export keeps it shown without a count.
  */
 .mep-row-status {
-    position: sticky;
-    right: 0;
     display: flex;
     flex: none;
     align-items: center;
     margin-left: auto;
     padding: 0 0 0 8px;
-    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
-    /* Over the row's right padding too: a narrow row's tools scroll under it and would show there. */
-    box-shadow: 8px 0 0 var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
 }
 .mep-row-said,
 .mep-row-export {
@@ -1481,7 +1522,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 .mep-row-said:not(:has(> :not([hidden]))) { display: none; }
 /* The divider of `.mep-row-group + .mep-row-group`, after the count or the lock's reason beside it. */
 .mep-row-said:has(> :not([hidden])) + .mep-row-export::before,
-.mep-toolbar:not(.mep-row-lock-below) > .mep-row-lock:not([hidden]) + .mep-row-status > .mep-row-export::before {
+.mep-row-lock:not([hidden]) + .mep-row-status > .mep-row-export::before {
     content: "";
     flex: none;
     width: 1px;
@@ -1498,19 +1539,27 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     margin-right: 2px;
 }
 .mep-face-icon > .codicon { font-size: 14px; line-height: 1; }
+/* The running format's entry in Export's menu: the same spinner before its name (`toolbar.ts`, `updateDocumentFace`). */
+.mep-entry-busy { display: inline-flex; flex: none; align-items: center; }
+.mep-entry-busy > .codicon { font-size: 14px; line-height: 1; }
+/* Busy, under reduced motion: the same codicon, still — `codicon.css` spins it everywhere else. */
+@media (prefers-reduced-motion: reduce) {
+    :is(.mep-face-icon, .mep-entry-busy) > .codicon-modifier-spin { animation: none; }
+}
 
 /*
  * Why the row is refused while a source box or the properties panel has the
- * focus, and the way back (`toolbar.ts`, `showLock`): text, not grey alone —
- * a pale note on the info tint, as sketched. It takes the room the tools leave
- * before the count, never pinned over them. Where it does not fit there whole
- * — measured (`placeLock`), not a width set here — it stands on a thin line
- * of its own right under the row (`-below`), whole, and is cut with an
- * ellipsis only where even that line is too narrow; the tools and the count
- * stay where they are, and the line goes with the lock. The whole text is the
- * row's description and each tool's tooltip too. A press on a refused tool
- * points at it for a moment (`-flash`) in the refusal's amber, as the caret
- * hint's refusal is marked (`.mep-hint[data-tone="refusal"]`).
+ * focus, and the way back (`toolbar.ts`, `layoutRow`): text, not grey alone —
+ * a pale note on the info tint, as sketched. It stands in the row, never
+ * under it, so the page never moves (Daniel, 2026-10-19): beside the tools
+ * where it fits there whole; else, for a box or a field, in the refused
+ * tools' place (`-inrow`: they give way), whole or in its short form, which
+ * keeps its keys; a button's lock shows its short form beside the tools or
+ * nothing. Measured, not a width set here; the ellipsis is the last resort
+ * only. The whole text is the row's description and each tool's tooltip
+ * too. A press on a refused tool points at it for a moment (`-flash`) in the
+ * refusal's amber, as the caret hint's refusal is marked
+ * (`.mep-hint[data-tone="refusal"]`).
  */
 .mep-row-lock {
     flex: 0 1 auto;
@@ -1522,20 +1571,10 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     font-size: 12px;
 }
 .mep-row-lock[hidden] { display: none; }
-.mep-toolbar:not(.mep-row-lock-below) > .mep-row-lock:not([hidden]) + .mep-row-status { margin-left: 0; }
-.mep-toolbar.mep-row-lock-below > .mep-row-lock {
-    position: fixed;
-    top: var(--mep-row-height);
-    left: 0;
-    right: 0;
-    box-sizing: border-box;
-    margin: 0;
-    padding: 2px 8px 3px;
-    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
-    border-bottom: 1px solid var(--mep-chrome-border);
-}
-/* Come while a button is held, the line waits for its room unseen — measured, not over the page (`toolbar.ts`, `placeLock`). */
-.mep-toolbar.mep-row-lock-below.mep-row-lock-waiting > .mep-row-lock { visibility: hidden; }
+.mep-toolbar:not(.mep-row-lock-inrow) > .mep-row-lock:not([hidden]) + .mep-row-status { margin-left: 0; }
+.mep-toolbar.mep-row-lock-inrow > .mep-row-group { display: none; }
+.mep-toolbar.mep-row-lock-inrow > .mep-row-lock { margin-left: 0; }
+
 .mep-row-lock-text {
     padding: 1px 8px;
     border-radius: 3px;

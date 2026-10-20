@@ -673,14 +673,17 @@ A toolbar stays at the top of the editor, one line of controls across its full w
 `Block type` | `i` `em` `b` `strong` `code` | `Formatting` `Annotation` `Insert` … problems | `Export`
 
 Each menu is its name followed by VS Code's own dropdown chevron. The problem count and
-**Export** stay pinned at the right end while the row scrolls.
+**Export** stay at the right end; while an export runs, **Export** names it — *Exporting
+PDF…*, or *PDF…* in a narrow row — and its icon spins.
 
 It is drawn as part of VS Code rather than of the page: the colours of the tab strip above
 it, the workbench's font, its menus drawn as VS Code's context menus and each object's bar
 as an editor widget — every colour taken from the current theme, so a light, dark or high
 contrast theme needs nothing of its own. Every control has the same height, and nothing
-wraps: in a narrow window the row scrolls sideways, so each control stays where you learned
-it. The five marks show their real
+wraps or scrolls: in a narrow window what does not fit moves into a **…** menu — first
+Annotation, Formatting and Insert, then the marks from the right — where a mark keeps its
+glyph, word, syntax and key, and a dot on **…** says one of them is on. An object's bar and
+the selection's bubble do the same with their own **…**. The five marks show their real
 element (the italic, emphasis, bold, strong and code your stylesheets draw) as their
 glyph; rest the pointer on one, or reach it with `Tab`, and the editor's hover names it, its
 delimiter, its element and its key — *Italic (`*`, `<i>`) — Ctrl+I*, *Emphasis (`_`, `<em>`)*,

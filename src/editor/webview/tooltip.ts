@@ -15,14 +15,12 @@
  * reader sees, and the two cannot drift apart — but for a key the control's
  * `aria-keyshortcuts` names already, which is not said twice.
  */
+import { MODIFIER_KEYS } from '../keys';
 import { Tip, tipText, withoutKeys } from '../tips';
 import { HOVER_DELAY_MS } from './hover';
 import { placeTip } from './placement';
 
 export const TOOLTIP_CLASS = 'mep-tooltip';
-
-/** The keys that only modify another: none of them hides the hover, nor makes a focus the keyboard's. */
-const MODIFIERS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
 
 const byMount = new WeakMap<HTMLElement, Tooltips>();
 
@@ -82,7 +80,8 @@ export class Tooltips {
         // A key acts — the hover would stand over what it changes. On the window and
         // capturing, so a handler that stops the key (Esc on a card, Ctrl+S) still lets it be seen.
         this.listen(window, 'keydown', e => {
-            if (!MODIFIERS.has((e as KeyboardEvent).key)) {
+            // A modifier alone neither hides the hover nor makes a focus the keyboard's.
+            if (!MODIFIER_KEYS.has((e as KeyboardEvent).key)) {
                 this.pointerLast = false;
                 this.refocusing = false;
                 this.hide();

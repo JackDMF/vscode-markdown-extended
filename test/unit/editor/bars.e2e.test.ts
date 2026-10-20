@@ -323,10 +323,11 @@ suite('Editor object bars (e2e)', () => {
         {
             n: 15, slug: 'admonition', source: '!!! warning "Check the inputs"\n    Body text here.\n', marker: 'Body',
             enter: () => clickBefore('text here', 1),
-            label: 'Admonition warning',
+            label: 'Warning admonition',
             verbs: [['edit-title', 'Edit title…', false, false], ['change-type', 'Type', false, false], ['block-attributes', 'Attributes…', true, false], ['remove-admonition', 'Remove admonition, keep content', false, true]],
             focus: 'edit-title',
-            narrow: { short: [['remove-admonition', 'Remove, keep content']], titleCut: true, pastColumn: true },
+            // The title's short form, "Warning", before it truncates (wave 2 #2): it fits the column now.
+            narrow: { short: [['remove-admonition', 'Remove, keep content']] },
         },
         {
             n: 16, slug: 'table', source: '| a | b |\n| - | - |\n| one | two |\n', marker: 'one',
@@ -591,7 +592,10 @@ suite('Editor object bars (e2e)', () => {
                     return { right: bar.getBoundingClientRect().right, noteLeft: note.getBoundingClientRect().left, float: getComputedStyle(note).float };
                 });
                 assert.strictEqual(placed.float, 'right', `${sheet}: the note is in the margin`);
-                assert.ok((await fitted()).pastColumn, `${sheet}: the table's bar is wider than the column (${JSON.stringify(await fitted())})`);
+                // Wider than the column, or — where even past it there is no room — its verbs moved into "…" (wave 2 #2): either way it stops short of the lane.
+                const grown = await fitted();
+                const more = await page.$eval(BAR, bar => bar.querySelector('.mep-object-more') !== null);
+                assert.ok(grown.pastColumn || more, `${sheet}: the table's bar is wider than the column, or holds "…" (${JSON.stringify({ grown, more })})`);
                 assert.ok(placed.right <= placed.noteLeft - 4 + 0.5, `${sheet}: the bar ends 4px short of the notes: ${JSON.stringify(placed)}`);
             } finally {
                 await page.evaluate(s => document.querySelectorAll('style').forEach(el => {
