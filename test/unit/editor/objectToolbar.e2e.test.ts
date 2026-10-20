@@ -949,7 +949,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await showDocument('Intro.\n\n!!! note "Old title"\n    Body text here.\n\nAfter.\n', 'Body');
         await clickBefore('text here', 1);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'admonition', label: 'Admonition note', verbs: ['edit-title', 'change-type', 'block-attributes', 'remove-admonition'] });
+        assert.deepStrictEqual(await barState(), { object: 'admonition', label: 'Note admonition', verbs: ['edit-title', 'change-type', 'block-attributes', 'remove-admonition'] });
 
         await clickVerb('change-type');
         const choice = `${BAR} select.mep-inline-choice`;

@@ -542,7 +542,8 @@ function insertAction(id: string, label: string, template: string, sample: Sampl
     return { id, place: { menu: 'insert' }, label, syntax: template, sample, apply: { kind: 'insert-source', template }, example, preview, ...look };
 }
 
-function titleOf(type: string): string {
+/** An admonition type as the Insert menu and the bars spell it: `warning` → `Warning`. */
+export function titleOf(type: string): string {
     return type.charAt(0).toUpperCase() + type.slice(1);
 }
 

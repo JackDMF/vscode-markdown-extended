@@ -117,9 +117,9 @@ suite('Editor chrome (e2e)', () => {
             assert.deepStrictEqual(look, {
                 'background-color': computed(tabs), 'border-bottom-color': computed(edge), 'font-size': '12px', 'border-radius': '0px', 'box-shadow': 'none',
             }, theme.name);
-            const heights = await page.$$eval('.mep-toolbar .mep-tool', els => els.map(e => e.getBoundingClientRect().height));
+            const heights = await page.$$eval('.mep-toolbar .mep-tool', els => els.filter(e => e.getClientRects().length > 0).map(e => e.getBoundingClientRect().height));
             assert.ok(heights.length >= 9 && heights.every(h => h === 22), `every control 22px: ${heights.join(', ')}`);
-            const chevrons = await page.$$eval('.mep-toolbar .mep-menu-face', els => els.map(e => e.querySelector(':scope > .mep-menu-caret > .codicon-chevron-down') !== null));
+            const chevrons = await page.$$eval('.mep-toolbar .mep-menu-face:not(.mep-more-face)', els => els.map(e => e.querySelector(':scope > .mep-menu-caret > .codicon-chevron-down') !== null));
             assert.deepStrictEqual(chevrons, [true, true, true, true, true], 'each menu face ends in the codicon chevron, Export\'s too');
             const face = await page.$eval('.mep-toolbar .mep-menu-face[data-menu="block-type"]', el => {
                 const label = (el.querySelector('.mep-face-label') as HTMLElement).getBoundingClientRect();

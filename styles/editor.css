@@ -792,6 +792,17 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 
 /* A set-verb's menu (a table's Row, Column, Align) is the formatting toolbar's menu, narrower. */
 .mep-object-menu { min-width: 180px; }
+/* In a bar's "…": a moved set-verb's entry opens its own menu, the chevron at the right. */
+.mep-object-menu .mep-entry-label { flex: none; }
+.mep-object-menu .mep-menu-item > .mep-menu-caret { margin-left: auto; }
+
+/* A verb moved into the bar's "…" (`objectToolbar.ts`, `fit`), and its divider: `.mep-object-verb`'s own display would beat the UA's `[hidden]`. */
+.mep-object-verb[hidden],
+.mep-object-separator[hidden] { display: none; }
+/* "…": a verb button at the bar's right end, the codicon at the row's "…" size. */
+.mep-object-more { padding: 0 4px; }
+.mep-object-more > .mep-face-icon { display: inline-flex; align-items: center; }
+.mep-object-more > .mep-face-icon > .codicon { font-size: 16px; line-height: 1; }
 
 /* Where `arrange` (verbs.ts) divides a bar: before other extensions' verbs, before the verb that destroys, or before a group of the object's own (a table's Attributes…). */
 .mep-object-separator {

@@ -53,7 +53,7 @@ import { ADMONITION_TYPES, plainWikiEmbed } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
 import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
-import { EMBED_WAY_BACK, FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, wording } from '../verbs';
+import { EMBED_WAY_BACK, FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
@@ -69,8 +69,9 @@ import {
 } from './objects';
 import { attributesStep, holderAttributesStep } from './attributes';
 import { currentReadsAttrs } from '../inlineEngine';
-import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
-import { barSeparator, followPointer, selectionWantsBubble } from './toolbar/toolbar';
+import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
+import { barSeparator, followPointer, selectionWantsBubble, separator } from './toolbar/toolbar';
+import { moreControl, moreName, moveUntilFits, overflows } from './overflow';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
@@ -203,11 +204,17 @@ interface MenuEntry {
     checked?: boolean;
     /** Why it cannot be chosen here, in its tooltip; the entry is drawn disabled. */
     refusal?: string | null;
+    /** Drawn after a divider: in a bar's "…", the verb that destroys, last. */
+    separated?: boolean;
+    /** It opens a menu of its own (a set-verb moved into "…"): drawn with the chevron right. */
+    opens?: boolean;
     run(): void;
 }
 
 interface Presentation {
     label: string;
+    /** The title's short form, drawn before the title truncates (`ObjectBar.fit`): an admonition's type alone, `Warning`. */
+    short?: string;
     /** Written after the label in the editor's code font: an atom's spelling (`Emoji :)`). */
     code?: string;
     title: string;
@@ -458,6 +465,11 @@ class ObjectBar {
     /** The object's name as the title shows it (`Emoji :rocket:`): the bar's accessible name while a field stands in for its verbs. */
     private name = '';
     private buttons: { verb: Verb; el: HTMLButtonElement }[] = [];
+    /** "…" (`moreControl`), last on the bar: the verbs `fit` moved into it, in the order they left. */
+    private more: HTMLButtonElement | null = null;
+    private moved: { verb: Verb; el: HTMLButtonElement }[] = [];
+    /** The title, and its short form, as the presentation gave them. */
+    private title = { label: '', short: undefined as string | undefined };
     /** A set-verb's open menu: its panel, the verb's button, its entries. */
     private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
 
@@ -492,7 +504,7 @@ class ObjectBar {
         // label, only in the title and the field's value, and a bar kept after
         // an undo would otherwise offer the undone source.
         const signature = JSON.stringify([
-            object.kind, object.from, presentation.label, presentation.title,
+            object.kind, object.from, presentation.label, presentation.short ?? null, presentation.title,
             presentation.verbs.map(v => [
                 v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? v.choice?.value ?? null, v.separated ?? false,
                 v.menu?.map(m => [m.id, m.label, m.title, m.keys ?? null, m.checked ?? null, m.refusal ?? null]) ?? null,
@@ -548,8 +560,13 @@ class ObjectBar {
      * short form at it, the noun the title already names dropped (`Delete`,
      * `Edit…`, `Remove, keep content`); then the title truncates, down to
      * hidden if the verbs need it (narrower than `TITLE_STUB` it says nothing:
-     * the bar's `aria-label` still names the object). Verbs never truncate
-     * (`flex: none`). It starts from the full labels every time, so a bar grown
+     * the bar's `aria-label` still names the object, and its hover). Verbs
+     * never truncate (`flex: none`): where even the hidden title leaves too
+     * little room, they move into the bar's "…" in `overflowOrder` — the verb
+     * that destroys first, then other extensions', then from the right, never
+     * the one `Alt+Enter` focuses (Daniel, 2026-10-19). Before the title
+     * truncates, a title with a short form takes it (`Warning admonition` →
+     * `Warning`). It starts from the full labels every time, so a bar grown
      * wider again gets them back — and does nothing where neither the room
      * nor what the bar shows changed since the last fit. Not while a field is
      * open: the verbs are not drawn then.
@@ -570,6 +587,13 @@ class ObjectBar {
             }
         }
         label.hidden = false;
+        this.setTitle(label, this.title.label);
+        for (const b of this.buttons) {
+            this.showVerb(b);
+        }
+        this.moved = [];
+        // "…" is in the bar only while it holds a verb.
+        this.more?.remove();
         this.el.style.maxWidth = `${Math.floor(room)}px`;
         // Measured at the mount's left edge: an absolute box's room is what lies right of its `left`, and `place` sets it after.
         const left = this.el.style.left;
@@ -583,10 +607,79 @@ class ObjectBar {
                 // Named in full for a screen reader: the short form leans on the title.
                 b.el.setAttribute('aria-label', b.verb.label);
             }
+            // The title's short form, before it truncates.
+            if (cut() && this.title.short !== undefined) {
+                this.setTitle(label, this.title.short);
+            }
             // Still too wide, and the title cut below a stub that could say anything: it goes.
             label.hidden = cut() && label.offsetWidth < TITLE_STUB;
         }
+        // The title hidden and the verbs still past the room: they move into "…".
+        if (label.hidden && this.more && overflows(this.el)) {
+            // Counted from the first measurement that moves anything.
+            this.el.append(this.more);
+            const order = overflowOrder(this.buttons.map(b => slotted(b.verb))).map(k => this.buttons[k]);
+            this.moved = moveUntilFits(order, () => !overflows(this.el), b => this.showVerb(b), b => this.hideVerb(b));
+            if (this.moved.length === 0) {
+                this.more.remove();
+            }
+        }
+        if (this.more) {
+            const inMore = this.moreEntries().map(e => e.label);
+            this.more.setAttribute('aria-label', moreName('bar', inMore));
+        }
+        // A title the room hid still names the object on a rest on the bar (its `aria-label` names it too).
+        this.tips.attach(this.el, () => (label.hidden ? plainTip(this.name) : null));
         this.el.style.left = left;
+    }
+
+    /** The title drawn as `text`, an atom's spelling after it as before. */
+    private setTitle(label: HTMLElement, text: string): void {
+        const first = label.firstChild;
+        if (first && first.nodeType === globalThis.Node.TEXT_NODE) {
+            first.nodeValue = text;
+        }
+    }
+
+    /** A verb back on the bar, with the divider before it. */
+    private showVerb(b: { verb: Verb; el: HTMLButtonElement }): void {
+        b.el.hidden = false;
+        const before = b.el.previousElementSibling as HTMLElement | null;
+        if (b.verb.separated && before?.classList.contains('mep-object-separator')) {
+            before.hidden = false;
+        }
+    }
+
+    /** A verb moved into "…": its button, and the divider that belongs to it, go. */
+    private hideVerb(b: { verb: Verb; el: HTMLButtonElement }): void {
+        b.el.hidden = true;
+        const before = b.el.previousElementSibling as HTMLElement | null;
+        if (b.verb.separated && before?.classList.contains('mep-object-separator')) {
+            before.hidden = true;
+        }
+    }
+
+    /**
+     * What "…" lists: the moved verbs in the bar's order, each with its full
+     * label (never the short form), the verb that destroys last after a
+     * divider; a set-verb's entry opens its own menu under "…" (F4).
+     */
+    private moreEntries(): MenuEntry[] {
+        return this.buttons.filter(b => this.moved.includes(b)).map(({ verb }) => ({
+            id: verb.id,
+            label: lensName(verb.label),
+            title: verb.title,
+            refusal: verb.refusal,
+            separated: verb.slot === 'destroy',
+            opens: verb.menu !== undefined,
+            run: () => {
+                if (verb.menu && this.more) {
+                    this.openMenu(verb.menu, this.more);
+                } else {
+                    this.choose(verb);
+                }
+            },
+        }));
     }
 
     /** Fit again at the next placing, though neither the room nor the bar changed: a font loaded late changed the labels' widths. */
@@ -600,6 +693,8 @@ class ObjectBar {
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
+        this.title = { label: presentation.label, short: presentation.short };
+        this.moved = [];
         this.el.dataset.name = presentation.label;
         if (presentation.code !== undefined) {
             const code = document.createElement('span');
@@ -637,7 +732,29 @@ class ObjectBar {
         });
         // The title, then a divider: it names the object, it is not the first verb (whose own divider that one is).
         // No verbs, no divider: it would divide the title from nothing.
+        // "…", drawn last by `fit` once it moves a verb into it.
+        const more = moreControl('bar') as HTMLButtonElement;
+        more.addEventListener('click', e => {
+            e.preventDefault();
+            this.toggleMore();
+        });
+        this.tips.attach(more, () => plainTip(more.getAttribute('aria-label') ?? 'More actions'));
+        more.hidden = false;
+        this.more = this.buttons.length > 0 ? more : null;
         this.el.replaceChildren(label, ...(this.buttons.length > 0 ? [barSeparator()] : []), ...this.buttons.flatMap((b, i) => b.verb.separated && i > 0 ? [barSeparator(), b.el] : [b.el]));
+    }
+
+    /** "…" pressed: its menu opens under it, or closes. */
+    private toggleMore(): void {
+        const more = this.more;
+        if (!more) {
+            return;
+        }
+        const open = this.menu?.button === more;
+        this.closeMenu(open);
+        if (!open) {
+            this.openMenu(this.moreEntries(), more);
+        }
     }
 
     private choose(verb: Verb): void {
@@ -688,6 +805,10 @@ class ObjectBar {
             label.className = 'mep-entry-label';
             label.textContent = entry.label;
             el.append(label);
+            if (entry.opens) {
+                el.setAttribute('aria-haspopup', 'menu');
+                el.append(chevronNode('right'));
+            }
             if (entry.keys) {
                 const keys = document.createElement('span');
                 keys.className = 'mep-entry-syntax';
@@ -707,7 +828,7 @@ class ObjectBar {
             el.addEventListener('mouseenter', () => followPointer(panel, el));
             return { entry, el };
         });
-        panel.append(...made.map(m => m.el));
+        panel.append(...made.flatMap((m, i) => (m.entry.separated && i > 0 ? [separator(), m.el] : [m.el])));
         panel.addEventListener('keydown', e => this.onMenuKey(e));
         panel.addEventListener('focusout', e => {
             if (!(e.relatedTarget instanceof globalThis.Node && panel.contains(e.relatedTarget))) {
@@ -845,7 +966,11 @@ class ObjectBar {
     }
 
     private onKey(e: KeyboardEvent): void {
-        const enabled = this.buttons.filter(b => !b.verb.refusal);
+        // What the keys reach: the verbs shown and offered, then "…" while it holds any.
+        const enabled: { el: HTMLButtonElement; choose(): void }[] = [
+            ...this.buttons.filter(b => !b.verb.refusal && !b.el.hidden).map(b => ({ el: b.el, choose: () => this.choose(b.verb) })),
+            ...(this.more?.isConnected ? [{ el: this.more, choose: () => this.toggleMore() }] : []),
+        ];
         const index = enabled.findIndex(b => b.el === document.activeElement);
         const move = (step: number) => {
             if (enabled.length > 0) {
@@ -875,7 +1000,7 @@ class ObjectBar {
             case ' ':
                 if (index >= 0) {
                     e.preventDefault();
-                    this.choose(enabled[index].verb);
+                    enabled[index].choose();
                 } else if (e.key === 'Enter' && document.activeElement === this.el) {
                     // The bar itself has the focus (`focusFirst`): Enter moves into its first verb, as ↓ does; choosing one is a second Enter.
                     e.preventDefault();
@@ -1818,7 +1943,8 @@ class ObjectToolbarView implements PluginView {
                 const title = object.node.attrs.title as string;
                 const remove = wording({ verb: 'Remove', noun: 'admonition', keeps: ', keep content' });
                 return {
-                    label: `Admonition ${type}`,
+                    label: `${titleOf(type)} admonition`,
+                    short: titleOf(type),
                     title: title === '' ? `A ${type} admonition without a title.` : `A ${type} admonition: ${title}`,
                     verbs: [
                         {

@@ -52,8 +52,8 @@ export function moreControl(kind: 'row' | 'bar'): HTMLElement {
         el.tabIndex = 0;
     } else {
         (el as HTMLButtonElement).type = 'button';
+        // No `data-verb`: it is no verb of the object's, and what lists a bar's verbs leaves it out.
         el.className = 'mep-object-verb mep-object-more';
-        el.dataset.verb = 'more';
         el.tabIndex = -1;
     }
     el.setAttribute('aria-haspopup', 'menu');

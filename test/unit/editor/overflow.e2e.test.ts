@@ -480,4 +480,169 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
             }
         }
     });
+
+    // -- the bars' "…" (section 5, b1-b5) -----------------------------------------
+
+    const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
+    const barMore = `${BAR} .mep-object-more`;
+
+    /** The caret at `needle` (+`at`), and its bar shown for `kind`. */
+    const barAt = async (needle: string, at: number, kind: string) => {
+        await clickText(page, needle, at);
+        await page.waitForSelector(`${BAR}[data-object="${kind}"]`, { timeout: 5000 });
+        await delay(150);
+    };
+
+    /** What the bar shows: its title, the verbs on it, the verbs hidden, and "…". */
+    const barState = () => page.$eval(BAR, el => {
+        const label = el.querySelector<HTMLElement>('.mep-object-label');
+        const verbs = Array.from(el.querySelectorAll<HTMLElement>('[data-verb]'));
+        const more = el.querySelector<HTMLElement>('.mep-object-more');
+        const r = el.getBoundingClientRect();
+        return {
+            title: label && !label.hidden ? label.textContent : null,
+            shown: verbs.filter(v => !v.hidden).map(v => v.dataset.verb),
+            moved: verbs.filter(v => v.hidden).map(v => v.dataset.verb),
+            more: more !== null && !more.hidden ? more.getAttribute('aria-label') : null,
+            moreLast: more !== null && el.lastElementChild === more,
+            inside: r.left >= 0 && r.right <= window.innerWidth + 0.5,
+            spills: el.scrollWidth > el.clientWidth + 0.5,
+            description: el.getAttribute('aria-description'),
+        };
+    });
+
+    /** The open "…" menu's entries: label, role, and a divider as `---`. */
+    const moreMenu = () => page.$eval(`${BAR} .mep-object-menu`, panel => Array.from(panel.children).map(c => c.classList.contains('mep-menu-separator')
+        ? '---'
+        : `${(c as HTMLElement).dataset.entry}:${c.querySelector('.mep-entry-label')?.textContent}:${c.getAttribute('role')}${c.querySelector('.codicon-chevron-right') ? ':>' : ''}`));
+
+    test('b1 a link in bold at 420: the title hidden, Remove and then Attributes of Bold… moved into "…", which names them; its entry removes the link with the undo hint; the bar still names its object on a rest', async function () {
+        this.timeout(60000);
+        for (const [theme, t] of THEMES) {
+            await applyTheme(page, theme);
+            await resize(420, 640);
+            await showDocument();
+            await barAt('bold docs', 3, 'link');
+            const s = await barState();
+            assert.strictEqual(s.title, null, `${t}: the title hidden`);
+            // `overflowOrder`: Remove first, then from the right — Attributes of Bold… (measured: both leave at 420).
+            assert.deepStrictEqual(s.moved, ['inline-attributes', 'remove-link'], `${t}: ${JSON.stringify(s)}`);
+            assert.deepStrictEqual(s.shown, ['open-link', 'edit-link', 'link-attributes'], 'Edit… (first focus) stays');
+            assert.strictEqual(s.more, 'More actions: Attributes of Bold…, Remove link, keep text');
+            assert.ok(s.moreLast && s.inside && !s.spills, JSON.stringify(s));
+            assert.ok(String(s.description).includes('Link'), `${t}: a rest on the bar names the object: ${s.description}`);
+            await page.click(barMore);
+            await page.waitForSelector(`${BAR} .mep-object-menu`);
+            await delay(80);
+            assert.deepStrictEqual(await moreMenu(), ['inline-attributes:Attributes of Bold…:menuitem', '---', 'remove-link:Remove link, keep text:menuitem']);
+            await shot(`bars-420-link-open-${t}.png`);
+            if (t === 'light') {
+                await page.focus(`${BAR} .mep-object-menu [data-entry="remove-link"]`);
+                await page.keyboard.press('Enter');
+                await delay(200);
+                assert.strictEqual(await page.$('.ProseMirror a'), null, 'the link removed');
+                assert.match(await page.$eval('.mep-hint', el => el.textContent ?? ''), /^Link removed — (Ctrl|Cmd)\+Z$/);
+            } else {
+                await page.keyboard.press('Escape');
+            }
+        }
+    });
+
+    test('b2 a table at 420: Delete table, then Edit source, moved; "…" lists Edit source, a divider, Delete table; Alt+Enter focuses Row, End "…", Enter opens it, Esc returns', async function () {
+        this.timeout(60000);
+        for (const [theme, t] of THEMES) {
+            await applyTheme(page, theme);
+            await resize(420, 640);
+            await showDocument();
+            await barAt('Alpha', 2, 'table');
+            const s = await barState();
+            assert.deepStrictEqual([...s.moved].sort(), ['delete-table', 'edit-source'], `${t}: ${JSON.stringify(s)}`);
+            assert.deepStrictEqual(s.shown, ['row', 'column', 'align', 'block-attributes']);
+            assert.strictEqual(s.more, 'More actions: Edit source, Delete table');
+            await page.keyboard.down('Alt');
+            await page.keyboard.press('Enter');
+            await page.keyboard.up('Alt');
+            await delay(100);
+            assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.verb), 'row', 'Alt+Enter focuses Row');
+            await page.keyboard.press('End');
+            assert.ok(await page.evaluate(sel => document.activeElement === document.querySelector(sel), barMore), 'End focuses "…", never a hidden verb');
+            await page.keyboard.press('Enter');
+            await page.waitForSelector(`${BAR} .mep-object-menu`);
+            await delay(80);
+            assert.deepStrictEqual(await moreMenu(), ['edit-source:Edit source:menuitem', '---', 'delete-table:Delete table:menuitem']);
+            await shot(`bars-420-table-open-${t}.png`);
+            await page.keyboard.press('Escape');
+            await delay(50);
+            assert.ok(await page.evaluate(sel => document.activeElement === document.querySelector(sel), barMore), 'Esc returns to "…"');
+            await page.keyboard.press('Escape');
+        }
+    });
+
+    test('b3 at 520 no bar needs "…"; the admonition\'s title is its short form "Warning", at 1280 "Warning admonition"; the link\'s title hidden', async function () {
+        this.timeout(60000);
+        for (const [theme, t] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as const) {
+            await applyTheme(page, theme);
+            await resize(520);
+            await showDocument();
+            for (const [needle, at, kind] of [['bold docs', 3, 'link'], ['Alpha', 2, 'table'], ['Admonition body', 3, 'admonition'], ['Inside the container', 3, 'container']] as const) {
+                await barAt(needle, at, kind);
+                const s = await barState();
+                assert.strictEqual(s.more, null, `520 ${t}: ${kind} has no "…": ${JSON.stringify(s)}`);
+                assert.deepStrictEqual(s.moved, [], `520 ${t}: ${kind}`);
+                if (kind === 'admonition') {
+                    assert.strictEqual(s.title, 'Warning', `520 ${t}: the short title`);
+                    await shot(`bars-520-${t}.png`);
+                }
+                if (kind === 'link') {
+                    assert.strictEqual(s.title, null, `520 ${t}: the link's title hidden`);
+                }
+            }
+        }
+        await applyTheme(page, LIGHT_MODERN);
+        await resize(1280);
+        await barAt('Admonition body', 3, 'admonition');
+        assert.strictEqual((await barState()).title, 'Warning admonition');
+    });
+
+    test('b4 420 → 1280: every verb back on the bar, "…" hidden, full labels', async function () {
+        this.timeout(30000);
+        await resize(420, 640);
+        await showDocument();
+        await barAt('Alpha', 2, 'table');
+        assert.ok((await barState()).moved.length > 0);
+        await resize(1280);
+        await delay(200);
+        const s = await barState();
+        assert.deepStrictEqual(s.moved, []);
+        assert.strictEqual(s.more, null);
+        assert.ok(await page.$eval(`${BAR} [data-verb="delete-table"]`, el => el.textContent === 'Delete table'), 'the full label');
+    });
+
+    test('b5 at 240 a set-verb in "…": its entry has a chevron; Enter closes "…" and opens its menu under "…"; Esc returns to "…"', async function () {
+        this.timeout(30000);
+        await resize(240, 640);
+        await showDocument();
+        await barAt('Alpha', 2, 'table');
+        const s = await barState();
+        assert.ok(s.moved.includes('align'), `Align moved at 240: ${JSON.stringify(s)}`);
+        await page.click(barMore);
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        await delay(80);
+        const entries = await moreMenu();
+        assert.ok(entries.includes('align:Align:menuitem:>'), `Align's entry has a chevron: ${entries}`);
+        await page.focus(`${BAR} .mep-object-menu [data-entry="align"]`);
+        await page.keyboard.press('Enter');
+        await delay(120);
+        const opened = await page.$eval(`${BAR} .mep-object-menu`, (panel, sel) => {
+            const more = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+            const r = panel.getBoundingClientRect();
+            return { entries: Array.from(panel.querySelectorAll<HTMLElement>('[data-entry]')).map(e => e.dataset.entry), under: r.top >= more.bottom - 0.5 || r.bottom <= more.top + 0.5 };
+        }, barMore);
+        assert.ok(!opened.entries.includes('align') && opened.under, `Align's own menu, under "…": ${JSON.stringify(opened)}`);
+        await shot('bars-240-table-align-light.png');
+        await page.keyboard.press('Escape');
+        await delay(50);
+        assert.ok(await page.evaluate(sel => document.activeElement === document.querySelector(sel), barMore), 'Esc returns to "…"');
+        await page.keyboard.press('Escape');
+    });
 });
