@@ -228,17 +228,19 @@ export function moved(a: Placement | null, b: Placement): boolean {
 
 /**
  * A menu panel of `size` under its opener (`align` 'start': its left at the
- * opener's, 'end': its right at the opener's), `GAP` away, flipping above
- * where the window ends; kept inside `frame`.
+ * opener's, 'end': its right at the opener's), `gap` away (`GAP`; a submenu
+ * under its entry has none: a band between them would belong to the next
+ * entry, whose pointer-enter closes the submenu), flipping above where the
+ * window ends; kept inside `frame`.
  */
-export function placeMenuAt(size: Size, opener: Rect, frame: Frame, align: 'start' | 'end' = 'start'): Placement {
+export function placeMenuAt(size: Size, opener: Rect, frame: Frame, align: 'start' | 'end' = 'start', gap = GAP): Placement {
     const left = align === 'end' ? opener.right - size.width : opener.left;
     const x = Math.max(frame.columnLeft, Math.min(left, frame.layerEdge - size.width));
-    const below = opener.bottom + GAP;
+    const below = opener.bottom + gap;
     if (below + size.height <= frame.floor) {
         return { x, y: below, side: 'below' };
     }
-    const above = opener.top - GAP - size.height;
+    const above = opener.top - gap - size.height;
     if (above >= frame.ceiling) {
         return { x, y: above, side: 'above' };
     }
@@ -477,8 +479,9 @@ export function placeMenu(panel: HTMLElement, opener: Element, parentPanel?: HTM
         if (p.side === 'none') {
             // Neither side of the parent has room (a narrow window, a menu moved into "…"): under its
             // entry, over the parent — the panel is later in the page than its parent, so it is painted
-            // above it, and the entry it was opened from stays in sight.
-            p = placeMenuAt(size, r, frame);
+            // above it, and the entry it was opened from stays in sight. Butted against the entry, no
+            // `GAP`: the band would be the next entry's, and the pointer entering it closes the submenu.
+            p = placeMenuAt(size, r, frame, 'start', 0);
         }
     } else {
         p = placeMenuAt(size, r, frame, align);

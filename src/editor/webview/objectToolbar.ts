@@ -1233,12 +1233,14 @@ class ObjectToolbarView implements PluginView {
     }
 
     /** The view applied `transactions` (`appendTransaction`): followed while `act` moves the focus. */
-    applied(transactions: readonly Transaction[]): void {
+    applied(transactions: readonly Transaction[], newState: EditorState): void {
+        let changed = false;
         for (const tr of transactions) {
             this.focusMoves?.appendMapping(tr.mapping);
-            if (tr.docChanged) {
-                this.followDismissals(tr.mapping);
-            }
+            changed = changed || tr.docChanged;
+        }
+        if (changed) {
+            this.followDismissals(transactions, newState.doc);
         }
     }
 
@@ -1253,9 +1255,14 @@ class ObjectToolbarView implements PluginView {
      * hold a position): a host resync that inserts above the caret's object
      * must not end the dismissal, so the keys follow the change — all at once,
      * so two that shift onto each other do not collide. An object the change
-     * deleted has nothing to be dismissed from: its dismissal ends.
+     * deleted has nothing to be dismissed from: its dismissal ends. Whether it
+     * is gone is read from the NEW document — a step that replaces a node's
+     * markup at its own position (the fidelity repair on a block's first edit)
+     * reports the position deleted though the object is still there: a node
+     * object is gone where no object of its kind stands at the mapped place, a
+     * mark's run where a step deleted across it.
      */
-    private followDismissals(mapping: Mapping): void {
+    private followDismissals(transactions: readonly Transaction[], doc: EditorState['doc']): void {
         const live = new Set(this.slot.dismissedOf(''));
         const moves = new Map<string, string | null>();
         const next = new Map<string, Dismissal>();
@@ -1263,12 +1270,18 @@ class ObjectToolbarView implements PluginView {
             if (!live.has(key)) {
                 continue;
             }
-            const at = mapping.mapResult(d.from, 1);
-            if (at.deleted) {
+            let pos = d.from;
+            let across = false;
+            for (const tr of transactions) {
+                const result = tr.mapping.mapResult(pos, 1);
+                pos = result.pos;
+                across = across || result.deletedAcross;
+            }
+            if (this.dismissedGone(d, pos, across, doc)) {
                 this.slot.caretLeft(key);
                 continue;
             }
-            const moved: Dismissal = { ...d, from: at.pos };
+            const moved: Dismissal = { ...d, from: pos };
             moves.set(key, barKey(d.trigger, moved));
             next.set(barKey(d.trigger, moved), moved);
         }
@@ -1277,6 +1290,15 @@ class ObjectToolbarView implements PluginView {
         for (const [key, d] of next) {
             this.dismissals.set(key, d);
         }
+    }
+
+    /** Whether what `d` is about is gone from `doc`, the change having mapped its place to `pos` (`followDismissals`). */
+    private dismissedGone(d: Dismissal, pos: number, deletedAcross: boolean, doc: EditorState['doc']): boolean {
+        if (d.kind === 'link' || d.kind === 'span' || d.kind === 'styled' || d.kind === 'holder') {
+            return deletedAcross;
+        }
+        const node = pos <= doc.content.size ? doc.nodeAt(pos) : null;
+        return node === null || objectOfNode(node, pos)?.kind !== d.kind;
     }
 
     destroy(): void {
@@ -2481,8 +2503,8 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
             toolbarViews.set(editorView, toolbar);
             return toolbar;
         },
-        appendTransaction(transactions) {
-            toolbar?.applied(transactions);
+        appendTransaction(transactions, _oldState, newState) {
+            toolbar?.applied(transactions, newState);
             return null;
         },
         props: {

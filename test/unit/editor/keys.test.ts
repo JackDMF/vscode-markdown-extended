@@ -87,4 +87,18 @@ suite('Editor keys: a binding as the platform names it', () => {
         assert.ok(!press('v', { ctrlKey: true, altKey: true }), 'Ctrl+Alt+V is no paste');
         assert.ok(press('v'), 'v alone is a character');
     });
+
+    test('r3-3: of the named keys only Backspace, Delete, Enter and Tab type; the arrows, Escape, Home, End, Page and the F-keys do not', () => {
+        const press = (key: string, m: Partial<Record<'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey', boolean>> = {}) =>
+            typesText({ key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...m });
+        for (const key of ['Backspace', 'Delete', 'Enter', 'Tab', 'a', ' ', '€']) {
+            assert.ok(press(key), key);
+        }
+        assert.ok(press('Tab', { shiftKey: true }), 'Shift+Tab outdents');
+        for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Escape', 'Home', 'End', 'PageUp', 'PageDown', 'Insert', 'F1', 'F5', 'F12', 'ContextMenu', 'Dead', 'Unidentified']) {
+            assert.ok(!press(key), key);
+            assert.ok(!press(key, { shiftKey: true }), `Shift+${key} selects, it changes nothing`);
+        }
+        assert.ok(!press('Tab', { altKey: true }), 'Alt+Tab is the window switcher');
+    });
 });
