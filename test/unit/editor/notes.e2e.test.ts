@@ -98,6 +98,10 @@ suite('Editor notes and links (e2e)', () => {
         const source = 'Alpha beta gamma.\n\nSecond paragraph.\n';
         await showDocument(source, 'Alpha');
         await selectText('beta');
+        // The editor has read the selection once its bubble is up: on a loaded machine the fixed wait in
+        // `selectText` was not always enough, and the note went in at the document's start, where the
+        // caret was before.
+        await page.waitForSelector('.mep-bubble:not([hidden])', { timeout: 5000 });
         await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
         await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden])');
         await page.click('.mep-menu[data-menu="annotation"] [data-action="sidenote"]');

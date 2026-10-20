@@ -118,9 +118,10 @@ export function probeBand(x: number, y: number, size: Size): Rect {
  * [columnLeft, layerEdge - width]. Both free: the one whose band covers no
  * text (`covered`); text under both: `bothCovered` (below unless an inline
  * object's bar), else below. Neither qualifies: an anchor running out of the
- * window — past either edge — keeps the layer at the visible bottom edge (the
+ * window while still in view keeps the layer at the visible bottom edge (the
  * top one where that is on the caret's line); otherwise below the caret's line,
- * or — no caret — below the anchor, either way kept inside the window.
+ * else above it, and only where neither fits kept inside the window — or, no
+ * caret, below the anchor. An anchor wholly out of the window pins nothing.
  */
 export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Context = {}): Placement {
     // A layer wider than the room was fitted to it before (`ObjectBar.fit`): this clamps, never shrinks.
@@ -149,19 +150,32 @@ export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Contex
     if (aboveOk) {
         return { x, y: above, side: 'above' };
     }
-    if (anchor.top < frame.ceiling || anchor.bottom > frame.floor) {
+    const inView = anchor.bottom > frame.ceiling && anchor.top < frame.floor;
+    if (inView && (anchor.top < frame.ceiling || anchor.bottom > frame.floor)) {
         // A table, a source block or a selection that runs out of the window — past
-        // either edge, no place qualifying: the bar sticks to the visible edge.
+        // either edge, no place qualifying: the bar sticks to the visible edge. An
+        // anchor wholly out of the window (scrolled away) is none of that: its layer
+        // is not pinned over text that has nothing to do with it.
         const y = frame.floor - GAP - size.height;
         const onCaret = ctx.caret ? overlaps(rectAt(x, y, size), ctx.caret) : false;
         return { x, y: onCaret ? frame.ceiling + GAP : y, side: 'edge' };
     }
-    // Under the caret's line where nothing else qualifies — but inside the window.
+    // Where nothing else qualifies: off the caret's line — below it where that is inside the
+    // window, else above it — and only where neither fits, kept inside the window.
     const lowest = Math.max(frame.ceiling + GAP, frame.floor - size.height);
     if (ctx.caret) {
-        return { x, y: Math.min(ctx.caret.bottom + GAP, lowest), side: 'caret' };
+        const underCaret = ctx.caret.bottom + GAP;
+        if (underCaret + size.height <= frame.floor) {
+            return { x, y: underCaret, side: 'caret' };
+        }
+        const overCaret = ctx.caret.top - GAP - size.height;
+        if (overCaret >= frame.ceiling + GAP) {
+            return { x, y: overCaret, side: 'caret' };
+        }
+        return { x, y: Math.min(underCaret, lowest), side: 'caret' };
     }
-    return { x, y: Math.min(below, lowest), side: 'below' };
+    // No caret: below the anchor, inside the window — unless the anchor is out of it, where its layer is too.
+    return { x, y: inView ? Math.min(below, lowest) : below, side: 'below' };
 }
 
 /**
@@ -189,6 +203,22 @@ export function placeBeside(size: Size, anchor: Rect, alignTop: number, frame: F
         }
     }
     return { x: right, y, side: 'none' };
+}
+
+/**
+ * `keys` after each key in `moves` followed it to its new key — or ended, where
+ * it maps to `null`. Built in one go from the old set, so a key that shifts
+ * onto another one's old name takes nothing from it.
+ */
+export function rekeyed(keys: Iterable<string>, moves: ReadonlyMap<string, string | null>): Set<string> {
+    const next = new Set<string>();
+    for (const key of keys) {
+        const to = moves.has(key) ? moves.get(key) : key;
+        if (to !== null && to !== undefined) {
+            next.add(to);
+        }
+    }
+    return next;
 }
 
 /** Whether `b` differs from `a` by a pixel: the inert time is armed again only then. */
@@ -434,7 +464,7 @@ export function placeLayer(el: HTMLElement, anchor: Rect, opts: PlaceOptions): P
  * A menu panel (`position: fixed`) under its opener — its left at the
  * opener's, or its right for `align` 'end' — flipping above where the window
  * ends; a submenu (`parentPanel`) beside its parent panel at the opener's
- * top, right else left, kept inside the window where neither fits.
+ * top, right else left, else — neither fits — under its entry, over the parent.
  */
 export function placeMenu(panel: HTMLElement, opener: Element, parentPanel?: HTMLElement, align: 'start' | 'end' = 'start'): Placement {
     const frame = VIEWPORT();
@@ -445,7 +475,10 @@ export function placeMenu(panel: HTMLElement, opener: Element, parentPanel?: HTM
         const parent = rectOf(parentPanel.getBoundingClientRect());
         p = placeBeside(size, parent, r.top - MENU_PADDING, frame, {}, 'none');
         if (p.side === 'none') {
-            p = { x: Math.max(frame.columnLeft, Math.min(parent.right + GAP, frame.layerEdge - size.width)), y: p.y, side: 'none' };
+            // Neither side of the parent has room (a narrow window, a menu moved into "…"): under its
+            // entry, over the parent — the panel is later in the page than its parent, so it is painted
+            // above it, and the entry it was opened from stays in sight.
+            p = placeMenuAt(size, r, frame);
         }
     } else {
         p = placeMenuAt(size, r, frame, align);
@@ -555,7 +588,8 @@ function sameFrame(a: Frame, b: Frame): boolean {
  * layers) and places it again on a scroll, a resize, the chrome moving
  * (`CHROME_MOVED`) or a font loading — once per frame, and only when the
  * anchor, the size or the frame changed. A layer that appeared or moved
- * ignores the pointer for `INERT_MS` (`data-inert`); the keyboard is untouched.
+ * ignores the pointer for `INERT_MS` (`data-inert`) — a field, asked for and
+ * focused, excepted; the keyboard is untouched.
  */
 export class LayerSlot {
     private occupant: LayerClaim | null = null;
@@ -607,9 +641,10 @@ export class LayerSlot {
     /**
      * Take the slot with `claim`, its element shown by the owner: a 'hover'
      * claim only when the slot is empty (or holds a hover); every other kind
-     * displaces the occupant. Refused while `key` is dismissed or a row menu
-     * is open, unless `force` (Alt+Enter). The occupant asking again is placed
-     * again where its anchor, size or frame changed.
+     * displaces the occupant — except a field, which only another field or a
+     * `force` claim displaces (its text would be lost). Refused while `key` is
+     * dismissed or a row menu is open, unless `force` (Alt+Enter). The occupant
+     * asking again is placed again where its anchor, size or frame changed.
      */
     request(claim: LayerClaim, opts: { force?: boolean } = {}): boolean {
         if (this.destroyed) {
@@ -622,6 +657,10 @@ export class LayerSlot {
                 return false;
             }
             if ((this.dismissed.has(claim.key) || this.suppressed) && !opts.force) {
+                return false;
+            }
+            // A field holds what its person typed: only a field, or a forced claim (Alt+Enter), takes its place.
+            if (current !== null && current.kind === 'field' && claim.kind !== 'field' && !opts.force) {
                 return false;
             }
         }
@@ -637,7 +676,8 @@ export class LayerSlot {
         }
         claim.el.hidden = this.hides(claim);
         if (!this.hides(claim)) {
-            this.place(appeared);
+            // A claim whose anchor is gone, on a slot that was empty, leaves it empty: nobody left, nobody to tell.
+            this.place(appeared, current !== null);
         }
         if (this.occupant === null) {
             // The anchor was gone: the claim ended as it was made.
@@ -690,10 +730,16 @@ export class LayerSlot {
         this.dismissed.delete(key);
     }
 
-    /** What `from` was about has moved (a change of the document shifted it): its dismissal follows to `to`. */
-    rekey(from: string, to: string): void {
-        if (from !== to && this.dismissed.delete(from)) {
-            this.dismissed.add(to);
+    /**
+     * What the dismissals were about has moved (a change of the document shifted
+     * it): each key in `moves` follows to its new key, or ends where it maps to
+     * `null`. All at once, so keys shifting onto one another do not collide.
+     */
+    rekeyAll(moves: ReadonlyMap<string, string | null>): void {
+        const next = rekeyed(this.dismissed, moves);
+        this.dismissed.clear();
+        for (const key of next) {
+            this.dismissed.add(key);
         }
     }
 
@@ -786,10 +832,13 @@ export class LayerSlot {
         this.listeners.push([target, type, listener, capture]);
     }
 
-    private vacate(): void {
+    /** The occupant is gone; `announce` false where there was none before it (a claim refused at its first placement). */
+    private vacate(announce = true): void {
         this.occupant = null;
         this.placed = null;
-        this.announceFree();
+        if (announce) {
+            this.announceFree();
+        }
     }
 
     /** The slot is empty: its waiters hear it after the current task, if it still is. */
@@ -814,15 +863,20 @@ export class LayerSlot {
         }
     }
 
-    /** Place the occupant; `appeared`: it was not shown a moment ago, so the pointer is refused whether or not it moved. */
-    private place(appeared: boolean): void {
+    /**
+     * Place the occupant; `appeared`: it was not shown a moment ago, so the
+     * pointer is refused whether or not it moved. `hadOccupant`: something held
+     * the slot before it — only then does its anchor being gone free the slot
+     * for the waiters.
+     */
+    private place(appeared: boolean, hadOccupant = true): void {
         const claim = this.occupant;
         if (claim === null) {
             return;
         }
         const anchor = claim.anchor();
         if (anchor === null) {
-            this.vacate();
+            this.vacate(hadOccupant);
             claim.hidden('released');
             return;
         }
@@ -846,9 +900,22 @@ export class LayerSlot {
         const before = this.written?.el === claim.el ? this.written.at : null;
         this.written = { el: claim.el, at };
         this.placed = { key: claim.key, anchor, width, height, frame, avoid };
-        if (appeared || moved(before, at)) {
+        if (claim.kind === 'field') {
+            // A field was asked for and has the focus: nothing under the pointer is meant for the text, and its
+            // set-verb menu opens inside it — no inert time (a bar the field replaced gives up what it had).
+            this.disarm(claim.el);
+        } else if (appeared || moved(before, at)) {
             this.arm(claim.el);
         }
+    }
+
+    /** `el` takes the pointer again before its inert time is over. */
+    private disarm(el: HTMLElement): void {
+        if (this.inertEl === el) {
+            clearTimeout(this.inertTimer);
+            this.inertEl = null;
+        }
+        delete el.dataset.inert;
     }
 
     /** The pointer is refused by `el` for `INERT_MS` (`.mep-layer[data-inert]`). */

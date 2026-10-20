@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { Frame, GAP, Rect, moved, placeBeside, placeMenuAt, placeStacked, probeBand } from '../../../src/editor/webview/placement';
+import { Frame, GAP, HideReason, LayerClaim, LayerSlot, Rect, moved, placeBeside, placeMenuAt, placeStacked, probeBand, rekeyed } from '../../../src/editor/webview/placement';
 
 /**
  * The one placement policy every floating layer reads (`placement.ts`): below
@@ -97,11 +97,33 @@ suite('Editor placement: the policy', () => {
         assert.deepStrictEqual(placeStacked(size, runsOut, frame), { x: 60, y: 250 - GAP - 28, side: 'edge' });
     });
 
-    test('r1-6: under the caret\'s line is kept inside the window where nothing else qualifies', () => {
+    test('r1-6b: where nothing else qualifies and under the caret\'s line does not fit, the layer goes above it, never on it', () => {
         const anchor = rect(80, 100, 140, 118);
         const caret = rect(26, 235, 604, 248);
         const blocked = [rect(0, 60, 700, 160)];
-        assert.deepStrictEqual(placeStacked(size, anchor, frame, { caret, avoid: blocked }), { x: 80, y: 250 - 28, side: 'caret' });
+        assert.deepStrictEqual(placeStacked(size, anchor, frame, { caret, avoid: blocked }), { x: 80, y: 235 - GAP - 28, side: 'caret' });
+        // Under the caret's line where that fits.
+        assert.deepStrictEqual(placeStacked(size, anchor, frame, { caret: rect(26, 170, 604, 190), avoid: blocked }), { x: 80, y: 190 + GAP, side: 'caret' });
+    });
+
+    test('r2-2: the clamp into the window comes only after under and above the caret\'s line both failed', () => {
+        const anchor = rect(80, 30, 140, 48);
+        const short: Frame = { columnLeft: 26, layerEdge: 604, ceiling: 27, floor: 80 };
+        assert.deepStrictEqual(placeStacked(size, anchor, short, { caret: rect(26, 40, 604, 62) }), { x: 80, y: 80 - 28, side: 'caret' });
+    });
+
+    test('r2-1: an anchor wholly above the window pins nothing to its edge, one wholly below neither', () => {
+        const above = rect(60, -200, 300, -150);
+        const below = rect(60, 400, 300, 450);
+        const caret = rect(26, 100, 604, 122);
+        assert.strictEqual(placeStacked(size, above, frame).side, 'below');
+        assert.ok(placeStacked(size, above, frame).y < frame.ceiling, 'it stays out of the window with its anchor');
+        assert.strictEqual(placeStacked(size, below, frame).side, 'below');
+        assert.ok(placeStacked(size, below, frame).y >= frame.floor, 'it stays out of the window with its anchor');
+        assert.deepStrictEqual(placeStacked(size, above, frame, { caret }), { x: 60, y: 126, side: 'caret' });
+        assert.deepStrictEqual(placeStacked(size, below, frame, { caret }), { x: 60, y: 126, side: 'caret' });
+        // Running out of the window while still in it keeps the edge rule.
+        assert.strictEqual(placeStacked(size, rect(60, -200, 300, 120), frame, { avoid: [rect(0, 0, 700, 400)] }).side, 'edge');
     });
 
     test('r1-13: text under both sides: below, but above for an inline object\'s bar; a side free of text always wins', () => {
@@ -116,5 +138,79 @@ suite('Editor placement: the policy', () => {
         assert.strictEqual(placeStacked(size, anchor, frame, { covered: none, bothCovered: 'above' }).side, 'below', 'free on both sides: below');
         assert.strictEqual(placeStacked(size, anchor, frame, { covered: below, bothCovered: 'above' }).side, 'above', 'text only below');
         assert.strictEqual(placeStacked(size, anchor, frame, { covered: above, bothCovered: 'above' }).side, 'below', 'text only above: the free side, below');
+    });
+
+    test('r2-5: dismissal keys follow a change in one go: two that shift onto each other do not collide, a deleted one ends', () => {
+        const keys = ['bar@link@10', 'bar@link@14', 'hover@table@30', 'sel@3-5'];
+        const moves = new Map<string, string | null>([['bar@link@10', 'bar@link@14'], ['bar@link@14', 'bar@link@18'], ['hover@table@30', null]]);
+        assert.deepStrictEqual(Array.from(rekeyed(keys, moves)).sort(), ['bar@link@14', 'bar@link@18', 'sel@3-5']);
+        // One after the other, the first move would have been eaten by the second.
+        const oneByOne = new Set(keys);
+        for (const [from, to] of moves) {
+            if (oneByOne.delete(from) && to !== null) {
+                oneByOne.add(to);
+            }
+        }
+        assert.notDeepStrictEqual(Array.from(oneByOne).sort(), ['bar@link@14', 'bar@link@18', 'sel@3-5']);
+    });
+});
+
+/**
+ * The slot's bookkeeping without a page: an instance with the state `request`
+ * and `vacate` read, its placing never reached (a claim whose anchor is gone,
+ * or one that is refused).
+ */
+suite('Editor placement: the slot\'s state', () => {
+    interface Bare {
+        occupant: LayerClaim | null;
+        request(claim: LayerClaim, opts?: { force?: boolean }): boolean;
+        onFreed(listener: () => void): () => void;
+        dismiss(key: string): void;
+    }
+    const bare = (): Bare => {
+        const slot = Object.create(LayerSlot.prototype) as Bare;
+        Object.assign(slot, { dismissed: new Set<string>(), menuOpen: false, placed: null, destroyed: false, freed: new Set<() => void>(), listeners: [] });
+        slot.occupant = null;
+        return slot;
+    };
+    const claim = (kind: LayerClaim['kind'], key: string, anchorGone = true, log: string[] = []): LayerClaim => ({
+        kind,
+        key,
+        el: { hidden: false } as unknown as HTMLElement,
+        anchor: () => (anchorGone ? null : { left: 0, top: 0, right: 1, bottom: 1 }),
+        valid: () => true,
+        hidden: (reason: HideReason) => {
+            log.push(`${key}:${reason}`);
+        },
+    });
+    const later = () => new Promise<void>(resolve => setTimeout(resolve, 20));
+
+    test('r2-4: a bar\'s claim does not displace a field\'s — the typed text would be lost — unless forced', () => {
+        const slot = bare();
+        const log: string[] = [];
+        slot.occupant = claim('field', 'field@3-3', true, log);
+        assert.strictEqual(slot.request(claim('bar', 'bar@link@3'), {}), false);
+        assert.strictEqual(slot.occupant?.key, 'field@3-3', 'the field still holds the slot');
+        assert.deepStrictEqual(log, [], 'and was not told to hide');
+        assert.strictEqual(slot.request(claim('bubble', 'sel@3-5')), false);
+        assert.strictEqual(slot.request(claim('hover', 'hover@table@9')), false);
+        assert.deepStrictEqual(log, []);
+        slot.request(claim('bar', 'bar@link@3'), { force: true });
+        assert.deepStrictEqual(log, ['field@3-3:displaced'], 'Alt+Enter takes it');
+    });
+
+    test('r2-8: a claim whose anchor is gone on an empty slot announces nothing; one that displaced an occupant does', async () => {
+        const slot = bare();
+        let heard = 0;
+        slot.onFreed(() => {
+            heard++;
+        });
+        assert.strictEqual(slot.request(claim('bubble', 'sel@1-4')), false);
+        await later();
+        assert.strictEqual(heard, 0, 'nobody left, nobody to tell');
+        slot.occupant = claim('bar', 'bar@link@3', false);
+        assert.strictEqual(slot.request(claim('bubble', 'sel@1-4')), false);
+        await later();
+        assert.strictEqual(heard, 1, 'the bar was displaced and the slot is free again');
     });
 });
