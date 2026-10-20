@@ -5,6 +5,7 @@ import { Transform } from 'prosemirror-transform';
 import type { Mapping } from 'prosemirror-transform';
 import { ALPHANUMERIC, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, opensInsideWords, plainWikiEmbed, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { AttrPair, NOTE_SYNTAX_CHARS, fenceHolder, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
+import { DEFAULT_FENCE, fenceOf, minimumFence, openingLineOf } from './fences';
 import { Token } from '../@types/markdown-it';
 import { AttrsCut, attrsCutsIn, attrsGivenTo } from '../plugin/markdownItAttrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
@@ -2406,21 +2407,8 @@ function paragraphMarkdown(node: Node): string {
     return inlineMarkdown(node, true);
 }
 
-/**
- * The fence a fenced code block is written with, before it is lengthened past
- * a run in its content: its own, unless it has none (an emptied indented
- * block) or holds an info string with a backtick, which no backtick fence
- * takes — tildes then, backticks otherwise. Where its literal is read
- * (`fenceHolder`) is decided by the same fence.
- */
-export function fenceOf(node: Node): string {
-    const params = String(node.attrs.params ?? '');
-    const markup = String(node.attrs.markup ?? '```');
-    if (markup === '' || (markup.startsWith('`') && params.includes('`'))) {
-        return params.includes('`') ? '~~~' : '```';
-    }
-    return markup;
-}
+/** The fence a fenced code block is written with (`fences.ts`), here where the save and its readers have always found it. */
+export { fenceOf };
 
 /**
  * Where the save writes `node`'s literal, as `attrsReadAt` knows it: the
@@ -2483,23 +2471,19 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
         },
         code_block(state, node) {
             const content = node.textContent;
-            const params = String(node.attrs.params ?? '');
-            if (String(node.attrs.markup ?? '```') === '' && content.trim() !== '') {
+            if (String(node.attrs.markup ?? DEFAULT_FENCE) === '' && content.trim() !== '') {
                 // Indented, as written.
                 state.text(content.split('\n').map(l => (l === '' ? '' : '    ' + l)).join('\n'), false);
                 state.closeBlock(node);
                 return;
             }
-            const markup = fenceOf(node);
-            const ch = markup[0];
-            let longest = 0;
-            for (const run of content.match(new RegExp(`^ {0,3}\\${ch}+`, 'gm')) ?? []) {
-                longest = Math.max(longest, run.trim().length);
-            }
-            const fence = longest >= markup.length ? ch.repeat(longest + 1) : markup;
-            // A fence's attribute literal stands on its opening line (`blocks.ts`).
-            const suffix = node.attrs.attrsSuffix as string | null;
-            state.write(fence + params + (suffix ? ` ${suffix}` : '') + '\n');
+            // Lengthened past a run inside (`minimumFence`); a fence's attribute literal stands on its opening line (`blocks.ts`).
+            const fence = minimumFence(fenceOf(node), content);
+            state.write(openingLineOf({
+                markup: fence,
+                params: String(node.attrs.params ?? ''),
+                attrsSuffix: node.attrs.attrsSuffix as string | null,
+            }) + '\n');
             state.text(content, false);
             state.write('\n');
             state.write(fence);
