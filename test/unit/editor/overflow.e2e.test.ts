@@ -490,8 +490,16 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
     const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
     const barMore = `${BAR} .mep-object-more`;
 
-    /** The caret at `needle` (+`at`), and its bar shown for `kind`. */
+    /**
+     * The caret at `needle` (+`at`), and its bar shown for `kind`. The caret goes
+     * through plain text first: what Esc dismissed stays dismissed until the
+     * caret has left the object (placement review 2), also across a document
+     * sent again, so an earlier test's Esc would keep this bar away.
+     */
     const barAt = async (needle: string, at: number, kind: string) => {
+        // At the top: a page an earlier test left scrolled has "Plain" out of the window, where no click reaches it.
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await clickText(page, 'Plain', 2);
         await clickText(page, needle, at);
         await page.waitForSelector(`${BAR}[data-object="${kind}"]`, { timeout: 5000 });
         await delay(150);

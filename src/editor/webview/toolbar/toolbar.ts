@@ -1642,8 +1642,8 @@ class ToolbarView implements PluginView {
     private place(menu: Menu): void {
         if (!menu.parent && menu.face) {
             placeMenu(menu.panel, menu.face, undefined, menu.alignEnd ? 'end' : 'start');
-        } else if (placeMenu(menu.panel, menu.opener as HTMLElement, (menu.parent as Menu).panel).side === 'none') {
-            placeMenu(menu.panel, menu.opener as HTMLElement);
+        } else {
+            placeMenu(menu.panel, menu.opener as HTMLElement, (menu.parent as Menu).panel);
         }
     }
 
