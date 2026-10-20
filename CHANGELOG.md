@@ -1,5 +1,20 @@
 # Change Log
 
+## Unreleased
+
+- Every floating layer — bars, bubble, fields, menus, cards, hints — follows one rule: below, else above.
+- A layer never covers the caret's line, the formatting row or another open layer.
+- A layer stands at its object's start and stops at the editor's edge, 4 px short of the margin lane.
+- One floating layer at a time: a selection shows the bubble, a caret rest the bar, a field replaces its bar.
+- The bar hides while you type and returns on a rest; Esc hides it until the caret leaves the object.
+- The bubble appears once the selection rests or on mouse-up, not while a keyboard selection grows.
+- A layer that just appeared or moved ignores the pointer for 250 ms.
+- The preview card stands beside its menu, else below or above it, never over the menu or its entry.
+- A bar on a block or selection taller than the window sticks to the window's edge.
+- The caret hint keeps clear of open layers and the margin lane, flipping above the caret's line when needed.
+- A hovered block shows a cue while another layer is up; its bar shows once the slot is free.
+- Menus open 4 px from their opener, like every layer.
+
 ## v4.8.0 — Bars, Labels and Notes That Fit
 
 ### ✨ Changes
