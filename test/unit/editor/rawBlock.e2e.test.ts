@@ -307,7 +307,14 @@ suite('Editor atoms with the real mouse (e2e)', () => {
     /** The editable table's Edit source: the table becomes a source block, its box open. */
     const openEditableTableSource = async () => {
         await clickText(page, 'first', 2);
-        const button = await page.waitForSelector(`${SELECTION_BAR}[data-object="table"] [data-verb="edit-source"]`, { visible: true });
+        const bar = `${SELECTION_BAR}[data-object="table"]`;
+        await page.waitForSelector(`${bar} [data-verb="edit-source"]`);
+        // A bar too narrow for it has Edit source in its "…" (wave 2 #2).
+        const moved = await page.$eval(`${bar} [data-verb="edit-source"]`, el => (el as HTMLElement).hidden);
+        if (moved) {
+            await clickAt(await centre(`${bar} .mep-object-more`));
+        }
+        const button = await page.waitForSelector(moved ? `${bar} .mep-object-menu [data-entry="edit-source"]` : `${bar} [data-verb="edit-source"]`, { visible: true });
         const box = await button?.boundingBox();
         assert.ok(box);
         await clickAt({ x: box.x + box.width / 2, y: box.y + box.height / 2 });

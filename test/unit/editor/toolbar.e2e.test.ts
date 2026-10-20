@@ -169,7 +169,7 @@ suite('Editor toolbar (e2e)', () => {
 
     test('every action is in its place once; menu entries are one height, samples fitted into them', async function () {
         this.timeout(15000);
-        const inMenus = await page.$$eval('.mep-menu:not([data-menu="more"]) [data-action]', els => els.map(e => (e as HTMLElement).dataset.action));
+        const inMenus = await page.$$eval('.mep-menu:not([data-menu="more"]):not([data-menu="bubble-more"]) [data-action]', els => els.map(e => (e as HTMLElement).dataset.action));
         assert.deepStrictEqual([...inMenus].sort(), TOOLBAR_ACTIONS.filter(a => menuOf(a) !== null).map(a => a.id).sort(), 'every action but the row\'s and the bubble\'s own is in a menu');
         for (const menu of ['block-type', 'formatting', 'annotation', 'insert']) {
             await openMenu(menu);

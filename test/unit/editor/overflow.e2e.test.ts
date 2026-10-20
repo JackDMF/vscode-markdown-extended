@@ -743,4 +743,27 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         assert.strictEqual(await page.$eval(panel('bubble-more'), el => (el as HTMLElement).hidden), true, 'the menu closed');
         assert.ok(await page.evaluate(() => (document.querySelector('.ProseMirror') as HTMLElement).innerHTML.includes('words')), 'the text is still there');
     });
+
+    test('r5 the row\'s "…" and a menu hosted in it hide the link\'s bar while open; it is back on close without a new rest', async function () {
+        this.timeout(30000);
+        await resize(420, 640);
+        await showDocument();
+        const bar = '.mep-object-toolbar[data-trigger="selection"][data-object="link"]';
+        await clickText(page, 'bold docs', 3);
+        await page.waitForSelector(`${bar}:not([hidden])`, { timeout: 5000 });
+        await page.focus(MORE);
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(`${panel('more')}:not([hidden])`);
+        await delay(80);
+        assert.ok(await page.$eval(bar, el => (el as HTMLElement).hidden), '"…" open: the bar hidden');
+        await page.focus(`${panel('more')} [data-submenu="insert"]`);
+        await page.keyboard.press('ArrowRight');
+        await page.waitForSelector(`${panel('insert')}:not([hidden])`);
+        await delay(80);
+        assert.ok(await page.$eval(bar, el => (el as HTMLElement).hidden), 'a hosted menu open: the bar hidden still');
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await delay(120);
+        assert.ok(await page.$eval(bar, el => !(el as HTMLElement).hidden), 'closed: the bar is back');
+    });
 });
