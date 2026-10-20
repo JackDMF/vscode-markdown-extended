@@ -781,6 +781,62 @@ suite('Editor placement (e2e)', () => {
         await clickBefore('Below it', 1);
     });
 
+    test('r3-1: Esc on a table\'s bar, a character typed in a cell: the bar stays hidden — the block\'s first edit re-marks it in place, which is no deletion; deleting the table ends the dismissal', async function () {
+        this.timeout(30000);
+        const doc = (cell: string) => `Alpha.\n\n| Kind | Where |\n| --- | --- |\n| ${cell} | second |\n\nAfter.\n`;
+        const shows = (text: string) => page.waitForFunction(t => document.querySelector('.ProseMirror')?.textContent?.includes(t), { timeout: 3000 }, text);
+        await showDocument(doc('first'), 'second');
+        await clickBefore('first', 2);
+        await waitBar();
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BAR), false, 'hidden by Esc');
+        await page.keyboard.type('x');
+        await shows('fixrst');
+        await delay(REST_MS * 2 + 200);
+        assert.strictEqual(await shown(BAR), false, 'still hidden after the typed character');
+        // The host's answer to the edit: the document again, the caret still in the cell.
+        await resendDocument(doc('fixrst'));
+        await delay(REST_MS * 2 + 200);
+        assert.strictEqual(await shown(BAR), false, 'still hidden after the resync');
+
+        // The table deleted, then back where it was: the dismissal did not outlive it.
+        await resendDocument('Alpha.\n\nAfter.\n');
+        await page.waitForFunction(() => !document.querySelector('.ProseMirror table'), { timeout: 3000 });
+        await resendDocument(doc('first'));
+        await shows('second');
+        await clickBefore('first', 2);
+        await waitBar();
+    });
+
+    test('r3-2: at 420 a submenu with no room beside stands against its entry: the pointer goes from the entry into it and it stays open', async function () {
+        this.timeout(20000);
+        await page.setViewport({ width: 420, height: 900 });
+        await showDocument('Alpha beta gamma.\n', 'Alpha');
+        await clickBefore('beta', 1);
+        await page.focus('.mep-toolbar .mep-menu-face[data-menu="insert"]');
+        await page.keyboard.press('ArrowDown');
+        await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])', { timeout: 3000 });
+        const opener = await box('.mep-menu[data-menu="insert"] [data-submenu="admonition"]');
+        assert.ok(opener);
+        const x = (opener.left + opener.right) / 2;
+        await page.mouse.move(x, (opener.top + opener.bottom) / 2);
+        await page.waitForSelector('.mep-menu[data-menu="admonition"]:not([hidden])', { timeout: 3000 });
+        await delay(300);
+        const sub = await box('.mep-menu[data-menu="admonition"]');
+        const first = await box('.mep-menu[data-menu="admonition"] .mep-menu-item:not([hidden])');
+        assert.ok(sub && first);
+        assert.ok(sub.top >= opener.bottom - 1 && sub.top <= opener.bottom + 1, `under its entry, against it: ${JSON.stringify({ opener, sub })}`);
+        // A pixel at a time: a band between the two would be the next entry's, and entering it closes the submenu.
+        for (let y = Math.round((opener.top + opener.bottom) / 2); y <= (first.top + first.bottom) / 2; y++) {
+            await page.mouse.move(x, y);
+        }
+        await delay(200);
+        assert.strictEqual(await shown('.mep-menu[data-menu="admonition"]:not([hidden])'), true, 'the submenu stays open under the pointer');
+        assert.strictEqual(await page.evaluate(() => document.querySelector('.mep-menu[data-menu="admonition"] .mep-menu-item:hover') !== null), true, 'the pointer is on its first entry');
+        await page.keyboard.press('Escape');
+    });
+
     test('r1-7: a character typed with AltGr or Option counts as typing: the bar hides at once', async function () {
         this.timeout(15000);
         await s2();

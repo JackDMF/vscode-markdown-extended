@@ -44,7 +44,8 @@ export interface TypingKey extends KeyChord {
  * (Ctrl or Cmd, not both), not an Alt command (Alt+Enter, Alt+arrow). Deleting
  * is typing whatever is held with it (Ctrl+Backspace deletes a word), and so
  * are the two shortcuts that change the text with no character of their own:
- * Ctrl or Cmd with V (paste) or X (cut). A
+ * Ctrl or Cmd with V (paste) or X (cut). Of the named keys only Backspace,
+ * Delete, Enter and Tab type. A
  * character made with Alt — Option on a Mac, AltGr on a German layout, which a
  * Windows browser reports as Ctrl+Alt with the AltGraph state on (`{ } [ ] @ \ ~`)
  * — is typing: a one-character key.
@@ -61,7 +62,8 @@ export function typesText(e: TypingKey): boolean {
         const key = e.key.toLowerCase();
         return !e.altKey && (key === 'v' || key === 'x');
     }
-    return e.altKey || altGraph ? e.key.length === 1 : true;
+    // A character, or Enter or Tab: the arrows, Escape, Home, End, PageUp/Down and the F-keys move or cancel and change nothing.
+    return e.key.length === 1 || (!e.altKey && !altGraph && (e.key === 'Enter' || e.key === 'Tab'));
 }
 
 /**

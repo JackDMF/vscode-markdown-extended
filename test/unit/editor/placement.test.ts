@@ -90,6 +90,13 @@ suite('Editor placement: the policy', () => {
         assert.deepStrictEqual(placeMenuAt(panel, rect(100, 500, 180, 526), viewport), { x: 100, y: 500 - GAP - 200, side: 'above' });
     });
 
+    test('r3-2: a submenu under its entry has no gap to it: the band would be the next entry\'s', () => {
+        const viewport: Frame = { columnLeft: 0, layerEdge: 800, ceiling: 0, floor: 600 };
+        const panel = { width: 260, height: 200 };
+        assert.deepStrictEqual(placeMenuAt(panel, rect(100, 100, 360, 126), viewport, 'start', 0), { x: 100, y: 126, side: 'below' });
+        assert.deepStrictEqual(placeMenuAt(panel, rect(100, 500, 360, 526), viewport, 'start', 0), { x: 100, y: 300, side: 'above' });
+    });
+
     test('r1-6: an anchor out of the window at the bottom only, no place qualifying, keeps the layer at the visible edge, off the caret', () => {
         const runsOut = rect(60, 60, 300, 400);
         const caret = rect(26, 215, 604, 245);
