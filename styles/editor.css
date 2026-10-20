@@ -384,6 +384,16 @@ img.mep-pending-range {
 .mep-menu-face[data-menu="block-type"] { min-width: 8.5em; justify-content: flex-start; }
 
 /*
+ * A row too narrow even for "…" with every tool in it and Export as its icon
+ * (`toolbar.ts`, `layoutRow`): the count and Export are pinned and never cut,
+ * so the block-type face gives — its type's name cuts to an ellipsis, the
+ * face and its chevron stay.
+ */
+.mep-toolbar.mep-row-tight > .mep-row-group:first-child { flex: 0 1 auto; min-width: 0; }
+.mep-toolbar.mep-row-tight .mep-menu-face[data-menu="block-type"] { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.mep-toolbar.mep-row-tight .mep-menu-face[data-menu="block-type"] > .mep-face-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/*
  * The chevron of everything that opens a list (`chevronNode`): a toolbar
  * menu's face, a submenu's entry, an object bar's set-verb. The codicon, dim,
  * no taller than the line.
@@ -544,6 +554,8 @@ img.mep-pending-range {
 .mep-entry-glyph .mep-sample > hr { width: 28px !important; }
 /* A sidebar's glyph stands on its side of the swatch. */
 .mep-entry-glyph:has(.left-sidebar) { justify-content: flex-start; padding-left: 3px; }
+/* The bubble's "…" draws a note's face glyph, the whole word: clipped at its right end, where it still reads "sidenot", not at both. */
+.mep-menu[data-menu="bubble-more"] .mep-entry-glyph:has(.sn-anchor, .mn-anchor) { justify-content: flex-start; padding-left: 3px; }
 .mep-entry-glyph:has(.right-sidebar) { justify-content: flex-end; padding-right: 3px; }
 .mep-entry-glyph table { font-size: 9px; line-height: 10px; }
 .mep-entry-glyph table :is(th, td) { padding: 0 3px; }
@@ -1539,6 +1551,13 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     margin-right: 2px;
 }
 .mep-face-icon > .codicon { font-size: 14px; line-height: 1; }
+/*
+ * Export in a row too narrow for its name (`toolbar.ts`, `exportIconOnly`):
+ * the icon and the chevron alone. Its name is its accessible name and its
+ * hover; the margin the icon keeps before the label goes with the label.
+ */
+.mep-menu-face.mep-face-icononly > .mep-face-label { display: none; }
+.mep-menu-face.mep-face-icononly > .mep-face-icon { margin-right: 0; }
 /* The running format's entry in Export's menu: the same spinner before its name (`toolbar.ts`, `updateDocumentFace`). */
 .mep-entry-busy { display: inline-flex; flex: none; align-items: center; }
 .mep-entry-busy > .codicon { font-size: 14px; line-height: 1; }

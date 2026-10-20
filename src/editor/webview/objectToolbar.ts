@@ -72,7 +72,7 @@ import { attributesStep, holderAttributesStep } from './attributes';
 import { currentReadsAttrs } from '../inlineEngine';
 import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
 import { barSeparator, followPointer, selectionWantsBubble, separator } from './toolbar/toolbar';
-import { moreControl, moreName, moveUntilFits, overflows } from './overflow';
+import { buildMoreEntry, fitWithMore, moreControl, moreName, overflows } from './overflow';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
@@ -468,8 +468,13 @@ class ObjectBar {
     private moved: { verb: Verb; el: HTMLButtonElement }[] = [];
     /** The title, and its short form, as the presentation gave them. */
     private title = { label: '', short: undefined as string | undefined };
-    /** A set-verb's open menu: its panel, the verb's button, its entries. */
-    private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
+    /**
+     * An open menu: its panel, the button it hangs from, its entries, and where it comes from — the set-verb
+     * whose menu it is (none for "…"'s own), and whether it was opened through "…" (`viaMore`: its entries have no hover).
+     */
+    private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[]; verb?: string; viaMore: boolean } | null = null;
+    /** A set-verb's menu that was open through "…" when the bar was drawn again: `fit` opens it where its verb stands now. */
+    private reopenVia: string | null = null;
 
     constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents, private readonly tips: Tooltips) {
         this.el = document.createElement('div');
@@ -513,12 +518,19 @@ class ObjectBar {
             // changed, an undo) is rebuilt: its entries act on the object as it
             // is, and a stale "Delete row" would say so of a row that is gone.
             // (An open menu holds the focus — it closes when the focus leaves it — so the rebuilt one takes it.)
-            const reopen = this.menu ? this.menu.button.dataset.verb : undefined;
+            const reopen = this.menu?.verb;
+            const via = this.menu?.viaMore === true;
             this.signature = signature;
+            this.reopenVia = null;
             this.render(presentation);
             const again = reopen === undefined ? undefined : this.buttons.find(b => b.verb.id === reopen);
             if (again?.verb.menu && !again.verb.refusal) {
-                this.openMenu(again.verb.menu, again.el);
+                if (via) {
+                    // Where the verb stands is not known before the bar is fitted: it may be in "…" still.
+                    this.reopenVia = again.verb.id;
+                } else {
+                    this.openMenu(again.verb.menu, again.el, { name: lensName(again.verb.label), verb: again.verb.id });
+                }
             }
         }
         this.el.hidden = false;
@@ -528,6 +540,7 @@ class ObjectBar {
         // The hover first, while its control is still in the bar (a menu's entry goes with the menu).
         this.tips.hide(this.el);
         this.closeMenu(false);
+        this.reopenVia = null;
         if (this.field) {
             this.field.dispose();
             this.events.fieldDropped();
@@ -576,6 +589,7 @@ class ObjectBar {
             return;
         }
         this.fitted = key;
+        const movedBefore = this.moved.map(b => b.verb.id).join(',');
         const shortens = this.buttons.filter(b => b.verb.short !== undefined && b.verb.short !== b.verb.label);
         for (const b of shortens) {
             if (b.el.dataset.short !== undefined) {
@@ -613,14 +627,16 @@ class ObjectBar {
             label.hidden = cut() && label.offsetWidth < TITLE_STUB;
         }
         // The title hidden and the verbs still past the room: they move into "…".
-        if (label.hidden && this.more && overflows(this.el)) {
-            // Counted from the first measurement that moves anything.
-            this.el.append(this.more);
+        const more = this.more;
+        if (label.hidden && more) {
             const order = overflowOrder(this.buttons.map(b => slotted(b.verb))).map(k => this.buttons[k]);
-            this.moved = moveUntilFits(order, () => !overflows(this.el), b => this.showVerb(b), b => this.hideVerb(b));
-            if (this.moved.length === 0) {
-                this.more.remove();
-            }
+            this.moved = fitWithMore(order, () => overflows(this.el), b => this.showVerb(b), b => this.hideVerb(b), shown => {
+                if (shown) {
+                    this.el.append(more);
+                } else {
+                    more.remove();
+                }
+            });
         }
         if (this.more) {
             const inMore = this.moreEntries().map(e => e.label);
@@ -629,6 +645,40 @@ class ObjectBar {
         // A title the room hid still names the object on a rest on the bar (its `aria-label` names it too).
         this.tips.attach(this.el, () => (label.hidden ? plainTip(this.name) : null));
         this.el.style.left = left;
+        this.menuAfterFit(movedBefore);
+    }
+
+    /**
+     * What the fit did to an open menu. A menu whose button is hidden or gone
+     * (its verb moved into "…", "…" itself left) hangs from nothing: it closes,
+     * the focus it held going to "…" where that is in the bar, else to the bar;
+     * so does one opened through "…" when what "…" holds changed, its entries
+     * being the old ones. A set-verb menu that was open through "…" when the
+     * bar was drawn again opens now, where its verb stands.
+     */
+    private menuAfterFit(movedBefore: string): void {
+        const menu = this.menu;
+        if (menu) {
+            const moved = this.moved.map(b => b.verb.id).join(',');
+            if (!menu.button.isConnected || menu.button.hidden || (menu.viaMore && moved !== movedBefore)) {
+                const held = menu.panel.contains(document.activeElement);
+                this.closeMenu(false);
+                if (held) {
+                    (this.more?.isConnected ? this.more : this.el).focus({ preventScroll: true });
+                }
+            }
+        }
+        const pending = this.reopenVia;
+        this.reopenVia = null;
+        const b = pending === null ? undefined : this.buttons.find(x => x.verb.id === pending);
+        if (b?.verb.menu && !b.verb.refusal && this.menu === null) {
+            const name = lensName(b.verb.label);
+            if (this.moved.includes(b) && this.more?.isConnected) {
+                this.openMenu(b.verb.menu, this.more, { name, verb: b.verb.id, viaMore: true });
+            } else if (!b.el.hidden) {
+                this.openMenu(b.verb.menu, b.el, { name, verb: b.verb.id });
+            }
+        }
     }
 
     /** The title drawn as `text`, an atom's spelling after it as before. */
@@ -672,7 +722,7 @@ class ObjectBar {
             opens: verb.menu !== undefined,
             run: () => {
                 if (verb.menu && this.more) {
-                    this.openMenu(verb.menu, this.more);
+                    this.openMenu(verb.menu, this.more, { name: lensName(verb.label), verb: verb.id, viaMore: true });
                 } else {
                     this.choose(verb);
                 }
@@ -751,7 +801,7 @@ class ObjectBar {
         const open = this.menu?.button === more;
         this.closeMenu(open);
         if (!open) {
-            this.openMenu(this.moreEntries(), more);
+            this.openMenu(this.moreEntries(), more, { name: moreName('bar', []), viaMore: true });
         }
     }
 
@@ -764,7 +814,7 @@ class ObjectBar {
             const open = this.menu?.button === button;
             this.closeMenu(open);
             if (button && !open) {
-                this.openMenu(verb.menu, button);
+                this.openMenu(verb.menu, button, { name: lensName(verb.label), verb: verb.id });
             }
         } else if (verb.field) {
             this.openField(verb, verb.field);
@@ -783,28 +833,29 @@ class ObjectBar {
      * to the marked entry, else the first that can be chosen. Inside the bar's
      * element, so the bar counts the focus in it as its own.
      */
-    private openMenu(entries: readonly MenuEntry[], button: HTMLButtonElement): void {
+    private openMenu(entries: readonly MenuEntry[], button: HTMLButtonElement, from: { name: string; verb?: string; viaMore?: boolean }): void {
+        const viaMore = from.viaMore === true;
         const panel = document.createElement('div');
         panel.className = 'mep-menu mep-object-menu';
         panel.setAttribute('role', 'menu');
         panel.tabIndex = -1;
-        panel.setAttribute('aria-label', lensName(button.textContent ?? ''));
+        // Named for what it holds: the verb's label, or "More actions" — never nameless, the button of "…" has no text.
+        panel.setAttribute('aria-label', from.name);
         const made = entries.map(entry => {
-            const el = document.createElement('div');
-            el.className = 'mep-menu-item';
+            // Inside "…" the label is whole: what the entry's hover would add is its description, and it has no hover.
+            const el = buildMoreEntry({
+                role: entry.checked === undefined ? 'menuitem' : 'menuitemradio',
+                checked: entry.checked,
+                opens: entry.opens,
+                refusal: entry.refusal,
+                description: viaMore && entry.title !== entry.label ? entry.title : undefined,
+            });
             el.dataset.entry = entry.id;
-            el.tabIndex = -1;
-            el.setAttribute('role', entry.checked === undefined ? 'menuitem' : 'menuitemradio');
-            if (entry.checked !== undefined) {
-                el.setAttribute('aria-checked', String(entry.checked));
-                el.classList.toggle('mep-active', entry.checked);
-            }
             const label = document.createElement('span');
             label.className = 'mep-entry-label';
             label.textContent = entry.label;
             el.append(label);
             if (entry.opens) {
-                el.setAttribute('aria-haspopup', 'menu');
                 el.append(chevronNode('right'));
             }
             if (entry.keys) {
@@ -813,11 +864,9 @@ class ObjectBar {
                 keys.textContent = entry.keys;
                 el.append(keys);
             }
-            // A set-verb's entry says what it does on a rest (it has no preview card).
-            this.tips.attach(el, () => plainTip(entry.title, entry.refusal), 'beside');
-            if (entry.refusal) {
-                el.classList.add('mep-disabled');
-                el.setAttribute('aria-disabled', 'true');
+            if (!viaMore) {
+                // A set-verb's entry says what it does on a rest (it has no preview card).
+                this.tips.attach(el, () => plainTip(entry.title, entry.refusal), 'beside');
             }
             el.addEventListener('click', e => {
                 e.preventDefault();
@@ -833,7 +882,7 @@ class ObjectBar {
                 this.closeMenu(false);
             }
         });
-        this.menu = { panel, button, entries: made };
+        this.menu = { panel, button, entries: made, verb: from.verb, viaMore };
         button.setAttribute('aria-expanded', 'true');
         // `position: fixed`, a child of the bar so the bar counts its focus as its own: placed as the row's menus are.
         this.el.append(panel);

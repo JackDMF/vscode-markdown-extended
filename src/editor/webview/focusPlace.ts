@@ -186,6 +186,6 @@ export function lockForms(role: ControlRole): LockForms {
         case 'property':
             return { full: 'Editing a property · Enter apply · Esc cancel', short: 'Property · Enter · Esc' };
         case 'button':
-            return { full: 'Focus is outside the text · Esc or click into the text', short: 'Focus is outside the text' };
+            return { full: 'Focus is outside the text · Esc or click into the text', short: 'Outside the text' };
     }
 }

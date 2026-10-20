@@ -437,7 +437,7 @@ export class VisualEditorSession implements vscode.Disposable {
                 // the page keeps showing the one that runs.
                 if (this.exporting !== null) {
                     this.host.log('[INFO] Visual Editor: an export is running; the request for another was dropped.');
-                    void this.postQuietly({ type: 'exportDone', outcome: 'busy' });
+                    void this.postQuietly({ type: 'exportDone', outcome: 'busy', format: this.exporting });
                     break;
                 }
                 // A message names anything: only a format of the table (`formats.ts`) is run.

@@ -266,10 +266,11 @@ export type HostMessage =
      * cancelled at the exporter pick, or failed (VS Code reported it) — and
      * the page's Export is offered again. `refused`: it named no format the
      * export makes, and was not run; Export is offered again and the page
-     * says so. `busy`: another export runs; the page keeps showing that one
-     * until its own answer.
+     * says so. `busy`: another export runs, in `format`: the page shows that
+     * one until its own answer, whichever it had asked for.
      */
-    | { type: 'exportDone'; outcome: 'settled' | 'refused' | 'busy' };
+    | { type: 'exportDone'; outcome: 'settled' | 'refused' }
+    | { type: 'exportDone'; outcome: 'busy'; format: ExportFormatName };
 
 /**
  * One completion of a link's field: `value` is what the field then holds — a

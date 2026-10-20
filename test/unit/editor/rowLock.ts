@@ -77,7 +77,7 @@ export async function assertRowFree(page: puppeteer.Page, when: string): Promise
 export const LOCK_SHORT: Record<string, string> = {
     [LOCK_SOURCE]: `Source · ${MOD_NAME}+Enter · Esc`,
     [LOCK_PROPERTY]: 'Property · Enter · Esc',
-    [LOCK_BUTTON]: 'Focus is outside the text',
+    [LOCK_BUTTON]: 'Outside the text',
 };
 
 /**
