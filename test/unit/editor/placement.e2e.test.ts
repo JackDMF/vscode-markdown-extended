@@ -818,11 +818,21 @@ suite('Editor placement (e2e)', () => {
 
     test('r3-2: at 420 a submenu with no room beside stands against its entry: the pointer goes from the entry into it and it stays open', async function () {
         this.timeout(20000);
-        await page.setViewport({ width: 420, height: 900 });
+        // Tall enough for the admonition list under its entry also where Insert is a submenu of "…" and stands lower.
+        await page.setViewport({ width: 420, height: 1100 });
         await showDocument('Alpha beta gamma.\n', 'Alpha');
         await clickBefore('beta', 1);
-        await page.focus('.mep-toolbar .mep-menu-face[data-menu="insert"]');
-        await page.keyboard.press('ArrowDown');
+        // At 420 Insert is in "…" (wave 2 · #2): it opens from its entry there, as a submenu of "…".
+        if (await page.$eval('.mep-toolbar .mep-menu-face[data-menu="insert"]', el => (el as HTMLElement).hidden)) {
+            await page.focus('.mep-toolbar .mep-more-face');
+            await page.keyboard.press('Enter');
+            await page.waitForSelector('.mep-menu[data-menu="more"]:not([hidden])', { timeout: 3000 });
+            await page.focus('.mep-menu[data-menu="more"] [data-submenu="insert"]');
+            await page.keyboard.press('ArrowRight');
+        } else {
+            await page.focus('.mep-toolbar .mep-menu-face[data-menu="insert"]');
+            await page.keyboard.press('ArrowDown');
+        }
         await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])', { timeout: 3000 });
         const opener = await box('.mep-menu[data-menu="insert"] [data-submenu="admonition"]');
         assert.ok(opener);
