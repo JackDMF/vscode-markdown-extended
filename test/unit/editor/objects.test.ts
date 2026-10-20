@@ -1,13 +1,14 @@
 import * as assert from 'assert';
 import { Node } from 'prosemirror-model';
 import { undo } from 'prosemirror-history';
-import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
+import { EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
+import { BACKTICK_INFO_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import {
-    EditorObject, changeLinkTransaction, convertNoteRefusal, convertNoteTransaction, currentObject, deleteObjectTransaction,
+    EditorObject, NESTED_CODE_ATTRS_REFUSAL, changeLanguageTransaction, changeLinkTransaction, changeOpeningLineTransaction, commitOpeningLine, openingLineRefusal, convertNoteRefusal, convertNoteTransaction, currentObject, deleteObjectTransaction,
     editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction, insertLockReason, isTopLevelBlock, LINK_LOCK, noteSource, objectAtSelection,
     removeLinkTransaction,
 } from '../../../src/editor/webview/objects';
@@ -296,3 +297,91 @@ suite('Editor objects: deleting a block', () => {
         assert.strictEqual(text(deleted), 'Before.\n\nAfter.\n');
     });
 });
+
+suite('Editor code blocks: the object, its opening line and its language', () => {
+    /** The code block the caret is in: its position. */
+    const blockPos = (state: EditorState) => state.selection.$from.before();
+
+    test('a fence is a code block — with a literal too, not a block with attributes; an indented one as well', () => {
+        assert.strictEqual(objectHere(caretAt(stateOf('```js {.numbered}\nconst a = 1;\n```\n'), 'const')).kind, 'code_block');
+        assert.strictEqual(objectHere(caretAt(stateOf('```\nplain\n```\n'), 'plain')).kind, 'code_block');
+        assert.strictEqual(objectHere(caretAt(stateOf('Text.\n\n    indented\n'), 'indented')).kind, 'code_block');
+    });
+
+    test('a nested fence is found, innermost: in a list item, in a quote, in a container', () => {
+        for (const source of ['- item\n\n  ```js\n  inner\n  ```\n', '> ```js\n> inner\n> ```\n', '::: warning\n```js\ninner\n```\n:::\n']) {
+            const state = caretAt(stateOf(source), 'inner');
+            const object = objectHere(state);
+            assert.strictEqual(object.kind, 'code_block', source);
+            assert.strictEqual(object.from, blockPos(state), source);
+            assert.ok(!isTopLevelBlock(state, object), 'nested: no lenses');
+        }
+    });
+
+    test('Edit source sets the fence, the info string and the literal; refusals keep the block', () => {
+        const state = caretAt(stateOf('```js {.numbered}\nconst a = 1;\n```\n'), 'const');
+        const pos = blockPos(state);
+        const tr = changeOpeningLineTransaction(state, pos, '~~~~ts {.x}');
+        assert.ok(tr);
+        const node = tr.doc.nodeAt(pos)!;
+        assert.deepStrictEqual([node.attrs.markup, node.attrs.params, node.attrs.attrsSuffix], ['~~~~', 'ts', '{.x}']);
+        assert.strictEqual(text(state.apply(tr)), '~~~~ts {.x}\nconst a = 1;\n~~~~\n');
+        assert.strictEqual(changeOpeningLineTransaction(state, pos, '```js {.numbered}'), null, 'unchanged');
+        assert.strictEqual(openingLineRefusal(state, pos, 'js {.x}'), NO_FENCE_REFUSAL);
+        assert.strictEqual(openingLineRefusal(state, pos, '```a`b'), BACKTICK_INFO_REFUSAL);
+        assert.match(openingLineRefusal(state, pos, '```js {.}') ?? '', /\{\.\} is no attribute list/);
+        assert.strictEqual(changeOpeningLineTransaction(state, pos, 'js'), null);
+        const holding = caretAt(stateOf('````\na\n```\nb\n````\n'), 'a');
+        assert.strictEqual(openingLineRefusal(holding, blockPos(holding), '```'), shortFenceRefusal('````'));
+    });
+
+    test('Edit source on an indented block: empty fences it with ```; a typed line fences it with that', () => {
+        const state = caretAt(stateOf('Text.\n\n    indented\n'), 'indented');
+        const empty = commitOpeningLine(state, blockPos(state), '');
+        assert.ok(empty !== null && 'tr' in empty && empty.fenced);
+        assert.strictEqual(text(state.apply(empty.tr)), 'Text.\n\n```\nindented\n```\n');
+        const typed = commitOpeningLine(state, blockPos(state), '~~~sh');
+        assert.ok(typed !== null && 'tr' in typed && typed.fenced);
+        assert.strictEqual(text(state.apply(typed.tr)), 'Text.\n\n~~~sh\nindented\n~~~\n');
+        const fenced = caretAt(stateOf('```\nx\n```\n'), 'x');
+        assert.deepStrictEqual(commitOpeningLine(fenced, blockPos(fenced), ''), { refusal: NO_FENCE_REFUSAL }, 'a fenced block is not made indented');
+    });
+
+    test('Language… changes only the first word of the info string; empty removes it; an indented block is fenced', () => {
+        const state = caretAt(stateOf('```js title=x {.n}\ncode\n```\n'), 'code');
+        const pos = blockPos(state);
+        const ts = changeLanguageTransaction(state, pos, 'typescript');
+        assert.ok(ts !== null && 'tr' in ts && !ts.fenced);
+        assert.strictEqual(text(state.apply(ts.tr)), '```typescript title=x {.n}\ncode\n```\n');
+        const none = changeLanguageTransaction(state, pos, '');
+        assert.ok(none !== null && 'tr' in none);
+        assert.strictEqual(text(state.apply(none.tr)), '```title=x {.n}\ncode\n```\n');
+        assert.strictEqual(changeLanguageTransaction(state, pos, 'js'), null, 'unchanged');
+        assert.deepStrictEqual(changeLanguageTransaction(state, pos, 'a`b'), { refusal: BACKTICK_INFO_REFUSAL });
+        const indented = caretAt(stateOf('Text.\n\n    echo hi\n'), 'echo');
+        const sh = changeLanguageTransaction(indented, blockPos(indented), 'sh');
+        assert.ok(sh !== null && 'tr' in sh && sh.fenced);
+        const after = indented.apply(sh.tr);
+        assert.strictEqual(text(after), 'Text.\n\n```sh\necho hi\n```\n');
+        assert.strictEqual(text(after.apply(undoOnce(after))), 'Text.\n\n    echo hi\n', 'one undo step restores the indented form');
+    });
+
+    test('a nested fence: Language… works, a literal is refused with the nested reason', () => {
+        const state = caretAt(stateOf('> ```js\n> inner\n> ```\n'), 'inner');
+        const pos = blockPos(state);
+        const ts = changeLanguageTransaction(state, pos, 'ts');
+        assert.ok(ts !== null && 'tr' in ts);
+        assert.strictEqual(text(state.apply(ts.tr)), '> ```ts\n> inner\n> ```\n');
+        assert.strictEqual(openingLineRefusal(state, pos, '```js {.x}'), NESTED_CODE_ATTRS_REFUSAL);
+    });
+});
+
+/** The transaction `undo` would dispatch on `state`. */
+function undoOnce(state: EditorState): Transaction {
+    let made: Transaction | null = null;
+    undo(state, tr => {
+        made = tr;
+    });
+    assert.ok(made, 'something to undo');
+    return made;
+}

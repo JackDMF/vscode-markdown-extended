@@ -144,6 +144,15 @@ export const VERB = {
     editSource: 'Edit source',
     showInTextEditor: 'Show in text editor',
     attributes: 'Attributes…',
+    /** A code block's type verb: its indented tooltip and the nested block's refusal name it. */
+    language: 'Language…',
     /** As the emoji's bar words it (`wording`): the notes' and the emoji's refusals name it as a way out. */
     deleteEmoji: wording({ verb: 'Delete', noun: 'emoji' }).label,
 } as const;
+
+/**
+ * What `Alt+Enter` says where there is nothing to act on: the key is taken,
+ * the caret stays. Written out — no registry lists the objects, and building
+ * it from the node kinds and the mark kinds would be a second list.
+ */
+export const NO_TARGET_HINT = 'No actions here — Alt+Enter acts on objects such as links, images, tables and code blocks';

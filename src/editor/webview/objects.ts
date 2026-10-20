@@ -21,6 +21,7 @@
  * | `container` | A `container` node (`::: name`) | The node |
  * | `admonition` | An `admonition` node (`!!! type "Title"`) | The node |
  * | `table` | A pipe table (`table`), the caret in a cell or cells selected | The node |
+ * | `code_block` | A fenced or indented code block at any depth, the caret in its text; one with a literal stays a `code_block` | The node |
  * | `block_attrs` | A top-level block carrying an attribute literal (`attrsSuffix`), a quote's too; a table with one stays a `table` | The node |
  * | `heading` | A top-level heading that is no `block_attrs` — a requirement heading is one | The node |
  * | `raw_block` | A source block | The node |
@@ -47,10 +48,11 @@ import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 import { VERB } from '../verbs';
+import { DEFAULT_FENCE, minimumFence, openingLineOf, parseOpeningLine, withLanguage } from '../fences';
 
 const nodes = editorSchema.nodes;
 
-export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
+export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'code_block' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
 
 /**
  * The objects that are a mark's run in its textblock rather than a node. A
@@ -77,7 +79,7 @@ export function isMarkObject(object: EditorObject): object is Extract<EditorObje
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
 
 /** The caret objects that are blocks: their bar sits at the block's right edge, as a block object's does. */
-const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'block_attrs', 'heading']);
+const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'code_block', 'block_attrs', 'heading']);
 
 export function isBlockObject(object: EditorObject): boolean {
     return BLOCK_OBJECTS.has(object.kind);
@@ -130,6 +132,8 @@ const NODE_KINDS: Readonly<Record<string, NodeObjectKind>> = {
     container: 'container',
     admonition: 'admonition',
     table: 'table',
+    // Ahead of `carriesBlockAttrs`: a fence with a literal is a code block, whose bar offers Attributes… among its verbs.
+    code_block: 'code_block',
     raw_block: 'raw_block',
     injected_block: 'injected_block',
     front_matter: 'front_matter',
@@ -288,6 +292,16 @@ function tableObjectAt(state: EditorState): EditorObject | null {
     return objectOfNode($from.node(1), $from.before(1));
 }
 
+/**
+ * The code block both ends of the selection are in, at any depth — in a list
+ * item, a quote, a container: its text is the innermost block the caret can
+ * stand in, so it comes before the wrapper around it.
+ */
+function codeBlockAt(state: EditorState): EditorObject | null {
+    const { $from, $to } = state.selection;
+    return $from.parent.type === nodes.code_block && $from.sameParent($to) ? objectOfNode($from.parent, $from.before()) : null;
+}
+
 /** The top-level block with an attribute literal holding both ends of the selection. */
 function blockAttrsAt(state: EditorState): EditorObject | null {
     const { $from, $to } = state.selection;
@@ -311,7 +325,7 @@ function headingAt(state: EditorState): EditorObject | null {
  * The object the selection is on: a node selected as a whole, else — innermost
  * first, so a link inside a note inside an admonition is the link — the link
  * the selection is in, the attribute span, emphasis with a literal, the note both its ends are in, the
- * container or admonition, the table, the top-level block with an attribute
+ * code block at any depth, the container or admonition, the table, the top-level block with an attribute
  * literal, and last the top-level heading. Cells selected across (a
  * `CellSelection`) are their table. `null` in plain text.
  */
@@ -335,7 +349,7 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     if (from !== null && to !== null && from.noteBefore === to.noteBefore) {
         return objectOfNode(from.note, from.noteBefore);
     }
-    return wrapperAt(state) ?? tableObjectAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
+    return codeBlockAt(state) ?? wrapperAt(state) ?? tableObjectAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
 }
 
 /**
@@ -1056,7 +1070,8 @@ export function literalHomeRefusal(node: Node): string | null {
         case 'injected_block':
             return 'Injected content is not in the file: there is no block here to give attributes to.';
         case 'code_block':
-            return node.attrs.markup === '' ? INDENTED_CODE_ATTRS_REFUSAL : null;
+            // An indented one is fenced as it takes the literal (`blockAttrsTransaction`).
+            return null;
         case 'blockquote':
             return quoteTakesLiteral(node) ? null : QUOTE_ATTRS_REFUSAL;
         case 'list_item':
@@ -1090,7 +1105,7 @@ function blockAttrsTransaction(state: EditorState, pos: number, literal: string)
         || (value !== '' && (literalRefusal(value, literalPlaceOf(node)) !== null || literalHomeRefusal(node) !== null))) {
         return null;
     }
-    const attrs: Record<string, unknown> = { ...node.attrs, attrsSuffix: value === '' ? null : value };
+    const attrs: Record<string, unknown> = { ...node.attrs, ...fencedFor(node, value), attrsSuffix: value === '' ? null : value };
     if (node.type === nodes.heading) {
         attrs.anchor = value === '' ? null : (parseAttrsLiteral(value) ?? []).filter(([n]) => n === 'id').map(([, v]) => v).pop() ?? null;
     } else {
@@ -1129,8 +1144,24 @@ export const CONTAINER_ATTRS_REFUSAL = `A container's {…} is not edited here: 
 /** Why an admonition is given no literal: the plugin hands it to the title bar. */
 export const ADMONITION_ATTRS_REFUSAL = `An admonition takes no {…}: on its !!! line, {…} styles the title, not the box. Its class is its type — choose it under ${VERB.type}▾ on the admonition's bar.`;
 
-/** Why an indented code block is given no literal: it has no opening line. */
-export const INDENTED_CODE_ATTRS_REFUSAL = 'An indented code block has no opening line to carry a {…}: make it a fenced one first.';
+/**
+ * Why a code block inside a quote, a list or a container is given no literal:
+ * the save writes a fence's literal only at the top level (a nested one is
+ * kept as source, `fidelity.ts`). Its other verbs work at any depth.
+ */
+export const NESTED_CODE_ATTRS_REFUSAL = `A code block inside a quote, a list or a container takes no {…} here: the editor writes a fence's attributes only at the top level. ${VERB.language} and ${VERB.editSource} work here.`;
+
+/**
+ * What an indented code block given `literal` becomes as well: a fenced one,
+ * on the fence a new block gets, lengthened past a run inside — it has no
+ * opening line to carry the literal otherwise. Nothing for any other block, or
+ * no literal.
+ */
+function fencedFor(node: Node, literal: string): { markup?: string } {
+    return node.type === nodes.code_block && node.attrs.markup === '' && literal !== ''
+        ? { markup: minimumFence(DEFAULT_FENCE, node.textContent) }
+        : {};
+}
 
 /** Why a list item is given no literal: it is written at the end of the item's first paragraph. */
 export const ITEM_ATTRS_REFUSAL = 'A list item\'s {…} stands at the end of its first paragraph, and this item does not start with a paragraph ending in text.';
@@ -1159,10 +1190,14 @@ export function literalOf(node: Node): string | null {
  * item — or why it is none: none where the host's engine reads no attributes
  * (`NO_ATTRS_REFUSAL`), else `literalHomeRefusal`, except that a block which
  * has a literal already can always have it edited or removed (a requirement
- * heading's apart).
+ * heading's apart). A code block's bar says whether it is `nested`, inside
+ * another block (`NESTED_CODE_ATTRS_REFUSAL`); every other caller targets a
+ * top-level block or a list item.
  */
-export function attributesTargetOf(node: Node, pos: number): AttributesTarget | { refusal: string } {
-    const refusal = (currentReadsAttrs() ? null : NO_ATTRS_REFUSAL) ?? blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
+export function attributesTargetOf(node: Node, pos: number, nested = false): AttributesTarget | { refusal: string } {
+    const refusal = (currentReadsAttrs() ? null : NO_ATTRS_REFUSAL)
+        ?? (nested && node.type === nodes.code_block ? NESTED_CODE_ATTRS_REFUSAL : null)
+        ?? blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
     return refusal === null ? { pos, node, name: BLOCK_NAMES[node.type.name] ?? 'Block' } : { refusal };
 }
 
@@ -1200,8 +1235,12 @@ export function currentTarget(state: EditorState, target: AttributesTarget): Att
     return node !== null && node.type === target.node.type ? { ...target, node } : null;
 }
 
-/** What a literal typed into the Attributes field does: a transaction and whether it removed the literal, a refusal, or nothing (unchanged). */
-export type AttributesCommit = { tr: Transaction; removed: boolean } | { refusal: string } | null;
+/**
+ * What a literal typed into the Attributes field does: a transaction, whether
+ * it removed the literal and whether it fenced an indented code block (the
+ * hint says so), a refusal, or nothing (unchanged).
+ */
+export type AttributesCommit = { tr: Transaction; removed: boolean; fenced: boolean } | { refusal: string } | null;
 
 /**
  * The target given `literal` — `{}` or nothing removes its literal — as the
@@ -1230,7 +1269,7 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
         // The literal reads alone; whether it reads with the rest of its block is asked of the block as it would be.
         const set = node.type === nodes.list_item
             ? state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, literal: next })
-            : state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, attrsSuffix: next, attrsPlacement: (node.attrs.attrsPlacement as string | null) ?? newPlacement(node) });
+            : state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, ...fencedFor(node, value), attrsSuffix: next, attrsPlacement: (node.attrs.attrsPlacement as string | null) ?? newPlacement(node) });
         const lost = literalsReadBackRefusal(set.doc, current.pos, state.doc, literalOf(node));
         if (lost !== null) {
             return { refusal: lost };
@@ -1244,5 +1283,141 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
     }
     // A removal too: the edit filter would refuse it, beside the block as much as in it, and the field says why.
     const filtered = noteRefusal(tr);
-    return filtered === null ? { tr: tr.scrollIntoView(), removed } : { refusal: filtered };
+    return filtered === null ? { tr: tr.scrollIntoView(), removed, fenced: !removed && fencedFor(node, value).markup !== undefined } : { refusal: filtered };
+}
+
+// ---------------------------------------------------------------------------
+// A code block's opening line — Edit source and Language…
+// ---------------------------------------------------------------------------
+
+/** The code block at `pos` in `state`, or `null`. */
+function codeBlockNodeAt(state: EditorState, pos: number): Node | null {
+    const node = pos >= 0 && pos < state.doc.content.size ? state.doc.nodeAt(pos) : null;
+    return node !== null && node.type === nodes.code_block ? node : null;
+}
+
+/** The code block at `pos` with `line` as its opening line, read (`parseOpeningLine`); the refusal of the line itself otherwise. */
+function withOpeningLine(state: EditorState, pos: number, node: Node, line: string): Transaction | { refusal: string } {
+    const parsed = parseOpeningLine(line, node.textContent);
+    if ('refusal' in parsed) {
+        return parsed;
+    }
+    return state.tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        markup: parsed.markup,
+        params: parsed.params,
+        attrsSuffix: parsed.literal,
+        attrsPlacement: parsed.literal === null ? null : 'end',
+    });
+}
+
+/**
+ * Why `line` cannot be the opening line of the code block at `pos`, or
+ * `null`: the line's own reasons (`parseOpeningLine`: no fence, a fence too
+ * short for the content, a backtick after backticks), then its literal's —
+ * none inside another block (`NESTED_CODE_ATTRS_REFUSAL`), else the one every
+ * literal meets (`literalRefusal`) and the block's read-back
+ * (`literalsReadBackRefusal`) — then the edit filter's (`noteRefusal`).
+ */
+export function openingLineRefusal(state: EditorState, pos: number, line: string): string | null {
+    const node = codeBlockNodeAt(state, pos);
+    if (node === null) {
+        return null;
+    }
+    const tr = withOpeningLine(state, pos, node, line);
+    if (!(tr instanceof Transaction)) {
+        return tr.refusal;
+    }
+    const next = tr.doc.nodeAt(pos)!;
+    const literal = next.attrs.attrsSuffix as string | null;
+    // A literal is read on the fence it stands on (`fenceHolder`): asked again when either changes.
+    if (literal !== null && (literal !== node.attrs.attrsSuffix || fenceHolder(String(next.attrs.markup)) !== fenceHolder(String(node.attrs.markup)))) {
+        const refusal = (state.doc.resolve(pos).depth > 0 ? NESTED_CODE_ATTRS_REFUSAL : null)
+            ?? literalRefusal(literal, fenceHolder(String(next.attrs.markup)))
+            ?? literalsReadBackRefusal(tr.doc, pos, state.doc, node.attrs.attrsSuffix as string | null);
+        if (refusal !== null) {
+            return refusal;
+        }
+    }
+    return noteRefusal(tr);
+}
+
+/**
+ * The code block at `pos` with `line` as its opening line — fence, info
+ * string, literal (`parseOpeningLine`) — or `null` when it is unchanged, gone
+ * or refused (`openingLineRefusal`, which the field asks first).
+ */
+export function changeOpeningLineTransaction(state: EditorState, pos: number, line: string): Transaction | null {
+    const node = codeBlockNodeAt(state, pos);
+    if (node === null || openingLineRefusal(state, pos, line) !== null) {
+        return null;
+    }
+    const tr = withOpeningLine(state, pos, node, line);
+    if (!(tr instanceof Transaction)) {
+        return null;
+    }
+    const next = tr.doc.nodeAt(pos)!;
+    const unchanged = (['markup', 'params', 'attrsSuffix'] as const).every(name => next.attrs[name] === node.attrs[name]);
+    return unchanged ? null : tr.scrollIntoView();
+}
+
+/** A code block's attributes, as `openingLineOf` reads them. */
+type OpeningLineAttrs = { markup: string; params: string; attrsSuffix: string | null };
+
+/**
+ * The opening line the code block at `pos` gets for `language`: its info
+ * string's first word replaced, added or — `''` — removed (`withLanguage`),
+ * the rest and the literal kept; an indented block fenced, on the fence a new
+ * block gets, lengthened past a run inside (`minimumFence`).
+ */
+function lineWithLanguage(node: Node, language: string): string {
+    const attrs = node.attrs as OpeningLineAttrs;
+    const markup = attrs.markup === '' ? minimumFence(DEFAULT_FENCE, node.textContent) : attrs.markup;
+    return openingLineOf({ markup, params: withLanguage(attrs.params, language), attrsSuffix: attrs.attrsSuffix });
+}
+
+/**
+ * Language… committed: the code block at `pos` with `language` as its info
+ * string's first word — through the opening line, so the one refusal applies
+ * (a backtick in a ``` fence's language) — and whether it fenced an indented
+ * block. `null` when unchanged or gone.
+ */
+export function changeLanguageTransaction(state: EditorState, pos: number, language: string): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
+    const node = codeBlockNodeAt(state, pos);
+    if (node === null) {
+        return null;
+    }
+    const fenced = node.attrs.markup === '';
+    if (fenced && language.trim() === '') {
+        // An indented block has no language to remove.
+        return null;
+    }
+    const line = lineWithLanguage(node, language);
+    const refusal = openingLineRefusal(state, pos, line);
+    if (refusal !== null) {
+        return { refusal };
+    }
+    const tr = changeOpeningLineTransaction(state, pos, line);
+    return tr === null ? null : { tr, fenced };
+}
+
+/**
+ * Edit source committed on the code block at `pos`: `line` as its opening
+ * line, and whether that fenced an indented block — whose field opens empty,
+ * so `''` there fences it on the fence a new block gets. `null` when unchanged
+ * or gone; a refusal for a line `openingLineRefusal` refuses.
+ */
+export function commitOpeningLine(state: EditorState, pos: number, line: string): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
+    const node = codeBlockNodeAt(state, pos);
+    if (node === null) {
+        return null;
+    }
+    const fenced = node.attrs.markup === '';
+    const typed = fenced && line.trim() === '' ? minimumFence(DEFAULT_FENCE, node.textContent) : line;
+    const refusal = openingLineRefusal(state, pos, typed);
+    if (refusal !== null) {
+        return { refusal };
+    }
+    const tr = changeOpeningLineTransaction(state, pos, typed);
+    return tr === null ? null : { tr, fenced };
 }

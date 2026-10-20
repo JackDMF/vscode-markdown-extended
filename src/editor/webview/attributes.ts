@@ -19,6 +19,7 @@
  * | Quote | a line of its own under its last paragraph, inside it: `> {.x}` | the `<blockquote>` |
  * | Table | a line of its own under a blank line after it: `{.x}` (one right under it stays there) | the `<table>` |
  * | Fenced code | after the opening fence's info string: ```` ```js {.x} ```` | the `<code>` |
+ * | Indented code | fenced as it takes one (```` ``` {.x} ````, "Code block fenced"); inside a quote, a list or a container refused | the `<code>` |
  * | Rule (selected) | after the rule: `--- {.x}` | the `<hr>` |
  * | List (one it has already) | where it stood: under its last line, or under a blank line | the `<ul>`/`<ol>` |
  *
@@ -31,7 +32,6 @@
  * | Quote ending in a list, code or a quote | a `> {…}` line under it goes to that block, not the quote |
  * | List item not starting with a paragraph that ends in text | there is no line end to put it at |
  * | Requirement heading | its anchor is Req Explorer's |
- * | Indented code | it has no opening line |
  * | Source block, front matter, injected content | not rich text, or not in the file |
  * | A literal the plugin would not read back whole | `literalRefusal`: not `{…}`, `{.}`, two lines, a `{` in a rule's value |
  *
@@ -42,6 +42,7 @@
 import { EditorView } from 'prosemirror-view';
 import { showChangeHint, undoHint } from './hint';
 import { wording } from '../verbs';
+import { FENCED_DONE } from '../fences';
 import { FieldStep, refusedStep } from './inlineField';
 import {
     AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, literalObjectOf, literalOf,
@@ -99,7 +100,7 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
             const before = view.state;
             view.dispatch(made.tr);
             if (view.state !== before) {
-                showChangeHint(view, undoHint(made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
+                showChangeHint(view, undoHint(made.fenced ? FENCED_DONE : made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
             }
         },
     };

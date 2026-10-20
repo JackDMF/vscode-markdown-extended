@@ -11,7 +11,7 @@ import { plugins } from '../../../src/plugin/plugins';
 import { withoutId } from '../../../src/editor/attrs';
 import { editorSchema } from '../../../src/editor/schema';
 import {
-    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, INDENTED_CODE_ATTRS_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt,
+    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, NESTED_CODE_ATTRS_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt, attributesTargetOf,
     commitAttributes, containerNameOf, literalOf, literalRefusal, spanLockReason,
 } from '../../../src/editor/webview/objects';
 import { FieldStep, refusedStep } from '../../../src/editor/webview/inlineField';
@@ -195,11 +195,26 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
         assert.match(hostEngine().render(out), /<table class="wider">[\s\S]*<p>After\.<\/p>/);
     });
 
-    test('a fenced code block: after the opening fence\'s info string; an indented one is refused', () => {
+    test('a fenced code block: after the opening fence\'s info string; an indented one is fenced as it takes one', () => {
         const { out } = written('```js\nconst a = 1;\n```\n', 'const', '{.numbered}');
         assert.strictEqual(out, '```js {.numbered}\nconst a = 1;\n```\n');
         assert.match(hostEngine().render(out), /<code class="numbered language-js">/);
-        assert.strictEqual(refusalAt(caretAt(stateOf('Text.\n\n    indented code\n'), 'indented')), INDENTED_CODE_ATTRS_REFUSAL);
+        const indented = caretAt(stateOf('Text.\n\n    indented code\n'), 'indented');
+        const made = commitAttributes(indented, targetAt(indented), '{.x}');
+        assert.ok(made !== null && 'tr' in made && made.fenced && !made.removed, 'fenced, not refused');
+        const fenced = text(indented.apply(made.tr));
+        assert.strictEqual(fenced, 'Text.\n\n``` {.x}\nindented code\n```\n');
+        assert.match(hostEngine().render(fenced), /<code class="x">indented code/);
+        const plain = caretAt(stateOf('```js\nx\n```\n'), 'x');
+        const again = commitAttributes(plain, targetAt(plain), '{.y}');
+        assert.ok(again !== null && 'tr' in again && !again.fenced, 'a fenced block is not fenced again');
+    });
+
+    test('a code block\'s bar inside a quote: Attributes… refused with the nested reason; the menu still targets the quote', () => {
+        const state = caretAt(stateOf('> ```js\n> x\n> ```\n>\n> After.\n'), 'x');
+        const pos = state.selection.$from.before();
+        assert.deepStrictEqual(attributesTargetOf(state.doc.nodeAt(pos)!, pos, true), { refusal: NESTED_CODE_ATTRS_REFUSAL });
+        assert.strictEqual(targetAt(state).name, 'Quote');
     });
 
     test('a container and an admonition are refused, and so is a paragraph inside one', () => {

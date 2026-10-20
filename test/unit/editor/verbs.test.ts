@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { FILE_STAYS, Slot, Slotted, Wording, arrange, barDescription, barName, firstFocus, wording } from '../../../src/editor/verbs';
+import { FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, Wording, arrange, barDescription, barName, firstFocus, wording } from '../../../src/editor/verbs';
 import { undoHint } from '../../../src/editor/webview/hint';
 import { UNDO_BINDING, keyLabel } from '../../../src/editor/keys';
 
@@ -140,5 +140,11 @@ suite('Editor object bars: the verbs\' model', () => {
         assert.match(hint, /^Image deleted — (Ctrl|Cmd)\+Z$/);
         assert.ok(hint.endsWith(keyLabel(UNDO_BINDING, hint.includes('Cmd'))));
         assert.strictEqual(FILE_STAYS, 'Delete from this document — the file stays');
+    });
+
+    test('a code block: Delete code block, short Delete, "Code block deleted"; Language… is its type verb; Alt+Enter with nothing to act on says so', () => {
+        assert.deepStrictEqual(wording({ verb: 'Delete', noun: 'code block' }), { label: 'Delete code block', short: 'Delete', done: 'Code block deleted' });
+        assert.strictEqual(VERB.language, 'Language…');
+        assert.strictEqual(NO_TARGET_HINT, 'No actions here — Alt+Enter acts on objects such as links, images, tables and code blocks');
     });
 });
