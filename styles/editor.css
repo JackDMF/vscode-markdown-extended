@@ -985,6 +985,8 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     pointer-events: none;
 }
 .mep-hint[hidden] { display: none; }
+/* A neutral hint is one short line (what was done, or that Alt+Enter has nothing to act on): it keeps to one where the window has the room. */
+.mep-hint[data-tone="neutral"] { max-width: 48em; }
 .mep-hint[data-tone="refusal"] { border-left: 3px solid var(--vscode-editorWarning-foreground, #bf8803); }
 
 /* ------------------------------------------------------------------------- */
@@ -1772,15 +1774,18 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 }
 
 /*
- * The caret's table cell (`mep-cell-active`, tables.ts): a 2 px ring inside it in the focus
- * colour — a different stroke from a focused control's 1 px outline outside. Over the cell's
+ * The caret's table cell (`mep-cell-active`, tables.ts): a 2 px ring inside it in the caret's
+ * colour — a different stroke from a focused control's 1 px outline outside, and a different
+ * colour: in the dark themes the focus colour is the very blue of the bar's focused button, and
+ * in high contrast the very orange, so the ring and the focus read as one thing. Over the cell's
  * faint inner line, which it replaces while the caret is there.
  */
 .ProseMirror > table td.mep-cell-active, .ProseMirror > table th.mep-cell-active {
-    box-shadow: inset 0 0 0 2px var(--vscode-focusBorder, Highlight);
+    box-shadow: inset 0 0 0 2px var(--vscode-editorCursor-foreground, var(--vscode-editor-foreground, CanvasText));
 }
+/* High contrast: the cells' own borders are the text colour, so the ring takes the contrast border's — still not the focus orange. */
 .vscode-high-contrast .ProseMirror > table td.mep-cell-active, .vscode-high-contrast .ProseMirror > table th.mep-cell-active {
-    box-shadow: inset 0 0 0 2px var(--vscode-contrastActiveBorder, var(--vscode-focusBorder, Highlight));
+    box-shadow: inset 0 0 0 2px var(--vscode-contrastBorder, var(--vscode-editorCursor-foreground, CanvasText));
 }
 /* The caret's row while Row is open, focused or hovered (objectToolbar.ts): the column tint's colour. */
 .ProseMirror .mep-table-row { background-color: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.15)); }

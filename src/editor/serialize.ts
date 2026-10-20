@@ -5,7 +5,7 @@ import { Transform } from 'prosemirror-transform';
 import type { Mapping } from 'prosemirror-transform';
 import { ALPHANUMERIC, INLINE_MARKERS, KBD_MARKERS, NOTE_SEPARATOR, NOTE_SYNTAX, opensInsideWords, plainWikiEmbed, sidebarCanClose, sidebarCanOpen } from '../syntax/markers';
 import { AttrPair, NOTE_SYNTAX_CHARS, fenceHolder, joinAttrs, parseAttrsLiteral, sameAttrs } from './attrs';
-import { DEFAULT_FENCE, fenceOf, minimumFence, openingLineOf } from './fences';
+import { DEFAULT_FENCE, fenceOf, savedFence, savedOpeningLine } from './fences';
 import { Token } from '../@types/markdown-it';
 import { AttrsCut, attrsCutsIn, attrsGivenTo } from '../plugin/markdownItAttrs';
 import { MDTable, TableAlign as MDTableAlign } from '../services/table/mdTable';
@@ -2407,9 +2407,6 @@ function paragraphMarkdown(node: Node): string {
     return inlineMarkdown(node, true);
 }
 
-/** The fence a fenced code block is written with (`fences.ts`), here where the save and its readers have always found it. */
-export { fenceOf };
-
 /**
  * Where the save writes `node`'s literal, as `attrsReadAt` knows it: the
  * node's name, a fenced code block's by the fence it is written with
@@ -2477,16 +2474,11 @@ function blockSerializer(options: SerializeOptions): MarkdownSerializer {
                 state.closeBlock(node);
                 return;
             }
-            // Lengthened past a run inside (`minimumFence`); a fence's attribute literal stands on its opening line (`blocks.ts`).
-            const fence = minimumFence(fenceOf(node), content);
-            state.write(openingLineOf({
-                markup: fence,
-                params: String(node.attrs.params ?? ''),
-                attrsSuffix: node.attrs.attrsSuffix as string | null,
-            }) + '\n');
+            // Lengthened past a closing line inside (`savedFence`); a fence's attribute literal stands on its opening line (`blocks.ts`).
+            state.write(savedOpeningLine(node) + '\n');
             state.text(content, false);
             state.write('\n');
-            state.write(fence);
+            state.write(savedFence(node));
             state.closeBlock(node);
         },
         horizontal_rule(state, node) {

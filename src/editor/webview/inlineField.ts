@@ -16,18 +16,8 @@
  * is taken on the window, before the field sees it — and saves the document as
  * it is, without the field's value.
  */
+import type { Completer, Completion } from '../completions';
 import { CompletionListView } from './completionList';
-
-/** One completion a field may take: `value` goes into the field, `label` and `detail` are what the list shows. */
-export interface Completion {
-    value: string;
-    label: string;
-    detail?: string;
-    kind?: string;
-}
-
-/** Where a field's completions come from: the choices for what the field holds now (a link's: the host's `linkChoices`). */
-export type Completer = (query: string) => Promise<readonly Completion[]>;
 
 /**
  * One value a verb or an action asks for, and what follows it: `commit`

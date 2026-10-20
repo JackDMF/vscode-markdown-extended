@@ -53,7 +53,8 @@ import { Mapping } from 'prosemirror-transform';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES, plainWikiEmbed } from '../../syntax/markers';
 import { containerClass } from '../schema';
-import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompletions, languageOf, openingLineOf } from '../fences';
+import type { Completion } from '../completions';
+import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, languageOf, savedOpeningLine } from '../fences';
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
 import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
@@ -84,7 +85,7 @@ import {
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
-import { plainTip } from '../tips';
+import { Tip, plainTip, tipText } from '../tips';
 import { Tooltips } from './tooltip';
 import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, caretRect, placeMenu, rangeAnchor } from './placement';
 
@@ -155,6 +156,8 @@ export interface Verb {
     /** The label without the noun the bar's title already names (`Delete`, `Edit…`), drawn when the bar is too narrow for its title (`ObjectBar.fit`). */
     short?: string;
     title: string;
+    /** `title` with a piece in the code font (a fence's ```), where the hover should draw it: the same words (`tipText(tip) === title`). */
+    tip?: Tip;
     /** Where it stands on the bar (`verbs.ts`): its order, its divider, whether `Alt+Enter` may focus it. */
     slot: Slot;
     /** A `run` verb that opens a source box in place (a source block's, a table's Edit source): it opens in place, as a field does. */
@@ -178,6 +181,8 @@ export interface Verb {
     separated?: boolean;
     /** What its field edits, when it is not the bar's object: the element inside it (`withInlineAttributes`), drawn while the field is open. */
     target?: { from: number; to: number };
+    /** What a table's set-verb acts on, tinted while it is active (`ObjectBar.activeAxis`): Row the caret's row, Column and Align its column. */
+    axis?: 'row' | 'column';
 }
 
 /** A verb's button drawn with `text` — its label or its short form — and, where it opens a list, the workbench's dropdown chevron, as the formatting row's menus carry. */
@@ -266,9 +271,6 @@ interface BarDecor {
 const NO_DECOR: BarDecor = { tint: null };
 
 const decorKey = new PluginKey<BarDecor>('mep-object-toolbar-decor');
-
-/** Which axis a table's set-verb acts on: Row the caret's row, Column and Align its column. */
-const VERB_AXIS: Readonly<Record<string, 'row' | 'column'>> = { row: 'row', column: 'column', align: 'column' };
 
 /**
  * The caret's rows or columns of the table `tint` names, as node decorations
@@ -485,10 +487,15 @@ class ObjectBar {
     private moved: { verb: Verb; el: HTMLButtonElement }[] = [];
     /** The title, and its short form, as the presentation gave them. */
     private title = { label: '', short: undefined as string | undefined };
-    /** A set-verb's open menu: its panel, the verb's button, its entries. */
-    private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
+    /**
+     * A set-verb's open menu: its panel, the button it opens under — the verb's, or "…" for a verb moved
+     * into it — the id of the verb it belongs to (`null` for the "…" list itself) and its entries.
+     */
+    private menu: { panel: HTMLElement; button: HTMLButtonElement; verb: string | null; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
     /** The verb under the pointer, by id (`activeVerb`). */
     private hovered: string | null = null;
+    /** The entry of the "…" list under the pointer, by the id of the verb it stands for (`activeVerb`). */
+    private hoveredEntry: string | null = null;
 
     constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents, private readonly tips: Tooltips) {
         this.el = document.createElement('div');
@@ -691,7 +698,7 @@ class ObjectBar {
             opens: verb.menu !== undefined,
             run: () => {
                 if (verb.menu && this.more) {
-                    this.openMenu(verb.menu, this.more);
+                    this.openMenu(verb.menu, this.more, verb.id);
                 } else {
                     this.choose(verb);
                 }
@@ -736,7 +743,7 @@ class ObjectBar {
                 el.setAttribute('aria-label', lensName(verb.label));
             }
             el.tabIndex = -1;
-            this.tips.attach(el, () => plainTip(verb.title, verb.refusal));
+            this.tips.attach(el, () => (verb.tip ? { ...verb.tip, note: verb.refusal ?? verb.tip.note } : plainTip(verb.title, verb.refusal)));
             el.setAttribute('aria-disabled', String(Boolean(verb.refusal)));
             if (verb.menu) {
                 el.setAttribute('aria-haspopup', 'menu');
@@ -768,20 +775,40 @@ class ObjectBar {
     }
 
     /**
-     * The verb that is active now, by id: the one whose menu is open, else the
-     * one whose button has the focus, else the one under the pointer; `null`
-     * for none. What a table's bar tints follows it (F6: Row tints the caret's
-     * row, Column and Align its column).
+     * The verb that is active now, by id: the one whose menu is open — under
+     * its button or, moved there, under "…" — else the one whose button has the
+     * focus, else the one under the pointer; with the "…" list itself open, the
+     * entry that has the focus or the pointer stands for its verb. `null` for
+     * none. What a table's bar tints follows it (F6: Row tints the caret's row,
+     * Column and Align its column).
      */
     activeVerb(): string | null {
-        const open = this.menu === null ? undefined : this.buttons.find(b => b.el === this.menu?.button);
+        const menu = this.menu;
+        if (menu?.verb) {
+            return menu.verb;
+        }
+        const entry = menu === null ? undefined : menu.entries.find(m => m.el === document.activeElement)?.entry.id ?? this.hoveredEntry;
         const focused = this.buttons.find(b => b.el === document.activeElement);
-        return open?.verb.id ?? focused?.verb.id ?? this.hovered;
+        return entry ?? focused?.verb.id ?? this.hovered;
+    }
+
+    /** The axis the active verb acts on (`Verb.axis`): what a table's bar tints. */
+    activeAxis(): Verb['axis'] {
+        const id = this.activeVerb();
+        return id === null ? undefined : this.buttons.find(b => b.verb.id === id)?.verb.axis;
     }
 
     private verbHovered(id: string, on: boolean): void {
         if (on || this.hovered === id) {
             this.hovered = on ? id : null;
+            this.events.verbActive();
+        }
+    }
+
+    /** The pointer on or off an entry of the open menu: only the "…" list's entries stand for a verb (`activeVerb`). */
+    private entryHovered(id: string, on: boolean): void {
+        if (this.menu?.verb === null && (on || this.hoveredEntry === id)) {
+            this.hoveredEntry = on ? id : null;
             this.events.verbActive();
         }
     }
@@ -808,7 +835,7 @@ class ObjectBar {
             const open = this.menu?.button === button;
             this.closeMenu(open);
             if (button && !open) {
-                this.openMenu(verb.menu, button);
+                this.openMenu(verb.menu, button, verb.id);
             }
         } else if (verb.field) {
             this.openField(verb, verb.field);
@@ -827,7 +854,7 @@ class ObjectBar {
      * to the marked entry, else the first that can be chosen. Inside the bar's
      * element, so the bar counts the focus in it as its own.
      */
-    private openMenu(entries: readonly MenuEntry[], button: HTMLButtonElement): void {
+    private openMenu(entries: readonly MenuEntry[], button: HTMLButtonElement, verb: string | null = null): void {
         const panel = document.createElement('div');
         panel.className = 'mep-menu mep-object-menu';
         panel.setAttribute('role', 'menu');
@@ -867,7 +894,13 @@ class ObjectBar {
                 e.preventDefault();
                 this.pick(entry);
             });
-            el.addEventListener('mouseenter', () => followPointer(panel, el));
+            el.addEventListener('mouseenter', () => {
+                followPointer(panel, el);
+                this.entryHovered(entry.id, true);
+            });
+            el.addEventListener('mouseleave', () => this.entryHovered(entry.id, false));
+            // Moving between entries with the arrow keys is a move between the verbs they stand for (`activeVerb`).
+            el.addEventListener('focus', () => this.events.verbActive());
             return { entry, el };
         });
         panel.append(...made.flatMap((m, i) => (m.entry.separated && i > 0 ? [separator(), m.el] : [m.el])));
@@ -877,7 +910,7 @@ class ObjectBar {
                 this.closeMenu(false);
             }
         });
-        this.menu = { panel, button, entries: made };
+        this.menu = { panel, button, verb, entries: made };
         button.setAttribute('aria-expanded', 'true');
         // `position: fixed`, a child of the bar so the bar counts its focus as its own: placed as the row's menus are.
         this.el.append(panel);
@@ -894,6 +927,7 @@ class ObjectBar {
             return;
         }
         this.menu = null;
+        this.hoveredEntry = null;
         this.events.verbActive();
         menu.button.setAttribute('aria-expanded', 'false');
         // An entry's hover goes with its menu: once the panel is out of the bar, `hide(this.el)` finds it no more.
@@ -1079,6 +1113,8 @@ class ObjectToolbarView implements PluginView {
     private hovered: HTMLElement | null = null;
     private hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private destroyed = false;
+    /** Language…'s completer, for the document it read the languages of (`languageCompleter`). */
+    private languages: { doc: EditorState['doc']; complete: (query: string) => Completion[] } | null = null;
     /** While `act` moves the focus: what the transactions dispatched meanwhile (a source box's commit) did to positions. */
     private focusMoves: Mapping | null = null;
     /** The hover the bars share with the formatting row (`tooltip.ts`), released with the view. */
@@ -1173,8 +1209,10 @@ class ObjectToolbarView implements PluginView {
 
     /**
      * A bar's verb opened its field: the field takes the slot, at what it
-     * edits — the element inside the object (`target`), else the caret's line
-     * at the caret, else (no caret) the object — not where the verbs stood.
+     * edits — the element inside the object (`target`), else (an inline
+     * object with the caret in it) the caret's line at the caret, else the
+     * object: a block's field stands where the block's bar did, anchored to
+     * the block.
      */
     private fieldOpened(bar: ObjectBar, object: EditorObject, target?: { from: number; to: number }): void {
         const view = this.view;
@@ -1187,7 +1225,9 @@ class ObjectToolbarView implements PluginView {
             return;
         }
         this.fieldKey = key;
-        const atCaret = target === undefined && bar === this.selectionBar && sel instanceof TextSelection;
+        // A block's field opens where that block's bar stands, anchored to the block (Daniel, #4 build critique); an inline
+        // object's at the object, a selection's at the selection — only where the caret itself is the anchor, at the caret.
+        const atCaret = target === undefined && bar === this.selectionBar && sel instanceof TextSelection && !isBlockPlaced(object);
         const head = sel.head;
         this.slot.request({
             kind: 'field',
@@ -1276,12 +1316,14 @@ class ObjectToolbarView implements PluginView {
      * first verb. Where there is none but the caret is in code, a key,
      * emphasis … without a `{…}` (`attributeHolderAt`), a bar of its own with
      * **Attributes…** — never drawn on a caret rest, kept while the selection
-     * stays in its run (`selectionObject`). False where there is neither.
+     * stays in its run (`selectionObject`). `'none'` where there is neither —
+     * the only answer the key says so for (`NO_TARGET_HINT`); `'unavailable'`
+     * where there is an object and no bar could be drawn for it.
      */
-    openFromKeyboard(): boolean {
+    openFromKeyboard(): 'opened' | 'unavailable' | 'none' {
         const object = objectAtSelection(this.view.state) ?? (currentReadsAttrs() ? attributeHolderAt(this.view.state).inline?.object ?? null : null);
         if (object === null) {
-            return false;
+            return 'none';
         }
         this.cancelPending();
         this.matured = object;
@@ -1289,10 +1331,10 @@ class ObjectToolbarView implements PluginView {
         // It takes the slot whatever holds it, a dismissal of this object's bar included.
         this.refresh(true);
         if (!this.selectionBar.visible) {
-            return false;
+            return 'unavailable';
         }
         this.selectionBar.focusFirst();
-        return true;
+        return 'opened';
     }
 
     /**
@@ -1487,14 +1529,14 @@ class ObjectToolbarView implements PluginView {
     /**
      * What the bars shown need drawn in the document: the tint of the caret's
      * row or column of the table whose bar shows, while the verb acting on it
-     * is active (`activeVerb`, `VERB_AXIS`). It is a decoration, so the view is
+     * is active (`activeAxis`, `Verb.axis`). It is a decoration, so the view is
      * told in a transaction of its own — after this update, which may not
      * dispatch one. A tint changes no box, so nothing moves.
      */
     private syncDecorations(): void {
         const wanted = (): BarDecor => {
             const bar = this.selectionBar;
-            const axis = bar.visible && bar.object?.kind === 'table' ? VERB_AXIS[bar.activeVerb() ?? ''] : undefined;
+            const axis = bar.visible && bar.object?.kind === 'table' ? bar.activeAxis() : undefined;
             return { tint: axis === undefined || bar.object === null ? null : { table: bar.object.from, axis } };
         };
         if (sameDecor(wanted(), decorKey.getState(this.view.state) ?? NO_DECOR)) {
@@ -2309,24 +2351,25 @@ class ObjectToolbarView implements PluginView {
             title: `A pipe table: ${columns} ${columns === 1 ? 'column' : 'columns'}, a header row and ${rows - 1} ${rows === 2 ? 'row' : 'rows'} under it.`,
             verbs: [
                 {
-                    id: 'row', label: 'Row', slot: 'type', title: 'Insert a row next to the caret\'s, or delete it.',
+                    id: 'row', label: 'Row', slot: 'type', axis: 'row', title: 'Insert a row next to the caret\'s, or delete it.',
                     menu: [
                         entry('insert-row-above', 'Insert above', 'A new row above the caret\'s; above the header row it is the new header.', () => addRowTransaction(view.state, 'above')),
                         entry('insert-row-below', 'Insert below', 'A new row below the caret\'s. Tab in the last cell adds one too.', () => addRowTransaction(view.state, 'below'), { keys: 'Tab at end' }),
+                        // The one that takes something away stands apart, after a divider (Daniel, #4 build critique).
                         entry('delete-row', 'Delete row', 'The caret\'s row goes; deleting the header row makes the next row the header.',
-                            () => deleteRowTransaction(view.state), { refusal: deleteRowRefusal(state) }, 'Row deleted'),
+                            () => deleteRowTransaction(view.state), { refusal: deleteRowRefusal(state), separated: true }, 'Row deleted'),
                     ],
                 },
                 {
-                    id: 'column', label: 'Column', slot: 'type', title: 'Insert a column next to the caret\'s (tinted), or delete it.',
+                    id: 'column', label: 'Column', slot: 'type', axis: 'column', title: 'Insert a column next to the caret\'s (tinted), or delete it.',
                     menu: [
                         entry('insert-column-left', 'Insert left', 'A new column left of the caret\'s.', () => addColumnTransaction(view.state, 'left')),
                         entry('insert-column-right', 'Insert right', 'A new column right of the caret\'s.', () => addColumnTransaction(view.state, 'right')),
-                        entry('delete-column', 'Delete column', 'The caret\'s column goes.', () => deleteColumnTransaction(view.state), { refusal: deleteColumnRefusal(state) }, 'Column deleted'),
+                        entry('delete-column', 'Delete column', 'The caret\'s column goes.', () => deleteColumnTransaction(view.state), { refusal: deleteColumnRefusal(state), separated: true }, 'Column deleted'),
                     ],
                 },
                 {
-                    id: 'align', label: 'Align', slot: 'type', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
+                    id: 'align', label: 'Align', slot: 'type', axis: 'column', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
                     menu: [alignEntry('left', 'Left', ':--'), alignEntry('center', 'Center', ':-:'), alignEntry('right', 'Right', '--:')],
                 },
                 { ...this.attributesVerb(object), separated: true },
@@ -2378,18 +2421,30 @@ class ObjectToolbarView implements PluginView {
             value: languageOf(object.node.attrs.params as string),
             label: 'Language',
             keys: '↵ set · Esc cancel · empty: no language',
-            complete: query => Promise.resolve(languageCompletions(this.view.state.doc, query)),
+            complete: query => Promise.resolve(this.languageCompleter()(query)),
             commit: value => this.commitCodeBlock(step, object, value, changeLanguageTransaction),
         };
+        // The fence in the code font: drawn as a part of its own, so three backticks read as the fence, not as noise.
+        const tip: Tip | undefined = indented
+            ? { parts: ['Language — setting one makes the block fenced (', { code: DEFAULT_FENCE }, '); its text stays.'] }
+            : undefined;
         return {
             id: 'language',
             label: VERB.language,
             slot: 'type',
-            title: indented
-                ? `Language — setting one makes the block fenced (${DEFAULT_FENCE}); its text stays.`
-                : 'The fence\'s language — the first word of its info string; the rest stays.',
+            title: tip ? tipText(tip) : 'The fence\'s language — the first word of its info string; the rest stays.',
+            tip,
             field: step,
         };
+    }
+
+    /** Language…'s completer for the document as it is: its languages read once, not on each key (`languageCompleter`). */
+    private languageCompleter(): (query: string) => Completion[] {
+        const doc = this.view.state.doc;
+        if (this.languages?.doc !== doc) {
+            this.languages = { doc, complete: languageCompleter(doc) };
+        }
+        return this.languages.complete;
     }
 
     /**
@@ -2399,10 +2454,10 @@ class ObjectToolbarView implements PluginView {
      * block gets as its placeholder: `Enter` fences it.
      */
     private openingLineVerb(object: Extract<EditorObject, { node: unknown }>): Verb {
-        const attrs = object.node.attrs as { markup: string; params: string; attrsSuffix: string | null };
-        const indented = attrs.markup === '';
+        const indented = object.node.attrs.markup === '';
         const step: FieldStep = {
-            value: openingLineOf(attrs),
+            // What the save writes (`savedOpeningLine`), not the node's own fence: the field must show the line the file will hold.
+            value: indented ? '' : savedOpeningLine(object.node),
             label: 'Opening line',
             placeholder: indented ? INDENTED_PLACEHOLDER : undefined,
             keys: '↵ set · Esc cancel · fence, info, {…}',
@@ -2423,13 +2478,15 @@ class ObjectToolbarView implements PluginView {
         value: string,
         make: (state: EditorState, pos: number, value: string) => { tr: Transaction; fenced: boolean } | { refusal: string } | null,
     ): FieldStep | void {
-        const current = currentObject(this.view.state, object);
-        const asked = current === null ? null : make(this.view.state, current.from, value);
+        const state = this.view.state;
+        const current = currentObject(state, object);
+        const asked = current === null ? null : make(state, current.from, value);
         if (asked !== null && 'refusal' in asked) {
             return refusedStep(step, value, asked.refusal);
         }
         this.act(object, now => {
-            const made = make(this.view.state, now.from, value);
+            // The pass made above stands while nothing moved under it; moving the focus back may have (a source box committed).
+            const made = current !== null && this.view.state === state && now.from === current.from ? asked : make(this.view.state, now.from, value);
             if (made === null || 'refusal' in made) {
                 return false;
             }
@@ -2574,16 +2631,21 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
                 if (select !== null) {
                     view.dispatch(select);
                 }
-                const opened = toolbarViews.get(view)?.openFromKeyboard() ?? false;
-                if (opened) {
-                    event.preventDefault();
-                } else if (view.state.selection instanceof TextSelection) {
-                    // Nothing to act on: the key is taken and says so, the caret stays (#4).
-                    showHint(view, NO_TARGET_HINT, 'neutral');
+                const opened = toolbarViews.get(view)?.openFromKeyboard() ?? 'none';
+                if (opened === 'opened') {
                     event.preventDefault();
                     return true;
                 }
-                return opened;
+                if (view.state.selection instanceof TextSelection) {
+                    // The key is taken, the caret stays (#4); it says there is nothing to act on only where there is no object — one
+                    // whose bar could not be drawn is not "nothing here".
+                    if (opened === 'none') {
+                        showHint(view, NO_TARGET_HINT, 'neutral');
+                    }
+                    event.preventDefault();
+                    return true;
+                }
+                return false;
             },
         },
     });

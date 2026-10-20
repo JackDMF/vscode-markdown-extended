@@ -21,7 +21,7 @@
 import type { Node } from 'prosemirror-model';
 import { endLiteralOf, findLeftDelimiter } from './attrs';
 import { LANGUAGES } from './languages';
-import type { Completion } from './webview/inlineField';
+import type { Completion } from './completions';
 
 /** The fence a new code block gets, and an indented one when something fences it. */
 export const DEFAULT_FENCE = '```';
@@ -49,6 +49,18 @@ export const BACKTICK_INFO_REFUSAL = 'A ``` fence takes no backtick after it: th
  */
 export const LANGUAGE_FOLLOWED_REFUSAL = 'Other words follow the language — Edit source changes the whole line.';
 
+/**
+ * Why Language… refuses a value with a space or a brace in it: the language is
+ * one word, and a word with more would change the info string or the literal
+ * behind the field's back.
+ */
+export const LANGUAGE_WORD_REFUSAL = 'A language is one word, without spaces or { }: Edit source changes the whole line.';
+
+/** Whether `language` is one word the info string's first word can be: no whitespace, no braces. */
+export function isLanguageWord(language: string): boolean {
+    return !/[\s{}]/.test(language.trim());
+}
+
 /** A block's opening line in its parts, as the node holds them (`markup`, `params`, `attrsSuffix`). */
 export interface OpeningLine {
     markup: string;
@@ -73,6 +85,31 @@ export function fenceOf(node: Node): string {
 }
 
 /**
+ * The fence the save writes for `node`: `fenceOf`, lengthened past a closing
+ * line inside (`minimumFence`). The closing line is this fence too, and the
+ * opening line of the bar's fields starts with it (`savedOpeningLine`).
+ */
+export function savedFence(node: Node): string {
+    return minimumFence(fenceOf(node), node.textContent);
+}
+
+/**
+ * The opening line the save writes for `node` — `savedFence`, its info string
+ * and its literal; fenced even for an indented block, which has no opening
+ * line yet and gets this one when something fences it. `params` stands in for
+ * the info string when a field is about to change it (Language…): the fence
+ * is the one the block has now, so a typed word that would not survive on it
+ * (a backtick after backticks) is refused, not carried to another fence.
+ *
+ * The one line the serializer, Edit source's prefill and Language… all build:
+ * a field that composed it from the node's `markup` would show a fence the
+ * save does not write, and refuse what the save would accept.
+ */
+export function savedOpeningLine(node: Node, params = String(node.attrs.params ?? '')): string {
+    return openingLineOf({ markup: savedFence(node), params, attrsSuffix: node.attrs.attrsSuffix as string | null });
+}
+
+/**
  * The block's opening line as the file writes it: the fence, the info string,
  * a space and the literal; `''` for an indented block (`markup` empty).
  */
@@ -85,14 +122,16 @@ export function openingLineOf(attrs: { markup: string; params: string; attrsSuff
 
 /**
  * The fence the file needs for `content`: `markup`, or one longer when a line
- * inside starts (after up to three spaces) with a run of its character as
- * long — that line would close the block otherwise.
+ * inside would close the block — a closing line is a run of the fence's
+ * character, after up to three spaces, followed by nothing but spaces or
+ * tabs, and as long as the fence. A line with words after the run
+ * (```` ```python ````) closes nothing: it is an opening line, text here.
  */
 export function minimumFence(markup: string, content: string): string {
     const ch = markup[0];
     let longest = 0;
-    for (const run of content.match(new RegExp(`^ {0,3}\\${ch}+`, 'gm')) ?? []) {
-        longest = Math.max(longest, run.trim().length);
+    for (const line of content.match(new RegExp(`^ {0,3}\\${ch}+[ \\t]*$`, 'gm')) ?? []) {
+        longest = Math.max(longest, line.trim().length);
     }
     return longest >= markup.length ? ch.repeat(longest + 1) : markup;
 }
@@ -170,27 +209,43 @@ export function documentLanguages(doc: Node): string[] {
 }
 
 /**
- * What Language… offers for `query`: the languages the document's fences
- * name first (`documentLanguages`, detail "JavaScript · in this document"),
- * then every language highlight.js highlights whose id or an alias starts
- * with it, case aside — the word that matched, the id before an alias, its
- * name as the detail. The list offers; the field takes any word.
+ * What Language… offers for a query, the document's languages read once
+ * (`documentLanguages`) — the completer a field asks on each key: the
+ * languages the document's fences name first (detail "JavaScript · in this
+ * document"), then every language highlight.js highlights whose id or an
+ * alias starts with the query, case aside — the word that matched, the id
+ * before an alias, its name as the detail. A language the document already
+ * offers under one of its words is not offered again under another
+ * (`javascript` in the document: no `js` below it). The list offers; the
+ * field takes any word.
  */
-export function languageCompletions(doc: Node, query: string): Completion[] {
-    const q = query.trim().toLowerCase();
-    const starts = (word: string) => word.toLowerCase().startsWith(q);
-    const own = documentLanguages(doc).filter(starts);
-    const offered = new Set(own.map(l => l.toLowerCase()));
-    const completions: Completion[] = own.map(language => {
-        const name = languageName(language);
-        return { value: language, label: language, detail: name === null ? 'in this document' : `${name} · in this document` };
-    });
-    for (const language of LANGUAGES) {
-        const word = [language.id, ...language.aliases].find(w => starts(w) && !offered.has(w));
-        if (word !== undefined) {
-            offered.add(word);
-            completions.push({ value: word, label: word, detail: language.name });
+export function languageCompleter(doc: Node): (query: string) => Completion[] {
+    const inDocument = documentLanguages(doc);
+    return query => {
+        const q = query.trim().toLowerCase();
+        const starts = (word: string) => word.toLowerCase().startsWith(q);
+        const own = inDocument.filter(starts);
+        const offered = new Set(own.map(l => l.toLowerCase()));
+        const completions: Completion[] = own.map(language => {
+            const name = languageName(language);
+            return { value: language, label: language, detail: name === null ? 'in this document' : `${name} · in this document` };
+        });
+        for (const language of LANGUAGES) {
+            const words = [language.id, ...language.aliases];
+            if (words.some(w => offered.has(w))) {
+                continue;
+            }
+            const word = words.find(starts);
+            if (word !== undefined) {
+                offered.add(word);
+                completions.push({ value: word, label: word, detail: language.name });
+            }
         }
-    }
-    return completions;
+        return completions;
+    };
+}
+
+/** `languageCompleter` asked once: what Language… offers for `query` in `doc`. */
+export function languageCompletions(doc: Node, query: string): Completion[] {
+    return languageCompleter(doc)(query);
 }

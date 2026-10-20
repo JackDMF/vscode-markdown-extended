@@ -2,8 +2,9 @@ import * as assert from 'assert';
 import { parseDocument, serializeDocument } from '../../../src/editor';
 import {
     BACKTICK_INFO_REFUSAL, NO_FENCE_REFUSAL, OpeningLine, documentLanguages, languageCompletions, languageName, languageOf, minimumFence, openingLineOf,
-    parseOpeningLine, shortFenceRefusal, withLanguage,
+    parseOpeningLine, savedFence, savedOpeningLine, shortFenceRefusal, withLanguage,
 } from '../../../src/editor/fences';
+import { editorSchema } from '../../../src/editor/schema';
 import { hostEngine } from './helpers';
 
 /** The first block of `text` as the editor parses it: a code block's attributes. */
@@ -67,6 +68,50 @@ suite('Editor code blocks: the opening line', () => {
             assert.strictEqual(minimumFence('~~~', '```'), '~~~');
             assert.strictEqual(minimumFence('```', 'a ```'), '```', 'a run inside a line closes nothing');
         });
+
+        test('only a closing-shaped line counts: a line with words after the run is text', () => {
+            assert.strictEqual(minimumFence('```', '```python\nprint(1)'), '```', 'an opening line inside closes nothing');
+            assert.strictEqual(minimumFence('~~~', '~~~js\nx'), '~~~');
+            assert.strictEqual(minimumFence('```', 'a\n```  \nb'), '````', 'spaces after the run still close');
+            assert.strictEqual(minimumFence('```', 'a\n```\t\nb'), '````', 'a tab too');
+            assert.strictEqual(minimumFence('```', 'a\n  ````\nb'), '`````', 'up to three spaces before');
+            assert.strictEqual(minimumFence('````', '```\n```python'), '````', 'a shorter closing line is no danger');
+        });
+
+        test('an opening line "```" is allowed on a block holding "```python"', () => {
+            assert.deepStrictEqual(parseOpeningLine('```', '```python\nprint(1)'), { markup: '```', params: '', literal: null });
+        });
+    });
+
+    suite('savedOpeningLine: the line the save writes, composed once', () => {
+        /** A code block with these attributes and `content`, as a document of its own. */
+        const docOf = (markup: string, params: string, content: string) => editorSchema.node('doc', null, [
+            editorSchema.nodes.code_block.create({ markup, params }, content === '' ? null : editorSchema.text(content)),
+        ]);
+        const cases: [string, string, string, string][] = [
+            ['```', 'js', 'x', '```js'],
+            ['```', 'js', 'a\n```\nb', '````js'],
+            ['```', 'js a`b', 'x', '~~~js a`b'],
+            ['```', 'js a`b', 'a\n~~~\nb', '~~~~js a`b'],
+            ['```', '', '```python\nx', '```'],
+            ['~~~', 'sh', 'a\n~~~\nb', '~~~~sh'],
+            ['', '', '', '```'],
+        ];
+        for (const [markup, params, content, expected] of cases) {
+            test(`${JSON.stringify([markup, params, content])} → ${JSON.stringify(expected)}, the first line the save writes`, () => {
+                const doc = docOf(markup, params, content);
+                const node = doc.firstChild!;
+                assert.strictEqual(savedOpeningLine(node), expected);
+                const written = serializeDocument({ doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
+                assert.strictEqual(written.split('\n')[0], expected, 'the save writes the same line');
+                assert.strictEqual(written.trimEnd().split('\n').pop(), savedFence(node), 'and closes it with the same fence');
+            });
+        }
+
+        test('with the info string a field is about to set', () => {
+            const node = docOf('```', 'js', 'a\n```\nb').firstChild!;
+            assert.strictEqual(savedOpeningLine(node, 'ts title=x'), '````ts title=x');
+        });
     });
 
     suite('the language: the info string\'s first word', () => {
@@ -105,9 +150,24 @@ suite('Editor code blocks: the opening line', () => {
                 { value: 'json', label: 'json', detail: 'JSON · in this document' },
             ]);
             const values = list.map(c => c.value);
-            assert.ok(values.includes('javascript'), 'the id');
+            assert.ok(!values.includes('javascript'), 'JavaScript is the document\'s js: once');
+            assert.ok(values.includes('java'), 'the id of a language the document does not use');
             assert.strictEqual(values.filter(v => v === 'json').length, 1, 'a language offered once');
             assert.ok(values.every(v => v.startsWith('j')));
+        });
+
+        test('a language the document names by one word is not offered again under another', () => {
+            const named = parseDocument(hostEngine(), '```javascript\nx\n```\n', {}).doc;
+            const values = languageCompletions(named, 'j').map(c => c.value);
+            for (const word of ['js', 'jsx', 'mjs', 'cjs']) {
+                assert.ok(!values.includes(word), `${word}: JavaScript is the document's, once`);
+            }
+            assert.strictEqual(values.filter(v => v === 'javascript').length, 1);
+            assert.deepStrictEqual(languageCompletions(named, 'j')[0], { value: 'javascript', label: 'javascript', detail: 'JavaScript · in this document' });
+            // The document's `js` does not hide `javascript` from a query `js` does not match.
+            const short = parseDocument(hostEngine(), '```js\nx\n```\n', {}).doc;
+            assert.ok(languageCompletions(short, 'java').some(c => c.value === 'javascript'), 'java → javascript');
+            assert.ok(!languageCompletions(short, 'j').some(c => c.value === 'javascript'), 'j → js alone');
         });
 
         test('an alias is found, and offered as typed', () => {

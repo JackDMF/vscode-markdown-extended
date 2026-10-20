@@ -3,7 +3,7 @@ import { Node } from 'prosemirror-model';
 import { undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
-import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
+import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_WORD_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
@@ -367,6 +367,70 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
         const after = indented.apply(sh.tr);
         assert.strictEqual(text(after), 'Text.\n\n```sh\necho hi\n```\n');
         assert.strictEqual(text(after.apply(undoOnce(after))), 'Text.\n\n    echo hi\n', 'one undo step restores the indented form');
+    });
+
+    /** `state` with the code block at its caret given `attrs` — as the page leaves a block whose text grew after its fence was set. */
+    const withBlockAttrs = (state: EditorState, attrs: Record<string, unknown>) => {
+        const pos = blockPos(state);
+        return state.apply(state.tr.setNodeMarkup(pos, undefined, { ...state.doc.nodeAt(pos)!.attrs, ...attrs }));
+    };
+
+    test('Language… on a ```js block that grew a ``` line inside: the fence the save writes, not the node\'s own', () => {
+        const parsed = caretAt(stateOf('````js\na\n```\nb\n````\n'), 'a');
+        const state = withBlockAttrs(parsed, { markup: '```' });
+        const pos = blockPos(state);
+        assert.strictEqual(text(state), '````js\na\n```\nb\n````\n', 'the save lengthens the fence');
+        const ts = changeLanguageTransaction(state, pos, 'ts');
+        assert.ok(ts !== null && 'tr' in ts, 'not refused as a fence too short');
+        assert.strictEqual(text(state.apply(ts.tr)), '````ts\na\n```\nb\n````\n');
+        assert.strictEqual(changeLanguageTransaction(state, pos, 'js'), null, 'the same language: the file does not change');
+        assert.strictEqual(commitOpeningLine(state, pos, '````js'), null, 'the line the field shows, typed back: unchanged');
+        const edited = commitOpeningLine(state, pos, '````js {.x}');
+        assert.ok(edited !== null && 'tr' in edited);
+        assert.strictEqual(text(state.apply(edited.tr)), '````js {.x}\na\n```\nb\n````\n');
+    });
+
+    test('Language… on a block whose info string holds a backtick: it is saved as ~~~, and the language changes on that', () => {
+        const parsed = caretAt(stateOf('~~~js a`b\ncode\n~~~\n'), 'code');
+        const state = withBlockAttrs(parsed, { markup: '```' });
+        const pos = blockPos(state);
+        assert.strictEqual(text(state), '~~~js a`b\ncode\n~~~\n');
+        const ts = changeLanguageTransaction(state, pos, 'ts');
+        assert.ok(ts !== null && 'tr' in ts, 'not refused for a backtick after a ``` fence');
+        assert.strictEqual(text(state.apply(ts.tr)), '~~~ts a`b\ncode\n~~~\n');
+        assert.strictEqual(commitOpeningLine(state, pos, '~~~js a`b'), null, 'the line the field shows, typed back: unchanged');
+        // A language that is itself the backtick is still refused on the fence it would stand on.
+        const plain = caretAt(stateOf('```js\ncode\n```\n'), 'code');
+        assert.deepStrictEqual(changeLanguageTransaction(plain, blockPos(plain), 'a`b'), { refusal: BACKTICK_INFO_REFUSAL });
+    });
+
+    test('Language… takes one word: a space, or a brace, is refused with the way to Edit source', () => {
+        const state = caretAt(stateOf('```js title=x {.n}\ncode\n```\n'), 'code');
+        const pos = blockPos(state);
+        for (const typed of ['js title=y', 'ts {.x}', 'a b', '{.x}', '}', 'js\tx']) {
+            assert.deepStrictEqual(changeLanguageTransaction(state, pos, typed), { refusal: LANGUAGE_WORD_REFUSAL }, JSON.stringify(typed));
+        }
+        assert.match(LANGUAGE_WORD_REFUSAL, /Edit source/);
+        const indented = caretAt(stateOf('Text.\n\n    echo hi\n'), 'echo');
+        assert.deepStrictEqual(changeLanguageTransaction(indented, blockPos(indented), 'sh -x'), { refusal: LANGUAGE_WORD_REFUSAL });
+        const ts = changeLanguageTransaction(state, pos, ' ts ');
+        assert.ok(ts !== null && 'tr' in ts, 'the spaces around a word are not part of it');
+        assert.strictEqual(text(state.apply(ts.tr)), '```ts title=x {.n}\ncode\n```\n');
+    });
+
+    test('Edit source: an info-string line inside closes nothing, so a ``` opening line is allowed on a ````-fenced block holding ```python', () => {
+        const state = caretAt(stateOf('````\n```python\nprint(1)\n````\n'), 'print');
+        const pos = blockPos(state);
+        assert.strictEqual(openingLineRefusal(state, pos, '```'), null);
+        const tr = changeOpeningLineTransaction(state, pos, '```');
+        assert.ok(tr);
+        const written = text(state.apply(tr));
+        assert.strictEqual(written, '```\n```python\nprint(1)\n```\n');
+        const again = parseDocument(hostEngine(), written, {}).doc.firstChild!;
+        assert.strictEqual(again.textContent, '```python\nprint(1)', 'what the file reads is the block that was edited');
+        // A closing-shaped line is still a danger.
+        const closing = caretAt(stateOf('````\n```\nx\n````\n'), 'x');
+        assert.strictEqual(openingLineRefusal(closing, blockPos(closing), '```'), shortFenceRefusal('````'));
     });
 
     test('a nested fence: Language… works, a literal is refused with the nested reason', () => {

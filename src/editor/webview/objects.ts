@@ -48,7 +48,7 @@ import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 import { VERB } from '../verbs';
-import { DEFAULT_FENCE, LANGUAGE_FOLLOWED_REFUSAL, minimumFence, openingLineOf, parseOpeningLine, withLanguage } from '../fences';
+import { LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_WORD_REFUSAL, isLanguageWord, parseOpeningLine, savedFence, savedOpeningLine, withLanguage } from '../fences';
 
 const nodes = editorSchema.nodes;
 
@@ -1159,7 +1159,7 @@ export const NESTED_CODE_ATTRS_REFUSAL = `A code block inside a quote, a list or
  */
 function fencedFor(node: Node, literal: string): { markup?: string } {
     return node.type === nodes.code_block && node.attrs.markup === '' && literal !== ''
-        ? { markup: minimumFence(DEFAULT_FENCE, node.textContent) }
+        ? { markup: savedFence(node) }
         : {};
 }
 
@@ -1312,21 +1312,25 @@ function withOpeningLine(state: EditorState, pos: number, node: Node, line: stri
 }
 
 /**
- * Why `line` cannot be the opening line of the code block at `pos`, or
- * `null`: the line's own reasons (`parseOpeningLine`: no fence, a fence too
- * short for the content, a backtick after backticks), then its literal's —
- * none inside another block (`NESTED_CODE_ATTRS_REFUSAL`), else the one every
- * literal meets (`literalRefusal`) and the block's read-back
- * (`literalsReadBackRefusal`) — then the edit filter's (`noteRefusal`).
+ * What a typed opening line does to the code block at `pos`, in one pass: the
+ * transaction that sets it, the reason it is refused, or `null` — the block is
+ * gone or the line leaves the file as it is. The refusals, in order: the
+ * line's own (`parseOpeningLine`: no fence, a fence too short for the content,
+ * a backtick after backticks), then its literal's — none inside another block
+ * (`NESTED_CODE_ATTRS_REFUSAL`), else the one every literal meets
+ * (`literalRefusal`) and the block's read-back (`literalsReadBackRefusal`) —
+ * then the edit filter's (`noteRefusal`). "As it is" is what the save writes
+ * (`savedOpeningLine`): a block whose fence the save lengthens, given that
+ * longer fence by hand, is unchanged; an indented block given a fence is not.
  */
-export function openingLineRefusal(state: EditorState, pos: number, line: string): string | null {
+function openingLineChange(state: EditorState, pos: number, line: string): { tr: Transaction } | { refusal: string } | null {
     const node = codeBlockNodeAt(state, pos);
     if (node === null) {
         return null;
     }
     const tr = withOpeningLine(state, pos, node, line);
     if (!(tr instanceof Transaction)) {
-        return tr.refusal;
+        return tr;
     }
     // `setNodeMarkup` at `pos` leaves a node there.
     const next = tr.doc.nodeAt(pos) ?? node;
@@ -1337,51 +1341,41 @@ export function openingLineRefusal(state: EditorState, pos: number, line: string
             ?? literalRefusal(literal, fenceHolder(String(next.attrs.markup)))
             ?? literalsReadBackRefusal(tr.doc, pos, state.doc, node.attrs.attrsSuffix as string | null);
         if (refusal !== null) {
-            return refusal;
+            return { refusal };
         }
     }
-    return noteRefusal(tr);
+    const filtered = noteRefusal(tr);
+    if (filtered !== null) {
+        return { refusal: filtered };
+    }
+    const unchanged = (node.attrs.markup === '') === (next.attrs.markup === '') && savedOpeningLine(next) === savedOpeningLine(node);
+    return unchanged ? null : { tr: tr.scrollIntoView() };
+}
+
+/** Why `line` cannot be the opening line of the code block at `pos`, or `null` (`openingLineChange`, which the field asks first). */
+export function openingLineRefusal(state: EditorState, pos: number, line: string): string | null {
+    const change = openingLineChange(state, pos, line);
+    return change !== null && 'refusal' in change ? change.refusal : null;
 }
 
 /**
  * The code block at `pos` with `line` as its opening line — fence, info
  * string, literal (`parseOpeningLine`) — or `null` when it is unchanged, gone
- * or refused (`openingLineRefusal`, which the field asks first).
+ * or refused (`openingLineRefusal`).
  */
 export function changeOpeningLineTransaction(state: EditorState, pos: number, line: string): Transaction | null {
-    const node = codeBlockNodeAt(state, pos);
-    if (node === null || openingLineRefusal(state, pos, line) !== null) {
-        return null;
-    }
-    const tr = withOpeningLine(state, pos, node, line);
-    if (!(tr instanceof Transaction)) {
-        return null;
-    }
-    const next = tr.doc.nodeAt(pos) ?? node;
-    const unchanged = (['markup', 'params', 'attrsSuffix'] as const).every(name => next.attrs[name] === node.attrs[name]);
-    return unchanged ? null : tr.scrollIntoView();
-}
-
-/** A code block's attributes, as `openingLineOf` reads them. */
-type OpeningLineAttrs = { markup: string; params: string; attrsSuffix: string | null };
-
-/**
- * The opening line the code block at `pos` gets for `language`: its info
- * string's first word replaced, added or — `''` — removed (`withLanguage`),
- * the rest and the literal kept; an indented block fenced, on the fence a new
- * block gets, lengthened past a run inside (`minimumFence`).
- */
-function lineWithLanguage(node: Node, language: string): string {
-    const attrs = node.attrs as OpeningLineAttrs;
-    const markup = attrs.markup === '' ? minimumFence(DEFAULT_FENCE, node.textContent) : attrs.markup;
-    return openingLineOf({ markup, params: withLanguage(attrs.params, language), attrsSuffix: attrs.attrsSuffix });
+    const change = openingLineChange(state, pos, line);
+    return change !== null && 'tr' in change ? change.tr : null;
 }
 
 /**
  * Language… committed: the code block at `pos` with `language` as its info
- * string's first word — through the opening line, so the one refusal applies
- * (a backtick in a ``` fence's language) — and whether it fenced an indented
- * block. `null` when unchanged or gone.
+ * string's first word, the rest of the info string and the literal kept —
+ * through the opening line the save writes (`savedOpeningLine`: its fence, an
+ * indented block fenced on the one a new block gets), so the one refusal
+ * applies (a backtick in a ``` fence's language) — and whether it fenced an
+ * indented block. A value that is not one word (a space, a brace) is refused,
+ * the reason pointing to Edit source. `null` when unchanged or gone.
  */
 export function changeLanguageTransaction(state: EditorState, pos: number, language: string): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
     const node = codeBlockNodeAt(state, pos);
@@ -1393,17 +1387,23 @@ export function changeLanguageTransaction(state: EditorState, pos: number, langu
         // An indented block has no language to remove.
         return null;
     }
-    if (language.trim() === '' && withLanguage(node.attrs.params as string, '') !== '') {
+    if (!isLanguageWord(language)) {
+        return { refusal: LANGUAGE_WORD_REFUSAL };
+    }
+    const params = node.attrs.params as string;
+    if (language.trim() === '' && withLanguage(params, '') !== '') {
         // The next word of the info string would become the language (Daniel, #4 build questions).
         return { refusal: LANGUAGE_FOLLOWED_REFUSAL };
     }
-    const line = lineWithLanguage(node, language);
-    const refusal = openingLineRefusal(state, pos, line);
-    if (refusal !== null) {
-        return { refusal };
+    return withFenced(openingLineChange(state, pos, savedOpeningLine(node, withLanguage(params, language))), fenced);
+}
+
+/** An opening-line change with whether it fenced an indented block, a refusal or nothing as it is. */
+function withFenced(change: ReturnType<typeof openingLineChange>, fenced: boolean): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
+    if (change === null) {
+        return null;
     }
-    const tr = changeOpeningLineTransaction(state, pos, line);
-    return tr === null ? null : { tr, fenced };
+    return 'refusal' in change ? change : { tr: change.tr, fenced };
 }
 
 /**
@@ -1418,11 +1418,5 @@ export function commitOpeningLine(state: EditorState, pos: number, line: string)
         return null;
     }
     const fenced = node.attrs.markup === '';
-    const typed = fenced && line.trim() === '' ? minimumFence(DEFAULT_FENCE, node.textContent) : line;
-    const refusal = openingLineRefusal(state, pos, typed);
-    if (refusal !== null) {
-        return { refusal };
-    }
-    const tr = changeOpeningLineTransaction(state, pos, typed);
-    return tr === null ? null : { tr, fenced };
+    return withFenced(openingLineChange(state, pos, fenced && line.trim() === '' ? savedFence(node) : line), fenced);
 }

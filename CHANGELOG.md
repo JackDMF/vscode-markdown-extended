@@ -42,6 +42,16 @@
 - A fenced block shows its language as a muted tag in its top-right corner, in the editor only.
 - Alt+Enter with nothing to act on says so in a hint, and the caret stays.
 - The caret's table cell carries a ring; its row or column is tinted only while Row, Column or Align is active.
+- A block's Language… and Edit source fields open where its bar stood, under the block.
+- Language… takes one word: a space or a brace is refused, and the reason points to Edit source.
+- Edit source shows the opening line the file will hold, with the longer fence a ``` line inside needs.
+- Only a closing-shaped line inside a fence needs a longer fence; a ```python line does not.
+- A language the document names by one word is offered once, not again under its aliases.
+- A table verb moved into "…" tints its row or column while its entry is focused or its menu is open.
+- Alt+Enter on an object whose bar cannot show no longer claims there is nothing to act on.
+- Copying a code block no longer carries the editor's language tag.
+- The "No actions here" hint fits one line; the fence in an indented block's tooltip is in the code font.
+- The Row and Column menus set Delete apart after a divider; the cell's ring no longer matches the focus outline.
 
 ## v4.8.0 — Bars, Labels and Notes That Fit
 

@@ -3,12 +3,12 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
+import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_WORD_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
 import { NO_TARGET_HINT } from '../../../src/editor/verbs';
 import { NESTED_CODE_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
 import { LAYER_SELECTOR } from '../../../src/editor/webview/placement';
 import { closeEditorPage, delay, describedTip, EditMessage, EditorPage, EXTENSION_ID, hoverTip, MOD, openEditorPage, pointAt, settle, shot, UNDO } from './pageHarness';
-import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
+import { DARK_MODERN, HC_DARK, LIGHT_MODERN, applyTheme } from './themes';
 
 /** The caret's bar, shown. */
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
@@ -406,6 +406,103 @@ suite('Code block (e2e)', () => {
         assert.strictEqual((await lastEdit())?.text, INDENTED);
     });
 
+    test('S6 a block whose text grew a ``` line: Edit source shows, and Language… saves, the fence the file holds', async function () {
+        this.timeout(30000);
+        await showDocument('Text.\n\n```js\ncode\n```\n\nAfter.\n', 'code');
+        await clickBefore('code', 3);
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await page.keyboard.type('```');
+        await delay(400);
+        await pressAlt('Enter');
+        await page.waitForSelector(BAR, { visible: true, timeout: 2000 });
+        await clickVerb('edit-source');
+        await page.waitForSelector(FIELD, { visible: true });
+        assert.strictEqual((await field()).value, '````js', 'the opening line the file will hold, not the fence the block was opened with');
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await pressAlt('Enter');
+        await page.waitForSelector(BAR, { visible: true, timeout: 2000 });
+        await clickVerb('language');
+        await page.waitForSelector(FIELD, { visible: true });
+        await typeInField('ts');
+        assert.strictEqual((await field().catch(() => null)), null, 'accepted: the field closed, nothing refused');
+        assert.strictEqual((await lastEdit())?.text, 'Text.\n\n````ts\ncode\n```\n````\n\nAfter.\n');
+    });
+
+    test('S7 Language… takes one word: a space or a brace is refused, pointing to Edit source; what was typed stays', async function () {
+        this.timeout(20000);
+        await showDocument('Text.\n\n```js title=x\ncode\n```\n\nAfter.\n', 'code');
+        await barFor('code');
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(FIELD, { visible: true });
+        for (const typed of ['ts title=y', 'ts{.x}']) {
+            await typeInField(typed);
+            const f = await field();
+            assert.deepStrictEqual({ value: f.value, refusal: f.refusal }, { value: typed, refusal: LANGUAGE_WORD_REFUSAL });
+        }
+        assert.match(LANGUAGE_WORD_REFUSAL, /Edit source/);
+        await shots('language-refused-1280');
+    });
+
+    test('S8 a field opened from a block\'s bar opens where that bar stands, under the block', async function () {
+        this.timeout(30000);
+        for (const verb of ['language', 'edit-source']) {
+            await showDocument(DOC, 'result');
+            await clickBefore('result', 2);
+            await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+            await delay(400);
+            const rect = () => page.evaluate(sel => {
+                const r = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+                const pre = (document.querySelector('.ProseMirror pre') as HTMLElement).getBoundingClientRect();
+                return { left: r.left, top: r.top, preBottom: pre.bottom, preLeft: pre.left };
+            }, BAR);
+            const stood = await rect();
+            await clickVerb(verb);
+            await page.waitForSelector(FIELD, { visible: true });
+            await delay(300);
+            const opened = await rect();
+            assert.ok(Math.abs(opened.top - stood.top) <= 2, `${verb}: the field's top ${opened.top} within the bar's place ${stood.top}`);
+            assert.ok(Math.abs(opened.left - stood.left) <= 2, `${verb}: at the bar's left`);
+            assert.ok(opened.top >= opened.preBottom, `${verb}: under the block, not at the caret's line inside it`);
+            await shot(page, `field-place-${verb}-1280.png`);
+            await page.keyboard.press('Escape');
+            await page.keyboard.press('Escape');
+        }
+    });
+
+    test('S9 the indented block\'s Language… tooltip draws the fence in the code font', async function () {
+        this.timeout(20000);
+        await showDocument(INDENTED, 'echo');
+        await barFor('echo');
+        await page.mouse.move(2, 2);
+        const tip = await hoverTip(page, `${BAR} [data-verb="language"]`);
+        assert.ok(tip, 'the tooltip shows');
+        assert.strictEqual(tip.text, 'Language — setting one makes the block fenced (```); its text stays.');
+        const parts = await page.$$eval('.mep-tooltip code', els => els.map(el => ({ text: el.textContent, mono: getComputedStyle(el).fontFamily, around: getComputedStyle(el.parentElement as HTMLElement).fontFamily })));
+        assert.strictEqual(parts.length, 1, 'the fence is a code part of its own');
+        assert.strictEqual(parts[0].text, '```');
+        assert.notStrictEqual(parts[0].mono, parts[0].around, 'in the editor\'s code font, not the tooltip\'s');
+        await shots('tooltip-fence-1280');
+    });
+
+    test('T3 a copy carries the block and its info string, not the editor\'s corner tag', async function () {
+        this.timeout(20000);
+        await showDocument(DOC, 'result');
+        await clickBefore('result', 2);
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a');
+        await page.keyboard.up(MOD);
+        const html = await page.evaluate(() => {
+            const data = new DataTransfer();
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+            return data.getData('text/html');
+        });
+        assert.ok(/<pre[^>]*data-params="js/.test(html), `the info string travels: ${html.slice(0, 300)}`);
+        assert.ok(!html.includes('data-lang'), 'the corner tag is the editor\'s chrome');
+        assert.strictEqual((await tag(0)).content, '"js"', 'and still shows in the editor');
+    });
+
     test('D1 Delete code block: the block goes, the hint names the key, the key restores it', async function () {
         this.timeout(20000);
         await showDocument(DOC, 'result');
@@ -454,6 +551,12 @@ suite('Code block (e2e)', () => {
         await pressAlt('Enter');
         const h = await hint();
         assert.deepStrictEqual(h, { text: NO_TARGET_HINT, shown: true, tone: 'neutral' });
+        const rows = await page.$eval('.mep-hint', el => {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            return new Set(Array.from(range.getClientRects()).map(r => Math.round(r.top))).size;
+        });
+        assert.strictEqual(rows, 1, `the hint fits one line at ${WIDE} px`);
         assert.strictEqual(await page.evaluate(() => (window as unknown as { altEnter: boolean | null }).altEnter), true, 'default prevented');
         assert.strictEqual(await page.evaluate(() => (document.getSelection() as Selection).focusOffset), before, 'the caret stays');
         assert.ok(await page.evaluate(() => document.activeElement?.classList.contains('ProseMirror')), 'the focus in the text');
@@ -461,6 +564,24 @@ suite('Code block (e2e)', () => {
         await shots('notarget-1280');
         await delay(3300);
         assert.strictEqual((await hint()).shown, false);
+    });
+
+    test('H3 Alt+Enter at an object whose bar cannot be drawn: the key is taken, but "no actions here" is not said — there was an object', async function () {
+        this.timeout(20000);
+        await showDocument('# Title\n\nText.\n', 'Title');
+        await clickBefore('Title', 2);
+        await page.evaluate(() => {
+            (window as unknown as { altEnter: boolean | null }).altEnter = null;
+            document.addEventListener('keydown', e => {
+                if (e.key === 'Enter' && e.altKey) {
+                    (window as unknown as { altEnter: boolean | null }).altEnter = e.defaultPrevented;
+                }
+            });
+        });
+        await pressAlt('Enter');
+        assert.strictEqual(await page.$(BAR), null, 'a heading with no lenses has no bar');
+        assert.strictEqual((await hint()).shown, false, 'no hint: it is not that there is nothing here');
+        assert.strictEqual(await page.evaluate(() => (window as unknown as { altEnter: boolean | null }).altEnter), true, 'the key is still taken');
     });
 
     test('H2 Alt+Enter in a fence inside a quote: the bar, Attributes… refused with the nested reason', async function () {
@@ -552,6 +673,99 @@ suite('Code block (e2e)', () => {
             assert.deepStrictEqual(await tinted('mep-cell-active'), ['second'], verb);
             await page.mouse.move(2, 2);
             assert.deepStrictEqual(await tintAfter('mep-table-column'), [], `${verb} left`);
+        }
+    });
+
+    test('C4 a verb moved into "…" stays active there: its entry focused, or its menu open, tints the caret\'s column', async function () {
+        this.timeout(60000);
+        await showDocument(TABLE_DOC, 'Alpha');
+        let moved = false;
+        for (const width of [420, 380, 340, 300, 260, 220, 180]) {
+            await viewport(width);
+            await showDocument(TABLE_DOC, 'Alpha');
+            await clickBefore('second', 1);
+            await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+            await delay(300);
+            moved = await page.$eval(`${BAR} [data-verb="align"]`, el => (el as HTMLElement).hidden);
+            if (moved) {
+                break;
+            }
+        }
+        assert.ok(moved, 'a width at which Align has moved into "…"');
+        assert.deepStrictEqual(await tintAfter('mep-table-column'), [], 'at rest: none');
+        await page.click(`${BAR} .mep-object-more`);
+        await page.waitForSelector(`${BAR} .mep-object-menu`, { visible: true, timeout: 2000 });
+        const entry = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.entry ?? '');
+        const focusEntry = async (id: string) => {
+            for (let i = 0; i < 8 && (await entry()) !== id; i++) {
+                await page.keyboard.press('ArrowDown');
+            }
+            assert.strictEqual(await entry(), id);
+        };
+        await focusEntry('align');
+        assert.deepStrictEqual(await tintAfter('mep-table-column'), ['Kind', 'first', 'second'], 'its entry focused');
+        assert.deepStrictEqual(await tinted('mep-table-row'), []);
+        await shots('table-more-focus-420');
+        await page.keyboard.press('ArrowDown');
+        assert.notStrictEqual(await entry(), 'align');
+        assert.deepStrictEqual(await tintAfter('mep-table-column'), [], 'another entry: none');
+        await focusEntry('align');
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(`${BAR} .mep-object-menu [data-entry="align-left"]`, { visible: true, timeout: 2000 });
+        assert.deepStrictEqual(await tintAfter('mep-table-column'), ['Kind', 'first', 'second'], 'its menu open under "…"');
+        await page.keyboard.press('Escape');
+        await delay(150);
+        assert.deepStrictEqual(await tintAfter('mep-table-column'), [], 'closed: none');
+    });
+
+    test('C5 Row and Column menus keep the entry that takes something away apart, after a divider', async function () {
+        this.timeout(20000);
+        await showDocument(TABLE_DOC, 'Alpha');
+        await clickBefore('first', 1);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        await settledLayers();
+        for (const [verb, doomed, others] of [['row', 'delete-row', ['insert-row-above', 'insert-row-below']], ['column', 'delete-column', ['insert-column-left', 'insert-column-right']]] as const) {
+            await page.click(`${BAR} [data-verb="${verb}"]`);
+            await page.waitForSelector(`${BAR} .mep-object-menu`, { visible: true, timeout: 2000 });
+            const rules = await page.$eval(`${BAR} .mep-object-menu`, (menu, id, rest) => ({
+                before: menu.querySelector(`[data-entry="${id}"]`)?.previousElementSibling?.getAttribute('role') ?? '',
+                others: rest.map(other => menu.querySelector(`[data-entry="${other}"]`)?.previousElementSibling?.getAttribute('role') ?? ''),
+            }), doomed, [...others]);
+            assert.strictEqual(rules.before, 'separator', `${verb}: a divider before ${doomed}`);
+            assert.ok(!rules.others.includes('separator'), `${verb}: none between the inserts`);
+            if (verb === 'row') {
+                await shots('table-row-menu-1280');
+            }
+            await page.keyboard.press('Escape');
+            await delay(100);
+        }
+    });
+
+    test('C6 the active cell\'s ring is not the focus outline\'s colour — dark and high contrast included', async function () {
+        this.timeout(30000);
+        await showDocument(TABLE_DOC, 'Alpha');
+        await clickBefore('first', 1);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        const colours = () => page.evaluate(() => {
+            const ring = getComputedStyle(document.querySelector('.ProseMirror .mep-cell-active') as HTMLElement).boxShadow;
+            const probe = document.createElement('span');
+            probe.style.color = 'var(--vscode-focusBorder)';
+            document.body.append(probe);
+            const focus = getComputedStyle(probe).color;
+            probe.remove();
+            return { ring: /rgba?\([^)]*\)/.exec(ring)?.[0] ?? ring, focus };
+        });
+        for (const theme of [LIGHT_MODERN, DARK_MODERN, HC_DARK]) {
+            await applyTheme(page, theme);
+            await delay(150);
+            const c = await colours();
+            assert.notStrictEqual(c.ring, c.focus, `${theme.name}: the ring ${c.ring} is not the focus colour ${c.focus}`);
+            if (theme === DARK_MODERN) {
+                await shot(page, 'table-rest-dark-1280.png');
+            }
+            if (theme === HC_DARK) {
+                await shot(page, 'table-rest-hc-1280.png');
+            }
         }
     });
 });
