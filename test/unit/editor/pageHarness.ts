@@ -231,6 +231,7 @@ async function preparePage(browser: puppeteer.Browser, bundle: string, extension
     );
     // A webview always has its theme's variables: Light Modern, which the body's class names, until a test applies another.
     await applyTheme(page, LIGHT_MODERN);
+    clickAsAPerson(page);
     for (const sheet of sheets) {
         await page.addStyleTag({ path: sheet });
     }
@@ -258,6 +259,27 @@ async function preparePage(browser: puppeteer.Browser, bundle: string, extension
             await page.evaluate(m => window.postMessage(m, '*'), message as unknown as Record<string, unknown>);
         },
         close: () => closeBrowser(browser),
+    };
+}
+
+/**
+ * A floating layer that just appeared or moved ignores the pointer for
+ * `INERT_MS` (`placement.ts`): a person cannot aim at it sooner, a script
+ * can. `page.click` and `page.mouse.click` wait first until no layer is inert
+ * — as a person would — so the suites click what they meant to. A test of the
+ * inert time itself presses with `page.mouse.down`/`up`, which do not wait.
+ */
+function clickAsAPerson(page: puppeteer.Page): void {
+    const settled = () => page.waitForFunction(() => document.querySelector('.mep-layer[data-inert]') === null, { timeout: 2000, polling: 20 }).catch(() => undefined);
+    const click = page.click.bind(page);
+    page.click = async (selector: string, options?: Readonly<puppeteer.ClickOptions>) => {
+        await settled();
+        return click(selector, options);
+    };
+    const mouseClick = page.mouse.click.bind(page.mouse);
+    page.mouse.click = async (x: number, y: number, options?: Readonly<puppeteer.MouseClickOptions>) => {
+        await settled();
+        return mouseClick(x, y, options);
     };
 }
 

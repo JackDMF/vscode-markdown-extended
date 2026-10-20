@@ -370,6 +370,11 @@ suite('Editor Attributes… (e2e)', () => {
         assert.strictEqual(onRaw.disabled, true);
         assert.match(onRaw.title, /source block is edited as Markdown/);
 
+        // The source block's bar stands below it, over the container's first line (`placement.ts`): Esc hides
+        // it first — the pointer moved off the block, or its own bar would take the slot once it is free.
+        await page.mouse.move(2, 2);
+        await page.keyboard.press('Escape');
+        await delay(400);
         await clickAt('Inside the container', 3);
         await openFormatting();
         const inContainer = await entryState();

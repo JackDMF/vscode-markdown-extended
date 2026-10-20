@@ -35,7 +35,8 @@ import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
-import { CHROME_MOVED, LOCK_ROOM_PROPERTY, firstFree } from '../clearance';
+import { CHROME_MOVED, LOCK_ROOM_PROPERTY } from '../clearance';
+import { LayerSlot, REST_MS, caretRect, placeCard, placeMenu, rangeAnchor } from '../placement';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldAside, fieldHeading, refusedStep } from '../inlineField';
 import { chevronNode, lensLabelNodes } from '../lenses';
@@ -446,10 +447,16 @@ class ToolbarView implements PluginView {
     private readonly tips: Tooltips;
     /** What each control's hover says now, written by `update`. */
     private readonly tipOfControl = new WeakMap<HTMLElement, Tip | null>();
+    /** The one floating layer of the view (`placement.ts`): the bubble and the field bars take it, a row menu hides it. */
+    private readonly slot: LayerSlot;
+    /** The selection the bubble is about (`selectionKey`), while it is wanted; its rest's timer. */
+    private bubbleKey: string | null = null;
+    private bubbleTimer: ReturnType<typeof setTimeout> | undefined;
 
     constructor(private readonly view: EditorView, private readonly host: ToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
         this.tips = Tooltips.for(this.mount);
+        this.slot = LayerSlot.for(view, this.mount);
         this.layer = div('mep-toolbar-layer');
         this.card = div(`${PREVIEW_CARD_CLASS}`);
         this.card.hidden = true;
@@ -464,7 +471,15 @@ class ToolbarView implements PluginView {
         for (const surface of [this.row, this.bubble, this.layer]) {
             surface.addEventListener('mousedown', e => e.preventDefault());
         }
-        this.listen(view.dom, 'focusin', () => this.placeBubble());
+        this.listen(view.dom, 'focusin', () => this.syncBubble());
+        // Esc in the bubble hides it until the selection changes, the focus back in the text.
+        this.listen(this.bubble, 'keydown', e => {
+            if ((e as KeyboardEvent).key === 'Escape' && this.bubbleKey !== null) {
+                e.preventDefault();
+                this.slot.dismiss(this.bubbleKey);
+                this.view.focus();
+            }
+        });
         this.listen(view.dom, 'focusout', e => this.focusLeft(e as FocusEvent));
         this.listen(this.bubble, 'focusout', e => this.focusLeft(e as FocusEvent));
         // A source box or a property's field taking the focus, or giving it
@@ -524,7 +539,13 @@ class ToolbarView implements PluginView {
         const released = () => {
             this.pointerHeld = false;
             this.pressing = false;
-            setTimeout(() => this.settleRoom(), 0);
+            setTimeout(() => {
+                this.settleRoom();
+                // After the release's own selection change: a selection the pointer drew shows its bubble now.
+                if (!this.destroyed) {
+                    this.bubbleReleased();
+                }
+            }, 0);
         };
         this.listen(document, 'pointerup', released, true);
         this.listen(document, 'pointercancel', released, true);
@@ -536,6 +557,7 @@ class ToolbarView implements PluginView {
                 this.pointerHeld = false;
                 this.pressing = false;
                 this.settleRoom();
+                this.bubbleReleased();
             }
         };
         this.listen(window, 'blur', lost);
@@ -616,7 +638,7 @@ class ToolbarView implements PluginView {
         }
         // After the faces: a face relabelled ("Paragraph", "Heading 2") changes the room the reason has beside them.
         this.showLock(lock);
-        this.placeBubble();
+        this.syncBubble();
     }
 
     /** The lock's reason at the row's end and as its description; `null` takes both away. */
@@ -702,7 +724,6 @@ class ToolbarView implements PluginView {
     /** The chrome over the page grew or shrank, or the page moved under it: what is placed against it is placed again. */
     private chromeMoved(): void {
         this.mount.dispatchEvent(new Event(CHROME_MOVED));
-        this.placeBubble();
     }
 
     /** A refused tool was pressed while the row is locked: its reason is pointed at for a moment, not a silent nothing. */
@@ -725,7 +746,9 @@ class ToolbarView implements PluginView {
         clearTimeout(this.cardTimer);
         clearTimeout(this.flashTimer);
         clearTimeout(this.focusTimer);
+        clearTimeout(this.bubbleTimer);
         this.closeFieldBar();
+        this.slot.destroy();
         this.tips.release();
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
@@ -815,7 +838,7 @@ class ToolbarView implements PluginView {
     }
 
     private buildBubble(): HTMLElement {
-        const bubble = div('mep-bubble');
+        const bubble = div('mep-bubble mep-layer');
         bubble.setAttribute('role', 'toolbar');
         bubble.setAttribute('aria-label', 'Format selection');
         bubble.hidden = true;
@@ -1190,6 +1213,10 @@ class ToolbarView implements PluginView {
         }
         menu.panel.hidden = false;
         (menu.face ?? menu.opener)?.setAttribute('aria-expanded', 'true');
+        if (!menu.parent) {
+            // A row menu open: the floating layer hides until it closes (`LayerSlot.suppress`).
+            this.slot.suppress(true);
+        }
         this.fitSamples(menu);
         this.place(menu);
         this.tips.hide();
@@ -1208,6 +1235,10 @@ class ToolbarView implements PluginView {
             // It opens again at rest: the canonical entries, the rest behind "More types…".
             this.toggleMore(menu, false);
             menu.panel.scrollTop = 0;
+            if (!menu.parent) {
+                // Back without a new rest, where it is still about what the selection is.
+                this.slot.suppress(false);
+            }
         }
         if (this.card.dataset.menu === menu.id) {
             this.hideCard();
@@ -1233,28 +1264,13 @@ class ToolbarView implements PluginView {
         }
     }
 
-    /** Under its face, or beside its opener; kept inside the window. */
+    /** Under its face, or beside its opener's menu (`placement.ts`, `placeMenu`). */
     private place(menu: Menu): void {
-        const panel = menu.panel;
-        const width = panel.offsetWidth;
-        const height = panel.offsetHeight;
-        let left: number;
-        let top: number;
         if (menu.face) {
-            const r = menu.face.getBoundingClientRect();
-            left = menu.alignEnd ? r.right - width : r.left;
-            top = r.bottom + 2;
+            placeMenu(menu.panel, menu.face, undefined, menu.alignEnd ? 'end' : 'start');
         } else {
-            const r = (menu.opener as HTMLElement).getBoundingClientRect();
-            const p = (menu.parent as Menu).panel.getBoundingClientRect();
-            left = p.right - 2;
-            top = r.top - 4;
-            if (left + width > window.innerWidth) {
-                left = p.left - width + 2;
-            }
+            placeMenu(menu.panel, menu.opener as HTMLElement, (menu.parent as Menu).panel);
         }
-        panel.style.left = `${Math.max(0, Math.min(left, window.innerWidth - width))}px`;
-        panel.style.top = `${Math.max(0, Math.min(top, window.innerHeight - height))}px`;
     }
 
     /**
@@ -1332,16 +1348,10 @@ class ToolbarView implements PluginView {
         this.card.dataset.action = action.id;
         this.card.dataset.menu = menu.id;
         this.card.hidden = false;
-        const p = menu.panel.getBoundingClientRect();
-        const r = item.getBoundingClientRect();
-        const width = this.card.offsetWidth;
-        const height = this.card.offsetHeight;
-        let left = p.right + 6;
-        if (left + width > window.innerWidth) {
-            left = p.left - width - 6;
+        // Beside the menu, else below or above it — never over the menu or the entry; with no room, no card.
+        if (!placeCard(this.card, menu.panel, item)) {
+            this.hideCard();
         }
-        this.card.style.left = `${Math.max(0, left)}px`;
-        this.card.style.top = `${Math.max(0, Math.min(r.top, window.innerHeight - height))}px`;
     }
 
     private hideCard(): void {
@@ -1645,7 +1655,7 @@ class ToolbarView implements PluginView {
     private openFieldBar(object: string, barLabel: string, verb: string, first: FieldStep, range?: { from: number; to: number }): void {
         this.closeFieldBar();
         const view = this.view;
-        const bar = div('mep-object-toolbar');
+        const bar = div('mep-object-toolbar mep-layer');
         bar.dataset.trigger = 'toolbar';
         bar.dataset.object = object;
         bar.setAttribute('role', 'toolbar');
@@ -1656,10 +1666,16 @@ class ToolbarView implements PluginView {
             }
         });
         const label = span('mep-object-label', barLabel);
+        // What it edits: the element (`range`), the selection, or — none — the caret.
+        const sel = view.state.selection;
+        const from = range?.from ?? sel.from;
+        const to = range?.to ?? sel.to;
+        const key = `field@${from}-${to}`;
         const close = () => {
             if (this.fieldBar?.bar === bar) {
                 this.fieldBar = null;
             }
+            this.slot.release(key);
             bar.remove();
             clearPendingRange(view);
         };
@@ -1689,42 +1705,49 @@ class ToolbarView implements PluginView {
             label.textContent = fieldHeading(barLabel, step.label);
             // Its title drawn as every bar's: a muted label, a divider after it.
             bar.replaceChildren(label, barSeparator(), field.el, ...fieldAside(step));
+            const again = this.fieldBar?.bar === bar;
             this.fieldBar = { bar, field };
+            if (again) {
+                // A next step, or a refusal's line: the bar's size changed under the same claim.
+                this.slot.contentChanged(key);
+            }
             return field;
         };
         this.mount.append(bar);
         const field = open(first);
-        // Where no content is, as every bar (`clearance.ts`): under the
-        // selection's last line, above its first, or beside its block. Placed
-        // before the field takes the focus, which scrolls it into view.
-        const sel = view.state.selection;
-        const start = view.coordsAtPos(sel.from, 1);
-        const end = view.coordsAtPos(sel.to, -1);
-        const base = this.mount.getBoundingClientRect();
-        const width = bar.offsetWidth;
-        const height = bar.offsetHeight;
-        const gap = 6;
-        const x = Math.max(base.left, Math.min(start.left, base.right - width));
-        const blockDom = sel.$from.depth >= 1 ? view.nodeDOM(sel.$from.before(1)) : null;
-        const beside = (blockDom instanceof Element ? blockDom.getBoundingClientRect().right : -Infinity) + gap;
-        const below = end.bottom + gap;
-        const found = firstFree(view, this.mount, [
-            { x, y: below },
-            { x, y: start.top - height - gap },
-            { x: beside, y: start.top, when: () => beside + width <= base.right },
-            { x: base.right - width, y: start.top },
-        ], { width, height }, bar);
-        bar.style.left = `${Math.max(base.left, Math.min(found?.x ?? x, base.right - width)) - base.left}px`;
-        bar.style.top = `${(found?.y ?? below) - base.top}px`;
+        // The one floating layer (`placement.ts`): at what it edits — below it, from its
+        // last line's start — the bar or bubble that was up gives way. Placed before the
+        // field takes the focus, which scrolls it into view.
+        const granted = this.slot.request({
+            kind: 'field',
+            key,
+            el: bar,
+            anchor: () => (this.fieldBar?.bar !== bar ? null : from === to ? caretRect(view, Math.min(from, view.state.doc.content.size)) : rangeAnchor(view, from, to)),
+            valid: () => this.fieldBar?.bar === bar,
+            hidden: () => {
+                if (this.fieldBar?.bar === bar) {
+                    this.closeFieldBar();
+                }
+            },
+        }, { force: true });
+        if (!granted) {
+            this.closeFieldBar();
+            return;
+        }
         // What the field acts on stays visible while the field has the focus.
-        showPendingRange(view, range?.from ?? sel.from, range?.to ?? sel.to);
+        showPendingRange(view, from, to);
         field.focus();
     }
 
     private closeFieldBar(): void {
-        this.fieldBar?.field.dispose();
-        this.fieldBar?.bar.remove();
+        const open = this.fieldBar;
         this.fieldBar = null;
+        open?.field.dispose();
+        open?.bar.remove();
+        const claim = this.slot.current;
+        if (open && claim?.el === open.bar) {
+            this.slot.release(claim.key);
+        }
     }
 
     // -- the bubble ------------------------------------------------------------
@@ -1734,65 +1757,107 @@ class ToolbarView implements PluginView {
         if (to && (this.bubble.contains(to) || placeOfElement(this.view, to).kind === 'text')) {
             return;
         }
-        this.bubble.hidden = true;
-        this.tips.hide(this.bubble);
+        this.dropBubble();
     }
 
     /**
-     * Over a non-empty text selection in editable text, while the editor (or
-     * the bubble) has the focus: above the selection's first line, centred on it
-     * when the selection is on one line — unless there it would cover content
-     * (the line above, a table's row above) or sit under the formatting row;
-     * then beside the block, just right of its edge on the selection's line,
-     * where the block is narrower than the column — close to what it acts on,
-     * as the mapping between a control and its object weakens with distance —
-     * else below the selection's last line where that is free, else at the
-     * column's right edge on its line, else below: a bar never covers content
-     * where it can help it (`clearance.ts`), and never the row above, which is
-     * what the person reads while choosing. Hidden otherwise.
+     * Whether the bubble is wanted: a non-empty text selection in editable
+     * text, while the editor (or the bubble) has the focus.
      */
-    private placeBubble(): void {
-        const view = this.view;
-        const sel = view.state.selection;
-        const focused = focusPlace(view).kind === 'text' || this.bubble.contains(document.activeElement);
-        const inText = sel instanceof TextSelection && !sel.empty
+    bubbleWanted(): boolean {
+        const sel = this.view.state.selection;
+        const focused = focusPlace(this.view).kind === 'text' || this.bubble.contains(document.activeElement);
+        return focused && sel instanceof TextSelection && !sel.empty
             && sel.$from.parent.inlineContent && sel.$to.parent.inlineContent && !sel.$from.parent.type.spec.code;
-        if (!focused || !inText) {
-            this.bubble.hidden = true;
-            this.tips.hide(this.bubble);
-            return;
-        }
-        this.bubble.hidden = false;
-        const start = view.coordsAtPos(sel.from, 1);
-        const end = view.coordsAtPos(sel.to, -1);
-        const base = this.mount.getBoundingClientRect();
-        const width = this.bubble.offsetWidth;
-        const height = this.bubble.offsetHeight;
-        const gap = 6;
-        const oneLine = Math.abs(start.top - end.top) < 2;
-        let x = oneLine ? (start.left + end.right) / 2 - width / 2 : start.left;
-        x = Math.max(base.left, Math.min(x, base.right - width));
-        const above = start.top - height - gap;
-        const below = end.bottom + gap;
-        // Beside the block: just right of its box, which only a block narrower than the column — a table — leaves room for.
-        const blockDom = sel.$from.depth >= 1 ? view.nodeDOM(sel.$from.before(1)) : null;
-        const beside = (blockDom instanceof Element ? blockDom.getBoundingClientRect().right : -Infinity) + gap;
-        const found = firstFree(view, this.mount, [
-            { x, y: above },
-            // Close to what it acts on: a narrow table's edge is a few pixels from its cell.
-            { x: beside, y: start.top, when: () => beside + width <= base.right },
-            { x, y: below },
-            // At the column's right edge on the selection's line.
-            { x: base.right - width, y: start.top },
-        ], { width, height }, this.bubble);
-        // Nowhere free: below, never over the row above, which is read while choosing.
-        this.bubble.style.left = `${(found?.x ?? x) - base.left}px`;
-        this.bubble.style.top = `${(found?.y ?? below) - base.top}px`;
     }
 
-    /** Whether the bubble is shown now: while it is, the object toolbar shows no block's bar, so there is one thing at a time. */
-    get bubbleShown(): boolean {
-        return !this.bubble.hidden;
+    /** The key of the selection now, as the slot knows it (`sel@from-to`). */
+    private selectionKey(): string {
+        const sel = this.view.state.selection;
+        return `sel@${sel.from}-${sel.to}`;
+    }
+
+    /**
+     * The bubble follows the selection through the slot (`placement.ts`): it
+     * shows once a selection has rested `REST_MS` — at once when the pointer
+     * that drew it is released — and hides while a keyboard selection grows,
+     * so it does not blink on every Shift+arrow. Below the selection's last
+     * line, from that line's start, like every layer; where the selection is
+     * taller than the window, at its visible edge. Hidden where it is not
+     * wanted (`bubbleWanted`).
+     */
+    private syncBubble(): void {
+        if (!this.bubbleWanted()) {
+            this.dropBubble();
+            return;
+        }
+        const key = this.selectionKey();
+        if (key !== this.bubbleKey) {
+            // A new selection: the last one's dismissal ends, and this one waits for its rest.
+            this.dropBubble();
+            this.bubbleKey = key;
+            // A selection the pointer draws waits for its release (`bubbleReleased`).
+            if (!this.pointerHeld) {
+                this.bubbleTimer = setTimeout(() => {
+                    this.bubbleTimer = undefined;
+                    this.requestBubble();
+                }, REST_MS);
+            }
+            return;
+        }
+        if (this.slot.current?.key === key) {
+            this.slot.replace();
+        }
+    }
+
+    /** The pointer button came up: a selection it drew shows its bubble now. */
+    private bubbleReleased(): void {
+        if (this.bubbleWanted() && this.bubbleKey === this.selectionKey() && this.slot.current?.key !== this.bubbleKey) {
+            clearTimeout(this.bubbleTimer);
+            this.bubbleTimer = undefined;
+            this.requestBubble();
+        }
+    }
+
+    private requestBubble(): void {
+        if (this.destroyed || !this.bubbleWanted()) {
+            return;
+        }
+        const key = this.selectionKey();
+        this.bubbleKey = key;
+        this.bubble.hidden = false;
+        const view = this.view;
+        const granted = this.slot.request({
+            kind: 'bubble',
+            key,
+            el: this.bubble,
+            anchor: () => {
+                const sel = view.state.selection;
+                return rangeAnchor(view, sel.from, sel.to);
+            },
+            valid: () => this.bubbleWanted() && this.selectionKey() === key,
+            hidden: () => this.hideBubble(),
+        });
+        if (!granted) {
+            this.hideBubble();
+        }
+    }
+
+    /** The bubble's selection is over: its wait, its dismissal and its claim end. */
+    private dropBubble(): void {
+        clearTimeout(this.bubbleTimer);
+        this.bubbleTimer = undefined;
+        if (this.bubbleKey !== null) {
+            this.slot.caretLeft(this.bubbleKey);
+            this.slot.release(this.bubbleKey);
+            this.bubbleKey = null;
+        }
+        this.hideBubble();
+    }
+
+    private hideBubble(): void {
+        this.bubble.hidden = true;
+        this.tips.hide(this.bubble);
     }
 }
 
@@ -1803,9 +1868,13 @@ export function toolbarStatusSlot(view: EditorView): HTMLElement | null {
     return view.dom.parentElement?.querySelector<HTMLElement>(':scope > .mep-toolbar > .mep-row-status > .mep-row-said') ?? null;
 }
 
-/** Whether the selection bubble of `view` is shown: the object toolbar hides every block's bar meanwhile. */
-export function selectionBubbleShown(view: EditorView): boolean {
-    return toolbarViews.get(view)?.bubbleShown ?? false;
+/**
+ * Whether the selection of `view` wants the bubble (`bubbleWanted`): a
+ * non-empty selection has no caret bar, so the object toolbar shows none
+ * meanwhile, also while the bubble waits for the selection's rest.
+ */
+export function selectionWantsBubble(view: EditorView): boolean {
+    return toolbarViews.get(view)?.bubbleWanted() ?? false;
 }
 
 /** Have the toolbar of `view` read the page's state again (Export busy or not), without a transaction through every plugin. */

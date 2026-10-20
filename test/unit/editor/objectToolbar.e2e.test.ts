@@ -93,7 +93,7 @@ suite('Editor object toolbar (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test(`the caret in a sidenote shows no toolbar before ${INLINE_DELAY_MS} ms, then one naming it, above its line, not over the caret's`, async function () {
+    test(`the caret in a sidenote shows no toolbar before ${INLINE_DELAY_MS} ms, then one naming it, above its line where text lies below, not over the caret's`, async function () {
         this.timeout(15000);
         await showDocument('Intro.\n\nAlpha ++beta ref|the body++ gamma.\n\nSecond paragraph.\n', 'Alpha');
         const pressed = await clickBefore('body', 1);
@@ -109,6 +109,7 @@ suite('Editor object toolbar (e2e)', () => {
             const ref = (document.querySelector('.ProseMirror .sn-ref') as HTMLElement).getClientRects()[0];
             return { barTop: bar.top, barBottom: bar.bottom, caretTop: caret.top, caretBottom: caret.bottom, refTop: ref.top };
         }, BAR);
+        // Text under the line ("Second paragraph"), none above where the bar stands ("Intro." ends before it): the tie goes above (`placement.ts`).
         assert.ok(geometry.barBottom <= geometry.refTop, `above the note's first line: ${JSON.stringify(geometry)}`);
         assert.ok(geometry.barBottom <= geometry.caretTop || geometry.barTop >= geometry.caretBottom, `not over the caret's line: ${JSON.stringify(geometry)}`);
 
@@ -118,7 +119,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$(BAR), null);
     });
 
-    test('on a line just under the row, the bar goes beside the line, else below it, and never over text or the caret', async function () {
+    test('on a line just under the row, the bar goes below it at the note\'s start, never under the row or over the caret', async function () {
         this.timeout(15000);
         await showDocument('Alpha ++beta ref|the body++ gamma.\n\nSecond paragraph.\n', 'Alpha');
         // The line scrolled up to just under the row: no room above it for a bar.
@@ -148,8 +149,8 @@ suite('Editor object toolbar (e2e)', () => {
             return { barTop: bar.top, barLeft: bar.left, rowBottom: row.bottom, caretBottom: caret.bottom, caretRight: caret.right, covered };
         }, BAR);
         assert.ok(geometry.barTop >= geometry.rowBottom, `not under the row: ${JSON.stringify(geometry)}`);
-        assert.deepStrictEqual(geometry.covered, [], `over no text: ${JSON.stringify(geometry)}`);
-        assert.ok(geometry.barLeft > geometry.caretRight || geometry.barTop >= geometry.caretBottom, `beside the line or below it: ${JSON.stringify(geometry)}`);
+        // Above is under the row: below, over the next line's text if need be — never on the caret's line.
+        assert.ok(geometry.barTop >= geometry.caretBottom, `below the line: ${JSON.stringify(geometry)}`);
     });
 
     test('Delete note posts the sentence with the reference in it, and says so beside the caret', async function () {
@@ -192,6 +193,9 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$(`${BAR} .mep-inline-field`), null);
         await settle();
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing was edited');
+        // Esc hid the slot until the caret leaves the note (`placement.ts`); Alt+Enter brings the bar back.
+        assert.strictEqual(await page.$(BAR), null, 'Esc hid the bar with its field');
+        await pressAlt('Enter');
 
         await clickVerb('edit-source');
         await page.keyboard.type('++beta ref|a new body++');

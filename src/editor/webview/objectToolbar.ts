@@ -13,20 +13,25 @@
  * selection has rested inside it for `INLINE_DELAY_MS`, and hides it the moment
  * the caret leaves; the pointer does not show it — an inline bar following the
  * pointer across a paragraph jumps. Two bars exist so the two triggers never
- * fight: one follows the selection, one the pointer, and the pointer's stays
- * hidden while it would show what the selection's already shows. `Alt+Enter`
- * opens the bar of the object at the caret at once, the focus on the first verb
+ * fight: one follows the selection, one the pointer — and only one floating
+ * layer shows at a time (`LayerSlot`, `placement.ts`): the caret's bar wins,
+ * the pointer's shows only while the slot is empty (the block under the
+ * pointer gets the hover cue meanwhile), a non-empty selection has the bubble
+ * instead. Typing hides the caret's bar until the next rest; `Esc` — in the
+ * bar, its field, or the text while the bar shows — hides it until the caret
+ * leaves the object. `Alt+Enter` opens the bar of the object at the caret at
+ * once, whatever holds the slot, the focus on the first verb
  * that opens something in place and changes nothing yet (`firstFocus`,
  * `verbs.ts`) — never Open, never Remove or Delete — else on the bar itself,
  * where `Enter` or `↓` moves into its verbs; the arrow keys move, `Enter`
  * chooses, `Esc` returns to the text.
  *
- * **Where it sits.** Above the object's first line — at an inline object's
- * start, at a block's right edge (`Anchor`); below its last line when above is
- * taken or under the formatting row — and never over the line
- * the caret is on: a bar that would cover it is put on the other side. While text is selected the bar prefers below, since the
- * selection bubble takes the room above. It is `position: absolute` inside the
- * editor's mount, as the bubble is, so it scrolls with the text.
+ * **Where it sits.** Where the one placement policy puts every layer
+ * (`placement.ts`): below its object — an inline object's last line, a
+ * block's box — at the object's start, else above it; never on the caret's
+ * line, under the formatting row or over another layer; text breaks a tie.
+ * A field a verb opens stands at what it edits. It is `position: absolute`
+ * inside the editor's mount, as the bubble is, so it scrolls with the text.
  *
  * **One model for every bar** (`verbs.ts`): each verb has a slot, and the
  * slots stand in one order — Open · Edit… · type verbs · Attributes… · Edit
@@ -58,15 +63,14 @@ import { FocusPlace, focusPlace } from './focusPlace';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
+    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
 import { attributesStep, holderAttributesStep } from './attributes';
 import { currentReadsAttrs } from '../inlineEngine';
-import { CHROME_MOVED, Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
 import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
-import { barSeparator, followPointer, selectionBubbleShown } from './toolbar/toolbar';
+import { barSeparator, followPointer, selectionWantsBubble } from './toolbar/toolbar';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
@@ -77,7 +81,7 @@ import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
 import { plainTip } from '../tips';
 import { Tooltips } from './tooltip';
-import { rightLaneEdge } from './lane';
+import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, caretRect, placeMenu, rangeAnchor } from './placement';
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -128,33 +132,17 @@ export const LENS_VERBS_INLINE = 4;
  */
 const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'styled', 'holder', 'note', 'image']);
 
-/** How long the caret rests in an inline object before its toolbar shows. */
-export const INLINE_DELAY_MS = 400;
+/** How long the caret rests in an inline object before its toolbar shows: the one rest (`placement.ts`). */
+export const INLINE_DELAY_MS = REST_MS;
+
+/** The keys that only modify another: they type nothing. */
+const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
 
 /** How long the pointer may be off a block and its bar before the bar goes: time to cross the gap between them. */
 const HOVER_GRACE_MS = 300;
 
-/** Between the bar and the line it sits above or below. */
-const GAP = 4;
-
-/** Between a bar grown past the text column and the editor's right edge. */
-const BAR_GUTTER = 16;
-
 /** Narrower than this, a cut title says nothing: `fit` hides it (the bar's `aria-label` still names the object). */
 const TITLE_STUB = 42;
-
-/**
- * The right edge a bar may reach: the text column's (`base`, the mount), or —
- * a floating layer, it may stand past the column — the editor's right edge
- * less the gutter, whichever is further (Daniel, 2026-10-16) — but never into
- * a margin lane reserved for notes (`rightLaneEdge`): past its edge stand the
- * notes, and a bar there would cover them. `GAP` short of it.
- */
-function layerRight(base: DOMRect): number {
-    const lane = rightLaneEdge();
-    const edge = document.documentElement.clientWidth - BAR_GUTTER;
-    return Math.max(base.right, lane === null ? edge : Math.min(edge, lane - GAP));
-}
 
 /** One verb as the bar draws it. */
 export interface Verb {
@@ -267,22 +255,6 @@ interface BarDecor {
 const NO_DECOR: BarDecor = { tint: null };
 
 const decorKey = new PluginKey<BarDecor>('mep-object-toolbar-decor');
-
-/**
- * Where a block's bar goes when no place is free (`placeBlock`, step 5):
- * above the block, unless that is under the formatting row (`ceiling`), where
- * it could not be seen or clicked; then below it, unless that is past the
- * window's bottom; then at the row's edge. A position, never a layout change.
- */
-export function lastResortY(aboveY: number, belowY: number, height: number, ceiling: number, bottom = window.innerHeight): number {
-    if (aboveY >= ceiling) {
-        return aboveY;
-    }
-    if (belowY >= ceiling && belowY + height <= bottom) {
-        return belowY;
-    }
-    return ceiling + GAP;
-}
 
 /** The caret's columns of the table at `tablePos`, as node decorations on their cells; none when the selection is not in it. */
 function columnTint(state: EditorState, tablePos: number | null): Decoration[] {
@@ -491,7 +463,7 @@ class ObjectBar {
 
     constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents, private readonly tips: Tooltips) {
         this.el = document.createElement('div');
-        this.el.className = 'mep-object-toolbar';
+        this.el.className = 'mep-object-toolbar mep-layer';
         this.el.dataset.trigger = trigger;
         this.el.setAttribute('role', 'toolbar');
         this.el.tabIndex = -1;
@@ -744,11 +716,9 @@ class ObjectBar {
         });
         this.menu = { panel, button, entries: made };
         button.setAttribute('aria-expanded', 'true');
+        // `position: fixed`, a child of the bar so the bar counts its focus as its own: placed as the row's menus are.
         this.el.append(panel);
-        const r = button.getBoundingClientRect();
-        const below = r.bottom + 2;
-        panel.style.left = `${Math.max(0, Math.min(r.left, window.innerWidth - panel.offsetWidth))}px`;
-        panel.style.top = `${below + panel.offsetHeight > window.innerHeight ? Math.max(0, r.top - 2 - panel.offsetHeight) : below}px`;
+        placeMenu(panel, button);
         const first = made.find(m => m.entry.checked && !m.entry.refusal) ?? made.find(m => !m.entry.refusal);
         (first?.el ?? panel).focus({ preventScroll: true });
     }
@@ -921,19 +891,10 @@ class ObjectBar {
     }
 }
 
-/**
- * Where an inline object's bar is put against, in the window's coordinates:
- * the top of the object's first line, the bottom of its last, and its start
- * (`left`). A block's bar is placed from the block itself (`placeBlock`).
- */
-interface Anchor {
-    top: number;
-    bottom: number;
-    left?: number;
+/** The slot's key of `object`'s bar (`placement.ts`): what Esc's dismissal keeps refusing until the caret leaves it. */
+function barKey(trigger: 'bar' | 'hover', object: EditorObject): string {
+    return `${trigger}@${object.kind}@${object.from}`;
 }
-
-/** A block's content edge: `.mep-atom` stands 8px out on each side (`editor.css`). */
-const ATOM_INSET = 8;
 
 class ObjectToolbarView implements PluginView {
     private readonly mount: HTMLElement;
@@ -953,32 +914,23 @@ class ObjectToolbarView implements PluginView {
     private focusMoves: Mapping | null = null;
     /** The hover the bars share with the formatting row (`tooltip.ts`), released with the view. */
     private readonly tips: Tooltips;
+    /** The one floating layer of the view (`placement.ts`), shared with the bubble and the row's field bars. */
+    private readonly slot: LayerSlot;
+    /** The key of a bar's open field in the slot, while one is open. */
+    private fieldKey: string | null = null;
+    /** A key went down in the text and its change has not come yet: the change it brings is typing (`LayerSlot.typing`). */
+    private keyed = false;
+    /** The atom carrying the hover cue: the pointer is on it while the slot is taken (`mep-hover-cue`). */
+    private cued: HTMLElement | null = null;
+    private readonly unfreed: () => void;
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
-        const events: BarEvents = {
-            escape: () => this.view.focus(),
-            fieldOpened: (object, target) => {
-                if (target !== undefined) {
-                    showPendingRange(this.view, target.from, target.to);
-                } else if (PENDING_OBJECTS.has(object.kind)) {
-                    showPendingRange(this.view, object.from, object.to);
-                }
-            },
-            fieldClosed: () => {
-                clearPendingRange(this.view);
-                this.refresh();
-            },
-            fieldDropped: () => setTimeout(() => {
-                if (!this.destroyed) {
-                    clearPendingRange(this.view);
-                }
-            }, 0),
-        };
         // One hover for the bars and the formatting row (`tooltip.ts`).
         this.tips = Tooltips.for(this.mount);
-        this.selectionBar = new ObjectBar('selection', events, this.tips);
-        this.hoverBar = new ObjectBar('hover', events, this.tips);
+        this.slot = LayerSlot.for(view, this.mount);
+        this.selectionBar = this.makeBar('selection');
+        this.hoverBar = this.makeBar('hover');
         this.mount.append(this.selectionBar.el, this.hoverBar.el);
 
         this.listen(document, 'mousemove', e => this.pointerAt(e.target as Element | null));
@@ -987,35 +939,109 @@ class ObjectToolbarView implements PluginView {
         const later = () => setTimeout(() => this.refresh(), 0);
         this.listen(document, 'focusin', later);
         this.listen(document, 'focusout', later);
-        // A scroll fires many times a frame, and placing probes the layout: once per frame.
-        this.listen(window, 'scroll', () => this.placeAllInFrame(), true);
-        this.listen(window, 'resize', () => this.placeAllInFrame());
-        // The lock's line came under the formatting row or went, or the page moved for it: a bar keeps clear of the chrome.
-        this.listen(this.mount, CHROME_MOVED, () => this.placeAllInFrame());
-        // A font that loaded after a bar was fitted (the codicons, the editor's code font) changed its labels' widths.
-        this.listen(document.fonts, 'loadingdone', () => {
-            this.selectionBar.refit();
-            this.hoverBar.refit();
-            this.placeAllInFrame();
-        });
+        // Capturing, so it is known before the key's own command changes the text (`update`).
+        // A key whose release the text never sees (the focus moved to a bar) is over at its keyup anywhere.
+        this.listen(view.dom, 'keydown', e => {
+            this.keyed = !MODIFIER_KEYS.has((e as KeyboardEvent).key) && !(e as KeyboardEvent).altKey;
+        }, true);
+        this.listen(document, 'keyup', () => {
+            this.keyed = false;
+        }, true);
+        // A slot that came free shows the pointer's bar where the pointer rests (the hover cue goes).
+        this.unfreed = this.slot.onFreed(() => this.refreshHover());
         this.refresh();
     }
 
-    /** The frame a `placeAll` is waiting for, or `undefined`. */
-    private placeFrame: number | undefined;
-
-    private placeAllInFrame(): void {
-        if (this.placeFrame === undefined) {
-            this.placeFrame = requestAnimationFrame(() => {
-                this.placeFrame = undefined;
-                if (!this.destroyed) {
-                    this.placeAll();
+    /** A bar and what it tells the view: Esc dismisses it, a field takes the slot at what it edits. */
+    private makeBar(trigger: 'selection' | 'hover'): ObjectBar {
+        const events: BarEvents = {
+            escape: () => {
+                const object = bar.object;
+                if (object !== null) {
+                    // Hidden until the caret leaves the object; Alt+Enter brings it back.
+                    this.slot.dismiss(barKey(trigger === 'selection' ? 'bar' : 'hover', object));
                 }
-            });
+                this.view.focus();
+            },
+            fieldOpened: (object, target) => {
+                if (target !== undefined) {
+                    showPendingRange(this.view, target.from, target.to);
+                } else if (PENDING_OBJECTS.has(object.kind)) {
+                    showPendingRange(this.view, object.from, object.to);
+                }
+                this.fieldOpened(bar, object, target);
+            },
+            fieldClosed: () => {
+                this.fieldGone();
+                clearPendingRange(this.view);
+                this.refresh();
+            },
+            fieldDropped: () => {
+                this.fieldGone();
+                setTimeout(() => {
+                    if (!this.destroyed) {
+                        clearPendingRange(this.view);
+                    }
+                }, 0);
+            },
+        };
+        const bar: ObjectBar = new ObjectBar(trigger, events, this.tips);
+        return bar;
+    }
+
+    /**
+     * A bar's verb opened its field: the field takes the slot, at what it
+     * edits — the element inside the object (`target`), else the caret's line
+     * at the caret, else (no caret) the object — not where the verbs stood.
+     */
+    private fieldOpened(bar: ObjectBar, object: EditorObject, target?: { from: number; to: number }): void {
+        const view = this.view;
+        const sel = view.state.selection;
+        const range = target ?? { from: object.from, to: object.to };
+        const key = `field@${range.from}-${range.to}`;
+        if (this.fieldKey === key && this.slot.current?.key === key) {
+            // The next step of the same field, or its refusal's line: the size changed, the claim is the same.
+            this.slot.contentChanged(key);
+            return;
+        }
+        this.fieldKey = key;
+        const atCaret = target === undefined && bar === this.selectionBar && sel instanceof TextSelection;
+        const head = sel.head;
+        this.slot.request({
+            kind: 'field',
+            key,
+            el: bar.el,
+            anchor: () => {
+                if (!bar.editing) {
+                    return null;
+                }
+                const size = view.state.doc.content.size;
+                if (target !== undefined) {
+                    return rangeAnchor(view, Math.min(target.from, size), Math.min(target.to, size));
+                }
+                return atCaret ? caretRect(view, Math.min(head, size)) : bar.object ? anchorOf(view, bar.object) : null;
+            },
+            valid: () => bar.editing,
+            hidden: () => this.barHidden(bar, 'displaced'),
+        }, { force: true });
+    }
+
+    /** A bar's field closed or went: its claim ends. */
+    private fieldGone(): void {
+        if (this.fieldKey !== null) {
+            this.slot.release(this.fieldKey);
+            this.fieldKey = null;
         }
     }
 
-    update(): void {
+    update(view: EditorView, prevState?: EditorState): void {
+        // A key changed the text: the caret's bar hides while typing and comes back on the next rest.
+        if (this.keyed && prevState !== undefined && view.state.doc !== prevState.doc) {
+            this.keyed = false;
+            this.cancelPending();
+            this.matured = null;
+            this.slot.typing();
+        }
         this.refresh();
     }
 
@@ -1028,16 +1054,16 @@ class ObjectToolbarView implements PluginView {
 
     destroy(): void {
         this.destroyed = true;
-        if (this.placeFrame !== undefined) {
-            cancelAnimationFrame(this.placeFrame);
-        }
         this.cancelPending();
         clearTimeout(this.hoverTimer);
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
         }
+        this.unfreed();
+        this.cue(null);
         this.selectionBar.hide();
         this.selectionBar.el.remove();
+        this.slot.destroy();
         this.tips.release();
         this.hoverBar.el.remove();
     }
@@ -1057,11 +1083,26 @@ class ObjectToolbarView implements PluginView {
         this.cancelPending();
         this.matured = object;
         this.forced = object;
-        this.refresh();
+        // It takes the slot whatever holds it, a dismissal of this object's bar included.
+        this.refresh(true);
         if (!this.selectionBar.visible) {
             return false;
         }
         this.selectionBar.focusFirst();
+        return true;
+    }
+
+    /**
+     * Esc in the text (F1, Daniel 2026-10-19): while the caret's bar shows, it
+     * hides until the caret leaves the object, and the key is consumed; with
+     * no bar up, VS Code's Esc is untouched.
+     */
+    escapeInText(): boolean {
+        const claim = this.slot.current;
+        if (claim === null || claim.kind !== 'bar' || claim.el.hidden) {
+            return false;
+        }
+        this.slot.dismiss(claim.key);
         return true;
     }
 
@@ -1116,16 +1157,30 @@ class ObjectToolbarView implements PluginView {
 
     // -- the selection's bar ---------------------------------------------------
 
-    private refresh(): void {
+    /**
+     * The caret's bar, through the slot (`placement.ts`): a block object's at
+     * once, an inline object's once the caret has rested in it `REST_MS`; none
+     * while the selection wants the bubble (one layer at a time), none for an
+     * object whose bar Esc dismissed until the caret leaves it — `force`
+     * (`Alt+Enter`) overrides both.
+     */
+    private refresh(force = false): void {
         if (this.destroyed) {
             return;
         }
         const object = this.selectionObject();
+        const key = object === null ? null : barKey('bar', object);
+        // The caret left a dismissed object: its dismissal ends.
+        for (const dismissed of this.slot.dismissedOf('bar@')) {
+            if (dismissed !== key) {
+                this.slot.caretLeft(dismissed);
+            }
+        }
         if (object === null) {
             this.cancelPending();
             this.matured = null;
             this.forced = null;
-            this.selectionBar.hide();
+            this.hideBar(this.selectionBar);
         } else if (isBlockObject(object) || sameObject(object, this.matured)) {
             this.cancelPending();
             this.matured = isBlockObject(object) ? null : object;
@@ -1135,31 +1190,81 @@ class ObjectToolbarView implements PluginView {
             this.forced = keyed ? this.forced : null;
             if (barless(object, presentation) && !keyed) {
                 // A heading's verbs are other extensions' lenses and actions; with none, no bar.
-                this.selectionBar.hide();
-            } else if (isBlockPlaced(object) && selectionBubbleShown(this.view)) {
-                // One thing at a time: while text is selected its bubble is the bar.
-                this.selectionBar.hide();
+                this.hideBar(this.selectionBar);
+            } else if (!force && (this.slot.holds('bubble') || selectionWantsBubble(this.view))) {
+                // One thing at a time: a non-empty selection has the bubble, not the caret's bar.
+                this.hideBar(this.selectionBar);
             } else {
                 this.selectionBar.show(object, presentation);
-                this.place(this.selectionBar, object);
+                if (this.selectionBar.editing) {
+                    // Its field holds the slot, at what it edits: placed again, not replaced by the bar.
+                    this.slot.replace();
+                } else if (!this.slot.request(this.claim(this.selectionBar, 'bar', object), { force })) {
+                    this.selectionBar.hide();
+                }
             }
         } else if (!sameObject(object, this.pending?.object ?? null)) {
             // A new inline object: nothing until the caret has rested in it.
             this.cancelPending();
             this.matured = null;
             this.forced = null;
-            this.selectionBar.hide();
-            this.pending = {
-                object,
-                timer: setTimeout(() => {
-                    this.pending = null;
-                    this.matured = object;
-                    this.refresh();
-                }, INLINE_DELAY_MS),
-            };
+            this.hideBar(this.selectionBar);
+            this.armRest(object);
         }
         this.refreshHover();
         this.syncDecorations();
+    }
+
+    /** The caret's rest in `object`: after `REST_MS` its bar asks for the slot. */
+    private armRest(object: EditorObject): void {
+        this.pending = {
+            object,
+            timer: setTimeout(() => {
+                this.pending = null;
+                this.matured = object;
+                this.refresh();
+            }, REST_MS),
+        };
+    }
+
+    /** `bar`'s claim on the slot for `object`. */
+    private claim(bar: ObjectBar, kind: 'bar' | 'hover', object: EditorObject): LayerClaim {
+        return {
+            kind,
+            key: barKey(kind, object),
+            el: bar.el,
+            anchor: () => (bar.object === null ? null : anchorOf(this.view, bar.object)),
+            valid: () => bar.object !== null,
+            hidden: reason => this.barHidden(bar, reason),
+            fit: (room, fresh) => {
+                if (fresh) {
+                    bar.refit();
+                }
+                bar.fit(room);
+            },
+        };
+    }
+
+    /**
+     * The slot hid `bar`: another layer took it, Esc, typing. The caret's bar
+     * comes back only on its own next rest — never by the slot.
+     */
+    private barHidden(bar: ObjectBar, reason: HideReason): void {
+        if (bar === this.selectionBar && (reason === 'displaced' || reason === 'typing')) {
+            this.cancelPending();
+            this.matured = null;
+        }
+        bar.hide();
+        this.syncDecorations();
+    }
+
+    /** Hide `bar`, letting go of the slot where it holds it. */
+    private hideBar(bar: ObjectBar): void {
+        const claim = this.slot.current;
+        if (claim !== null && claim.el === bar.el) {
+            this.slot.release(claim.key);
+        }
+        bar.hide();
     }
 
     /**
@@ -1242,194 +1347,50 @@ class ObjectToolbarView implements PluginView {
         return null;
     }
 
+    /**
+     * The pointer's bar, through the slot: the caret's layer wins (Daniel,
+     * 2026-10-19) — it shows only while the slot is empty; while another layer
+     * holds it, the block under the pointer carries the hover cue
+     * (`mep-hover-cue`) instead, and its bar shows once the slot comes free.
+     */
     private refreshHover(): void {
         const object = this.hoveredObject();
         // The cheap reasons first: the presentation asks for code actions and lenses.
         // While a node view's control has the focus nothing else is offered: the control is the edit.
-        const presentation = object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object)) || selectionBubbleShown(this.view)
+        const presentation = object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object))
             || focusPlace(this.view).kind === 'control'
             ? null
             : this.present(object);
+        const current = this.slot.current;
         if (object === null || presentation === null || barless(object, presentation)) {
+            this.cue(null);
+            this.hideBar(this.hoverBar);
+        } else if (current !== null && current.el !== this.hoverBar.el) {
+            this.cue(this.hovered);
             this.hoverBar.hide();
         } else {
             this.hoverBar.show(object, presentation);
-            this.place(this.hoverBar, object);
-        }
-        this.syncDecorations();
-    }
-
-    // -- placing ---------------------------------------------------------------
-
-    private placeAll(): void {
-        for (const bar of [this.selectionBar, this.hoverBar]) {
-            if (bar.visible && bar.object) {
-                this.place(bar, bar.object);
+            if (this.hoverBar.editing) {
+                // Its field holds the slot: placed again, not replaced by the bar.
+                this.slot.replace();
+            } else if (this.slot.request(this.claim(this.hoverBar, 'hover', object))) {
+                this.cue(null);
+            } else {
+                this.hoverBar.hide();
+                this.cue(this.hovered);
             }
         }
         this.syncDecorations();
     }
 
-    /** Where the object's first line starts and its last line ends. */
-    private anchor(object: EditorObject): Anchor {
-        const view = this.view;
-        if (!isMarkObject(object)) {
-            const dom = view.nodeDOM(object.from);
-            if (dom instanceof Element) {
-                // An inline element's own line boxes: a note's body floated
-                // into the margin is not one of them, so the bar keeps to the
-                // reference's lines.
-                const rects = Array.from(dom.getClientRects()).filter(r => r.width > 0 || r.height > 0);
-                if (rects.length > 0) {
-                    return { left: rects[0].left, top: rects[0].top, bottom: rects[rects.length - 1].bottom };
-                }
-            }
-        }
-        const start = view.coordsAtPos(object.from, 1);
-        const end = view.coordsAtPos(object.to, -1);
-        return { left: start.left, top: Math.min(start.top, end.top), bottom: Math.max(start.bottom, end.bottom) };
-    }
-
-    /**
-     * An inline object's bar (a note, a link, a span, an image, a badge):
-     * above the object's first line at its start, else beside that line —
-     * just right of its textblock's text on it — else below its last line;
-     * the first of these `firstFree` finds free, above and below never on the
-     * caret's line. Where none is free, below.
-     */
-    private place(bar: ObjectBar, object: EditorObject): void {
-        // Its width first: the places below are found for the bar as it will be drawn.
-        const base = this.mount.getBoundingClientRect();
-        bar.fit(layerRight(base) - base.left);
-        // A bar that fits the text column keeps to it; only one wider than the column stands past it.
-        const right = bar.el.offsetWidth <= base.width ? base.right : layerRight(base);
-        if (isBlockPlaced(object)) {
-            this.placeBlock(bar, object, base, right);
+    /** The hover cue on `atom`, and on no other block. */
+    private cue(atom: HTMLElement | null): void {
+        if (atom === this.cued) {
             return;
         }
-        const el = bar.el;
-        const view = this.view;
-        const anchor = this.anchor(object);
-        const width = el.offsetWidth;
-        const height = el.offsetHeight;
-        const sel = view.state.selection;
-        const typing = bar === this.selectionBar && sel instanceof TextSelection;
-        const caret = typing ? view.coordsAtPos(sel.head) : null;
-        const offCaret = (y: number) => () => caret === null || y >= caret.bottom || y + height <= caret.top;
-        const x0 = Math.max(base.left, Math.min(anchor.left ?? right - width, right - width));
-        const aboveY = this.clearOfLensRows(anchor.top - GAP - height, height, true);
-        const belowY = this.clearOfLensRows(anchor.bottom + GAP, height, false);
-        const block = this.textblockDOM(object.from);
-        const lineRight = block ? rightEdgeIn(block, anchor.top, anchor.top + height) : -Infinity;
-        const besideX = lineRight + GAP;
-        const places: Place[] = [
-            { x: x0, y: aboveY, when: offCaret(aboveY) },
-            { x: besideX, y: anchor.top, when: () => besideX + width <= right },
-            { x: x0, y: belowY, when: offCaret(belowY) },
-        ];
-        const found = firstFree(view, this.mount, places, { width, height });
-        let x = found?.x ?? x0;
-        let y = found?.y ?? belowY;
-        if (!found && caret !== null && !offCaret(y)()) {
-            y = caret.bottom + GAP;
-        }
-        x = Math.max(base.left, Math.min(x, right - width));
-        el.style.left = `${x - base.left}px`;
-        el.style.top = `${y - base.top}px`;
-    }
-
-    /** The element of the textblock holding position `pos`: the line an inline object stands on. */
-    private textblockDOM(pos: number): Element | null {
-        const $pos = this.view.state.doc.resolve(Math.min(pos, this.view.state.doc.content.size));
-        for (let d = $pos.depth; d > 0; d--) {
-            if ($pos.node(d).isTextblock) {
-                const dom = this.view.nodeDOM($pos.before(d));
-                return dom instanceof Element ? dom : null;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * `y` moved past another extension's lens rows (`lenses.ts`), which sit
-     * right above a block's first line, where a bar goes too — above a row
-     * when going up, below it going down — so a candidate place is not one
-     * that `firstFree` must refuse for the row (a lens row is `OCCUPIED`).
-     */
-    private clearOfLensRows(y: number, height: number, up: boolean): number {
-        const rows = Array.from(this.view.dom.querySelectorAll(':scope > .mep-lens-row'), r => r.getBoundingClientRect());
-        let at = y;
-        for (let hit = rows.find(r => at < r.bottom && at + height > r.top); hit; hit = rows.find(r => at < r.bottom && at + height > r.top)) {
-            at = up ? hit.top - GAP - height : hit.bottom + GAP;
-        }
-        return at;
-    }
-
-    /**
-     * A block's bar covers no content where it can help it, and never moves
-     * layout (Daniel, 2026-09-29 and 2026-09-30). The first of these places
-     * `firstFree` finds free is where it goes:
-     *
-     * 1. beside the block's first line, outside it, top-aligned with it — where
-     *    the block ends short of the text column's right edge (a table, a short
-     *    heading);
-     * 2. above the block, right-aligned to the column — where the line above
-     *    ends short of it, or a margin is there;
-     * 3. inside the block's own box at its top right — a source block, a
-     *    container or an admonition whose first line is short — probing the
-     *    block's own content;
-     * 4. below the block, right-aligned to the column;
-     * 5. where none is free: above the block, right-aligned to the column,
-     *    regardless — over whatever is there, usually the empty tail of the
-     *    line above, as a heading's bar has always stood. Where above is under
-     *    the formatting row (the block's top scrolled up to it), the bar could
-     *    be neither seen nor clicked there: below the block then, and where
-     *    that is past the window's bottom too, at the row's edge — over the
-     *    block's own top, still moving nothing.
-     *
-     * A bar is never given room in the document: a room moved the block down
-     * as its bar appeared, and the layout jumped under the reader (a
-     * full-width table's bar did it on every visit). A block that draws a box
-     * of its own (a table, a source block, a container, an admonition) is its
-     * box; a heading or a block with attributes is its text, whose lines in
-     * the bar's band must all end before the bar.
-     */
-    private placeBlock(bar: ObjectBar, object: EditorObject, base: DOMRect, layerEdge: number): void {
-        const el = bar.el;
-        const view = this.view;
-        const width = el.offsetWidth;
-        const height = el.offsetHeight;
-        const dom = isMarkObject(object) ? null : view.nodeDOM(object.from);
-        if (!(dom instanceof Element)) {
-            return;
-        }
-        const box = dom.getBoundingClientRect();
-        const style = getComputedStyle(view.dom);
-        const columnRight = view.dom.getBoundingClientRect().right - (parseFloat(style.paddingRight) || 0);
-        const textual = object.kind === 'heading' || object.kind === 'block_attrs';
-        const top = (textual ? firstLineTop(dom) : null) ?? box.top;
-        const right = textual
-            ? rightEdgeIn(dom, top, top + height)
-            : box.right - (isBlockObject(object) ? ATOM_INSET : 0);
-        const edge = columnRight - width;
-        const aboveY = this.clearOfLensRows(box.top - GAP - height, height, true);
-        const insideRight = box.right - (isBlockObject(object) ? ATOM_INSET : 0) - GAP;
-        const insideY = box.top + (isBlockObject(object) ? ATOM_INSET : GAP);
-        const belowY = this.clearOfLensRows(box.bottom + GAP, height, false);
-        // Each place where the bar will stand: a bar wider than the column is pushed back to the column's
-        // left edge, and the band `firstFree` checks must be that one, not the one right-aligned to the column.
-        const at = (x: number) => Math.max(base.left, Math.min(x, layerEdge - width));
-        const ladder: Place[] = [
-            { x: at(right + GAP), y: top, when: () => right + GAP + width <= columnRight },
-            { x: at(edge), y: aboveY },
-            ...(textual || object.kind === 'table' ? [] : [{ x: at(insideRight - width), y: insideY, within: dom }]),
-            { x: at(edge), y: belowY },
-        ];
-        const found = firstFree(view, this.mount, ladder, { width, height });
-        const x = found?.x ?? at(edge);
-        const y = found?.y ?? lastResortY(aboveY, belowY, height, rowCeiling(this.mount));
-        el.style.left = `${x - base.left}px`;
-        el.style.top = `${y - base.top}px`;
+        this.cued?.classList.remove('mep-hover-cue');
+        atom?.classList.add('mep-hover-cue');
+        this.cued = atom;
     }
 
     // -- the verbs -------------------------------------------------------------
@@ -2244,6 +2205,10 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
                 return barDecorations(state, decorKey.getState(state) ?? NO_DECOR);
             },
             handleKeyDown(view, event) {
+                if (event.key === 'Escape' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+                    // Consumed only while the caret's bar shows (F1); else VS Code's Esc.
+                    return toolbarViews.get(view)?.escapeInText() ?? false;
+                }
                 if (event.key !== 'Enter' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
                     return false;
                 }

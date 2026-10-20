@@ -261,7 +261,8 @@ suite('Editor labels, menus and states (e2e)', () => {
                 }
             }
         });
-        await page.waitForSelector('.mep-bubble:not([hidden])');
+        // Pointed at once its inert time is over (`placement.ts`): before, the pointer passes through it.
+        await page.waitForSelector('.mep-bubble:not([hidden]):not([data-inert])');
         await pointTo('.mep-bubble [data-action="attrs-bubble"]', 700);
         assert.strictEqual(await page.$eval('.mep-tooltip', el => (el as HTMLElement).hidden), false, 'the hover shows');
         // No key, no press: the selection collapses, the update hides the bubble.

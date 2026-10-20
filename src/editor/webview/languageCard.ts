@@ -12,6 +12,7 @@
  * other link is followed as a Ctrl+clicked one in the text is.
  */
 import { lensLabelNodes } from './lenses';
+import { placeLayer } from './placement';
 
 /**
  * The class of a card's hover section, whose HTML a provider wrote.
@@ -142,20 +143,9 @@ export class LanguageCard {
         this.el.remove();
     }
 
-    /** Below the range it is about, above it when below has no room; kept inside the page's width. */
+    /** Below the range it is about, else above it, off the other open layers: the one policy (`placement.ts`). */
     private place(anchor: CardAnchor): void {
-        const base = this.mount.getBoundingClientRect();
-        const width = this.el.offsetWidth;
-        const height = this.el.offsetHeight;
-        const gap = 4;
-        let left = anchor.left - base.left;
-        left = Math.max(0, Math.min(left, base.width - width));
-        let top = anchor.bottom + gap;
-        if (top + height > window.innerHeight && anchor.top - gap - height >= 0) {
-            top = anchor.top - gap - height;
-        }
-        this.el.style.left = `${left}px`;
-        this.el.style.top = `${top - base.top}px`;
+        placeLayer(this.el, { left: anchor.left, top: anchor.top, right: anchor.left, bottom: anchor.bottom }, { mount: this.mount, space: 'mount' });
     }
 
     private click(e: MouseEvent): void {
