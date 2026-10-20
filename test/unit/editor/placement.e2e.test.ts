@@ -632,7 +632,6 @@ suite('Editor placement (e2e)', () => {
         await page.evaluate(() => {
             window.scrollBy(0, 0);
             window.dispatchEvent(new Event('resize'));
-            (document.querySelector('.mep-editor') as HTMLElement).dispatchEvent(new Event('mep-chrome-moved'));
         });
         await delay(100);
         assert.strictEqual(await page.$eval(BAR, el => el.hasAttribute('data-inert')), false);

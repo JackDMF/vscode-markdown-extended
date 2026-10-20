@@ -27,7 +27,7 @@
  */
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { CHROME_MOVED, PROBING_CLASS, contentIn, firstLineTop, rowCeiling } from './clearance';
+import { PROBING_CLASS, contentIn, firstLineTop, rowCeiling } from './clearance';
 import { focusPlace } from './focusPlace';
 import { rightLaneEdge } from './lane';
 import { EditorObject, isBlockObject, isBlockPlaced, isMarkObject } from './objects';
@@ -585,8 +585,8 @@ function sameFrame(a: Frame, b: Frame): boolean {
  * bar; a field is opened from a bar or the row and replaces it).
  *
  * The slot places its occupant (`placeLayer`: caret's line, text, the other
- * layers) and places it again on a scroll, a resize, the chrome moving
- * (`CHROME_MOVED`) or a font loading — once per frame, and only when the
+ * layers) and places it again on a scroll, a resize or a font loading —
+ * once per frame, and only when the
  * anchor, the size or the frame changed. A layer that appeared or moved
  * ignores the pointer for `INERT_MS` (`data-inert`) — a field, asked for and
  * focused, excepted; the keyboard is untouched.
@@ -621,8 +621,6 @@ export class LayerSlot {
         // A scroll fires many times a frame, and placing probes the layout: once per frame.
         this.listen(window, 'scroll', () => this.replaceInFrame(), true);
         this.listen(window, 'resize', () => this.replaceInFrame());
-        // The lock's line came under the row or went, or the page moved for it.
-        this.listen(mount, CHROME_MOVED, () => this.replaceInFrame());
         // A font that loaded after the layer was fitted changed its labels' widths.
         this.listen(document.fonts, 'loadingdone', () => {
             this.refitNext = true;
