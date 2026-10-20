@@ -5,7 +5,7 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { INERT_MS, REST_MS } from '../../../src/editor/webview/placement';
-import { closeEditorPage, clickText, delay, editCommand, EditMessage, EditorPage, EXTENSION_ID, MOD, openEditorPage, settle, shot } from './pageHarness';
+import { closeEditorPage, clickText, delay, editCommand, EditMessage, EditorPage, EXTENSION_ID, leaveObjects, MOD, openEditorPage, settle, shot } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
@@ -38,6 +38,7 @@ suite('Editor inline attributes (e2e)', () => {
         await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         await page.mouse.move(2, 2);
+        await leaveObjects(page);
         await page.evaluate(() => {
             (document.activeElement as HTMLElement | null)?.blur();
             window.scrollTo(0, 0);
