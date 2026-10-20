@@ -592,10 +592,10 @@ img.mep-pending-range {
  * menus' bounds and the window. A moved mark keeps its key, after its syntax,
  * never cut: where the menu is capped, the syntax goes first.
  */
-.mep-menu[data-menu="more"] > :is(.mep-menu-item, .mep-menu-separator)[hidden] { display: none; }
-.mep-menu[data-menu="more"] { width: max-content; max-width: min(380px, calc(100vw - 8px)); }
-.mep-menu[data-menu="more"] .mep-entry-syntax { min-width: 0; }
-.mep-menu[data-menu="more"] .mep-submenu-item > .mep-menu-caret { margin-left: auto; }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) > :is(.mep-menu-item, .mep-menu-separator)[hidden] { display: none; }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) { width: max-content; max-width: min(380px, calc(100vw - 8px)); }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) .mep-entry-syntax { min-width: 0; }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) .mep-submenu-item > .mep-menu-caret { margin-left: auto; }
 .mep-entry-key {
     flex: none;
     padding-left: 10px;

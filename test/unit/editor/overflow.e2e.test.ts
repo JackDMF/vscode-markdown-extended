@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { ROW_OVERFLOW } from '../../../src/editor/webview/toolbar/actions';
+import { BUBBLE_OVERFLOW, ROW_OVERFLOW } from '../../../src/editor/webview/toolbar/actions';
 import { moreName } from '../../../src/editor/webview/overflow';
 import { EXTENSION_ID, EditorPage, clickText, closeEditorPage, delay, describedTip, openEditorPage, shot as saveShot, showDiagnostics } from './pageHarness';
 import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, MOD_NAME, assertReasonShown, assertRowLocked, rowBoxes } from './rowLock';
@@ -644,5 +644,103 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         await delay(50);
         assert.ok(await page.evaluate(sel => document.activeElement === document.querySelector(sel), barMore), 'Esc returns to "…"');
         await page.keyboard.press('Escape');
+    });
+
+    // -- the bubble's "…" (Daniel, 2026-10-20) -------------------------------------
+
+    const BUBBLE = '.mep-bubble:not([hidden])';
+
+    /** A selection over `needle`'s first `length` characters, and the bubble shown for it. */
+    const selectAndBubble = async (needle: string, length: number) => {
+        await page.focus('.ProseMirror');
+        await page.evaluate((n, len) => {
+            const root = document.querySelector('.ProseMirror') as HTMLElement;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const at = (node.textContent ?? '').indexOf(n);
+                if (at >= 0) {
+                    (document.getSelection() as Selection).setBaseAndExtent(node, at, node, at + len);
+                    return;
+                }
+            }
+        }, needle, length);
+        await page.waitForSelector(BUBBLE, { timeout: 5000 });
+        await delay(150);
+    };
+
+    const bubbleState = () => page.$eval(BUBBLE, el => {
+        const r = el.getBoundingClientRect();
+        const more = el.querySelector<HTMLElement>('.mep-more-face');
+        return {
+            moved: Array.from(el.querySelectorAll<HTMLElement>('[data-action][hidden]')).map(b => b.dataset.action as string),
+            more: more ? more.getAttribute('aria-label') : null,
+            moreLast: more !== null && el.lastElementChild === more,
+            inside: r.left >= 0 && r.right <= window.innerWidth + 0.5,
+            spills: el.scrollWidth > el.clientWidth + 0.5,
+        };
+    });
+
+    test('u1 the bubble at 1280 / 520 / 420 never spills past the window: what does not fit is in its "…", a prefix of BUBBLE_OVERFLOW', async function () {
+        this.timeout(90000);
+        for (const [theme, t] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as const) {
+            await applyTheme(page, theme);
+            for (const width of [1280, 520, 420]) {
+                await resize(width, 640);
+                await showDocument();
+                await selectAndBubble('words, then', 5);
+                const s = await bubbleState();
+                assert.ok(s.inside && !s.spills, `${width} ${t}: inside the window: ${JSON.stringify(s)}`);
+                assert.deepStrictEqual([...s.moved].sort(), BUBBLE_OVERFLOW.slice(0, s.moved.length).map(String).sort(), `${width} ${t}: a prefix of BUBBLE_OVERFLOW: ${s.moved}`);
+                assert.strictEqual(s.more !== null, s.moved.length > 0, `${width} ${t}: "…" exactly when something moved`);
+                if (width === 1280) {
+                    assert.deepStrictEqual(s.moved, [], '1280: nothing moved');
+                } else {
+                    assert.ok(s.moved.length > 0 && s.moreLast, `${width}: something moved, "…" last`);
+                }
+                await shot(`bubble-${width}-${t}.png`);
+            }
+        }
+    });
+
+    test('u2 the bubble\'s "…" at 420 opens under it and leaves it shown; its entries in the bubble\'s order; one applies to the selection and closes it', async function () {
+        this.timeout(60000);
+        for (const [theme, t] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as const) {
+            await applyTheme(page, theme);
+            await resize(420, 640);
+            await showDocument();
+            await selectAndBubble('words, then', 5);
+            const s = await bubbleState();
+            await page.click(`${BUBBLE} .mep-more-face`);
+            await page.waitForSelector(`${panel('bubble-more')}:not([hidden])`);
+            await delay(100);
+            const open = await page.$eval(panel('bubble-more'), (el, moreSel) => {
+                const items = Array.from(el.children).filter(c => (c as HTMLElement).offsetParent !== null) as HTMLElement[];
+                const face = (document.querySelector(moreSel) as HTMLElement).getBoundingClientRect();
+                const r = el.getBoundingClientRect();
+                return {
+                    entries: items.map(i => (i.classList.contains('mep-menu-separator') ? '---' : i.dataset.action as string)),
+                    inside: r.left >= 0 && r.right <= window.innerWidth + 0.5 && r.bottom <= window.innerHeight + 0.5,
+                    clearOfFace: r.top >= face.bottom - 0.5 || r.bottom <= face.top + 0.5,
+                };
+            }, `${BUBBLE} .mep-more-face`);
+            assert.deepStrictEqual(open.entries.filter(e => e !== '---').sort(), [...s.moved].sort(), `${t}: every moved control has its entry`);
+            assert.ok(open.inside && open.clearOfFace, `${t}: inside the window, clear of "…": ${JSON.stringify(open)}`);
+            assert.ok(await page.$(BUBBLE), `${t}: the bubble stays shown while its "…" is open`);
+            await shot(`bubble-more-420-${t}.png`);
+            await page.keyboard.press('Escape');
+            await page.mouse.click(5, 630);
+            await delay(80);
+        }
+        // An entry applies to the selection: the first moved one, then everything closes.
+        await applyTheme(page, LIGHT_MODERN);
+        await showDocument();
+        await selectAndBubble('words, then', 5);
+        const first = (await bubbleState()).moved.find(id => id === 'strike') ?? (await bubbleState()).moved[0];
+        await page.click(`${BUBBLE} .mep-more-face`);
+        await page.waitForSelector(`${panel('bubble-more')}:not([hidden])`);
+        await page.click(`${panel('bubble-more')} [data-action="${first}"]`);
+        await delay(150);
+        assert.strictEqual(await page.$eval(panel('bubble-more'), el => (el as HTMLElement).hidden), true, 'the menu closed');
+        assert.ok(await page.evaluate(() => (document.querySelector('.ProseMirror') as HTMLElement).innerHTML.includes('words')), 'the text is still there');
     });
 });

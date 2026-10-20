@@ -157,11 +157,19 @@ suite('Editor placement (e2e)', () => {
     const s5 = async () => {
         await showDocument('Alpha beta gamma.\n', 'Alpha');
         await clickBefore('beta', 1);
-        // From the keyboard: in a row narrower than its tools the face may stand past its visible end (wave 2 · #2 is the overflow).
-        await page.focus('.mep-toolbar .mep-menu-face[data-menu="formatting"]');
-        await page.keyboard.press('ArrowDown');
+        // From the keyboard; in a row too narrow for it, Formatting is in "…" (wave 2 · #2) and opens from its entry there.
+        if (await page.$eval('.mep-toolbar .mep-menu-face[data-menu="formatting"]', el => (el as HTMLElement).hidden)) {
+            await page.focus('.mep-toolbar .mep-more-face');
+            await page.keyboard.press('Enter');
+            await page.waitForSelector('.mep-menu[data-menu="more"]:not([hidden])', { timeout: 3000 });
+            await page.focus('.mep-menu[data-menu="more"] [data-submenu="formatting"]');
+            await page.keyboard.press('ArrowRight');
+        } else {
+            await page.focus('.mep-toolbar .mep-menu-face[data-menu="formatting"]');
+            await page.keyboard.press('ArrowDown');
+        }
         await page.waitForSelector('.mep-menu[data-menu="formatting"]:not([hidden])', { timeout: 3000 });
-        await page.hover('.mep-menu [data-action="mark"]');
+        await page.hover('.mep-menu[data-menu="formatting"] [data-action="mark"]');
         await delay(600);
     };
 
@@ -375,7 +383,7 @@ suite('Editor placement (e2e)', () => {
         const check = async () => {
             const card = await box(CARD);
             const menu = await box('.mep-menu[data-menu="formatting"]');
-            const entry = await box('.mep-menu [data-action="mark"]');
+            const entry = await box('.mep-menu[data-menu="formatting"] [data-action="mark"]');
             assert.ok(card && menu && entry);
             assert.ok(!overlap(card, menu) && !overlap(card, entry), `never over the menu or its entry: ${JSON.stringify({ card, menu, entry })}`);
             return { card, menu };

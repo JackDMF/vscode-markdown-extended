@@ -751,6 +751,26 @@ export function moreOrder(moved: readonly RowControl[]): { marks: string[]; menu
     };
 }
 
+const BUBBLE_ITEMS = TOOLBAR_ACTIONS.filter(inBubble).map(a => a.id);
+
+/**
+ * The order the bubble's controls leave it for its "…" where it is too
+ * narrow (Daniel, 2026-10-20: the bubble gets the row's overflow), derived as
+ * the row's is: what the bubble adds to the row's marks leaves first — the
+ * extension's marks, the notes and Attributes — from the right, as the row's
+ * menus leave before its marks; then the row's own marks, from the right, in
+ * `ROW_OVERFLOW`'s order. The marks with keys stay longest.
+ */
+export const BUBBLE_OVERFLOW: readonly string[] = [
+    ...BUBBLE_ITEMS.filter(id => !ROW_MARKS.includes(id)).reverse(),
+    ...ROW_OVERFLOW.filter(id => ROW_MARKS.includes(id)),
+];
+
+/** Whether a bubble control is one of the row's marks: "…" lists those first, the rest after a divider. */
+export function isRowMark(id: string): boolean {
+    return ROW_MARKS.includes(id);
+}
+
 /** What a menu's face says (the block-type face says the current type instead, when there is one). */
 export const MENU_LABELS: Readonly<Record<ToolbarMenu | ToolbarSubmenu, string>> = {
     'block-type': 'Block type',

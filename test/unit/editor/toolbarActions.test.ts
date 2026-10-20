@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
-    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, ROW_OVERFLOW, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, moreOrder, submenuOf, tipOf,
+    BUBBLE_OVERFLOW, INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, ROW_OVERFLOW, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, moreOrder, submenuOf, tipOf,
 } from '../../../src/editor/webview/toolbar/actions';
 import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
 import { tipText } from '../../../src/editor/tips';
@@ -605,6 +605,14 @@ suite('Editor toolbar: what leaves a narrow row for "…"', () => {
         assert.deepStrictEqual([...ROW_OVERFLOW].sort(), [...ROW_LAYOUT.flat().filter(g => g !== 'marks' && g !== 'block-type'), ...rowMarks].sort());
         assert.ok(!ROW_OVERFLOW.includes('block-type'), 'Block type never leaves');
         assert.deepStrictEqual(rowMarks, ['italic', 'emphasis', 'bold', 'strong', 'code'], 'so the marks leave as code, strong, b, em, i');
+    });
+
+    test('the bubble\'s controls leave as the row\'s do: what it adds to the marks first, from the right, then the marks from the right; each once', () => {
+        const bubble = TOOLBAR_ACTIONS.filter(inBubble).map(a => a.id);
+        const added = bubble.filter(id => !rowMarks.includes(id));
+        assert.deepStrictEqual([...BUBBLE_OVERFLOW], [...[...added].reverse(), ...[...rowMarks].reverse()]);
+        assert.deepStrictEqual([...BUBBLE_OVERFLOW].sort(), [...bubble].sort(), 'every bubble control once');
+        assert.strictEqual(BUBBLE_OVERFLOW[0], 'attrs-bubble', 'its own Attributes, drawn last, leaves first');
     });
 
     test('"…" lists what it holds in row order, marks before menus, whatever order they left in', () => {

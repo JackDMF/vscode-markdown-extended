@@ -53,8 +53,8 @@ import { currentReadsAttrs } from '../../inlineEngine';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    ActionPreview, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
-    TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, menuOf, moreOrder, submenuOf, tipOf,
+    ActionPreview, BUBBLE_OVERFLOW, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
+    TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, isRowMark, menuOf, moreOrder, submenuOf, tipOf,
 } from './actions';
 import { moreControl, moreName, moveUntilFits, overflows } from '../overflow';
 import { ariaKeyshortcuts, keyLabel } from '../../keys';
@@ -385,7 +385,7 @@ interface Tool {
 }
 
 interface Menu {
-    id: ToolbarMenu | ToolbarSubmenu | 'export' | 'more';
+    id: ToolbarMenu | ToolbarSubmenu | 'export' | 'more' | 'bubble-more';
     panel: HTMLElement;
     /** Its entries in order, the submenu's opener included; the arrow keys move between them. */
     items: HTMLElement[];
@@ -408,6 +408,8 @@ interface Menu {
     children: Menu[];
     /** Opened as a top-level menu: it hides the floating layer (`LayerSlot.suppress`) until it closes, whatever it is by then. */
     suppressing?: true;
+    /** A floating layer's own menu (the bubble's "…"): it opens from the layer, so it never hides it. */
+    ofLayer?: true;
     /** "More types…": the entry that shows the entries kept behind it (`ToolbarAction.alias`) in place, and those entries. */
     more?: { item: HTMLElement; hidden: HTMLElement[]; count: number };
 }
@@ -483,6 +485,14 @@ class ToolbarView implements PluginView {
     private readonly rowMenus = new Map<ToolbarMenu, Menu>();
     /** What is in "…" now, in the order it left the row (`ROW_OVERFLOW`). */
     private moved: readonly RowControl[] = [];
+    /** The bubble's "…" (`fitBubble`): its menu, its face, each control's button in the bubble and its entry in "…", what moved, and the room it was fitted to. */
+    private bubbleMore!: Menu;
+    private bubbleMoreFace!: HTMLElement;
+    private bubbleDivider!: HTMLElement;
+    private readonly bubbleControls = new Map<string, HTMLElement>();
+    private readonly bubbleEntries = new Map<string, HTMLElement>();
+    private bubbleMoved: readonly string[] = [];
+    private bubbleFitted = '';
     /** Export's label: `layoutRow` names the running format in it, as the row's room allows. */
     private exportLabel!: HTMLElement;
     /** What the last layout was measured for (`layoutRow`): the same again measures nothing. */
@@ -659,7 +669,7 @@ class ToolbarView implements PluginView {
                 const enabled = menu.tools.some(t => stateOf(t.action).enabled);
                 setState(menu.opener, enabled, false);
             }
-            if (menu === this.more) {
+            if (menu === this.more || menu === this.bubbleMore) {
                 continue;
             }
             if (menu.face && menu.scope === 'document') {
@@ -672,6 +682,7 @@ class ToolbarView implements PluginView {
         this.lockRole = place.kind === 'control' ? place.role : null;
         this.layoutRow();
         this.updateMore(lock);
+        this.updateBubbleMore();
         this.syncBubble();
     }
 
@@ -950,9 +961,106 @@ class ToolbarView implements PluginView {
         bubble.setAttribute('aria-label', 'Format selection');
         bubble.hidden = true;
         for (const action of TOOLBAR_ACTIONS.filter(inBubble)) {
-            bubble.append(this.markButton(action));
+            const button = this.markButton(action);
+            this.bubbleControls.set(action.id, button);
+            bubble.append(button);
         }
+        this.buildBubbleMore();
         return bubble;
+    }
+
+    /**
+     * The bubble's "…" (Daniel, 2026-10-20), as the row's: an entry for every
+     * control of the bubble, each hidden while the control is in the bubble —
+     * the row's marks, a divider, then what the bubble adds — glyph, word,
+     * syntax and key, checked when on. Its face stands last in the bubble only
+     * while it holds something (`fitBubble`); its menu hangs from it and leaves
+     * the bubble shown (`ofLayer`).
+     */
+    private buildBubbleMore(): void {
+        const more = this.newMenu('bubble-more', 'More', 'selection');
+        more.alignEnd = true;
+        more.ofLayer = true;
+        this.bubbleMore = more;
+        this.bubbleDivider = separator();
+        this.bubbleDivider.hidden = true;
+        for (const action of TOOLBAR_ACTIONS.filter(inBubble)) {
+            if (!isRowMark(action.id) && !this.bubbleDivider.isConnected) {
+                more.panel.append(this.bubbleDivider);
+            }
+            const item = this.menuEntry(more, action);
+            if (action.apply.kind === 'mark' || action.apply.kind === 'wrap-node') {
+                item.setAttribute('role', 'menuitemcheckbox');
+                item.setAttribute('aria-checked', 'false');
+            }
+            if (action.key !== undefined) {
+                item.append(span('mep-entry-key', keyLabel(action.key, macKeys())));
+            }
+            item.hidden = true;
+            this.bubbleEntries.set(action.id, item);
+            more.panel.append(item);
+        }
+        const face = moreControl('row');
+        face.hidden = false;
+        this.wireFace(more, face);
+        this.bubbleMoreFace = face;
+    }
+
+    /**
+     * The bubble fitted to `room` (the slot's, `placement.ts`): where it is
+     * wider, its controls leave it for "…" in `BUBBLE_OVERFLOW`'s order until
+     * the rest fits, with the row's one mechanism (`moveUntilFits`). Measured
+     * at the mount's left edge, as a bar is; again only for another room, or
+     * after a font loaded (`fresh`).
+     */
+    private fitBubble(room: number, fresh: boolean): void {
+        const key = `${Math.round(room)}`;
+        if (!fresh && key === this.bubbleFitted) {
+            return;
+        }
+        this.bubbleFitted = key;
+        const bubble = this.bubble;
+        const left = bubble.style.left;
+        bubble.style.left = '0px';
+        bubble.style.maxWidth = `${Math.floor(room)}px`;
+        const show = (id: string) => {
+            (this.bubbleControls.get(id) as HTMLElement).hidden = false;
+            (this.bubbleEntries.get(id) as HTMLElement).hidden = true;
+        };
+        const hide = (id: string) => {
+            (this.bubbleControls.get(id) as HTMLElement).hidden = true;
+            (this.bubbleEntries.get(id) as HTMLElement).hidden = false;
+        };
+        this.bubbleMoreFace.remove();
+        for (const id of BUBBLE_OVERFLOW) {
+            show(id);
+        }
+        let moved: string[] = [];
+        if (overflows(bubble)) {
+            // Counted from the first measurement that moves anything.
+            bubble.append(this.bubbleMoreFace);
+            moved = moveUntilFits(BUBBLE_OVERFLOW, () => !overflows(bubble), show, hide);
+            if (moved.length === 0) {
+                this.bubbleMoreFace.remove();
+            }
+        }
+        bubble.style.left = left;
+        this.bubbleMoved = moved;
+        this.bubbleDivider.hidden = !(moved.some(isRowMark) && moved.some(id => !isRowMark(id)));
+        if (moved.length === 0 && !this.bubbleMore.panel.hidden) {
+            this.closeMenu(this.bubbleMore);
+        }
+        this.updateBubbleMore();
+    }
+
+    /** The bubble's "…": a dot when a control in it is on, its name what it holds in its menu's order, the ones on said so. */
+    private updateBubbleMore(): void {
+        const order = TOOLBAR_ACTIONS.filter(inBubble).filter(a => this.bubbleMoved.includes(a.id));
+        const on = order.filter(a => this.bubbleControls.get(a.id)?.classList.contains('mep-active'));
+        this.bubbleMoreFace.classList.toggle('mep-has-on', on.length > 0);
+        this.bubbleMoreFace.setAttribute('aria-label', moreName('row', order.map(a => a.label), on.map(a => a.label)));
+        this.tipOfControl.set(this.bubbleMoreFace, plainTip('More'));
+        this.tips.refresh(this.bubbleMoreFace);
     }
 
     /** A mark's button: its glyph is the element the mark renders as, held to the button's size. */
@@ -1415,7 +1523,7 @@ class ToolbarView implements PluginView {
         }
         menu.panel.hidden = false;
         triggerOf(menu)?.setAttribute('aria-expanded', 'true');
-        if (!menu.parent) {
+        if (!menu.parent && !menu.ofLayer) {
             // A row menu open: the floating layer hides until it closes (`LayerSlot.suppress`).
             this.slot.suppress(true);
             menu.suppressing = true;
@@ -1965,7 +2073,7 @@ class ToolbarView implements PluginView {
 
     private focusLeft(e: FocusEvent): void {
         const to = e.relatedTarget as Element | null;
-        if (to && (this.bubble.contains(to) || placeOfElement(this.view, to).kind === 'text')) {
+        if (to && (this.bubble.contains(to) || this.bubbleMore.panel.contains(to) || placeOfElement(this.view, to).kind === 'text')) {
             return;
         }
         this.dropBubble();
@@ -2048,6 +2156,7 @@ class ToolbarView implements PluginView {
             },
             valid: () => this.bubbleWanted() && this.selectionKey() === key,
             hidden: () => this.hideBubble(),
+            fit: (room, fresh) => this.fitBubble(room, fresh),
         });
         if (!granted) {
             this.hideBubble();
@@ -2067,6 +2176,7 @@ class ToolbarView implements PluginView {
     }
 
     private hideBubble(): void {
+        this.closeMenu(this.bubbleMore);
         this.bubble.hidden = true;
         this.tips.hide(this.bubble);
     }
