@@ -89,4 +89,32 @@ suite('Editor placement: the policy', () => {
         assert.deepStrictEqual(placeMenuAt(panel, rect(700, 0, 780, 26), viewport, 'end'), { x: 520, y: 30, side: 'below' });
         assert.deepStrictEqual(placeMenuAt(panel, rect(100, 500, 180, 526), viewport), { x: 100, y: 500 - GAP - 200, side: 'above' });
     });
+
+    test('r1-6: an anchor out of the window at the bottom only, no place qualifying, keeps the layer at the visible edge, off the caret', () => {
+        const runsOut = rect(60, 60, 300, 400);
+        const caret = rect(26, 215, 604, 245);
+        assert.deepStrictEqual(placeStacked(size, runsOut, frame, { caret }), { x: 60, y: 27 + GAP, side: 'edge' });
+        assert.deepStrictEqual(placeStacked(size, runsOut, frame), { x: 60, y: 250 - GAP - 28, side: 'edge' });
+    });
+
+    test('r1-6: under the caret\'s line is kept inside the window where nothing else qualifies', () => {
+        const anchor = rect(80, 100, 140, 118);
+        const caret = rect(26, 235, 604, 248);
+        const blocked = [rect(0, 60, 700, 160)];
+        assert.deepStrictEqual(placeStacked(size, anchor, frame, { caret, avoid: blocked }), { x: 80, y: 250 - 28, side: 'caret' });
+    });
+
+    test('r1-13: text under both sides: below, but above for an inline object\'s bar; a side free of text always wins', () => {
+        const anchor = rect(60, 100, 300, 118);
+        const below = (band: Rect) => band.top >= 118;
+        const above = (band: Rect) => band.bottom <= 100;
+        const both = () => true;
+        const none = () => false;
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: both }).side, 'below');
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: both, bothCovered: 'above' }).side, 'above');
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: both, bothCovered: 'below' }).side, 'below');
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: none, bothCovered: 'above' }).side, 'below', 'free on both sides: below');
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: below, bothCovered: 'above' }).side, 'above', 'text only below');
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: above, bothCovered: 'above' }).side, 'below', 'text only above: the free side, below');
+    });
 });

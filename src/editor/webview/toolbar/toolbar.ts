@@ -508,11 +508,15 @@ class ToolbarView implements PluginView {
     /** The selection the bubble is about (`selectionKey`), while it is wanted; its rest's timer. */
     private bubbleKey: string | null = null;
     private bubbleTimer: ReturnType<typeof setTimeout> | undefined;
+    /** Stops listening to the slot coming free (`bubbleFreed`). */
+    private readonly unfreed: () => void;
 
     constructor(private readonly view: EditorView, private readonly host: ToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
         this.tips = Tooltips.for(this.mount);
         this.slot = LayerSlot.for(view, this.mount);
+        // A bubble whose rest ended while a row menu held the slot is asked again once it is free.
+        this.unfreed = this.slot.onFreed(() => this.bubbleFreed());
         this.layer = div('mep-toolbar-layer');
         this.card = div(`${PREVIEW_CARD_CLASS}`);
         this.card.hidden = true;
@@ -855,6 +859,7 @@ class ToolbarView implements PluginView {
         clearTimeout(this.flashTimer);
         clearTimeout(this.focusTimer);
         clearTimeout(this.bubbleTimer);
+        this.unfreed();
         this.closeFieldBar();
         this.slot.destroy();
         this.tips.release();
@@ -2134,6 +2139,19 @@ class ToolbarView implements PluginView {
         if (this.bubbleWanted() && this.bubbleKey === this.selectionKey() && this.slot.current?.key !== this.bubbleKey) {
             clearTimeout(this.bubbleTimer);
             this.bubbleTimer = undefined;
+            this.requestBubble();
+        }
+    }
+
+    /**
+     * The slot came free (a row menu closed over an empty slot, a layer went):
+     * the selection the bubble waits for or was refused for is still the
+     * selection, and no rest is pending — its request was lost while the slot
+     * was taken, and nothing else asks again.
+     */
+    private bubbleFreed(): void {
+        if (this.bubbleKey !== null && this.bubbleTimer === undefined && this.bubbleKey === this.selectionKey()
+            && this.slot.current === null && this.bubble.hidden && !this.pointerHeld) {
             this.requestBubble();
         }
     }

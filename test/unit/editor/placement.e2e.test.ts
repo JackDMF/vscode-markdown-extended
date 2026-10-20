@@ -4,6 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { GAP, INERT_MS, REST_MS } from '../../../src/editor/webview/placement';
+import { LensRow } from '../../../src/editor/protocol';
 import { closeEditorPage, delay, EditorPage, EXTENSION_ID, openEditorPage, pointAt, shot } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 
@@ -46,6 +47,13 @@ suite('Editor placement (e2e)', () => {
             window.scrollTo(0, 0);
         });
         await delay(300);
+    };
+
+    /** The host's answer to an edit made elsewhere: the document again, the page left as it is (a resync). */
+    const resendDocument = async (text: string) => {
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        version++;
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
     };
 
     const clickBefore = async (needle: string, index = 0) => {
@@ -108,11 +116,21 @@ suite('Editor placement (e2e)', () => {
         await waitBar();
     };
 
+    /** s2's document: the link on a paragraph's second line, whole lines of text above and below it, as far across as the bar stands. */
+    const S2_TEXT = `Above the paragraph.\n\n${LONG}, ${LONG} then [linkedwords](https://example.com/limits) and more text after it, ${LONG.toLowerCase()}, ${LONG.toLowerCase()}, ${LONG.toLowerCase()}.\n\nBelow it.\n`;
+
     /** s2: the caret in a link on a paragraph's second line. */
     const s2 = async () => {
-        // Whole lines of text above and below the link's line, the link one word so it never wraps: the tie goes below.
-        await showDocument(`Above the paragraph.\n\n${LONG}, ${LONG} then [linkedwords](https://example.com/limits) and more text after it, ${LONG.toLowerCase()}.\n\nBelow it.\n`, 'linkedwords');
+        // Whole lines of text above and below the link's line, the link one word so it never wraps: text under both, an inline object's bar goes above.
+        await showDocument(S2_TEXT, 'linkedwords');
         await clickBefore('linkedwords', 3);
+        await waitBar();
+    };
+
+    /** s2b: the caret in a link on the document's last line, text above it and nothing below: the free side, below. */
+    const s2b = async () => {
+        await showDocument(`Above the line.\n\nThe last line holds [lastlink](https://example.com/last)\n`, 'lastlink');
+        await clickBefore('lastlink', 3);
         await waitBar();
     };
 
@@ -187,7 +205,46 @@ suite('Editor placement (e2e)', () => {
         await waitBar();
     };
 
+    /** s6r: a requirement's heading with its lens row, a two-line title and a paragraph below, scrolled to just under the row, the caret in the title. */
+    const s6r = async () => {
+        const filler = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1}.`).join('\n\n');
+        // Text enough after it that the page can scroll the row up under the toolbar.
+        const after = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 41}.`).join('\n\n');
+        const title = 'FRS-RXE-040 Every floating layer keeps off the caret\'s line, the formatting row and the other open layers, whatever the width of the window';
+        await showDocument(`${filler}\n\n## ${title}\n\nThe paragraph under the title says what the requirement asks for, in a line or two of text that the bar must not cover.\n\n${after}\n`, 'FRS-RXE-040');
+        // The row above the heading is the foreign lenses (no surface); its bar's verbs are the `action` lenses.
+        const rows: LensRow[] = [
+            { blockIndex: 40, items: [{ id: '1.0', title: '$(check) 3 tests passing', tooltip: 'Runs the tests' }, { id: '1.1', title: 'Implemented' }] },
+            { blockIndex: 40, items: [{ id: '1.2', title: 'Show in Req Explorer', surface: 'action', artifact: 'FRS-RXE-040' }] },
+        ];
+        await (editor as EditorPage).send({ type: 'lenses', version, blocks: 72, rows });
+        await page.waitForSelector('.mep-lens-row', { timeout: 2000 });
+        await page.evaluate(() => {
+            const lens = (document.querySelector('.mep-lens-row') as HTMLElement).getBoundingClientRect();
+            const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
+            window.scrollBy(0, lens.top - row.bottom - 2);
+        });
+        await delay(100);
+        await clickBefore('Every floating', 3);
+        await waitBar();
+    };
+
     /** s7: the margin lane open, the caret in a link in a table cell, Shift+Enter refused: the hint and the bar. */
+    /** s7b: as s7 with the caret in the cell's plain text: the table's bar, below the table, and the hint above the caret's line. */
+    const s7b = async () => {
+        await showDocument(`Alpha ++beta|the note's body++ gamma.\n\n| Kind | Where it is written down |\n| --- | --- |\n| first | in [the device limits](https://example.com/a) |\n\nAfter.\n`, 'device limits');
+        // The hint of the scenario before, if it still stands, would be the one shown again (`CaretHint.show`).
+        await page.evaluate(() => {
+            (document.querySelector('.mep-hint') as HTMLElement | null)?.setAttribute('hidden', '');
+        });
+        await clickBefore('first', 2);
+        await waitBar();
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Shift');
+        await page.waitForSelector('.mep-hint:not([hidden])', { timeout: 2000 });
+    };
+
     const s7 = async () => {
         await showDocument(`Alpha ++beta|the note's body++ gamma.\n\n| Kind | Where it is written down |\n| --- | --- |\n| first | in [the device limits](https://example.com/a) |\n\nAfter.\n`, 'device limits');
         await clickBefore('device limits', 4);
@@ -241,9 +298,24 @@ suite('Editor placement (e2e)', () => {
         assert.ok(offLine(bar, line), `off the caret's line: ${JSON.stringify({ bar, line })}`);
     });
 
-    test('s2: a link\'s bar on a second line goes below the link, at its start, never on the caret\'s line', async function () {
+    test('s2: a link\'s bar with text above and below goes above the link, at its start, never on the caret\'s line', async function () {
         this.timeout(15000);
         await s2();
+        const bar = await box(BAR);
+        const link = await page.$eval('.ProseMirror a', a => {
+            const rects = a.getClientRects();
+            return { left: rects[0].left, top: rects[0].top };
+        });
+        const line = await caret();
+        assert.ok(bar);
+        assert.ok(bar.bottom <= link.top - GAP + 1, `above the link: ${JSON.stringify({ bar, link })}`);
+        assert.ok(Math.abs(bar.left - link.left) <= 1, `at the link's first line's start: ${JSON.stringify({ bar, link })}`);
+        assert.ok(offLine(bar, line), `off the caret's line: ${JSON.stringify({ bar, line })}`);
+    });
+
+    test('s2b: a link\'s bar with text only above stays below it, the free side', async function () {
+        this.timeout(15000);
+        await s2b();
         const bar = await box(BAR);
         const link = await page.$eval('.ProseMirror a', a => {
             const rects = a.getClientRects();
@@ -252,8 +324,23 @@ suite('Editor placement (e2e)', () => {
         const line = await caret();
         assert.ok(bar);
         assert.ok(bar.top >= link.bottom + GAP - 1, `below the link: ${JSON.stringify({ bar, link })}`);
-        assert.ok(Math.abs(bar.left - link.left) <= 1, `at the link's first line's start: ${JSON.stringify({ bar, link })}`);
+        assert.ok(Math.abs(bar.left - link.left) <= 1, `at the link's start: ${JSON.stringify({ bar, link })}`);
         assert.ok(offLine(bar, line), `off the caret's line: ${JSON.stringify({ bar, line })}`);
+    });
+
+    test('s6r: a requirement heading with its lens row, just under the row, has its bar below the title, clear of the row and the lens row', async function () {
+        this.timeout(15000);
+        await s6r();
+        const bar = await box(BAR);
+        const heading = await box('.ProseMirror > h2');
+        const lens = await box('.mep-lens-row');
+        const row = await box('.mep-toolbar');
+        assert.ok(bar && heading && lens && row);
+        assert.ok(lens.top >= row.bottom - 1 && lens.top <= row.bottom + 8, `the lens row just under the row: ${JSON.stringify({ lens, row })}`);
+        assert.ok(bar.top >= row.bottom, 'not under the row');
+        assert.ok(bar.top >= heading.bottom + GAP - 1, `below the two-line title: ${JSON.stringify({ bar, heading })}`);
+        assert.ok(Math.abs(bar.left - heading.left) <= 1, `at the title's left: ${JSON.stringify({ bar, heading })}`);
+        assert.ok(!overlap(bar, lens), 'not over the lens row');
     });
 
     test('s3a/s3b: a mouse selection in a note shows the bubble alone, below it; collapsed, the note\'s bar after a rest, the bubble gone', async function () {
@@ -277,7 +364,8 @@ suite('Editor placement (e2e)', () => {
         const bar = await box(BAR);
         const ref = await box('.ProseMirror .sn-ref');
         assert.ok(bar && ref);
-        assert.ok(bar.top >= ref.bottom + GAP - 1, `the bar below the note's line: ${JSON.stringify({ bar, ref })}`);
+        // Text above and below the note's line: an inline object's bar goes above.
+        assert.ok(bar.bottom <= ref.top - GAP + 1, `the bar above the note's line: ${JSON.stringify({ bar, ref })}`);
         assert.strictEqual(await shown(BUBBLE), false);
     });
 
@@ -418,15 +506,33 @@ suite('Editor placement (e2e)', () => {
         assert.deepStrictEqual(await coveredText(BAR), []);
     });
 
-    test('s7: with the lane open the bar and the hint stop short of it; the hint flips above the caret\'s line, and a keystroke takes it', async function () {
+    /** The lane's right edge, as the page reserves it (`rightLaneEdge`). */
+    const laneEdge = () => page.evaluate(() => {
+        const body = getComputedStyle(document.body);
+        const column = document.body.getBoundingClientRect().right - (parseFloat(body.paddingRight) || 0);
+        const gaps = ['--md-note-gap', '--md-sidebar-gap'].map(n => parseFloat(body.getPropertyValue(n))).filter(n => !isNaN(n));
+        return column + (gaps.length > 0 ? Math.min(...gaps) : 0);
+    });
+
+    test('s7: with the lane open the bar and the hint stop short of it and keep off each other and off the caret\'s line', async function () {
         this.timeout(15000);
         await s7();
-        const lane = await page.evaluate(() => {
-            const body = getComputedStyle(document.body);
-            const column = document.body.getBoundingClientRect().right - (parseFloat(body.paddingRight) || 0);
-            const gaps = ['--md-note-gap', '--md-sidebar-gap'].map(n => parseFloat(body.getPropertyValue(n))).filter(n => !isNaN(n));
-            return column + (gaps.length > 0 ? Math.min(...gaps) : 0);
-        });
+        const lane = await laneEdge();
+        const bar = await box(BAR);
+        const hint = await box('.mep-hint');
+        const line = await caret();
+        assert.ok(bar && hint);
+        assert.ok(bar.right <= lane - GAP + 1 && hint.right <= lane - GAP + 1, `short of the lane: ${JSON.stringify({ bar, hint, lane })}`);
+        assert.ok(!overlap(bar, hint), `the hint keeps off the bar: ${JSON.stringify({ bar, hint })}`);
+        assert.ok(offLine(hint, line), `the hint off the caret's line: ${JSON.stringify({ hint, line })}`);
+        // A link's bar goes above where text is on both sides: the hint takes the free place under the line.
+        assert.ok(bar.bottom <= line.top + 1 && hint.top >= line.bottom - 1, `the bar above the line, the hint under it: ${JSON.stringify({ bar, hint, line })}`);
+    });
+
+    test('s7b: with the table\'s bar below the table, the hint flips above the caret\'s line, and a keystroke takes it', async function () {
+        this.timeout(15000);
+        await s7b();
+        const lane = await laneEdge();
         const bar = await box(BAR);
         const hint = await box('.mep-hint');
         const line = await caret();
@@ -558,16 +664,250 @@ suite('Editor placement (e2e)', () => {
         assert.strictEqual(await page.$eval('.ProseMirror > .mep-atom', el => el.classList.contains('mep-hover-cue')), false, 'no cue once the bar shows');
     });
 
+    // -- fix round 1 (review of 2026-10-20) -------------------------------------
+
+    const FORMATTING_FACE = '.mep-toolbar .mep-menu-face[data-menu="formatting"]';
+    const FORMATTING_MENU = '.mep-menu[data-menu="formatting"]:not([hidden])';
+    /** The pointer on the document's source block, which has a bar of its own. */
+    const SOURCE_BLOCK_TEXT = 'Text before.\n\n<div>A source block</div>\n\nAfter the block.\n';
+
+    const hoverTheBlock = async () => {
+        const atom = await box('.ProseMirror > .mep-atom');
+        assert.ok(atom);
+        await page.mouse.move((atom.left + atom.right) / 2, (atom.top + atom.bottom) / 2);
+    };
+
+    test('r1-1: Esc in the pointer\'s bar hides it for as long as the pointer stays; leaving the block and coming back brings it again', async function () {
+        this.timeout(20000);
+        await showDocument(SOURCE_BLOCK_TEXT, 'A source block');
+        await hoverTheBlock();
+        await page.waitForSelector(HOVER_BAR, { timeout: 2000 });
+        await delay(INERT_MS + 50);
+        await page.focus(`${HOVER_BAR} button`);
+        await page.keyboard.press('Escape');
+        await delay(100);
+        assert.strictEqual(await shown(HOVER_BAR), false, 'hidden by Esc');
+        await hoverTheBlock();
+        await delay(200);
+        assert.strictEqual(await shown(HOVER_BAR), false, 'still hidden while the pointer stays on the block');
+        // Away for longer than the grace, then back on the block.
+        await page.mouse.move(2, 2);
+        await delay(600);
+        await hoverTheBlock();
+        await page.waitForSelector(HOVER_BAR, { timeout: 2000 });
+    });
+
+    test('r1-1b: the block whose pointer\'s bar Esc dismissed has no hover cue: the cue promises a bar', async function () {
+        this.timeout(20000);
+        await showDocument(SOURCE_BLOCK_TEXT, 'A source block');
+        await hoverTheBlock();
+        await page.waitForSelector(HOVER_BAR, { timeout: 2000 });
+        await delay(INERT_MS + 50);
+        await page.focus(`${HOVER_BAR} button`);
+        await page.keyboard.press('Escape');
+        await delay(100);
+        assert.strictEqual(await page.$eval('.ProseMirror > .mep-atom', el => el.classList.contains('mep-hover-cue')), false, 'no cue for a bar that will not come');
+        await page.mouse.move(2, 2);
+        await delay(600);
+    });
+
+    test('r1-2: a row menu opened over a field bar leaves the field and what was typed in it', async function () {
+        this.timeout(15000);
+        await s4();
+        await page.keyboard.type('xy');
+        await page.click(FORMATTING_FACE);
+        await page.waitForSelector(FORMATTING_MENU, { timeout: 3000 });
+        await delay(150);
+        const field = await page.$eval(`${ROW_FIELD} input`, el => ({ value: (el as HTMLInputElement).value, hidden: (el.closest('.mep-layer') as HTMLElement).hidden }));
+        // The field opens on `{.}` with the caret after the dot: what was typed stands in it.
+        assert.deepStrictEqual(field, { value: '{.xy}', hidden: false });
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+    });
+
+    test('r1-3: a selection that rested while a row menu was open has its bubble when the menu closes', async function () {
+        this.timeout(15000);
+        await showDocument('Alpha beta gamma delta epsilon zeta.\n\nSecond paragraph.\n', 'Alpha');
+        await clickBefore('beta', 0);
+        await page.keyboard.down('Shift');
+        for (let i = 0; i < 3; i++) {
+            await page.keyboard.press('ArrowRight');
+        }
+        await page.keyboard.up('Shift');
+        // Opened and closed without the pointer, so no release asks for the bubble (`bubbleReleased`): only the rest does, and it fires while the menu is open.
+        await page.$eval(FORMATTING_FACE, el => (el as HTMLElement).click());
+        await page.waitForSelector(FORMATTING_MENU, { timeout: 3000 });
+        await delay(REST_MS + 250);
+        assert.strictEqual(await shown(BUBBLE), false, 'no bubble over an open menu');
+        await page.$eval(FORMATTING_FACE, el => (el as HTMLElement).click());
+        await page.waitForSelector(BUBBLE, { timeout: 1000 });
+    });
+
+    test('r1-4: the pointer\'s bar stays under a pointer that has not moved since it ran into the bar while it was inert', async function () {
+        this.timeout(20000);
+        await showDocument(SOURCE_BLOCK_TEXT, 'A source block');
+        await hoverTheBlock();
+        await page.waitForSelector(`${HOVER_BAR}[data-inert]`, { timeout: 2000 });
+        const bar = await box(HOVER_BAR);
+        assert.ok(bar);
+        // At once, while the bar ignores the pointer: the event names the text under it.
+        await page.mouse.move((bar.left + bar.right) / 2, (bar.top + bar.bottom) / 2);
+        await delay(INERT_MS + 800);
+        assert.strictEqual(await shown(HOVER_BAR), true, 'still there under the still pointer');
+        const again = await box(HOVER_BAR);
+        assert.deepStrictEqual(again, bar, 'and where it was');
+    });
+
+    test('r1-5: Esc\'s dismissal of the caret\'s bar survives the focus leaving the editor and coming back', async function () {
+        this.timeout(20000);
+        await s2();
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BAR), false, 'hidden by Esc');
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await delay(250);
+        await page.evaluate(() => (document.querySelector('.ProseMirror') as HTMLElement).focus());
+        assert.strictEqual(await page.evaluate(() => (document.getSelection()?.anchorNode?.parentElement?.closest('a') ?? null) !== null), true, 'the caret is still in the link');
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BAR), false, 'still hidden');
+        // Out of the link, so the next test's click into it is a new arrival.
+        await clickBefore('Below it', 1);
+    });
+
+    test('r1-5: Esc\'s dismissal of the caret\'s bar survives a resync that moves its object', async function () {
+        this.timeout(20000);
+        await s2();
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BAR), false, 'hidden by Esc');
+        // The host's text changed above the caret: a paragraph more, every position after it moved.
+        await resendDocument(`A paragraph the host put first.\n\n${S2_TEXT}`);
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('the host put first'), { timeout: 3000 });
+        assert.strictEqual(await page.evaluate(() => (document.getSelection()?.anchorNode?.parentElement?.closest('a') ?? null) !== null), true, 'the caret is still in the link');
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BAR), false, 'still hidden');
+        await clickBefore('Below it', 1);
+    });
+
+    test('r1-7: a character typed with AltGr or Option counts as typing: the bar hides at once', async function () {
+        this.timeout(15000);
+        await s2();
+        await page.evaluate(() => {
+            document.querySelector('.ProseMirror')?.dispatchEvent(new KeyboardEvent('keydown', { key: '{', code: 'Digit7', ctrlKey: true, altKey: true, modifierAltGraph: true, bubbles: true, cancelable: true }));
+        });
+        await page.keyboard.sendCharacter('{');
+        await delay(60);
+        assert.strictEqual(await page.$eval('.ProseMirror a', a => a.textContent?.includes('{') ?? false), true, 'the character is in the link');
+        assert.strictEqual(await shown(BAR), false, 'hidden at the keystroke');
+        await page.evaluate(() => {
+            document.dispatchEvent(new KeyboardEvent('keyup', { key: '{', bubbles: true }));
+        });
+    });
+
+    test('r1-8: a field whose range the document has shrunk past is placed again without an error', async function () {
+        this.timeout(20000);
+        const errors: string[] = [];
+        const onError = (error: Error) => errors.push(String(error));
+        page.on('pageerror', onError);
+        try {
+            const paragraphs = Array.from({ length: 6 }, (_, i) => `Paragraph number ${i + 1} of the document.`).join('\n\n');
+            await showDocument(`${paragraphs}\n`, 'number 6');
+            await clickBefore('number 6', 0);
+            await page.keyboard.down('Shift');
+            for (let i = 0; i < 6; i++) {
+                await page.keyboard.press('ArrowRight');
+            }
+            await page.keyboard.up('Shift');
+            await page.keyboard.down('Control');
+            await page.keyboard.press('k');
+            await page.keyboard.up('Control');
+            await page.waitForSelector(`${ROW_FIELD} .mep-inline-field`, { timeout: 2000 });
+            await resendDocument('Paragraph number 1 of the document.\n');
+            await delay(200);
+            await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+            await delay(300);
+            assert.deepStrictEqual(errors, []);
+        } finally {
+            page.off('pageerror', onError);
+            await page.keyboard.press('Escape');
+        }
+    });
+
+    test('r1-9: typing in a link does not let the pointer\'s bar take the freed slot; it waits at the cue until the caret\'s bar is back', async function () {
+        this.timeout(15000);
+        await t6();
+        await page.keyboard.type('x');
+        await delay(100);
+        assert.strictEqual(await shown(BAR), false, 'the caret\'s bar hid at the keystroke');
+        assert.strictEqual(await shown(HOVER_BAR), false, 'the pointer\'s bar did not take its place');
+        assert.strictEqual(await page.$eval('.ProseMirror > .mep-atom', el => el.classList.contains('mep-hover-cue')), true, 'the cue stays');
+        await waitBar();
+        assert.strictEqual(await shown(HOVER_BAR), false, 'the caret\'s layer wins again');
+    });
+
+    test('r1-10: placing a layer reads the other open layers once', async function () {
+        this.timeout(20000);
+        const filler = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1} before the link.`).join('\n\n');
+        await showDocument(`${filler}\n\nA line with [a link](https://example.com/a) in it.\n\n${filler}\n`, 'a link');
+        await page.evaluate(() => {
+            const link = document.querySelector('.ProseMirror a') as HTMLElement;
+            window.scrollBy(0, link.getBoundingClientRect().top - 300);
+        });
+        await delay(100);
+        await clickBefore('a link', 4);
+        await waitBar();
+        await delay(INERT_MS + 50);
+        const reads = await page.evaluate(() => {
+            const w = window as unknown as { layerReads: number };
+            w.layerReads = 0;
+            const original = Element.prototype.querySelectorAll;
+            Element.prototype.querySelectorAll = function (this: Element, selector: string) {
+                if (typeof selector === 'string' && selector.startsWith('.mep-layer, .mep-menu')) {
+                    w.layerReads++;
+                }
+                return original.call(this, selector);
+            } as typeof Element.prototype.querySelectorAll;
+            (window as unknown as { restoreQuery: () => void }).restoreQuery = () => {
+                Element.prototype.querySelectorAll = original;
+            };
+            return 0;
+        });
+        assert.strictEqual(reads, 0);
+        try {
+            await page.evaluate(() => window.scrollBy(0, 30));
+            await delay(250);
+            assert.strictEqual(await page.evaluate(() => (window as unknown as { layerReads: number }).layerReads), 1);
+        } finally {
+            await page.evaluate(() => (window as unknown as { restoreQuery: () => void }).restoreQuery());
+        }
+    });
+
+    test('r1-12: the harness\'s click fails, naming it, when a layer stays inert', async function () {
+        this.timeout(15000);
+        await page.evaluate(() => {
+            const stuck = document.createElement('div');
+            stuck.id = 'stuck-layer';
+            stuck.className = 'mep-layer';
+            stuck.dataset.inert = '';
+            document.body.append(stuck);
+        });
+        try {
+            await assert.rejects(page.mouse.click(5, 5), /layer still inert after 2 s/);
+        } finally {
+            await page.evaluate(() => document.getElementById('stuck-layer')?.remove());
+        }
+    });
+
     // -- shots ----------------------------------------------------------------
 
     test('shots: every scenario light and dark at 1280 and 520', async function () {
         this.timeout(240000);
         const scenarios: [string, () => Promise<void>][] = [
-            ['s1', s1], ['s2', s2], ['s3a', s3a], ['s3b', async () => {
+            ['s1', s1], ['s2', s2], ['s2b', s2b], ['s3a', s3a], ['s3b', async () => {
                 await s3a();
                 await clickBefore('reference words', 4);
                 await waitBar();
-            }], ['s3m', s3m], ['s4', s4], ['s5', s5], ['s6', s6], ['s7', s7], ['t6-cue', t6],
+            }], ['s3m', s3m], ['s4', s4], ['s5', s5], ['s6', s6], ['s6r', s6r], ['s7', s7], ['s7b', s7b], ['t6-cue', t6],
         ];
         for (const [width, height] of [[1280, 900], [520, 640]]) {
             for (const [theme, name] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as const) {
