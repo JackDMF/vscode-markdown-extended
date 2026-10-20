@@ -17,11 +17,9 @@
  */
 import { Tip, tipText, withoutKeys } from '../tips';
 import { HOVER_DELAY_MS } from './hover';
+import { placeTip } from './placement';
 
 export const TOOLTIP_CLASS = 'mep-tooltip';
-
-/** Between the control and its hover. */
-const GAP = 4;
 
 /** The keys that only modify another: none of them hides the hover, nor makes a focus the keyboard's. */
 const MODIFIERS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
@@ -264,29 +262,16 @@ export class Tooltips {
     }
 
     /**
-     * The shown hover under `el`, its left edge at the control's, kept inside
-     * the window — above the control where there is no room below; or,
-     * `beside`, right of it at its top, left of it where there is no room right.
+     * The shown hover under `el`, its left edge at the control's — above the
+     * control where there is no room below; or, `beside`, right of it at its
+     * top, left of it where there is no room right: the one policy
+     * (`placement.ts`, `placeTip`), in the window's frame.
      */
     private position(el: HTMLElement): void {
-        const place = this.tips.get(el)?.place ?? 'below';
+        // Measured at the window's corner: its width is its own, not what room is left where it stood.
         this.el.style.left = '0px';
         this.el.style.top = '0px';
-        const r = el.getBoundingClientRect();
-        const width = this.el.offsetWidth;
-        const height = this.el.offsetHeight;
-        let left: number;
-        let top: number;
-        if (place === 'beside') {
-            left = r.right + GAP + width <= window.innerWidth ? r.right + GAP : r.left - GAP - width;
-            top = r.top;
-        } else {
-            const below = r.bottom + GAP;
-            left = r.left;
-            top = below + height <= window.innerHeight ? below : r.top - GAP - height;
-        }
-        this.el.style.left = `${Math.max(0, Math.min(left, window.innerWidth - width))}px`;
-        this.el.style.top = `${Math.max(0, Math.min(top, window.innerHeight - height))}px`;
+        placeTip(this.el, el, this.tips.get(el)?.place ?? 'below');
     }
 }
 

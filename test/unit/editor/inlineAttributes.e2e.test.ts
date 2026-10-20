@@ -4,6 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
+import { INERT_MS, REST_MS } from '../../../src/editor/webview/placement';
 import { closeEditorPage, clickText, delay, editCommand, EditMessage, EditorPage, EXTENSION_ID, MOD, openEditorPage, settle, shot } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 
@@ -198,12 +199,13 @@ suite('Editor inline attributes (e2e)', () => {
         }, from, fromAt, to, toAt);
         await page.focus('.ProseMirror');
         await select('--flag', 2, '--flag', 6);
-        await delay(200);
+        // A selection no pointer drew shows its bubble once it rests, and the bubble takes the pointer after its inert time (`placement.ts`).
+        await delay(REST_MS + INERT_MS + 100);
         await page.hover(BUBBLE_TOOL);
         assert.ok((await page.$eval(BUBBLE_TOOL, el => (el.getAttribute('aria-description') ?? ''))).startsWith('Attributes of Code…'));
         await shot(page, 'inline-attrs-10-bubble-in-code.png');
         await select('restart', 0, ' the server', 4);
-        await delay(200);
+        await delay(REST_MS + INERT_MS + 100);
         await page.hover(BUBBLE_TOOL);
         assert.ok((await page.$eval(BUBBLE_TOOL, el => (el.getAttribute('aria-description') ?? ''))).startsWith('Span with class'));
         await shot(page, 'inline-attrs-11-bubble-across.png');

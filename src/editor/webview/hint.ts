@@ -17,6 +17,7 @@
 import { EditorState, Plugin, PluginKey } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { UNDO_BINDING, keyLabel } from '../keys';
+import { caretRect, placeLayer } from './placement';
 
 export type HintTone = 'refusal' | 'neutral';
 
@@ -39,15 +40,20 @@ class CaretHint {
         if (tone === 'refusal' && kind === 'plain' && this.showing() && this.el.textContent === text && this.el.dataset.tone === tone) {
             return;
         }
-        const base = (this.el.offsetParent ?? document.body).getBoundingClientRect();
-        // Beside the caret, or beside the control that spoke when the focus is in one (a property row).
-        const at = near ? near.getBoundingClientRect() : this.view.coordsAtPos(this.view.state.selection.head);
+        // At the caret, or at the control that spoke when the focus is in one (a property row).
+        const at = near ? near.getBoundingClientRect() : caretRect(this.view, this.view.state.selection.head);
         this.el.textContent = text;
         this.el.dataset.tone = tone;
         this.el.dataset.kind = kind;
         this.el.hidden = false;
-        this.el.style.left = `${Math.max(0, at.left - base.left)}px`;
-        this.el.style.top = `${at.bottom - base.top + 4}px`;
+        const mount = this.el.parentElement;
+        if (mount !== null) {
+            // Measured at the mount's left edge: its width is its text's, not the room left where it stood.
+            this.el.style.left = '0px';
+            // Not a layer, but placed as one: under the caret's line, else above it, off every open layer and short of the lane.
+            const p = placeLayer(this.el, { left: at.left, top: at.top, right: at.right, bottom: at.bottom }, { view: this.view, mount, space: 'mount', caret: near === undefined });
+            this.el.toggleAttribute('data-flipped', p.side === 'above');
+        }
         clearTimeout(this.timer);
         if (kind !== 'paragraph') {
             this.timer = setTimeout(() => {
@@ -69,6 +75,14 @@ class CaretHint {
     /** Hide a hint that reported a change and is showing: the document changed since. */
     staleAfterChange(): void {
         if (this.showing('change')) {
+            clearTimeout(this.timer);
+            this.el.hidden = true;
+        }
+    }
+
+    /** Hide a hint that stands above the caret's line (`data-flipped`): the document changed since. */
+    hideFlipped(): void {
+        if (this.showing() && this.el.hasAttribute('data-flipped')) {
             clearTimeout(this.timer);
             this.el.hidden = true;
         }
@@ -171,6 +185,8 @@ export function hintPlugin(): Plugin {
                 update(view, prevState) {
                     if (view.state.doc !== prevState.doc) {
                         hint.staleAfterChange();
+                        // A hint flipped above the caret's line stands over the text being typed: the next change takes it away.
+                        hint.hideFlipped();
                     }
                     // A paragraph's hint, once the caret has left that paragraph or an undo or redo ended it.
                     const at = hintKey.getState(view.state);

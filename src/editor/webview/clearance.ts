@@ -1,14 +1,9 @@
 /**
- * Where a floating bar may go: never over content (Daniel, 2026-09-29). Every
- * bar of the page — an object's bar, a block's, the selection bubble, the
- * toolbar's field bar — says only where it could stand, in order of
- * preference, and `firstFree` answers which of those places is free, by one
- * notion of free for all of them: under the formatting row (fixed at the
- * editor's top, `rowCeiling`) and past
- * the window's bottom is not; over the selection bubble is not (for any bar
- * but the bubble); over content is not (`OCCUPIED`, text). Three ladders with
- * three notions of free had drifted apart — one bar pinned under the row, one
- * blind to images, one to lens rows — so the notion lives here, once.
+ * What counts as content (Daniel, 2026-09-29): the one fact a floating layer
+ * keeps off — a character of a textblock, a table's cell, an image, an atom,
+ * another extension's lens row — and where the chrome over the page ends
+ * (`rowCeiling`, the lock's line). Where a layer goes is `placement.ts`'s:
+ * its policy reads this oracle to break a tie between below and above.
  *
  * DOM geometry only, read from the view.
  */
@@ -22,23 +17,10 @@ export interface Band {
     bottom: number;
 }
 
-/**
- * One place a bar could stand: its top left corner, and — when it stands
- * inside a rendered block (a source block's top right) — that block, whose own
- * content is probed instead of the page's. `when` is the bar's own condition
- * (it fits the column, it is off the caret's line).
- */
-export interface Place {
-    x: number;
-    y: number;
-    within?: Element;
-    when?: () => boolean;
-}
-
 /** How far apart the points are that a band is probed at. */
 const PROBE_STEP = 16;
 
-/** On the mount while `firstFree` probes: the page's floating chrome takes no hit then (`editor.css`). */
+/** On the mount while the placement probes (`placement.ts`): the page's floating chrome takes no hit then (`editor.css`). */
 export const PROBING_CLASS = 'mep-probing';
 
 /**
@@ -48,12 +30,6 @@ export const PROBING_CLASS = 'mep-probing';
  * extension's lens row above a block.
  */
 const OCCUPIED = '.ProseMirror > table td, .ProseMirror > table th, img:not(.ProseMirror-separator), .mep-atom, .mep-inline-atom, .mep-lens-row';
-
-/** The language cards the page floats over the text (`languageCard.ts`, `completionList.ts`): occupied while open. */
-const OPEN_CARDS = ':scope > .mep-language-card, :scope > .mep-completions';
-
-/** What counts as content inside a rendered block, besides its text. */
-const OCCUPIED_WITHIN = 'img:not(.ProseMirror-separator), td, th, .mep-inline-atom';
 
 /**
  * The bottom of the formatting row (fixed at the editor's top) in `mount` —
@@ -83,51 +59,6 @@ export const CHROME_MOVED = 'mep-chrome-moved';
 /** The custom property on the mount that holds the room the page keeps for the lock's line (`editor.css`). */
 export const LOCK_ROOM_PROPERTY = '--mep-lock-room';
 
-function overlaps(a: Band, b: Band): boolean {
-    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-}
-
-/**
- * The first of `places` where a bar of `size` is free, or `null`. The probing
- * class is set on the mount once around the whole search — one style change,
- * not one per probe. `self` is the bar being placed, which is looked through
- * when it is the bubble (the other bars keep out of the bubble).
- */
-export function firstFree(
-    view: EditorView, mount: HTMLElement, places: readonly Place[], size: { width: number; height: number }, self?: Element,
-): Place | null {
-    const ceiling = rowCeiling(mount);
-    const bubbleEl = mount.querySelector<HTMLElement>(':scope > .mep-bubble');
-    const bubble = bubbleEl && !bubbleEl.hidden && bubbleEl !== self ? bubbleEl.getBoundingClientRect() : null;
-    // An open card (a hover, a diagnostic, the completion list) is read, not a bar: no bar covers it.
-    const cards = Array.from(mount.querySelectorAll<HTMLElement>(OPEN_CARDS))
-        .filter(card => card !== self && !card.hidden)
-        .map(card => card.getBoundingClientRect())
-        .filter(r => r.width > 0 && r.height > 0);
-    mount.classList.add(PROBING_CLASS);
-    try {
-        for (const place of places) {
-            const band = { left: place.x, right: place.x + size.width, top: place.y, bottom: place.y + size.height };
-            if (!Number.isFinite(band.left) || band.top < ceiling || band.bottom > window.innerHeight) {
-                continue;
-            }
-            if (place.when && !place.when()) {
-                continue;
-            }
-            if ((bubble && overlaps(bubble, band)) || cards.some(card => overlaps(card, band))) {
-                continue;
-            }
-            if (place.within ? contentWithin(place.within, band) : contentIn(view, band)) {
-                continue;
-            }
-            return place;
-        }
-        return null;
-    } finally {
-        mount.classList.remove(PROBING_CLASS);
-    }
-}
-
 /**
  * Whether anything the page shows as content lies in `band`: a character of a
  * textblock, or what `OCCUPIED` names. Probed at points across the band's
@@ -135,7 +66,7 @@ export function firstFree(
  * position whose character stands at that point; a point beside a short line,
  * or between blocks, resolves to a position somewhere else, which is no text.
  */
-function contentIn(view: EditorView, band: Band): boolean {
+export function contentIn(view: EditorView, band: Band): boolean {
     if (band.right <= band.left || band.bottom <= band.top) {
         return false;
     }
@@ -190,12 +121,6 @@ function contentAt(view: EditorView, x: number, y: number): boolean {
     return false;
 }
 
-/** Whether a rendered block's own content lies in `band`: its text, and its images, cells and badges. */
-function contentWithin(root: Element, band: Band): boolean {
-    return textRects(root).some(r => overlaps(r, band))
-        || Array.from(root.querySelectorAll(OCCUPIED_WITHIN)).some(el => overlaps(el.getBoundingClientRect(), band));
-}
-
 /**
  * The top of the first line of `dom`'s content: where a block's text starts,
  * as its line boxes say — a floated note body left out. `null` for an element
@@ -209,7 +134,7 @@ export function firstLineTop(dom: Element): number | null {
 /**
  * The line boxes of the text inside `root`, whitespace-only text left out, and
  * text in a floated element (a note body set into the margin) too: it is no
- * part of the line it hangs beside, as `anchor()` in `objectToolbar.ts` keeps
+ * part of the line it hangs beside, as `anchorOf` in `placement.ts` keeps
  * to a note's reference for the same reason.
  */
 function textRects(root: Element): DOMRect[] {
@@ -242,19 +167,4 @@ function textRects(root: Element): DOMRect[] {
         }
     }
     return rects;
-}
-
-/**
- * The right edge of the text `dom` shows between `top` and `bottom`: the
- * lines of its text in that band, so a bar beside the first line can be
- * checked against a longer second line reaching under it. `-Infinity` for none.
- */
-export function rightEdgeIn(dom: Element, top: number, bottom: number): number {
-    let right = -Infinity;
-    for (const r of textRects(dom)) {
-        if (r.bottom > top && r.top < bottom) {
-            right = Math.max(right, r.right);
-        }
-    }
-    return right;
 }

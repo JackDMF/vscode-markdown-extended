@@ -7,6 +7,7 @@ import { ALL_LOCK, REQUIREMENT_HEADING_LOCK } from '../../../src/editor/webview/
 import { ADMONITION_FAMILIES, ADMONITION_TYPES } from '../../../src/syntax/markers';
 import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, settle, MOD } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { REST_MS } from '../../../src/editor/webview/placement';
 
 const SOURCE = [
     '## FRS-TST-001: Page {#frs-tst-001-1a2b3c4d}',
@@ -69,7 +70,8 @@ suite('Editor toolbar (e2e)', () => {
             }
             throw new Error(`no "${n}" in the document`);
         }, needle);
-        await delay(150);
+        // A selection no pointer drew rests before its bubble shows (`placement.ts`, REST_MS).
+        await delay(REST_MS + 150);
     };
 
     const rowTool = (id: string) => `.mep-toolbar [data-action="${id}"]`;
@@ -345,7 +347,7 @@ suite('Editor toolbar (e2e)', () => {
         assert.ok((await lastEdit())?.text.includes('\nAlpha beta gamma.\n'), (await lastEdit())?.text);
     });
 
-    test('the bubble holds the ten marks and the two notes, appears above a selection where that covers no text and below where it would, and hides when it collapses or loses the focus', async function () {
+    test('the bubble holds the ten marks and the two notes, appears below a selection, and hides when it collapses or loses the focus', async function () {
         this.timeout(10000);
         const placement = () => page.evaluate(() => {
             const bubble = document.querySelector('.mep-bubble') as HTMLElement;
@@ -376,13 +378,12 @@ suite('Editor toolbar (e2e)', () => {
         await selectText('gamma');
         const underText = await placement();
         assert.deepStrictEqual(underText, { hidden: false, above: false, below: true, overlapsHorizontally: true, coversTheLineAbove: false, tools });
-        // Under a short line that ends before it: above, where the bubble has always been.
-        // (The bubble is wide, and centred on the word: the word stands far enough along that "Short." ends before it.)
+        // Under a short line that ends before it: still below, like every layer (`placement.ts`) — nothing below to cover.
         await showDocument('Short.\n\nAlpha, a longer paragraph whose one line runs on and on, far along, until the word gamma.\n');
         await shown('far along');
         await selectText('gamma');
         const underShort = await placement();
-        assert.deepStrictEqual(underShort, { hidden: false, above: true, below: false, overlapsHorizontally: true, coversTheLineAbove: false, tools });
+        assert.deepStrictEqual(underShort, { hidden: false, above: false, below: true, overlapsHorizontally: true, coversTheLineAbove: false, tools });
         await showDocument(SOURCE);
         await selectText('gamma');
 
@@ -427,7 +428,8 @@ suite('Editor toolbar (e2e)', () => {
             const after = texts.find(t => (t.textContent ?? '').startsWith(' c here')) as Text;
             (document.getSelection() as Selection).setBaseAndExtent(b, 0, after, 2);
         });
-        await delay(150);
+        // The selection rests before its bubble shows (`placement.ts`).
+        await delay(REST_MS + 150);
         const across = { title: await page.$eval(BUBBLE_TOOL, el => (el.getAttribute('aria-description') ?? '')), width: await bubbleWidth() };
         assert.ok(across.title.startsWith('Span with class'), across.title);
         assert.strictEqual(across.width, inCode.width, 'the bubble keeps its width');

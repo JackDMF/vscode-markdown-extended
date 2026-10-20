@@ -680,11 +680,10 @@ img.mep-pending-range {
 
 /*
  * A note, a link, an image, a source block, injected content: each shows the
- * same small bar above its first line (below its last when there is no room),
- * a label naming it and then its verbs. Positioned by objectToolbar.ts inside
- * .mep-editor, as the bubble is, so it scrolls with the text; under the bubble,
- * which belongs to the selection being formatted. An editor widget with the
- * row's 22px controls.
+ * same small bar below it (above where there is no room), a label naming it
+ * and then its verbs. Positioned by placement.ts inside .mep-editor, as the
+ * bubble is, so it scrolls with the text; one floating layer at a time. An
+ * editor widget with the row's 22px controls.
  */
 .mep-object-toolbar {
     position: absolute;
@@ -739,10 +738,22 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 
 /* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through. */
-.mep-probing .mep-object-toolbar,
-.mep-probing .mep-bubble,
+.mep-probing .mep-layer,
 .mep-probing .mep-toolbar-layer,
+.mep-probing .mep-language-card,
 .mep-probing .mep-hint { pointer-events: none !important; }
+
+/* A layer that just appeared or moved ignores the pointer for a moment (`placement.ts`, INERT_MS):
+   a click meant for the text under it still lands there. The keyboard is untouched. */
+.mep-layer[data-inert] { pointer-events: none; }
+
+/* A block under the pointer while another layer holds the slot (`placement.ts`): a cue
+   that its bar is there once the slot is free — an outline, no text, no pointer change. */
+.mep-atom.mep-hover-cue {
+    outline: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    outline-offset: -1px;
+}
+.vscode-high-contrast .mep-atom.mep-hover-cue { outline-color: var(--vscode-contrastActiveBorder, Highlight); }
 
 /* A set-verb's menu (a table's Row, Column, Align) is the formatting toolbar's menu, narrower. */
 .mep-object-menu { min-width: 180px; }

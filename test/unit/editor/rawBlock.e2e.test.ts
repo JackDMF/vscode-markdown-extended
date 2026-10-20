@@ -465,7 +465,8 @@ suite('Editor atoms with the real mouse (e2e)', () => {
         await showBoxes();
         await openTableSource();
         await page.keyboard.type('\n| South | 5 | 6 |');
-        await clickText(page, 'Last paragraph', 3);
+        // Text the box's bar does not stand over: it stands below the table, over the block after it (`placement.ts`).
+        await clickText(page, 'Between the tables', 3);
         await settle();
         assert.strictEqual(await page.$('.mep-raw-editor'), null);
         assert.strictEqual(await page.$(SELECTION_BAR), null, 'a paragraph has no bar');

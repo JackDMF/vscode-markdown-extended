@@ -175,7 +175,7 @@ suite('Editor lens rows (e2e)', () => {
         assert.deepStrictEqual(await rows(), []);
     });
 
-    test('the object toolbar of a block with a row sits above the row, not over it', async function () {
+    test('the object toolbar of a block with a row sits below the block, not over the row', async function () {
         this.timeout(10000);
         await send(ROWS);
         await page.waitForSelector('.mep-lens-row');
@@ -192,7 +192,8 @@ suite('Editor lens rows (e2e)', () => {
         assert.ok(barBox);
         assert.ok(barBox.y + barBox.height <= rowBox.top || barBox.y >= rowBox.bottom,
             `the bar ${JSON.stringify(barBox)} overlaps the row ${JSON.stringify(rowBox)}`);
-        assert.ok(barBox.y + barBox.height <= rowBox.top, 'with room above, the bar is above the row');
+        // A lens row is content for the probe (F6, `placement.ts`): above counts as covered, so the bar goes below the block.
+        assert.ok(barBox.y >= box.y + box.height, `the bar is below the block, not over the row: ${JSON.stringify({ barBox, box })}`);
 
         // Crossing the row on the way up to the bar keeps the bar.
         await page.mouse.move(box.x + box.width / 2, rowBox.top + 2);
