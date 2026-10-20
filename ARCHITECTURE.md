@@ -1032,8 +1032,11 @@ chosen again is the default, `---`), a gap,
 then *Edit source* and *Delete table*. The three are set-verbs: a menu opens under the verb on
 a click, `Enter` or `Space`, in the formatting toolbar's menu chrome (`.mep-menu`), the arrows
 move, `Enter` chooses, `Esc` closes back to the verb. They act on the rows and columns the
-selection is in, and while the bar shows the caret's column is tinted — a node decoration on
-its cells — so *left* and *right* have something to be left and right of. Deleting the last row
+selection is in. At rest the caret's cell carries a 2 px ring inside it (`mep-cell-active`,
+`tables.ts`); only while *Row* is open, focused or hovered is the caret's row tinted, and
+only while *Column* or *Align* is, its column — node decorations on the cells
+(`ObjectBar.activeVerb`, `BarDecor.tint`) — so *above*, *left* and *right* have something to
+be relative to, and a tint the whole time the bar showed no longer reads as styling. Deleting the last row
 or the last column is refused with *Delete table* named instead. *Edit source* replaces the
 table by a source block holding its text (its slice untouched, else the tidy form) and opens
 its box; the commit is parsed by the host again, a table once more if it still is one.
