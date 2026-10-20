@@ -828,8 +828,8 @@ comes back. **Edit as source** and a nested row's link open the YAML between the
 lines in a box (`Ctrl+Enter` or clicking away applies, `Esc` cancels). While a row, the box
 or the header's buttons have the focus, the formatting row is off and no bar shows for what
 is selected in the text; on a button the row says *Focus is outside the text · Esc or click
-into the text*, or *Outside the text* where that does not fit beside the buttons (narrower,
-the buttons only dim, and their tooltips say why). `Esc` until the caret is back in the text, or a click into it, brings them
+into the text*, or *Outside the text* where that does not fit beside the buttons (the buttons
+move into the disabled **…** to make room; narrower still, they only dim, and their tooltips say why). `Esc` until the caret is back in the text, or a click into it, brings them
 back. A document without
 front matter has no panel; **Insert → Properties** adds one at the top and asks for the
 first key.

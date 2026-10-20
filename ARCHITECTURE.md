@@ -1691,8 +1691,8 @@ The layers:
   whole; else, for a source box or a property's field, in the refused tools' place
   (`mep-row-lock-inrow`: they give way, nothing moves into "…"), whole or — cut even there —
   in its short form, which keeps its keys (*Source · Ctrl+Enter · Esc*); for a button, its
-  short form (*Outside the text*) beside the tools where that fits, else no note: the tools
-  only dim. The whole reason is the row's `aria-description`, the short form's hover and each
+  short form (*Outside the text*) beside the tools where that fits, else the refused tools
+  give way into the (disabled) "…" until it does, else no note: the tools only dim. The whole reason is the row's `aria-description`, the short form's hover and each
   tool's tooltip, and it is pointed at in the refusal's
   amber when a refused tool is pressed; read again once per focus move, since a
   box taking the focus changes no state — the block-type face (the

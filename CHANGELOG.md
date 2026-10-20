@@ -21,7 +21,7 @@
 - Menus moved into "…" open as submenus; "…" names its contents for a screen reader.
 - The row's lock note stands in the row: beside the tools, else in the refused tools' place, else short.
 - The page no longer moves when the row locks or unlocks.
-- A lock nobody ran into says "Outside the text" where it fits; else the tools only dim.
+- A lock nobody ran into says "Outside the text"; the tools give way into "…" for it, else only dim.
 - Export busy names the format: "Exporting PDF…", or "PDF…" in a narrow row; the tooltip says it whole.
 - The Export face spins while an export runs; a still glyph under reduced motion.
 - In the Export menu the running format carries the spinner; the others say which export they wait for.

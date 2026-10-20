@@ -699,13 +699,13 @@ suite('Editor properties panel (e2e)', () => {
         await page.keyboard.press('Escape');
     };
 
-    test('the reason stands in the row, never under it: beside the tools where it fits, else in their place, else its short form; a button\'s beside or none; the page and Export never move', async function () {
+    test('the reason stands in the row, never under it: beside the tools where it fits, else in their place, else its short form; a button\'s beside, else the tools give way into "…"; the page and Export never move', async function () {
         this.timeout(60000);
         // What the row's width leaves (measured on the sketch's fonts, `lockForms`): the forms the model gives, per reason.
         const expected: Record<number, Record<string, ReasonPlace>> = {
             1280: { source: 'beside', button: 'beside', property: 'beside' },
-            600: { source: 'inrow', button: 'hidden', property: 'inrow' },
-            400: { source: 'short', button: 'hidden', property: 'inrow' },
+            600: { source: 'inrow', button: 'short', property: 'inrow' },
+            400: { source: 'short', button: 'short', property: 'inrow' },
         };
         try {
             for (const width of [1280, 600, 400]) {

@@ -720,9 +720,11 @@ class ToolbarView implements PluginView {
      *   place (`mep-row-lock-inrow`: they give way, nothing moves into "…"),
      *   whole, or — cut even there — its short form, which keeps its keys;
      * - else, for a button, its short form ("Outside the text") beside the
-     *   tools where that fits, else no note: the tools only dim, the reason
-     *   their tooltips and the row's description. The whole reason is the
-     *   note's hover wherever the short form shows.
+     *   tools where that fits, else the refused tools give way into "…"
+     *   (disabled meanwhile) until it fits; where even that leaves it no
+     *   room, no note: the tools only dim, the reason their tooltips and the
+     *   row's description. The whole reason is the note's hover wherever the
+     *   short form shows.
      *
      * Measured, not set by a width, so it holds for any font and label; and
      * measured again only when what it was measured for changed
@@ -752,24 +754,39 @@ class ToolbarView implements PluginView {
         const running = this.host.exporting();
         this.exportIconOnly(false);
         this.exportLabel.textContent = running === null ? EXPORT_LABEL : exportBusyLabel(running, 'short');
-        let moved: RowControl[] = fitWithMore(ROW_OVERFLOW, () => overflows(this.row), c => this.showInRow(c), c => this.moveToMore(c), shown => {
-            this.moreGroup.hidden = !shown;
-        });
-        // Everything that may leave has left and the row is still past its box: Export gives its name up for its icon (a pinned item is never cut).
-        if (overflows(this.row)) {
-            this.exportIconOnly(true);
-            // Narrower still: Block type is what gives — its type's name cuts to an ellipsis, the face stays in the row.
-            this.row.classList.toggle(ROW_TIGHT_CLASS, overflows(this.row));
-        }
+        // The tools fitted to the row alone, the reason (if any) not yet there.
+        const fitTools = (): RowControl[] => {
+            const left = fitWithMore(ROW_OVERFLOW, () => overflows(this.row), c => this.showInRow(c), c => this.moveToMore(c), shown => {
+                this.moreGroup.hidden = !shown;
+            });
+            // Everything that may leave has left and the row is still past its box: Export gives its name up for its icon (a pinned item is never cut).
+            if (overflows(this.row)) {
+                this.exportIconOnly(true);
+                // Narrower still: Block type is what gives — its type's name cuts to an ellipsis, the face stays in the row.
+                this.row.classList.toggle(ROW_TIGHT_CLASS, overflows(this.row));
+            }
+            return left;
+        };
+        let moved: RowControl[] = fitTools();
         if (forms !== null) {
             const whole = () => !overflows(note) && !overflows(this.row);
             note.hidden = false;
             text.textContent = forms.full;
             if (!whole()) {
                 if (role === 'button') {
-                    // Beside the tools, where the room is: the short form, else none — the tools only dim.
+                    // The short form beside the tools where it fits; else the refused tools give way into "…"
+                    // (disabled under the lock) until it does; where even all of them gone leaves it no room, no
+                    // note — the tools only dim, the reason in their tooltips and the row's description.
                     text.textContent = forms.short;
-                    note.hidden = !whole();
+                    if (!whole() && !this.exportIcon) {
+                        moved = fitWithMore(ROW_OVERFLOW, () => overflows(this.row) || overflows(note), c => this.showInRow(c), c => this.moveToMore(c), shown => {
+                            this.moreGroup.hidden = !shown;
+                        });
+                    }
+                    if (!whole()) {
+                        note.hidden = true;
+                        moved = fitTools();
+                    }
                 } else {
                     // The refused tools give way: nothing of them is in the row, nor in "…". The room is the reason's and the status's.
                     for (const control of ROW_OVERFLOW) {

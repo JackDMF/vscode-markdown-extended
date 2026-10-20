@@ -377,26 +377,42 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
-    test('l4 a button\'s lock: at 900 and 860 "Outside the text" beside the tools, which dim, the whole reason its hover; where it does not fit beside them (800, 640, 520) no note, Bold\'s tooltip says the whole reason', async function () {
-        this.timeout(90000);
+    test('l4 a button\'s lock: at 900 and 860 "Outside the text" beside the tools; at 800, 640 and 520 the refused tools give way into the disabled "…" and it stands in the row; the whole reason its hover', async function () {
+        this.timeout(120000);
         for (const width of [900, 860, 800, 640, 520]) {
             await resize(width);
             await showDocument();
             await clickText(page, 'Plain', 2);
             const before = await rowBoxes(page);
+            const idle = (await rowState()).moved;
             await openYaml();
             await page.keyboard.press('Escape');
             await delay(150);
-            if (width >= 860) {
-                await assertReasonShown(page, `${width}, a button`, LOCK_BUTTON, 'short', before);
-                assert.strictEqual(await describedTip(page, `${ROW} .mep-row-lock`), LOCK_BUTTON, `${width}: the short form's hover is the whole reason`);
-            } else {
-                await assertReasonShown(page, `${width}, a button`, LOCK_BUTTON, 'hidden', before);
-                assert.ok((await describedTip(page, `${ROW} [data-action="bold"]`)).endsWith(`\n${LOCK_BUTTON}`), 'Bold\'s tooltip carries the whole reason');
-                // A press on Bold: the flash has no note to point at — the limit #10 lifts.
-                await clickAt(`${ROW} [data-action="bold"]`);
-                assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock`, el => (el as HTMLElement).hidden), true, 'nothing shows');
+            await assertReasonShown(page, `${width}, a button`, LOCK_BUTTON, 'short', before);
+            assert.strictEqual(await describedTip(page, `${ROW} .mep-row-lock`), LOCK_BUTTON, `${width}: the short form's hover is the whole reason`);
+            const s = await rowState();
+            if (width < 860) {
+                assert.ok(s.moved.length > idle.length, `${width}: tools gave way into "…" for it: ${idle} -> ${s.moved}`);
+                assert.deepStrictEqual([...s.moved].sort(), prefix(s.moved.length), `${width}: a prefix of ROW_OVERFLOW`);
+                assert.strictEqual(await page.$eval(MORE, el => el.getAttribute('aria-disabled')), 'true', `${width}: "…" is disabled under the lock`);
             }
+            await shot(`lock-button-${width}-light.png`);
+            await page.keyboard.press('Escape');
+            await delay(150);
+            assert.deepStrictEqual((await rowState()).moved, idle, `${width}: the lock gone, the row is as it was`);
+        }
+    });
+
+    test('l7 a button\'s lock at 400 still shows "Outside the text"; below the width where even that fits (340) no note — the tools only dim, the row describes itself with the whole reason', async function () {
+        this.timeout(60000);
+        for (const [width, where] of [[400, 'short'], [340, 'hidden']] as const) {
+            await resize(width);
+            await showDocument();
+            await clickText(page, 'Plain', 2);
+            await openYaml();
+            await page.keyboard.press('Escape');
+            await delay(150);
+            await assertReasonShown(page, `${width}, a button`, LOCK_BUTTON, where);
             await shot(`lock-button-${width}-light.png`);
             await page.keyboard.press('Escape');
         }
