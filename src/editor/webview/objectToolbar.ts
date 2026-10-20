@@ -52,6 +52,7 @@ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES, plainWikiEmbed } from '../../syntax/markers';
 import { containerClass } from '../schema';
 import { editRawSourceAt } from './nodeViews';
+import { typesText } from '../keys';
 import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
 import { EMBED_WAY_BACK, FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
@@ -63,7 +64,7 @@ import { FocusPlace, focusPlace } from './focusPlace';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
+    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
@@ -134,9 +135,6 @@ const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'styled', 
 
 /** How long the caret rests in an inline object before its toolbar shows: the one rest (`placement.ts`). */
 export const INLINE_DELAY_MS = REST_MS;
-
-/** The keys that only modify another: they type nothing. */
-const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
 
 /** How long the pointer may be off a block and its bar before the bar goes: time to cross the gap between them. */
 const HOVER_GRACE_MS = 300;
@@ -923,6 +921,8 @@ class ObjectToolbarView implements PluginView {
     /** The atom carrying the hover cue: the pointer is on it while the slot is taken (`mep-hover-cue`). */
     private cued: HTMLElement | null = null;
     private readonly unfreed: () => void;
+    /** Typing hid the caret's bar and its rest has not come: the pointer's bar does not take the free slot meanwhile (`refreshHover`). */
+    private typingHold = false;
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -933,7 +933,7 @@ class ObjectToolbarView implements PluginView {
         this.hoverBar = this.makeBar('hover');
         this.mount.append(this.selectionBar.el, this.hoverBar.el);
 
-        this.listen(document, 'mousemove', e => this.pointerAt(e.target as Element | null));
+        this.listen(document, 'mousemove', e => this.pointerAt(e.target as Element | null, e as MouseEvent));
         this.listen(document.documentElement, 'mouseleave', () => this.unhover());
         // Focus moving in or out of the editor and the bars shows or hides the selection's bar.
         const later = () => setTimeout(() => this.refresh(), 0);
@@ -941,11 +941,21 @@ class ObjectToolbarView implements PluginView {
         this.listen(document, 'focusout', later);
         // Capturing, so it is known before the key's own command changes the text (`update`).
         // A key whose release the text never sees (the focus moved to a bar) is over at its keyup anywhere.
+        // A character made with Alt (Option, AltGr: `{ } [ ] @ \ ~`) is typing; a modifier, a shortcut or an Alt command is not (`typesText`).
         this.listen(view.dom, 'keydown', e => {
-            this.keyed = !MODIFIER_KEYS.has((e as KeyboardEvent).key) && !(e as KeyboardEvent).altKey;
+            this.keyed = typesText(e as KeyboardEvent);
         }, true);
         this.listen(document, 'keyup', () => {
             this.keyed = false;
+        }, true);
+        // A click into the text from outside it — the focus was away — is an arrival: what Esc dismissed is
+        // shown again. The window coming back (Alt+Tab) is not: the caret is where it was.
+        this.listen(view.dom, 'mousedown', () => {
+            if (focusPlace(view).kind === 'away') {
+                for (const key of this.slot.dismissedOf('bar@')) {
+                    this.slot.caretLeft(key);
+                }
+            }
         }, true);
         // A slot that came free shows the pointer's bar where the pointer rests (the hover cue goes).
         this.unfreed = this.slot.onFreed(() => this.refreshHover());
@@ -1040,6 +1050,7 @@ class ObjectToolbarView implements PluginView {
             this.keyed = false;
             this.cancelPending();
             this.matured = null;
+            this.typingHold = true;
             this.slot.typing();
         }
         this.refresh();
@@ -1049,6 +1060,26 @@ class ObjectToolbarView implements PluginView {
     applied(transactions: readonly Transaction[]): void {
         for (const tr of transactions) {
             this.focusMoves?.appendMapping(tr.mapping);
+            if (tr.docChanged) {
+                this.followDismissals(tr.mapping);
+            }
+        }
+    }
+
+    /**
+     * A change of the document moved what Esc's dismissals are about (the keys
+     * hold a position): a host resync that inserts above the caret's object
+     * must not end the dismissal, so the keys follow the change.
+     */
+    private followDismissals(mapping: Mapping): void {
+        for (const trigger of ['bar', 'hover'] as const) {
+            for (const key of this.slot.dismissedOf(`${trigger}@`)) {
+                const at = key.lastIndexOf('@');
+                const from = Number(key.slice(at + 1));
+                if (Number.isInteger(from)) {
+                    this.slot.rekey(key, `${key.slice(0, at + 1)}${mapping.map(from, 1)}`);
+                }
+            }
         }
     }
 
@@ -1143,6 +1174,15 @@ class ObjectToolbarView implements PluginView {
         }
     }
 
+    /** Whether the selection is in the text (or what else in it takes the focus), where its object is the one the caret is in. */
+    private caretInText(): boolean {
+        if (this.selectionBar.editing || this.hoverBar.editing) {
+            return false;
+        }
+        const kind = focusPlace(this.view).kind;
+        return kind === 'text' || kind === 'content';
+    }
+
     /** The bare holder `Alt+Enter` opened a bar for (`openFromKeyboard`), while the selection is still in its run. */
     private maturedHolder(): EditorObject | null {
         return this.matured?.kind === 'holder' ? currentObject(this.view.state, this.matured) : null;
@@ -1170,10 +1210,13 @@ class ObjectToolbarView implements PluginView {
         }
         const object = this.selectionObject();
         const key = object === null ? null : barKey('bar', object);
-        // The caret left a dismissed object: its dismissal ends.
-        for (const dismissed of this.slot.dismissedOf('bar@')) {
-            if (dismissed !== key) {
-                this.slot.caretLeft(dismissed);
+        // The caret left a dismissed object: its dismissal ends — where the caret is in the
+        // text. The focus away, or in the chrome, says nothing: it is back where it was.
+        if (this.caretInText()) {
+            for (const dismissed of this.slot.dismissedOf('bar@')) {
+                if (dismissed !== key) {
+                    this.slot.caretLeft(dismissed);
+                }
             }
         }
         if (object === null) {
@@ -1235,6 +1278,8 @@ class ObjectToolbarView implements PluginView {
             el: bar.el,
             anchor: () => (bar.object === null ? null : anchorOf(this.view, bar.object)),
             valid: () => bar.object !== null,
+            // An inline object's bar goes above where text is on both sides (Daniel, 2026-10-20); a block's stays below.
+            bothCovered: isBlockPlaced(object) ? undefined : 'above',
             hidden: reason => this.barHidden(bar, reason),
             fit: (room, fresh) => {
                 if (fresh) {
@@ -1290,11 +1335,25 @@ class ObjectToolbarView implements PluginView {
 
     // -- the pointer's bar -----------------------------------------------------
 
-    private pointerAt(target: Element | null): void {
+    /**
+     * Whether the pointer is on the pointer's bar. By where it is, not by what
+     * the event names: the bar ignores the pointer for a moment after it appears
+     * or moves (`data-inert`), and the event then names what is under it — the
+     * text, which would start the bar's way out under a pointer that never moved.
+     */
+    private onHoverBar(e: MouseEvent): boolean {
+        if (!this.hoverBar.visible) {
+            return false;
+        }
+        const r = this.hoverBar.el.getBoundingClientRect();
+        return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    }
+
+    private pointerAt(target: Element | null, e: MouseEvent): void {
         if (target === null || typeof target.closest !== 'function') {
             return;
         }
-        if (this.hoverBar.el.contains(target)) {
+        if (this.hoverBar.el.contains(target) || this.onHoverBar(e)) {
             clearTimeout(this.hoverTimer);
             this.hoverTimer = undefined;
             return;
@@ -1312,6 +1371,7 @@ class ObjectToolbarView implements PluginView {
             this.hoverTimer = undefined;
             if (atom !== this.hovered) {
                 this.hovered = atom;
+                this.endHoverDismissals();
                 this.refreshHover();
             }
             return;
@@ -1325,7 +1385,19 @@ class ObjectToolbarView implements PluginView {
         clearTimeout(this.hoverTimer);
         this.hoverTimer = undefined;
         this.hovered = null;
+        this.endHoverDismissals();
         this.refreshHover();
+    }
+
+    /**
+     * The pointer left the block it was on, or is on another: Esc's dismissal of
+     * the pointer's bar ends (`escape`). Only the caret's bar was ever cleared,
+     * so a block dismissed once never had its bar again.
+     */
+    private endHoverDismissals(): void {
+        for (const key of this.slot.dismissedOf('hover@')) {
+            this.slot.caretLeft(key);
+        }
     }
 
     /** The block object whose element the pointer is on, found by the element ProseMirror drew for it. */
@@ -1362,8 +1434,18 @@ class ObjectToolbarView implements PluginView {
             ? null
             : this.present(object);
         const current = this.slot.current;
-        if (object === null || presentation === null || barless(object, presentation)) {
+        // A dismissed pointer's bar is not coming: no cue promises it.
+        const dismissed = object !== null && this.slot.dismissedOf('hover@').includes(barKey('hover', object));
+        // Typing hid the caret's bar and its rest is to bring it back: the pointer's bar waits too, at the cue.
+        const typingHold = this.typingHold && this.pending !== null && !this.hoverBar.editing;
+        if (!typingHold) {
+            this.typingHold = false;
+        }
+        if (object === null || presentation === null || barless(object, presentation) || dismissed) {
             this.cue(null);
+            this.hideBar(this.hoverBar);
+        } else if (typingHold) {
+            this.cue(this.hovered);
             this.hideBar(this.hoverBar);
         } else if (current !== null && current.el !== this.hoverBar.el) {
             this.cue(this.hovered);

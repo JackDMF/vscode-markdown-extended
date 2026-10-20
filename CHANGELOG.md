@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Every floating layer — bars, bubble, fields, menus, cards, hints — follows one rule: below, else above.
+- With text on both sides, an inline object's bar goes above; block bars and the bubble stay below.
 - A layer never covers the caret's line, the formatting row or another open layer.
 - A layer stands at its object's start and stops at the editor's edge, 4 px short of the margin lane.
 - One floating layer at a time: a selection shows the bubble, a caret rest the bar, a field replaces its bar.

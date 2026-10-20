@@ -9,9 +9,10 @@
  * below the anchor, `GAP` away, else above it; a place qualifies only under
  * the formatting row (and its lock line), inside the window, off the caret's
  * line and off every other open layer. Where both qualify, text decides: the
- * one whose band (`probeBand`) covers none, else below. Neither: an anchor
- * taller than the window keeps the layer at the visible edge; otherwise it
- * goes below the caret's line. No layer keeps a ladder of its own.
+ * one whose band (`probeBand`) covers none, else below — above for an inline
+ * object's bar. Neither: an anchor running out of the window keeps the layer at
+ * the visible edge; otherwise it goes below the caret's line, inside the
+ * window. No layer keeps a ladder of its own.
  *
  * **The slot.** One floating layer at a time — the selection's bubble, an
  * object's bar, a field bar, the pointer's bar (`LayerSlot`): a selection shows
@@ -77,6 +78,8 @@ export interface Context {
     avoid?: readonly Rect[];
     /** Whether a band covers text (the probe); the tie-break only. Absent = never covered. */
     covered?: (band: Rect) => boolean;
+    /** The side that wins where text is under both: 'above' for an inline object's bar (Daniel, 2026-10-20); the default is below. A side free of text always wins. */
+    bothCovered?: 'above' | 'below';
 }
 
 export type Side = 'below' | 'above' | 'right' | 'left' | 'edge' | 'caret' | 'none';
@@ -113,10 +116,11 @@ export function probeBand(x: number, y: number, size: Size): Rect {
 /**
  * Below the anchor, else above; x = anchor.left clamped into
  * [columnLeft, layerEdge - width]. Both free: the one whose band covers no
- * text (`covered`), else below. Neither: an anchor spanning the window keeps
- * the layer at the visible bottom edge (the top one where that is on the
- * caret's line); otherwise below the caret's line, or — no caret — below the
- * anchor as far as the window lets it.
+ * text (`covered`); text under both: `bothCovered` (below unless an inline
+ * object's bar), else below. Neither qualifies: an anchor running out of the
+ * window — past either edge — keeps the layer at the visible bottom edge (the
+ * top one where that is on the caret's line); otherwise below the caret's line,
+ * or — no caret — below the anchor, either way kept inside the window.
  */
 export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Context = {}): Placement {
     // A layer wider than the room was fitted to it before (`ObjectBar.fit`): this clamps, never shrinks.
@@ -127,8 +131,15 @@ export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Contex
     const aboveOk = qualifies(x, above, size, frame, ctx);
     if (belowOk && aboveOk) {
         const covered = ctx.covered;
-        if (covered && covered(probeBand(x, below, size)) && !covered(probeBand(x, above, size))) {
-            return { x, y: above, side: 'above' };
+        if (covered) {
+            const textBelow = covered(probeBand(x, below, size));
+            const textAbove = covered(probeBand(x, above, size));
+            if (textBelow && !textAbove) {
+                return { x, y: above, side: 'above' };
+            }
+            if (textBelow && textAbove && ctx.bothCovered === 'above') {
+                return { x, y: above, side: 'above' };
+            }
         }
         return { x, y: below, side: 'below' };
     }
@@ -138,16 +149,19 @@ export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Contex
     if (aboveOk) {
         return { x, y: above, side: 'above' };
     }
-    if (anchor.top < frame.ceiling && anchor.bottom > frame.floor) {
-        // A table, a source block or a selection taller than the window: the bar sticks to the visible edge.
+    if (anchor.top < frame.ceiling || anchor.bottom > frame.floor) {
+        // A table, a source block or a selection that runs out of the window — past
+        // either edge, no place qualifying: the bar sticks to the visible edge.
         const y = frame.floor - GAP - size.height;
         const onCaret = ctx.caret ? overlaps(rectAt(x, y, size), ctx.caret) : false;
         return { x, y: onCaret ? frame.ceiling + GAP : y, side: 'edge' };
     }
+    // Under the caret's line where nothing else qualifies — but inside the window.
+    const lowest = Math.max(frame.ceiling + GAP, frame.floor - size.height);
     if (ctx.caret) {
-        return { x, y: ctx.caret.bottom + GAP, side: 'caret' };
+        return { x, y: Math.min(ctx.caret.bottom + GAP, lowest), side: 'caret' };
     }
-    return { x, y: Math.min(below, frame.floor - size.height), side: 'below' };
+    return { x, y: Math.min(below, lowest), side: 'below' };
 }
 
 /**
@@ -319,9 +333,14 @@ export function anchorOf(view: EditorView, object: EditorObject): Rect | null {
 /**
  * A range's anchor from its line boxes: the left of its LAST line — the
  * layer stands under that line, so its x belongs to it (on one line, the
- * range's start) — the top of its first, the bottom of its last.
+ * range's start) — the top of its first, the bottom of its last. The range is
+ * kept inside the document; `null` where it is not drawn.
  */
-export function rangeAnchor(view: EditorView, from: number, to: number): Rect {
+export function rangeAnchor(view: EditorView, rawFrom: number, rawTo: number): Rect | null {
+    // A range a field was opened on, the document shorter since (a resync): kept inside it.
+    const size = view.state.doc.content.size;
+    const from = Math.max(0, Math.min(rawFrom, size));
+    const to = Math.max(from, Math.min(rawTo, size));
     let rects: DOMRect[] = [];
     try {
         const start = view.domAtPos(from, 1);
@@ -334,9 +353,14 @@ export function rangeAnchor(view: EditorView, from: number, to: number): Rect {
         rects = [];
     }
     if (rects.length === 0) {
-        const s = view.coordsAtPos(from, 1);
-        const e = view.coordsAtPos(to, -1);
-        return { left: s.left, top: Math.min(s.top, e.top), right: Math.max(s.right, e.right), bottom: Math.max(s.bottom, e.bottom) };
+        try {
+            const s = view.coordsAtPos(from, 1);
+            const e = view.coordsAtPos(to, -1);
+            return { left: s.left, top: Math.min(s.top, e.top), right: Math.max(s.right, e.right), bottom: Math.max(s.bottom, e.bottom) };
+        } catch {
+            // Not drawn: the thing the layer is about is gone, and the claim ends.
+            return null;
+        }
     }
     // The last line: the boxes beside the lowest-starting one.
     const lastTop = Math.max(...rects.map(r => r.top));
@@ -361,6 +385,11 @@ export interface PlaceOptions {
     covered?: boolean;
     /** The layer itself and what it holds, left out of the open layers; `el` when not given. */
     except?: Element;
+    /** The frame and the other open layers, where the caller has read them already: not read twice. */
+    frame?: Frame;
+    avoid?: readonly Rect[];
+    /** The side that wins where text is under both (`Context.bothCovered`). */
+    bothCovered?: 'above' | 'below';
 }
 
 /** Write `p` (viewport coordinates) as `el`'s position in its space. */
@@ -377,11 +406,12 @@ function writeAt(el: HTMLElement, x: number, y: number, space: 'mount' | 'viewpo
  * slot knows whether the layer moved.
  */
 export function placeLayer(el: HTMLElement, anchor: Rect, opts: PlaceOptions): Placement {
-    const frame = readFrame(opts.mount);
+    const frame = opts.frame ?? readFrame(opts.mount);
     const view = opts.view;
     const ctx: Context = {
         caret: opts.caret && view ? caretBand(view, frame) : null,
-        avoid: openLayers(opts.mount, opts.except ?? el),
+        avoid: opts.avoid ?? openLayers(opts.mount, opts.except ?? el),
+        bothCovered: opts.bothCovered,
     };
     const size = { width: el.offsetWidth, height: el.offsetHeight };
     let placement: Placement;
@@ -481,6 +511,8 @@ export interface LayerClaim {
     hidden(reason: HideReason): void;
     /** Fit the layer to the room it may take before it is placed (`ObjectBar.fit`); `fresh` after a font loaded. */
     fit?(room: number, fresh: boolean): void;
+    /** Where text is under both sides: 'above' for an inline object's bar (the policy's `bothCovered`); absent: below. */
+    bothCovered?: 'above' | 'below';
 }
 
 /** What the occupant was last placed from, in viewport coordinates: a re-place with the same inputs (anchor, size, frame, the other layers) does nothing. */
@@ -528,7 +560,7 @@ function sameFrame(a: Frame, b: Frame): boolean {
 export class LayerSlot {
     private occupant: LayerClaim | null = null;
     private readonly dismissed = new Set<string>();
-    private suppressed = false;
+    private menuOpen = false;
     private placed: Placed | null = null;
     private written: Written | null = null;
     private inertEl: HTMLElement | null = null;
@@ -603,8 +635,8 @@ export class LayerSlot {
         if (!same) {
             this.placed = null;
         }
-        claim.el.hidden = this.suppressed;
-        if (!this.suppressed) {
+        claim.el.hidden = this.hides(claim);
+        if (!this.hides(claim)) {
             this.place(appeared);
         }
         if (this.occupant === null) {
@@ -624,7 +656,7 @@ export class LayerSlot {
     /** Place the occupant again if its anchor, size or frame changed; the inert time only if it moved. */
     replace(): void {
         const claim = this.occupant;
-        if (claim === null || this.suppressed || this.destroyed) {
+        if (claim === null || this.hides(claim) || this.destroyed) {
             return;
         }
         if (!claim.valid()) {
@@ -637,7 +669,7 @@ export class LayerSlot {
 
     /** The occupant's content changed size (a field's refusal line, a fit): placed again, the inert time only if it moved. */
     contentChanged(key: string): void {
-        if (this.occupant?.key === key && !this.suppressed) {
+        if (this.occupant?.key === key && !this.hides(this.occupant)) {
             this.placed = null;
             this.place(false);
         }
@@ -658,6 +690,13 @@ export class LayerSlot {
         this.dismissed.delete(key);
     }
 
+    /** What `from` was about has moved (a change of the document shifted it): its dismissal follows to `to`. */
+    rekey(from: string, to: string): void {
+        if (from !== to && this.dismissed.delete(from)) {
+            this.dismissed.add(to);
+        }
+    }
+
     /** The dismissed keys starting with `prefix`: what an owner ends once the caret is elsewhere. */
     dismissedOf(prefix: string): string[] {
         return Array.from(this.dismissed).filter(k => k.startsWith(prefix));
@@ -672,14 +711,31 @@ export class LayerSlot {
         }
     }
 
-    /** A row menu opened (`true`) or closed: the occupant hides while it is open, and comes back after if still valid. */
+    /** Whether a row menu is open: every layer but a field is refused and hidden meanwhile (`suppress`). */
+    get suppressed(): boolean {
+        return this.menuOpen;
+    }
+
+    /**
+     * A row menu opened (`true`) or closed: the occupant hides while it is open,
+     * and comes back after if still valid — a field does not: hiding the input
+     * that has the focus would blur it, and a blur cancels, the typed text lost.
+     * A slot found empty when the menu closes tells its waiters (`onFreed`): the
+     * bubble or the pointer's bar that was refused while the menu was open.
+     */
     suppress(on: boolean): void {
-        if (on === this.suppressed || this.destroyed) {
+        if (on === this.menuOpen || this.destroyed) {
             return;
         }
-        this.suppressed = on;
+        this.menuOpen = on;
         const claim = this.occupant;
         if (claim === null) {
+            if (!on) {
+                this.announceFree();
+            }
+            return;
+        }
+        if (claim.kind === 'field') {
             return;
         }
         if (on) {
@@ -694,6 +750,11 @@ export class LayerSlot {
         claim.el.hidden = false;
         this.placed = null;
         this.place(true);
+    }
+
+    /** Whether the open row menu hides `claim`: every kind but a field. */
+    private hides(claim: LayerClaim): boolean {
+        return this.menuOpen && claim.kind !== 'field';
     }
 
     /** Call `listener` (after the current task) whenever the slot becomes empty: a pointer's bar waiting for it. Returns the unsubscribe. */
@@ -728,6 +789,11 @@ export class LayerSlot {
     private vacate(): void {
         this.occupant = null;
         this.placed = null;
+        this.announceFree();
+    }
+
+    /** The slot is empty: its waiters hear it after the current task, if it still is. */
+    private announceFree(): void {
         if (this.freed.size > 0) {
             setTimeout(() => {
                 if (!this.destroyed && this.occupant === null) {
@@ -773,7 +839,7 @@ export class LayerSlot {
             && prev.avoid.length === avoid.length && prev.avoid.every((r, i) => sameRect(r, avoid[i]))) {
             return;
         }
-        const p = placeLayer(claim.el, anchor, { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el });
+        const p = placeLayer(claim.el, anchor, { view: this.view, mount: this.mount, space: 'mount', caret: true, covered: true, except: claim.el, frame, avoid, bothCovered: claim.bothCovered });
         // Compared where it is written: a layer that scrolls with the text has not moved.
         const base = this.mount.getBoundingClientRect();
         const at: Placement = { x: p.x - base.left, y: p.y - base.top, side: p.side };

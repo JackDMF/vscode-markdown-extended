@@ -56,7 +56,7 @@ import {
     ActionPreview, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
     TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, menuOf, submenuOf, tipOf,
 } from './actions';
-import { ariaKeyshortcuts } from '../../keys';
+import { MODIFIER_KEYS, ariaKeyshortcuts } from '../../keys';
 import { Tip, plainTip } from '../../tips';
 import { macKeys } from '../hint';
 import { Tooltips, describeAs } from '../tooltip';
@@ -125,9 +125,6 @@ const PREVIEW_DELAY_MS = 300;
 /** The class that points at the lock's reason after a refused press (`editor.css`), and how long it stays. */
 const LOCK_FLASH_CLASS = 'mep-row-lock-flash';
 const LOCK_FLASH_MS = 900;
-
-/** The keys that only modify a press or another key: none of them ends a press's wait (`placeLock`). */
-const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
 
 /**
  * The least a Block type sample is zoomed to fit its entry (`fitSamples`):
@@ -452,11 +449,15 @@ class ToolbarView implements PluginView {
     /** The selection the bubble is about (`selectionKey`), while it is wanted; its rest's timer. */
     private bubbleKey: string | null = null;
     private bubbleTimer: ReturnType<typeof setTimeout> | undefined;
+    /** Stops listening to the slot coming free (`bubbleFreed`). */
+    private readonly unfreed: () => void;
 
     constructor(private readonly view: EditorView, private readonly host: ToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
         this.tips = Tooltips.for(this.mount);
         this.slot = LayerSlot.for(view, this.mount);
+        // A bubble whose rest ended while a row menu held the slot is asked again once it is free.
+        this.unfreed = this.slot.onFreed(() => this.bubbleFreed());
         this.layer = div('mep-toolbar-layer');
         this.card = div(`${PREVIEW_CARD_CLASS}`);
         this.card.hidden = true;
@@ -525,7 +526,7 @@ class ToolbarView implements PluginView {
             }
         }, true);
         // A key acts, not the press: a line still waiting on one shows now (its room
-        // follows when the press ends, as before). Not a modifier, nor a key's repeat:
+        // follows when the press ends, as before). Not a modifier (`MODIFIER_KEYS`), nor a key's repeat:
         // one held from before the press (a Shift-click) repeats while the button is
         // down, and would show the line over what is pressed.
         this.listen(document, 'keydown', e => {
@@ -747,6 +748,7 @@ class ToolbarView implements PluginView {
         clearTimeout(this.flashTimer);
         clearTimeout(this.focusTimer);
         clearTimeout(this.bubbleTimer);
+        this.unfreed();
         this.closeFieldBar();
         this.slot.destroy();
         this.tips.release();
@@ -1815,6 +1817,19 @@ class ToolbarView implements PluginView {
         if (this.bubbleWanted() && this.bubbleKey === this.selectionKey() && this.slot.current?.key !== this.bubbleKey) {
             clearTimeout(this.bubbleTimer);
             this.bubbleTimer = undefined;
+            this.requestBubble();
+        }
+    }
+
+    /**
+     * The slot came free (a row menu closed over an empty slot, a layer went):
+     * the selection the bubble waits for or was refused for is still the
+     * selection, and no rest is pending — its request was lost while the slot
+     * was taken, and nothing else asks again.
+     */
+    private bubbleFreed(): void {
+        if (this.bubbleKey !== null && this.bubbleTimer === undefined && this.bubbleKey === this.selectionKey()
+            && this.slot.current === null && this.bubble.hidden && !this.pointerHeld) {
             this.requestBubble();
         }
     }
