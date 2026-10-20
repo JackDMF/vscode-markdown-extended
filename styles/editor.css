@@ -1286,7 +1286,7 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 .ProseMirror .selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }
 .ProseMirror .selectedCell *::selection, .ProseMirror .selectedCell::selection { background: transparent; }
-/* The caret's column while the table's bar shows: what Insert left and right are left and right of. */
+/* The caret's column while Column or Align is open, focused or hovered: what Insert left and right are left and right of. */
 .ProseMirror .mep-table-column { background-color: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.15)); }
 .ProseMirror .mep-table-column.selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }
 
@@ -1770,3 +1770,18 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     pointer-events: none;
     user-select: none;
 }
+
+/*
+ * The caret's table cell (`mep-cell-active`, tables.ts): a 2 px ring inside it in the focus
+ * colour — a different stroke from a focused control's 1 px outline outside. Over the cell's
+ * faint inner line, which it replaces while the caret is there.
+ */
+.ProseMirror > table td.mep-cell-active, .ProseMirror > table th.mep-cell-active {
+    box-shadow: inset 0 0 0 2px var(--vscode-focusBorder, Highlight);
+}
+.vscode-high-contrast .ProseMirror > table td.mep-cell-active, .vscode-high-contrast .ProseMirror > table th.mep-cell-active {
+    box-shadow: inset 0 0 0 2px var(--vscode-contrastActiveBorder, var(--vscode-focusBorder, Highlight));
+}
+/* The caret's row while Row is open, focused or hovered (objectToolbar.ts): the column tint's colour. */
+.ProseMirror .mep-table-row { background-color: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.15)); }
+.ProseMirror .mep-table-row.selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }

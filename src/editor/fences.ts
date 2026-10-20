@@ -43,6 +43,12 @@ export function shortFenceRefusal(needed: string): string {
 /** Why an info string with a backtick after a backtick fence is refused (markdown-it's own rule). */
 export const BACKTICK_INFO_REFUSAL = 'A ``` fence takes no backtick after it: the block would no longer be code. A ~~~ fence takes one.';
 
+/**
+ * Why Language… is not emptied while other words of the info string follow
+ * (```` ```js title=x ````): the next word would become the language.
+ */
+export const LANGUAGE_FOLLOWED_REFUSAL = 'Other words follow the language — Edit source changes the whole line.';
+
 /** A block's opening line in its parts, as the node holds them (`markup`, `params`, `attrsSuffix`). */
 export interface OpeningLine {
     markup: string;

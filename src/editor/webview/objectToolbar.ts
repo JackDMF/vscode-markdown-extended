@@ -252,35 +252,47 @@ const CONVERT_LABELS: Readonly<Record<NoteNodeName, string>> = {
 /**
  * What the bars draw into the document, set by the bars' view as they show
  * and go (`ObjectToolbarView.syncDecorations`) and drawn by the plugin's
- * decorations: `tint`, the table whose caret column is tinted while its bar
- * shows, by its position. A bar never draws layout into the document: it
- * floats, so showing it moves nothing.
+ * decorations: `tint`, the table whose caret row or column is tinted, by its
+ * position, and which — only while the bar's Row, or its Column or Align, is
+ * open, focused or hovered (`ObjectBar.activeVerb`): at rest the caret's cell
+ * carries a ring (`tables.ts`), and a tint the whole time the bar showed read
+ * as styling. A bar never draws layout into the document: it floats, so
+ * showing it moves nothing.
  */
 interface BarDecor {
-    tint: number | null;
+    tint: { table: number; axis: 'row' | 'column' } | null;
 }
 
 const NO_DECOR: BarDecor = { tint: null };
 
 const decorKey = new PluginKey<BarDecor>('mep-object-toolbar-decor');
 
-/** The caret's columns of the table at `tablePos`, as node decorations on their cells; none when the selection is not in it. */
-function columnTint(state: EditorState, tablePos: number | null): Decoration[] {
-    const table = tablePos === null ? null : state.doc.nodeAt(tablePos);
-    if (tablePos === null || !table || table.type.name !== 'table' || !(isInTable(state) || state.selection instanceof CellSelection)) {
+/** Which axis a table's set-verb acts on: Row the caret's row, Column and Align its column. */
+const VERB_AXIS: Readonly<Record<string, 'row' | 'column'>> = { row: 'row', column: 'column', align: 'column' };
+
+/**
+ * The caret's rows or columns of the table `tint` names, as node decorations
+ * on their cells (`mep-table-row`, `mep-table-column`); none when the
+ * selection is not in it.
+ */
+function axisTint(state: EditorState, tint: BarDecor['tint']): Decoration[] {
+    const table = tint === null ? null : state.doc.nodeAt(tint.table);
+    if (tint === null || !table || table.type.name !== 'table' || !(isInTable(state) || state.selection instanceof CellSelection)) {
         return [];
     }
     const rect = selectedRect(state);
-    if (rect.tableStart !== tablePos + 1) {
+    if (rect.tableStart !== tint.table + 1) {
         return [];
     }
+    const rows = tint.axis === 'row' ? [rect.top, rect.bottom] : [0, rect.map.height];
+    const cols = tint.axis === 'row' ? [0, rect.map.width] : [rect.left, rect.right];
     const decorations: Decoration[] = [];
-    for (let row = 0; row < rect.map.height; row++) {
-        for (let col = rect.left; col < rect.right; col++) {
+    for (let row = rows[0]; row < rows[1]; row++) {
+        for (let col = cols[0]; col < cols[1]; col++) {
             const pos = rect.tableStart + rect.map.map[row * rect.map.width + col];
             const cell = state.doc.nodeAt(pos);
             if (cell) {
-                decorations.push(Decoration.node(pos, pos + cell.nodeSize, { class: 'mep-table-column' }));
+                decorations.push(Decoration.node(pos, pos + cell.nodeSize, { class: tint.axis === 'row' ? 'mep-table-row' : 'mep-table-column' }));
             }
         }
     }
@@ -288,12 +300,12 @@ function columnTint(state: EditorState, tablePos: number | null): Decoration[] {
 }
 
 function barDecorations(state: EditorState, decor: BarDecor): DecorationSet {
-    const decorations = columnTint(state, decor.tint);
+    const decorations = axisTint(state, decor.tint);
     return decorations.length === 0 ? DecorationSet.empty : DecorationSet.create(state.doc, decorations);
 }
 
 function sameDecor(a: BarDecor, b: BarDecor): boolean {
-    return a.tint === b.tint;
+    return a.tint === b.tint || (a.tint !== null && b.tint !== null && a.tint.table === b.tint.table && a.tint.axis === b.tint.axis);
 }
 
 /**
@@ -453,6 +465,8 @@ interface BarEvents {
     fieldClosed(committed: boolean): void;
     /** The bar went with its field open: the view hides it from inside an update, so the drawing goes after it. */
     fieldDropped(): void;
+    /** A verb's menu opened or closed, or its button took or lost the focus or the pointer: what it drives (a table's row or column tint) is drawn anew (`activeVerb`). */
+    verbActive(): void;
 }
 
 /** One bar: a label and verbs, or a label and the inline field. */
@@ -473,6 +487,8 @@ class ObjectBar {
     private title = { label: '', short: undefined as string | undefined };
     /** A set-verb's open menu: its panel, the verb's button, its entries. */
     private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
+    /** The verb under the pointer, by id (`activeVerb`). */
+    private hovered: string | null = null;
 
     constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents, private readonly tips: Tooltips) {
         this.el = document.createElement('div');
@@ -691,6 +707,7 @@ class ObjectBar {
     private render(presentation: Presentation): void {
         this.tips.hide(this.el);
         this.closeMenu(false);
+        this.hovered = null;
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
@@ -729,6 +746,11 @@ class ObjectBar {
                 e.preventDefault();
                 this.choose(verb);
             });
+            // Open, focused or hovered: the verb is active, and a table draws what it acts on (`activeVerb`).
+            el.addEventListener('pointerenter', () => this.verbHovered(verb.id, true));
+            el.addEventListener('pointerleave', () => this.verbHovered(verb.id, false));
+            el.addEventListener('focus', () => this.events.verbActive());
+            el.addEventListener('blur', () => this.events.verbActive());
             return { verb, el };
         });
         // The title, then a divider: it names the object, it is not the first verb (whose own divider that one is).
@@ -743,6 +765,25 @@ class ObjectBar {
         more.hidden = false;
         this.more = this.buttons.length > 0 ? more : null;
         this.el.replaceChildren(label, ...(this.buttons.length > 0 ? [barSeparator()] : []), ...this.buttons.flatMap((b, i) => b.verb.separated && i > 0 ? [barSeparator(), b.el] : [b.el]));
+    }
+
+    /**
+     * The verb that is active now, by id: the one whose menu is open, else the
+     * one whose button has the focus, else the one under the pointer; `null`
+     * for none. What a table's bar tints follows it (F6: Row tints the caret's
+     * row, Column and Align its column).
+     */
+    activeVerb(): string | null {
+        const open = this.menu === null ? undefined : this.buttons.find(b => b.el === this.menu?.button);
+        const focused = this.buttons.find(b => b.el === document.activeElement);
+        return open?.verb.id ?? focused?.verb.id ?? this.hovered;
+    }
+
+    private verbHovered(id: string, on: boolean): void {
+        if (on || this.hovered === id) {
+            this.hovered = on ? id : null;
+            this.events.verbActive();
+        }
     }
 
     /** "…" pressed: its menu opens under it, or closes. */
@@ -843,6 +884,7 @@ class ObjectBar {
         placeMenu(panel, button);
         const first = made.find(m => m.entry.checked && !m.entry.refusal) ?? made.find(m => !m.entry.refusal);
         (first?.el ?? panel).focus({ preventScroll: true });
+        this.events.verbActive();
     }
 
     /** Close the open menu, the focus back on its verb when asked. */
@@ -852,6 +894,7 @@ class ObjectBar {
             return;
         }
         this.menu = null;
+        this.events.verbActive();
         menu.button.setAttribute('aria-expanded', 'false');
         // An entry's hover goes with its menu: once the panel is out of the bar, `hide(this.el)` finds it no more.
         this.tips.hide(menu.panel);
@@ -1122,6 +1165,7 @@ class ObjectToolbarView implements PluginView {
                     }
                 }, 0);
             },
+            verbActive: () => this.syncDecorations(),
         };
         const bar: ObjectBar = new ObjectBar(trigger, events, this.tips);
         return bar;
@@ -1442,14 +1486,17 @@ class ObjectToolbarView implements PluginView {
 
     /**
      * What the bars shown need drawn in the document: the tint of the caret's
-     * column of the table whose bar shows. It is a decoration, so the view is
+     * row or column of the table whose bar shows, while the verb acting on it
+     * is active (`activeVerb`, `VERB_AXIS`). It is a decoration, so the view is
      * told in a transaction of its own — after this update, which may not
      * dispatch one. A tint changes no box, so nothing moves.
      */
     private syncDecorations(): void {
-        const wanted = (): BarDecor => ({
-            tint: this.selectionBar.visible && this.selectionBar.object?.kind === 'table' ? this.selectionBar.object.from : null,
-        });
+        const wanted = (): BarDecor => {
+            const bar = this.selectionBar;
+            const axis = bar.visible && bar.object?.kind === 'table' ? VERB_AXIS[bar.activeVerb() ?? ''] : undefined;
+            return { tint: axis === undefined || bar.object === null ? null : { table: bar.object.from, axis } };
+        };
         if (sameDecor(wanted(), decorKey.getState(this.view.state) ?? NO_DECOR)) {
             return;
         }
@@ -2498,7 +2545,7 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
                 if (!tr.docChanged || value.tint === null) {
                     return value;
                 }
-                return { tint: tr.mapping.map(value.tint) };
+                return { tint: { ...value.tint, table: tr.mapping.map(value.tint.table) } };
             },
         },
         view(editorView) {

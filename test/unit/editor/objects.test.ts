@@ -3,7 +3,7 @@ import { Node } from 'prosemirror-model';
 import { undo } from 'prosemirror-history';
 import { EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { PRESERVE_SOURCE_META } from '../../../src/editor/fidelity';
-import { BACKTICK_INFO_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
+import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
 import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
@@ -347,15 +347,18 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
         assert.deepStrictEqual(commitOpeningLine(fenced, blockPos(fenced), ''), { refusal: NO_FENCE_REFUSAL }, 'a fenced block is not made indented');
     });
 
-    test('Language… changes only the first word of the info string; empty removes it; an indented block is fenced', () => {
+    test('Language… changes only the first word of the info string; empty removes it unless other words follow; an indented block is fenced', () => {
         const state = caretAt(stateOf('```js title=x {.n}\ncode\n```\n'), 'code');
         const pos = blockPos(state);
         const ts = changeLanguageTransaction(state, pos, 'typescript');
         assert.ok(ts !== null && 'tr' in ts && !ts.fenced);
         assert.strictEqual(text(state.apply(ts.tr)), '```typescript title=x {.n}\ncode\n```\n');
-        const none = changeLanguageTransaction(state, pos, '');
-        assert.ok(none !== null && 'tr' in none);
-        assert.strictEqual(text(state.apply(none.tr)), '```title=x {.n}\ncode\n```\n');
+        // The next word would become the language: refused, the way named (Daniel, #4 build questions).
+        assert.deepStrictEqual(changeLanguageTransaction(state, pos, ''), { refusal: LANGUAGE_FOLLOWED_REFUSAL });
+        const alone = caretAt(stateOf('```js {.n}\ncode\n```\n'), 'code');
+        const none = changeLanguageTransaction(alone, blockPos(alone), '');
+        assert.ok(none !== null && 'tr' in none, 'the literal is no info word: the language goes');
+        assert.strictEqual(text(alone.apply(none.tr)), '``` {.n}\ncode\n```\n');
         assert.strictEqual(changeLanguageTransaction(state, pos, 'js'), null, 'unchanged');
         assert.deepStrictEqual(changeLanguageTransaction(state, pos, 'a`b'), { refusal: BACKTICK_INFO_REFUSAL });
         const indented = caretAt(stateOf('Text.\n\n    echo hi\n'), 'echo');

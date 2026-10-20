@@ -48,7 +48,7 @@ import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 import { VERB } from '../verbs';
-import { DEFAULT_FENCE, minimumFence, openingLineOf, parseOpeningLine, withLanguage } from '../fences';
+import { DEFAULT_FENCE, LANGUAGE_FOLLOWED_REFUSAL, minimumFence, openingLineOf, parseOpeningLine, withLanguage } from '../fences';
 
 const nodes = editorSchema.nodes;
 
@@ -1392,6 +1392,10 @@ export function changeLanguageTransaction(state: EditorState, pos: number, langu
     if (fenced && language.trim() === '') {
         // An indented block has no language to remove.
         return null;
+    }
+    if (language.trim() === '' && withLanguage(node.attrs.params as string, '') !== '') {
+        // The next word of the info string would become the language (Daniel, #4 build questions).
+        return { refusal: LANGUAGE_FOLLOWED_REFUSAL };
     }
     const line = lineWithLanguage(node, language);
     const refusal = openingLineRefusal(state, pos, line);

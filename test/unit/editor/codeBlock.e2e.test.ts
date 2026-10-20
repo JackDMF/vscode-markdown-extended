@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { BACKTICK_INFO_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
+import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
 import { NO_TARGET_HINT } from '../../../src/editor/verbs';
 import { NESTED_CODE_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
 import { LAYER_SELECTOR } from '../../../src/editor/webview/placement';
@@ -282,15 +282,25 @@ suite('Code block (e2e)', () => {
         assert.strictEqual((await bar()).label, 'Code block typescript');
     });
 
-    test('L3 Language… emptied: the language goes, the rest of the info string stays; no corner tag', async function () {
+    test('L3 Language… emptied: refused while other words follow; alone, the language goes and the corner tag with it', async function () {
         this.timeout(20000);
         await showDocument('Text.\n\n```js title=x\ncode\n```\n\nAfter.\n', 'code');
         await barFor('code');
         await page.keyboard.press('Enter');
         await page.waitForSelector(FIELD, { visible: true });
         await typeInField('');
-        assert.strictEqual((await lastEdit())?.text, 'Text.\n\n```title=x\ncode\n```\n\nAfter.\n');
-        assert.strictEqual((await tag()).content, '"title=x"', 'the info string\'s first word is the tag: "title=x" now');
+        assert.strictEqual((await field()).refusal, LANGUAGE_FOLLOWED_REFUSAL, 'the next word would become the language');
+        assert.strictEqual((await tag()).content, '"js"', 'nothing changed');
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+
+        await showDocument('Text.\n\n```js {.n}\ncode\n```\n\nAfter.\n', 'code');
+        await barFor('code');
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(FIELD, { visible: true });
+        await typeInField('');
+        assert.strictEqual((await lastEdit())?.text, 'Text.\n\n``` {.n}\ncode\n```\n\nAfter.\n');
+        assert.strictEqual((await tag()).content, 'none', 'no language, no corner tag');
     });
 
     test('L4 Esc with the list open closes the list; Esc again closes the field and the bar, the focus in the text', async function () {
@@ -462,5 +472,86 @@ suite('Code block (e2e)', () => {
         assert.strictEqual(b.focus, 'language');
         assert.strictEqual(await page.$eval(`${BAR} [data-verb="block-attributes"]`, el => el.getAttribute('aria-disabled')), 'true');
         assert.ok((await describedTip(page, `${BAR} [data-verb="block-attributes"]`)).includes(NESTED_CODE_ATTRS_REFUSAL));
+    });
+
+    // -- the table's active cell (the same item: the caret's place in a table, the tint on demand) --
+
+    const TABLE_DOC = 'Intro paragraph.\n\n| Name  | Kind   | Count |\n| :---- | :----: | ----: |\n| Alpha | first  | 1     |\n| Beta  | second | 22    |\n\nAfter the table.\n';
+
+    const tinted = (cls: string) => page.$$eval(`.ProseMirror .${cls}`, els => els.map(e => e.textContent ?? ''));
+
+    /** Until no layer ignores the pointer (`INERT_MS`): a hover before that reaches nothing. */
+    const settledLayers = () => page.waitForFunction(() => document.querySelector('.mep-layer[data-inert]') === null, { timeout: 2000, polling: 20 });
+
+    /** The tint once the view's microtask and its transaction have run. */
+    const tintAfter = async (cls: string) => {
+        await delay(120);
+        return tinted(cls);
+    };
+
+    test('C1 the caret in a cell, the bar up: the cell ringed 2 px inside, no row or column tinted', async function () {
+        this.timeout(20000);
+        await showDocument(TABLE_DOC, 'Alpha');
+        await clickBefore('first', 1);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        assert.deepStrictEqual(await tinted('mep-cell-active'), ['first']);
+        const ring = await page.$eval('.ProseMirror .mep-cell-active', el => getComputedStyle(el).boxShadow);
+        assert.match(ring, /inset 0px 0px 0px 2px$|^rgb.*\) 0px 0px 0px 2px inset$/, ring);
+        assert.deepStrictEqual(await tinted('mep-table-column'), []);
+        assert.deepStrictEqual(await tinted('mep-table-row'), []);
+        await shots('table-rest-1280');
+    });
+
+    test('C2 Row ▾ opened, focused or hovered tints the caret\'s row; closed, left and blurred, none', async function () {
+        this.timeout(20000);
+        await showDocument(TABLE_DOC, 'Alpha');
+        await clickBefore('first', 1);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        await settledLayers();
+        const row = await page.$(`${BAR} [data-verb="row"]`);
+        const box = await row?.boundingBox();
+        assert.ok(box);
+        // Hovered.
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), ['Alpha', 'first', '1']);
+        await page.mouse.move(2, 2);
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), [], 'left: none');
+        // Opened.
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForSelector(`${BAR} .mep-object-menu`, { visible: true, timeout: 2000 });
+        await page.mouse.move(2, 2);
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), ['Alpha', 'first', '1'], 'its menu open');
+        assert.deepStrictEqual(await tinted('mep-cell-active'), ['first'], 'the cell keeps its ring');
+        await shots('table-row-1280');
+        // Closed, the focus back on Row: still active (focused).
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.verb), 'row', 'Esc returns to Row');
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), ['Alpha', 'first', '1'], 'focused');
+        await page.keyboard.press('ArrowRight');
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), [], 'focus moved on to Column');
+        assert.deepStrictEqual(await tintAfter('mep-table-column'), ['Kind', 'first', 'second'], 'Column focused');
+        await page.keyboard.press('Escape');
+        await delay(150);
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), []);
+        assert.deepStrictEqual(await tintAfter('mep-table-column'), []);
+    });
+
+    test('C3 Column ▾ or Align ▾ hovered tints the caret\'s column; the cell keeps its ring', async function () {
+        this.timeout(20000);
+        await showDocument(TABLE_DOC, 'Alpha');
+        await clickBefore('second', 1);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        await settledLayers();
+        for (const verb of ['column', 'align']) {
+            const box = await (await page.$(`${BAR} [data-verb="${verb}"]`))?.boundingBox();
+            assert.ok(box);
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+            assert.deepStrictEqual(await tintAfter('mep-table-column'), ['Kind', 'first', 'second'], verb);
+            assert.deepStrictEqual(await tinted('mep-table-row'), [], verb);
+            assert.deepStrictEqual(await tinted('mep-cell-active'), ['second'], verb);
+            await page.mouse.move(2, 2);
+            assert.deepStrictEqual(await tintAfter('mep-table-column'), [], `${verb} left`);
+        }
     });
 });

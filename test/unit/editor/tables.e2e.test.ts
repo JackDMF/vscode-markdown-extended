@@ -281,16 +281,17 @@ suite('Editor pipe tables (e2e)', () => {
         ].join('\n'));
     });
 
-    test('the table\'s bar: Row ▾, Column ▾, Align ▾, a gap, Attributes…, Edit source, a gap and Delete table; the caret\'s column tinted while it shows', async function () {
+    test('the table\'s bar: Row ▾, Column ▾, Align ▾, a gap, Attributes…, Edit source, a gap and Delete table; the caret\'s cell ringed, no tint at rest', async function () {
         this.timeout(15000);
         await showDocument(DOC, 'Alpha');
         await barFor('first');
         assert.deepStrictEqual(await barState(), { object: 'table', label: 'Table', verbs: ['row', 'column', 'align', 'block-attributes', 'edit-source', 'delete-table'] });
         const layout = await page.$eval(BAR, bar => Array.from(bar.children).map(c => (c as HTMLElement).dataset.verb ?? c.className));
         assert.deepStrictEqual(layout, ['mep-object-label', 'mep-object-separator', 'row', 'column', 'align', 'mep-object-separator', 'block-attributes', 'edit-source', 'mep-object-separator', 'delete-table']);
-        await page.waitForSelector('.mep-table-column', { timeout: 1000 });
-        const tinted = await page.$$eval('.ProseMirror .mep-table-column', els => els.map(e => e.textContent));
-        assert.deepStrictEqual(tinted, ['Kind', 'first', 'second'], 'the caret\'s column, every row of it');
+        // Wave 2 #4: at rest the caret's cell has a ring; a tint only while Row, Column or Align is active (codeBlock.e2e C1-C3).
+        await page.waitForSelector('.ProseMirror .mep-cell-active', { timeout: 1000 });
+        assert.deepStrictEqual(await page.$$eval('.ProseMirror .mep-cell-active', els => els.map(e => e.textContent)), ['first']);
+        assert.strictEqual(await page.$('.mep-table-column, .mep-table-row'), null, 'no tint at rest');
         // Text above and below the table: the tie goes below (`placement.ts`).
         const where = await barBelowTheTable();
         assert.ok(where.below && where.atLeft, `below the table, at its left: ${JSON.stringify(where)}`);
@@ -299,7 +300,7 @@ suite('Editor pipe tables (e2e)', () => {
         // Into text the bar does not stand over: it stands below the table, over "After the table." (`placement.ts`).
         await clickAt('Intro', 2);
         await delay(100);
-        assert.strictEqual(await page.$('.mep-table-column'), null, 'the tint goes with the bar');
+        assert.strictEqual(await page.$('.mep-cell-active'), null, 'the ring goes with the caret');
         assert.strictEqual(await page.$('.ProseMirror table.mep-table-active'), null, 'and the outline with the caret');
     });
 
@@ -392,7 +393,7 @@ suite('Editor pipe tables (e2e)', () => {
         await clickAt('FRS-002', 2);
         const before = await tableTop();
         await page.waitForSelector(BAR, { timeout: 2000 });
-        await page.waitForSelector('.mep-table-column', { timeout: 1000 });
+        await page.waitForSelector('.mep-cell-active', { timeout: 1000 });
         await delay(100);
         assert.deepStrictEqual(await tableTop(), before, 'the table\'s top and the scroll are where they were before its bar showed');
         // Text above (the intro under the bar's band) and below: the tie goes below.

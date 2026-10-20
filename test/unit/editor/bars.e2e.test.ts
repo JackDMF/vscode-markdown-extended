@@ -422,6 +422,7 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['language', 'Language…', false, false], ['block-attributes', 'Attributes…', false, false], ['edit-source', 'Edit source', false, false],
                 ['delete-code-block', 'Delete code block', false, true]],
             focus: 'language',
+            // #2's rule: the noun drops first, then the title cuts; at 520 that is enough — no verb moves into "…".
             narrow: { short: [['delete-code-block', 'Delete']], titleCut: true, pastColumn: true },
         },
         {
