@@ -30,6 +30,31 @@ export const settle = () => new Promise(resolve => setTimeout(resolve, 500));
 /** Wait `ms` milliseconds. */
 export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * The caret to the start of the text, as a person leaving the object they were in: what Esc dismissed
+ * there — a bar hidden until the caret leaves its object — is over. A suite whose next document holds
+ * an object where the last test's did calls it before it blurs the page, so no test starts with
+ * the bar of the one before still dismissed (a click back into the same object does not end it).
+ */
+export async function leaveObjects(page: puppeteer.Page): Promise<void> {
+    const start = await page.evaluate(() => {
+        const root = document.querySelector('.ProseMirror') as HTMLElement;
+        const first = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode();
+        if (!first) {
+            return null;
+        }
+        const range = document.createRange();
+        range.setStart(first, 0);
+        range.setEnd(first, 1);
+        const r = range.getBoundingClientRect();
+        return { x: r.left + 1, y: (r.top + r.bottom) / 2 };
+    });
+    if (start) {
+        await page.mouse.click(start.x, start.y);
+        await delay(120);
+    }
+}
+
 /** With `MEP_SHOTS_DIR` set, the suites save a screenshot of each state they name there; without it, none. */
 export const SHOTS_DIR = process.env.MEP_SHOTS_DIR;
 
