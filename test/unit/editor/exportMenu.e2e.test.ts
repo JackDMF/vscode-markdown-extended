@@ -112,7 +112,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         await page.setViewport({ width: WIDTH, height: 900 });
     });
 
-    test('Export stands at the row\'s right end, after the count and a divider, alone without a count, and stays there while a narrow row scrolls', async function () {
+    test('Export stands at the row\'s right end, after the count and a divider, alone without a count, and stays there in a narrow row, which never scrolls', async function () {
         this.timeout(20000);
         await applyTheme(page, LIGHT_MODERN);
         await showDocument(SOURCE);
@@ -144,18 +144,10 @@ suite('Editor toolbar: Export (e2e)', () => {
         await page.setViewport({ width: 520, height: 900 });
         await delay(150);
         const narrow = await rightEnd();
-        assert.ok(narrow.scrolls, 'the narrow row scrolls');
+        assert.ok(!narrow.scrolls, 'the narrow row never scrolls: what does not fit is in "…"');
         assert.ok(narrow.face && narrow.face.right <= narrow.viewport && narrow.face.left >= 0, 'Export is whole in the window');
         await shot(page, 'export-4-narrow-dark.png');
-        await page.$eval('.mep-toolbar', el => {
-            el.scrollLeft = el.scrollWidth;
-        });
-        await delay(50);
-        const scrolled = await rightEnd();
-        assert.deepStrictEqual(scrolled.face, narrow.face, 'pinned: the row scrolled, Export stayed');
-        await page.$eval('.mep-toolbar', el => {
-            el.scrollLeft = 0;
-        });
+        assert.ok(narrow.face && Math.abs(narrow.row.right - 8 - narrow.face.right) <= 1, 'Export at the right end, nothing scrolled under it');
         await applyTheme(page, LIGHT_MODERN);
         await showDiagnostics(editor as EditorPage, version, []);
     });

@@ -223,11 +223,9 @@ img.mep-pending-range {
 /*
  * The row: full width, fixed at the top of the editor as the workbench's rows
  * are under the tabs — the page's own padding does not inset it. One line,
- * every control 22px. Narrow, it scrolls sideways rather than wrapping, so
- * every control keeps its place — without a scrollbar, which would be laid
- * out inside the row's height and clip the controls: the wheel scrolls it
- * (`toolbar.ts`), and a control that takes the keyboard's focus is scrolled
- * into view.
+ * every control 22px. It never wraps and never scrolls: narrow, what does not
+ * fit moves into "…" (`toolbar.ts`, `layoutRow`) — the menus first, then the
+ * marks from the right — and the count and Export stay at its right end.
  */
 .mep-toolbar {
     position: fixed;
@@ -242,9 +240,7 @@ img.mep-pending-range {
     height: var(--mep-row-height);
     margin: 0;
     padding: 0 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
+    overflow: hidden;
     font-family: var(--vscode-font-family, sans-serif);
     font-size: calc(var(--vscode-font-size, 13px) - 1px);
     line-height: 20px;
@@ -253,7 +249,31 @@ img.mep-pending-range {
     border-bottom: 1px solid var(--mep-chrome-border);
 }
 
-.mep-toolbar::-webkit-scrollbar { display: none; }
+/* A control moved into "…", and a group all of whose controls moved: `.mep-tool`'s own display would beat the UA's `[hidden]`. */
+.mep-tool[hidden],
+.mep-row-group[hidden] { display: none; }
+
+/* "…": the row's last tool, right after the last control left in it — no divider of its own. */
+.mep-row-more { padding-left: 0; }
+.mep-row-more::before { display: none; }
+.mep-more-face { position: relative; justify-content: center; min-width: 26px; padding: 0 4px; }
+.mep-more-face > .mep-face-icon { margin-right: 0; }
+.mep-more-face > .mep-face-icon > .codicon { font-size: 16px; }
+/*
+ * A mark in "…" that is on: a 6px dot on "…" (the check inside says which),
+ * in the workbench's colour for an option that is on; High Contrast outlines it.
+ */
+.mep-more-face.mep-has-on::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, Highlight));
+}
+.vscode-high-contrast .mep-more-face.mep-has-on::after { outline: 1px solid var(--vscode-contrastBorder, CanvasText); }
 
 .mep-row-group {
     display: flex;
@@ -382,7 +402,7 @@ img.mep-pending-range {
 /* Menus: the workbench's context menu                                       */
 /* ------------------------------------------------------------------------- */
 
-/* Menus and the card sit outside the scrolling row, positioned from their face. */
+/* Menus and the card sit outside the row, which clips what hangs out of it, positioned from their face. */
 .mep-menu {
     position: fixed;
     z-index: 30;
@@ -567,7 +587,24 @@ img.mep-pending-range {
     font-size: 12px;
     color: var(--vscode-descriptionForeground, GrayText);
 }
-.mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail) { color: inherit; opacity: 0.8; }
+.mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail, .mep-entry-key) { color: inherit; opacity: 0.8; }
+
+/*
+ * "…" (`toolbar.ts`, `layoutRow`): as wide as its longest entry, within the
+ * menus' bounds and the window. A moved mark keeps its key, after its syntax,
+ * never cut: where the menu is capped, the syntax goes first.
+ */
+.mep-menu[data-menu="more"] > :is(.mep-menu-item, .mep-menu-separator)[hidden] { display: none; }
+.mep-menu[data-menu="more"] { width: max-content; max-width: min(380px, calc(100vw - 8px)); }
+.mep-menu[data-menu="more"] .mep-entry-syntax { min-width: 0; }
+.mep-menu[data-menu="more"] .mep-submenu-item > .mep-menu-caret { margin-left: auto; }
+.mep-entry-key {
+    flex: none;
+    padding-left: 10px;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
 
 /* A command's entry (Export's): its name in plain text, and how it is made beside it, right and dim. */
 .mep-menu[data-menu="export"] > .mep-menu-item > .mep-entry-label { flex: none; white-space: nowrap; }
@@ -1457,20 +1494,15 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
  * The formatting row's right end: what is about the document as a whole —
  * what the page says of it (the diagnostics count, in `-said`), then Export,
  * with the row's divider before Export whenever anything stands before it:
- * the count, or the lock's reason beside the tools. Pinned to the right while
- * the row scrolls sideways; Export keeps it shown without a count.
+ * the count, or the lock's reason beside the tools. It never leaves the row
+ * (`layoutRow` moves the tools before it); Export keeps it shown without a count.
  */
 .mep-row-status {
-    position: sticky;
-    right: 0;
     display: flex;
     flex: none;
     align-items: center;
     margin-left: auto;
     padding: 0 0 0 8px;
-    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
-    /* Over the row's right padding too: a narrow row's tools scroll under it and would show there. */
-    box-shadow: 8px 0 0 var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
 }
 .mep-row-said,
 .mep-row-export {

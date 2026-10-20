@@ -6,9 +6,10 @@
  * - **The row** is one line of uniform controls: the block-type menu, the five
  *   native marks, the Formatting, Annotation and Insert menus — and, pinned at
  *   its right end with the diagnostics count, the Export menu, which acts on
- *   the document rather than the selection. It never wraps;
- *   narrow, it scrolls sideways, so every control keeps its place. A mark's
- *   glyph is its real element (`<i>`, `<em>`, …) held to the button's size.
+ *   the document rather than the selection. It never wraps and never
+ *   scrolls: narrow, what does not fit moves into a "…" menu (`layoutRow`,
+ *   `ROW_OVERFLOW`). A mark's glyph is its real element (`<i>`, `<em>`, …)
+ *   held to the button's size.
  * - **A menu** lists its entries as glyph · word · syntax — the glyph the element
  *   the parser makes, styled by the page's cascade, at its natural size and
  *   clipped; the Block type entries draw their word as the element, zoomed to
@@ -25,7 +26,7 @@
  * Everything lives inside the page's `body.markdown-body`, so a sample is
  * styled by the same stylesheets as the document; only the chrome is
  * `styles/editor.css`. The menus and the card are positioned `fixed` in a layer
- * of their own: the row scrolls, and a scrolling box clips what hangs out of it.
+ * of their own: the row clips what hangs out of it.
  *
  * Controls act on `mousedown` + `preventDefault`, so the editor keeps its focus
  * and its selection; they are reachable by Tab, menus by the arrow keys.
@@ -53,10 +54,11 @@ import { currentReadsAttrs } from '../../inlineEngine';
 import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    ActionPreview, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
-    TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, menuOf, submenuOf, tipOf,
+    ActionPreview, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
+    TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, menuOf, moreOrder, submenuOf, tipOf,
 } from './actions';
-import { ariaKeyshortcuts } from '../../keys';
+import { moreControl, moreName, moveUntilFits, overflows } from '../overflow';
+import { ariaKeyshortcuts, keyLabel } from '../../keys';
 import { Tip, plainTip } from '../../tips';
 import { macKeys } from '../hint';
 import { Tooltips, describeAs } from '../tooltip';
@@ -361,7 +363,7 @@ interface Tool {
 }
 
 interface Menu {
-    id: ToolbarMenu | ToolbarSubmenu | 'export';
+    id: ToolbarMenu | ToolbarSubmenu | 'export' | 'more';
     panel: HTMLElement;
     /** Its entries in order, the submenu's opener included; the arrow keys move between them. */
     items: HTMLElement[];
@@ -374,10 +376,16 @@ interface Menu {
     face?: HTMLElement;
     /** Hung from its face's right edge, not its left: the row's last control, at the window's edge. */
     alignEnd?: true;
-    /** A submenu's entry in its parent, and the parent. */
+    /**
+     * A submenu's entry in its parent, and the parent. A row menu moved into
+     * "…" (`layoutRow`) keeps its face and has its entry there as `opener`;
+     * `parent` is "…" only while it is moved, so it is a submenu exactly then.
+     */
     opener?: HTMLElement;
     parent?: Menu;
     children: Menu[];
+    /** Opened as a top-level menu: it hides the floating layer (`LayerSlot.suppress`) until it closes, whatever it is by then. */
+    suppressing?: true;
     /** "More types…": the entry that shows the entries kept behind it (`ToolbarAction.alias`) in place, and those entries. */
     more?: { item: HTMLElement; hidden: HTMLElement[]; count: number };
 }
@@ -404,17 +412,23 @@ export function barSeparator(): HTMLElement {
     return rule;
 }
 
-function separator(): HTMLElement {
+/** A divider between groups of a menu's entries; the bars' menus draw it too (`objectToolbar.ts`). */
+export function separator(): HTMLElement {
     const rule = div('mep-menu-separator');
     rule.setAttribute('role', 'separator');
     return rule;
+}
+
+/** What opens `menu` and gets the focus back from it: its entry in its parent while it is a submenu, else its face. */
+function triggerOf(menu: Menu): HTMLElement | undefined {
+    return menu.parent ? menu.opener : menu.face;
 }
 
 class ToolbarView implements PluginView {
     private readonly mount: HTMLElement;
     private readonly row: HTMLElement;
     private readonly bubble: HTMLElement;
-    /** Where the menus and the card are, outside the row that scrolls. */
+    /** Where the menus and the card are, outside the row that clips. */
     private readonly layer: HTMLElement;
     private readonly card: HTMLElement;
     private readonly tools: Tool[] = [];
@@ -441,6 +455,21 @@ class ToolbarView implements PluginView {
     private room = 0;
     /** Watches the row and its status for a size that changes where the reason fits (`placeLock`). */
     private rowSize: ResizeObserver | undefined;
+    /** "…": the menu that holds what does not fit in the row (`layoutRow`), its face, and the group the face stands in. */
+    private more!: Menu;
+    private moreFace!: HTMLElement;
+    private moreGroup!: HTMLElement;
+    /** In "…", between the moved marks and the moved menus. */
+    private moreDivider!: HTMLElement;
+    /** Each control that may leave the row: its element in the row, and its entry in "…". */
+    private readonly rowControls = new Map<RowControl, HTMLElement>();
+    private readonly overflowEntries = new Map<RowControl, HTMLElement>();
+    /** The row's menus by id; all but Block type may move into "…". */
+    private readonly rowMenus = new Map<ToolbarMenu, Menu>();
+    /** What is in "…" now, in the order it left the row (`ROW_OVERFLOW`). */
+    private moved: readonly RowControl[] = [];
+    /** What the last layout was measured for (`layoutRow`): the same again measures nothing. */
+    private layoutKey = '';
     /** The update a focus move asked for, while it waits. */
     private focusTimer: ReturnType<typeof setTimeout> | undefined;
     /** The hover of the row's controls and the bubble's (`tooltip.ts`), shared with the bars. */
@@ -566,22 +595,23 @@ class ToolbarView implements PluginView {
                 lost();
             }
         }, true);
+        // What fits in the row changes with its width and with the count beside
+        // Export: laid out again when either changes (`layoutRow`), and when a
+        // font has loaded, which changes every control's width.
         if (typeof ResizeObserver !== 'undefined') {
-            this.rowSize = new ResizeObserver(() => this.placeLock());
+            this.rowSize = new ResizeObserver(() => {
+                this.layoutRow();
+                this.placeLock();
+            });
             this.rowSize.observe(this.row);
             this.rowSize.observe(this.row.querySelector('.mep-row-status') as Element);
         }
-        // The row draws no scrollbar (it would take the controls' height): a
-        // narrow row scrolls sideways by the wheel, a vertical wheel included.
-        this.listen(this.row, 'wheel', e => {
-            const wheel = e as WheelEvent;
-            const row = this.row;
-            if (row.scrollWidth <= row.clientWidth || wheel.deltaY === 0 || Math.abs(wheel.deltaX) > Math.abs(wheel.deltaY)) {
-                return;
-            }
-            wheel.preventDefault();
-            row.scrollLeft += wheel.deltaY;
-        });
+        if (typeof document.fonts !== 'undefined') {
+            this.listen(document.fonts, 'loadingdone', () => {
+                this.layoutKey = '';
+                this.layoutRow();
+            });
+        }
         this.update(view);
     }
 
@@ -612,6 +642,10 @@ class ToolbarView implements PluginView {
                 // A menu entry shows its word and syntax, and its card the construct and the refusal: no hover.
                 // A refused one says why to a screen reader.
                 describeAs(tool.el, note);
+                // A mark's entry in "…" is checked as its button is pressed.
+                if (tool.el.getAttribute('role') === 'menuitemcheckbox') {
+                    tool.el.setAttribute('aria-checked', String(s.active));
+                }
                 // A named entry says one name: the selection's, or — the row locked — its resting one.
                 if (tool.action.named) {
                     relabel(tool.el, s.label ?? tool.action.label);
@@ -630,15 +664,113 @@ class ToolbarView implements PluginView {
                 const enabled = menu.tools.some(t => stateOf(t.action).enabled);
                 setState(menu.opener, enabled, false);
             }
+            if (menu === this.more) {
+                continue;
+            }
             if (menu.face && menu.scope === 'document') {
                 this.updateDocumentFace(menu, place);
             } else if (menu.face) {
                 this.updateFace(menu, stateOf, lock);
             }
         }
-        // After the faces: a face relabelled ("Paragraph", "Heading 2") changes the room the reason has beside them.
+        // After the faces: a face relabelled ("Paragraph", "Heading 2") changes what fits in the row.
+        this.layoutRow();
+        this.updateMore(lock);
         this.showLock(lock);
         this.syncBubble();
+    }
+
+    /**
+     * The row never scrolls (Daniel, 2026-10-19): where it is too narrow, its
+     * controls leave it for "…" in `ROW_OVERFLOW`'s order — the three menus,
+     * then the marks from the right — until the rest fits; Block type, the
+     * count and Export never leave. Measured, not set by a width, so it holds
+     * for any font and any label; measured again only when what it was
+     * measured for changed (`layoutKey`): the row's width, the block-type
+     * face's label, the count, the lock's reason, the running export.
+     */
+    private layoutRow(): void {
+        if (this.destroyed) {
+            return;
+        }
+        const key = this.rowLayoutKey();
+        if (key === this.layoutKey) {
+            return;
+        }
+        const before = this.moved.join(',');
+        for (const control of ROW_OVERFLOW) {
+            this.showInRow(control);
+        }
+        this.moreGroup.hidden = true;
+        let moved: RowControl[] = [];
+        if (overflows(this.row)) {
+            // "…" counts from the first measurement that moves anything.
+            this.moreGroup.hidden = false;
+            moved = moveUntilFits(ROW_OVERFLOW, () => !overflows(this.row), c => this.showInRow(c), c => this.moveToMore(c));
+            if (moved.length === 0) {
+                this.moreGroup.hidden = true;
+            }
+        }
+        this.moved = moved;
+        const { marks, menus } = moreOrder(moved);
+        this.moreDivider.hidden = marks.length === 0 || menus.length === 0;
+        this.more.children = menus.map(id => this.rowMenus.get(id) as Menu);
+        this.layoutKey = this.rowLayoutKey();
+        if (moved.join(',') !== before && this.menus.some(m => !m.panel.hidden)) {
+            // A menu open over a row that changed stands where nothing opens it now.
+            this.closeAll();
+        }
+    }
+
+    /** What the row's layout depends on, besides the controls themselves. */
+    private rowLayoutKey(): string {
+        const said = this.row.querySelector<HTMLElement>('.mep-row-said');
+        const blockType = this.rowMenus.get('block-type')?.face?.textContent ?? '';
+        return [this.row.clientWidth, said?.offsetWidth ?? 0, blockType, this.lockNote.hidden ? '' : this.lockNote.textContent, this.host.exporting() ?? ''].join('|');
+    }
+
+    /** `control` back in the row, its entry in "…" hidden; a menu is top-level again. */
+    private showInRow(control: RowControl): void {
+        const el = this.rowControls.get(control) as HTMLElement;
+        el.hidden = false;
+        (el.parentElement as HTMLElement).hidden = false;
+        (this.overflowEntries.get(control) as HTMLElement).hidden = true;
+        const menu = this.rowMenus.get(control as ToolbarMenu);
+        if (menu) {
+            menu.parent = undefined;
+        }
+    }
+
+    /** `control` out of the row and into "…"; a group whose controls all left goes with its divider. */
+    private moveToMore(control: RowControl): void {
+        const el = this.rowControls.get(control) as HTMLElement;
+        el.hidden = true;
+        const group = el.parentElement as HTMLElement;
+        group.hidden = Array.from(group.children).every(c => (c as HTMLElement).hidden);
+        (this.overflowEntries.get(control) as HTMLElement).hidden = false;
+        const menu = this.rowMenus.get(control as ToolbarMenu);
+        if (menu) {
+            menu.parent = this.more;
+        }
+    }
+
+    /**
+     * "…"'s face: refused under the lock as every selection tool is; a dot
+     * when a mark in it is on; its name what it holds, in its menu's order —
+     * marks, then menus — the ones on said so.
+     */
+    private updateMore(lock: string | null): void {
+        const { marks, menus } = moreOrder(this.moved);
+        const on = marks.filter(id => this.rowControls.get(id)?.classList.contains('mep-active'));
+        const name = (id: RowControl) => (this.rowMenus.has(id as ToolbarMenu) ? MENU_LABELS[id as ToolbarMenu] : TOOLBAR_ACTIONS.find(a => a.id === id)?.label ?? id);
+        setState(this.moreFace, lock === null, false);
+        this.moreFace.classList.toggle('mep-has-on', on.length > 0);
+        this.moreFace.setAttribute('aria-label', moreName('row', [...marks, ...menus].map(name), on.map(name)));
+        this.tipOfControl.set(this.moreFace, plainTip('More', lock));
+        this.tips.refresh(this.moreFace);
+        if (lock !== null && !this.more.panel.hidden) {
+            this.closeAll();
+        }
     }
 
     /** The lock's reason at the row's end and as its description; `null` takes both away. */
@@ -774,14 +906,19 @@ class ToolbarView implements PluginView {
             for (const item of group) {
                 if (item === 'marks') {
                     for (const action of TOOLBAR_ACTIONS.filter(inRow)) {
-                        box.append(this.markButton(action));
+                        const button = this.markButton(action);
+                        this.rowControls.set(action.id, button);
+                        box.append(button);
                     }
                 } else {
-                    box.append(this.menuFace(item));
+                    const face = this.menuFace(item);
+                    this.rowControls.set(item, face);
+                    box.append(face);
                 }
             }
             row.append(box);
         }
+        row.append(this.moreGroup = this.buildMore());
         // The lock's reason (`showLock`), while the row is refused: in the room
         // the tools leave, not pinned over them, so a narrow row cuts it rather
         // than covering a tool.
@@ -877,18 +1014,93 @@ class ToolbarView implements PluginView {
     }
 
     private menuFace(id: ToolbarMenu): HTMLElement {
-        return this.faceFor(this.buildMenu(id, TOOLBAR_ACTIONS.filter(a => menuOf(a) === id)), MENU_LABELS[id]);
+        const menu = this.buildMenu(id, TOOLBAR_ACTIONS.filter(a => menuOf(a) === id));
+        this.rowMenus.set(id, menu);
+        return this.faceFor(menu, MENU_LABELS[id]);
+    }
+
+    /**
+     * "…" (`layoutRow`), in a group of its own after the row's last group,
+     * hidden while nothing moved. Its menu holds an entry for every control
+     * that may leave the row, each hidden while that control is in the row:
+     * the marks in row order — glyph, word, syntax and key, checked when on —
+     * a divider, then the menus in row order, each opening its own menu as a
+     * submenu. Hung from the face's right edge, as Export's is.
+     */
+    private buildMore(): HTMLElement {
+        const more = this.newMenu('more', 'More', 'selection');
+        more.alignEnd = true;
+        this.more = more;
+        for (const action of TOOLBAR_ACTIONS.filter(inRow)) {
+            const item = this.menuEntry(more, action);
+            item.setAttribute('role', 'menuitemcheckbox');
+            item.setAttribute('aria-checked', 'false');
+            if (action.key !== undefined) {
+                item.append(span('mep-entry-key', keyLabel(action.key, macKeys())));
+            }
+            item.hidden = true;
+            this.overflowEntries.set(action.id, item);
+            more.panel.append(item);
+        }
+        this.moreDivider = separator();
+        this.moreDivider.hidden = true;
+        more.panel.append(this.moreDivider);
+        // In row order, whatever order they leave in.
+        for (const id of moreOrder(ROW_OVERFLOW).menus) {
+            const item = this.hostEntry(more, this.rowMenus.get(id) as Menu);
+            item.hidden = true;
+            this.overflowEntries.set(id, item);
+            more.panel.append(item);
+        }
+        const face = moreControl('row');
+        // Shown and hidden with its group.
+        face.hidden = false;
+        this.wireFace(more, face);
+        this.moreFace = face;
+        const group = div('mep-row-group mep-row-more');
+        group.hidden = true;
+        group.append(face);
+        return group;
+    }
+
+    /** A row menu's entry in "…": its name and a chevron; it opens the menu itself, as a submenu, while the face is out of the row. */
+    private hostEntry(more: Menu, menu: Menu): HTMLElement {
+        const item = this.entry(more);
+        item.classList.add('mep-submenu-item');
+        item.dataset.submenu = menu.id;
+        item.setAttribute('aria-haspopup', 'menu');
+        item.setAttribute('aria-expanded', 'false');
+        const glyph = span('mep-entry-glyph');
+        glyph.setAttribute('aria-hidden', 'true');
+        item.append(glyph, span('mep-entry-label', MENU_LABELS[menu.id as ToolbarMenu]), chevronNode('right'));
+        menu.opener = item;
+        item.addEventListener('mouseenter', () => {
+            this.hideCard();
+            followPointer(more.panel, item);
+            this.openMenu(menu, false);
+        });
+        item.addEventListener('click', e => {
+            e.preventDefault();
+            this.openMenu(menu, false);
+        });
+        return item;
     }
 
     /** A top-level menu's face in the row: `label` and a chevron; it opens the menu on a press, Enter, Space or the down arrow. */
     private faceFor(menu: Menu, label: string): HTMLElement {
         const face = div('mep-tool mep-menu-face');
+        face.append(span('mep-face-label', label), chevronNode());
+        this.wireFace(menu, face);
+        return face;
+    }
+
+    /** `face` opens `menu`: on a press, Enter, Space or the down arrow; named and described by its hover. */
+    private wireFace(menu: Menu, face: HTMLElement): void {
         face.dataset.menu = menu.id;
         face.setAttribute('role', 'button');
         face.setAttribute('aria-haspopup', 'menu');
         face.setAttribute('aria-expanded', 'false');
         face.tabIndex = 0;
-        face.append(span('mep-face-label', label), chevronNode());
         this.tips.attach(face, () => this.tipOfControl.get(face) ?? null);
         menu.face = face;
         face.addEventListener('click', e => {
@@ -908,7 +1120,6 @@ class ToolbarView implements PluginView {
                 this.closeAll();
             }
         });
-        return face;
     }
 
     /**
@@ -1193,7 +1404,7 @@ class ToolbarView implements PluginView {
                 }
                 stop();
                 this.closeMenu(menu);
-                (menu.opener ?? menu.face)?.focus();
+                triggerOf(menu)?.focus();
                 break;
             case 'Tab':
                 this.closeAll();
@@ -1202,20 +1413,23 @@ class ToolbarView implements PluginView {
     }
 
     private openMenu(menu: Menu, focusFirst: boolean): void {
-        if (menu.face && isDisabled(menu.face)) {
+        if (!menu.parent && menu.face && isDisabled(menu.face)) {
             this.flashLock();
             return;
         }
         if (menu.parent) {
             this.closeSubmenus(menu.parent);
+            // Last in the layer, so it stands over its parent where it is placed over it (`place`).
+            this.layer.append(menu.panel);
         } else {
             this.closeAll();
         }
         menu.panel.hidden = false;
-        (menu.face ?? menu.opener)?.setAttribute('aria-expanded', 'true');
+        triggerOf(menu)?.setAttribute('aria-expanded', 'true');
         if (!menu.parent) {
             // A row menu open: the floating layer hides until it closes (`LayerSlot.suppress`).
             this.slot.suppress(true);
+            menu.suppressing = true;
         }
         this.fitSamples(menu);
         this.place(menu);
@@ -1231,12 +1445,15 @@ class ToolbarView implements PluginView {
         }
         if (!menu.panel.hidden) {
             menu.panel.hidden = true;
-            (menu.face ?? menu.opener)?.setAttribute('aria-expanded', 'false');
+            // Both: a menu moved into "…" or back while open has had either.
+            menu.face?.setAttribute('aria-expanded', 'false');
+            menu.opener?.setAttribute('aria-expanded', 'false');
             // It opens again at rest: the canonical entries, the rest behind "More types…".
             this.toggleMore(menu, false);
             menu.panel.scrollTop = 0;
-            if (!menu.parent) {
+            if (menu.suppressing) {
                 // Back without a new rest, where it is still about what the selection is.
+                menu.suppressing = undefined;
                 this.slot.suppress(false);
             }
         }
@@ -1264,12 +1481,17 @@ class ToolbarView implements PluginView {
         }
     }
 
-    /** Under its face, or beside its opener's menu (`placement.ts`, `placeMenu`). */
+    /**
+     * Under its face, or beside its opener's menu (`placement.ts`,
+     * `placeMenu`); where neither side of the parent has room (a narrow
+     * window, a menu moved into "…"), under its entry, over the parent — the
+     * entry it was opened from stays in sight.
+     */
     private place(menu: Menu): void {
-        if (menu.face) {
+        if (!menu.parent && menu.face) {
             placeMenu(menu.panel, menu.face, undefined, menu.alignEnd ? 'end' : 'start');
-        } else {
-            placeMenu(menu.panel, menu.opener as HTMLElement, (menu.parent as Menu).panel);
+        } else if (placeMenu(menu.panel, menu.opener as HTMLElement, (menu.parent as Menu).panel).side === 'none') {
+            placeMenu(menu.panel, menu.opener as HTMLElement);
         }
     }
 
