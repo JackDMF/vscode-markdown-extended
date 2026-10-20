@@ -1528,6 +1528,13 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     margin-right: 2px;
 }
 .mep-face-icon > .codicon { font-size: 14px; line-height: 1; }
+/* The running format's entry in Export's menu: the same spinner before its name (`toolbar.ts`, `updateDocumentFace`). */
+.mep-entry-busy { display: inline-flex; flex: none; align-items: center; }
+.mep-entry-busy > .codicon { font-size: 14px; line-height: 1; }
+/* Busy, under reduced motion: the same codicon, still — `codicon.css` spins it everywhere else. */
+@media (prefers-reduced-motion: reduce) {
+    :is(.mep-face-icon, .mep-entry-busy) > .codicon-modifier-spin { animation: none; }
+}
 
 /*
  * Why the row is refused while a source box or the properties panel has the

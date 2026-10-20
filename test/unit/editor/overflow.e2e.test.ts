@@ -425,4 +425,59 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         await delay(200);
         assert.deepStrictEqual(await at(), before, 'unlocked: nothing moved');
     });
+
+    // -- Export busy names the format (section 6, e1) -----------------------------
+
+    test('e1 Export → HTML at 1280, 520 and 420: the face names the format as the room allows and spins, the tooltip says it whole, no tool moved; the menu; reduced motion; done', async function () {
+        this.timeout(120000);
+        const EXPORT = `${ROW} .mep-menu-face[data-menu="export"]`;
+        const face = () => page.$eval(EXPORT, el => ({
+            label: (el.querySelector('.mep-face-label') as HTMLElement).textContent,
+            spins: el.querySelector(':scope > .mep-face-icon > .codicon-loading.codicon-modifier-spin') !== null,
+            busy: el.getAttribute('aria-busy'),
+            title: el.getAttribute('aria-description'),
+        }));
+        for (const [theme, t] of THEMES) {
+            await applyTheme(page, theme);
+            for (const [width, label] of [[1280, 'Exporting HTML…'], [520, 'HTML…'], [420, 'HTML…']] as const) {
+                await resize(width, 640);
+                await showDocument();
+                await clickText(page, 'Plain', 2);
+                const idle = (await rowState()).moved;
+                await page.click(EXPORT);
+                await page.waitForSelector(`${panel('export')}:not([hidden])`);
+                await page.click(`${panel('export')} [data-export="html"]`);
+                await delay(120);
+                assert.deepStrictEqual(await face(), { label, spins: true, busy: 'true', title: 'Exporting HTML…\nExporting HTML — the other formats wait for it' }, `${width} ${t}`);
+                assert.deepStrictEqual((await rowState()).moved, idle, `${width} ${t}: the busy label moved no tool`);
+                await shot(`export-busy-${width}-${t}.png`);
+                if (width === 520 && t === 'light') {
+                    await page.click(EXPORT);
+                    await page.waitForSelector(`${panel('export')}:not([hidden])`);
+                    await delay(80);
+                    const entries = await page.$$eval(`${panel('export')} [data-export]`, els => els.map(el => ({
+                        id: (el as HTMLElement).dataset.export,
+                        disabled: el.getAttribute('aria-disabled'),
+                        spins: el.querySelector(':scope > .mep-entry-busy > .codicon-modifier-spin') !== null,
+                        detail: el.querySelector('.mep-entry-detail')?.textContent ?? null,
+                        note: el.getAttribute('aria-description'),
+                    })));
+                    assert.deepStrictEqual(entries.map(e => [e.id, e.disabled, e.spins]), [['html', 'true', true], ['pdf', 'true', false], ['png', 'true', false], ['jpg', 'true', false], ['settings', null, false]]);
+                    assert.strictEqual(entries[0].detail, 'exporting…');
+                    assert.deepStrictEqual(entries.slice(1, 4).map(e => e.note), Array(3).fill('Exporting HTML — the other formats wait for it'));
+                    await shot('export-menu-busy-520-light.png');
+                    await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+                    await delay(50);
+                    const still = await page.$eval(`${EXPORT} .codicon-modifier-spin`, el => getComputedStyle(el).animationName);
+                    await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+                    assert.strictEqual(still, 'none', 'reduced motion: the spinner holds still');
+                    await page.keyboard.press('Escape');
+                }
+                await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
+                await delay(120);
+                assert.deepStrictEqual(await face(), { label: 'Export', spins: false, busy: 'false', title: 'Export' }, `${width} ${t}: done`);
+                assert.ok(await page.$(`${EXPORT} > .mep-face-icon > .codicon-export`), 'the export codicon back');
+            }
+        }
+    });
 });

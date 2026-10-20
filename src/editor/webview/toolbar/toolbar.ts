@@ -113,12 +113,41 @@ const EXPORT_ENTRIES: readonly ExportEntry[] = [
     { id: 'settings', label: 'Export settings…', exports: false, separated: true, run: host => host.exportSettings() },
 ];
 
-/** The Export menu's face: its label, and the codicon before it; and the label while an export runs. */
+/** The Export menu's face: its label, and the codicon before it. */
 const EXPORT_LABEL = 'Export';
-const EXPORT_BUSY_LABEL = 'Exporting…';
 
-/** Why a format is refused while an export runs. */
-export const EXPORT_BUSY_REFUSAL = 'An export is running — wait for it to finish';
+/** A format as the menu and the quick pick name it (`formats.ts`). */
+function formatLabel(format: ExportFormatName): string {
+    return EXPORT_FORMATS.find(f => f.format === format)?.label ?? format;
+}
+
+/**
+ * What Export's face says while an export of `format` runs: `Exporting PDF…`
+ * where the row has the room, `PDF…` where it has not (`layoutRow`); the
+ * tooltip always says it whole (Daniel, 2026-10-19).
+ */
+export function exportBusyLabel(format: ExportFormatName, room: 'full' | 'short'): string {
+    return room === 'full' ? `Exporting ${formatLabel(format)}…` : `${formatLabel(format)}…`;
+}
+
+/** Why the other formats are refused while an export of `format` runs: the face's note and their description. */
+export function exportBusyNote(format: ExportFormatName): string {
+    return `Exporting ${formatLabel(format)} — the other formats wait for it`;
+}
+
+/** What the running format's entry says in place of how it is made. */
+const EXPORT_RUNNING_DETAIL = 'exporting…';
+
+/** The workbench's busy codicon, spinning (`codicon-modifier-spin`); held still where motion is reduced (`editor.css`). */
+function spinner(): globalThis.Node[] {
+    const nodes = lensLabelNodes('$(loading)');
+    for (const node of nodes) {
+        if (node instanceof HTMLElement) {
+            node.classList.add('codicon-modifier-spin');
+        }
+    }
+    return nodes;
+}
 
 /** How long the pointer or the focus rests on an entry before its preview card shows. */
 const PREVIEW_DELAY_MS = 300;
@@ -454,6 +483,8 @@ class ToolbarView implements PluginView {
     private readonly rowMenus = new Map<ToolbarMenu, Menu>();
     /** What is in "…" now, in the order it left the row (`ROW_OVERFLOW`). */
     private moved: readonly RowControl[] = [];
+    /** Export's label: `layoutRow` names the running format in it, as the row's room allows. */
+    private exportLabel!: HTMLElement;
     /** What the last layout was measured for (`layoutRow`): the same again measures nothing. */
     private layoutKey = '';
     /** The update a focus move asked for, while it waits. */
@@ -684,6 +715,9 @@ class ToolbarView implements PluginView {
             note.classList.remove(LOCK_FLASH_CLASS);
             clearTimeout(this.flashTimer);
         }
+        // A running export names its format: short while the tools are measured, so the label moves none of them.
+        const running = this.host.exporting();
+        this.exportLabel.textContent = running === null ? EXPORT_LABEL : exportBusyLabel(running, 'short');
         for (const control of ROW_OVERFLOW) {
             this.showInRow(control);
         }
@@ -721,6 +755,13 @@ class ToolbarView implements PluginView {
         }
         // Its hover: the whole reason, where the short form shows.
         this.tips.refresh(note);
+        // The whole busy label only where the row has the room without moving a tool or cutting the reason.
+        if (running !== null) {
+            this.exportLabel.textContent = exportBusyLabel(running, 'full');
+            if (overflows(this.row) || (!note.hidden && overflows(note))) {
+                this.exportLabel.textContent = exportBusyLabel(running, 'short');
+            }
+        }
         this.moved = moved;
         const { marks, menus } = moreOrder(moved);
         this.moreDivider.hidden = marks.length === 0 || menus.length === 0;
@@ -894,6 +935,7 @@ class ToolbarView implements PluginView {
             menu.panel.append(item);
         }
         const face = this.faceFor(menu, EXPORT_LABEL);
+        this.exportLabel = face.querySelector('.mep-face-label') as HTMLElement;
         const icon = span('mep-face-icon');
         icon.setAttribute('aria-hidden', 'true');
         icon.append(...lensLabelNodes('$(export)'));
@@ -1087,21 +1129,40 @@ class ToolbarView implements PluginView {
      * Export's face, read from the lock model (`rowLock` for its scope, the
      * document): offered beside a locked row, its tooltip saying what the
      * focus changes (an open box applied first). While an export runs it says
-     * so — `Exporting…`, busy — and its formats are refused, the settings not.
+     * which — a spinning codicon, `Exporting PDF…` or `PDF…` as the row has
+     * the room (`layoutRow` sets the label), busy, the whole in its tooltip —
+     * and in its menu the running format spins, the others are refused saying
+     * what they wait for; the settings are not.
      */
     private updateDocumentFace(menu: Menu, place: FocusPlace): void {
         const face = menu.face as HTMLElement;
         const { refusal, note } = rowLock(place, menu.scope);
-        const busy = this.host.exporting() !== null;
+        const running = this.host.exporting();
         setState(face, refusal === null, false);
-        (face.querySelector('.mep-face-label') as HTMLElement).textContent = busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL;
-        face.setAttribute('aria-busy', String(busy));
-        this.tipOfControl.set(face, plainTip(busy ? EXPORT_BUSY_LABEL : EXPORT_LABEL, refusal ?? (busy ? EXPORT_BUSY_REFUSAL : note)));
+        const icon = face.querySelector('.mep-face-icon') as HTMLElement;
+        if (icon.dataset.busy !== String(running !== null)) {
+            icon.dataset.busy = String(running !== null);
+            icon.replaceChildren(...(running === null ? lensLabelNodes('$(export)') : spinner()));
+        }
+        face.setAttribute('aria-busy', String(running !== null));
+        this.tipOfControl.set(face, running === null ? plainTip(EXPORT_LABEL, refusal ?? note) : plainTip(exportBusyLabel(running, 'full'), refusal ?? exportBusyNote(running)));
         this.tips.refresh(face);
         // A menu entry has no hover; a refused one says why to a screen reader.
         for (const item of this.formatItems) {
-            setState(item, !busy, false);
-            describeAs(item, busy ? EXPORT_BUSY_REFUSAL : null);
+            const mine = running !== null && item.dataset.export === running;
+            setState(item, running === null, false);
+            describeAs(item, running === null ? null : mine ? exportBusyLabel(running, 'full') : exportBusyNote(running));
+            item.querySelector(':scope > .mep-entry-busy')?.remove();
+            if (mine) {
+                const busy = span('mep-entry-busy');
+                busy.setAttribute('aria-hidden', 'true');
+                busy.append(...spinner());
+                item.prepend(busy);
+            }
+            const detail = item.querySelector<HTMLElement>(':scope > .mep-entry-detail');
+            if (detail) {
+                detail.textContent = mine ? EXPORT_RUNNING_DETAIL : EXPORT_ENTRIES.find(e => e.id === item.dataset.export)?.detail ?? '';
+            }
         }
     }
 

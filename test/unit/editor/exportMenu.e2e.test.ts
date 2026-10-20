@@ -262,7 +262,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         await showDiagnostics(editor as EditorPage, version, []);
     });
 
-    test('one export at a time: from the press until the host answers, the face reads Exporting… and the formats are refused with the reason; the settings are not', async function () {
+    test('one export at a time: from the press until the host answers, the face names the running format and spins; the other formats are refused saying what they wait for; the settings are not', async function () {
         this.timeout(20000);
         await showDocument(SOURCE);
         const face = () => page.$eval(FACE, el => ({
@@ -280,14 +280,17 @@ suite('Editor toolbar: Export (e2e)', () => {
         await page.click(FACE);
         await page.click(`${PANEL} [data-export="html"]`);
         await delay(80);
-        const reason = 'An export is running — wait for it to finish';
-        assert.deepStrictEqual(await face(), { label: 'Exporting…', busy: 'true', disabled: 'false', title: `Exporting…\n${reason}` });
+        const reason = 'Exporting HTML — the other formats wait for it';
+        assert.deepStrictEqual(await face(), { label: 'Exporting HTML…', busy: 'true', disabled: 'false', title: `Exporting HTML…\n${reason}` });
+        assert.ok(await page.$(`${FACE} > .mep-face-icon > .codicon-loading.codicon-modifier-spin`), 'the face spins');
         await page.click(FACE);
         await page.waitForSelector(`${PANEL}:not([hidden])`);
         assert.deepStrictEqual(await entries(), [
-            ...['html', 'pdf', 'png', 'jpg'].map(id => ({ id, disabled: 'true', title: reason })),
+            { id: 'html', disabled: 'true', title: 'Exporting HTML…' },
+            ...['pdf', 'png', 'jpg'].map(id => ({ id, disabled: 'true', title: reason })),
             { id: 'settings', disabled: null, title: '' },
         ]);
+        assert.deepStrictEqual(await page.$eval(`${PANEL} [data-export="html"]`, el => [el.querySelector(':scope > .mep-entry-busy > .codicon-modifier-spin') !== null, el.querySelector('.mep-entry-detail')?.textContent]), [true, 'exporting…'], 'the running format spins');
         await shot(page, 'export-5-busy-light.png');
         await page.click(`${PANEL} [data-export="pdf"]`);
         await delay(80);
@@ -295,7 +298,7 @@ suite('Editor toolbar: Export (e2e)', () => {
 
         await (editor as EditorPage).send({ type: 'exportDone', outcome: 'busy' });
         await delay(80);
-        assert.strictEqual((await face()).label, 'Exporting…', 'answered busy: the one running is still shown');
+        assert.strictEqual((await face()).label, 'Exporting HTML…', 'answered busy: the one running is still shown');
         await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
         await delay(80);
         assert.deepStrictEqual(await face(), { label: 'Export', busy: 'false', disabled: 'false', title: 'Export' });
@@ -312,7 +315,7 @@ suite('Editor toolbar: Export (e2e)', () => {
             type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE, exporting: 'pdf',
         });
         await delay(100);
-        assert.deepStrictEqual(await page.$eval(FACE, el => [(el.querySelector('.mep-face-label') as HTMLElement).textContent, el.getAttribute('aria-busy')]), ['Exporting…', 'true']);
+        assert.deepStrictEqual(await page.$eval(FACE, el => [(el.querySelector('.mep-face-label') as HTMLElement).textContent, el.getAttribute('aria-busy')]), ['Exporting PDF…', 'true'], 'the format the host names');
         await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
         await delay(80);
         assert.deepStrictEqual(await page.$eval(FACE, el => [(el.querySelector('.mep-face-label') as HTMLElement).textContent, el.getAttribute('aria-busy')]), ['Export', 'false']);
@@ -337,7 +340,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         await page.click(FACE);
         await page.click(`${PANEL} [data-export="pdf"]`);
         await delay(80);
-        assert.strictEqual(await page.$eval(`${FACE} .mep-face-label`, el => el.textContent), 'Exporting…');
+        assert.strictEqual(await page.$eval(`${FACE} .mep-face-label`, el => el.textContent), 'Exporting PDF…');
         await showDocument(SOURCE);
         assert.deepStrictEqual(await page.$eval(FACE, el => [(el.querySelector('.mep-face-label') as HTMLElement).textContent, el.getAttribute('aria-busy')]), ['Export', 'false']);
     });
