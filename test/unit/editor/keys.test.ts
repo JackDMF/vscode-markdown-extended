@@ -66,4 +66,25 @@ suite('Editor keys: a binding as the platform names it', () => {
         assert.ok(!press('x', { ctrlKey: true, altKey: true }), 'Ctrl+Alt+X without the AltGraph state is a shortcut');
         assert.ok(!press('Enter', { ctrlKey: true, altKey: true }, true), 'AltGr with a named key types nothing');
     });
+
+    test('r2-6: deleting is typing with any modifier; paste and cut are typing, other shortcuts are not', () => {
+        const press = (key: string, m: Partial<Record<'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey', boolean>> = {}) =>
+            typesText({ key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...m });
+        for (const key of ['Backspace', 'Delete']) {
+            assert.ok(press(key), key);
+            assert.ok(press(key, { ctrlKey: true }), `Ctrl+${key} deletes a word`);
+            assert.ok(press(key, { metaKey: true }), `Cmd+${key}`);
+            assert.ok(press(key, { altKey: true }), `Alt+${key}`);
+            assert.ok(press(key, { ctrlKey: true, shiftKey: true }), `Ctrl+Shift+${key}`);
+        }
+        assert.ok(press('v', { ctrlKey: true }), 'Ctrl+V');
+        assert.ok(press('V', { ctrlKey: true, shiftKey: true }), 'Ctrl+Shift+V');
+        assert.ok(press('v', { metaKey: true }), 'Cmd+V');
+        assert.ok(press('x', { ctrlKey: true }), 'Ctrl+X');
+        assert.ok(press('x', { metaKey: true }), 'Cmd+X');
+        assert.ok(!press('c', { ctrlKey: true }), 'copy changes nothing');
+        assert.ok(!press('z', { ctrlKey: true }), 'Ctrl+Z is the editor\'s own undo');
+        assert.ok(!press('v', { ctrlKey: true, altKey: true }), 'Ctrl+Alt+V is no paste');
+        assert.ok(press('v'), 'v alone is a character');
+    });
 });

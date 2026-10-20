@@ -41,7 +41,10 @@ export interface TypingKey extends KeyChord {
 /**
  * Whether a key going down is meant to change the text: a character or an
  * editing key (Backspace, Enter), not a modifier on its own, not a shortcut
- * (Ctrl or Cmd, not both), not an Alt command (Alt+Enter, Alt+arrow). A
+ * (Ctrl or Cmd, not both), not an Alt command (Alt+Enter, Alt+arrow). Deleting
+ * is typing whatever is held with it (Ctrl+Backspace deletes a word), and so
+ * are the two shortcuts that change the text with no character of their own:
+ * Ctrl or Cmd with V (paste) or X (cut). A
  * character made with Alt — Option on a Mac, AltGr on a German layout, which a
  * Windows browser reports as Ctrl+Alt with the AltGraph state on (`{ } [ ] @ \ ~`)
  * — is typing: a one-character key.
@@ -50,9 +53,13 @@ export function typesText(e: TypingKey): boolean {
     if (MODIFIER_KEYS.has(e.key)) {
         return false;
     }
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+        return true;
+    }
     const altGraph = e.getModifierState?.('AltGraph') === true;
     if (!altGraph && e.ctrlKey !== e.metaKey) {
-        return false;
+        const key = e.key.toLowerCase();
+        return !e.altKey && (key === 'v' || key === 'x');
     }
     return e.altKey || altGraph ? e.key.length === 1 : true;
 }

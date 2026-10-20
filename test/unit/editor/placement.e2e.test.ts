@@ -890,6 +890,94 @@ suite('Editor placement (e2e)', () => {
         }
     });
 
+    // -- fix round 2 (review of 2026-10-20) ---------------------------------------
+
+    test('r2-3: Esc, the focus away, a click back into the same link: the bar stays hidden; Alt+Enter brings it back', async function () {
+        this.timeout(20000);
+        await s2();
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BAR), false, 'hidden by Esc');
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await delay(250);
+        await clickBefore('linkedwords', 5);
+        assert.strictEqual(await page.evaluate(() => (document.getSelection()?.anchorNode?.parentElement?.closest('a') ?? null) !== null), true, 'the caret is in the link');
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BAR), false, 'a click back into the same object does not bring the bar again');
+        await page.keyboard.down('Alt');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Alt');
+        await waitBar(500);
+        await clickBefore('Below it', 1);
+    });
+
+    test('r2-7: a source box focused while the selection is elsewhere ends Esc\'s dismissal: back in the link, its bar comes', async function () {
+        this.timeout(25000);
+        await t6();
+        await page.keyboard.press('Escape');
+        await page.waitForSelector(HOVER_BAR, { timeout: 1000 });
+        await delay(INERT_MS + 50);
+        // The pointer\'s bar on the source block opens its source box: the focus is in a control, the selection on the block.
+        await page.click(`${HOVER_BAR} [data-verb="edit-source"]`);
+        await page.waitForSelector('.mep-raw-block textarea', { timeout: 2000 });
+        await delay(150);
+        assert.strictEqual(await page.evaluate(() => document.activeElement?.tagName), 'TEXTAREA', 'the source box has the focus');
+        await clickBefore('a link', 2);
+        await waitBar();
+    });
+
+    test('r2-9: a field bar has no inert time: its input takes the pointer at once', async function () {
+        this.timeout(15000);
+        await showDocument('A plain paragraph with words in it.\n', 'plain paragraph');
+        await clickBefore('words in', 0);
+        await page.keyboard.down('Control');
+        await page.keyboard.press('k');
+        await page.keyboard.up('Control');
+        await page.waitForSelector(`${ROW_FIELD} .mep-inline-field`, { timeout: 2000 });
+        assert.strictEqual(await page.$eval(ROW_FIELD, el => el.hasAttribute('data-inert')), false, 'the row\'s field bar');
+        await page.keyboard.press('Escape');
+        await delay(100);
+
+        // A bar's own field replaces the bar's verbs: the inert time the bar had is given up with them.
+        await s2();
+        await page.keyboard.down('Alt');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Alt');
+        await delay(30);
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(`${BAR} .mep-inline-field`, { timeout: 2000 });
+        assert.strictEqual(await page.$eval(BAR, el => el.hasAttribute('data-inert')), false, 'the object bar\'s field');
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await clickBefore('Below it', 1);
+    });
+
+    test('r2-10: Esc in the bubble hides it for good: after a focus round trip with the selection unchanged it stays hidden until the selection changes', async function () {
+        this.timeout(20000);
+        await showDocument('Alpha beta gamma delta epsilon zeta.\n\nSecond paragraph.\n', 'Alpha');
+        await clickBefore('beta', 0);
+        await page.keyboard.down('Shift');
+        for (let i = 0; i < 3; i++) {
+            await page.keyboard.press('ArrowRight');
+        }
+        await page.keyboard.up('Shift');
+        await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
+        await page.evaluate(() => (document.querySelector('.mep-bubble .mep-tool') as HTMLElement).focus());
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BUBBLE), false, 'hidden by Esc');
+        assert.strictEqual(await page.evaluate(() => document.activeElement === document.querySelector('.ProseMirror')), true, 'the focus is back in the text');
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await delay(250);
+        await page.evaluate(() => (document.querySelector('.ProseMirror') as HTMLElement).focus());
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BUBBLE), false, 'still hidden after the round trip');
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.up('Shift');
+        await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
+    });
+
     // -- shots ----------------------------------------------------------------
 
     test('shots: every scenario light and dark at 1280 and 520', async function () {

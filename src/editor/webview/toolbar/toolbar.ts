@@ -449,6 +449,8 @@ class ToolbarView implements PluginView {
     /** The selection the bubble is about (`selectionKey`), while it is wanted; its rest's timer. */
     private bubbleKey: string | null = null;
     private bubbleTimer: ReturnType<typeof setTimeout> | undefined;
+    /** The selection whose bubble Esc dismissed while the focus went away: kept dismissed until the selection changes. */
+    private bubbleParked: string | null = null;
     /** Stops listening to the slot coming free (`bubbleFreed`). */
     private readonly unfreed: () => void;
 
@@ -1759,7 +1761,8 @@ class ToolbarView implements PluginView {
         if (to && (this.bubble.contains(to) || placeOfElement(this.view, to).kind === 'text')) {
             return;
         }
-        this.dropBubble();
+        // The focus left, the selection did not: an Esc dismissal of this selection's bubble stays.
+        this.dropBubble(true);
     }
 
     /**
@@ -1789,6 +1792,11 @@ class ToolbarView implements PluginView {
      * wanted (`bubbleWanted`).
      */
     private syncBubble(): void {
+        // A dismissal parked by a focus round trip ends once the selection is another one.
+        if (this.bubbleParked !== null && this.bubbleParked !== this.selectionKey()) {
+            this.slot.caretLeft(this.bubbleParked);
+            this.bubbleParked = null;
+        }
         if (!this.bubbleWanted()) {
             this.dropBubble();
             return;
@@ -1798,6 +1806,8 @@ class ToolbarView implements PluginView {
             // A new selection: the last one's dismissal ends, and this one waits for its rest.
             this.dropBubble();
             this.bubbleKey = key;
+            // The selection the focus left and came back to: its dismissal, if Esc made one, is the bubble's own again.
+            this.bubbleParked = this.bubbleParked === key ? null : this.bubbleParked;
             // A selection the pointer draws waits for its release (`bubbleReleased`).
             if (!this.pointerHeld) {
                 this.bubbleTimer = setTimeout(() => {
@@ -1858,12 +1868,20 @@ class ToolbarView implements PluginView {
         }
     }
 
-    /** The bubble's selection is over: its wait, its dismissal and its claim end. */
-    private dropBubble(): void {
+    /**
+     * The bubble's wait and claim end, and — the selection is over — its
+     * dismissal. With `keepDismissal` the focus left but the selection did not:
+     * the key is parked and the dismissal stays until the selection changes.
+     */
+    private dropBubble(keepDismissal = false): void {
         clearTimeout(this.bubbleTimer);
         this.bubbleTimer = undefined;
         if (this.bubbleKey !== null) {
-            this.slot.caretLeft(this.bubbleKey);
+            if (keepDismissal) {
+                this.bubbleParked = this.bubbleKey;
+            } else {
+                this.slot.caretLeft(this.bubbleKey);
+            }
             this.slot.release(this.bubbleKey);
             this.bubbleKey = null;
         }
