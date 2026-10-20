@@ -21,7 +21,7 @@
 - Menus moved into "…" open as submenus; "…" names its contents for a screen reader.
 - The row's lock note stands in the row: beside the tools, else in the refused tools' place, else short.
 - The page no longer moves when the row locks or unlocks.
-- A lock nobody ran into says "Focus is outside the text" where it fits; else the tools only dim.
+- A lock nobody ran into says "Outside the text" where it fits; else the tools only dim.
 - Export busy names the format: "Exporting PDF…", or "PDF…" in a narrow row; the tooltip says it whole.
 - The Export face spins while an export runs; a still glyph under reduced motion.
 - In the Export menu the running format carries the spinner; the others say which export they wait for.
@@ -30,6 +30,10 @@
 - A bar whose title is hidden still names its object on hover and to a screen reader.
 - Admonition bars read "Warning admonition", shortened to "Warning" before the title truncates.
 - The selection's bubble never spills past the window: what does not fit moves into its own "…".
+- The bubble's "…" shows its controls' own glyphs and closes on a second press, keyboard included.
+- Menus in a bar's "…" are named and have no hover; their extra text is their description.
+- In a row too narrow for its name, Export shows its icon alone; Block type then cuts its label.
+- Export busy shows the format the host runs, even when another was asked for.
 
 ## v4.8.0 — Bars, Labels and Notes That Fit
 
