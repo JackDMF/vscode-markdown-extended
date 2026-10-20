@@ -200,8 +200,6 @@ img.mep-pending-range {
     --mep-row-height: 27px;
     /* The space between the row's edge and the document's first block. */
     --mep-row-gap: 8px;
-    /* The room kept for the lock's line under the row while it stands there (`toolbar.ts`, `settleRoom`). */
-    --mep-lock-room: 0px;
     /* The row's bottom edge, as the workbench draws the edge under its tabs. */
     --mep-chrome-border: var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-editorGroupHeader-border, var(--vscode-widget-border, transparent)));
     /*
@@ -218,7 +216,7 @@ img.mep-pending-range {
  * document that begins with a table, a fence or a container does not sit
  * against the row's edge: the row stands over the page, not in it.
  */
-.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-lock-room) + var(--mep-row-gap)); }
+.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-row-gap)); }
 
 /*
  * The row: full width, fixed at the top of the editor as the workbench's rows
@@ -1420,7 +1418,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 
 /* A block brought into view (a followed link's fragment) stands below the formatting row, not under it; so does an element inside one found by its id. */
 .mep-editor .ProseMirror > *,
-.mep-editor .ProseMirror [id] { scroll-margin-top: calc(64px + var(--mep-lock-room)); }
+.mep-editor .ProseMirror [id] { scroll-margin-top: 64px; }
 
 /* ------------------------------------------------------------------------- */
 /* The document cannot be shown without loss                                 */
@@ -1513,7 +1511,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 .mep-row-said:not(:has(> :not([hidden]))) { display: none; }
 /* The divider of `.mep-row-group + .mep-row-group`, after the count or the lock's reason beside it. */
 .mep-row-said:has(> :not([hidden])) + .mep-row-export::before,
-.mep-toolbar:not(.mep-row-lock-below) > .mep-row-lock:not([hidden]) + .mep-row-status > .mep-row-export::before {
+.mep-row-lock:not([hidden]) + .mep-row-status > .mep-row-export::before {
     content: "";
     flex: none;
     width: 1px;
@@ -1533,16 +1531,17 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 
 /*
  * Why the row is refused while a source box or the properties panel has the
- * focus, and the way back (`toolbar.ts`, `showLock`): text, not grey alone —
- * a pale note on the info tint, as sketched. It takes the room the tools leave
- * before the count, never pinned over them. Where it does not fit there whole
- * — measured (`placeLock`), not a width set here — it stands on a thin line
- * of its own right under the row (`-below`), whole, and is cut with an
- * ellipsis only where even that line is too narrow; the tools and the count
- * stay where they are, and the line goes with the lock. The whole text is the
- * row's description and each tool's tooltip too. A press on a refused tool
- * points at it for a moment (`-flash`) in the refusal's amber, as the caret
- * hint's refusal is marked (`.mep-hint[data-tone="refusal"]`).
+ * focus, and the way back (`toolbar.ts`, `layoutRow`): text, not grey alone —
+ * a pale note on the info tint, as sketched. It stands in the row, never
+ * under it, so the page never moves (Daniel, 2026-10-19): beside the tools
+ * where it fits there whole; else, for a box or a field, in the refused
+ * tools' place (`-inrow`: they give way), whole or in its short form, which
+ * keeps its keys; a button's lock shows its short form beside the tools or
+ * nothing. Measured, not a width set here; the ellipsis is the last resort
+ * only. The whole text is the row's description and each tool's tooltip
+ * too. A press on a refused tool points at it for a moment (`-flash`) in the
+ * refusal's amber, as the caret hint's refusal is marked
+ * (`.mep-hint[data-tone="refusal"]`).
  */
 .mep-row-lock {
     flex: 0 1 auto;
@@ -1554,20 +1553,10 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     font-size: 12px;
 }
 .mep-row-lock[hidden] { display: none; }
-.mep-toolbar:not(.mep-row-lock-below) > .mep-row-lock:not([hidden]) + .mep-row-status { margin-left: 0; }
-.mep-toolbar.mep-row-lock-below > .mep-row-lock {
-    position: fixed;
-    top: var(--mep-row-height);
-    left: 0;
-    right: 0;
-    box-sizing: border-box;
-    margin: 0;
-    padding: 2px 8px 3px;
-    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
-    border-bottom: 1px solid var(--mep-chrome-border);
-}
-/* Come while a button is held, the line waits for its room unseen — measured, not over the page (`toolbar.ts`, `placeLock`). */
-.mep-toolbar.mep-row-lock-below.mep-row-lock-waiting > .mep-row-lock { visibility: hidden; }
+.mep-toolbar:not(.mep-row-lock-inrow) > .mep-row-lock:not([hidden]) + .mep-row-status { margin-left: 0; }
+.mep-toolbar.mep-row-lock-inrow > .mep-row-group { display: none; }
+.mep-toolbar.mep-row-lock-inrow > .mep-row-lock { margin-left: 0; }
+
 .mep-row-lock-text {
     padding: 1px 8px;
     border-radius: 3px;

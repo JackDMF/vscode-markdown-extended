@@ -50,6 +50,7 @@ export function rowState(page: puppeteer.Page) {
  * Every control of the row that acts on the selection refused, each saying
  * `reason`, and the row showing it at its end; Export, which acts on the whole
  * document, offered still, its tooltip noting what it takes of the open control.
+ * At a width where the whole reason stands in the row (`assertReasonShown` for the narrow ones).
  */
 export async function assertRowLocked(page: puppeteer.Page, when: string, reason: string): Promise<void> {
     const state = await rowState(page);
@@ -59,7 +60,7 @@ export async function assertRowLocked(page: puppeteer.Page, when: string, reason
     assert.deepStrictEqual(state.tools.filter(s => s.document).map(s => ({ id: s.id, disabled: s.disabled, title: s.title })), [
         { id: 'export', disabled: false, title: EXPORT_TITLE[reason] },
     ], `${when}: Export is offered, saying what it takes of the open control`);
-    assert.strictEqual(state.reason, reason, `${when}: the row shows the reason`);
+    assert.strictEqual(state.reason, reason, `${when}: the row shows the whole reason (a wide row)`);
     assert.strictEqual(state.description, reason, `${when}: and describes itself with it`);
 }
 
@@ -72,31 +73,53 @@ export async function assertRowFree(page: puppeteer.Page, when: string): Promise
     assert.strictEqual(state.tools.find(s => s.id === 'bold')?.disabled, false, `${when}: Bold is offered`);
 }
 
+/** Each reason's short form (`lockForms`): what the row shows where the whole reason does not fit — never without its keys. */
+export const LOCK_SHORT: Record<string, string> = {
+    [LOCK_SOURCE]: `Source · ${MOD_NAME}+Enter · Esc`,
+    [LOCK_PROPERTY]: 'Property · Enter · Esc',
+    [LOCK_BUTTON]: 'Focus is outside the text',
+};
+
 /**
- * Where the shown reason stands: `beside` the tools in the row, where it fits
- * there, or `below` them on a line of its own under the row. Either way it is
- * shown whole (cut with an ellipsis only where even its own line is too
- * narrow), it covers no tool, and the tools and the diagnostics count stand
- * where they stood before the lock (`before`, from `rowBoxes`).
+ * Where the reason stands (wave 2 #2; it is never under the row, and the page
+ * never moves): `beside` the tools, whole; `inrow`, whole, in the refused
+ * tools' place (they give way); `short`, its short form, whole — in their
+ * place for a box or a field, beside them for a button; `hidden`, a button's
+ * lock with no room: the tools only dim.
  */
-export async function assertReasonShown(page: puppeteer.Page, when: string, where: 'beside' | 'below', before?: RowBoxes): Promise<void> {
+export type ReasonPlace = 'beside' | 'inrow' | 'short' | 'hidden';
+
+/**
+ * The reason shown as `where` says, the row describing itself with the whole
+ * of it, nothing under the row and the row not scrolled; and Export and the
+ * diagnostics count where they stood before the lock (`before`, from `rowBoxes`).
+ */
+export async function assertReasonShown(page: puppeteer.Page, when: string, reason: string, where: ReasonPlace, before?: RowBoxes): Promise<void> {
     const layout = await reasonLayout(page);
-    assert.ok(layout.lock.width > 0 && layout.lock.height > 0, `${when}: the reason is shown`);
-    assert.ok(layout.whole || layout.ellipsis, `${when}: the reason is whole, or cut with an ellipsis`);
-    if (where === 'below') {
-        assert.ok(layout.lock.top >= layout.row.bottom - 0.5, `${when}: the reason is on its own line under the row (${layout.lock.top} < ${layout.row.bottom})`);
-        assert.ok(layout.whole || layout.lock.width >= layout.viewport - 32, `${when}: cut only where its own line is too narrow`);
+    assert.strictEqual(layout.description, reason, `${when}: the row describes itself with the whole reason`);
+    assert.strictEqual(layout.scrolls, false, `${when}: the row does not scroll`);
+    if (where === 'hidden') {
+        assert.strictEqual(layout.shown, false, `${when}: no note`);
+        assert.strictEqual(layout.inrow, false, `${when}: the tools stay, dimmed`);
     } else {
-        assert.ok(layout.lock.top < layout.row.bottom && layout.lock.bottom <= layout.row.bottom + 0.5, `${when}: the reason is in the row, beside the tools`);
-        assert.ok(layout.whole, `${when}: and whole there`);
+        assert.ok(layout.shown && layout.lock.width > 0, `${when}: the reason is shown`);
+        assert.strictEqual(layout.text, where === 'short' ? LOCK_SHORT[reason] : reason, `${when}: the form shown`);
+        assert.ok(layout.whole, `${when}: whole, never cut`);
+        assert.ok(layout.lock.top >= layout.row.top - 0.5 && layout.lock.bottom <= layout.row.bottom + 0.5, `${when}: in the row, nothing under it`);
+        const inrow = where === 'inrow' || (where === 'short' && reason !== LOCK_BUTTON);
+        assert.strictEqual(layout.inrow, inrow, `${when}: ${inrow ? 'in the refused tools\' place' : 'beside the tools'}`);
+        if (!inrow) {
+            const covered = layout.tools.filter(t => t.left < layout.lock.right && t.right > layout.lock.left);
+            assert.deepStrictEqual(covered.map(t => t.id), [], `${when}: the reason covers no tool`);
+        } else {
+            assert.deepStrictEqual(layout.tools.map(t => t.id), ['export'], `${when}: the selection's tools gave way, Export stays`);
+        }
     }
-    const covered = layout.boxes.tools.filter(t => t.left < layout.lock.right && t.right > layout.lock.left && t.top < layout.lock.bottom && t.bottom > layout.lock.top);
-    assert.deepStrictEqual(covered.map(t => t.id), [], `${when}: the reason covers no tool`);
     if (layout.countFull !== null) {
         assert.ok(layout.countFull, `${when}: the diagnostics count stays whole`);
     }
     if (before) {
-        assert.deepStrictEqual(layout.boxes, before, `${when}: the tools and the count did not move`);
+        assert.deepStrictEqual(layout.boxes, before, `${when}: Export and the count did not move`);
     }
 }
 
@@ -108,13 +131,13 @@ export interface Box {
     bottom: number;
 }
 
-/** The row's tools, and its diagnostics count, where they stand. */
+/** What the lock never moves: Export, and the diagnostics count. */
 export interface RowBoxes {
-    tools: Box[];
+    export: Box;
     count: Box | null;
 }
 
-/** Where the row's tools and count stand now, to compare with them under a lock. */
+/** Where Export and the count stand now, to compare with them under a lock. */
 export async function rowBoxes(page: puppeteer.Page): Promise<RowBoxes> {
     return (await reasonLayout(page)).boxes;
 }
@@ -130,19 +153,20 @@ function reasonLayout(page: puppeteer.Page) {
             return { id, left: b.left, right: b.right, top: b.top, bottom: b.bottom };
         };
         const lock = row.querySelector('.mep-row-lock') as HTMLElement;
-        const style = getComputedStyle(lock);
-        const view = box(row);
-        const tools = Array.from(row.querySelectorAll('.mep-tool'))
-            .map(el => place(el, (el as HTMLElement).dataset.action ?? (el as HTMLElement).dataset.menu ?? ''))
-            .filter(t => t.right > view.left && t.left < view.right);
         const count = row.querySelector('.mep-diag-count:not([hidden])') as HTMLElement | null;
+        const exportFace = row.querySelector('.mep-menu-face[data-menu="export"]') as HTMLElement;
         return {
-            row: view,
-            viewport: window.innerWidth,
+            row: box(row),
             lock: box(lock),
+            shown: !lock.hidden && lock.getClientRects().length > 0,
+            text: lock.textContent,
             whole: lock.scrollWidth <= lock.clientWidth + 1,
-            ellipsis: style.textOverflow === 'ellipsis' && style.overflow === 'hidden',
-            boxes: { tools, count: count ? place(count, 'count') : null },
+            inrow: row.classList.contains('mep-row-lock-inrow'),
+            scrolls: row.scrollWidth > row.clientWidth,
+            description: row.getAttribute('aria-description'),
+            tools: Array.from(row.querySelectorAll<HTMLElement>('.mep-tool')).filter(el => el.getClientRects().length > 0)
+                .map(el => place(el, el.dataset.action ?? el.dataset.menu ?? '')),
+            boxes: { export: place(exportFace, 'export'), count: count ? place(count, 'count') : null },
             countFull: count ? count.scrollWidth <= count.clientWidth + 1 && count.getBoundingClientRect().width > 0 : null,
         };
     });

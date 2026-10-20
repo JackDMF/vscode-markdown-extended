@@ -24,7 +24,6 @@ import type { InlineEngineDefinition } from '../inlineEngine';
 import { setInlineEngine, setWriteOptions } from '../serialize';
 import { CaretReporter } from './caret';
 import { completionDocumentShown, completionMessage, completionPlugin } from './completion';
-import { lockLineHeight } from './clearance';
 import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
@@ -847,15 +846,9 @@ const plugins = [
     }, placeDrop),
 ];
 
-/**
- * Room above the caret for the formatting row fixed at the top when ProseMirror
- * scrolls the selection into view — and for the lock's line under it while it
- * stands there (`lockLineHeight`): read each time ProseMirror scrolls.
- */
+/** Room above the caret for the formatting row fixed at the top when ProseMirror scrolls the selection into view. */
 const SCROLL_MARGIN = {
-    get top(): number {
-        return 64 + lockLineHeight(mount);
-    },
+    top: 64,
     bottom: 8,
     left: 8,
     right: 8,

@@ -5,11 +5,17 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { ROW_OVERFLOW } from '../../../src/editor/webview/toolbar/actions';
 import { moreName } from '../../../src/editor/webview/overflow';
-import { EXTENSION_ID, EditorPage, clickText, closeEditorPage, delay, openEditorPage, shot as saveShot, showDiagnostics } from './pageHarness';
+import { EXTENSION_ID, EditorPage, clickText, closeEditorPage, delay, describedTip, openEditorPage, shot as saveShot, showDiagnostics } from './pageHarness';
+import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, MOD_NAME, assertReasonShown, assertRowLocked, rowBoxes } from './rowLock';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 /** The plan's document (wave2-overflow-plan.md, section 9): bold code, a sidenote, a table, a container, an admonition, a link in bold. */
 const SOURCE = [
+    '---',
+    'title: Demo',
+    'stream: UXD',
+    '---',
+    '',
     '# Overflow',
     '',
     'Plain words, then **bold `code` here** and more plain words.',
@@ -24,7 +30,7 @@ const SOURCE = [
     'Inside the container.',
     ':::',
     '',
-    '!!! warning',
+    '!!! warning "Check the inputs"',
     '    Admonition body.',
     '',
     'See the **[bold docs](docs/api.md)** here.',
@@ -59,15 +65,15 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
 
     const shot = (name: string) => saveShot(page, name);
 
-    const showDocument = async () => {
+    const showDocument = async (text = SOURCE) => {
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
-        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, SOURCE, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('Overflow'));
         await showDiagnostics(editor as EditorPage, version, [
-            { range: { start: { line: 2, character: 0 }, end: { line: 2, character: 5 } }, severity: 'warning', message: 'A warning' },
-            { range: { start: { line: 4, character: 0 }, end: { line: 4, character: 5 } }, severity: 'warning', message: 'Another' },
+            { range: { start: { line: 7, character: 0 }, end: { line: 7, character: 5 } }, severity: 'warning', message: 'A warning' },
+            { range: { start: { line: 9, character: 0 }, end: { line: 9, character: 5 } }, severity: 'warning', message: 'Another' },
         ]);
         await delay(100);
     };
@@ -278,5 +284,145 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         await page.keyboard.press('Escape');
         await resize(420, 640);
         assert.deepStrictEqual((await rowState()).moved, narrow);
+    });
+
+    // -- the lock's note in the row (section 3C, l1-l5) --------------------------
+
+    const clickAt = async (selector: string) => {
+        const box = await (await page.waitForSelector(selector, { visible: true }))?.boundingBox();
+        assert.ok(box, `no box for ${selector}`);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await delay(120);
+    };
+
+    /** The YAML box of the properties opened: the row locked by a source box. */
+    const openYaml = async () => {
+        await clickText(page, 'Plain', 2);
+        await clickAt('.mep-properties .mep-props-source');
+        await page.waitForSelector('.mep-props-editor');
+        await delay(150);
+    };
+
+    /** Where the page stands: what would move were the lock to make room for itself. */
+    const pageAt = () => page.evaluate(() => ({
+        scroll: document.scrollingElement?.scrollTop ?? 0,
+        // The panel stands first: what is under it grows with the YAML box, which is no move of the page.
+        first: Math.round((document.querySelector('.mep-properties') as HTMLElement).getBoundingClientRect().top),
+        room: getComputedStyle(document.querySelector('.mep-editor') as HTMLElement).paddingTop,
+    }));
+
+    test('l1 at 1280 a source box\'s reason stands beside the tools, whole; the tools refused, Export offered', async function () {
+        this.timeout(30000);
+        await showDocument();
+        await openYaml();
+        await assertRowLocked(page, '1280', LOCK_SOURCE);
+        await assertReasonShown(page, '1280', LOCK_SOURCE, 'beside');
+        await page.keyboard.press('Escape');
+    });
+
+    test('l2 at 520 the reason takes the refused tools\' place, whole: Export, the count and the page stay where they were', async function () {
+        this.timeout(60000);
+        for (const [theme, t] of THEMES) {
+            await applyTheme(page, theme);
+            await resize(520);
+            await showDocument();
+            await clickText(page, 'Plain', 2);
+            const before = await rowBoxes(page);
+            const unlocked = await pageAt();
+            await openYaml();
+            await assertReasonShown(page, `520 ${t}`, LOCK_SOURCE, 'inrow', before);
+            assert.deepStrictEqual(await pageAt(), unlocked, `520 ${t}: the page did not move`);
+            await shot(`lock-520-${t}.png`);
+            await page.keyboard.press('Escape');
+            await page.keyboard.press('Escape');
+        }
+    });
+
+    test('l3 at 420 the whole reason in the row; narrower its short form, whole, keys kept, its hover and the row\'s description the whole reason; Esc gives the row back; a property\'s field the same', async function () {
+        this.timeout(90000);
+        for (const [theme, t] of THEMES) {
+            await applyTheme(page, theme);
+            for (const [width, where] of [[420, 'inrow'], [340, 'short']] as const) {
+                await resize(width, 640);
+                await showDocument();
+                await clickText(page, 'Plain', 2);
+                const moved = (await rowState()).moved;
+                const before = await rowBoxes(page);
+                await openYaml();
+                await assertReasonShown(page, `${width} ${t}`, LOCK_SOURCE, where, before);
+                if (where === 'short') {
+                    assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock-text`, el => el.textContent), `Source · ${MOD_NAME}+Enter · Esc`);
+                    assert.strictEqual(await describedTip(page, `${ROW} .mep-row-lock`), LOCK_SOURCE, 'its hover: the whole reason');
+                }
+                await shot(`lock-${width}-${t}.png`);
+                await page.keyboard.press('Escape');
+                await page.keyboard.press('Escape');
+                await delay(150);
+                const back = await rowState();
+                assert.strictEqual(await page.$eval(ROW, el => el.classList.contains('mep-row-lock-inrow')), false, 'the tools are back');
+                assert.deepStrictEqual(back.moved, moved, '"…" holds what it held');
+            }
+        }
+        await applyTheme(page, LIGHT_MODERN);
+        await clickAt('.mep-properties .mep-props-toggle');
+        await page.waitForSelector('.mep-prop-row', { visible: true });
+        await clickAt('.mep-prop-row[data-key="stream"] input');
+        await delay(150);
+        await assertReasonShown(page, '340, a property\'s field', LOCK_PROPERTY, 'short');
+        assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock-text`, el => el.textContent), 'Property · Enter · Esc');
+        await shot('lock-property-340-light.png');
+        await page.keyboard.press('Escape');
+    });
+
+    test('l4 a button\'s lock: at 900 "Focus is outside the text" beside the tools, which dim; at 520 no note, Bold\'s tooltip says the whole reason', async function () {
+        this.timeout(40000);
+        for (const width of [900, 520]) {
+            await resize(width);
+            await showDocument();
+            await clickText(page, 'Plain', 2);
+            const before = await rowBoxes(page);
+            await openYaml();
+            await page.keyboard.press('Escape');
+            await delay(150);
+            if (width === 900) {
+                await assertReasonShown(page, '900, a button', LOCK_BUTTON, 'short', before);
+            } else {
+                await assertReasonShown(page, '520, a button', LOCK_BUTTON, 'hidden', before);
+                assert.ok((await describedTip(page, `${ROW} [data-action="bold"]`)).endsWith(`\n${LOCK_BUTTON}`), 'Bold\'s tooltip carries the whole reason');
+                // A press on Bold: the flash has no note to point at — the limit #10 lifts.
+                await clickAt(`${ROW} [data-action="bold"]`);
+                assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock`, el => (el as HTMLElement).hidden), true, 'nothing shows');
+            }
+            await shot(`lock-button-${width}-light.png`);
+            await page.keyboard.press('Escape');
+        }
+    });
+
+    test('l5 the lock comes and goes at 520 with the page scrolled: the scroll and the first visible block stay', async function () {
+        this.timeout(30000);
+        const filler = Array.from({ length: 30 }, (_, i) => `Filler paragraph ${i}.`).join('\n\n');
+        await resize(520);
+        const above = Array.from({ length: 10 }, (_, i) => `Above ${i}.`).join('\n\n');
+        await showDocument(`# Overflow\n\n${above}\n\n<div>raw block</div>\n\n${filler}\n`);
+        await page.evaluate(() => {
+            document.scrollingElement!.scrollTop = 300;
+        });
+        await delay(100);
+        const at = () => page.evaluate(() => {
+            const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect().bottom;
+            const first = Array.from(document.querySelectorAll<HTMLElement>('.ProseMirror > p')).find(p => p.getBoundingClientRect().top >= row);
+            return { scroll: document.scrollingElement?.scrollTop ?? 0, first: first?.textContent, top: Math.round(first?.getBoundingClientRect().top ?? -1) };
+        });
+        const before = await at();
+        const block = await (await page.$('.ProseMirror > .mep-raw-block'))?.boundingBox();
+        assert.ok(block);
+        await page.mouse.click(block.x + block.width / 2, block.y + block.height / 2, { clickCount: 2, delay: 40 });
+        await page.waitForSelector('.mep-raw-editor');
+        await delay(200);
+        assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock`, el => (el as HTMLElement).hidden), false, 'locked');
+        assert.deepStrictEqual(await at(), before, 'locked: nothing moved');
+        await page.keyboard.press('Escape');
+        await delay(200);
+        assert.deepStrictEqual(await at(), before, 'unlocked: nothing moved');
     });
 });

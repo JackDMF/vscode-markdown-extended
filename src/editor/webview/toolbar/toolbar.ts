@@ -36,13 +36,12 @@ import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
-import { CHROME_MOVED, LOCK_ROOM_PROPERTY } from '../clearance';
 import { LayerSlot, REST_MS, caretRect, placeCard, placeMenu, rangeAnchor } from '../placement';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldAside, fieldHeading, refusedStep } from '../inlineField';
 import { chevronNode, lensLabelNodes } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
-import { FocusPlace, RowScope, focusPlace, placeOfElement, rowLock } from '../focusPlace';
+import { ControlRole, FocusPlace, RowScope, focusPlace, lockForms, placeOfElement, rowLock } from '../focusPlace';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
@@ -128,8 +127,8 @@ const PREVIEW_DELAY_MS = 300;
 const LOCK_FLASH_CLASS = 'mep-row-lock-flash';
 const LOCK_FLASH_MS = 900;
 
-/** The keys that only modify a press or another key: none of them ends a press's wait (`placeLock`). */
-const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
+/** On the row while the lock's reason stands in the refused tools' place: they give way to it (`layoutRow`, `editor.css`). */
+const LOCK_INROW_CLASS = 'mep-row-lock-inrow';
 
 /**
  * The least a Block type sample is zoomed to fit its entry (`fitSamples`):
@@ -137,12 +136,6 @@ const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', '
  * what still stands out is clipped instead.
  */
 const SAMPLE_ZOOM_FLOOR = 0.75;
-
-/** On the row while the lock's reason does not fit beside the tools: it stands on a line of its own under them (`editor.css`). */
-const LOCK_BELOW_CLASS = 'mep-row-lock-below';
-
-/** On the row while that line, brought by a press, waits for its room until the release (`settleRoom`): laid out, not shown (`editor.css`), no chrome yet (`clearance.ts`). */
-const LOCK_WAIT_CLASS = 'mep-row-lock-waiting';
 
 /** Draw a sample: the element the parser makes, with its classes, attributes and content. */
 export function renderSample(spec: SampleSpec): HTMLElement {
@@ -440,20 +433,13 @@ class ToolbarView implements PluginView {
     /** The field an action asked for a value in (a span's literal, a link's address, an image's alt text), while it is open. */
     private fieldBar: { bar: HTMLElement; field: InlineField } | null = null;
     private destroyed = false;
-    /** The row's reason while it is locked (`showLock`), at its right end. */
+    /** The row's reason while it is locked (`layoutRow`), in the row, and what kind of control locked it; `null` when none does. */
     private lockNote!: HTMLElement;
+    private lockRole: ControlRole | null = null;
     private flashTimer: ReturnType<typeof setTimeout> | undefined;
-    /** A pointer button is down: the page does not move under it (`settleRoom`). */
+    /** A pointer button is down: a selection it draws shows its bubble at the release (`bubbleReleased`). */
     private pointerHeld = false;
-    /**
-     * The pointer is what acts: a main button went down and no key came since.
-     * A press whose release was lost leaves `pointerHeld` set until a blur or a
-     * move; a lock a key brings meanwhile is no press's, and its line shows.
-     */
-    private pressing = false;
-    /** The height the page keeps free under the row for the reason's line (`settleRoom`). */
-    private room = 0;
-    /** Watches the row and its status for a size that changes where the reason fits (`placeLock`). */
+    /** Watches the row and its status for a size that changes what fits in it (`layoutRow`). */
     private rowSize: ResizeObserver | undefined;
     /** "…": the menu that holds what does not fit in the row (`layoutRow`), its face, and the group the face stands in. */
     private more!: Menu;
@@ -542,34 +528,17 @@ class ToolbarView implements PluginView {
             }
         }, true);
         this.listen(window, 'resize', () => this.closeAll());
-        // Whether the reason fits beside the tools changes with the row's width
-        // and with the count beside it: measured again when either changes.
-        // The main button held: the room under the row waits for its release
-        // (`settleRoom`), and is settled after the click the release makes. Only
-        // the main button — a right press opens a menu that may take its release.
+        // The main button held: a selection it draws shows its bubble at the
+        // release (`bubbleReleased`). Only the main button — a right press
+        // opens a menu that may take its release.
         this.listen(document, 'pointerdown', e => {
             if ((e as PointerEvent).button === 0) {
                 this.pointerHeld = true;
-                this.pressing = true;
             }
-        }, true);
-        // A key acts, not the press: a line still waiting on one shows now (its room
-        // follows when the press ends, as before). Not a modifier, nor a key's repeat:
-        // one held from before the press (a Shift-click) repeats while the button is
-        // down, and would show the line over what is pressed.
-        this.listen(document, 'keydown', e => {
-            const key = e as KeyboardEvent;
-            if (key.repeat || MODIFIER_KEYS.has(key.key)) {
-                return;
-            }
-            this.pressing = false;
-            this.endLockWait();
         }, true);
         const released = () => {
             this.pointerHeld = false;
-            this.pressing = false;
             setTimeout(() => {
-                this.settleRoom();
                 // After the release's own selection change: a selection the pointer drew shows its bubble now.
                 if (!this.destroyed) {
                     this.bubbleReleased();
@@ -579,13 +548,11 @@ class ToolbarView implements PluginView {
         this.listen(document, 'pointerup', released, true);
         this.listen(document, 'pointercancel', released, true);
         // A release that never reaches the page — the window left while the
-        // button was down (Alt-Tab), a menu took it — would hold the room back
+        // button was down (Alt-Tab), a menu took it — would hold the bubble back
         // for good: a blur, or a move with no button down, says the press is over.
         const lost = () => {
             if (this.pointerHeld) {
                 this.pointerHeld = false;
-                this.pressing = false;
-                this.settleRoom();
                 this.bubbleReleased();
             }
         };
@@ -599,10 +566,7 @@ class ToolbarView implements PluginView {
         // Export: laid out again when either changes (`layoutRow`), and when a
         // font has loaded, which changes every control's width.
         if (typeof ResizeObserver !== 'undefined') {
-            this.rowSize = new ResizeObserver(() => {
-                this.layoutRow();
-                this.placeLock();
-            });
+            this.rowSize = new ResizeObserver(() => this.layoutRow());
             this.rowSize.observe(this.row);
             this.rowSize.observe(this.row.querySelector('.mep-row-status') as Element);
         }
@@ -674,20 +638,31 @@ class ToolbarView implements PluginView {
             }
         }
         // After the faces: a face relabelled ("Paragraph", "Heading 2") changes what fits in the row.
+        this.lockRole = place.kind === 'control' ? place.role : null;
         this.layoutRow();
         this.updateMore(lock);
-        this.showLock(lock);
         this.syncBubble();
     }
 
     /**
-     * The row never scrolls (Daniel, 2026-10-19): where it is too narrow, its
-     * controls leave it for "…" in `ROW_OVERFLOW`'s order — the three menus,
-     * then the marks from the right — until the rest fits; Block type, the
-     * count and Export never leave. Measured, not set by a width, so it holds
-     * for any font and any label; measured again only when what it was
-     * measured for changed (`layoutKey`): the row's width, the block-type
-     * face's label, the count, the lock's reason, the running export.
+     * The row never scrolls and never moves the page (Daniel, 2026-10-19).
+     * Where it is too narrow, its controls leave it for "…" in
+     * `ROW_OVERFLOW`'s order — the three menus, then the marks from the right
+     * — until the rest fits; Block type, the count and Export never leave.
+     * While a control has the focus (`lockRole`), its reason stands in the row
+     * in one of the forms `lockForms` gives, never under it:
+     *
+     * - beside the tools, whole, where it fits there;
+     * - else, for a source box or a property's field, in the refused tools'
+     *   place (`mep-row-lock-inrow`: they give way, nothing moves into "…"),
+     *   whole, or — cut even there — its short form, which keeps its keys;
+     * - else, for a button, its short form beside the tools where that fits,
+     *   else no note: the tools only dim, the reason their tooltips and the
+     *   row's description.
+     *
+     * Measured, not set by a width, so it holds for any font and label; and
+     * measured again only when what it was measured for changed
+     * (`rowLayoutKey`).
      */
     private layoutRow(): void {
         if (this.destroyed) {
@@ -698,6 +673,17 @@ class ToolbarView implements PluginView {
             return;
         }
         const before = this.moved.join(',');
+        const role = this.lockRole;
+        const forms = role === null ? null : lockForms(role);
+        const note = this.lockNote;
+        const text = note.firstElementChild as HTMLElement;
+        this.row.classList.remove(LOCK_INROW_CLASS);
+        note.hidden = true;
+        describeAs(this.row, forms?.full ?? null);
+        if (forms === null) {
+            note.classList.remove(LOCK_FLASH_CLASS);
+            clearTimeout(this.flashTimer);
+        }
         for (const control of ROW_OVERFLOW) {
             this.showInRow(control);
         }
@@ -711,6 +697,30 @@ class ToolbarView implements PluginView {
                 this.moreGroup.hidden = true;
             }
         }
+        if (forms !== null) {
+            const whole = () => !overflows(note) && !overflows(this.row);
+            note.hidden = false;
+            text.textContent = forms.full;
+            if (!whole()) {
+                if (role === 'button') {
+                    text.textContent = forms.short;
+                    note.hidden = !whole();
+                } else {
+                    // The refused tools give way: nothing of them is in the row, nor in "…".
+                    for (const control of ROW_OVERFLOW) {
+                        this.showInRow(control);
+                    }
+                    moved = [];
+                    this.moreGroup.hidden = true;
+                    this.row.classList.add(LOCK_INROW_CLASS);
+                    if (overflows(note)) {
+                        text.textContent = forms.short;
+                    }
+                }
+            }
+        }
+        // Its hover: the whole reason, where the short form shows.
+        this.tips.refresh(note);
         this.moved = moved;
         const { marks, menus } = moreOrder(moved);
         this.moreDivider.hidden = marks.length === 0 || menus.length === 0;
@@ -722,11 +732,11 @@ class ToolbarView implements PluginView {
         }
     }
 
-    /** What the row's layout depends on, besides the controls themselves. */
+    /** What the row's layout depends on, besides the controls themselves: its width, the count, the block type's label, the lock, the running export. */
     private rowLayoutKey(): string {
         const said = this.row.querySelector<HTMLElement>('.mep-row-said');
         const blockType = this.rowMenus.get('block-type')?.face?.textContent ?? '';
-        return [this.row.clientWidth, said?.offsetWidth ?? 0, blockType, this.lockNote.hidden ? '' : this.lockNote.textContent, this.host.exporting() ?? ''].join('|');
+        return [this.row.clientWidth, said?.offsetWidth ?? 0, blockType, this.lockRole ?? '', this.host.exporting() ?? ''].join('|');
     }
 
     /** `control` back in the row, its entry in "…" hidden; a menu is top-level again. */
@@ -773,91 +783,6 @@ class ToolbarView implements PluginView {
         }
     }
 
-    /** The lock's reason at the row's end and as its description; `null` takes both away. */
-    private showLock(reason: string | null): void {
-        this.lockNote.hidden = reason === null;
-        (this.lockNote.firstElementChild as HTMLElement).textContent = reason ?? '';
-        describeAs(this.row, reason);
-        if (reason === null) {
-            this.lockNote.classList.remove(LOCK_FLASH_CLASS);
-            clearTimeout(this.flashTimer);
-        }
-        this.placeLock();
-    }
-
-    /**
-     * The reason beside the tools where it fits there whole, else on its own
-     * line under the row (`LOCK_BELOW_CLASS`): measured, not set by a width,
-     * so it holds for any tool set and font. The tools and the count never
-     * move; the line goes with the lock. The page makes room for the line
-     * (`settleRoom`) — and the bars, which keep clear of the chrome, are
-     * placed again — when it comes or goes. A line that comes while a button
-     * is held waits for its room, unseen (`LOCK_WAIT_CLASS`): shown before it,
-     * it would stand over the page's top and take the release — and so the
-     * click — from what was pressed there, however little room the page's own
-     * stylesheets leave above it.
-     */
-    private placeLock(): void {
-        const was = this.row.classList.contains(LOCK_BELOW_CLASS);
-        this.row.classList.remove(LOCK_BELOW_CLASS);
-        const note = this.lockNote;
-        const below = !note.hidden && note.scrollWidth > note.clientWidth + 1;
-        this.row.classList.toggle(LOCK_BELOW_CLASS, below);
-        // Only a line a press brings waits: one a key brings shows at once, a held button or not.
-        const waiting = below && this.pressing && this.pointerHeld && this.room < 0.5;
-        this.row.classList.toggle(LOCK_WAIT_CLASS, waiting);
-        // A waiting line is no chrome yet (`lockLineHeight`): the bars are placed once, with its room.
-        if (below !== was && !waiting) {
-            this.chromeMoved();
-        }
-        this.settleRoom();
-    }
-
-    /** A line waiting for its room shows now, and what keeps clear of the chrome is placed against it. */
-    private endLockWait(): void {
-        if (this.row.classList.contains(LOCK_WAIT_CLASS)) {
-            this.row.classList.remove(LOCK_WAIT_CLASS);
-            this.chromeMoved();
-        }
-    }
-
-    /**
-     * The page keeps the line's height free under the row (`--mep-lock-room`)
-     * while the line stands there, so it covers nothing — but never while a
-     * button is held: a page that moved between the press and the release
-     * would take the click from what was pressed (the header's toggle, Edit as
-     * source) or drag a selection. It is settled once the pointer is up
-     * (`pointerup`, after the click), or at once for a key. The scroll
-     * position is kept as it was: what stood just under the chrome stands just
-     * under it still — under the line when it comes, under the row when it
-     * goes — and the browser's scroll anchoring, which would scroll the content
-     * back under the line, is overruled.
-     */
-    private settleRoom(): void {
-        if (this.destroyed || this.pointerHeld) {
-            return;
-        }
-        // The line comes with its room, never before it.
-        this.row.classList.remove(LOCK_WAIT_CLASS);
-        const want = this.row.classList.contains(LOCK_BELOW_CLASS) ? this.lockNote.getBoundingClientRect().height : 0;
-        if (Math.abs(want - this.room) < 0.5) {
-            return;
-        }
-        const scroller = document.scrollingElement;
-        const top = scroller?.scrollTop ?? 0;
-        this.room = want;
-        this.mount.style.setProperty(LOCK_ROOM_PROPERTY, `${want}px`);
-        if (scroller) {
-            scroller.scrollTop = top;
-        }
-        this.chromeMoved();
-    }
-
-    /** The chrome over the page grew or shrank, or the page moved under it: what is placed against it is placed again. */
-    private chromeMoved(): void {
-        this.mount.dispatchEvent(new Event(CHROME_MOVED));
-    }
-
     /** A refused tool was pressed while the row is locked: its reason is pointed at for a moment, not a silent nothing. */
     private flashLock(): void {
         if (this.lockNote.hidden) {
@@ -874,7 +799,6 @@ class ToolbarView implements PluginView {
     destroy(): void {
         this.destroyed = true;
         this.rowSize?.disconnect();
-        this.mount.style.removeProperty(LOCK_ROOM_PROPERTY);
         clearTimeout(this.cardTimer);
         clearTimeout(this.flashTimer);
         clearTimeout(this.focusTimer);
@@ -919,12 +843,16 @@ class ToolbarView implements PluginView {
             row.append(box);
         }
         row.append(this.moreGroup = this.buildMore());
-        // The lock's reason (`showLock`), while the row is refused: in the room
-        // the tools leave, not pinned over them, so a narrow row cuts it rather
-        // than covering a tool.
+        // The lock's reason (`layoutRow`), while the row is refused: in the
+        // row, beside the tools or in their place, never over them. Its hover
+        // is the whole reason where it shows the short form.
         this.lockNote = span('mep-row-lock');
         this.lockNote.hidden = true;
         this.lockNote.append(span('mep-row-lock-text'));
+        this.tips.attach(this.lockNote, () => {
+            const full = this.lockRole === null ? null : lockForms(this.lockRole).full;
+            return full === null || this.lockNote.textContent === full ? null : plainTip(full);
+        });
         // The row's right end: what is about the document as a whole, not the
         // text at the selection — what the page says of it (the diagnostics
         // count, `diagnostics.ts`, in its slot), then Export.
