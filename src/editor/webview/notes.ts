@@ -34,6 +34,7 @@ import { EditorView } from 'prosemirror-view';
 import { Mapping } from 'prosemirror-transform';
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
+import { NOTE_LABELS as NOTE_NAMES } from '../refusal';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema, noteRef } from '../schema';
 import { RAW_TEXT_MARKS, causeReason, frontMatterTakeover, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
@@ -596,13 +597,8 @@ export function notePasteTransaction(state: EditorState, slice: Slice): Transact
 
 export type NoteNodeName = 'sidenote' | 'marginal_note' | 'left_sidebar' | 'right_sidebar';
 
-/** What each is called — on its bar (`objectToolbar.ts`) and in the Annotation menu (`actions.ts`). */
-export const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = {
-    sidenote: 'Sidenote',
-    marginal_note: 'Marginal note',
-    left_sidebar: 'Left sidebar',
-    right_sidebar: 'Right sidebar',
-};
+/** What each is called — on its bar (`objectToolbar.ts`), in the Annotation menu (`actions.ts`) and in a refusal (`noteNoun`). */
+export const NOTE_LABELS: Readonly<Record<NoteNodeName, string>> = NOTE_NAMES;
 
 export const NOTE_LOCK = 'Select text in a paragraph or heading, outside any note, to add this.';
 export const NESTED_NOTE_LOCK = 'A note cannot hold another note: the text is already in one.';

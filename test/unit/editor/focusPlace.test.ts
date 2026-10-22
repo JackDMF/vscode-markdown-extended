@@ -119,4 +119,11 @@ suite('Editor focus place', () => {
         assert.strictEqual(lockForms('property').short, 'Property · Enter · Esc');
         assert.strictEqual(lockForms('button').short, 'Outside the text');
     });
+
+    test('a press on a refused tool says what is off, then the way back, with the key that applies (#10 L1–L3)', () => {
+        assert.strictEqual(lockForms('source').press, `Formatting is off while editing source — ${applyKey()} applies`);
+        assert.match(applyKey(), /^(Ctrl|Cmd)\+Enter$/);
+        assert.strictEqual(lockForms('property').press, 'Formatting is off while editing a property — Enter applies');
+        assert.strictEqual(lockForms('button').press, 'Formatting is off while the focus is outside the text — press Esc or click into the text');
+    });
 });
