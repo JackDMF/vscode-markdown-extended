@@ -15,6 +15,14 @@
 - The source box has Apply and Cancel buttons; Cancel never applies on the way out.
 - Refusal messages reworded in plain language; values you typed appear in code font, buttons in quotes.
 - Screen readers hear each hint through one status region, once.
+- Every source block shows a muted "source" chip at its top-right, in the editor only, never copied or exported.
+- Raw source and tall blocks keep the chip in sight while scrolling; beside right notes or tables it stands above.
+- The chip takes the page's own text colour and leaves a stylesheet's own ::after labels alone.
+- A source block's bar names why: "Source · has a footnote", "· definition list", "· footnote text" and more.
+- Screen readers hear the reason as the block's name, and on selection the reason with Alt+Enter.
+- Typing, pasting, dictation, IME, Ctrl+D/H or Delete over a selected source block is refused, naming why.
+- Backspace or Delete beside a source block selects it first; cut still takes it.
+- Replacing a selection that spans a source block says "Source block removed" with the undo key.
 - PNG and JPEG export no longer hangs on macOS while the display sleeps.
 
 ## v4.9.0 — Layers That Keep Their Place

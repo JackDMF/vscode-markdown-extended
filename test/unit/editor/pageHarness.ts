@@ -171,6 +171,8 @@ export interface EditorPageOptions {
     styles?: readonly string[];
     /** More stylesheets by absolute path, after the built-in Markdown extension's and before `styles`. */
     stylesheets?: readonly string[];
+    /** A person's `markdown.styles` by absolute path, after `styles` and before the editor's own, where the host links them (`html.ts`). */
+    userStyles?: readonly string[];
     /**
      * Whether VS Code's built-in Markdown extension is there, as it is unless
      * disabled: the page then starts its cascade with that extension's
@@ -282,6 +284,9 @@ async function preparePage(browser: puppeteer.Browser, bundle: string, extension
     }
     for (const sheet of options.styles ?? []) {
         await page.addStyleTag({ path: path.join(extensionPath, 'styles', sheet) });
+    }
+    for (const sheet of options.userStyles ?? []) {
+        await page.addStyleTag({ path: sheet });
     }
     // The codicon font, before the editor's own sheet as the host links it (`html.ts`): the
     // chevrons and `$(icon)`s are drawn with it. The page has no origin to load the font file

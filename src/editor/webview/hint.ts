@@ -327,6 +327,17 @@ class CaretHint {
         });
     }
 
+    /**
+     * What the page shows already (a source block's reason on selection), said only: never over a
+     * hint someone can see (#5a) — nor in place of a refusal's announcement still pending this frame.
+     */
+    sayQuietly(text: string): void {
+        if (this.showing()) {
+            return;
+        }
+        this.say(text);
+    }
+
     /** Whether a hint is showing, and of `kind` where one is given. */
     showing(kind?: HintKind): boolean {
         return !this.el.hidden && (kind === undefined || this.el.dataset.kind === kind);
@@ -439,7 +450,7 @@ export function dismissRefusal(view: EditorView, within?: Element): void {
 
 /** Say `text` to a screen reader only, through the live region, drawn nowhere: what the page already shows is not shown twice. */
 export function announceHint(view: EditorView, text: string): void {
-    hints.get(view)?.say(text);
+    hints.get(view)?.sayQuietly(text);
 }
 
 /** Show `text` beside the caret of `view`, or under `near`; a refusal is `showRefusal` at the caret. A no-op for a view built without `hintPlugin`. */
