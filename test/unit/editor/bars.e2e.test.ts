@@ -424,8 +424,9 @@ suite('Editor object bars (e2e)', () => {
         {
             n: 21, slug: 'block-attrs', source: 'A paragraph with attributes.\n{.lead}\n\nAfter.\n', marker: 'paragraph',
             enter: () => clickBefore('paragraph', 2),
-            label: 'Paragraph attributes',
-            verbs: [['block-attributes', 'Attributes…', false, false]],
+            // #8: the block's name and its literal, as an inline element's bar shows its own; Remove attributes after the divider.
+            label: 'Paragraph {.lead}',
+            verbs: [['block-attributes', 'Attributes…', false, false], ['remove-attributes', 'Remove attributes', false, true]],
             focus: 'block-attributes',
         },
         {

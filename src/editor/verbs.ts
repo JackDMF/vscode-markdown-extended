@@ -25,6 +25,7 @@
  * refusals (`webview/objects.ts`) quote the verbs' names from `VERB`.
  */
 import type { Said } from './tips';
+import { innerOf } from './attributeLiteral';
 
 /** Where a verb stands on its bar. */
 export type Slot = 'open' | 'edit' | 'type' | 'attributes' | 'source' | 'actions' | 'destroy';
@@ -135,6 +136,27 @@ export function wording(w: Wording): { label: string; short: string; done: strin
 /** What a bar shows as its title: the object's name and, after it, its spelling (`Emoji :rocket:`). */
 export function barName(label: string, code?: string): string {
     return code === undefined ? label : `${label} ${code}`;
+}
+
+/** A breadcrumb part as its names read it: what it is called and its literal, braces included (`null`: none). */
+export interface NamedPart {
+    name: string;
+    literal: string | null;
+}
+
+/**
+ * A two-part bar's accessible name (#8): the current part, then the outer one
+ * — `List item .lead in List .steps` — each literal without its braces, which
+ * a screen reader would read out; a part without one is its name alone.
+ */
+export function crumbName(current: NamedPart, outer: NamedPart | null): string {
+    const one = (p: NamedPart) => (p.literal === null ? p.name : `${p.name} ${innerOf(p.literal).trim()}`);
+    return outer === null ? one(current) : `${one(current)} in ${one(outer)}`;
+}
+
+/** A breadcrumb part's accessible name (#8): `Attributes of List, .steps`, or `…, none` without a literal. */
+export function crumbPartName(part: NamedPart): string {
+    return `Attributes of ${part.name}, ${part.literal === null ? 'none' : innerOf(part.literal).trim()}`;
 }
 
 /**
