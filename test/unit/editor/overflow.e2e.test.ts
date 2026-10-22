@@ -5,8 +5,9 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { BUBBLE_OVERFLOW, ROW_OVERFLOW } from '../../../src/editor/webview/toolbar/actions';
 import { moreName } from '../../../src/editor/webview/overflow';
+import { GAP, LAYER_GUTTER } from '../../../src/editor/webview/placement';
 import { EXTENSION_ID, EditorPage, clickText, closeEditorPage, delay, describedTip, hoverTip, openEditorPage, shot as saveShot, showDiagnostics } from './pageHarness';
-import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, MOD_NAME, assertReasonShown, assertRowLocked, rowBoxes } from './rowLock';
+import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, MOD_NAME, assertReasonShown, assertRowLocked, inRowForm, narrowestWidth, noteRoom, rowBoxes } from './rowLock';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 /** The plan's document (wave2-overflow-plan.md, section 9): bold code, a sidenote, a table, a container, an admonition, a link in bold. */
@@ -341,11 +342,24 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         }
     });
 
-    test('l3 at 420 the whole reason in the row; narrower its short form, whole, keys kept, its hover and the row\'s description the whole reason; Esc gives the row back; a property\'s field the same', async function () {
-        this.timeout(90000);
+    test('l3 down to where it fits (Segoe UI 420, the system font on macOS wider) the whole reason in the row; narrower its short form, whole, keys kept, its hover and the row\'s description the whole reason; Esc gives the row back; a property\'s field the same', async function () {
+        this.timeout(120000);
+        // Where the whole reason stops fitting is the font's: found, and the row checked to have had no room to spare there.
+        const fitsWhole = async (width: number) => {
+            await resize(width, 640);
+            await showDocument();
+            await clickText(page, 'Plain', 2);
+            await openYaml();
+            const text = await page.$eval(`${ROW} .mep-row-lock-text`, el => el.textContent);
+            await page.keyboard.press('Escape');
+            await page.keyboard.press('Escape');
+            await delay(150);
+            return text === LOCK_SOURCE;
+        };
+        const whole = await narrowestWidth(340, 520, fitsWhole);
         for (const [theme, t] of THEMES) {
             await applyTheme(page, theme);
-            for (const [width, where] of [[420, 'inrow'], [340, 'short']] as const) {
+            for (const [width, where] of [[whole, 'inrow'], [340, 'short']] as const) {
                 await resize(width, 640);
                 await showDocument();
                 await clickText(page, 'Plain', 2);
@@ -353,6 +367,11 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
                 const before = await rowBoxes(page);
                 await openYaml();
                 await assertReasonShown(page, `${width} ${t}`, LOCK_SOURCE, where, before);
+                // The form the room calls for: at the edge the whole reason left less than a pixel and a half; narrower the whole would not fit.
+                assert.strictEqual(await inRowForm(page, LOCK_SOURCE), where, `${width} ${t}: the form the room calls for`);
+                if (where === 'inrow') {
+                    assert.ok((await noteRoom(page) as number) < 1.5, `${width} ${t}: the whole reason went at the last width it fit (${await noteRoom(page)} px to spare)`);
+                }
                 if (where === 'short') {
                     assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock-text`, el => el.textContent), `Source · ${MOD_NAME}+Enter · Esc`);
                     assert.strictEqual(await describedTip(page, `${ROW} .mep-row-lock`), LOCK_SOURCE, 'its hover: the whole reason');
@@ -403,16 +422,29 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         }
     });
 
-    test('l7 a button\'s lock at 400 still shows "Outside the text"; below the width where even that fits (340) no note — the tools only dim, the row describes itself with the whole reason', async function () {
-        this.timeout(60000);
-        for (const [width, where] of [[400, 'short'], [340, 'hidden']] as const) {
+    test('l7 a button\'s lock still shows "Outside the text" down to the last width it fits (Segoe UI about 380, the system font on macOS wider); below it, and at 340, no note — the tools only dim, the row describes itself with the whole reason', async function () {
+        this.timeout(120000);
+        const buttonLock = async (width: number) => {
             await resize(width);
             await showDocument();
             await clickText(page, 'Plain', 2);
             await openYaml();
             await page.keyboard.press('Escape');
             await delay(150);
+        };
+        // Where even the short form stops fitting is the font's: found, and the row checked to have had no room to spare there.
+        const last = await narrowestWidth(340, 520, async width => {
+            await buttonLock(width);
+            const shown = await page.$eval(`${ROW} .mep-row-lock`, el => !(el as HTMLElement).hidden && el.getClientRects().length > 0);
+            await page.keyboard.press('Escape');
+            return shown;
+        });
+        for (const [width, where] of [[last, 'short'], [last - 1, 'hidden'], [340, 'hidden']] as const) {
+            await buttonLock(width);
             await assertReasonShown(page, `${width}, a button`, LOCK_BUTTON, where);
+            if (where === 'short') {
+                assert.ok((await noteRoom(page) as number) < 1.5, `${width}: the note went at the last width it fit (${await noteRoom(page)} px to spare)`);
+            }
             await shot(`lock-button-${width}-light.png`);
             await page.keyboard.press('Escape');
         }
@@ -606,8 +638,46 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         }
     });
 
-    test('b3 at 520 no bar needs "…"; the admonition\'s title is its short form "Warning", at 1280 "Warning admonition"; the link\'s title hidden', async function () {
+    test('b3 at 520 each bar shows "…" only where its verbs do not fit, and its title whole, short or hidden as the room allows (measured); at 1280 the admonition\'s "Warning admonition"', async function () {
         this.timeout(60000);
+        // What the bar needs, measured on a copy without the room's cap — every verb on it, its title (the form it took) shown
+        // whole or left out — against the room it may take, worked out here and not read from the product's own max-width: from
+        // its column's left edge to the editor's right edge less the gutter (a bar may go past the column), but `GAP` short of
+        // the notes where the stylesheet reserves a margin lane for them (the page's right padding; the lane begins at the
+        // column plus the nearer of the note and sidebar gaps), and never less than the column. Where that falls is the font's.
+        const needs = () => page.$eval(BAR, (bar, gutter, gap) => {
+            const mount = (bar.parentElement as HTMLElement).getBoundingClientRect();
+            let edge = document.documentElement.clientWidth - gutter;
+            if (parseFloat(getComputedStyle(document.documentElement).paddingRight) > 0) {
+                const body = getComputedStyle(document.body);
+                const column = document.body.getBoundingClientRect().right - (parseFloat(body.paddingRight) || 0);
+                const gaps = ['--md-note-gap', '--md-sidebar-gap'].map(n => parseFloat(body.getPropertyValue(n))).filter(n => !isNaN(n));
+                edge = Math.min(edge, column + (gaps.length > 0 ? Math.min(...gaps) : 0) - gap);
+            }
+            const room = Math.max(mount.right, edge) - mount.left;
+            const width = (title: boolean) => {
+                const copy = bar.cloneNode(true) as HTMLElement;
+                copy.querySelector(':scope > .mep-object-more')?.remove();
+                for (const hidden of Array.from(copy.querySelectorAll<HTMLElement>(':scope > [data-verb], :scope > .mep-object-separator'))) {
+                    hidden.hidden = false;
+                }
+                const label = copy.querySelector(':scope > .mep-object-label') as HTMLElement;
+                label.hidden = !title;
+                Object.assign(copy.style, { maxWidth: 'none', left: '0px', visibility: 'hidden' });
+                (bar.parentElement as HTMLElement).append(copy);
+                const need = { bar: copy.getBoundingClientRect().width, label: title ? label.getBoundingClientRect().width : 0 };
+                copy.remove();
+                return need;
+            };
+            const bare = width(false);
+            const titled = width(true);
+            return {
+                // "…" only where the verbs do not fit even with the title gone.
+                more: bare.bar > room + 1,
+                // The title whole where it fits; cut where it does not; hidden where what is left of it is under the stub (42 px).
+                title: titled.bar <= room + 1 ? 'whole' : room - (titled.bar - titled.label) < 42 ? 'hidden' : 'cut',
+            };
+        }, LAYER_GUTTER, GAP);
         for (const [theme, t] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as const) {
             await applyTheme(page, theme);
             await resize(520);
@@ -615,14 +685,19 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
             for (const [needle, at, kind] of [['bold docs', 3, 'link'], ['Alpha', 2, 'table'], ['Admonition body', 3, 'admonition'], ['Inside the container', 3, 'container']] as const) {
                 await barAt(needle, at, kind);
                 const s = await barState();
-                assert.strictEqual(s.more, null, `520 ${t}: ${kind} has no "…": ${JSON.stringify(s)}`);
-                assert.deepStrictEqual(s.moved, [], `520 ${t}: ${kind}`);
-                if (kind === 'admonition') {
-                    assert.strictEqual(s.title, 'Warning', `520 ${t}: the short title`);
-                    await shot(`bars-520-${t}.png`);
+                const need = await needs();
+                assert.strictEqual(s.more !== null, need.more, `520 ${t}: ${kind} has ${need.more ? '' : 'no '}"…" (measured): ${JSON.stringify(s)}`);
+                if (need.more) {
+                    assert.ok(s.moved.length > 0 && s.title === null && s.inside && !s.spills, `520 ${t}: ${kind}: ${JSON.stringify(s)}`);
+                    continue;
                 }
-                if (kind === 'link') {
-                    assert.strictEqual(s.title, null, `520 ${t}: the link's title hidden`);
+                assert.deepStrictEqual(s.moved, [], `520 ${t}: ${kind}`);
+                assert.strictEqual(s.title === null, need.title === 'hidden', `520 ${t}: ${kind}'s title ${need.title} (measured): ${JSON.stringify(s)}`);
+                if (kind === 'admonition') {
+                    if (s.title !== null) {
+                        assert.strictEqual(s.title, 'Warning', `520 ${t}: the short title`);
+                    }
+                    await shot(`bars-520-${t}.png`);
                 }
             }
         }

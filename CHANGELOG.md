@@ -11,6 +11,7 @@
 - The source box has Apply and Cancel buttons; Cancel never applies on the way out.
 - Refusal messages reworded in plain language; values you typed appear in code font.
 - Screen readers hear each hint through one status region, once.
+- PNG and JPEG export no longer hangs on macOS while the display sleeps.
 
 ## v4.9.0 — Layers That Keep Their Place
 
