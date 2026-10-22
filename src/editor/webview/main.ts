@@ -27,7 +27,7 @@ import { completionDocumentShown, completionMessage, completionPlugin } from './
 import { keepingLine, touchesNote } from './lane';
 import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
-import { showChangeHint, showHint } from './hint';
+import { dismissRefusal, showChangeHint, showHint } from './hint';
 import { hoverDocumentShown, hoverMessage, hoverPlugin } from './hover';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
 import { DROP_LOCK, IMAGE_LOCK, insertFilesTransaction, insertLockReason } from './objects';
@@ -899,6 +899,8 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         // replaced blocks stays where it was — and its line stays in place on
         // screen when the change opens or closes the margin lane.
         const shown = view;
+        // A refusal was about the text before.
+        dismissRefusal(shown);
         const resync = resyncTransaction(shown.state, doc);
         keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
         sendDeferredActions();

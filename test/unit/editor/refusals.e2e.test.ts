@@ -81,6 +81,8 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
 
     /** A `|` typed into the inline code `ab` in a table cell: refused (C3), the hint at the caret. */
     const refuseInCell = async (needle = 'ab') => {
+        // Two presses at one spot within 500 ms are a double click to ProseMirror, not a click that focuses the text.
+        await delay(500);
         await clickText(page, needle, 1);
         await page.keyboard.type('|');
         await page.waitForSelector('.mep-hint:not([hidden])', { timeout: 2000 });
