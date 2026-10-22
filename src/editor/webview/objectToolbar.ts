@@ -2055,6 +2055,8 @@ class ObjectToolbarView implements PluginView {
                             title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
                             slot: 'attributes',
                             field: step,
+                            // At the span it edits, as every run's attributes field (`markAttributesVerb`).
+                            target: { from: object.from, to: object.to },
                         },
                         {
                             id: 'remove-attributes',
@@ -2529,10 +2531,13 @@ class ObjectToolbarView implements PluginView {
     /**
      * The verb that opens the attributes field of a link, a styled run
      * (`_x_{…}`, `` `x`{…} ``), an image or a bare holder: the one step every
-     * route shares (`holderAttributesStep`).
+     * route shares (`holderAttributesStep`). A run's field opens at the run it
+     * edits (`target`), not where the caret or the bar was; an image's stands
+     * at the image, its object, already.
      */
     private markAttributesVerb(object: LiteralObject, id: string, label: string, title: string): Verb {
-        return { id, label, title, slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)) };
+        const target = 'mark' in object ? { from: object.from, to: object.to } : undefined;
+        return { id, label, title, slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)), target };
     }
 
     /** A table's **Edit source**: the table becomes a source block holding its text, the source box open (`tableSourceTransaction`). */

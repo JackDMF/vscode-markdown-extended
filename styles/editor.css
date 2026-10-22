@@ -933,8 +933,12 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 .vscode-high-contrast .mep-inline-field[aria-invalid="true"] { border-width: 2px; border-style: dashed; }
 /* The keys line's syntax, and a literal it or the reason names: plain muted monospace, no chip. */
 .mep-field-keys code, .mep-field-refusal code {
+    padding: 0;
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 11px;
+    color: inherit;
+    background: none;
+    border-radius: 0;
 }
 /* Enter will remove what the field had: the keys line says so in the text's colour. */
 .mep-field-keys.mep-keys-removes { color: var(--vscode-foreground, inherit); }
@@ -967,6 +971,8 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     border: none;
     background: transparent;
 }
+/* The frame is the field's border and focus: the webview's default ring on the input inside would draw a second one. */
+.mep-attr-field > .mep-inline-field:focus { outline: none; }
 .mep-attr-brace {
     flex: none;
     color: var(--vscode-descriptionForeground, GrayText);

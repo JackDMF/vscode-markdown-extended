@@ -1,0 +1,525 @@
+import * as assert from 'assert';
+import * as puppeteer from 'puppeteer';
+import { buildEditorEngine } from '../../../src/editor/host/engineHost';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
+import { ATTRIBUTES_REMOVED_HINT } from '../../../src/editor/webview/attributes';
+import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
+import { closeEditorPage, delay, describedTip, hoverTip, EditMessage, EditorPage, EXTENSION_ID, MOD, openEditorPage, pointAt, settle, shot, UNDO } from './pageHarness';
+import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
+
+/** The caret's bar, shown. */
+const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
+/** The row's field bar. */
+const ROW_FIELD = '.mep-object-toolbar[data-trigger="toolbar"]';
+/** Whichever bar holds the open field. */
+const ANY_FIELD_BAR = '.mep-object-toolbar.mep-field-bar:not([hidden])';
+const FORMATTING_ENTRY = '.mep-menu[data-menu="formatting"] [data-action="block-attributes"]';
+const BLOCK_TYPE_ENTRY = '.mep-menu[data-menu="block-type"] [data-action="block-type-attributes"]';
+
+const DOC = [
+    'Requirement states are **configurable** for each project, and a paragraph can carry a class.',
+    '',
+    '> A warning to the reader.',
+    '> {.warning #intro}',
+    '',
+    '| Name | Kind |',
+    '| ----- | ----- |',
+    '| **Alpha** | first |',
+    '',
+    'Some *italic*, _emphasis_ and __strong__ words.',
+    '',
+    'The last paragraph.',
+    '',
+].join('\n');
+
+const THEMES: readonly [string, Theme][] = [['light', LIGHT_MODERN], ['dark', DARK_MODERN], ['hc', HC_DARK]];
+
+/** The open field's bar as the eye and a screen reader meet it. */
+interface FieldState {
+    heading: string;
+    value: string;
+    placeholder: string;
+    selected: [number, number];
+    focused: boolean;
+    braces: { text: string; hidden: string | null; select: string }[];
+    keys: string | null;
+    keysCode: string[];
+    keysRemoves: boolean;
+    reason: string | null;
+    reasonRole: string | null;
+    describedBy: 'keys' | 'reason' | 'none' | 'other';
+    invalid: string | null;
+    frameBorder: { color: string; style: string; width: string };
+    narrow: boolean;
+    labelCut: boolean;
+}
+
+/**
+ * The attributes field (wave 2 · #13) in the real page, every route to it:
+ * the braces drawn by the field and never in the value, one outer pair
+ * stripped on a paste or a typed `}`, a stray brace dropped on Enter; one
+ * title `<Name> · Attributes`; a keys line that says what Enter does with the
+ * value as typed; a refusal under the keys line, amber, cleared on the next
+ * edit; the field at the element it edits; a narrow bar's second line. With
+ * `MEP_SHOTS_DIR` set, the states are saved light, dark and High Contrast.
+ */
+suite('Attributes field (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    let version = 0;
+
+    const lastEdit = async (): Promise<EditMessage | undefined> => (await (editor as EditorPage).edits()).pop();
+
+    const showDocument = async (text: string = DOC) => {
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        version++;
+        await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
+        await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('last paragraph'));
+        await page.mouse.move(2, 2);
+        await page.evaluate(() => {
+            (document.activeElement as HTMLElement | null)?.blur();
+            const hint = document.querySelector('.mep-hint') as HTMLElement | null;
+            if (hint) {
+                hint.hidden = true;
+            }
+            window.scrollTo(0, 0);
+        });
+        await delay(300);
+    };
+
+    const clickAt = async (needle: string, index = 0) => {
+        const p = await pointAt(page, needle, index);
+        await page.mouse.click(p.x, p.y);
+        await delay(80);
+    };
+
+    const pressAlt = async (key: puppeteer.KeyInput) => {
+        await page.keyboard.down('Alt');
+        await page.keyboard.press(key);
+        await page.keyboard.up('Alt');
+        await delay(150);
+    };
+
+    const clickVerb = async (verb: string) => {
+        const button = await page.waitForSelector(`${BAR} [data-verb="${verb}"]`, { visible: true, timeout: INLINE_DELAY_MS + 2000 });
+        const box = await button?.boundingBox();
+        assert.ok(box, `no box for ${verb}`);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForSelector(`${ANY_FIELD_BAR} .mep-inline-field`, { visible: true });
+        await delay(80);
+    };
+
+    const openMenu = async (menu: 'formatting' | 'block-type') => {
+        await page.click(`.mep-toolbar .mep-menu-face[data-menu="${menu}"]`);
+        await page.waitForSelector(`.mep-menu[data-menu="${menu}"]:not([hidden])`);
+    };
+
+    const chooseEntry = async (menu: 'formatting' | 'block-type', entry: string) => {
+        await openMenu(menu);
+        await page.click(entry);
+        await page.waitForSelector(`${ROW_FIELD} .mep-inline-field`, { visible: true });
+        await delay(80);
+    };
+
+    const field = (): Promise<FieldState> => page.evaluate(sel => {
+        const bar = document.querySelector(sel) as HTMLElement;
+        const input = bar.querySelector('.mep-inline-field') as HTMLInputElement;
+        const keys = bar.querySelector(':scope > .mep-field-keys') as HTMLElement | null;
+        const reason = bar.querySelector(':scope > .mep-field-refusal') as HTMLElement | null;
+        const frame = bar.querySelector('.mep-attr-field') as HTMLElement;
+        const label = bar.querySelector('.mep-object-label') as HTMLElement;
+        const by = input.getAttribute('aria-describedby');
+        const fs = getComputedStyle(frame);
+        return {
+            heading: label.textContent ?? '',
+            value: input.value,
+            placeholder: input.placeholder,
+            selected: [input.selectionStart ?? -1, input.selectionEnd ?? -1] as [number, number],
+            focused: document.activeElement === input,
+            braces: Array.from(frame.querySelectorAll('.mep-attr-brace')).map(b => ({ text: b.textContent ?? '', hidden: b.getAttribute('aria-hidden'), select: getComputedStyle(b).userSelect })),
+            keys: keys?.textContent ?? null,
+            keysCode: Array.from(keys?.querySelectorAll('code') ?? []).map(c => c.textContent ?? ''),
+            keysRemoves: keys?.classList.contains('mep-keys-removes') ?? false,
+            reason: reason?.textContent ?? null,
+            reasonRole: reason?.getAttribute('role') ?? null,
+            describedBy: (by === null ? 'none' : by === keys?.id ? 'keys' : by === reason?.id ? 'reason' : 'other') as FieldState['describedBy'],
+            invalid: input.getAttribute('aria-invalid'),
+            frameBorder: { color: fs.borderTopColor, style: fs.borderTopStyle, width: fs.borderTopWidth },
+            narrow: bar.classList.contains('mep-narrow'),
+            labelCut: label.scrollWidth > label.clientWidth + 1,
+        };
+    }, ANY_FIELD_BAR);
+
+    /** The open field's bar and the box of a run of text, in the viewport. */
+    const boxes = (needle: string) => page.evaluate((sel, n) => {
+        const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+        const root = document.querySelector('.ProseMirror') as HTMLElement;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const at = (node.textContent ?? '').indexOf(n);
+            if (at >= 0) {
+                const range = document.createRange();
+                range.setStart(node, at);
+                range.setEnd(node, at + n.length);
+                const r = range.getBoundingClientRect();
+                return { bar: { left: bar.left, top: bar.top, bottom: bar.bottom }, run: { left: r.left, top: r.top, bottom: r.bottom } };
+            }
+        }
+        throw new Error(`no "${n}"`);
+    }, ANY_FIELD_BAR, needle);
+
+    /** `name` saved in every theme: the state is drawn again by the theme's variables, nothing re-run. */
+    const shots = async (name: string, themes: readonly [string, Theme][] = THEMES) => {
+        for (const [id, theme] of themes) {
+            await applyTheme(page, theme);
+            await delay(60);
+            await shot(page, `${name}-${id}.png`);
+        }
+        await applyTheme(page, LIGHT_MODERN);
+    };
+
+    const width = async (w: number, h: number) => {
+        await page.setViewport({ width: w, height: h });
+        await delay(150);
+    };
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    setup(async () => {
+        await width(1280, 900);
+        await applyTheme(page, LIGHT_MODERN);
+    });
+
+    teardown(async () => {
+        await page.keyboard.press('Escape');
+        await page.mouse.click(2, 890);
+    });
+
+    test('F1 Formatting → Attributes of Paragraph…: the braces drawn outside an empty value, `.class` its placeholder, one title, the keys line describing the field', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('configurable', 3);
+        await chooseEntry('formatting', FORMATTING_ENTRY);
+        const s = await field();
+        assert.deepStrictEqual({ heading: s.heading, value: s.value, placeholder: s.placeholder, focused: s.focused }, { heading: 'Paragraph · Attributes', value: '', placeholder: '.class', focused: true });
+        assert.deepStrictEqual(s.braces, [{ text: '{', hidden: 'true', select: 'none' }, { text: '}', hidden: 'true', select: 'none' }]);
+        assert.strictEqual(s.keys, '↵ set · Esc cancel · .class #id key=value');
+        assert.deepStrictEqual(s.keysCode, ['.class #id key=value'], 'the syntax in the code font');
+        assert.strictEqual(s.describedBy, 'keys');
+        assert.strictEqual(s.invalid, null);
+        assert.strictEqual(s.labelCut, false);
+        await shots('field-empty-1280');
+    });
+
+    test('F2 the quote\'s bar, Attributes…: its literal between the braces, selected whole; "empty removes" said; named Quote', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('warning to', 3);
+        await clickVerb('block-attributes');
+        const s = await field();
+        assert.deepStrictEqual({ heading: s.heading, value: s.value, selected: s.selected, placeholder: s.placeholder }, { heading: 'Quote · Attributes', value: '.warning #intro', selected: [0, 15], placeholder: '' });
+        assert.strictEqual(s.keys, '↵ set · Esc cancel · empty removes · .class #id key=value');
+        await shots('field-prefilled-1280');
+    });
+
+    test('F3 a pasted {.x #y} and a typed {.lead} lose their outer braces, the caret at the end; Enter writes {.lead}', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('configurable', 3);
+        await chooseEntry('formatting', FORMATTING_ENTRY);
+        await page.evaluate(() => {
+            const input = document.activeElement as HTMLInputElement;
+            const data = new DataTransfer();
+            data.setData('text/plain', '{.x #y}');
+            // What a paste does to an input: the text goes in, then `input`.
+            input.setRangeText('{.x #y}', input.selectionStart ?? 0, input.selectionEnd ?? 0, 'end');
+            input.dispatchEvent(new InputEvent('input', { inputType: 'insertFromPaste', dataTransfer: data, bubbles: true }));
+        });
+        let s = await field();
+        assert.deepStrictEqual([s.value, s.selected], ['.x #y', [5, 5]]);
+        await shots('field-pasted-1280', [['light', LIGHT_MODERN]]);
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a');
+        await page.keyboard.up(MOD);
+        await page.keyboard.type('{.lead');
+        assert.strictEqual((await field()).value, '{.lead', 'one brace alone stays while typing');
+        await page.keyboard.type('}');
+        s = await field();
+        assert.deepStrictEqual([s.value, s.selected], ['.lead', [5, 5]]);
+        await shots('field-pasted-1280', [['dark', DARK_MODERN], ['hc', HC_DARK]]);
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.ok((await lastEdit())?.text.includes('carry a class. {.lead}\n'), (await lastEdit())?.text);
+    });
+
+    test('F4 a stray brace is dropped on Enter: `.a}` and `{.a` both write {.a}', async function () {
+        this.timeout(20000);
+        for (const typed of ['.a}', '{.a']) {
+            await showDocument();
+            await clickAt('configurable', 3);
+            await chooseEntry('formatting', FORMATTING_ENTRY);
+            await page.keyboard.type(typed);
+            await page.keyboard.press('Enter');
+            await settle();
+            assert.ok((await lastEdit())?.text.includes('carry a class. {.a}\n'), `${typed}: ${(await lastEdit())?.text}`);
+        }
+    });
+
+    test('F5–F6 a refused value: the field kept with it, framed amber, the keys line kept, the reason under it; the next key clears it all', async function () {
+        this.timeout(20000);
+        await showDocument();
+        const before = (await (editor as EditorPage).edits()).length;
+        await clickAt('configurable', 3);
+        await chooseEntry('formatting', FORMATTING_ENTRY);
+        await page.keyboard.type('width = 300');
+        await page.keyboard.press('Enter');
+        await delay(150);
+        let s = await field();
+        assert.deepStrictEqual(
+            { value: s.value, focused: s.focused, keys: s.keys !== null, invalid: s.invalid, describedBy: s.describedBy, role: s.reasonRole },
+            { value: 'width = 300', focused: true, keys: true, invalid: 'true', describedBy: 'reason', role: null },
+        );
+        assert.ok(s.reason?.startsWith('width = 300 is text, not an attribute list'), s.reason ?? 'none');
+        assert.ok(s.reason?.includes('Write it as width=300.'), s.reason ?? 'none');
+        assert.ok(!/\{width|300\}/.test(s.reason ?? ''), 'the value named without the braces the field draws');
+        assert.strictEqual(s.frameBorder.color, await page.evaluate(() => {
+            const probe = document.createElement('div');
+            probe.style.color = getComputedStyle(document.documentElement).getPropertyValue('--vscode-inputValidation-warningBorder').trim() || '#b89500';
+            document.body.append(probe);
+            const c = getComputedStyle(probe).color;
+            probe.remove();
+            return c;
+        }), 'framed in the refusal\'s amber');
+        const reasonBox = await page.$eval(`${ANY_FIELD_BAR} > .mep-field-refusal`, (el, sel) => {
+            const r = el.getBoundingClientRect();
+            const f = (document.querySelector(`${sel} .mep-attr-field`) as HTMLElement).getBoundingClientRect();
+            return { top: r.top, fieldBottom: f.bottom };
+        }, ANY_FIELD_BAR);
+        assert.ok(reasonBox.top >= reasonBox.fieldBottom - 1, `the reason on a line of its own: ${JSON.stringify(reasonBox)}`);
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
+        await shots('field-refused-1280');
+        await applyTheme(page, HC_DARK);
+        s = await field();
+        assert.deepStrictEqual([s.frameBorder.style, s.frameBorder.width], ['dashed', '2px'], 'High Contrast: the form changes, not the colour alone');
+        await applyTheme(page, LIGHT_MODERN);
+
+        await page.keyboard.press('Backspace');
+        await delay(80);
+        s = await field();
+        assert.deepStrictEqual({ reason: s.reason, invalid: s.invalid, describedBy: s.describedBy, style: s.frameBorder.style }, { reason: null, invalid: null, describedBy: 'keys', style: 'solid' });
+        await shots('field-cleared-1280');
+        await page.keyboard.press('Enter');
+        await delay(150);
+        assert.notStrictEqual((await field()).reason, null, 'Enter checks again');
+    });
+
+    test('F7–F8 the quote\'s literal emptied: "↵ removes … · Esc keeps them", no placeholder; Esc keeps it, Enter removes it in one undo step', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('warning to', 3);
+        await clickVerb('block-attributes');
+        await page.keyboard.press('Backspace');
+        await delay(80);
+        const s = await field();
+        assert.deepStrictEqual({ keys: s.keys, code: s.keysCode, removes: s.keysRemoves, placeholder: s.placeholder, value: s.value }, {
+            keys: '↵ removes .warning #intro · Esc keeps them', code: ['.warning #intro'], removes: true, placeholder: '', value: '',
+        });
+        const colours = await page.$eval(`${ANY_FIELD_BAR} > .mep-field-keys`, el => {
+            const probe = document.createElement('span');
+            probe.style.color = 'var(--vscode-foreground)';
+            el.append(probe);
+            const text = getComputedStyle(probe).color;
+            probe.remove();
+            return [getComputedStyle(el).color, text];
+        });
+        assert.strictEqual(colours[0], colours[1], 'in the text\'s colour');
+        await shots('field-emptied-1280');
+        const before = (await (editor as EditorPage).edits()).length;
+        await page.keyboard.press('Escape');
+        await settle();
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'Esc keeps them');
+
+        // Esc dismissed the quote's bar until the caret leaves it (wave 2 #9): Alt+Enter brings it back.
+        await clickAt('warning to', 3);
+        await pressAlt('Enter');
+        await clickVerb('block-attributes');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.ok(!(await lastEdit())?.text.includes('{.warning'), (await lastEdit())?.text);
+        assert.strictEqual(await page.$eval('.mep-hint', el => el.textContent), `${ATTRIBUTES_REMOVED_HINT} — ${UNDO}`);
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('z');
+        await page.keyboard.up(MOD);
+        await settle();
+        assert.ok((await lastEdit())?.text.includes('> {.warning #intro}'), `one undo step brings it back: ${(await lastEdit())?.text}`);
+    });
+
+    test('F9 a copy from the field holds the value as shown, without the braces', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('warning to', 3);
+        await clickVerb('block-attributes');
+        const copied = await page.evaluate(() => {
+            const input = document.activeElement as HTMLInputElement;
+            input.select();
+            let text = '';
+            const listen = (e: ClipboardEvent) => {
+                text = (input.value.slice(input.selectionStart ?? 0, input.selectionEnd ?? 0));
+                e.clipboardData?.setData('text/plain', text);
+            };
+            document.addEventListener('copy', listen, true);
+            document.execCommand('copy');
+            document.removeEventListener('copy', listen, true);
+            return text;
+        });
+        assert.strictEqual(copied, '.warning #intro');
+    });
+
+    test('R1 the bold run\'s bar (Alt+Enter) → Attributes…: Bold · Attributes, the field at the run, not where the bar was', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('configurable', 3);
+        await pressAlt('Enter');
+        await clickVerb('edit-attributes');
+        const s = await field();
+        assert.strictEqual(s.heading, 'Bold · Attributes');
+        const b = await boxes('configurable');
+        assert.ok(Math.abs(b.bar.left - b.run.left) <= 2, `at the run's start: ${JSON.stringify(b)}`);
+        assert.ok(b.bar.top >= b.run.bottom - 1 || b.bar.bottom <= b.run.top + 1, `off the run's line: ${JSON.stringify(b)}`);
+        await shots('routes-bar-1280', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+    });
+
+    test('R2 the bubble\'s {…} over the bold run says what it does there, and over plain text', async function () {
+        this.timeout(20000);
+        await showDocument();
+        const a = await pointAt(page, 'configurable', 0);
+        const b = await pointAt(page, 'configurable', 11);
+        await page.mouse.move(a.x, a.y);
+        await page.mouse.down();
+        await page.mouse.move(b.x + 6, b.y, { steps: 4 });
+        await page.mouse.up();
+        await page.waitForSelector('.mep-bubble:not([hidden]) [data-action="attrs-bubble"]', { timeout: 3000 });
+        const tip = await describedTip(page, '.mep-bubble [data-action="attrs-bubble"]');
+        assert.strictEqual(tip, 'Attributes of Bold… — **text**{.class}\nOver plain text: Span with class… — [text]{.class}');
+        // The bubble takes the pointer once its inert time is over (`placement.ts`).
+        await delay(400);
+        const shown = await hoverTip(page, '.mep-bubble [data-action="attrs-bubble"]');
+        assert.ok(shown?.text.includes('Over plain text'), `the hover draws the note too: ${shown?.text}`);
+        await shots('routes-bubble-1280', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+    });
+
+    test('R3–R4 Formatting keeps Attributes of Paragraph… after its divider; Block type gains it last, after a divider, the same card and field', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('configurable', 3);
+        await openMenu('formatting');
+        const formatting = await page.$eval(FORMATTING_ENTRY, el => ({ label: el.querySelector('.mep-entry-label')?.textContent, previous: (el.previousElementSibling as HTMLElement | null)?.dataset.action }));
+        assert.deepStrictEqual(formatting, { label: 'Attributes of Paragraph…', previous: 'inline-attributes' });
+        await page.hover(FORMATTING_ENTRY);
+        await delay(500);
+        await shots('routes-formatting-1280', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+        await page.keyboard.press('Escape');
+
+        await openMenu('block-type');
+        const entry = await page.$eval(BLOCK_TYPE_ENTRY, el => ({
+            label: el.querySelector('.mep-entry-label')?.textContent ?? el.textContent,
+            last: el.nextElementSibling === null,
+            divider: el.previousElementSibling?.getAttribute('role') === 'separator' || (el.previousElementSibling?.className ?? '').includes('separator'),
+            syntax: el.querySelector('.mep-entry-syntax')?.textContent,
+            role: el.getAttribute('role'),
+        }));
+        assert.deepStrictEqual(entry, { label: 'Attributes of Paragraph…', last: true, divider: true, syntax: 'text {.class}', role: 'menuitem' });
+        await page.hover(BLOCK_TYPE_ENTRY);
+        await page.waitForSelector('.mep-preview-card[data-action="block-type-attributes"]:not([hidden])', { timeout: 2000 });
+        await shots('routes-blocktype-1280', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+        await page.click(BLOCK_TYPE_ENTRY);
+        await page.waitForSelector(`${ROW_FIELD} .mep-inline-field`, { visible: true });
+        assert.strictEqual((await field()).heading, 'Paragraph · Attributes');
+        await page.keyboard.press('Escape');
+
+        await clickAt('warning to', 3);
+        await page.keyboard.press('Escape');
+        await openMenu('block-type');
+        assert.strictEqual(await page.$eval(`${BLOCK_TYPE_ENTRY} .mep-entry-label`, el => el.textContent), 'Attributes of Quote…');
+    });
+
+    test('R5 Attributes of Bold… on a table\'s bar opens Bold · Attributes; Italic, Emphasis and Strong runs title by their own names', async function () {
+        this.timeout(30000);
+        await showDocument();
+        await clickAt('Alpha', 2);
+        await pressAlt('Enter');
+        await clickVerb('inline-attributes');
+        assert.strictEqual((await field()).heading, 'Bold · Attributes');
+        await page.keyboard.press('Escape');
+        for (const [needle, name] of [['italic', 'Italic'], ['emphasis', 'Emphasis'], ['strong', 'Strong']]) {
+            await clickAt(needle, 2);
+            await pressAlt('Enter');
+            await clickVerb('edit-attributes');
+            const s = await field();
+            assert.strictEqual(s.heading, `${name} · Attributes`);
+            assert.strictEqual(s.labelCut, false);
+            await page.keyboard.press('Escape');
+            await delay(100);
+        }
+    });
+
+    test('N1–N2 at 420 the keys line goes under the field, the title whole; refused, the reason on a line of its own', async function () {
+        this.timeout(20000);
+        await width(420, 640);
+        await showDocument();
+        await clickAt('warning to', 3);
+        await clickVerb('block-attributes');
+        let s = await field();
+        assert.strictEqual(s.narrow, true, 'the keys line wrapped: mep-narrow');
+        assert.strictEqual(s.labelCut, false);
+        const layout = await page.evaluate(sel => {
+            const bar = document.querySelector(sel) as HTMLElement;
+            const r = (q: string) => (bar.querySelector(q) as HTMLElement).getBoundingClientRect();
+            const b = bar.getBoundingClientRect();
+            return { keysTop: r(':scope > .mep-field-keys').top, fieldBottom: r('.mep-attr-field').bottom, keysWidth: r(':scope > .mep-field-keys').width, barWidth: b.width, barRight: b.right, window: window.innerWidth };
+        }, ANY_FIELD_BAR);
+        assert.ok(layout.keysTop >= layout.fieldBottom - 1, JSON.stringify(layout));
+        assert.ok(layout.keysWidth >= layout.barWidth - 20, `the keys line full width: ${JSON.stringify(layout)}`);
+        assert.ok(layout.barRight <= layout.window, `inside the window: ${JSON.stringify(layout)}`);
+        await shots('narrow-prefilled-420', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+        await page.keyboard.press('End');
+        await page.keyboard.type(' title="a');
+        await page.keyboard.press('Enter');
+        await delay(150);
+        s = await field();
+        assert.ok(s.reason?.includes('has an open quote'), s.reason ?? 'none');
+        assert.strictEqual(s.labelCut, false);
+        await shots('narrow-refused-420', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+    });
+
+    test('N3 at 420 the Block type menu shows the entry inside the window', async function () {
+        this.timeout(20000);
+        await width(420, 640);
+        await showDocument();
+        await clickAt('configurable', 3);
+        await openMenu('block-type');
+        await page.hover(BLOCK_TYPE_ENTRY);
+        await delay(400);
+        const r = await page.$eval(BLOCK_TYPE_ENTRY, el => {
+            el.scrollIntoView({ block: 'nearest' });
+            const b = el.getBoundingClientRect();
+            const m = (el.closest('.mep-menu') as HTMLElement).getBoundingClientRect();
+            return { right: m.right, left: m.left, w: window.innerWidth, visible: b.height > 0 };
+        });
+        assert.ok(r.visible && r.left >= 0 && r.right <= r.w, JSON.stringify(r));
+        await shots('narrow-blocktype-420', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+    });
+});
