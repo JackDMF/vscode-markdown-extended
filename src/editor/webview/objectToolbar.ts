@@ -2612,8 +2612,9 @@ class ObjectToolbarView implements PluginView {
      * reason, on a container and an admonition, whose renderers drop a literal.
      */
     private attributesVerb(object: EditorObject): Verb {
-        // A code block is an object at any depth; its literal is written only at the top level.
-        const nested = object.kind === 'code_block' && this.view.state.doc.resolve(object.from).depth > 0;
+        // A code block is an object at any depth, a list item and a heading in a quote too; below the top level only
+        // a heading's and a list item's literal is written (`nestedAttrsRefusal`).
+        const nested = !isMarkObject(object) && object.from < this.view.state.doc.content.size && this.view.state.doc.resolve(object.from).depth > 0;
         const found = isMarkObject(object) ? { refusal: NO_BLOCK_ATTRS_REFUSAL } : attributesTargetOf(object.node, object.from, nested);
         const refused = 'refusal' in found;
         const fences = object.kind === 'code_block' && object.node.attrs.markup === '' ? ' Setting one makes the block fenced.' : '';

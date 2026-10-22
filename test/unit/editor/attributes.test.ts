@@ -11,7 +11,7 @@ import { plugins } from '../../../src/plugin/plugins';
 import { withoutId } from '../../../src/editor/attrs';
 import { editorSchema } from '../../../src/editor/schema';
 import {
-    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, NESTED_CODE_ATTRS_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt, attributesTargetOf,
+    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, NESTED_CODE_ATTRS_REFUSAL, NESTED_LIST_ATTRS_REFUSAL, LITERAL_READ_WITH_BLOCK_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt, attributesTargetOf,
     commitAttributes, containerNameOf, literalOf, literalRefusal, spanLockReason,
 } from '../../../src/editor/webview/objects';
 import { FieldStep, refusedStep } from '../../../src/editor/webview/inlineField';
@@ -476,6 +476,118 @@ suite('Editor Attributes…: where the engine reads no attributes, nothing offer
         const parsed = parseDocument(noAttrs, source, {});
         const doc = parsed.doc.type.create(null, topChildren(parsed.doc).map(n => touched(n)));
         assert.strictEqual(serializeDocument({ ...parsed, doc }, options), source);
+    });
+});
+
+/** The position of the first node of `type` in `state`'s document. */
+function nodePos(state: EditorState, type: string): number {
+    let found = -1;
+    state.doc.descendants((node, pos) => {
+        if (found < 0 && node.type.name === type) {
+            found = pos;
+        }
+        return found < 0;
+    });
+    assert.ok(found >= 0, `no ${type}`);
+    return found;
+}
+
+/** The target the first node of `type` is, as a bar or the menu would hand it to the field. */
+function targetOfNode(state: EditorState, type: string, name: string): AttributesTarget {
+    const pos = nodePos(state, type);
+    return { pos, node: state.doc.nodeAt(pos) as Node, name };
+}
+
+/** One undo step from `state`: the state before it. */
+function undone(state: EditorState): EditorState {
+    let back: Transaction | null = null;
+    undo(state, tr => {
+        back = tr;
+    });
+    assert.ok(back, 'one undo step');
+    return state.apply(back);
+}
+
+suite('Editor Attributes…: a heading inside a quote, an admonition or a container (#8 step 1)', () => {
+    const QUOTE = '> ## Sync rules {#sync-rules}\n> Text\n> {.warning}\n';
+    const ADMONITION = '!!! warning\n    ## Sync rules {#sync-rules}\n    Body\n';
+    const CONTAINER = '::: note\n## T {.h}\n:::\n';
+
+    test('round trip: the nested heading\'s literal is kept as written, the block stays rich text', () => {
+        for (const source of [QUOTE, ADMONITION, CONTAINER]) {
+            const state = stateOf(source);
+            let raw = false;
+            state.doc.descendants(node => {
+                raw = raw || node.type.name === 'raw_block';
+                return true;
+            });
+            assert.ok(!raw, `${source}: no source block`);
+            assert.strictEqual(text(state), source);
+            const heading = state.doc.nodeAt(nodePos(state, 'heading')) as Node;
+            assert.strictEqual(heading.attrs.attrsSuffix, source === CONTAINER ? '{.h}' : '{#sync-rules}', source);
+            assert.strictEqual(heading.attrs.anchor, source === CONTAINER ? null : 'sync-rules', source);
+        }
+        // A heading with a literal moved into a quote (a paste) keeps it: the fidelity plugin leaves a heading's alone.
+        const quote = stateOf('> Text.\n');
+        const moved = editorSchema.nodes.heading.create({ level: 2, attrsSuffix: '{.x}' }, editorSchema.text('Moved'));
+        const pasted = quote.apply(quote.tr.replaceWith(1, 1 + (quote.doc.firstChild?.firstChild?.nodeSize ?? 0), moved));
+        assert.strictEqual(text(pasted), '> ## Moved {.x}\n');
+        assert.deepStrictEqual(literals(stateOf(text(pasted))), ['{.x}']);
+    });
+
+    test('edited through the model: the heading\'s literal changes, the quote\'s stays; read back alike; one undo step; removed with no trailing space', () => {
+        const quote = stateOf(QUOTE);
+        const made = commitAttributes(quote, targetOfNode(quote, 'heading', 'Heading'), '{#other .c}');
+        assert.ok(made !== null && 'tr' in made, made !== null && 'refusal' in made ? saidText(made.refusal) : 'a transaction');
+        const changed = quote.apply(made.tr);
+        // A changed quote is written in the serializer's layout (a `>` line between its blocks), as for any edit in it.
+        assert.strictEqual(text(changed), '> ## Sync rules {#other .c}\n>\n> Text\n> {.warning}\n');
+        const again = stateOf(text(changed));
+        assert.deepStrictEqual(literals(again), ['{.warning}', '{#other .c}'], 'the quote\'s and the heading\'s, read back');
+        assert.strictEqual((again.doc.nodeAt(nodePos(again, 'heading')) as Node).attrs.anchor, 'other');
+        assert.strictEqual(text(undone(changed)), QUOTE);
+        const removed = commitAttributes(quote, targetOfNode(quote, 'heading', 'Heading'), '');
+        assert.ok(removed !== null && 'tr' in removed && removed.removed);
+        assert.strictEqual(text(quote.apply(removed.tr)), '> ## Sync rules\n>\n> Text\n> {.warning}\n');
+
+        const admonition = stateOf(ADMONITION);
+        const set = commitAttributes(admonition, targetOfNode(admonition, 'heading', 'Heading'), '{#other .c}');
+        assert.ok(set !== null && 'tr' in set, set !== null && 'refusal' in set ? saidText(set.refusal) : 'a transaction');
+        assert.strictEqual(text(admonition.apply(set.tr)), '!!! warning\n    ## Sync rules {#other .c}\n\n    Body\n');
+        assert.deepStrictEqual(literals(stateOf(text(admonition.apply(set.tr)))), ['{#other .c}']);
+    });
+
+    test('fail-first: a list inside a quote, or inside a list, is refused — the save would drop its literal', () => {
+        // Before #8 the commit was accepted: the list node took `{.x}` and the save
+        // (`writtenLiterals`, top-level lists only) wrote `> - a\n> - b\n` — the literal silently lost.
+        const refusalOf = (state: EditorState, target: AttributesTarget): string => {
+            const made = commitAttributes(state, target, '{.x}');
+            if (made === null) {
+                return 'nothing';
+            }
+            return 'tr' in made ? `accepted, and saved as ${JSON.stringify(text(state.apply(made.tr)))} — the literal lost` : saidText(made.refusal);
+        };
+        const state = stateOf('> - a\n> - b\n');
+        const list = nodePos(state, 'bullet_list');
+        assert.strictEqual(refusalOf(state, targetOfNode(state, 'bullet_list', 'List')), NESTED_LIST_ATTRS_REFUSAL);
+        assert.deepStrictEqual(attributesTargetOf(state.doc.nodeAt(list) as Node, list, true), { refusal: NESTED_LIST_ATTRS_REFUSAL });
+        const nested = stateOf('- a\n  - b\n');
+        let inner = -1;
+        nested.doc.descendants((node, pos) => {
+            if (node.type.name === 'bullet_list' && pos > 0) {
+                inner = pos;
+            }
+            return true;
+        });
+        assert.strictEqual(refusalOf(nested, { pos: inner, node: nested.doc.nodeAt(inner) as Node, name: 'List' }), NESTED_LIST_ATTRS_REFUSAL);
+    });
+
+    test('a nested heading\'s literal that would not read back with its quote is refused, the wrapper\'s units checked', () => {
+        // With the span's `$` on the heading's line, the literal's would pair as a left sidebar (`mathStandIn.test.ts`, at the top level).
+        const state = stateOf('> ## A [x]{title="a $b"} c y d\n> Text.\n');
+        assert.deepStrictEqual(commitAttributes(state, targetOfNode(state, 'heading', 'Heading'), '{title="d$ e"}'), { refusal: LITERAL_READ_WITH_BLOCK_REFUSAL });
+        const made = commitAttributes(state, targetOfNode(state, 'heading', 'Heading'), '{title="d e"}');
+        assert.ok(made !== null && 'tr' in made, 'without the $ it is set');
     });
 });
 

@@ -1181,6 +1181,31 @@ export const ADMONITION_ATTRS_REFUSAL = `An admonition takes no {…}: on its !!
 export const NESTED_CODE_ATTRS_REFUSAL: Said = said`A code block inside a quote, a list or a container takes no ${value('{…}')} here. ${VERB.language} and ${VERB.editSource} still work.`;
 
 /**
+ * Why a list inside another block is given no literal: the save writes a
+ * list's literal only at the top level (a `{…}` line under a nested list goes
+ * to the outermost one, and a nested list written with one is kept as source).
+ */
+export const NESTED_LIST_ATTRS_REFUSAL: Said = `A list inside a quote, an admonition or a container keeps attributes only as source — use ${VERB.showInTextEditor} to add them there.`;
+
+/**
+ * Why `node`, standing inside another block, is given no literal, or `null`:
+ * the save writes a literal below the top level only for a heading and a list
+ * item (`writtenLiterals`, `fidelity.ts`) — a nested code block's, a nested
+ * list's or any other nested block's would be dropped, so none is taken. A
+ * block that takes no literal anywhere (a container, an admonition) is left to
+ * `literalHomeRefusal`, whose reason names it.
+ */
+export function nestedAttrsRefusal(node: Node): Said | null {
+    if (node.type === nodes.heading || node.type === nodes.list_item || !SUFFIX_NODES.has(node.type.name)) {
+        return null;
+    }
+    if (node.type === nodes.code_block) {
+        return NESTED_CODE_ATTRS_REFUSAL;
+    }
+    return node.type === nodes.bullet_list || node.type === nodes.ordered_list ? NESTED_LIST_ATTRS_REFUSAL : NO_BLOCK_ATTRS_REFUSAL;
+}
+
+/**
  * What an indented code block given `literal` becomes as well: a fenced one,
  * on the fence a new block gets, lengthened past a run inside — it has no
  * opening line to carry the literal otherwise. Nothing for any other block, or
@@ -1219,13 +1244,13 @@ export function literalOf(node: Node): string | null {
  * item — or why it is none: none where the host's engine reads no attributes
  * (`NO_ATTRS_REFUSAL`), else `literalHomeRefusal`, except that a block which
  * has a literal already can always have it edited or removed (a requirement
- * heading's apart). A code block's bar says whether it is `nested`, inside
- * another block (`NESTED_CODE_ATTRS_REFUSAL`); every other caller targets a
- * top-level block or a list item.
+ * heading's apart). A caller says whether the block is `nested`, inside
+ * another block: then only a heading and a list item take one
+ * (`nestedAttrsRefusal`: a nested code block, list or other block is refused).
  */
 export function attributesTargetOf(node: Node, pos: number, nested = false): AttributesTarget | { refusal: Said } {
     const refusal = (currentReadsAttrs() ? null : NO_ATTRS_REFUSAL)
-        ?? (nested && node.type === nodes.code_block ? NESTED_CODE_ATTRS_REFUSAL : null)
+        ?? (nested ? nestedAttrsRefusal(node) : null)
         ?? blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
     return refusal === null ? { pos, node, name: BLOCK_NAMES[node.type.name] ?? 'Block' } : { refusal };
 }
@@ -1285,7 +1310,9 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
     const value = literal.trim();
     const removed = isRemoval(value);
     const node = current.node;
-    const refusal = blockAttrsRefusal(node)
+    // Below the top level only a heading's and a list item's literal is written: any other would be dropped by the save.
+    const refusal = (state.doc.resolve(current.pos).depth > 0 ? nestedAttrsRefusal(node) : null)
+        ?? blockAttrsRefusal(node)
         ?? (removed ? null : literalRefusal(value, literalPlaceOf(node)) ?? literalHomeRefusal(node));
     if (refusal !== null) {
         return { refusal };
