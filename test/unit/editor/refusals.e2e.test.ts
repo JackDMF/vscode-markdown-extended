@@ -64,6 +64,10 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
     const fresh = async (text = REFUSALS_DOC, marker = 'Refusals') => {
         await page.mouse.move(2, 2);
         await page.evaluate(() => {
+            // A menu the last test left open is closed as Esc in it closes it.
+            for (const menu of Array.from(document.querySelectorAll('.mep-menu:not([hidden])'))) {
+                menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            }
             (document.activeElement as HTMLElement | null)?.blur();
             window.scrollTo(0, 0);
         });
@@ -385,14 +389,20 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         await page.keyboard.press('ArrowLeft');
         await delay(120);
         assert.ok(await page.$('.ProseMirror-gapcursor'), 'a gap cursor before the table');
+        // The face opens — its Attributes of … entry keeps Formatting's state — and its types are refused with the gap's reason.
         const face = `${ROW} .mep-menu-face[data-menu="block-type"]`;
-        assert.strictEqual(await page.$eval(face, el => el.getAttribute('aria-disabled')), 'true');
         await page.click(face);
+        const menu = '.mep-menu[data-menu="block-type"]';
+        await page.waitForSelector(`${menu}:not([hidden])`);
+        const entry = `${menu} [data-action="heading-2"]`;
+        assert.strictEqual(await page.$eval(entry, el => el.getAttribute('aria-disabled')), 'true');
+        await page.click(entry);
         await delay(80);
-        const p = await placed(face, ROW);
-        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'control', 'No block here to change — Insert adds one at this spot.']);
-        assert.ok(Math.abs(p.hint.left - p.controls[0].left) <= 2);
+        const p = await placed(entry, menu);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'No block here to change — Insert adds one at this spot.']);
+        assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1);
         await shotAs('s11-gap-lock');
+        await page.click(face);
     });
 
     test('D4e: a refused Block type entry (a table cell) says why beside the menu, at the entry; the card is put away', async function () {
@@ -415,9 +425,10 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         assert.strictEqual(await page.$eval('.mep-preview-card', el => (el as HTMLElement).hidden), true, 'the card put away');
         assert.strictEqual(await page.$eval(menu, el => (el as HTMLElement).hidden), false, 'the menu stays open');
         await shotAs('s8-blocktype-entry');
-        await page.keyboard.press('Escape');
+        // A press on the face closes the menu; the hint goes with the press.
+        await page.click(face);
         await delay(80);
-        assert.strictEqual(await shown(), false, 'gone with the menu');
+        assert.deepStrictEqual([await page.$eval(menu, el => (el as HTMLElement).hidden), await shown()], [true, false], 'the menu closed, the hint gone with it');
     });
 
     /** Open the bar's `verb` menu and press `entry` with the mouse. */

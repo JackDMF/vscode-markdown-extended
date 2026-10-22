@@ -37,7 +37,7 @@ import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, placeCard, placeMenu, rangeAnchor } from '../placement';
-import { showHint } from '../hint';
+import { dismissRefusal, showHint, showRefusal } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
 import { chevronNode, lensLabelNodes } from '../lenses';
@@ -477,6 +477,8 @@ class ToolbarView implements PluginView {
     private lockRole: ControlRole | null = null;
     /** Why the row's selection tools are refused now (`update`), `null` while they are offered: "…"'s face follows it, whoever laid the row out. */
     private refusal: string | null = null;
+    /** Why each refused control is refused now (`update`): a tool, a face, a menu's entry in "…" — what a press on it says at it (#10). */
+    private readonly reasonOf = new Map<HTMLElement, Said>();
     private flashTimer: ReturnType<typeof setTimeout> | undefined;
     /** A pointer button is down: a selection it draws shows its bubble at the release (`bubbleReleased`). */
     private pointerHeld = false;
@@ -668,9 +670,13 @@ class ToolbarView implements PluginView {
             return s;
         };
         const mac = macKeys();
+        this.reasonOf.clear();
         for (const tool of this.tools) {
             const s = stateOf(tool.action);
             const note = s.enabled ? null : s.reason;
+            if (note !== null) {
+                this.reasonOf.set(tool.el, note);
+            }
             if (tool.el.classList.contains('mep-menu-item')) {
                 // A menu entry shows its word and syntax, and its card the construct and the refusal: no hover.
                 // A refused one says why to a screen reader. A mark's entry in "…" is checked as its button is pressed.
@@ -955,6 +961,25 @@ class ToolbarView implements PluginView {
         if (lock !== null && !this.more.panel.hidden) {
             this.closeAll();
         }
+    }
+
+    /**
+     * A refused control was pressed — a tool, a face, a menu's entry, "…": why,
+     * at it (#10), under the row or beside the menu it stands in, the hover and
+     * the card put away so the reason is not said twice side by side. While the
+     * row is locked, what to do to get it back (`lockForms().press`), and the
+     * lock note at the row's end flashes as before.
+     */
+    private refuseAt(el: HTMLElement): void {
+        this.flashLock();
+        this.tips.hide();
+        this.hideCard();
+        const message = this.lockRole !== null ? lockForms(this.lockRole).press : this.reasonOf.get(el);
+        if (message === undefined || saidText(message) === '') {
+            return;
+        }
+        const menu = el.closest('.mep-menu');
+        showRefusal(this.view, message, menu instanceof HTMLElement ? { at: 'menu-entry', el, menu } : { at: 'control', el });
     }
 
     /** A refused tool was pressed while the row is locked: its reason is pointed at for a moment, not a silent nothing. */
@@ -1290,7 +1315,7 @@ class ToolbarView implements PluginView {
         item.addEventListener('click', e => {
             e.preventDefault();
             if (isDisabled(item)) {
-                this.flashLock();
+                this.refuseAt(item);
                 return;
             }
             this.openMenu(menu, false);
@@ -1370,6 +1395,13 @@ class ToolbarView implements PluginView {
         const title = menu.id === 'block-type' && label !== MENU_LABELS[menu.id] ? `${MENU_LABELS[menu.id]}: ${label}` : label;
         this.tipOfControl.set(face, plainTip(title, reason));
         this.tips.refresh(face);
+        if (reason !== null) {
+            // What a press on the face, or on its entry in "…", says at it (#10).
+            this.reasonOf.set(face, reason);
+            if (menu.opener) {
+                this.reasonOf.set(menu.opener, reason);
+            }
+        }
         if (!enabled && !menu.panel.hidden) {
             this.closeAll();
         }
@@ -1655,11 +1687,12 @@ class ToolbarView implements PluginView {
 
     private openMenu(menu: Menu, focusFirst: boolean): void {
         if (!menu.parent && menu.face && isDisabled(menu.face)) {
-            this.flashLock();
+            this.refuseAt(menu.face);
             return;
         }
         if (menu.parent === this.more && menu.opener && isDisabled(menu.opener)) {
-            // A menu moved into "…" is refused by its entry as it was by its face.
+            // A menu moved into "…" is refused by its entry as it was by its face, saying why at the entry.
+            this.refuseAt(menu.opener);
             return;
         }
         if (menu.parent) {
@@ -1690,6 +1723,8 @@ class ToolbarView implements PluginView {
         }
         if (!menu.panel.hidden) {
             menu.panel.hidden = true;
+            // A refusal said at one of its entries goes with it.
+            dismissRefusal(this.view, menu.panel);
             // Both: a menu moved into "…" or back while open has had either.
             menu.face?.setAttribute('aria-expanded', 'false');
             menu.opener?.setAttribute('aria-expanded', 'false');
@@ -1834,7 +1869,7 @@ class ToolbarView implements PluginView {
 
     private activate(tool: Tool): void {
         if (isDisabled(tool.el)) {
-            this.flashLock();
+            this.refuseAt(tool.el);
             return;
         }
         this.closeAll();
