@@ -385,6 +385,8 @@ suite('Attributes field (e2e)', () => {
     test('F9 a copy from the field holds the value as shown, without the braces', async function () {
         this.timeout(20000);
         await showDocument();
+        // Through plain text first: what Esc dismissed stays dismissed until the caret has left the object, also across a document sent again.
+        await clickAt('The last', 1);
         await clickAt('warning to', 3);
         await clickVerb('block-attributes');
         const copied = await page.evaluate(() => {
