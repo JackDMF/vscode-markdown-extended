@@ -131,9 +131,15 @@ export function exportBusyLabel(format: ExportFormatName, room: 'full' | 'short'
     return room === 'full' ? `Exporting ${formatLabel(format)}…` : `${formatLabel(format)}…`;
 }
 
-/** Why the other formats are refused while an export of `format` runs: the face's note and their description. */
+/** Why the other formats are refused while an export of `format` runs: the caption atop Export's menu and the face's note (#10 L4a). */
 export function exportBusyNote(format: ExportFormatName): string {
-    return `Exporting ${formatLabel(format)} — the other formats wait for it`;
+    return `One export at a time — ${formatLabel(format)} is running`;
+}
+
+/** What a waiting format says — its description, and at it when pressed — while `running` runs: when to choose it again (#10 L4b). */
+export function exportWaitNote(format: ExportFormatName, running: ExportFormatName): string {
+    const run = formatLabel(running);
+    return `${formatLabel(format)} waits for ${run} — choose it again when ${run} is done.`;
 }
 
 /** What the running format's entry says in place of how it is made. */
@@ -479,6 +485,9 @@ class ToolbarView implements PluginView {
     private refusal: string | null = null;
     /** Why each refused control is refused now (`update`): a tool, a face, a menu's entry in "…" — what a press on it says at it (#10). */
     private readonly reasonOf = new Map<HTMLElement, Said>();
+    /** The caption atop Export's menu while an export runs, and the format running as the face last showed it. */
+    private exportCaption: HTMLElement | null = null;
+    private exportRunning: ExportFormatName | null = null;
     private flashTimer: ReturnType<typeof setTimeout> | undefined;
     /** A pointer button is down: a selection it draws shows its bubble at the release (`bubbleReleased`). */
     private pointerHeld = false;
@@ -1072,6 +1081,14 @@ class ToolbarView implements PluginView {
     private exportFace(): HTMLElement {
         const menu = this.newMenu('export', EXPORT_LABEL, 'document');
         menu.alignEnd = true;
+        // While an export runs: why the other formats wait, once atop them at full contrast (a waiting entry is
+        // dimmed); not focusable and not read — each waiting entry's description says it (#10).
+        const caption = div('mep-menu-caption');
+        caption.setAttribute('role', 'presentation');
+        caption.setAttribute('aria-hidden', 'true');
+        caption.hidden = true;
+        menu.panel.append(caption);
+        this.exportCaption = caption;
         for (const entry of EXPORT_ENTRIES) {
             if (entry.separated) {
                 menu.panel.append(separator());
@@ -1429,11 +1446,20 @@ class ToolbarView implements PluginView {
         face.setAttribute('aria-busy', String(running !== null));
         this.tipOfControl.set(face, running === null ? plainTip(EXPORT_LABEL, refusal ?? note) : plainTip(exportBusyLabel(running, 'full'), refusal ?? exportBusyNote(running)));
         this.tips.refresh(face);
-        // A menu entry has no hover; a refused one says why to a screen reader.
+        if (this.exportCaption !== null) {
+            this.exportCaption.hidden = running === null;
+            this.exportCaption.textContent = running === null ? '' : exportBusyNote(running);
+        }
+        if (running === null && this.exportRunning !== null) {
+            // Done: what was said at a waiting format is over.
+            dismissRefusal(this.view, menu.panel);
+        }
+        this.exportRunning = running;
+        // A menu entry has no hover; a refused one says why to a screen reader, and when pressed at it (`runCommand`).
         for (const item of this.formatItems) {
             const mine = running !== null && item.dataset.export === running;
             setState(item, running === null, false);
-            describeAs(item, running === null ? null : mine ? exportBusyLabel(running, 'full') : exportBusyNote(running));
+            describeAs(item, running === null ? null : mine ? exportBusyLabel(running, 'full') : exportWaitNote(item.dataset.export as ExportFormatName, running));
             // As the face's icon is: drawn only when whether it spins changes, so the animation runs on through every update.
             const spinning = item.querySelector(':scope > .mep-entry-busy');
             if (mine && spinning === null) {
@@ -1882,7 +1908,16 @@ class ToolbarView implements PluginView {
      */
     private runCommand(menu: Menu, item: HTMLElement): void {
         const command = menu.commands.get(item);
-        if (!command || isDisabled(item)) {
+        if (!command) {
+            return;
+        }
+        if (isDisabled(item)) {
+            // A format waiting for the one running: refused, not queued (Daniel, 2026-10-22) — said at it, the menu open.
+            const running = this.host.exporting();
+            if (running !== null && this.formatItems.includes(item)) {
+                this.tips.hide();
+                showRefusal(this.view, exportWaitNote(item.dataset.export as ExportFormatName, running), { at: 'menu-entry', el: item, menu: menu.panel });
+            }
             return;
         }
         const held = menu.panel.contains(document.activeElement);

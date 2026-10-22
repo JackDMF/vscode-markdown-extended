@@ -162,7 +162,8 @@ suite('Editor toolbar: Export (e2e)', () => {
             const face = (document.querySelector(faceSelector) as HTMLElement).getBoundingClientRect();
             const p = panel.getBoundingClientRect();
             return {
-                entries: Array.from(panel.children).map(c => (c.getAttribute('role') === 'separator' ? '—' : `${c.querySelector('.mep-entry-label')?.textContent}|${c.querySelector('.mep-entry-detail')?.textContent ?? ''}`)),
+                // The busy caption (#10), hidden at rest, is no entry.
+                entries: Array.from(panel.children).filter(c => !c.classList.contains('mep-menu-caption')).map(c => (c.getAttribute('role') === 'separator' ? '—' : `${c.querySelector('.mep-entry-label')?.textContent}|${c.querySelector('.mep-entry-detail')?.textContent ?? ''}`)),
                 samples: panel.querySelectorAll('.mep-sample').length,
                 expanded: document.querySelector(faceSelector)?.getAttribute('aria-expanded'),
                 right: Math.round(p.right - face.right),
