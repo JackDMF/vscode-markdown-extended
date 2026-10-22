@@ -604,3 +604,88 @@ suite('Editor breadcrumb: the fit at narrow widths (e2e)', () => {
         assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'List · Attributes');
     });
 });
+
+const RESYNC_DOC = 'An intro paragraph.\n\n- Queue the edit locally\n- Send the batch\n\nThe last paragraph.\n';
+
+/**
+ * An open field and a host resync (#8 step 9, F7 — the wave-2 follow-up):
+ * a change made elsewhere above the field's block keeps the field open with
+ * what was typed, and Enter writes to the same block — on the outer part's
+ * route, the current part's and the Formatting menu's; a resync that deletes
+ * the block closes the field and writes nothing.
+ */
+suite('Editor breadcrumb: an open field through a host resync (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    const b = breadcrumbPage(() => editor as EditorPage);
+    const FIELD = '.mep-object-toolbar .mep-inline-field';
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    teardown(async () => {
+        await page.keyboard.press('Escape');
+        await page.mouse.click(1270, 890);
+    });
+
+    const open = async (route: 'outer' | 'current' | 'formatting') => {
+        await b.show(RESYNC_DOC);
+        if (route === 'formatting') {
+            await b.clickAt('Queue the edit', 2);
+            await b.openMenuByKeys('formatting');
+            await page.click('.mep-menu[data-menu="formatting"] [data-action="block-attributes"]');
+        } else {
+            await b.clickAt('Queue the edit', 2);
+            await b.pressAlt('Enter');
+            await page.click(`${CRUMBS} [data-part="${route}"]`);
+        }
+        await page.waitForSelector(FIELD, { visible: true, timeout: 2000 });
+        await delay(100);
+    };
+
+    for (const [route, heading, typed, written] of [
+        ['outer', 'List · Attributes', '.abc', '- Send the batch\n{.abc}\n'],
+        ['current', 'List item · Attributes', '.def', '- Queue the edit locally {.def}\n'],
+        ['formatting', 'List item · Attributes', '.ghi', '- Queue the edit locally {.ghi}\n'],
+    ] as const) {
+        test(`fail-first, ${route} route: a paragraph inserted above by the host keeps "${heading}" open with what was typed; Enter writes to the same block`, async function () {
+            // Before #8 step 9 the resync closed the field and what was typed was lost (PLAN.md follow-up, attributes-field review 3).
+            this.timeout(20000);
+            await open(route);
+            assert.strictEqual(await page.$eval('.mep-object-toolbar:has(.mep-inline-field) .mep-object-label', el => el.textContent), heading);
+            await page.keyboard.type(typed);
+            await b.resync(`Inserted at the top by another writer.\n\n${RESYNC_DOC}`);
+            assert.ok(await page.$(FIELD), 'the field is still open');
+            assert.strictEqual(await page.$eval(FIELD, el => (el as HTMLInputElement).value), typed);
+            assert.ok(await page.evaluate(sel => document.activeElement === document.querySelector(sel), FIELD), 'and has the focus');
+            await page.keyboard.press('Enter');
+            await settle();
+            const text = (await b.lastEdit())?.text ?? '';
+            assert.ok(text.startsWith('Inserted at the top') && text.includes(written), text);
+        });
+    }
+
+    test('a resync that deletes the list closes its field and writes nothing', async function () {
+        this.timeout(20000);
+        await open('outer');
+        await page.keyboard.type('.zzz');
+        const before = (await (editor as EditorPage).edits()).length;
+        await b.resync('An intro paragraph.\n\nThe last paragraph.\n');
+        await delay(150);
+        assert.strictEqual(await page.$(FIELD), null, 'the field is gone');
+        await page.keyboard.press('Enter');
+        await settle();
+        const after = await (editor as EditorPage).edits();
+        assert.ok(after.slice(before).every(e => !e.text.includes('.zzz')), 'nothing written');
+    });
+});

@@ -18,6 +18,8 @@ export const ANY_FIELD = '.mep-object-toolbar .mep-inline-field';
 /** What the breadcrumb suites (#8) do on the page: show a document, put the caret, read the bar, the field and the edits. */
 export interface BreadcrumbPage {
     show(text: string, marker?: string): Promise<void>;
+    /** The host's document again, as after a change made elsewhere: nothing on the page touched (no blur, no scroll). */
+    resync(text: string): Promise<void>;
     clickAt(needle: string, index?: number): Promise<void>;
     /** The caret at `needle`, and the rest that brings its bar. */
     restAt(needle: string, index?: number): Promise<void>;
@@ -57,6 +59,12 @@ export function breadcrumbPage(editor: () => EditorPage): BreadcrumbPage {
             await p.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
             // Long enough that the next click is no double click with the last one.
             await delay(600);
+        },
+        resync: async (text: string) => {
+            const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+            version++;
+            await editor().send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
+            await delay(250);
         },
         clickAt: async (needle: string, index = 1) => {
             const at = await pointAt(page(), needle, index);

@@ -31,7 +31,7 @@
  * Controls act on `mousedown` + `preventDefault`, so the editor keeps its focus
  * and its selection; they are reachable by Tab, menus by the arrow keys.
  */
-import { EditorState, NodeSelection, Plugin, PluginView, TextSelection } from 'prosemirror-state';
+import { EditorState, NodeSelection, Plugin, PluginView, TextSelection, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
@@ -48,7 +48,7 @@ import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
     applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLinkTransaction,
-    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, NO_BLOCK_ATTRS_REFUSAL, objectAtSelection, spanLockReason, blockPartsAt, AttributesTarget,
+    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, NO_BLOCK_ATTRS_REFUSAL, objectAtSelection, spanLockReason, blockPartsAt, AttributesTarget, Followed, followAll,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
 import { attributesField, attributesStep, holderAttributesStep } from '../attributes';
@@ -503,7 +503,9 @@ class ToolbarView implements PluginView {
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
     private cardTimer: ReturnType<typeof setTimeout> | undefined;
     /** The field an action asked for a value in (a span's literal, a link's address, an image's alt text), while it is open. */
-    private fieldBar: { bar: HTMLElement; field: InlineField; row: FieldRow } | null = null;
+    private fieldBar: { bar: HTMLElement; field: InlineField; row: FieldRow; followed: readonly object[] } | null = null;
+    /** The open field's target a change deleted (`applied`, #8 F7): it closes at the next `update`, nothing written. */
+    private fieldTargetGone = false;
     private destroyed = false;
     /** The row's reason while it is locked (`layoutRow`), in the row, and what kind of control locked it; `null` when none does. */
     private lockNote!: HTMLElement;
@@ -686,7 +688,25 @@ class ToolbarView implements PluginView {
         this.update(view);
     }
 
+    /**
+     * The view applied `transactions` (`appendTransaction`): what the open
+     * field edits and stands at is followed through them in place (#8 F7) —
+     * a host resync above it keeps the field and what was typed; where it is
+     * gone, the field closes at the next `update`, nothing written.
+     */
+    applied(transactions: readonly Transaction[], doc: EditorState['doc']): void {
+        const open = this.fieldBar;
+        if (open === null || !transactions.some(tr => tr.docChanged)) {
+            return;
+        }
+        this.fieldTargetGone = followAll(open.followed as Followed[], transactions, doc).size > 0;
+    }
+
     update(view: EditorView): void {
+        if (this.fieldTargetGone) {
+            this.fieldTargetGone = false;
+            this.closeFieldBar();
+        }
         const state = view.state;
         const states = new Map<ToolbarAction, ActionState>();
         const includes = this.host.includesOffered();
@@ -2103,8 +2123,9 @@ class ToolbarView implements PluginView {
             return;
         }
         // At the block's left edge, where its own bar stands (`blockAnchor`, the bar's own rule, read for the block as it is now) — not at the caret, which a menu leaves wherever it was.
-        const block = target;
-        this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target), undefined, () => blockAnchor(this.view, block), part === 'outer');
+        // A copy, followed while the field is open (#8 F7): the commit writes to it and the field stands at it, a resync above or not.
+        const block = { ...target };
+        this.openFieldBar('block-attributes', block.name, 'block-attributes', attributesStep(this.view, block), undefined, () => blockAnchor(this.view, block), part === 'outer');
     }
 
     /**
@@ -2115,12 +2136,14 @@ class ToolbarView implements PluginView {
      * The element's run stays drawn while the field is open.
      */
     private askInlineAttributes(): void {
-        const at = currentReadsAttrs() ? attributeHolderAt(this.view.state).inline : null;
-        if (at === null) {
+        const found = currentReadsAttrs() ? attributeHolderAt(this.view.state).inline : null;
+        if (found === null) {
             showHint(this.view, currentReadsAttrs() ? INLINE_ATTRS_LOCK : NO_ATTRS_REFUSAL, 'refusal');
             return;
         }
-        this.openFieldBar(at.holder.holder, holderNames(at).label, 'inline-attributes', holderAttributesStep(this.view, at), { from: at.object.from, to: at.object.to });
+        // A copy, followed while the field is open (#8 F7): the run it edits and stands at.
+        const at = { holder: found.holder, object: { ...found.object } };
+        this.openFieldBar(at.holder.holder, holderNames(at).label, 'inline-attributes', holderAttributesStep(this.view, at), at.object);
     }
 
     // -- links and images ------------------------------------------------------
@@ -2247,6 +2270,8 @@ class ToolbarView implements PluginView {
         const from = range?.from ?? sel.from;
         const to = range?.to ?? sel.to;
         const key = `field@${from}-${to}`;
+        // Where it stands, followed through the document's changes while it is open (#8 F7, `applied`): read when placed.
+        const place = range ?? { from, to };
         const close = () => {
             if (this.fieldBar?.bar === bar) {
                 this.fieldBar.row.destroy();
@@ -2289,7 +2314,7 @@ class ToolbarView implements PluginView {
             this.fieldBar?.row.destroy();
             const row = new FieldRow(bar, [label, barSeparator()], field, step, { contentChanged: () => this.slot.contentChanged(key) });
             row.render();
-            this.fieldBar = { bar, field, row };
+            this.fieldBar = { bar, field, row, followed: [...(step.followed ?? []), place] };
             if (again) {
                 // A next step, or a refusal's line: the bar's size changed under the same claim.
                 this.slot.contentChanged(key);
@@ -2309,7 +2334,7 @@ class ToolbarView implements PluginView {
             el: bar,
             anchor: () => (this.fieldBar?.bar !== bar ? null
                 : anchorAt ? anchorAt()
-                : from === to ? caretRect(view, Math.min(from, view.state.doc.content.size)) : rangeAnchor(view, from, to)),
+                : place.from === place.to ? caretRect(view, Math.min(place.from, view.state.doc.content.size)) : rangeAnchor(view, place.from, place.to)),
             valid: () => this.fieldBar?.bar === bar,
             hidden: () => {
                 if (this.fieldBar?.bar === bar) {
@@ -2509,11 +2534,16 @@ export function refreshToolbar(view: EditorView): void {
  * the key is kept from VS Code, whose `Ctrl+K` starts a chord.
  */
 export function toolbarPlugin(host: ToolbarHost): Plugin {
+    let toolbar: ToolbarView | null = null;
     return new Plugin({
         view: view => {
-            const toolbar = new ToolbarView(view, host);
+            toolbar = new ToolbarView(view, host);
             toolbarViews.set(view, toolbar);
             return toolbar;
+        },
+        appendTransaction(transactions, _oldState, newState) {
+            toolbar?.applied(transactions, newState.doc);
+            return null;
         },
         props: {
             handleKeyDown(view, event) {

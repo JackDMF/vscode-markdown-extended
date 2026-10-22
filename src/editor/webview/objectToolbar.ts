@@ -72,7 +72,7 @@ import {
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine, CodeBlockObject,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, literalOfObject, attributeHolderAt, holderInside,
-    AttributesTarget, CrumbPart, Crumbs, attributesTargetAt, blockAttrsRefusal, commitAttributes, crumbsAt,
+    AttributesTarget, CrumbPart, Crumbs, Followed, attributesTargetAt, blockAttrsRefusal, commitAttributes, crumbsAt, followAll,
 } from './objects';
 import { attributesField, attributesRemovedHint, attributesStep, holderAttributesStep } from './attributes';
 import { attributesTyped } from '../attributeLiteral';
@@ -587,6 +587,8 @@ class ObjectBar {
     private parts: { view: CrumbView; el: HTMLElement }[] = [];
     /** The outer part moved into "…" by `fitCrumbs` (#8, step 3 of the ladder): its entry is first there. */
     private outerMoved = false;
+    /** What the open field edits by its place (`FieldStep.followed`): followed through the document's changes while it is open (#8 F7). */
+    private following: readonly object[] = [];
     /** "…" (`moreControl`), last on the bar: the verbs `fit` moved into it, in the order they left. */
     private more: HTMLButtonElement | null = null;
     private moved: { verb: Verb; el: HTMLButtonElement }[] = [];
@@ -631,6 +633,11 @@ class ObjectBar {
 
     get editing(): boolean {
         return this.field !== null;
+    }
+
+    /** What the open field edits by its place, and the place its field stands at: none while no field is open. */
+    get followed(): readonly object[] {
+        return this.field === null ? [] : this.following;
     }
 
     /** Show `object`; redrawn only when what it shows changed, so a focused verb keeps its focus, and never under an open field. */
@@ -1415,6 +1422,8 @@ class ObjectBar {
         });
         field.el.dataset.verb = verb.id;
         this.field = field;
+        // The step's own and what its field is placed at (`target`, `anchorBlock`): one object each where they are the same.
+        this.following = [...('options' in spec ? [] : spec.followed ?? []), ...(verb.target ? [verb.target] : []), ...(verb.anchorBlock ? [verb.anchorBlock] : [])];
         // The buttons go with the replaced row, and no pointerleave comes for a hover on one: forgotten here, it would tint on (`activeVerb`).
         this.hovered = null;
         this.hoveredEntry = null;
@@ -1540,6 +1549,8 @@ class ObjectToolbarView implements PluginView {
     private readonly dismissals = new Map<string, Dismissal>();
     /** What puts the window's scroll back once an outer part's field closes (#8, `revealField`). */
     private unreveal: ((committed: boolean) => void) | null = null;
+    /** The bars whose open field's target a change deleted (`followObjects`): closed at the next `update`. */
+    private readonly goneFields = new Set<ObjectBar>();
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -1693,6 +1704,11 @@ class ObjectToolbarView implements PluginView {
             this.typingHold = true;
             this.slot.typing();
         }
+        // A field whose target the change deleted (`followObjects`): it closes, nothing written.
+        for (const bar of this.goneFields) {
+            this.hideBar(bar);
+        }
+        this.goneFields.clear();
         this.refresh();
     }
 
@@ -1705,6 +1721,49 @@ class ObjectToolbarView implements PluginView {
         }
         if (changed) {
             this.followDismissals(transactions, newState.doc);
+            this.followObjects(transactions, newState.doc);
+        }
+    }
+
+    /**
+     * A change of the document moved what the bars hold a position of (#8 F7,
+     * the wave-2 follow-up): the bars' objects, the rested and forced object,
+     * and an open field's target and the place it stands at — followed in
+     * place (`followAll`), so a host resync that inserts above the object
+     * keeps its bar and its open field, what was typed and all, and the
+     * commit writes to the same block. A field whose target is gone closes,
+     * writing nothing — after this update, from `update`.
+     */
+    private followObjects(transactions: readonly Transaction[], doc: EditorState['doc']): void {
+        const bars = [this.selectionBar, this.hoverBar];
+        const items: Followed[] = [];
+        for (const bar of bars) {
+            if (bar.object !== null) {
+                items.push(bar.object);
+            }
+            items.push(...bar.followed as Followed[]);
+        }
+        for (const object of [this.matured, this.forced, this.pending?.object ?? null]) {
+            if (object !== null) {
+                items.push(object);
+            }
+        }
+        if (items.length === 0) {
+            return;
+        }
+        const gone = followAll(items, transactions, doc);
+        if (gone.size === 0) {
+            return;
+        }
+        for (const bar of bars) {
+            if (bar.editing && (bar.followed.some(f => gone.has(f as Followed)) || (bar.object !== null && gone.has(bar.object)))) {
+                this.goneFields.add(bar);
+            }
+        }
+        this.matured = this.matured !== null && gone.has(this.matured) ? null : this.matured;
+        this.forced = this.forced !== null && gone.has(this.forced) ? null : this.forced;
+        if (this.pending !== null && gone.has(this.pending.object)) {
+            this.cancelPending();
         }
     }
 
@@ -2441,9 +2500,12 @@ class ObjectToolbarView implements PluginView {
         if (part.target === null) {
             verb = { ...base, refusal: part.refusal ?? NO_BLOCK_ATTRS_REFUSAL };
         } else if ('pos' in part.target) {
-            verb = { ...base, field: attributesStep(this.view, part.target), anchorBlock: part.target };
+            // A copy, followed while its field is open (F7): the field commits to it and stands at it — the cached part is the state's.
+            const target = { ...part.target };
+            verb = { ...base, field: attributesStep(this.view, target), anchorBlock: target };
         } else {
-            verb = { ...base, field: holderAttributesStep(this.view, part.target), target: { from: part.from, to: part.to } };
+            const at = { holder: part.target.holder, object: { ...part.target.object } };
+            verb = { ...base, field: holderAttributesStep(this.view, at), target: at.object };
         }
         return { role: part.role, name, literal: part.literal, verb, opens };
     }
@@ -2469,7 +2531,8 @@ class ObjectToolbarView implements PluginView {
             title: `The ${names.noun}'s {…}, written right after it: ${attributesTyped(literalOfObject(inside.object))} (Enter to apply, Esc to cancel).`,
             slot: 'attributes',
             field: step,
-            target: { from: inside.object.from, to: inside.object.to },
+            // The run itself: followed with the field while it is open (F7).
+            target: inside.object,
         };
         return { ...own, verbs: [...own.verbs, verb] };
     }
@@ -2698,6 +2761,8 @@ class ObjectToolbarView implements PluginView {
                 }, {
                     removable: false,
                     unchanged: () => this.act(object, () => false),
+                    // The span followed while the field is open (F7): a resync above it keeps the field.
+                    followed: [object],
                 });
                 // The title says Span, not attributes: the verb keeps its noun however narrow the bar.
                 const remove = wording({ verb: 'Remove', noun: 'attributes', keeps: ', keep text', titled: false });
@@ -2711,8 +2776,8 @@ class ObjectToolbarView implements PluginView {
                             title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
                             slot: 'attributes',
                             field: step,
-                            // At the span it edits, as every run's attributes field (`markAttributesVerb`).
-                            target: { from: object.from, to: object.to },
+                            // At the span it edits, as every run's attributes field (`markAttributesVerb`), followed with it.
+                            target: object,
                         },
                         {
                             id: 'remove-attributes',
@@ -3118,10 +3183,12 @@ class ObjectToolbarView implements PluginView {
      */
     private wrapperAttributesVerb(object: EditorObject): Verb {
         const own = this.attributesVerb(object);
-        const target = currentReadsAttrs() ? attributesTargetAt(this.view.state) : null;
-        if (target === null || 'refusal' in target || target.pos <= object.from || target.pos >= object.to) {
+        const found = currentReadsAttrs() ? attributesTargetAt(this.view.state) : null;
+        if (found === null || 'refusal' in found || found.pos <= object.from || found.pos >= object.to) {
             return own;
         }
+        // A copy, followed while its field is open (F7).
+        const target = { ...found };
         return {
             id: 'block-attributes',
             label: `Attributes of ${target.name}…`,
@@ -3283,7 +3350,8 @@ class ObjectToolbarView implements PluginView {
      * at the image, its object, already.
      */
     private markAttributesVerb(object: LiteralObject, id: string, label: string, title: (typed: string) => string): Verb {
-        const target = 'mark' in object ? { from: object.from, to: object.to } : undefined;
+        // The run itself, followed with its field while it is open (F7).
+        const target = 'mark' in object ? object : undefined;
         // What the tooltip says an empty value does is what the field's keys line says: it removes only a literal there is.
         return { id, label, title: title(attributesTyped(literalOfObject(object))), slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)), target };
     }

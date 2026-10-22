@@ -86,11 +86,12 @@ export function attributesField(
     name: string,
     literal: string | null,
     commit: (literal: string, refused: (reason: Said) => FieldStep) => FieldStep | void,
-    options: { removable?: boolean; unchanged?: () => void } = {},
+    options: { removable?: boolean; unchanged?: () => void; followed?: readonly object[] } = {},
 ): FieldStep {
     const removable = options.removable ?? true;
     const shown = innerOf(literal);
     const step: FieldStep = {
+        ...(options.followed === undefined ? {} : { followed: options.followed }),
         value: shown,
         label: ATTRIBUTES_FIELD_LABEL,
         heading: attributesTitle(name),
@@ -130,6 +131,8 @@ export function attributesRemovedHint(name: string): string {
  * that says so.
  */
 export function attributesStep(view: EditorView, target: AttributesTarget): FieldStep {
+    // `target` is followed in place while the field is open (`FieldStep.followed`, #8 F7): a caller sharing it — a bar's
+    // anchor for the field — sees it move with it; one that must not, passes a copy.
     return attributesField(target.name, literalOf(target.node), (value, refused) => {
         // Asked first, so a refusal keeps the field open with what was typed; the
         // transaction is built after the focus is back, which may commit a source box.
@@ -152,7 +155,7 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
         if (view.state !== before) {
             showChangeHint(view, undoHint(made.fenced ? FENCED_DONE : made.removed ? attributesRemovedHint(target.name) : ATTRIBUTES_SET_HINT));
         }
-    }, { unchanged: () => view.focus() });
+    }, { unchanged: () => view.focus(), followed: [target] });
 }
 
 /**
@@ -192,5 +195,5 @@ export function holderAttributesStep(view: EditorView, at: InlineHolderAt): Fiel
         if (view.state !== before) {
             showChangeHint(view, undoHint(removed ? attributesRemovedHint(holderNames(at).label) : ATTRIBUTES_SET_HINT));
         }
-    }, { unchanged: () => view.focus() });
+    }, { unchanged: () => view.focus(), followed: [at.object] });
 }

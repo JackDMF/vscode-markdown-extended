@@ -1414,6 +1414,61 @@ export function currentTarget(state: EditorState, target: AttributesTarget): Att
     return node !== null && node.type === target.node.type ? { ...target, node } : null;
 }
 
+/** What an open field or a bar holds a position of: a block target, an object, an inline element's run, a range. */
+export type Followed = AttributesTarget | EditorObject | LiteralObject | { from: number; to: number };
+
+/**
+ * `items` followed through `transactions` into `doc`, in place (#8 F7, the
+ * wave-2 follow-up): a host resync that inserts above a bar's object or an
+ * open field's target moves them, it does not close the field. Each is
+ * mapped once however often it is named. Returned: the ones that are gone —
+ * a step deleted across their start, or (a block, a node object) no node of
+ * their type stands at the mapped place, decided on the new document; a run
+ * whose end met its start. Positions only: O(items × steps), never per key.
+ */
+export function followAll(items: Iterable<Followed>, transactions: readonly Transaction[], doc: Node): Set<Followed> {
+    const gone = new Set<Followed>();
+    for (const item of new Set(items)) {
+        let from = 'pos' in item ? item.pos : item.from;
+        // A node's start also mapped leaning left: a step that replaces only the node's markup at its own place
+        // (a resync's `setNodeMarkup`) maps a right-leaning start into the node.
+        let left = from;
+        let to = 'pos' in item ? item.pos + item.node.nodeSize : item.to;
+        let across = false;
+        for (const tr of transactions) {
+            const start = tr.mapping.mapResult(from, 1);
+            across = across || start.deletedAcross;
+            from = start.pos;
+            left = tr.mapping.map(left, -1);
+            to = tr.mapping.map(to, -1);
+        }
+        if ('pos' in item || 'node' in item) {
+            const was = item.node;
+            const at = (pos: number) => (!across && pos < doc.content.size ? doc.nodeAt(pos) : null);
+            from = at(from)?.type === was.type ? from : left;
+            const node = at(from);
+            if (node === null || node.type !== was.type) {
+                gone.add(item);
+                continue;
+            }
+            if ('pos' in item) {
+                item.pos = from;
+                item.node = node;
+            } else {
+                item.from = from;
+                item.to = from + node.nodeSize;
+                item.node = node;
+            }
+        } else if (across || to < from || ('mark' in item && to === from)) {
+            gone.add(item);
+        } else {
+            item.from = from;
+            item.to = to;
+        }
+    }
+    return gone;
+}
+
 // ---------------------------------------------------------------------------
 // The breadcrumb: the parts at the caret that hold a {…} (#8)
 // ---------------------------------------------------------------------------
