@@ -517,6 +517,15 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await selectionRead();
     };
 
+    /** The one embed the typed `]` made, waited for rather than given a fixed time; fails naming `what`. */
+    const embedMade = async (what: string) => {
+        try {
+            await page.waitForFunction(() => document.querySelectorAll('.ProseMirror .mep-wiki-embed').length === 1, { timeout: 2000, polling: 20 });
+        } catch {
+            assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 1, what);
+        }
+    };
+
     const pasteText = (text: string) => page.evaluate(t => {
         const data = new DataTransfer();
         data.setData('text/plain', t);
@@ -766,14 +775,14 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
             ['A ++r|![[x]++ b\n', 'x', 2, 'A ++r|!\\[\\[x\\]\\]++ b\n'],
         ] as const) {
             await showDocument(source, needle);
-            await clickBefore(needle, 0);
+            // The arrows move from the caret the editor has read, not from where `leaveObjects` left it.
+            await clickBeforeRead(needle, 0);
             for (let k = 0; k < Math.abs(arrows); k++) {
                 await page.keyboard.press(arrows < 0 ? 'ArrowLeft' : 'ArrowRight');
             }
-            await delay(100);
+            await selectionRead();
             await page.keyboard.type(']');
-            await delay(100);
-            assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 1, source);
+            await embedMade(source);
             await page.keyboard.press('Backspace');
             await settle();
             assert.strictEqual(await page.$('.ProseMirror .mep-wiki-embed'), null, source);
@@ -784,10 +793,9 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
     test('Backspace right after ]] made an embed in a note gives back the typed text', async function () {
         this.timeout(15000);
         await showDocument('Alpha ++beta|the body++ gamma.\n', 'Alpha');
-        await clickBefore('body', 0);
+        await clickBeforeRead('body', 0);
         await page.keyboard.type('![[z]]');
-        await delay(100);
-        assert.strictEqual(await page.$$eval('.ProseMirror .mep-wiki-embed', els => els.length), 1);
+        await embedMade('the note');
         await page.keyboard.press('Backspace');
         await settle();
         assert.strictEqual(await page.$('.ProseMirror .mep-wiki-embed'), null);

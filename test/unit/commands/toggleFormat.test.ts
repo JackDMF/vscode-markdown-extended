@@ -101,12 +101,29 @@ suite('Inline toggles: what a selection toggles', () => {
 
     test('every cursor and selection is toggled, in one undo step (#180)', async () => {
         const { content, selections } = parse('al‸pha beta «gam»ma\ndel‸ta');
-        const editor = await inline('bold', content, selections);
+        const editor = await open(content, selections);
+        // One undo step is one edit: VS Code puts an undo stop before and after each.
+        let edits = 0;
+        const listening = vscode.workspace.onDidChangeTextDocument(e => {
+            if (e.document === editor.document && e.contentChanges.length > 0) {
+                edits++;
+            }
+        });
+        try {
+            await toggleInlineFormat(editor, INLINE_MARKERS.bold, md);
+        } finally {
+            listening.dispose();
+        }
         assert.strictEqual(read(editor), '**al‸pha** beta **«gam»**ma\n**del‸ta**');
-        // `undo` acts on the focused editor: focus this one, whatever the suites before left open.
-        await vscode.window.showTextDocument(editor.document, { preserveFocus: false });
-        await vscode.commands.executeCommand('undo');
-        assert.strictEqual(editor.document.getText(), 'alpha beta gamma\ndelta');
+        assert.strictEqual(edits, 1, 'every marker pair written in one edit');
+        // And undone in one. `undo` goes to the editor with the text focus, which a VS Code window in
+        // the background never gives it (no focus event reaches the editor): the undo is then lost, so
+        // it is tried only in a window that has the focus.
+        if (vscode.window.state.focused) {
+            await vscode.window.showTextDocument(editor.document, { preserveFocus: false });
+            await vscode.commands.executeCommand('undo');
+            assert.strictEqual(editor.document.getText(), 'alpha beta gamma\ndelta');
+        }
     });
 
     test('two cursors in one word bold it once and both stay', async () => {

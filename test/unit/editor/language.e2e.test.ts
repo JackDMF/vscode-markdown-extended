@@ -108,7 +108,11 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         await page.keyboard.press('End');
         const before = await count();
         // Req Explorer's case: an id's prefix, whose `-` is the trigger; the letters before it ask nothing.
-        await page.keyboard.type(' FRS-');
+        // The space before them is a trigger too, asked the ask delay after it unless a later trigger came
+        // first: typed key by key, a loaded machine let it ask once the letters were in, a second question.
+        // Inserted with them as one input, its last character a letter, it asks nothing.
+        await page.keyboard.sendCharacter(' FRS');
+        await page.keyboard.type('-');
         const asked = await waitFor('complete', before);
         assert.strictEqual(asked.triggerCharacter, '-');
         assert.strictEqual(asked.baseVersion, version);
@@ -164,9 +168,18 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
             await send({ type: 'completions', requestId: pending.requestId, version, incomplete: false, items: [] });
         }
         await showText(SOURCE);
+        await page.waitForFunction(t => document.querySelector('.ProseMirror > p')?.textContent === t, {}, LINE_2);
         await page.click('.ProseMirror > p');
         await page.keyboard.press('End');
+        // Ctrl+Space asks at the caret the editor holds: the click's and End's, once it has read them
+        // (`selectionchange` comes when the browser gets to it), not the one the new document left.
+        await page.evaluate(() => new Promise(resolve => {
+            document.dispatchEvent(new Event('selectionchange'));
+            requestAnimationFrame(() => resolve(null));
+        }));
+        await page.waitForFunction(() => document.getSelection()?.isCollapsed === true && document.activeElement?.classList.contains('ProseMirror'));
         const before = await count();
+        // Ctrl, not ⌘, on every platform: VS Code's own key for suggestions (`completion.ts`).
         await page.keyboard.down('Control');
         await page.keyboard.press('Space');
         await page.keyboard.up('Control');
