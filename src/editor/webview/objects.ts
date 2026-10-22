@@ -21,6 +21,7 @@
  * | `container` | A `container` node (`::: name`) | The node |
  * | `admonition` | An `admonition` node (`!!! type "Title"`) | The node |
  * | `table` | A pipe table (`table`), the caret in a cell or cells selected | The node |
+ * | `code_block` | A fenced or indented code block at any depth, the caret in its text; one with a literal stays a `code_block` | The node |
  * | `block_attrs` | A top-level block carrying an attribute literal (`attrsSuffix`), a quote's too; a table with one stays a `table` | The node |
  * | `heading` | A top-level heading that is no `block_attrs` — a requirement heading is one | The node |
  * | `raw_block` | A source block | The node |
@@ -40,6 +41,7 @@ import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
+import { VALUE_PREDICATE, WRITE_IT_AS, innerOf, isRemoval } from '../attributeLiteral';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
@@ -47,10 +49,11 @@ import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 import { VERB } from '../verbs';
+import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_LITERAL_REFUSAL, LANGUAGE_WORD_REFUSAL, isLanguageWord, languageOf, parseOpeningLine, savedFence, savedOpeningLine, withLanguage } from '../fences';
 
 const nodes = editorSchema.nodes;
 
-export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
+export type NodeObjectKind = 'note' | 'image' | 'badge' | 'wiki_embed' | 'emoji' | 'container' | 'admonition' | 'table' | 'code_block' | 'block_attrs' | 'heading' | 'raw_block' | 'injected_block' | 'front_matter';
 
 /**
  * The objects that are a mark's run in its textblock rather than a node. A
@@ -77,7 +80,7 @@ export function isMarkObject(object: EditorObject): object is Extract<EditorObje
 const BLOCK_OBJECTS: ReadonlySet<string> = new Set(['raw_block', 'injected_block', 'front_matter']);
 
 /** The caret objects that are blocks: their bar sits at the block's right edge, as a block object's does. */
-const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'block_attrs', 'heading']);
+const BLOCK_PLACED: ReadonlySet<string> = new Set(['container', 'admonition', 'table', 'code_block', 'block_attrs', 'heading']);
 
 export function isBlockObject(object: EditorObject): boolean {
     return BLOCK_OBJECTS.has(object.kind);
@@ -130,6 +133,8 @@ const NODE_KINDS: Readonly<Record<string, NodeObjectKind>> = {
     container: 'container',
     admonition: 'admonition',
     table: 'table',
+    // Ahead of `carriesBlockAttrs`: a fence with a literal is a code block, whose bar offers Attributes… among its verbs.
+    code_block: 'code_block',
     raw_block: 'raw_block',
     injected_block: 'injected_block',
     front_matter: 'front_matter',
@@ -288,6 +293,16 @@ function tableObjectAt(state: EditorState): EditorObject | null {
     return objectOfNode($from.node(1), $from.before(1));
 }
 
+/**
+ * The code block both ends of the selection are in, at any depth — in a list
+ * item, a quote, a container: its text is the innermost block the caret can
+ * stand in, so it comes before the wrapper around it.
+ */
+function codeBlockAt(state: EditorState): EditorObject | null {
+    const { $from, $to } = state.selection;
+    return $from.parent.type === nodes.code_block && $from.sameParent($to) ? objectOfNode($from.parent, $from.before()) : null;
+}
+
 /** The top-level block with an attribute literal holding both ends of the selection. */
 function blockAttrsAt(state: EditorState): EditorObject | null {
     const { $from, $to } = state.selection;
@@ -311,7 +326,7 @@ function headingAt(state: EditorState): EditorObject | null {
  * The object the selection is on: a node selected as a whole, else — innermost
  * first, so a link inside a note inside an admonition is the link — the link
  * the selection is in, the attribute span, emphasis with a literal, the note both its ends are in, the
- * container or admonition, the table, the top-level block with an attribute
+ * code block at any depth, the container or admonition, the table, the top-level block with an attribute
  * literal, and last the top-level heading. Cells selected across (a
  * `CellSelection`) are their table. `null` in plain text.
  */
@@ -335,7 +350,7 @@ export function objectAtSelection(state: EditorState): EditorObject | null {
     if (from !== null && to !== null && from.noteBefore === to.noteBefore) {
         return objectOfNode(from.note, from.noteBefore);
     }
-    return wrapperAt(state) ?? tableObjectAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
+    return codeBlockAt(state) ?? wrapperAt(state) ?? tableObjectAt(state) ?? blockAttrsAt(state) ?? headingAt(state);
 }
 
 /**
@@ -622,45 +637,55 @@ export const NO_ATTRS_REFUSAL = 'The preview reads no attributes here: markdown-
  * (a paragraph's by default), or `null`: the preview must read it there as
  * attributes, all of it (`attrsReadAt`, the rule the host's parse recognises
  * a literal by) — and reads none where the host's engine reads no
- * attributes (`NO_ATTRS_REFUSAL`).
+ * attributes (`NO_ATTRS_REFUSAL`). The literal is named as the attributes
+ * field shows it, between the braces it draws (`innerOf`), so the reason
+ * never asks for a brace one cannot type there; `braced` names it whole, for
+ * a field whose text holds the braces (a code block's opening line).
  */
-export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph'): string | null {
+export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph', braced = false): string | null {
     if (!currentReadsAttrs()) {
         return NO_ATTRS_REFUSAL;
     }
     const value = literal.trim();
-    if (value.startsWith('{') && readBrace(value, 0).close < 0) {
-        return `${value} is not closed: end the attribute list with }.`;
+    const shown = braced ? value : innerOf(value);
+    const reading = value.startsWith('{') ? readBrace(value, 0) : null;
+    if (reading !== null && reading.close < 0) {
+        // With the braces the field's, an open quote is what leaves the list unclosed — it swallows the closing brace —
+        // as the plugin's own reading says it ended (`openQuote`), not as a pattern over the text guesses.
+        return reading.openQuote
+            ? `${shown} ${VALUE_PREDICATE.openQuote}: close it with ".`
+            : `${shown} ${VALUE_PREDICATE.notClosed}: end the attribute list with }.`;
     }
     if (value.startsWith('{') && isTextBrace(value, 0)) {
-        const text = `${value} is text, not an attribute list: a space beside its = makes it text, as in PowerShell's @{a = 1}.`;
+        const text = `${shown} ${VALUE_PREDICATE.isText}: a space beside its = makes it text, as in PowerShell's @{a = 1}.`;
         const tightened = tightenedSuggestion(value);
-        return tightened === null ? text : `${text} Write it as ${tightened}.`;
+        return tightened === null ? text : `${text} ${WRITE_IT_AS}${braced ? tightened : innerOf(tightened)}.`;
     }
     if (parseAttrsLiteral(value) === null) {
-        return `${value || 'An empty value'} is no attribute list: write it as {.class}, {#id} or {key="value"}, as markdown-it-attrs reads it.`;
+        const examples = braced ? '{.class}, {#id} or {key="value"}' : '.class, #id or key="value"';
+        return `${shown || 'An empty value'} ${VALUE_PREDICATE.noList}: write it as ${examples}, as markdown-it-attrs reads it.`;
     }
     if (INLINE_PLACES.has(place) && hasInnerBrace(value)) {
-        return `${value} holds a } inside a value: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
+        return `${shown} ${VALUE_PREDICATE.innerBrace}: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
     }
     const holder = holderNamed(place);
     const own = holder === undefined ? undefined : (parseAttrsLiteral(value) ?? []).find(([name]) => holder.own.includes(name))?.[0];
     if (place === 'link' && own !== undefined) {
-        return `${value} sets the link's href or title, which the link writes in its (…): give it a class, an id or another attribute.`;
+        return `${shown} ${VALUE_PREDICATE.linkOwn}, which the link writes in its (…): give it a class, an id or another attribute.`;
     }
     if (holder !== undefined && own !== undefined) {
         // The one key at fault, and where it is changed instead.
         return `${own} is the ${holder.noun}'s own: change it with Edit ${holder.noun}…. Here, give it a class, an id or another attribute.`;
     }
     if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(value)) {
-        return `${value} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
+        return `${shown} ${VALUE_PREDICATE.ruleBrace}: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
     }
     if (place === fenceHolder('```') && value.includes('`')) {
-        return `${value} holds a backtick: the line opening a \`\`\` fence holds none, and the block would no longer be code. A ~~~ fence takes it.`;
+        return `${shown} ${VALUE_PREDICATE.backtick}: the line opening a \`\`\` fence holds none, and the block would no longer be code. A ~~~ fence takes it.`;
     }
     if (attrsReadAt(value, place) === null) {
         const math = currentInlineDefinition().math ? ', math' : '';
-        return `${value} holds what markdown-it reads before markdown-it-attrs here — a \\, an entity, code, emphasis, HTML, a link${math} or a plugin's markup — and the preview would show it as text.`;
+        return `${shown} ${VALUE_PREDICATE.readBefore} — a \\, an entity, code, emphasis, HTML, a link${math} or a plugin's markup — and the preview would show it as text.`;
     }
     return null;
 }
@@ -786,8 +811,7 @@ export function inlineLiteralPlace(object: LiteralObject): LiteralPlace {
  * the literal trimmed otherwise.
  */
 function typedMarkLiteral(literal: string): string | null {
-    const value = literal.trim();
-    return value === '' || value === '{}' ? null : value;
+    return isRemoval(literal) ? null : literal.trim();
 }
 
 /**
@@ -1056,7 +1080,8 @@ export function literalHomeRefusal(node: Node): string | null {
         case 'injected_block':
             return 'Injected content is not in the file: there is no block here to give attributes to.';
         case 'code_block':
-            return node.attrs.markup === '' ? INDENTED_CODE_ATTRS_REFUSAL : null;
+            // An indented one is fenced as it takes the literal (`blockAttrsTransaction`).
+            return null;
         case 'blockquote':
             return quoteTakesLiteral(node) ? null : QUOTE_ATTRS_REFUSAL;
         case 'list_item':
@@ -1090,7 +1115,7 @@ function blockAttrsTransaction(state: EditorState, pos: number, literal: string)
         || (value !== '' && (literalRefusal(value, literalPlaceOf(node)) !== null || literalHomeRefusal(node) !== null))) {
         return null;
     }
-    const attrs: Record<string, unknown> = { ...node.attrs, attrsSuffix: value === '' ? null : value };
+    const attrs: Record<string, unknown> = { ...node.attrs, ...fencedFor(node, value), attrsSuffix: value === '' ? null : value };
     if (node.type === nodes.heading) {
         attrs.anchor = value === '' ? null : (parseAttrsLiteral(value) ?? []).filter(([n]) => n === 'id').map(([, v]) => v).pop() ?? null;
     } else {
@@ -1129,8 +1154,24 @@ export const CONTAINER_ATTRS_REFUSAL = `A container's {…} is not edited here: 
 /** Why an admonition is given no literal: the plugin hands it to the title bar. */
 export const ADMONITION_ATTRS_REFUSAL = `An admonition takes no {…}: on its !!! line, {…} styles the title, not the box. Its class is its type — choose it under ${VERB.type}▾ on the admonition's bar.`;
 
-/** Why an indented code block is given no literal: it has no opening line. */
-export const INDENTED_CODE_ATTRS_REFUSAL = 'An indented code block has no opening line to carry a {…}: make it a fenced one first.';
+/**
+ * Why a code block inside a quote, a list or a container is given no literal:
+ * the save writes a fence's literal only at the top level (a nested one is
+ * kept as source, `fidelity.ts`). Its other verbs work at any depth.
+ */
+export const NESTED_CODE_ATTRS_REFUSAL = `A code block inside a quote, a list or a container takes no {…} here: the editor writes a fence's attributes only at the top level. ${VERB.language} and ${VERB.editSource} work here.`;
+
+/**
+ * What an indented code block given `literal` becomes as well: a fenced one,
+ * on the fence a new block gets, lengthened past a run inside — it has no
+ * opening line to carry the literal otherwise. Nothing for any other block, or
+ * no literal.
+ */
+function fencedFor(node: Node, literal: string): { markup?: string } {
+    return node.type === nodes.code_block && node.attrs.markup === '' && literal !== ''
+        ? { markup: savedFence(node) }
+        : {};
+}
 
 /** Why a list item is given no literal: it is written at the end of the item's first paragraph. */
 export const ITEM_ATTRS_REFUSAL = 'A list item\'s {…} stands at the end of its first paragraph, and this item does not start with a paragraph ending in text.';
@@ -1159,10 +1200,14 @@ export function literalOf(node: Node): string | null {
  * item — or why it is none: none where the host's engine reads no attributes
  * (`NO_ATTRS_REFUSAL`), else `literalHomeRefusal`, except that a block which
  * has a literal already can always have it edited or removed (a requirement
- * heading's apart).
+ * heading's apart). A code block's bar says whether it is `nested`, inside
+ * another block (`NESTED_CODE_ATTRS_REFUSAL`); every other caller targets a
+ * top-level block or a list item.
  */
-export function attributesTargetOf(node: Node, pos: number): AttributesTarget | { refusal: string } {
-    const refusal = (currentReadsAttrs() ? null : NO_ATTRS_REFUSAL) ?? blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
+export function attributesTargetOf(node: Node, pos: number, nested = false): AttributesTarget | { refusal: string } {
+    const refusal = (currentReadsAttrs() ? null : NO_ATTRS_REFUSAL)
+        ?? (nested && node.type === nodes.code_block ? NESTED_CODE_ATTRS_REFUSAL : null)
+        ?? blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
     return refusal === null ? { pos, node, name: BLOCK_NAMES[node.type.name] ?? 'Block' } : { refusal };
 }
 
@@ -1200,8 +1245,12 @@ export function currentTarget(state: EditorState, target: AttributesTarget): Att
     return node !== null && node.type === target.node.type ? { ...target, node } : null;
 }
 
-/** What a literal typed into the Attributes field does: a transaction and whether it removed the literal, a refusal, or nothing (unchanged). */
-export type AttributesCommit = { tr: Transaction; removed: boolean } | { refusal: string } | null;
+/**
+ * What a literal typed into the Attributes field does: a transaction, whether
+ * it removed the literal and whether it fenced an indented code block (the
+ * hint says so), a refusal, or nothing (unchanged).
+ */
+export type AttributesCommit = { tr: Transaction; removed: boolean; fenced: boolean } | { refusal: string } | null;
 
 /**
  * The target given `literal` — `{}` or nothing removes its literal — as the
@@ -1215,7 +1264,7 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
         return null;
     }
     const value = literal.trim();
-    const removed = value === '' || value === '{}';
+    const removed = isRemoval(value);
     const node = current.node;
     const refusal = blockAttrsRefusal(node)
         ?? (removed ? null : literalRefusal(value, literalPlaceOf(node)) ?? literalHomeRefusal(node));
@@ -1230,7 +1279,7 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
         // The literal reads alone; whether it reads with the rest of its block is asked of the block as it would be.
         const set = node.type === nodes.list_item
             ? state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, literal: next })
-            : state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, attrsSuffix: next, attrsPlacement: (node.attrs.attrsPlacement as string | null) ?? newPlacement(node) });
+            : state.tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, ...fencedFor(node, value), attrsSuffix: next, attrsPlacement: (node.attrs.attrsPlacement as string | null) ?? newPlacement(node) });
         const lost = literalsReadBackRefusal(set.doc, current.pos, state.doc, literalOf(node));
         if (lost !== null) {
             return { refusal: lost };
@@ -1244,5 +1293,133 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
     }
     // A removal too: the edit filter would refuse it, beside the block as much as in it, and the field says why.
     const filtered = noteRefusal(tr);
-    return filtered === null ? { tr: tr.scrollIntoView(), removed } : { refusal: filtered };
+    return filtered === null ? { tr: tr.scrollIntoView(), removed, fenced: !removed && fencedFor(node, value).markup !== undefined } : { refusal: filtered };
+}
+
+// ---------------------------------------------------------------------------
+// A code block's opening line — Edit source and Language…
+// ---------------------------------------------------------------------------
+
+/**
+ * A code block as the field's caller holds it: the object `currentObject`
+ * found in `state` — where it stands and the node there.
+ */
+export type CodeBlockObject = Extract<EditorObject, { node: Node }>;
+
+/** The code block at `block` with `line` as its opening line, read (`parseOpeningLine`); the refusal of the line itself otherwise. */
+function withOpeningLine(state: EditorState, { from: pos, node }: CodeBlockObject, line: string): Transaction | { refusal: string } {
+    const parsed = parseOpeningLine(line, node.textContent, String(node.attrs.params ?? ''));
+    if ('refusal' in parsed) {
+        return parsed;
+    }
+    return state.tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        markup: parsed.markup,
+        params: parsed.params,
+        attrsSuffix: parsed.literal,
+        attrsPlacement: parsed.literal === null ? null : 'end',
+    });
+}
+
+/**
+ * What a typed opening line does to the code block `block`, in one pass: the
+ * transaction that sets it, the reason it is refused, or `null` — the line
+ * leaves the file as it is. The line the field showed, typed back as it is,
+ * changes nothing and is never read again: the info string is kept as the file
+ * has it, spacing and braces that are text included. The refusals, in order: the
+ * line's own (`parseOpeningLine`: no fence, a fence too short for the content,
+ * a backtick after backticks), then its literal's — none inside another block
+ * (`NESTED_CODE_ATTRS_REFUSAL`), else the one every literal meets
+ * (`literalRefusal`) and the block's read-back (`literalsReadBackRefusal`) —
+ * then the edit filter's (`noteRefusal`). "As it is" is what the save writes
+ * (`savedOpeningLine`): a block whose fence the save lengthens, given that
+ * longer fence by hand, is unchanged; an indented block given a fence is not.
+ */
+function openingLineChange(state: EditorState, block: CodeBlockObject, line: string): { tr: Transaction } | { refusal: string } | null {
+    const { from: pos, node } = block;
+    if (node.attrs.markup !== '' && line === savedOpeningLine(node)) {
+        return null;
+    }
+    const tr = withOpeningLine(state, block, line);
+    if (!(tr instanceof Transaction)) {
+        return tr;
+    }
+    // `setNodeMarkup` at `pos` leaves a node there.
+    const next = tr.doc.nodeAt(pos) ?? node;
+    const literal = next.attrs.attrsSuffix as string | null;
+    // A literal is read on the fence it stands on (`fenceHolder`): asked again when either changes.
+    if (literal !== null && (literal !== node.attrs.attrsSuffix || fenceHolder(String(next.attrs.markup)) !== fenceHolder(String(node.attrs.markup)))) {
+        const refusal = (state.doc.resolve(pos).depth > 0 ? NESTED_CODE_ATTRS_REFUSAL : null)
+            // The opening line's field holds the braces as typed: the reason names the literal whole.
+            ?? literalRefusal(literal, fenceHolder(String(next.attrs.markup)), true)
+            ?? literalsReadBackRefusal(tr.doc, pos, state.doc, node.attrs.attrsSuffix as string | null);
+        if (refusal !== null) {
+            return { refusal };
+        }
+    }
+    const filtered = noteRefusal(tr);
+    if (filtered !== null) {
+        return { refusal: filtered };
+    }
+    const unchanged = (node.attrs.markup === '') === (next.attrs.markup === '') && savedOpeningLine(next) === savedOpeningLine(node);
+    return unchanged ? null : { tr: tr.scrollIntoView() };
+}
+
+/**
+ * Language… committed: the code block `block` with `language` as its info
+ * string's first word, the rest of the info string and the literal kept as
+ * they are — set on the node directly, not read back from a line
+ * (`parseOpeningLine` reads braces; the language has none to say) — and
+ * whether it fenced an indented block, on the fence the save writes for it
+ * (`savedFence`). The one rule it meets is the backtick's: none in the info
+ * string of a ``` fence (a language that is itself a backtick, `a`b`). A value
+ * that is not one word (a space, a brace) is refused, the reason pointing to
+ * Edit source; so is an emptied language while words or a {…} follow it, which
+ * would become the language. `null` when the language is as it is.
+ */
+export function changeLanguageTransaction(state: EditorState, block: CodeBlockObject, language: string): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
+    const { from: pos, node } = block;
+    if (!isLanguageWord(language)) {
+        return { refusal: LANGUAGE_WORD_REFUSAL };
+    }
+    const word = language.trim();
+    const params = String(node.attrs.params ?? '');
+    if (word === languageOf(params)) {
+        // Unchanged — an indented block has no language to remove — and the info string's spacing is none of its business.
+        return null;
+    }
+    const rest = withLanguage(params, '');
+    if (word === '' && rest !== '') {
+        // The next word of the info string would become the language (Daniel, #4 build questions); a {…} is named as such.
+        return { refusal: rest.startsWith('{') ? LANGUAGE_LITERAL_REFUSAL : LANGUAGE_FOLLOWED_REFUSAL };
+    }
+    const indented = node.attrs.markup === '';
+    const fence = savedFence(node);
+    const next = withLanguage(params, word);
+    if (fence.startsWith('`') && next.includes('`')) {
+        return { refusal: BACKTICK_INFO_REFUSAL };
+    }
+    const tr = state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, markup: indented ? fence : node.attrs.markup, params: next });
+    const filtered = noteRefusal(tr);
+    return filtered === null ? { tr: tr.scrollIntoView(), fenced: indented } : { refusal: filtered };
+}
+
+/** An opening-line change with whether it fenced an indented block, a refusal or nothing as it is. */
+function withFenced(change: ReturnType<typeof openingLineChange>, fenced: boolean): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
+    if (change === null) {
+        return null;
+    }
+    return 'refusal' in change ? change : { tr: change.tr, fenced };
+}
+
+/**
+ * Edit source committed on the code block `block`: `line` as its opening
+ * line — fence, info string, literal (`parseOpeningLine`) — and whether that
+ * fenced an indented block, whose field opens empty, so `''` there fences it
+ * on the fence a new block gets. `null` when the file stays as it is; a
+ * refusal for a line `openingLineChange` refuses.
+ */
+export function commitOpeningLine(state: EditorState, block: CodeBlockObject, line: string): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
+    const fenced = block.node.attrs.markup === '';
+    return withFenced(openingLineChange(state, block, fenced && line.trim() === '' ? savedFence(block.node) : line), fenced);
 }

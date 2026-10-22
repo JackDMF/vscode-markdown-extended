@@ -200,8 +200,6 @@ img.mep-pending-range {
     --mep-row-height: 27px;
     /* The space between the row's edge and the document's first block. */
     --mep-row-gap: 8px;
-    /* The room kept for the lock's line under the row while it stands there (`toolbar.ts`, `settleRoom`). */
-    --mep-lock-room: 0px;
     /* The row's bottom edge, as the workbench draws the edge under its tabs. */
     --mep-chrome-border: var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-editorGroupHeader-border, var(--vscode-widget-border, transparent)));
     /*
@@ -218,16 +216,14 @@ img.mep-pending-range {
  * document that begins with a table, a fence or a container does not sit
  * against the row's edge: the row stands over the page, not in it.
  */
-.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-lock-room) + var(--mep-row-gap)); }
+.mep-editor { padding-top: calc(var(--mep-row-height) + var(--mep-row-gap)); }
 
 /*
  * The row: full width, fixed at the top of the editor as the workbench's rows
  * are under the tabs — the page's own padding does not inset it. One line,
- * every control 22px. Narrow, it scrolls sideways rather than wrapping, so
- * every control keeps its place — without a scrollbar, which would be laid
- * out inside the row's height and clip the controls: the wheel scrolls it
- * (`toolbar.ts`), and a control that takes the keyboard's focus is scrolled
- * into view.
+ * every control 22px. It never wraps and never scrolls: narrow, what does not
+ * fit moves into "…" (`toolbar.ts`, `layoutRow`) — the menus first, then the
+ * marks from the right — and the count and Export stay at its right end.
  */
 .mep-toolbar {
     position: fixed;
@@ -242,9 +238,7 @@ img.mep-pending-range {
     height: var(--mep-row-height);
     margin: 0;
     padding: 0 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
+    overflow: hidden;
     font-family: var(--vscode-font-family, sans-serif);
     font-size: calc(var(--vscode-font-size, 13px) - 1px);
     line-height: 20px;
@@ -253,7 +247,31 @@ img.mep-pending-range {
     border-bottom: 1px solid var(--mep-chrome-border);
 }
 
-.mep-toolbar::-webkit-scrollbar { display: none; }
+/* A control moved into "…", and a group all of whose controls moved: `.mep-tool`'s own display would beat the UA's `[hidden]`. */
+.mep-tool[hidden],
+.mep-row-group[hidden] { display: none; }
+
+/* "…": the row's last tool, right after the last control left in it — no divider of its own. */
+.mep-row-more { padding-left: 0; }
+.mep-row-more::before { display: none; }
+.mep-more-face { position: relative; justify-content: center; min-width: 26px; padding: 0 4px; }
+.mep-more-face > .mep-face-icon { margin-right: 0; }
+.mep-more-face > .mep-face-icon > .codicon { font-size: 16px; }
+/*
+ * A mark in "…" that is on: a 6px dot on "…" (the check inside says which),
+ * in the workbench's colour for an option that is on; High Contrast outlines it.
+ */
+.mep-more-face.mep-has-on::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder, Highlight));
+}
+.vscode-high-contrast .mep-more-face.mep-has-on::after { outline: 1px solid var(--vscode-contrastBorder, CanvasText); }
 
 .mep-row-group {
     display: flex;
@@ -366,6 +384,16 @@ img.mep-pending-range {
 .mep-menu-face[data-menu="block-type"] { min-width: 8.5em; justify-content: flex-start; }
 
 /*
+ * A row too narrow even for "…" with every tool in it and Export as its icon
+ * (`toolbar.ts`, `layoutRow`): the count and Export are pinned and never cut,
+ * so the block-type face gives — its type's name cuts to an ellipsis, the
+ * face and its chevron stay.
+ */
+.mep-toolbar.mep-row-tight > .mep-row-group:first-child { flex: 0 1 auto; min-width: 0; }
+.mep-toolbar.mep-row-tight .mep-menu-face[data-menu="block-type"] { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.mep-toolbar.mep-row-tight .mep-menu-face[data-menu="block-type"] > .mep-face-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/*
  * The chevron of everything that opens a list (`chevronNode`): a toolbar
  * menu's face, a submenu's entry, an object bar's set-verb. The codicon, dim,
  * no taller than the line.
@@ -382,7 +410,7 @@ img.mep-pending-range {
 /* Menus: the workbench's context menu                                       */
 /* ------------------------------------------------------------------------- */
 
-/* Menus and the card sit outside the scrolling row, positioned from their face. */
+/* Menus and the card sit outside the row, which clips what hangs out of it, positioned from their face. */
 .mep-menu {
     position: fixed;
     z-index: 30;
@@ -526,6 +554,8 @@ img.mep-pending-range {
 .mep-entry-glyph .mep-sample > hr { width: 28px !important; }
 /* A sidebar's glyph stands on its side of the swatch. */
 .mep-entry-glyph:has(.left-sidebar) { justify-content: flex-start; padding-left: 3px; }
+/* The bubble's "…" draws a note's face glyph, the whole word: clipped at its right end, where it still reads "sidenot", not at both. */
+.mep-menu[data-menu="bubble-more"] .mep-entry-glyph:has(.sn-anchor, .mn-anchor) { justify-content: flex-start; padding-left: 3px; }
 .mep-entry-glyph:has(.right-sidebar) { justify-content: flex-end; padding-right: 3px; }
 .mep-entry-glyph table { font-size: 9px; line-height: 10px; }
 .mep-entry-glyph table :is(th, td) { padding: 0 3px; }
@@ -567,7 +597,24 @@ img.mep-pending-range {
     font-size: 12px;
     color: var(--vscode-descriptionForeground, GrayText);
 }
-.mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail) { color: inherit; opacity: 0.8; }
+.mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail, .mep-entry-key) { color: inherit; opacity: 0.8; }
+
+/*
+ * "…" (`toolbar.ts`, `layoutRow`): as wide as its longest entry, within the
+ * menus' bounds and the window. A moved mark keeps its key, after its syntax,
+ * never cut: where the menu is capped, the syntax goes first.
+ */
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) > :is(.mep-menu-item, .mep-menu-separator)[hidden] { display: none; }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) { width: max-content; max-width: min(380px, calc(100vw - 8px)); }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) .mep-entry-syntax { min-width: 0; }
+.mep-menu:is([data-menu="more"], [data-menu="bubble-more"]) .mep-submenu-item > .mep-menu-caret { margin-left: auto; }
+.mep-entry-key {
+    flex: none;
+    padding-left: 10px;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
 
 /* A command's entry (Export's): its name in plain text, and how it is made beside it, right and dim. */
 .mep-menu[data-menu="export"] > .mep-menu-item > .mep-entry-label { flex: none; white-space: nowrap; }
@@ -677,14 +724,15 @@ img.mep-pending-range {
 }
 
 .mep-bubble[hidden] { display: none; }
+/* The bubble takes the focus for a moment while its "…" is measured (`holdFocus`), and keeps it where "…" went: it is no control to draw a ring on. */
+.mep-bubble:focus { outline: none; }
 
 /*
  * A note, a link, an image, a source block, injected content: each shows the
- * same small bar above its first line (below its last when there is no room),
- * a label naming it and then its verbs. Positioned by objectToolbar.ts inside
- * .mep-editor, as the bubble is, so it scrolls with the text; under the bubble,
- * which belongs to the selection being formatted. An editor widget with the
- * row's 22px controls.
+ * same small bar below it (above where there is no room), a label naming it
+ * and then its verbs. Positioned by placement.ts inside .mep-editor, as the
+ * bubble is, so it scrolls with the text; one floating layer at a time. An
+ * editor widget with the row's 22px controls.
  */
 .mep-object-toolbar {
     position: absolute;
@@ -730,8 +778,10 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 /* A title the bar's room hid (`fit`) takes its divider with it. */
 .mep-object-label[hidden] + .mep-object-separator { display: none; }
+/* A title left alone on its row — the field wrapped under it (`FieldRow.fit`) — takes its divider with it. */
+.mep-title-alone > .mep-object-separator { display: none; }
 /* A field's title is never cut: it says what the field edits (`Paragraph · Attributes`). */
-.mep-object-toolbar:has(> .mep-inline-field) > .mep-object-label { flex: none; overflow: visible; text-overflow: clip; }
+.mep-field-bar > .mep-object-label { flex: none; overflow: visible; text-overflow: clip; }
 
 /* An atom's spelling in its label (`Emoji :)`): the editor's code font, no chip. */
 .mep-object-label-code {
@@ -739,13 +789,36 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 
 /* While the page asks where content is (`clearance.ts`, a class on the mount), its floating chrome is looked through. */
-.mep-probing .mep-object-toolbar,
-.mep-probing .mep-bubble,
+.mep-probing .mep-layer,
 .mep-probing .mep-toolbar-layer,
+.mep-probing .mep-language-card,
 .mep-probing .mep-hint { pointer-events: none !important; }
+
+/* A layer that just appeared or moved ignores the pointer for a moment (`placement.ts`, INERT_MS):
+   a click meant for the text under it still lands there. The keyboard is untouched. */
+.mep-layer[data-inert] { pointer-events: none; }
+
+/* A block under the pointer while another layer holds the slot (`placement.ts`): a cue
+   that its bar is there once the slot is free — an outline, no text, no pointer change. */
+.mep-atom.mep-hover-cue {
+    outline: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #8888));
+    outline-offset: -1px;
+}
+.vscode-high-contrast .mep-atom.mep-hover-cue { outline-color: var(--vscode-contrastActiveBorder, Highlight); }
 
 /* A set-verb's menu (a table's Row, Column, Align) is the formatting toolbar's menu, narrower. */
 .mep-object-menu { min-width: 180px; }
+/* In a bar's "…": a moved set-verb's entry opens its own menu, the chevron at the right. */
+.mep-object-menu .mep-entry-label { flex: none; }
+.mep-object-menu .mep-menu-item > .mep-menu-caret { margin-left: auto; }
+
+/* A verb moved into the bar's "…" (`objectToolbar.ts`, `fit`), and its divider: `.mep-object-verb`'s own display would beat the UA's `[hidden]`. */
+.mep-object-verb[hidden],
+.mep-object-separator[hidden] { display: none; }
+/* "…": a verb button at the bar's right end, the codicon at the row's "…" size. */
+.mep-object-more { padding: 0 4px; }
+.mep-object-more > .mep-face-icon { display: inline-flex; align-items: center; }
+.mep-object-more > .mep-face-icon > .codicon { font-size: 16px; line-height: 1; }
 
 /* Where `arrange` (verbs.ts) divides a bar: before other extensions' verbs, before the verb that destroys, or before a group of the object's own (a table's Attributes…). */
 .mep-object-separator {
@@ -814,15 +887,12 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 
 /*
- * Why what was typed was refused, in the keys' place while the field stays open with it:
- * the text's colour, marked in the refusal's amber as the caret hint's refusal is; it may
- * take two lines rather than run past the window.
+ * Why what was typed was refused, on a line of its own under the field while it stays open
+ * with it (`fieldRow.ts`, the keys line kept): the text's colour, marked in the refusal's
+ * amber as the caret hint's refusal is (`.mep-field-refusal-text`); it may take two lines
+ * rather than run past the window.
  */
 .mep-field-refusal {
-    margin-left: 6px;
-    padding-left: 6px;
-    max-width: 48ch;
-    border-left: 2px solid var(--vscode-editorWarning-foreground, #bf8803);
     font-size: 11px;
     line-height: 14px;
     white-space: normal;
@@ -846,6 +916,99 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     outline: none;
 }
 .mep-inline-field::placeholder { color: var(--vscode-input-placeholderForeground, GrayText); }
+
+/*
+ * A field's bar (`fieldRow.ts`) may take a second line: a refusal's reason always, the keys
+ * line where the room is too narrow for it beside the field (`mep-narrow`, measured by
+ * `FieldRow.fit`). The title never truncates (the rule above). Refused (`aria-invalid`), the
+ * field is framed in the refusal's amber until the next edit — in High Contrast thicker and
+ * dashed too, a change of form, not of colour alone.
+ */
+.mep-object-toolbar.mep-field-bar { flex-wrap: wrap; row-gap: 2px; }
+.mep-field-bar > .mep-field-refusal {
+    flex-basis: 100%;
+    /* Its text is not counted in the bar's own width: a wrapping flex container is as wide as all its items on one line,
+       and the reason would stretch the bar to its length. It takes the row the title, field and keys make instead. */
+    contain: inline-size;
+    margin: 2px 4px 2px 6px;
+    font-size: 12px;
+    line-height: 16px;
+}
+/* The reason keeps to about eighty characters, as prose is read: a long one wraps instead of stretching the bar —
+   the text is the capped box inside the line, which itself takes the row so the reason stands apart under the field. */
+.mep-field-refusal-text {
+    display: block;
+    box-sizing: border-box;
+    max-width: 80ch;
+    padding: 1px 0 1px 8px;
+    border-left: 2px solid var(--vscode-editorWarning-foreground, #bf8803);
+}
+.mep-field-bar.mep-narrow > .mep-field-keys {
+    flex-basis: 100%;
+    margin: 0 4px 2px 6px;
+    padding: 2px 0 0;
+    border-left: none;
+    border-top: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, transparent));
+    white-space: normal;
+}
+.mep-field-bar.mep-narrow > .mep-inline-field,
+.mep-attr-bar.mep-narrow .mep-attr-field { flex: 1 1 auto; min-width: 0; }
+.mep-inline-field[aria-invalid="true"] { border-color: var(--vscode-inputValidation-warningBorder, #b89500); }
+.vscode-high-contrast .mep-inline-field[aria-invalid="true"] { border-width: 2px; border-style: dashed; }
+/* The keys line's syntax, and a value the reason names: plain monospace, no chip. */
+.mep-field-keys code, .mep-field-refusal code {
+    padding: 0;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    color: inherit;
+    background: none;
+    border-radius: 0;
+}
+/* The reason's values are muted against its plain sentence; the sentence keeps the text's colour. */
+.mep-field-refusal code { color: var(--vscode-descriptionForeground, GrayText); }
+/* Enter will remove what the field had: the keys line says so in the text's colour. */
+.mep-field-keys.mep-keys-removes { color: var(--vscode-foreground, inherit); }
+
+/*
+ * The attributes field (`attributeLiteral.ts`): the braces are the field's, drawn fixed inside
+ * its frame — muted, not selectable, not in the value — and the input borderless between them.
+ */
+.mep-attr-field {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    box-sizing: border-box;
+    height: 22px;
+    padding: 0 4px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    line-height: 20px;
+    color: var(--vscode-input-foreground, inherit);
+    background: var(--vscode-input-background, transparent);
+    border: 1px solid var(--vscode-focusBorder, Highlight);
+    border-radius: 2px;
+    cursor: text;
+}
+.mep-attr-field > .mep-inline-field {
+    flex: 1 1 auto;
+    min-width: 10em;
+    height: 20px;
+    padding: 0 2px;
+    border: none;
+    background: transparent;
+}
+/* The frame is the field's border and focus: the webview's default ring on the input inside would draw a second one. */
+.mep-attr-field > .mep-inline-field:focus { outline: none; }
+.mep-attr-brace {
+    flex: none;
+    color: var(--vscode-descriptionForeground, GrayText);
+    user-select: none;
+}
+/* Refused (`FieldRow` marks the bar `mep-refused` with the input's `aria-invalid`): the frame in the refusal's amber. */
+.mep-attr-bar.mep-refused .mep-attr-field { border-color: var(--vscode-inputValidation-warningBorder, #b89500); }
+.vscode-high-contrast .mep-attr-bar.mep-refused .mep-attr-field { border-width: 2px; border-style: dashed; }
+.mep-attr-field > .mep-inline-field[aria-invalid="true"] { border: none; }
+.mep-attr-bar.mep-narrow .mep-attr-field > .mep-inline-field { min-width: 0; width: 100%; }
 
 /*
  * A link's field completes: the files and headings the host offers, listed
@@ -928,6 +1091,8 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     pointer-events: none;
 }
 .mep-hint[hidden] { display: none; }
+/* A neutral hint is one short line (what was done, or that Alt+Enter has nothing to act on): it keeps to one where the window has the room. */
+.mep-hint[data-tone="neutral"] { max-width: 48em; }
 .mep-hint[data-tone="refusal"] { border-left: 3px solid var(--vscode-editorWarning-foreground, #bf8803); }
 
 /* ------------------------------------------------------------------------- */
@@ -1229,7 +1394,7 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 .ProseMirror .selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }
 .ProseMirror .selectedCell *::selection, .ProseMirror .selectedCell::selection { background: transparent; }
-/* The caret's column while the table's bar shows: what Insert left and right are left and right of. */
+/* The caret's column while Column or Align is open, focused or hovered: what Insert left and right are left and right of. */
 .ProseMirror .mep-table-column { background-color: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.15)); }
 .ProseMirror .mep-table-column.selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }
 
@@ -1372,7 +1537,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 
 /* A block brought into view (a followed link's fragment) stands below the formatting row, not under it; so does an element inside one found by its id. */
 .mep-editor .ProseMirror > *,
-.mep-editor .ProseMirror [id] { scroll-margin-top: calc(64px + var(--mep-lock-room)); }
+.mep-editor .ProseMirror [id] { scroll-margin-top: 64px; }
 
 /* ------------------------------------------------------------------------- */
 /* The document cannot be shown without loss                                 */
@@ -1446,20 +1611,15 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
  * The formatting row's right end: what is about the document as a whole —
  * what the page says of it (the diagnostics count, in `-said`), then Export,
  * with the row's divider before Export whenever anything stands before it:
- * the count, or the lock's reason beside the tools. Pinned to the right while
- * the row scrolls sideways; Export keeps it shown without a count.
+ * the count, or the lock's reason beside the tools. It never leaves the row
+ * (`layoutRow` moves the tools before it); Export keeps it shown without a count.
  */
 .mep-row-status {
-    position: sticky;
-    right: 0;
     display: flex;
     flex: none;
     align-items: center;
     margin-left: auto;
     padding: 0 0 0 8px;
-    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
-    /* Over the row's right padding too: a narrow row's tools scroll under it and would show there. */
-    box-shadow: 8px 0 0 var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
 }
 .mep-row-said,
 .mep-row-export {
@@ -1470,7 +1630,7 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
 .mep-row-said:not(:has(> :not([hidden]))) { display: none; }
 /* The divider of `.mep-row-group + .mep-row-group`, after the count or the lock's reason beside it. */
 .mep-row-said:has(> :not([hidden])) + .mep-row-export::before,
-.mep-toolbar:not(.mep-row-lock-below) > .mep-row-lock:not([hidden]) + .mep-row-status > .mep-row-export::before {
+.mep-row-lock:not([hidden]) + .mep-row-status > .mep-row-export::before {
     content: "";
     flex: none;
     width: 1px;
@@ -1487,19 +1647,34 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     margin-right: 2px;
 }
 .mep-face-icon > .codicon { font-size: 14px; line-height: 1; }
+/*
+ * Export in a row too narrow for its name (`toolbar.ts`, `exportIconOnly`):
+ * the icon and the chevron alone. Its name is its accessible name and its
+ * hover; the margin the icon keeps before the label goes with the label.
+ */
+.mep-menu-face.mep-face-icononly > .mep-face-label { display: none; }
+.mep-menu-face.mep-face-icononly > .mep-face-icon { margin-right: 0; }
+/* The running format's entry in Export's menu: the same spinner before its name (`toolbar.ts`, `updateDocumentFace`). */
+.mep-entry-busy { display: inline-flex; flex: none; align-items: center; }
+.mep-entry-busy > .codicon { font-size: 14px; line-height: 1; }
+/* Busy, under reduced motion: the same codicon, still — `codicon.css` spins it everywhere else. */
+@media (prefers-reduced-motion: reduce) {
+    :is(.mep-face-icon, .mep-entry-busy) > .codicon-modifier-spin { animation: none; }
+}
 
 /*
  * Why the row is refused while a source box or the properties panel has the
- * focus, and the way back (`toolbar.ts`, `showLock`): text, not grey alone —
- * a pale note on the info tint, as sketched. It takes the room the tools leave
- * before the count, never pinned over them. Where it does not fit there whole
- * — measured (`placeLock`), not a width set here — it stands on a thin line
- * of its own right under the row (`-below`), whole, and is cut with an
- * ellipsis only where even that line is too narrow; the tools and the count
- * stay where they are, and the line goes with the lock. The whole text is the
- * row's description and each tool's tooltip too. A press on a refused tool
- * points at it for a moment (`-flash`) in the refusal's amber, as the caret
- * hint's refusal is marked (`.mep-hint[data-tone="refusal"]`).
+ * focus, and the way back (`toolbar.ts`, `layoutRow`): text, not grey alone —
+ * a pale note on the info tint, as sketched. It stands in the row, never
+ * under it, so the page never moves (Daniel, 2026-10-19): beside the tools
+ * where it fits there whole; else, for a box or a field, in the refused
+ * tools' place (`-inrow`: they give way), whole or in its short form, which
+ * keeps its keys; a button's lock shows its short form beside the tools or
+ * nothing. Measured, not a width set here; the ellipsis is the last resort
+ * only. The whole text is the row's description and each tool's tooltip
+ * too. A press on a refused tool points at it for a moment (`-flash`) in the
+ * refusal's amber, as the caret hint's refusal is marked
+ * (`.mep-hint[data-tone="refusal"]`).
  */
 .mep-row-lock {
     flex: 0 1 auto;
@@ -1511,20 +1686,10 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     font-size: 12px;
 }
 .mep-row-lock[hidden] { display: none; }
-.mep-toolbar:not(.mep-row-lock-below) > .mep-row-lock:not([hidden]) + .mep-row-status { margin-left: 0; }
-.mep-toolbar.mep-row-lock-below > .mep-row-lock {
-    position: fixed;
-    top: var(--mep-row-height);
-    left: 0;
-    right: 0;
-    box-sizing: border-box;
-    margin: 0;
-    padding: 2px 8px 3px;
-    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background, Canvas));
-    border-bottom: 1px solid var(--mep-chrome-border);
-}
-/* Come while a button is held, the line waits for its room unseen — measured, not over the page (`toolbar.ts`, `placeLock`). */
-.mep-toolbar.mep-row-lock-below.mep-row-lock-waiting > .mep-row-lock { visibility: hidden; }
+.mep-toolbar:not(.mep-row-lock-inrow) > .mep-row-lock:not([hidden]) + .mep-row-status { margin-left: 0; }
+.mep-toolbar.mep-row-lock-inrow > .mep-row-group { display: none; }
+.mep-toolbar.mep-row-lock-inrow > .mep-row-lock { margin-left: 0; }
+
 .mep-row-lock-text {
     padding: 1px 8px;
     border-radius: 3px;
@@ -1700,3 +1865,41 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
     border-radius: 3px;
     box-shadow: inset 0 -1px 0 var(--vscode-widget-shadow, transparent);
 }
+
+/* ---- Wave 2 #4: the code block as an object ---------------------------------------------- */
+
+/*
+ * A fenced block's language at its top-right corner (`data-lang`, schema.ts): editor chrome,
+ * not in the file. A pseudo-element, so it is no node, no layer and no target for the
+ * pointer; it stands in markdown.css's 16 px padding above the first line (`pre` is
+ * positioned there), ending where that line starts. None without a language.
+ */
+.ProseMirror pre[data-lang] { position: relative; }
+.ProseMirror pre[data-lang]::before {
+    content: attr(data-lang);
+    position: absolute;
+    top: 2px;
+    right: 8px;
+    font: 11px/14px var(--vscode-font-family, sans-serif);
+    color: var(--vscode-descriptionForeground, GrayText);
+    pointer-events: none;
+    user-select: none;
+}
+
+/*
+ * The caret's table cell (`mep-cell-active`, tables.ts): a 2 px ring inside it in the caret's
+ * colour — a different stroke from a focused control's 1 px outline outside, and a different
+ * colour: in the dark themes the focus colour is the very blue of the bar's focused button, and
+ * in high contrast dark the very orange, so the ring and the focus read as one thing. Over the cell's
+ * faint inner line, which it replaces while the caret is there.
+ */
+.ProseMirror > table td.mep-cell-active, .ProseMirror > table th.mep-cell-active {
+    box-shadow: inset 0 0 0 2px var(--vscode-editorCursor-foreground, var(--vscode-editor-foreground, CanvasText));
+}
+/* High contrast: the cells' own borders are the text colour, so the ring takes the contrast border's — in HC dark that is not the focus orange (pinned, C6); HC light is not pinned. */
+.vscode-high-contrast .ProseMirror > table td.mep-cell-active, .vscode-high-contrast .ProseMirror > table th.mep-cell-active {
+    box-shadow: inset 0 0 0 2px var(--vscode-contrastBorder, var(--vscode-editorCursor-foreground, CanvasText));
+}
+/* The caret's row while Row is open, focused or hovered (objectToolbar.ts): the column tint's colour. */
+.ProseMirror .mep-table-row { background-color: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.15)); }
+.ProseMirror .mep-table-row.selectedCell { background-color: var(--vscode-editor-selectionBackground, rgba(0, 120, 215, 0.3)); }

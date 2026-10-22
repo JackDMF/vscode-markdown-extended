@@ -98,9 +98,13 @@ suite('Editor notes and links (e2e)', () => {
         const source = 'Alpha beta gamma.\n\nSecond paragraph.\n';
         await showDocument(source, 'Alpha');
         await selectText('beta');
+        // The editor has read the selection once its bubble is up: on a loaded machine the fixed wait in
+        // `selectText` was not always enough, and the note went in at the document's start, where the
+        // caret was before.
+        await page.waitForSelector('.mep-bubble:not([hidden])', { timeout: 5000 });
         await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
         await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden])');
-        await page.click('.mep-menu [data-action="sidenote"]');
+        await page.click('.mep-menu[data-menu="annotation"] [data-action="sidenote"]');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Alpha ++beta|note++ gamma.\n\nSecond paragraph.\n');
         assert.strictEqual(await page.$('.ProseMirror .mep-raw-block'), null, 'the paragraph is still rich text');
@@ -229,9 +233,9 @@ suite('Editor notes and links (e2e)', () => {
         await clickBefore('body', 1);
         await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
         await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden])');
-        assert.strictEqual(await page.$eval('.mep-menu [data-action="sidenote"]', el => el.classList.contains('mep-active')), true, 'shown active inside a sidenote');
-        assert.strictEqual(await page.$eval('.mep-menu [data-action="marginal-note"]', el => el.getAttribute('aria-disabled')), 'true');
-        await page.click('.mep-menu [data-action="sidenote"]');
+        assert.strictEqual(await page.$eval('.mep-menu[data-menu="annotation"] [data-action="sidenote"]', el => el.classList.contains('mep-active')), true, 'shown active inside a sidenote');
+        assert.strictEqual(await page.$eval('.mep-menu[data-menu="annotation"] [data-action="marginal-note"]', el => el.getAttribute('aria-disabled')), 'true');
+        await page.click('.mep-menu[data-menu="annotation"] [data-action="sidenote"]');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Alpha beta ref gamma.\n');
         assert.strictEqual(await page.$('.ProseMirror .sn-ref'), null);

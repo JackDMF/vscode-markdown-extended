@@ -1382,6 +1382,8 @@ suite('Editor host: Export from the toolbar', () => {
             source, doc, webview, session, exported, commands, first,
             finish: () => finish?.(),
             done: () => webview.posted.filter((m): m is ExportDone => m.type === 'exportDone').map(m => m.outcome),
+            /** The format each `busy` answer names: the one that runs. */
+            busyFormats: () => webview.posted.filter((m): m is ExportDone => m.type === 'exportDone').flatMap(m => (m.outcome === 'busy' ? [m.format] : [])),
             dispose: () => {
                 session.dispose();
                 engineChanged.dispose();
@@ -1447,6 +1449,7 @@ suite('Editor host: Export from the toolbar', () => {
             s.webview.send({ type: 'export', format: 'png' });
             await until(() => s.done()[0], 2000);
             assert.deepStrictEqual(s.done(), ['busy']);
+            assert.deepStrictEqual(s.busyFormats(), ['pdf'], 'the answer names the format that runs, not the one asked for');
             // An edit behind the running export is applied while it runs.
             const typed = SOURCE.replace('stays', 'typed meanwhile');
             s.webview.send({ type: 'edit', text: typed, baseVersion: s.first.version });
@@ -1456,7 +1459,7 @@ suite('Editor host: Export from the toolbar', () => {
             // The page is loaded again (a webview reload): its document says an export runs.
             s.webview.send({ type: 'ready' });
             await s.session.settled();
-            assert.strictEqual(s.webview.documents().pop()?.exporting, true, 'the reloaded page is told an export runs');
+            assert.strictEqual(s.webview.documents().pop()?.exporting, 'pdf', 'the reloaded page is told which export runs');
             s.finish();
             await until(() => s.done()[1], 2000);
             assert.deepStrictEqual(s.done(), ['busy', 'settled']);

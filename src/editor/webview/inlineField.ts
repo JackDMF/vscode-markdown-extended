@@ -16,18 +16,9 @@
  * is taken on the window, before the field sees it — and saves the document as
  * it is, without the field's value.
  */
+import type { Completer, Completion } from '../completions';
+import type { TipPart } from '../tips';
 import { CompletionListView } from './completionList';
-
-/** One completion a field may take: `value` goes into the field, `label` and `detail` are what the list shows. */
-export interface Completion {
-    value: string;
-    label: string;
-    detail?: string;
-    kind?: string;
-}
-
-/** Where a field's completions come from: the choices for what the field holds now (a link's: the host's `linkChoices`). */
-export type Completer = (query: string) => Promise<readonly Completion[]>;
 
 /**
  * One value a verb or an action asks for, and what follows it: `commit`
@@ -41,13 +32,45 @@ export interface FieldStep {
     value: string;
     caret?: number;
     label: string;
+    /**
+     * The bar's heading while the field is open, where it is not the object's
+     * name and the field's label (`fieldHeading`): an attributes field names
+     * the element it edits (`Bold · Attributes`, `attributesTitle`), whichever
+     * bar opened it.
+     */
+    heading?: string;
     placeholder?: string;
     complete?: Completer;
-    /** The keys and the syntax the field takes, drawn at its right in the bar (`↵ set · Esc cancel · …`). */
-    keys?: string;
-    /** Why what was typed was refused: drawn beside the field in the keys' place, and announced (`role="alert"`), until the next commit. */
+    /**
+     * The keys and the syntax the field takes, drawn at its right in the bar
+     * (`↵ set · Esc cancel · …`); a function of the value as typed where what
+     * Enter does changes with it (`↵ removes .x · Esc keeps them`).
+     */
+    keys?: KeysLine | ((value: string) => KeysLine);
+    /** The braces drawn around the value, fixed (`InlineFieldOptions.adorn`). */
+    adorn?: FieldAdorn;
+    /** Why what was typed was refused: drawn under the field, the keys line kept, until the next edit. */
     refusal?: string;
+    /** The refusal drawn with the values it names set apart in the code font (`refusalParts`); its plain words where not given. */
+    refusalParts?(refusal: string, typed: string): readonly TipPart[];
     commit(value: string): FieldStep | void;
+}
+
+/**
+ * A keys line: words; parts with the syntax in the code font (`tips.ts`); or
+ * parts that say Enter removes what the field had, drawn in the text's colour.
+ */
+export type KeysLine = string | readonly TipPart[] | { parts: readonly TipPart[]; removes: true };
+
+/**
+ * What a field draws around its value and never puts in it: an attributes
+ * field's `{` and `}`. `strip` is what a change typed or pasted loses (one
+ * outer pair, `stripOuterPair`).
+ */
+export interface FieldAdorn {
+    open: string;
+    close: string;
+    strip(value: string): string;
 }
 
 /**
@@ -62,12 +85,19 @@ export function refusedStep(step: FieldStep, typed: string, refusal: string): Fi
 export interface InlineFieldOptions {
     /** What the field starts with, selected, so typing replaces it. */
     value: string;
-    /** Where the caret goes instead of selecting the value: `{.}` with the caret after the dot, to type a class. */
+    /** Where the caret goes instead of selecting the value: a refused value's end, to correct it. */
     caret?: number;
     /** The field's accessible name, and its placeholder unless `placeholder` says more. */
     label: string;
-    /** What the empty field says: what an empty value means (a link's text: the address). */
+    /** What the empty field says: what an empty value means (a link's text: the address); `''` says nothing. */
     placeholder?: string;
+    /**
+     * Fixed text around the value (an attributes field's braces): the input is
+     * framed with them (`box`, `span.mep-attr-field`), muted, hidden from a
+     * screen reader, not selectable; a change that brings them into the value
+     * loses them again (`strip`), the caret kept where it was.
+     */
+    adorn?: FieldAdorn;
     /**
      * Completion (a link's path): asked as the field opens and after each
      * change, the answer to the latest question listed under the field. `↓`/`↑`
@@ -76,6 +106,8 @@ export interface InlineFieldOptions {
      * commits, `Esc` closes the list first.
      */
     complete?: Completer;
+    /** The value as it is now, after every change typed or pasted into the field (the bar redraws its keys line from it). */
+    onChange?(value: string): void;
     /** `Enter`: the value as typed. The field is already closed. */
     onCommit(value: string): void;
     /** `Esc`, or the focus leaving the field. The field is already closed. */
@@ -90,31 +122,6 @@ export interface InlineFieldOptions {
  */
 export function fieldHeading(object: string, field: string): string {
     return object === '' || object.toLowerCase().endsWith(field.toLowerCase()) ? object || field : `${object} · ${field}`;
-}
-
-/** The keys line a bar draws at a field's right (`FieldStep.keys`). */
-export function fieldKeys(text: string): HTMLElement {
-    const el = document.createElement('span');
-    el.className = 'mep-field-keys';
-    el.setAttribute('aria-hidden', 'true');
-    el.textContent = text;
-    return el;
-}
-
-/**
- * What a bar draws at a field's right, the one rule for every bar that shows
- * a field: the reason a commit was refused (`FieldStep.refusal`), announced,
- * else the keys line (`fieldKeys`), else nothing.
- */
-export function fieldAside(step: { keys?: string; refusal?: string }): HTMLElement[] {
-    if (step.refusal) {
-        const el = document.createElement('span');
-        el.className = 'mep-field-refusal';
-        el.setAttribute('role', 'alert');
-        el.textContent = step.refusal;
-        return [el];
-    }
-    return step.keys ? [fieldKeys(step.keys)] : [];
 }
 
 /** The completion list's footer: its keys, the glyphs VS Code's own keybinding labels use. */
@@ -153,12 +160,17 @@ abstract class InlineControl<E extends HTMLInputElement | HTMLSelectElement> {
         return this.done;
     }
 
+    /** What the owner puts in its bar: the control, or the frame around it (`InlineFieldOptions.adorn`). */
+    get box(): HTMLElement {
+        return this.el;
+    }
+
     /** Remove it without committing or cancelling: its owner is going away. */
     dispose(): void {
         this.done = true;
         this.stopAwaitingWindow();
         this.teardown();
-        this.el.remove();
+        this.box.remove();
     }
 
     /** A key the control takes before `Enter` and `Esc` are read; true when it did. */
@@ -228,7 +240,7 @@ abstract class InlineControl<E extends HTMLInputElement | HTMLSelectElement> {
         this.done = true;
         this.stopAwaitingWindow();
         this.teardown();
-        this.el.remove();
+        this.box.remove();
         if (value === null) {
             this.callbacks.onCancel(reason);
         } else {
@@ -249,6 +261,8 @@ export class InlineField extends InlineControl<HTMLInputElement> {
     private asked = 0;
     private timer: ReturnType<typeof setTimeout> | undefined;
     private readonly listId = `mep-completions-${++listSeq}`;
+    /** The frame around the input and its fixed text, when adorned. */
+    private readonly frame: HTMLElement | null = null;
 
     constructor(private readonly options: InlineFieldOptions) {
         const input = document.createElement('input');
@@ -260,18 +274,123 @@ export class InlineField extends InlineControl<HTMLInputElement> {
         // Wide enough for the value, within what the stylesheet allows.
         input.size = Math.max(12, Math.min(60, options.value.length + 2));
         super(input, options.label, options);
+        if (options.adorn) {
+            const brace = (text: string) => {
+                const el = document.createElement('span');
+                el.className = 'mep-attr-brace';
+                el.setAttribute('aria-hidden', 'true');
+                el.textContent = text;
+                return el;
+            };
+            const frame = document.createElement('span');
+            frame.className = 'mep-attr-field';
+            frame.append(brace(options.adorn.open), input, brace(options.adorn.close));
+            // A press on the frame or a brace puts the caret in the input, as a press on its border would.
+            frame.addEventListener('mousedown', e => {
+                if (e.target !== input) {
+                    e.preventDefault();
+                    input.focus();
+                }
+            });
+            this.frame = frame;
+        }
         if (options.complete) {
             input.setAttribute('role', 'combobox');
             input.setAttribute('aria-autocomplete', 'list');
             input.setAttribute('aria-expanded', 'false');
             input.setAttribute('aria-controls', this.listId);
             input.autocomplete = 'off';
-            input.addEventListener('input', () => {
-                // What is typed now is the value: `Enter` before the next
-                // answer commits it, not a choice made for the earlier text.
-                this.choose(-1);
-                this.scheduleQuery();
-            });
+        }
+        input.addEventListener('input', e => {
+            // The input Firefox raises straight after `compositionend` leaves the value as the end judged it: not judged twice.
+            const judged = this.composed;
+            this.composed = null;
+            if (judged !== null && input.value === judged) {
+                return;
+            }
+            // The edit the strip itself makes (`replaceValue`) is not asked about again.
+            if (!this.stripping) {
+                // Not mid-composition (an IME's text is not whole yet: its `{` and `}` may arrive apart, or be taken
+                // back), and not on an undo or redo, which brings back exactly what the user asked to have.
+                const inputType = (e as InputEvent).inputType ?? '';
+                this.changed(!(e as InputEvent).isComposing && !inputType.startsWith('history'));
+            }
+        });
+        // Chromium raises no `input` after `compositionend`, so the guard ends with the user's next move: left standing, an edit that
+        // happened to leave the same text (a typed letter deleted again) would pass for the echo and go unjudged. Firefox's echo is
+        // a composition-text event, which is not the user's next edit.
+        input.addEventListener('keydown', () => (this.composed = null));
+        input.addEventListener('beforeinput', e => {
+            if ((e as InputEvent).inputType !== 'insertCompositionText') {
+                this.composed = null;
+            }
+        });
+        // What a composition brought in is judged when it ends.
+        input.addEventListener('compositionend', () => {
+            this.changed(true);
+            this.composed = input.value;
+        });
+    }
+
+    /** The value the end of the last composition judged, until the next `input` event: Firefox raises one after `compositionend`, which changes nothing. */
+    private composed: string | null = null;
+
+    get box(): HTMLElement {
+        return this.frame ?? this.el;
+    }
+
+    /** Set while the strip edits the input, so the `input` event that edit raises is not read as typing. */
+    private stripping = false;
+
+    /**
+     * What was typed or pasted is the value now: the fixed text it brought in
+     * stripped (`adorn`, unless `strip` is false: mid-composition, an undo),
+     * completions asked for it, the owner told. The caret stays where it was in
+     * what is left — at the end after a paste or a typed closing brace.
+     */
+    private changed(strip: boolean): void {
+        const adorn = this.options.adorn;
+        if (adorn && strip) {
+            const value = this.el.value;
+            const stripped = adorn.strip(value);
+            if (stripped !== value) {
+                const end = this.el.selectionEnd ?? value.length;
+                // What came off before the caret is the opening text; whatever came off is the same length at each end.
+                const off = (value.length - stripped.length) / 2;
+                const at = Math.max(0, Math.min(stripped.length, end - off));
+                this.replaceValue(stripped);
+                this.el.setSelectionRange(at, at);
+            }
+        }
+        if (this.options.complete) {
+            // What is typed now is the value: `Enter` before the next
+            // answer commits it, not a choice made for the earlier text.
+            this.choose(-1);
+            this.scheduleQuery();
+        }
+        this.options.onChange?.(this.el.value);
+    }
+
+    /**
+     * `value` in place of what the input holds, as an edit the input's own undo
+     * keeps (`insertText` over the whole text): Ctrl+Z takes the strip back, as
+     * it takes any typing. An assigned `value` would empty that history. Where
+     * the browser will not make the edit (no focus, no `execCommand`), it is
+     * assigned, and the undo of what came before is lost — the strip still holds.
+     */
+    private replaceValue(value: string): void {
+        const el = this.el;
+        this.stripping = true;
+        try {
+            if (typeof document.execCommand === 'function' && document.activeElement === el) {
+                el.setSelectionRange(0, el.value.length);
+                document.execCommand('insertText', false, value);
+            }
+            if (el.value !== value) {
+                el.value = value;
+            }
+        } finally {
+            this.stripping = false;
         }
     }
 

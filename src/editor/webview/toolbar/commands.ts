@@ -9,6 +9,7 @@ import { GapCursor } from 'prosemirror-gapcursor';
 import { AllSelection, Command, EditorState, NodeSelection, TextSelection, Transaction } from 'prosemirror-state';
 import { isInTable } from 'prosemirror-tables';
 import { parseAttrsLiteral } from '../../attrs';
+import { DEFAULT_FENCE } from '../../fences';
 import { PRESERVE_SOURCE_META } from '../../fidelity';
 import { SUFFIX_NODES, editorSchema } from '../../schema';
 import { serializeNode } from '../../serialize';
@@ -371,7 +372,7 @@ export function blockCommand(node: BlockTarget, level?: number): Command {
             case 'heading':
                 return isCurrent(current, 'heading', level) ? false : keepingLiterals(setBlockType(nodes.heading, { level }))(state, dispatch);
             case 'code_block':
-                return isCurrent(current, 'code_block') ? false : keepingLiterals(setBlockType(nodes.code_block, { params: '', markup: '```' }))(state, dispatch);
+                return isCurrent(current, 'code_block') ? false : keepingLiterals(setBlockType(nodes.code_block, { params: '', markup: DEFAULT_FENCE }))(state, dispatch);
             case 'blockquote':
                 return wrapper?.node.type === nodes.blockquote ? lift(state, dispatch) : wrapIn(nodes.blockquote)(state, dispatch);
             case 'bullet_list':

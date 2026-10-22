@@ -30,6 +30,31 @@ export const settle = () => new Promise(resolve => setTimeout(resolve, 500));
 /** Wait `ms` milliseconds. */
 export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * The caret to the start of the text, as a person leaving the object they were in: what Esc dismissed
+ * there — a bar hidden until the caret leaves its object — is over. A suite whose next document holds
+ * an object where the last test's did calls it before it blurs the page, so no test starts with
+ * the bar of the one before still dismissed (a click back into the same object does not end it).
+ */
+export async function leaveObjects(page: puppeteer.Page): Promise<void> {
+    const start = await page.evaluate(() => {
+        const root = document.querySelector('.ProseMirror') as HTMLElement;
+        const first = document.createTreeWalker(root, NodeFilter.SHOW_TEXT).nextNode();
+        if (!first) {
+            return null;
+        }
+        const range = document.createRange();
+        range.setStart(first, 0);
+        range.setEnd(first, 1);
+        const r = range.getBoundingClientRect();
+        return { x: r.left + 1, y: (r.top + r.bottom) / 2 };
+    });
+    if (start) {
+        await page.mouse.click(start.x, start.y);
+        await delay(120);
+    }
+}
+
 /** With `MEP_SHOTS_DIR` set, the suites save a screenshot of each state they name there; without it, none. */
 export const SHOTS_DIR = process.env.MEP_SHOTS_DIR;
 
@@ -231,6 +256,7 @@ async function preparePage(browser: puppeteer.Browser, bundle: string, extension
     );
     // A webview always has its theme's variables: Light Modern, which the body's class names, until a test applies another.
     await applyTheme(page, LIGHT_MODERN);
+    clickAsAPerson(page);
     for (const sheet of sheets) {
         await page.addStyleTag({ path: sheet });
     }
@@ -258,6 +284,35 @@ async function preparePage(browser: puppeteer.Browser, bundle: string, extension
             await page.evaluate(m => window.postMessage(m, '*'), message as unknown as Record<string, unknown>);
         },
         close: () => closeBrowser(browser),
+    };
+}
+
+/**
+ * A floating layer that just appeared or moved ignores the pointer for
+ * `INERT_MS` (`placement.ts`): a person cannot aim at it sooner, a script
+ * can. `page.click` and `page.mouse.click` wait first until no layer is inert
+ * — as a person would — so the suites click what they meant to. A test of the
+ * inert time itself presses with `page.mouse.down`/`up`, which do not wait. A
+ * layer still inert after 2 s is a layer whose inert time never ended — the
+ * click fails, saying so, instead of landing on a layer a person could not use.
+ */
+function clickAsAPerson(page: puppeteer.Page): void {
+    const settled = async () => {
+        try {
+            await page.waitForFunction(() => document.querySelector('.mep-layer[data-inert]') === null, { timeout: 2000, polling: 20 });
+        } catch {
+            throw new Error('layer still inert after 2 s');
+        }
+    };
+    const click = page.click.bind(page);
+    page.click = async (selector: string, options?: Readonly<puppeteer.ClickOptions>) => {
+        await settled();
+        return click(selector, options);
+    };
+    const mouseClick = page.mouse.click.bind(page.mouse);
+    page.mouse.click = async (x: number, y: number, options?: Readonly<puppeteer.MouseClickOptions>) => {
+        await settled();
+        return mouseClick(x, y, options);
     };
 }
 

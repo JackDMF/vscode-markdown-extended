@@ -6,6 +6,7 @@ import { inputRules, textblockTypeInputRule, undoInputRule, wrappingInputRule } 
 import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
 import { Command, Plugin } from 'prosemirror-state';
+import { DEFAULT_FENCE } from '../fences';
 import { fidelityPlugin } from '../fidelity';
 import { REDO_BINDINGS, UNDO_BINDING } from '../keys';
 import { emojiKeymap, emojiPlugin } from './emoji';
@@ -38,7 +39,7 @@ function markdownInputRules(): Plugin {
                 (match, node) => node.childCount + (node.attrs.order as number) === Number(match[1]),
             ),
             wrappingInputRule(/^\s*>\s$/, nodes.blockquote),
-            textblockTypeInputRule(/^```$/, nodes.code_block, () => ({ params: '', markup: '```' })),
+            textblockTypeInputRule(/^```$/, nodes.code_block, () => ({ params: '', markup: DEFAULT_FENCE })),
         ],
     });
 }

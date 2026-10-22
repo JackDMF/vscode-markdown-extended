@@ -82,7 +82,31 @@ suite('Editor labels, menus and states (e2e)', () => {
         return Object.fromEntries(props.map(p => [p, cs.getPropertyValue(p)]));
     }, properties);
 
+    /** A row menu whose face moved into "…" (a narrow row): opened from its entry there, by click or by keys. True when it was. */
+    const openFromMore = async (menu: string, keys: boolean): Promise<boolean> => {
+        if (!(await page.$eval(face(menu), el => (el as HTMLElement).hidden))) {
+            return false;
+        }
+        if (keys) {
+            await page.focus(`${ROW} .mep-more-face`);
+            await page.keyboard.press('Enter');
+            await page.waitForSelector(`${panel('more')}:not([hidden])`);
+            await page.focus(`${panel('more')} [data-submenu="${menu}"]`);
+            await page.keyboard.press('ArrowRight');
+        } else {
+            await page.click(`${ROW} .mep-more-face`);
+            await page.waitForSelector(`${panel('more')}:not([hidden])`);
+            await page.click(`${panel('more')} [data-submenu="${menu}"]`);
+        }
+        await page.waitForSelector(`${panel(menu)}:not([hidden])`);
+        await delay(80);
+        return true;
+    };
+
     const openByClick = async (menu: string) => {
+        if (await openFromMore(menu, false)) {
+            return;
+        }
         await page.click(face(menu));
         await page.waitForSelector(`${panel(menu)}:not([hidden])`);
         await delay(80);
@@ -111,9 +135,11 @@ suite('Editor labels, menus and states (e2e)', () => {
         await clickText(page, 'payload', 2);
         // The pointer off the menus: an entry under it would take the focus (`followPointer`).
         await page.mouse.move(WIDE - 10, 790);
-        await page.focus(face('insert'));
-        await page.keyboard.press('Enter');
-        await page.waitForSelector(`${panel('insert')}:not([hidden])`);
+        if (!(await openFromMore('insert', true))) {
+            await page.focus(face('insert'));
+            await page.keyboard.press('Enter');
+            await page.waitForSelector(`${panel('insert')}:not([hidden])`);
+        }
         await page.focus(`${panel('insert')} [data-submenu="admonition"]`);
         await page.keyboard.press('ArrowRight');
         await page.waitForSelector(`${panel('admonition')}:not([hidden])`);
@@ -239,7 +265,7 @@ suite('Editor labels, menus and states (e2e)', () => {
             await delay(200);
             const tool = await page.$eval('.mep-bubble [data-action="attrs-bubble"]', el => [el.classList.contains('mep-active'), el.getAttribute('aria-label')]);
             assert.deepStrictEqual(tool, [false, 'Attributes of Bold…']);
-            assert.strictEqual(await describedTip(page, '.mep-bubble [data-action="attrs-bubble"]'), 'Attributes of Bold… — **text**{.class}');
+            assert.strictEqual(await describedTip(page, '.mep-bubble [data-action="attrs-bubble"]'), 'Attributes of Bold… — **text**{.class}\nOver plain text: Span with class… — [text]{.class}');
             assert.strictEqual((await style('.mep-bubble', 'padding-top'))['padding-top'], '4px');
             await pointTo('.mep-bubble [data-action="attrs-bubble"]', 700);
         });
@@ -261,7 +287,8 @@ suite('Editor labels, menus and states (e2e)', () => {
                 }
             }
         });
-        await page.waitForSelector('.mep-bubble:not([hidden])');
+        // Pointed at once its inert time is over (`placement.ts`): before, the pointer passes through it.
+        await page.waitForSelector('.mep-bubble:not([hidden]):not([data-inert])');
         await pointTo('.mep-bubble [data-action="attrs-bubble"]', 700);
         assert.strictEqual(await page.$eval('.mep-tooltip', el => (el as HTMLElement).hidden), false, 'the hover shows');
         // No key, no press: the selection collapses, the update hides the bubble.
@@ -495,7 +522,7 @@ suite('Editor labels, menus and states (e2e)', () => {
         assert.ok(!String(shown[1]).startsWith('Strong'), `no stray hover: ${JSON.stringify(shown)}`);
     });
 
-    test('15 the hover follows its control while the row scrolls; 16 a set-verb entry\'s hover stands beside the entry', async function () {
+    test('15 a row control\'s hover at 420 px, under it; 16 a set-verb entry\'s hover stands beside the entry', async function () {
         this.timeout(30000);
         await applyTheme(page, LIGHT_MODERN);
         await page.setViewport({ width: NARROW, height: 640 });
@@ -505,17 +532,12 @@ suite('Editor labels, menus and states (e2e)', () => {
             await page.focus(`${ROW} [data-action="emphasis"]`);
             await page.keyboard.press('Tab');
             await delay(80);
-            const before = await page.$eval('.mep-tooltip', el => [(el as HTMLElement).hidden, el.getBoundingClientRect().left]);
-            const faceLeft = async () => (await page.$eval(`${ROW} [data-action="bold"]`, el => el.getBoundingClientRect().left));
+            // The row never scrolls (wave 2 #2): the hover stands under its control, inside the window.
+            const before = await page.$eval('.mep-tooltip', el => [(el as HTMLElement).hidden, el.getBoundingClientRect().left, el.getBoundingClientRect().right]);
+            const faceLeft = await page.$eval(`${ROW} [data-action="bold"]`, el => el.getBoundingClientRect().left);
             assert.strictEqual(before[0], false, 'the focus shows Bold\'s hover');
-            await page.$eval(ROW, el => {
-                el.scrollLeft += 80;
-            });
-            await delay(120);
-            const after = await page.$eval('.mep-tooltip', el => [(el as HTMLElement).hidden, el.getBoundingClientRect().left]);
-            assert.strictEqual(after[0], false);
-            assert.ok(Math.abs(Number(after[1]) - Math.max(0, await faceLeft())) < 1 && Number(after[1]) < Number(before[1]), `the hover follows: ${JSON.stringify([before, after])}`);
-            await shot('15-hover-follows-row-scroll-420-light.png');
+            assert.ok(Math.abs(Number(before[1]) - faceLeft) < 1 && Number(before[2]) <= NARROW + 0.5, `under Bold, inside the window: ${JSON.stringify([before, faceLeft])}`);
+            await shot('15-hover-row-420-light.png');
         } finally {
             await page.setViewport({ width: WIDE, height: 800 });
         }
@@ -568,17 +590,12 @@ suite('Editor labels, menus and states (e2e)', () => {
             });
             await eachTheme('13-420-formatting', async () => {
                 await clickText(page, 'payload', 2);
-                await page.$eval(ROW, el => {
-                    el.scrollLeft = 110;
-                });
+                // At 420 Formatting is in "…" (wave 2 #2): `openByClick` opens it from there.
                 await openByClick('formatting');
                 await pointTo(`${panel('formatting')} [data-action="block-attributes"]`, 400);
                 await inside('formatting');
             });
             await eachTheme('14-420-insert-admonition', async () => {
-                await page.$eval(ROW, el => {
-                    el.scrollLeft = 9999;
-                });
                 await openAdmonitions('warning');
                 await inside('insert');
                 await inside('admonition');

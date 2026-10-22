@@ -443,14 +443,24 @@ export function tableRefusal(tr: Transaction): string | null {
 /**
  * What the page draws on tables beyond their content: a hairline around the
  * table the caret is in — the signifier that it is a table being edited, there
- * before its bar is — and the cells a verb just made, highlighted for
- * `FLASH_MS` (`editor.css` fades it, or holds it where motion is reduced).
+ * before its bar is — the caret's cell, ringed (`mep-cell-active`: where
+ * Row, Column and Align act, the row or the column tinted only while one of
+ * them is open, focused or hovered, `objectToolbar.ts`), and the cells a verb
+ * just made, highlighted for `FLASH_MS` (`editor.css` fades it, or holds it
+ * where motion is reduced).
  */
 function tableDecorations(state: EditorState, flashed: readonly number[]): DecorationSet {
     const decorations: Decoration[] = [];
     const { $from } = state.selection;
     if ($from.depth >= 1 && $from.node(1).type === nodes.table) {
         decorations.push(Decoration.node($from.before(1), $from.after(1), { class: 'mep-table-active' }));
+        for (let d = $from.depth; d > 1; d--) {
+            const cell = $from.node(d);
+            if (cell.type === nodes.table_cell || cell.type === nodes.table_header) {
+                decorations.push(Decoration.node($from.before(d), $from.after(d), { class: 'mep-cell-active' }));
+                break;
+            }
+        }
     }
     for (const pos of flashed) {
         const cell = state.doc.nodeAt(pos);

@@ -729,7 +729,8 @@
     "test:unit": "npm run test",
     "lint": "eslint src --ext ts",
     "lint:fix": "eslint src --ext ts --fix",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "languages": "node scripts/languages.mjs"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",

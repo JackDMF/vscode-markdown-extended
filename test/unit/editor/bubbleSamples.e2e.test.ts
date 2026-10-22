@@ -5,6 +5,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { closeEditorPage, EXTENSION_ID, EditorPage, delay, openEditorPage, shot } from './pageHarness';
 import { DARK_MODERN, applyTheme } from './themes';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { REST_MS } from '../../../src/editor/webview/placement';
 
 /**
  * A person's `markdown.styles`, as Req Explorer's corpus has one: a note
@@ -18,22 +19,25 @@ const USER_STYLE = [
     '.mn-ref { border-bottom: 1.5px dotted #dddddd; }',
 ].join('\n');
 
-type Branch = 'above' | 'beside' | 'below' | 'edge';
+type Branch = 'above' | 'below' | 'edge';
 
-/** A document per branch of the bubble's ladder (`placeBubble`), and the word to select in it. */
-const PLACES: { branch: Branch; text: string }[] = [
-    { branch: 'above', text: 'Short.\n\nAlpha, a longer paragraph whose one line runs on and on, far along, until the word gamma.\n' },
-    { branch: 'beside', text: 'A line above the table, long enough to run on across the column and on and on and on and on and on.\n\n| A | B |\n| - | - |\n| one | gamma |\n| three | four |\n' },
-    { branch: 'below', text: 'A first paragraph whose one line runs on, well across where the word below it stands.\n\nAlpha beta gamma.\n' },
+/** Eighty short lines: a selection over all of them is taller than the window. */
+const TALL = Array.from({ length: 80 }, (_, i) => `Line ${i + 1}${i === 79 ? ' gamma' : ''}.`).join('\n\n');
+
+/**
+ * A document per place the policy puts the bubble (`placement.ts`), and what
+ * to select in it: below the selection; above it where text lies below and
+ * none above (the tie-break); at the window's visible edge for a selection
+ * taller than the window.
+ */
+const PLACES: { branch: Branch; text: string; whole?: true }[] = [
+    { branch: 'edge', text: `${TALL}\n`, whole: true },
     {
-        branch: 'edge', text: [
-            'A first line that runs on across the whole column, and on and on and on and on, and on and on and on and on and on and on and on.  ',
-            'Then gamma.  ',
-            // Short, under the bubble's place below but not under the column's right end.
-            'A third line, short.',
-            '',
-        ].join('\n'),
+        branch: 'above', text: 'Short.\n\nAlpha, a longer paragraph whose one line runs on and on, far along, until the word gamma.\n\n'
+            + 'A paragraph under it whose one line runs on and on across the whole of the column, so that below the word there is text, and it goes on and on and on, further still, across all of it.\n',
     },
+    // Last: the sub-pixel offsets are tried on it, a bubble no scroll moves.
+    { branch: 'below', text: 'A first paragraph whose one line runs on, well across where the word below it stands.\n\nAlpha beta gamma.\n' },
 ];
 
 /**
@@ -56,6 +60,8 @@ suite('Bubble samples (e2e)', () => {
         version++;
         await (editor as EditorPage).send({ type: 'document', json, version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('gamma'));
+        // Back at the top a tall document left the page scrolled from.
+        await page.evaluate(() => window.scrollTo(0, 0));
         await delay(50);
     };
 
@@ -73,7 +79,29 @@ suite('Bubble samples (e2e)', () => {
             }
             throw new Error(`no "${n}" in the document`);
         }, needle);
-        await delay(150);
+        // A selection no pointer drew rests before its bubble shows (`placement.ts`).
+        await delay(REST_MS + 150);
+        await page.waitForSelector('.mep-bubble:not([hidden])', { timeout: 5000 });
+    };
+
+    /** The whole document's text selected, and the page scrolled to its middle: a selection taller than the window. */
+    const selectAll = async () => {
+        await page.focus('.ProseMirror');
+        await page.evaluate(() => {
+            const paragraphs = document.querySelectorAll('.ProseMirror > p');
+            const first = paragraphs[0].firstChild as Text;
+            const last = paragraphs[paragraphs.length - 1].firstChild as Text;
+            (document.getSelection() as Selection).setBaseAndExtent(first, 0, last, (last.textContent ?? '').length);
+        });
+        await delay(REST_MS + 150);
+        await page.waitForSelector('.mep-bubble:not([hidden])', { timeout: 5000 });
+        await page.evaluate(() => window.scrollTo(0, (document.scrollingElement as Element).scrollHeight / 3));
+        // The scroll places the bubble again in the next frame (`placement.ts`, once per frame): on a loaded
+        // machine a fixed wait read it where the scroll had carried it, not yet at the window's visible edge.
+        await page.waitForFunction(() => {
+            const bubble = document.querySelector('.mep-bubble') as HTMLElement;
+            return !bubble.hidden && Math.abs(bubble.getBoundingClientRect().bottom - (window.innerHeight - 4)) < 1;
+        }, { timeout: 5000 });
     };
 
     /** Which branch the bubble stands in, and every sample whose painted box its button cuts. */
@@ -84,10 +112,11 @@ suite('Bubble samples (e2e)', () => {
         const sel = (document.getSelection() as Selection).getRangeAt(0);
         const range = sel.getBoundingClientRect();
         const block = (sel.startContainer.parentElement as HTMLElement).closest('.ProseMirror > *') as HTMLElement;
-        const branch = box.bottom <= range.top + 1 ? 'above'
-            : box.top >= range.bottom - 1 ? 'below'
-                : box.left >= block.getBoundingClientRect().right ? 'beside'
-                    : Math.abs(box.right - mount.getBoundingClientRect().right) < 1 ? 'edge' : 'elsewhere';
+        void block;
+        void mount;
+        const branch = Math.abs(box.bottom - (window.innerHeight - 4)) < 1 && range.top < 0 ? 'edge'
+            : box.bottom <= range.top + 1 ? 'above'
+                : box.top >= range.bottom - 1 ? 'below' : 'elsewhere';
         const cut: string[] = [];
         const looks: string[] = [];
         for (const sample of Array.from(bubble.querySelectorAll<HTMLElement>('.mep-sample > *'))) {
@@ -159,13 +188,17 @@ suite('Bubble samples (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test('in every branch of its ladder, and at every sub-pixel offset, the bubble draws each sample\'s border and background whole, the same', async function () {
+    test('in every place the policy puts it, and at every sub-pixel offset, the bubble draws each sample\'s border and background whole, the same', async function () {
         this.timeout(30000);
         let looks: string[] | undefined;
         const cut: Record<string, string[]> = {};
-        for (const { branch, text } of PLACES) {
+        for (const { branch, text, whole } of PLACES) {
             await showDocument(text);
-            await selectText('gamma');
+            if (whole) {
+                await selectAll();
+            } else {
+                await selectText('gamma');
+            }
             const found = await read();
             await shot(page, `bubble-${branch}.png`);
             assert.strictEqual(found.branch, branch, `the document for "${branch}" puts the bubble there`);

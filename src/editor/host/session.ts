@@ -150,8 +150,8 @@ export class VisualEditorSession implements vscode.Disposable {
     private mapSeq = 0;
     /** `vscode.commands.executeCommand`, or the test's stand-in for it (`SessionHost.executeCommand`). */
     private readonly execute: <T>(command: string, ...args: unknown[]) => Thenable<T>;
-    /** An export the page asked for is running, from its request until `exportDone`; another is dropped meanwhile. */
-    private exporting = false;
+    /** The format of an export the page asked for that is running, from its request until `exportDone`; another is dropped meanwhile. */
+    private exporting: ExportFormat | null = null;
 
     constructor(
         private readonly document: vscode.TextDocument,
@@ -435,9 +435,9 @@ export class VisualEditorSession implements vscode.Disposable {
                 // One at a time: the page shows the running one until its
                 // `exportDone`, and a request meanwhile is answered `busy` —
                 // the page keeps showing the one that runs.
-                if (this.exporting) {
+                if (this.exporting !== null) {
                     this.host.log('[INFO] Visual Editor: an export is running; the request for another was dropped.');
-                    void this.postQuietly({ type: 'exportDone', outcome: 'busy' });
+                    void this.postQuietly({ type: 'exportDone', outcome: 'busy', format: this.exporting });
                     break;
                 }
                 // A message names anything: only a format of the table (`formats.ts`) is run.
@@ -446,7 +446,7 @@ export class VisualEditorSession implements vscode.Disposable {
                     void this.postQuietly({ type: 'exportDone', outcome: 'refused' });
                     break;
                 }
-                this.exporting = true;
+                this.exporting = format;
                 // In the queue, behind the edit the page flushed before asking,
                 // so the export reads at least the text the page showed at the
                 // press — unless that edit was dropped (the file changed
@@ -485,7 +485,7 @@ export class VisualEditorSession implements vscode.Disposable {
 
     /** The export the page asked for settled — exported, cancelled, failed: the page may ask again. */
     private exportFinished(): void {
-        this.exporting = false;
+        this.exporting = null;
         void this.postQuietly({ type: 'exportDone', outcome: 'settled' });
     }
 
@@ -665,8 +665,8 @@ export class VisualEditorSession implements vscode.Disposable {
             defaultWrap: Config.instance.editorWrapColumn(this.document.uri),
             includes,
             inline,
-            // A page loaded again while an export runs shows it running, until its `exportDone`.
-            ...(this.exporting ? { exporting: true as const } : {}),
+            // A page loaded again while an export runs shows it running, by its format, until its `exportDone`.
+            ...(this.exporting === null ? {} : { exporting: this.exporting }),
         });
         // A link followed here before the page had the document lands now.
         await this.postReveal();

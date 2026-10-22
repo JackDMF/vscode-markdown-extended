@@ -11,7 +11,7 @@ import { plugins } from '../../../src/plugin/plugins';
 import { withoutId } from '../../../src/editor/attrs';
 import { editorSchema } from '../../../src/editor/schema';
 import {
-    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, INDENTED_CODE_ATTRS_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt,
+    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, NESTED_CODE_ATTRS_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt, attributesTargetOf,
     commitAttributes, containerNameOf, literalOf, literalRefusal, spanLockReason,
 } from '../../../src/editor/webview/objects';
 import { FieldStep, refusedStep } from '../../../src/editor/webview/inlineField';
@@ -195,11 +195,26 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
         assert.match(hostEngine().render(out), /<table class="wider">[\s\S]*<p>After\.<\/p>/);
     });
 
-    test('a fenced code block: after the opening fence\'s info string; an indented one is refused', () => {
+    test('a fenced code block: after the opening fence\'s info string; an indented one is fenced as it takes one', () => {
         const { out } = written('```js\nconst a = 1;\n```\n', 'const', '{.numbered}');
         assert.strictEqual(out, '```js {.numbered}\nconst a = 1;\n```\n');
         assert.match(hostEngine().render(out), /<code class="numbered language-js">/);
-        assert.strictEqual(refusalAt(caretAt(stateOf('Text.\n\n    indented code\n'), 'indented')), INDENTED_CODE_ATTRS_REFUSAL);
+        const indented = caretAt(stateOf('Text.\n\n    indented code\n'), 'indented');
+        const made = commitAttributes(indented, targetAt(indented), '{.x}');
+        assert.ok(made !== null && 'tr' in made && made.fenced && !made.removed, 'fenced, not refused');
+        const fenced = text(indented.apply(made.tr));
+        assert.strictEqual(fenced, 'Text.\n\n``` {.x}\nindented code\n```\n');
+        assert.match(hostEngine().render(fenced), /<code class="x">indented code/);
+        const plain = caretAt(stateOf('```js\nx\n```\n'), 'x');
+        const again = commitAttributes(plain, targetAt(plain), '{.y}');
+        assert.ok(again !== null && 'tr' in again && !again.fenced, 'a fenced block is not fenced again');
+    });
+
+    test('a code block\'s bar inside a quote: Attributes… refused with the nested reason; the menu still targets the quote', () => {
+        const state = caretAt(stateOf('> ```js\n> x\n> ```\n>\n> After.\n'), 'x');
+        const pos = state.selection.$from.before();
+        assert.deepStrictEqual(attributesTargetOf(state.doc.nodeAt(pos)!, pos, true), { refusal: NESTED_CODE_ATTRS_REFUSAL });
+        assert.strictEqual(targetAt(state).name, 'Quote');
     });
 
     test('a container and an admonition are refused, and so is a paragraph inside one', () => {
@@ -238,6 +253,23 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
         const made = commitAttributes(selected, targetAt(selected), '{title="x{y"}');
         assert.ok(made !== null && 'refusal' in made && /last \{/.test(made.refusal));
         assert.strictEqual(commitAttributes(state, target, '{}'), null, 'removing what is not there does nothing');
+    });
+
+    test('a refusal names the literal as the attributes field shows it, between its braces, and never asks for a brace', () => {
+        const state = caretAt(stateOf('Alpha beta.\n'), 'beta');
+        const target = targetAt(state);
+        const refusal = (literal: string) => {
+            const made = commitAttributes(state, target, literal);
+            assert.ok(made !== null && 'refusal' in made, `${literal} is refused`);
+            return made.refusal;
+        };
+        assert.strictEqual(refusal('{title="a}'), 'title="a has an open quote: close it with ".');
+        // The reading says it ended inside a quote — a quote the plugin opens anywhere a value is empty, not only after an `=`.
+        assert.strictEqual(refusal('{.a "b}'), '.a "b has an open quote: close it with ".');
+        const spaced = refusal('{width = 300}');
+        assert.ok(spaced.startsWith('width = 300 is text, not an attribute list'), spaced);
+        assert.ok(spaced.endsWith('Write it as width=300.'), spaced);
+        assert.ok(refusal('{.}').startsWith('. is no attribute list: write it as .class, #id or key="value"'), refusal('{.}'));
     });
 
     test('the literal is kept verbatim: parse(serialize(…)) gives it back as typed, for each construct', () => {
@@ -433,9 +465,9 @@ suite('Editor Attributes…: where the engine reads no attributes, nothing offer
 
 suite('Editor fields: a refused commit keeps the field', () => {
     test('refusedStep is the same step with what was typed, the caret at its end, and the reason', () => {
-        const step: FieldStep = { value: '{.}', caret: 2, label: 'Attributes', keys: 'keys', commit: () => undefined };
-        const refused = refusedStep(step, '{.a', 'It is not closed.');
-        assert.deepStrictEqual({ ...refused, commit: null }, { value: '{.a', caret: 3, label: 'Attributes', keys: 'keys', refusal: 'It is not closed.', commit: null });
+        const step: FieldStep = { value: '', label: 'Attributes', keys: 'keys', commit: () => undefined };
+        const refused = refusedStep(step, '.a"', 'It has an open quote.');
+        assert.deepStrictEqual({ ...refused, commit: null }, { value: '.a"', caret: 3, label: 'Attributes', keys: 'keys', refusal: 'It has an open quote.', commit: null });
         assert.strictEqual(refused.commit, step.commit, 'it commits as the step does');
     });
 });

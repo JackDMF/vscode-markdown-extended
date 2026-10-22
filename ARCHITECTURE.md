@@ -771,8 +771,8 @@ condition of it, so a holder around the object hides none inside it; its field d
 element, not the object, while it is open) — and, where there is no
 object, a bar of the bare holder's own, never drawn on a caret rest and kept while the
 selection stays in its run; and the bubble's `{…}`, which gives a selection within one
-holder's run that holder's attributes — marked meanwhile, its accessible name saying which —
-and any other selection a span. The block half is
+holder's run that holder's attributes — marked meanwhile, its accessible name saying which,
+its tooltip's second line what it does over plain text — and any other selection a span. The block half is
 `attributesTargetAt`, which names **Attributes of Paragraph…**. A link's bar has
 **Attributes…**, an image's has it after *Edit image…*, and a run of emphasis,
 strikethrough, a highlight, code, superscript, subscript or a key carrying a literal is an
@@ -783,8 +783,11 @@ makes a removal and which, on a bare holder, gives its mark the literal over its
 **A refused field stays open** (`FieldStep.refusal`, `refusedStep` in `inlineField.ts`):
 a commit that refuses what was typed returns the same step with the typed value and the
 reason, and both bars that show fields (`ObjectBar.openField`, `Toolbar.openFieldBar`)
-draw it again with the reason in the keys' place, announced as an alert (`fieldAside`), the
-caret at the end of what was typed. The refusal is asked before the focus goes back to the
+hand the drawing to one row (`FieldRow`, `webview/fieldRow.ts`): the keys line stays, the
+reason goes on a line of its own under the field, the input `aria-invalid` and described by
+the reason — read once as the focus enters the field shown again, so no `role="alert"`
+besides — framed in `inputValidation-warningBorder` (thicker and dashed in High Contrast),
+the caret at the end of what was typed; the next edit clears it all. The refusal is asked before the focus goes back to the
 text; the transaction is built after, since that may commit a source box. Every
 attributes field answers so; a caret hint for a refusal would close the field and lose what
 was typed.
@@ -862,13 +865,29 @@ would be *Attributes…* on a block with no literal yet — every plain heading 
 quote and a list item without a literal, and a plain heading with no lenses or actions,
 reach it through the menu only. Both surfaces open the same field step (`attributesStep`) and commit through the same
 rule (`commitAttributes` in `objects.ts`), so they cannot prefill, refuse or announce
-differently. The field is labelled with the block's name (*Paragraph · Attributes*),
-placed at the block by the bars' ladder, prefilled with the literal — or `{.}` with the
-caret after the dot when there is none — and takes the whole literal (`.class`, `#id`,
-`key=value`, `key="a value"`); at its right the bar says so, `↵ set · Esc cancel ·
-{.class #id key=value}` (`FieldStep.keys`), and **Span with class**'s field says the same. `Enter` sets it in one transaction, so one undo step, and
-the hint says *Attributes set — Ctrl+Z*; `{}` or an empty field removes it (*Attributes
-removed — Ctrl+Z*); `Esc` changes nothing. A literal markdown-it-attrs would not read
+differently. **The attributes field** is one for every route — a block's, an inline
+element's, Span with class's (`attributesField` in `attributes.ts`; its spelling rules in
+`attributeLiteral.ts`, pure). It draws the braces itself, fixed, muted, hidden from a screen
+reader and unselectable (`InlineFieldOptions.adorn`), so the value is only what stands
+between them: the literal prefilled and selected, or empty with the placeholder `.class`
+where there never was one (none once an existing one is emptied). A paste or a typed closing
+brace that brings in a whole `{…}` loses one outer pair (`stripOuterPair`); `Enter` drops a
+stray leading `{` or trailing `}` and braces the rest (`literalFrom`). It is titled by the
+element it edits, whichever bar opened it (*Paragraph · Attributes*, *Bold · Attributes*:
+`FieldStep.heading`, `attributesTitle`), stands at that element — a run's verb carries it as
+`target`, a block's field stands at the block's left edge from every route (`blockAnchor`) —
+and its keys line follows what `Enter` will commit (`keysFor`): `↵ set · Esc cancel · empty
+removes · .class #id key=value`, the syntax in the code font, and once an existing literal is
+emptied (or only a stray brace left) `↵ removes .x #y · Esc keeps them` in the text's colour.
+`Enter` sets it in one transaction, so one undo step, and the hint says *Attributes set —
+Ctrl+Z*; an empty field removes it (*Attributes removed — Ctrl+Z*); `Esc` changes nothing, and
+so does `Enter` in a field left as it was shown (`attributesField`'s `unchanged`: a literal the
+author wrote as `{ .a }` is not rewritten, nothing is said to be set). A refusal names the
+literal as the field shows it, without its braces (`literalRefusal`; the code block's
+opening line, whose text holds them, has it named whole), the values it names in the code
+font (`refusalParts`) and its line kept to about 80 characters. The braces a paste or a
+typed `}` brings in are stripped as an edit of the input's own undo history, not while an IME
+composes (`InlineField.changed`). A literal markdown-it-attrs would not read
 back whole is refused with the reason beside the field, which stays open with it
 (`literalRefusal`, the stage-3 reader; `refusedStep`). The block is the innermost list item holding the selection, else the top-level
 block: a nested paragraph's literal is not written, so the caret in a paragraph in a quote
@@ -931,7 +950,7 @@ splitting the wrapper in two, as ProseMirror's `liftEmptyBlock` would; `Backspac
 start of an empty first paragraph lifts the wrapper's blocks out (`unwrapTransaction`, the
 same transaction as the bars' *Remove …, keep content*). The toolbar inserts both natively
 (`insertWrapperTransaction`, `insert-wrapper`), and **Span with class** (`attr-span`) asks
-for the literal in the inline field, prefilled `{.}` with the caret after the dot;
+for the literal in the attributes field (above), empty between the braces it draws;
 **Attributes…** (`block-attrs`) does the same for the block at the caret (above).
 
 ### Tables
@@ -1002,7 +1021,9 @@ takes the row away again and leaves the table for a new paragraph after it, as `
 empty last item leaves a list. `Shift+Enter`, a hard break, is refused with the reason beside
 the caret (`CELL_BREAK_REFUSAL`, the one sentence any refused break says). Arrows, a drag across cells (a
 `CellSelection`, drawn in the selection colour) and pasting cells are `tableEditing`'s; a cell
-has no block type, so the block-type control is locked there (`TABLE_LOCK`, on `isInTable`).
+has no block type, so the block types are locked there (`TABLE_LOCK`, on `isInTable`): dimmed in
+the Block type menu with that reason, while the menu itself opens for its one entry that is not a type,
+**Attributes of Table…**, which keeps the state Formatting's has (`ToolbarView.updateFace`).
 
 **What the page adds to a table's look**, each an affordance or feedback, not decoration
 (Daniel, 2026-09-29, after the screenshots): a hairline around the table the caret is in, the
@@ -1032,8 +1053,11 @@ chosen again is the default, `---`), a gap,
 then *Edit source* and *Delete table*. The three are set-verbs: a menu opens under the verb on
 a click, `Enter` or `Space`, in the formatting toolbar's menu chrome (`.mep-menu`), the arrows
 move, `Enter` chooses, `Esc` closes back to the verb. They act on the rows and columns the
-selection is in, and while the bar shows the caret's column is tinted — a node decoration on
-its cells — so *left* and *right* have something to be left and right of. Deleting the last row
+selection is in. At rest the caret's cell carries a 2 px ring inside it (`mep-cell-active`,
+`tables.ts`); only while *Row* is open, focused or hovered is the caret's row tinted, and
+only while *Column* or *Align* is, its column — node decorations on the cells
+(`ObjectBar.activeVerb`, `BarDecor.tint`) — so *above*, *left* and *right* have something to
+be relative to, and a tint the whole time the bar showed no longer reads as styling. Deleting the last row
 or the last column is refused with *Delete table* named instead. *Edit source* replaces the
 table by a source block holding its text (its slice untouched, else the tidy form) and opens
 its box; the commit is parsed by the host again, a table once more if it still is one.
@@ -1530,8 +1554,12 @@ heavy as frequent ones. So the surfaces now divide the work:
 
 - **The row** — `Block type ▾ | i em b strong code | Formatting ▾ Annotation ▾ Insert ▾`
   (`ROW_LAYOUT`) — is one line of controls of one height; menus are a text label and a
-  chevron, hairlines separate the groups, and a narrow window scrolls the row rather than
-  wrapping it, so no control moves. Only the five native marks are in it, their glyph the
+  chevron, hairlines separate the groups, and the row never wraps and never scrolls: where
+  it is too narrow, its controls move into a "…" menu in one decided order (`ROW_OVERFLOW`:
+  Annotation, Formatting, Insert, then the marks from the right; Block type, the count and
+  Export never move), measured by `layoutRow` with the one loop the object bars and the
+  bubble share (`overflow.ts`). A lock's reason stands in the row too — beside the tools, or
+  in the refused tools' place, or its short form (`lockForms`) — so the page never moves. Only the five native marks are in it, their glyph the
   real element held to the button's height and minimum width, so a stylesheet can change
   how the glyph looks but not the row's geometry. The height is the glyph's *border box*,
   and the button clips at its own edge: what a stylesheet draws around the text — a note
@@ -1554,7 +1582,10 @@ heavy as frequent ones. So the surfaces now divide the work:
   line) is cut first. A Block type entry draws its word as the element instead
   (`drawnLabel`): "Heading 1" in h1's style, without the headings' rules; such a sample is
   scaled into the entry with `zoom`, measured when the menu opens (`fitSamples`), but no
-  lower than 0.75 — beyond, it is clipped (the code block's stood at 0.42). Groups are divided
+  lower than 0.75 — beyond, it is clipped (the code block's stood at 0.42). The one Block type
+  entry that is no block type, **Attributes of Paragraph…** (`block-type-attributes`), stands
+  last after a divider with its `{…}` glyph: Formatting's entry again (`BLOCK_ATTRIBUTES`), its
+  name, state and card from the same `block-attrs` case. Groups are divided
   (`separated`), as the workbench divides its menus; an entry has no hover — its card shows the
   construct and the refusal — and a refused one says why in its `aria-description`. The
   admonition types are a submenu of Insert: the eleven canonical types, then "More types…
@@ -1591,9 +1622,11 @@ every webview receives, each with a fallback after it:
   affordance is the codicon `chevron-down` (`chevronNode` in `lenses.ts`, the one element
   for the row's faces, a submenu's `chevron-right` and an object bar's set-verbs), dim in
   `descriptionForeground`, right after the label (the block-type face keeps the longest
-  type's width after it, so nothing after it moves). A narrow row scrolls sideways with no
-  scrollbar — one would be laid out inside its 26px and clip the controls — by the wheel
-  (`toolbar.ts` turns a vertical wheel sideways) and by the focus.
+  type's width after it, so nothing after it moves). A narrow row neither wraps nor scrolls:
+  what does not fit leaves it for a "…" menu in `ROW_OVERFLOW`'s order — Annotation,
+  Formatting, Insert, then the marks from the right — and where even that is too wide Export
+  shows its icon alone and Block type cuts its label (`layoutRow`, with `fitWithMore` of
+  `overflow.ts`, the one loop the bars' and the bubble's "…" share).
 - **A menu** — the row's four, a submenu, the table bar's Row, Column and Align — is the
   context menu: `menu-background`, `-foreground`, `-border`, the entry under the pointer or
   the focus in `menu-selectionBackground` / `-Foreground` (outlined in
@@ -1679,22 +1712,15 @@ The layers:
   has the focus (`focusPlace.ts`), the reason (`controlLock`, by the control's `role`: a
   source box's *Editing source · Ctrl+Enter apply · Esc cancel*, a property's field's
   *Editing a property · Enter apply · Esc cancel*, a button's *Focus is outside the text ·
-  Esc or click into the text*) shown in the room the tools leave before the status, never
-  pinned over them, and where it does not fit there whole — measured (`placeLock`, on every
-  lock and every size change of the row or its status), not a breakpoint — on a thin line
-  of its own under the row (`mep-row-lock-below`), cut with an ellipsis only where even that
-  line is too narrow. The page makes room for the line (`--mep-lock-room`, `settleRoom`)
-  once a held main button is released — a page that moved between press and release would
-  take the click from the header's toggle or Edit as source; a right press holds nothing
-  back, and a release the page never sees (a menu took it, the window was left) is read
-  from a window `blur` or a pointer move with no button down — keeping its scroll position,
-  so what stood just under the chrome stands just under it still (the browser's scroll
-  anchoring, which would scroll it back under the line, is overruled); the room goes with
-  the lock the same way. The line is part of the row's ceiling for the bars (`rowCeiling`,
-  which re-places them on `CHROME_MOVED`). `scroll-margin-top` keeps the settled room
-  (`--mep-lock-room`); `SCROLL_MARGIN.top` and the panel's source-box scroll keep the line's
-  live height (`lockLineHeight`) — the two differ only while a press holds the room back — as its
-  `aria-description` and in each tooltip, and pointed at in the refusal's
+  Esc or click into the text*) shown in the row, never under it and never moving the page —
+  measured by `layoutRow` (not a breakpoint), again only when what it measured changed
+  (`rowLayoutKey`), in one of the two forms `lockForms` gives: beside the tools where it fits
+  whole; else, for a source box or a property's field, in the refused tools' place
+  (`mep-row-lock-inrow`: they give way, nothing moves into "…"), whole or — cut even there —
+  in its short form, which keeps its keys (*Source · Ctrl+Enter · Esc*); for a button, its
+  short form (*Outside the text*) beside the tools where that fits, else the refused tools
+  give way into the (disabled) "…" until it does, else no note: the tools only dim. The whole reason is the row's `aria-description`, the short form's hover and each
+  tool's tooltip, and it is pointed at in the refusal's
   amber when a refused tool is pressed; read again once per focus move, since a
   box taking the focus changes no state — the block-type face (the
   current type's name, locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
@@ -1783,19 +1809,37 @@ as opposed to text, which is typed:
 | `badge` | an `inline_atom` | the node |
 | `container`, `admonition` | the node | the node |
 | `table` | a pipe table the caret is in, or whose cells are selected across | the node |
+| `code_block` | a fenced or indented code block the caret is in, at any depth — with a literal too | the node |
 | `block_attrs` | a block carrying `attrsSuffix` — not a requirement heading, whose anchor is Req Explorer's | the node |
 | `heading` | a top-level heading that is no `block_attrs` (a requirement heading is one) | the node |
 | `raw_block`, `injected_block`, `front_matter` | the node | the node |
 
 `objectAtSelection` finds the selection's object: a node selected as a whole, else,
 innermost first, the link the selection is in (a caret inside its text or at either end),
-the attribute span, the note both ends of the selection are in, the innermost container or
-admonition holding both ends, the top-level block with an attribute literal, and last the
-top-level heading. A link
+the attribute span, the note both ends of the selection are in, the code block both ends
+are in (at any depth: in a list, a quote or a container it is still the object), the
+innermost container or admonition holding both ends, the top-level block with an attribute
+literal, and last the top-level heading. A link
 in a note's body is the link; text beside a span in an admonition is the admonition. A verb never acts on the object it was drawn for: it looks it
 up again (`currentObject` — the same kind at the same position, still there), so an edit
 arriving from the host between drawing and clicking cannot make a verb act on something
 else.
+
+**A code block's opening line** (`fences.ts`, pure). The fence, the info string and the
+`{…}` after them are composed, read back and refused in one module: the serializer writes
+the line through `openingLineOf` and `minimumFence`, the bar's Edit source shows it and
+commits it through `parseOpeningLine` (no fence, a fence shorter than a run inside, a
+backtick after backticks are refused; the literal then meets `literalRefusal`), and
+Language… changes only the info string's first word (`withLanguage`). One rule, two
+behaviours: a typed fence too short for the content is refused, while a block whose
+content grew a run after its fence was set is still written with a longer fence, silently.
+An indented block has no opening line; Language…, Attributes… and Edit source fence it on
+apply (`DEFAULT_FENCE`, lengthened as needed), and the hint says "Code block fenced". The
+completions come from `languages.ts`, generated from the installed highlight.js by
+`npm run languages` and pinned by `languages.test.ts`. The language shows at rest as a
+corner tag, `pre[data-lang]::before` — a pseudo-element, so no node, no layer, inert; its
+`data-lang` is set in the schema's `toDOM` — O(1) per node, no decoration set to keep — and
+the clipboard's serializer (`clipboardNodes`) strips it, so no copy carries it. A first word that opens with a brace is no language (`languageOf`).
 
 **The triggers.** The last three objects are *block* objects and show their bar while the
 pointer is on them or they are selected, at once — as the source block's toolbar did. The
@@ -1994,8 +2038,11 @@ command's keybinding. The hint is the one the notes plugin shows a refusal in; o
 
 **The inline field** (`webview/inlineField.ts`) is one reusable component for every place a
 value is asked for where it is used — the verbs' fields, and the toolbar's **Span with
-class**, which opens it prefilled `{.}` with the caret after the dot (`caret`) in a bar of
-the same kind under the selection. `InlineChoice` is its counterpart for a value out of a
+class**, which opens the attributes field (empty between its fixed braces, `adorn`) in a
+bar of the same kind under the selection. A field bar's row — heading, field, keys line, a
+refusal's reason — is drawn by one `FieldRow` for both bars; it wraps rather than clipping,
+and where the bar's room is too narrow for the keys line beside the field (`FieldRow.fit`,
+before the slot places it) the keys line goes under it (`mep-narrow`). `InlineChoice` is its counterpart for a value out of a
 list (an admonition's type): a `<select>` with the same contract, picking a value commits
 it. The field is a one-line `<input>` opened prefilled with the value selected; `Enter` commits, `Esc`
 cancels, the focus moving elsewhere in the page cancels — a click elsewhere never applies a
@@ -2390,8 +2437,10 @@ the page commits its open boxes and flushes (`exportDocument` in `main.ts`, the 
 pick, the exporter pick, progress and report as the command has them. The formats are one
 table (`services/exporter/formats.ts`, which also declares the `ExportFormat` enum the table
 holds), read by the menu and by `pickFormat`. One export runs at a time: the page shows
-*Exporting…* and refuses its formats until the host's `exportDone`; the host answers a second
-request `busy`; every `document` says whether one runs (`exporting`), so a page loaded
+*Exporting PDF…* — the running format, spinning, *PDF…* where the row is narrower, its icon
+alone below that, the whole in its tooltip and accessible name — and refuses its other formats
+until the host's `exportDone`; the host answers a second request `busy`, naming the format that
+runs (`format`), which the page then shows; every `document` says which one runs (`exporting`), so a page loaded
 meanwhile shows it and a lost `exportDone` keeps the face busy no longer than the next
 document. The host starts the export without waiting for it in its queue — a browser's launch
 would hold up typing — so edits typed just after the press may reach it. *Limits:* an export

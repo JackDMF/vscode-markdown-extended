@@ -4,7 +4,8 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
-import { closeEditorPage, clickText, delay, editCommand, EditMessage, EditorPage, EXTENSION_ID, MOD, openEditorPage, settle, shot } from './pageHarness';
+import { INERT_MS, REST_MS } from '../../../src/editor/webview/placement';
+import { closeEditorPage, clickText, delay, editCommand, EditMessage, EditorPage, EXTENSION_ID, leaveObjects, MOD, openEditorPage, settle, shot } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
@@ -37,6 +38,7 @@ suite('Editor inline attributes (e2e)', () => {
         await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         await page.mouse.move(2, 2);
+        await leaveObjects(page);
         await page.evaluate(() => {
             (document.activeElement as HTMLElement | null)?.blur();
             window.scrollTo(0, 0);
@@ -105,17 +107,17 @@ suite('Editor inline attributes (e2e)', () => {
         await clickImage();
         await page.click(`${BAR} [data-verb="image-attributes"]`);
         await page.waitForSelector(`${BAR} .mep-inline-field`, { visible: true });
-        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '{.hero width=300}');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '.hero width=300', 'the literal between the braces the field draws');
         await shot(page, 'inline-attrs-03-image-field.png');
         await selectAll();
-        await page.keyboard.type('{.hero src=other.png}');
+        await page.keyboard.type('.hero src=other.png');
         await page.keyboard.press('Enter');
         await delay(150);
         const refused = await page.evaluate(sel => ({
             value: (document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null)?.value ?? null,
             refusal: document.querySelector(`${sel} .mep-field-refusal`)?.textContent ?? null,
         }), BAR);
-        assert.strictEqual(refused.value, '{.hero src=other.png}');
+        assert.strictEqual(refused.value, '.hero src=other.png');
         assert.strictEqual(refused.refusal, 'src is the image\'s own: change it with Edit image…. Here, give it a class, an id or another attribute.');
         await shot(page, 'inline-attrs-04-image-field-refused.png');
     });
@@ -198,18 +200,19 @@ suite('Editor inline attributes (e2e)', () => {
         }, from, fromAt, to, toAt);
         await page.focus('.ProseMirror');
         await select('--flag', 2, '--flag', 6);
-        await delay(200);
+        // A selection no pointer drew shows its bubble once it rests, and the bubble takes the pointer after its inert time (`placement.ts`).
+        await delay(REST_MS + INERT_MS + 100);
         await page.hover(BUBBLE_TOOL);
         assert.ok((await page.$eval(BUBBLE_TOOL, el => (el.getAttribute('aria-description') ?? ''))).startsWith('Attributes of Code…'));
         await shot(page, 'inline-attrs-10-bubble-in-code.png');
         await select('restart', 0, ' the server', 4);
-        await delay(200);
+        await delay(REST_MS + INERT_MS + 100);
         await page.hover(BUBBLE_TOOL);
         assert.ok((await page.$eval(BUBBLE_TOOL, el => (el.getAttribute('aria-description') ?? ''))).startsWith('Span with class'));
         await shot(page, 'inline-attrs-11-bubble-across.png');
         await page.click(BUBBLE_TOOL);
         await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true });
-        await page.keyboard.type('s');
+        await page.keyboard.type('.s');
         await page.keyboard.press('Enter');
         await settle();
         assert.ok((await lastEdit())?.text.includes('{.s}'), (await lastEdit())?.text);

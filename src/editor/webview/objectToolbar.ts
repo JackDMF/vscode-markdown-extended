@@ -9,24 +9,31 @@
  * **The triggers.** A block object (a source block, injected content, the front
  * matter) shows its bar while the pointer is on it or it is selected. A caret
  * object (a note, a link, a span, an image, a badge, a container, an admonition,
- * a block with attributes) shows its bar once the caret or the
+ * a code block at any depth, a block with attributes) shows its bar once the caret or the
  * selection has rested inside it for `INLINE_DELAY_MS`, and hides it the moment
  * the caret leaves; the pointer does not show it — an inline bar following the
  * pointer across a paragraph jumps. Two bars exist so the two triggers never
- * fight: one follows the selection, one the pointer, and the pointer's stays
- * hidden while it would show what the selection's already shows. `Alt+Enter`
- * opens the bar of the object at the caret at once, the focus on the first verb
+ * fight: one follows the selection, one the pointer — and only one floating
+ * layer shows at a time (`LayerSlot`, `placement.ts`): the caret's bar wins,
+ * the pointer's shows only while the slot is empty (the block under the
+ * pointer gets the hover cue meanwhile), a non-empty selection has the bubble
+ * instead. Typing hides the caret's bar until the next rest; `Esc` — in the
+ * bar, its field, or the text while the bar shows — hides it until the caret
+ * leaves the object. `Alt+Enter` opens the bar of the object at the caret at
+ * once, whatever holds the slot, the focus on the first verb
  * that opens something in place and changes nothing yet (`firstFocus`,
  * `verbs.ts`) — never Open, never Remove or Delete — else on the bar itself,
  * where `Enter` or `↓` moves into its verbs; the arrow keys move, `Enter`
- * chooses, `Esc` returns to the text.
+ * chooses, `Esc` returns to the text. With nothing to act on, `Alt+Enter` is
+ * taken all the same and says so in a neutral hint, the caret staying
+ * (`NO_TARGET_HINT`).
  *
- * **Where it sits.** Above the object's first line — at an inline object's
- * start, at a block's right edge (`Anchor`); below its last line when above is
- * taken or under the formatting row — and never over the line
- * the caret is on: a bar that would cover it is put on the other side. While text is selected the bar prefers below, since the
- * selection bubble takes the room above. It is `position: absolute` inside the
- * editor's mount, as the bubble is, so it scrolls with the text.
+ * **Where it sits.** Where the one placement policy puts every layer
+ * (`placement.ts`): below its object — an inline object's last line, a
+ * block's box — at the object's start, else above it; never on the caret's
+ * line, under the formatting row or over another layer; text breaks a tie.
+ * A field a verb opens stands at what it edits. It is `position: absolute`
+ * inside the editor's mount, as the bubble is, so it scrolls with the text.
  *
  * **One model for every bar** (`verbs.ts`): each verb has a slot, and the
  * slots stand in one order — Open · Edit… · type verbs · Attributes… · Edit
@@ -46,10 +53,14 @@ import { Mapping } from 'prosemirror-transform';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { ADMONITION_TYPES, plainWikiEmbed } from '../../syntax/markers';
 import { containerClass } from '../schema';
+import type { Completion } from '../completions';
+import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, languageOf, savedOpeningLine } from '../fences';
 import { editRawSourceAt } from './nodeViews';
+import { typesText } from '../keys';
 import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
-import { EMBED_WAY_BACK, FILE_STAYS, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, wording } from '../verbs';
-import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
+import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
+import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
+import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
@@ -58,15 +69,16 @@ import { FocusPlace, focusPlace } from './focusPlace';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
-    removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction,
-    changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
+    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
+    removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine, CodeBlockObject,
+    changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, literalOfObject, attributeHolderAt, holderInside,
 } from './objects';
-import { attributesStep, holderAttributesStep } from './attributes';
+import { attributesField, attributesStep, holderAttributesStep } from './attributes';
+import { attributesTyped } from '../attributeLiteral';
 import { currentReadsAttrs } from '../inlineEngine';
-import { CHROME_MOVED, Place, firstFree, firstLineTop, rightEdgeIn, rowCeiling } from './clearance';
-import { NO_INCLUDES_REFUSAL } from './toolbar/actions';
-import { barSeparator, followPointer, selectionBubbleShown } from './toolbar/toolbar';
+import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
+import { barSeparator, followPointer, selectionWantsBubble, separator } from './toolbar/toolbar';
+import { buildMoreEntry, fitWithMore, holdFocus, moreControl, moreName, overflows } from './overflow';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
@@ -75,9 +87,25 @@ import {
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
-import { plainTip } from '../tips';
+import { Tip, plainTip, tipText } from '../tips';
 import { Tooltips } from './tooltip';
-import { rightLaneEdge } from './lane';
+import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, caretRect, placeMenu, rangeAnchor } from './placement';
+
+/**
+ * The opening line the save writes for a code block (`savedOpeningLine`), once
+ * per node: the bar reads it on every redraw — Edit source's prefill is in its
+ * signature — and composing it scans the block's whole text for a closing run.
+ */
+const openingLines = new WeakMap<CodeBlockObject['node'], string>();
+
+function openingLineOfBlock(node: CodeBlockObject['node']): string {
+    let line = openingLines.get(node);
+    if (line === undefined) {
+        line = savedOpeningLine(node);
+        openingLines.set(node, line);
+    }
+    return line;
+}
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -128,33 +156,17 @@ export const LENS_VERBS_INLINE = 4;
  */
 const PENDING_OBJECTS: ReadonlySet<string> = new Set(['link', 'span', 'styled', 'holder', 'note', 'image']);
 
-/** How long the caret rests in an inline object before its toolbar shows. */
-export const INLINE_DELAY_MS = 400;
+/** How long the caret rests in an inline object before its toolbar shows: the one rest (`placement.ts`). */
+export const INLINE_DELAY_MS = REST_MS;
 
 /** How long the pointer may be off a block and its bar before the bar goes: time to cross the gap between them. */
 const HOVER_GRACE_MS = 300;
 
-/** Between the bar and the line it sits above or below. */
-const GAP = 4;
-
-/** Between a bar grown past the text column and the editor's right edge. */
-const BAR_GUTTER = 16;
-
 /** Narrower than this, a cut title says nothing: `fit` hides it (the bar's `aria-label` still names the object). */
 const TITLE_STUB = 42;
 
-/**
- * The right edge a bar may reach: the text column's (`base`, the mount), or —
- * a floating layer, it may stand past the column — the editor's right edge
- * less the gutter, whichever is further (Daniel, 2026-10-16) — but never into
- * a margin lane reserved for notes (`rightLaneEdge`): past its edge stand the
- * notes, and a bar there would cover them. `GAP` short of it.
- */
-function layerRight(base: DOMRect): number {
-    const lane = rightLaneEdge();
-    const edge = document.documentElement.clientWidth - BAR_GUTTER;
-    return Math.max(base.right, lane === null ? edge : Math.min(edge, lane - GAP));
-}
+/** What `reopenVia` holds for "…"'s own list, which no verb id is. */
+const MORE_LIST = '…';
 
 /** One verb as the bar draws it. */
 export interface Verb {
@@ -165,6 +177,8 @@ export interface Verb {
     /** The label without the noun the bar's title already names (`Delete`, `Edit…`), drawn when the bar is too narrow for its title (`ObjectBar.fit`). */
     short?: string;
     title: string;
+    /** `title` with a piece in the code font (a fence's ```), where the hover should draw it: the same words (`tipText(tip) === title`). */
+    tip?: Tip;
     /** Where it stands on the bar (`verbs.ts`): its order, its divider, whether `Alt+Enter` may focus it. */
     slot: Slot;
     /** A `run` verb that opens a source box in place (a source block's, a table's Edit source): it opens in place, as a field does. */
@@ -188,6 +202,8 @@ export interface Verb {
     separated?: boolean;
     /** What its field edits, when it is not the bar's object: the element inside it (`withInlineAttributes`), drawn while the field is open. */
     target?: { from: number; to: number };
+    /** What a table's set-verb acts on, tinted while it is active (`ObjectBar.activeAxis`): Row the caret's row, Column and Align its column. */
+    axis?: 'row' | 'column';
 }
 
 /** A verb's button drawn with `text` — its label or its short form — and, where it opens a list, the workbench's dropdown chevron, as the formatting row's menus carry. */
@@ -215,11 +231,17 @@ interface MenuEntry {
     checked?: boolean;
     /** Why it cannot be chosen here, in its tooltip; the entry is drawn disabled. */
     refusal?: string | null;
+    /** Drawn after a divider: in a bar's "…", the verb that destroys, last. */
+    separated?: boolean;
+    /** It opens a menu of its own (a set-verb moved into "…"): drawn with the chevron right. */
+    opens?: boolean;
     run(): void;
 }
 
 interface Presentation {
     label: string;
+    /** The title's short form, drawn before the title truncates (`ObjectBar.fit`): an admonition's type alone, `Warning`. */
+    short?: string;
     /** Written after the label in the editor's code font: an atom's spelling (`Emoji :)`). */
     code?: string;
     title: string;
@@ -256,12 +278,15 @@ const CONVERT_LABELS: Readonly<Record<NoteNodeName, string>> = {
 /**
  * What the bars draw into the document, set by the bars' view as they show
  * and go (`ObjectToolbarView.syncDecorations`) and drawn by the plugin's
- * decorations: `tint`, the table whose caret column is tinted while its bar
- * shows, by its position. A bar never draws layout into the document: it
- * floats, so showing it moves nothing.
+ * decorations: `tint`, the table whose caret row or column is tinted, by its
+ * position, and which — only while the bar's Row, or its Column or Align, is
+ * open, focused or hovered (`ObjectBar.activeVerb`): at rest the caret's cell
+ * carries a ring (`tables.ts`), and a tint the whole time the bar showed read
+ * as styling. A bar never draws layout into the document: it floats, so
+ * showing it moves nothing.
  */
 interface BarDecor {
-    tint: number | null;
+    tint: { table: number; axis: 'row' | 'column' } | null;
 }
 
 const NO_DECOR: BarDecor = { tint: null };
@@ -269,38 +294,28 @@ const NO_DECOR: BarDecor = { tint: null };
 const decorKey = new PluginKey<BarDecor>('mep-object-toolbar-decor');
 
 /**
- * Where a block's bar goes when no place is free (`placeBlock`, step 5):
- * above the block, unless that is under the formatting row (`ceiling`), where
- * it could not be seen or clicked; then below it, unless that is past the
- * window's bottom; then at the row's edge. A position, never a layout change.
+ * The caret's rows or columns of the table `tint` names, as node decorations
+ * on their cells (`mep-table-row`, `mep-table-column`); none when the
+ * selection is not in it.
  */
-export function lastResortY(aboveY: number, belowY: number, height: number, ceiling: number, bottom = window.innerHeight): number {
-    if (aboveY >= ceiling) {
-        return aboveY;
-    }
-    if (belowY >= ceiling && belowY + height <= bottom) {
-        return belowY;
-    }
-    return ceiling + GAP;
-}
-
-/** The caret's columns of the table at `tablePos`, as node decorations on their cells; none when the selection is not in it. */
-function columnTint(state: EditorState, tablePos: number | null): Decoration[] {
-    const table = tablePos === null ? null : state.doc.nodeAt(tablePos);
-    if (tablePos === null || !table || table.type.name !== 'table' || !(isInTable(state) || state.selection instanceof CellSelection)) {
+function axisTint(state: EditorState, tint: BarDecor['tint']): Decoration[] {
+    const table = tint === null ? null : state.doc.nodeAt(tint.table);
+    if (tint === null || !table || table.type.name !== 'table' || !(isInTable(state) || state.selection instanceof CellSelection)) {
         return [];
     }
     const rect = selectedRect(state);
-    if (rect.tableStart !== tablePos + 1) {
+    if (rect.tableStart !== tint.table + 1) {
         return [];
     }
+    const rows = tint.axis === 'row' ? [rect.top, rect.bottom] : [0, rect.map.height];
+    const cols = tint.axis === 'row' ? [0, rect.map.width] : [rect.left, rect.right];
     const decorations: Decoration[] = [];
-    for (let row = 0; row < rect.map.height; row++) {
-        for (let col = rect.left; col < rect.right; col++) {
+    for (let row = rows[0]; row < rows[1]; row++) {
+        for (let col = cols[0]; col < cols[1]; col++) {
             const pos = rect.tableStart + rect.map.map[row * rect.map.width + col];
             const cell = state.doc.nodeAt(pos);
             if (cell) {
-                decorations.push(Decoration.node(pos, pos + cell.nodeSize, { class: 'mep-table-column' }));
+                decorations.push(Decoration.node(pos, pos + cell.nodeSize, { class: tint.axis === 'row' ? 'mep-table-row' : 'mep-table-column' }));
             }
         }
     }
@@ -308,12 +323,12 @@ function columnTint(state: EditorState, tablePos: number | null): Decoration[] {
 }
 
 function barDecorations(state: EditorState, decor: BarDecor): DecorationSet {
-    const decorations = columnTint(state, decor.tint);
+    const decorations = axisTint(state, decor.tint);
     return decorations.length === 0 ? DecorationSet.empty : DecorationSet.create(state.doc, decorations);
 }
 
 function sameDecor(a: BarDecor, b: BarDecor): boolean {
-    return a.tint === b.tint;
+    return a.tint === b.tint || (a.tint !== null && b.tint !== null && a.tint.table === b.tint.table && a.tint.axis === b.tint.axis);
 }
 
 /**
@@ -471,8 +486,12 @@ interface BarEvents {
     /** A field opened for `object`, editing `target` within it when given: what it acts on is drawn (`pendingRange.ts`). */
     fieldOpened(object: EditorObject, target?: { from: number; to: number }): void;
     fieldClosed(committed: boolean): void;
+    /** The open field's row changed size (its keys line, a refusal cleared): the slot places it again. */
+    fieldResized(): void;
     /** The bar went with its field open: the view hides it from inside an update, so the drawing goes after it. */
     fieldDropped(): void;
+    /** A verb's menu opened or closed, or its button took or lost the focus or the pointer: what it drives (a table's row or column tint) is drawn anew (`activeVerb`). */
+    verbActive(): void;
 }
 
 /** One bar: a label and verbs, or a label and the inline field. */
@@ -480,18 +499,40 @@ class ObjectBar {
     readonly el: HTMLElement;
     object: EditorObject | null = null;
     private field: InlineField | InlineChoice | null = null;
+    /** What draws the field's row while it is open (`fieldRow.ts`). */
+    private row: FieldRow | null = null;
     private signature = '';
     /** What the last `fit` was for — the room and the signature — so a scroll frame that changed neither measures nothing (`refit` forgets it). */
     private fitted = '';
     /** The object's name as the title shows it (`Emoji :rocket:`): the bar's accessible name while a field stands in for its verbs. */
     private name = '';
     private buttons: { verb: Verb; el: HTMLButtonElement }[] = [];
-    /** A set-verb's open menu: its panel, the verb's button, its entries. */
-    private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[] } | null = null;
+    /** "…" (`moreControl`), last on the bar: the verbs `fit` moved into it, in the order they left. */
+    private more: HTMLButtonElement | null = null;
+    private moved: { verb: Verb; el: HTMLButtonElement }[] = [];
+    /** The title, and its short form, as the presentation gave them. */
+    private title = { label: '', short: undefined as string | undefined };
+    /**
+     * An open menu: its panel, the button it hangs from — the verb's, or "…" for a verb moved into it — its
+     * entries, and where it comes from: the set-verb whose menu it is (none for "…"'s own list), and
+     * whether it was opened through "…" (`viaMore`: its entries have no hover).
+     */
+    private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[]; verb?: string; viaMore: boolean } | null = null;
+    /** The verb under the pointer, by id (`activeVerb`). */
+    private hovered: string | null = null;
+    /** The entry of the "…" list under the pointer, by the id of the verb it stands for (`activeVerb`). */
+    private hoveredEntry: string | null = null;
+    /**
+     * A menu that was open through "…" when the bar was drawn again: a set-verb's, by its id, or "…"'s own list
+     * (`MORE_LIST`): `fit` opens it where its verb stands now, or where "…" still is.
+     */
+    private reopenVia: string | null = null;
+    /** The entry of "…"'s own list the focus was on when it was drawn again (`reopenVia` `MORE_LIST`): the reopened list puts the focus on it where it still stands. */
+    private reopenEntry: string | null = null;
 
     constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents, private readonly tips: Tooltips) {
         this.el = document.createElement('div');
-        this.el.className = 'mep-object-toolbar';
+        this.el.className = 'mep-object-toolbar mep-layer';
         this.el.dataset.trigger = trigger;
         this.el.setAttribute('role', 'toolbar');
         this.el.tabIndex = -1;
@@ -520,7 +561,7 @@ class ObjectBar {
         // label, only in the title and the field's value, and a bar kept after
         // an undo would otherwise offer the undone source.
         const signature = JSON.stringify([
-            object.kind, object.from, presentation.label, presentation.title,
+            object.kind, object.from, presentation.label, presentation.short ?? null, presentation.title,
             presentation.verbs.map(v => [
                 v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? v.choice?.value ?? null, v.separated ?? false,
                 v.menu?.map(m => [m.id, m.label, m.title, m.keys ?? null, m.checked ?? null, m.refusal ?? null]) ?? null,
@@ -531,12 +572,24 @@ class ObjectBar {
             // changed, an undo) is rebuilt: its entries act on the object as it
             // is, and a stale "Delete row" would say so of a row that is gone.
             // (An open menu holds the focus — it closes when the focus leaves it — so the rebuilt one takes it.)
-            const reopen = this.menu ? this.menu.button.dataset.verb : undefined;
+            const reopen = this.menu?.verb;
+            const via = this.menu?.viaMore === true;
+            // "…"'s own list, open: it holds the verbs as they are now, so it is drawn again with them where "…" is still in the bar.
+            const list = this.menu !== null && this.menu.button === this.more && reopen === undefined;
+            this.reopenEntry = list ? this.menu?.entries.find(m => m.el === document.activeElement)?.entry.id ?? null : null;
             this.signature = signature;
+            this.reopenVia = null;
             this.render(presentation);
             const again = reopen === undefined ? undefined : this.buttons.find(b => b.verb.id === reopen);
-            if (again?.verb.menu && !again.verb.refusal) {
-                this.openMenu(again.verb.menu, again.el);
+            if (list) {
+                this.reopenVia = MORE_LIST;
+            } else if (again?.verb.menu && !again.verb.refusal) {
+                if (via) {
+                    // Where the verb stands is not known before the bar is fitted: it may be in "…" still.
+                    this.reopenVia = again.verb.id;
+                } else {
+                    this.openMenu(again.verb.menu, again.el, { name: lensName(again.verb.label), verb: again.verb.id });
+                }
             }
         }
         this.el.hidden = false;
@@ -546,7 +599,9 @@ class ObjectBar {
         // The hover first, while its control is still in the bar (a menu's entry goes with the menu).
         this.tips.hide(this.el);
         this.closeMenu(false);
+        this.reopenVia = null;
         if (this.field) {
+            this.dropRow();
             this.field.dispose();
             this.events.fieldDropped();
         }
@@ -576,8 +631,13 @@ class ObjectBar {
      * short form at it, the noun the title already names dropped (`Delete`,
      * `Edit…`, `Remove, keep content`); then the title truncates, down to
      * hidden if the verbs need it (narrower than `TITLE_STUB` it says nothing:
-     * the bar's `aria-label` still names the object). Verbs never truncate
-     * (`flex: none`). It starts from the full labels every time, so a bar grown
+     * the bar's `aria-label` still names the object, and its hover). Verbs
+     * never truncate (`flex: none`): where even the hidden title leaves too
+     * little room, they move into the bar's "…" in `overflowOrder` — the verb
+     * that destroys first, then other extensions', then from the right, never
+     * the one `Alt+Enter` focuses (Daniel, 2026-10-19). Before the title
+     * truncates, a title with a short form takes it (`Warning admonition` →
+     * `Warning`). It starts from the full labels every time, so a bar grown
      * wider again gets them back — and does nothing where neither the room
      * nor what the bar shows changed since the last fit. Not while a field is
      * open: the verbs are not drawn then.
@@ -589,6 +649,7 @@ class ObjectBar {
             return;
         }
         this.fitted = key;
+        const movedBefore = this.moved.map(b => b.verb.id).join(',');
         const shortens = this.buttons.filter(b => b.verb.short !== undefined && b.verb.short !== b.verb.label);
         for (const b of shortens) {
             if (b.el.dataset.short !== undefined) {
@@ -598,6 +659,14 @@ class ObjectBar {
             }
         }
         label.hidden = false;
+        this.setTitle(label, this.title.label);
+        for (const b of this.buttons) {
+            this.showVerb(b);
+        }
+        this.moved = [];
+        // "…" is in the bar only while it holds a verb: taken out and put back as it is measured, it keeps the focus it had.
+        const keepMore = holdFocus(this.buttons.map(b => b.el), this.more, this.el);
+        this.more?.remove();
         this.el.style.maxWidth = `${Math.floor(room)}px`;
         // Measured at the mount's left edge: an absolute box's room is what lies right of its `left`, and `place` sets it after.
         const left = this.el.style.left;
@@ -611,10 +680,138 @@ class ObjectBar {
                 // Named in full for a screen reader: the short form leans on the title.
                 b.el.setAttribute('aria-label', b.verb.label);
             }
+            // The title's short form, before it truncates.
+            if (cut() && this.title.short !== undefined) {
+                this.setTitle(label, this.title.short);
+            }
             // Still too wide, and the title cut below a stub that could say anything: it goes.
             label.hidden = cut() && label.offsetWidth < TITLE_STUB;
         }
+        // The title hidden and the verbs still past the room: they move into "…".
+        const more = this.more;
+        if (label.hidden && more) {
+            const order = overflowOrder(this.buttons.map(b => slotted(b.verb))).map(k => this.buttons[k]);
+            this.moved = fitWithMore(order, () => overflows(this.el), b => this.showVerb(b), b => this.hideVerb(b), shown => {
+                if (shown) {
+                    this.el.append(more);
+                } else {
+                    more.remove();
+                }
+            });
+        }
+        if (this.more) {
+            const inMore = this.moreEntries().map(e => e.label);
+            this.more.setAttribute('aria-label', moreName('bar', inMore));
+        }
+        // A title the room hid still names the object on a rest on the bar (its `aria-label` names it too).
+        this.tips.attach(this.el, () => (label.hidden ? plainTip(this.name) : null));
         this.el.style.left = left;
+        keepMore();
+        this.menuAfterFit(movedBefore);
+    }
+
+    /**
+     * What the fit did to an open menu. A menu whose button is hidden or gone
+     * (its verb moved into "…", "…" itself left) hangs from nothing: it closes,
+     * the focus it held going to "…" where that is in the bar, else to the bar;
+     * so does one opened through "…" when what "…" holds changed, its entries
+     * being the old ones. A set-verb menu that was open through "…" when the
+     * bar was drawn again opens now, where its verb stands.
+     */
+    private menuAfterFit(movedBefore: string): void {
+        const menu = this.menu;
+        if (menu) {
+            const moved = this.moved.map(b => b.verb.id).join(',');
+            if (!menu.button.isConnected || menu.button.hidden || (menu.viaMore && moved !== movedBefore)) {
+                const held = menu.panel.contains(document.activeElement);
+                this.closeMenu(false);
+                if (held) {
+                    (this.more?.isConnected ? this.more : this.el).focus({ preventScroll: true });
+                }
+            }
+        }
+        const pending = this.reopenVia;
+        const entry = this.reopenEntry;
+        this.reopenVia = null;
+        this.reopenEntry = null;
+        if (pending === MORE_LIST && this.menu === null) {
+            if (this.more?.isConnected) {
+                this.openMenu(this.moreEntries(), this.more, { name: moreName('bar', []), viaMore: true, focus: entry ?? undefined });
+            } else {
+                // "…" is gone — the verbs it held fit the bar now: the focus the list had stays in the bar.
+                this.el.focus({ preventScroll: true });
+            }
+            return;
+        }
+        const b = pending === null || pending === MORE_LIST ? undefined : this.buttons.find(x => x.verb.id === pending);
+        if (b?.verb.menu && !b.verb.refusal && this.menu === null) {
+            const name = lensName(b.verb.label);
+            if (this.moved.includes(b) && this.more?.isConnected) {
+                this.openMenu(b.verb.menu, this.more, { name, verb: b.verb.id, viaMore: true });
+            } else if (!b.el.hidden) {
+                this.openMenu(b.verb.menu, b.el, { name, verb: b.verb.id });
+            }
+        }
+    }
+
+    /** The title drawn as `text`, an atom's spelling after it as before. */
+    private setTitle(label: HTMLElement, text: string): void {
+        const first = label.firstChild;
+        if (first && first.nodeType === globalThis.Node.TEXT_NODE) {
+            first.nodeValue = text;
+        }
+    }
+
+    /** A verb back on the bar, with the divider before it. */
+    private showVerb(b: { verb: Verb; el: HTMLButtonElement }): void {
+        b.el.hidden = false;
+        const before = b.el.previousElementSibling as HTMLElement | null;
+        if (b.verb.separated && before?.classList.contains('mep-object-separator')) {
+            before.hidden = false;
+        }
+    }
+
+    /** A verb moved into "…": its button, and the divider that belongs to it, go. */
+    private hideVerb(b: { verb: Verb; el: HTMLButtonElement }): void {
+        b.el.hidden = true;
+        const before = b.el.previousElementSibling as HTMLElement | null;
+        if (b.verb.separated && before?.classList.contains('mep-object-separator')) {
+            before.hidden = true;
+        }
+    }
+
+    /**
+     * What "…" lists: the moved verbs in the bar's order, each with its full
+     * label (never the short form), the verb that destroys last after a
+     * divider; a set-verb's entry opens its own menu under "…" (F4).
+     */
+    private moreEntries(): MenuEntry[] {
+        return this.buttons.filter(b => this.moved.includes(b)).map(({ verb }) => ({
+            id: verb.id,
+            label: lensName(verb.label),
+            title: verb.title,
+            refusal: verb.refusal,
+            separated: verb.slot === 'destroy',
+            opens: verb.menu !== undefined,
+            run: () => {
+                if (verb.menu && this.more) {
+                    this.openMenu(verb.menu, this.more, { name: lensName(verb.label), verb: verb.id, viaMore: true });
+                } else {
+                    this.choose(verb);
+                }
+            },
+        }));
+    }
+
+    /** The open field's row fitted to `room` before the slot places it (`FieldRow.fit`). */
+    fitField(room: number, fresh: boolean): void {
+        this.row?.fit(room, fresh);
+    }
+
+    /** The field's row is gone with its field: what it set on the bar goes too. */
+    private dropRow(): void {
+        this.row?.destroy();
+        this.row = null;
     }
 
     /** Fit again at the next placing, though neither the room nor the bar changed: a font loaded late changed the labels' widths. */
@@ -625,9 +822,12 @@ class ObjectBar {
     private render(presentation: Presentation): void {
         this.tips.hide(this.el);
         this.closeMenu(false);
+        this.hovered = null;
         const label = document.createElement('span');
         label.className = 'mep-object-label';
         label.textContent = presentation.label;
+        this.title = { label: presentation.label, short: presentation.short };
+        this.moved = [];
         this.el.dataset.name = presentation.label;
         if (presentation.code !== undefined) {
             const code = document.createElement('span');
@@ -651,7 +851,7 @@ class ObjectBar {
                 el.setAttribute('aria-label', lensName(verb.label));
             }
             el.tabIndex = -1;
-            this.tips.attach(el, () => plainTip(verb.title, verb.refusal));
+            this.tips.attach(el, () => (verb.tip ? { ...verb.tip, note: verb.refusal ?? verb.tip.note } : plainTip(verb.title, verb.refusal)));
             el.setAttribute('aria-disabled', String(Boolean(verb.refusal)));
             if (verb.menu) {
                 el.setAttribute('aria-haspopup', 'menu');
@@ -661,11 +861,78 @@ class ObjectBar {
                 e.preventDefault();
                 this.choose(verb);
             });
+            // Open, focused or hovered: the verb is active, and a table draws what it acts on (`activeVerb`).
+            el.addEventListener('pointerenter', () => this.verbHovered(verb.id, true));
+            el.addEventListener('pointerleave', () => this.verbHovered(verb.id, false));
+            el.addEventListener('focus', () => this.events.verbActive());
+            el.addEventListener('blur', () => this.events.verbActive());
             return { verb, el };
         });
         // The title, then a divider: it names the object, it is not the first verb (whose own divider that one is).
         // No verbs, no divider: it would divide the title from nothing.
+        // "…", drawn last by `fit` once it moves a verb into it.
+        const more = moreControl('bar') as HTMLButtonElement;
+        more.addEventListener('click', e => {
+            e.preventDefault();
+            this.toggleMore();
+        });
+        // Its hover is its name: said once, as the `aria-label`, not again as a description.
+        this.tips.attach(more, () => plainTip(more.getAttribute('aria-label') ?? 'More actions'), 'below', false);
+        more.hidden = false;
+        this.more = this.buttons.length > 0 ? more : null;
         this.el.replaceChildren(label, ...(this.buttons.length > 0 ? [barSeparator()] : []), ...this.buttons.flatMap((b, i) => b.verb.separated && i > 0 ? [barSeparator(), b.el] : [b.el]));
+    }
+
+    /**
+     * The verb that is active now, by id: the one whose menu is open — under
+     * its button or, moved there, under "…" — else the one whose button has the
+     * focus, else the one under the pointer; with the "…" list itself open, the
+     * entry that has the focus or the pointer stands for its verb. `null` for
+     * none. What a table's bar tints follows it (F6: Row tints the caret's row,
+     * Column and Align its column).
+     */
+    activeVerb(): string | null {
+        const menu = this.menu;
+        if (menu?.verb) {
+            return menu.verb;
+        }
+        const entry = menu === null ? undefined : menu.entries.find(m => m.el === document.activeElement)?.entry.id ?? this.hoveredEntry;
+        const focused = this.buttons.find(b => b.el === document.activeElement);
+        return entry ?? focused?.verb.id ?? this.hovered;
+    }
+
+    /** The axis the active verb acts on (`Verb.axis`): what a table's bar tints. */
+    activeAxis(): Verb['axis'] {
+        const id = this.activeVerb();
+        return id === null ? undefined : this.buttons.find(b => b.verb.id === id)?.verb.axis;
+    }
+
+    private verbHovered(id: string, on: boolean): void {
+        if (on || this.hovered === id) {
+            this.hovered = on ? id : null;
+            this.events.verbActive();
+        }
+    }
+
+    /** The pointer on or off an entry of the open menu: only the "…" list's entries stand for a verb (`activeVerb`). */
+    private entryHovered(id: string, on: boolean): void {
+        if (this.menu !== null && this.menu.verb === undefined && (on || this.hoveredEntry === id)) {
+            this.hoveredEntry = on ? id : null;
+            this.events.verbActive();
+        }
+    }
+
+    /** "…" pressed: its menu opens under it, or closes. */
+    private toggleMore(): void {
+        const more = this.more;
+        if (!more) {
+            return;
+        }
+        const open = this.menu?.button === more;
+        this.closeMenu(open);
+        if (!open) {
+            this.openMenu(this.moreEntries(), more, { name: moreName('bar', []), viaMore: true });
+        }
     }
 
     private choose(verb: Verb): void {
@@ -677,7 +944,7 @@ class ObjectBar {
             const open = this.menu?.button === button;
             this.closeMenu(open);
             if (button && !open) {
-                this.openMenu(verb.menu, button);
+                this.openMenu(verb.menu, button, { name: lensName(verb.label), verb: verb.id });
             }
         } else if (verb.field) {
             this.openField(verb, verb.field);
@@ -696,61 +963,70 @@ class ObjectBar {
      * to the marked entry, else the first that can be chosen. Inside the bar's
      * element, so the bar counts the focus in it as its own.
      */
-    private openMenu(entries: readonly MenuEntry[], button: HTMLButtonElement): void {
+    private openMenu(entries: readonly MenuEntry[], button: HTMLButtonElement, from: { name: string; verb?: string; viaMore?: boolean; focus?: string }): void {
+        const viaMore = from.viaMore === true;
         const panel = document.createElement('div');
         panel.className = 'mep-menu mep-object-menu';
         panel.setAttribute('role', 'menu');
         panel.tabIndex = -1;
-        panel.setAttribute('aria-label', lensName(button.textContent ?? ''));
+        // Named for what it holds: the verb's label, or "More actions" — never nameless, the button of "…" has no text.
+        panel.setAttribute('aria-label', from.name);
         const made = entries.map(entry => {
-            const el = document.createElement('div');
-            el.className = 'mep-menu-item';
+            // Inside "…" the label is whole: what the entry's hover would add is its description, and it has no hover.
+            const el = buildMoreEntry({
+                role: entry.checked === undefined ? 'menuitem' : 'menuitemradio',
+                checked: entry.checked,
+                opens: entry.opens,
+                refusal: entry.refusal,
+                description: viaMore && entry.title !== entry.label ? entry.title : undefined,
+            });
             el.dataset.entry = entry.id;
-            el.tabIndex = -1;
-            el.setAttribute('role', entry.checked === undefined ? 'menuitem' : 'menuitemradio');
-            if (entry.checked !== undefined) {
-                el.setAttribute('aria-checked', String(entry.checked));
-                el.classList.toggle('mep-active', entry.checked);
-            }
             const label = document.createElement('span');
             label.className = 'mep-entry-label';
             label.textContent = entry.label;
             el.append(label);
+            if (entry.opens) {
+                el.append(chevronNode('right'));
+            }
             if (entry.keys) {
                 const keys = document.createElement('span');
                 keys.className = 'mep-entry-syntax';
                 keys.textContent = entry.keys;
                 el.append(keys);
             }
-            // A set-verb's entry says what it does on a rest (it has no preview card).
-            this.tips.attach(el, () => plainTip(entry.title, entry.refusal), 'beside');
-            if (entry.refusal) {
-                el.classList.add('mep-disabled');
-                el.setAttribute('aria-disabled', 'true');
+            if (!viaMore) {
+                // A set-verb's entry says what it does on a rest (it has no preview card).
+                this.tips.attach(el, () => plainTip(entry.title, entry.refusal), 'beside');
             }
             el.addEventListener('click', e => {
                 e.preventDefault();
                 this.pick(entry);
             });
-            el.addEventListener('mouseenter', () => followPointer(panel, el));
+            el.addEventListener('mouseenter', () => {
+                followPointer(panel, el);
+                this.entryHovered(entry.id, true);
+            });
+            el.addEventListener('mouseleave', () => this.entryHovered(entry.id, false));
+            // Moving between entries with the arrow keys is a move between the verbs they stand for (`activeVerb`).
+            el.addEventListener('focus', () => this.events.verbActive());
             return { entry, el };
         });
-        panel.append(...made.map(m => m.el));
+        panel.append(...made.flatMap((m, i) => (m.entry.separated && i > 0 ? [separator(), m.el] : [m.el])));
         panel.addEventListener('keydown', e => this.onMenuKey(e));
         panel.addEventListener('focusout', e => {
             if (!(e.relatedTarget instanceof globalThis.Node && panel.contains(e.relatedTarget))) {
                 this.closeMenu(false);
             }
         });
-        this.menu = { panel, button, entries: made };
+        this.menu = { panel, button, entries: made, verb: from.verb, viaMore };
         button.setAttribute('aria-expanded', 'true');
+        // `position: fixed`, a child of the bar so the bar counts its focus as its own: placed as the row's menus are.
         this.el.append(panel);
-        const r = button.getBoundingClientRect();
-        const below = r.bottom + 2;
-        panel.style.left = `${Math.max(0, Math.min(r.left, window.innerWidth - panel.offsetWidth))}px`;
-        panel.style.top = `${below + panel.offsetHeight > window.innerHeight ? Math.max(0, r.top - 2 - panel.offsetHeight) : below}px`;
-        const first = made.find(m => m.entry.checked && !m.entry.refusal) ?? made.find(m => !m.entry.refusal);
+        placeMenu(panel, button);
+        const first = made.find(m => m.entry.id === from.focus && !m.entry.refusal)
+            ?? made.find(m => m.entry.checked && !m.entry.refusal) ?? made.find(m => !m.entry.refusal);
         (first?.el ?? panel).focus({ preventScroll: true });
+        this.events.verbActive();
     }
 
     /** Close the open menu, the focus back on its verb when asked. */
@@ -760,6 +1036,8 @@ class ObjectBar {
             return;
         }
         this.menu = null;
+        this.hoveredEntry = null;
+        this.events.verbActive();
         menu.button.setAttribute('aria-expanded', 'false');
         // An entry's hover goes with its menu: once the panel is out of the bar, `hide(this.el)` finds it no more.
         this.tips.hide(menu.panel);
@@ -831,9 +1109,13 @@ class ObjectBar {
             ? (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
                 new InlineChoice({ choices: spec.options, value: spec.value, label: spec.label, ...callbacks })
             : (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
-                new InlineField({ value: spec.value, caret: spec.caret, label: spec.label, placeholder: spec.placeholder, complete: spec.complete, ...callbacks });
+                new InlineField({
+                    value: spec.value, caret: spec.caret, label: spec.label, placeholder: spec.placeholder, complete: spec.complete, adorn: spec.adorn,
+                    onChange: value => this.row?.changed(value), ...callbacks,
+                });
         const field = make({
             onCommit: value => {
+                this.dropRow();
                 this.field = null;
                 this.signature = '';
                 const next = spec.commit(value);
@@ -844,6 +1126,7 @@ class ObjectBar {
                 this.events.fieldClosed(true);
             },
             onCancel: reason => {
+                this.dropRow();
                 this.field = null;
                 this.signature = '';
                 if (reason === 'escape') {
@@ -854,10 +1137,14 @@ class ObjectBar {
         });
         field.el.dataset.verb = verb.id;
         this.field = field;
+        // The buttons go with the replaced row, and no pointerleave comes for a hover on one: forgotten here, it would tint on (`activeVerb`).
+        this.hovered = null;
+        this.hoveredEntry = null;
         if (label) {
             // A prefilled field shows no placeholder: the label says what the value is.
             // The object's name alone: what the field holds (a literal) is not said twice (`Image · Attributes`).
-            label.textContent = fieldHeading(this.el.dataset.name ?? '', spec.label);
+            // An attributes field names the element it edits, whichever bar opened it (`FieldStep.heading`).
+            label.textContent = ('heading' in spec ? spec.heading : undefined) ?? fieldHeading(this.el.dataset.name ?? '', spec.label);
             // The heading says it all: the object's hover, attached for the title, would say something else.
             this.tips.attach(label, () => null);
             // A title `fit` hid for the verbs is the field's heading now, and there are no verbs to count.
@@ -865,9 +1152,10 @@ class ObjectBar {
             this.el.setAttribute('aria-label', this.name);
         }
         this.fitted = '';
-        const aside = 'options' in spec ? [] : fieldAside(spec);
         this.tips.hide(this.el);
-        this.el.replaceChildren(...(label ? [label, barSeparator()] : []), field.el, ...aside);
+        this.dropRow();
+        this.row = new FieldRow(this.el, label ? [label, barSeparator()] : [], field, 'options' in spec ? null : spec, { contentChanged: () => this.events.fieldResized() });
+        this.row.render();
         field.focus();
         if (this.object) {
             this.events.fieldOpened(this.object, verb.target);
@@ -875,7 +1163,11 @@ class ObjectBar {
     }
 
     private onKey(e: KeyboardEvent): void {
-        const enabled = this.buttons.filter(b => !b.verb.refusal);
+        // What the keys reach: the verbs shown and offered, then "…" while it holds any.
+        const enabled: { el: HTMLButtonElement; choose(): void }[] = [
+            ...this.buttons.filter(b => !b.verb.refusal && !b.el.hidden).map(b => ({ el: b.el, choose: () => this.choose(b.verb) })),
+            ...(this.more?.isConnected ? [{ el: this.more, choose: () => this.toggleMore() }] : []),
+        ];
         const index = enabled.findIndex(b => b.el === document.activeElement);
         const move = (step: number) => {
             if (enabled.length > 0) {
@@ -905,7 +1197,7 @@ class ObjectBar {
             case ' ':
                 if (index >= 0) {
                     e.preventDefault();
-                    this.choose(enabled[index].verb);
+                    enabled[index].choose();
                 } else if (e.key === 'Enter' && document.activeElement === this.el) {
                     // The bar itself has the focus (`focusFirst`): Enter moves into its first verb, as ↓ does; choosing one is a second Enter.
                     e.preventDefault();
@@ -921,19 +1213,17 @@ class ObjectBar {
     }
 }
 
-/**
- * Where an inline object's bar is put against, in the window's coordinates:
- * the top of the object's first line, the bottom of its last, and its start
- * (`left`). A block's bar is placed from the block itself (`placeBlock`).
- */
-interface Anchor {
-    top: number;
-    bottom: number;
-    left?: number;
+/** The slot's key of `object`'s bar (`placement.ts`): what Esc's dismissal keeps refusing until the caret leaves it. */
+function barKey(trigger: 'bar' | 'hover', object: Pick<EditorObject, 'kind' | 'from'>): string {
+    return `${trigger}@${object.kind}@${object.from}`;
 }
 
-/** A block's content edge: `.mep-atom` stands 8px out on each side (`editor.css`). */
-const ATOM_INSET = 8;
+/** What an Esc dismissal is about, kept beside its key in the slot so a change of the document can move it without parsing the key. */
+interface Dismissal {
+    trigger: 'bar' | 'hover';
+    kind: EditorObject['kind'];
+    from: number;
+}
 
 class ObjectToolbarView implements PluginView {
     private readonly mount: HTMLElement;
@@ -949,95 +1239,243 @@ class ObjectToolbarView implements PluginView {
     private hovered: HTMLElement | null = null;
     private hoverTimer: ReturnType<typeof setTimeout> | undefined;
     private destroyed = false;
+    /** Language…'s completer, for the document it read the languages of (`languageCompleter`). */
+    private languages: { doc: EditorState['doc']; complete: (query: string) => Completion[] } | null = null;
     /** While `act` moves the focus: what the transactions dispatched meanwhile (a source box's commit) did to positions. */
     private focusMoves: Mapping | null = null;
     /** The hover the bars share with the formatting row (`tooltip.ts`), released with the view. */
     private readonly tips: Tooltips;
+    /** The one floating layer of the view (`placement.ts`), shared with the bubble and the row's field bars. */
+    private readonly slot: LayerSlot;
+    /** The key of a bar's open field in the slot, while one is open. */
+    private fieldKey: string | null = null;
+    /** A key went down in the text and its change has not come yet: the change it brings is typing (`LayerSlot.typing`). */
+    private keyed = false;
+    /** The atom carrying the hover cue: the pointer is on it while the slot is taken (`mep-hover-cue`). */
+    private cued: HTMLElement | null = null;
+    private readonly unfreed: () => void;
+    /** Typing hid the caret's bar and its rest has not come: the pointer's bar does not take the free slot meanwhile (`refreshHover`). */
+    private typingHold = false;
+    /** The dismissals Esc made, by the slot's key: where each is about, for `followDismissals`. */
+    private readonly dismissals = new Map<string, Dismissal>();
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
+        // One hover for the bars and the formatting row (`tooltip.ts`).
+        this.tips = Tooltips.for(this.mount);
+        this.slot = LayerSlot.for(view, this.mount);
+        this.selectionBar = this.makeBar('selection');
+        this.hoverBar = this.makeBar('hover');
+        this.mount.append(this.selectionBar.el, this.hoverBar.el);
+
+        this.listen(document, 'mousemove', e => this.pointerAt(e.target as Element | null, e as MouseEvent));
+        this.listen(document.documentElement, 'mouseleave', () => this.unhover());
+        // Focus moving in or out of the editor and the bars shows or hides the selection's bar.
+        const later = () => setTimeout(() => this.refresh(), 0);
+        this.listen(document, 'focusin', later);
+        this.listen(document, 'focusout', later);
+        // Capturing, so it is known before the key's own command changes the text (`update`).
+        // A key whose release the text never sees (the focus moved to a bar) is over at its keyup anywhere.
+        // A character made with Alt (Option, AltGr: `{ } [ ] @ \ ~`) is typing; a modifier, a shortcut or an Alt command is not (`typesText`).
+        this.listen(view.dom, 'keydown', e => {
+            this.keyed = typesText(e as KeyboardEvent);
+        }, true);
+        this.listen(document, 'keyup', () => {
+            this.keyed = false;
+        }, true);
+        // What Esc dismissed stays dismissed until the caret leaves the object (Daniel, 2026-10-20): a click back
+        // into the same object after the focus was away does not bring the bar again — Alt+Enter does.
+        // A slot that came free shows the pointer's bar where the pointer rests (the hover cue goes).
+        this.unfreed = this.slot.onFreed(() => this.refreshHover());
+        this.refresh();
+    }
+
+    /** A bar and what it tells the view: Esc dismisses it, a field takes the slot at what it edits. */
+    private makeBar(trigger: 'selection' | 'hover'): ObjectBar {
         const events: BarEvents = {
-            escape: () => this.view.focus(),
+            escape: () => {
+                const object = bar.object;
+                if (object !== null) {
+                    // Hidden until the caret leaves the object; Alt+Enter brings it back.
+                    this.dismiss(trigger === 'selection' ? 'bar' : 'hover', object);
+                }
+                this.view.focus();
+            },
             fieldOpened: (object, target) => {
                 if (target !== undefined) {
                     showPendingRange(this.view, target.from, target.to);
                 } else if (PENDING_OBJECTS.has(object.kind)) {
                     showPendingRange(this.view, object.from, object.to);
                 }
+                this.fieldOpened(bar, object, target);
             },
             fieldClosed: () => {
+                this.fieldGone();
                 clearPendingRange(this.view);
                 this.refresh();
             },
-            fieldDropped: () => setTimeout(() => {
-                if (!this.destroyed) {
-                    clearPendingRange(this.view);
+            fieldResized: () => {
+                if (this.fieldKey !== null) {
+                    this.slot.contentChanged(this.fieldKey);
                 }
-            }, 0),
+            },
+            fieldDropped: () => {
+                this.fieldGone();
+                setTimeout(() => {
+                    if (!this.destroyed) {
+                        clearPendingRange(this.view);
+                    }
+                }, 0);
+            },
+            verbActive: () => this.syncDecorations(),
         };
-        // One hover for the bars and the formatting row (`tooltip.ts`).
-        this.tips = Tooltips.for(this.mount);
-        this.selectionBar = new ObjectBar('selection', events, this.tips);
-        this.hoverBar = new ObjectBar('hover', events, this.tips);
-        this.mount.append(this.selectionBar.el, this.hoverBar.el);
-
-        this.listen(document, 'mousemove', e => this.pointerAt(e.target as Element | null));
-        this.listen(document.documentElement, 'mouseleave', () => this.unhover());
-        // Focus moving in or out of the editor and the bars shows or hides the selection's bar.
-        const later = () => setTimeout(() => this.refresh(), 0);
-        this.listen(document, 'focusin', later);
-        this.listen(document, 'focusout', later);
-        // A scroll fires many times a frame, and placing probes the layout: once per frame.
-        this.listen(window, 'scroll', () => this.placeAllInFrame(), true);
-        this.listen(window, 'resize', () => this.placeAllInFrame());
-        // The lock's line came under the formatting row or went, or the page moved for it: a bar keeps clear of the chrome.
-        this.listen(this.mount, CHROME_MOVED, () => this.placeAllInFrame());
-        // A font that loaded after a bar was fitted (the codicons, the editor's code font) changed its labels' widths.
-        this.listen(document.fonts, 'loadingdone', () => {
-            this.selectionBar.refit();
-            this.hoverBar.refit();
-            this.placeAllInFrame();
-        });
-        this.refresh();
+        const bar: ObjectBar = new ObjectBar(trigger, events, this.tips);
+        return bar;
     }
 
-    /** The frame a `placeAll` is waiting for, or `undefined`. */
-    private placeFrame: number | undefined;
-
-    private placeAllInFrame(): void {
-        if (this.placeFrame === undefined) {
-            this.placeFrame = requestAnimationFrame(() => {
-                this.placeFrame = undefined;
-                if (!this.destroyed) {
-                    this.placeAll();
+    /**
+     * A bar's verb opened its field: the field takes the slot, at what it
+     * edits — the element inside the object (`target`), else (an inline
+     * object with the caret in it) the caret's line at the caret, else the
+     * object: a block's field stands where the block's bar did, anchored to
+     * the block.
+     */
+    private fieldOpened(bar: ObjectBar, object: EditorObject, target?: { from: number; to: number }): void {
+        const view = this.view;
+        const sel = view.state.selection;
+        const range = target ?? { from: object.from, to: object.to };
+        const key = `field@${range.from}-${range.to}`;
+        if (this.fieldKey === key && this.slot.current?.key === key) {
+            // The next step of the same field, or its refusal's line: the size changed, the claim is the same.
+            this.slot.contentChanged(key);
+            return;
+        }
+        this.fieldKey = key;
+        // A block's field opens where that block's bar stands, anchored to the block (Daniel, #4 build critique); an inline
+        // object's at the object, a selection's at the selection — only where the caret itself is the anchor, at the caret.
+        const atCaret = target === undefined && bar === this.selectionBar && sel instanceof TextSelection && !isBlockPlaced(object);
+        const head = sel.head;
+        this.slot.request({
+            kind: 'field',
+            key,
+            el: bar.el,
+            anchor: () => {
+                if (!bar.editing) {
+                    return null;
                 }
-            });
+                const size = view.state.doc.content.size;
+                if (target !== undefined) {
+                    return rangeAnchor(view, Math.min(target.from, size), Math.min(target.to, size));
+                }
+                return atCaret ? caretRect(view, Math.min(head, size)) : bar.object ? anchorOf(view, bar.object) : null;
+            },
+            valid: () => bar.editing,
+            hidden: () => this.barHidden(bar, 'displaced'),
+            fit: (room, fresh) => bar.fitField(room, fresh),
+        }, { force: true });
+    }
+
+    /** A bar's field closed or went: its claim ends. */
+    private fieldGone(): void {
+        if (this.fieldKey !== null) {
+            this.slot.release(this.fieldKey);
+            this.fieldKey = null;
         }
     }
 
-    update(): void {
+    update(view: EditorView, prevState?: EditorState): void {
+        // A key changed the text: the caret's bar hides while typing and comes back on the next rest.
+        if (this.keyed && prevState !== undefined && view.state.doc !== prevState.doc) {
+            this.keyed = false;
+            this.cancelPending();
+            this.matured = null;
+            this.typingHold = true;
+            this.slot.typing();
+        }
         this.refresh();
     }
 
     /** The view applied `transactions` (`appendTransaction`): followed while `act` moves the focus. */
-    applied(transactions: readonly Transaction[]): void {
+    applied(transactions: readonly Transaction[], newState: EditorState): void {
+        let changed = false;
         for (const tr of transactions) {
             this.focusMoves?.appendMapping(tr.mapping);
+            changed = changed || tr.docChanged;
         }
+        if (changed) {
+            this.followDismissals(transactions, newState.doc);
+        }
+    }
+
+    /** Esc: `object`'s layer hides until the caret leaves it; what the dismissal is about is kept for `followDismissals`. */
+    private dismiss(trigger: 'bar' | 'hover', object: EditorObject): void {
+        this.dismissals.set(barKey(trigger, object), { trigger, kind: object.kind, from: object.from });
+        this.slot.dismiss(barKey(trigger, object));
+    }
+
+    /**
+     * A change of the document moved what Esc's dismissals are about (the keys
+     * hold a position): a host resync that inserts above the caret's object
+     * must not end the dismissal, so the keys follow the change — all at once,
+     * so two that shift onto each other do not collide. An object the change
+     * deleted has nothing to be dismissed from: its dismissal ends. Whether it
+     * is gone is read from the NEW document — a step that replaces a node's
+     * markup at its own position (the fidelity repair on a block's first edit)
+     * reports the position deleted though the object is still there: a node
+     * object is gone where no object of its kind stands at the mapped place, a
+     * mark's run where a step deleted across it.
+     */
+    private followDismissals(transactions: readonly Transaction[], doc: EditorState['doc']): void {
+        const live = new Set(this.slot.dismissedOf(''));
+        const moves = new Map<string, string | null>();
+        const next = new Map<string, Dismissal>();
+        for (const [key, d] of this.dismissals) {
+            if (!live.has(key)) {
+                continue;
+            }
+            let pos = d.from;
+            let across = false;
+            for (const tr of transactions) {
+                const result = tr.mapping.mapResult(pos, 1);
+                pos = result.pos;
+                across = across || result.deletedAcross;
+            }
+            if (this.dismissedGone(d, pos, across, doc)) {
+                this.slot.caretLeft(key);
+                continue;
+            }
+            const moved: Dismissal = { ...d, from: pos };
+            moves.set(key, barKey(d.trigger, moved));
+            next.set(barKey(d.trigger, moved), moved);
+        }
+        this.slot.rekeyAll(moves);
+        this.dismissals.clear();
+        for (const [key, d] of next) {
+            this.dismissals.set(key, d);
+        }
+    }
+
+    /** Whether what `d` is about is gone from `doc`, the change having mapped its place to `pos` (`followDismissals`). */
+    private dismissedGone(d: Dismissal, pos: number, deletedAcross: boolean, doc: EditorState['doc']): boolean {
+        if (d.kind === 'link' || d.kind === 'span' || d.kind === 'styled' || d.kind === 'holder') {
+            return deletedAcross;
+        }
+        const node = pos <= doc.content.size ? doc.nodeAt(pos) : null;
+        return node === null || objectOfNode(node, pos)?.kind !== d.kind;
     }
 
     destroy(): void {
         this.destroyed = true;
-        if (this.placeFrame !== undefined) {
-            cancelAnimationFrame(this.placeFrame);
-        }
         this.cancelPending();
         clearTimeout(this.hoverTimer);
         for (const [target, type, listener, capture] of this.listeners) {
             target.removeEventListener(type, listener, capture);
         }
+        this.unfreed();
+        this.cue(null);
         this.selectionBar.hide();
         this.selectionBar.el.remove();
+        this.slot.destroy();
         this.tips.release();
         this.hoverBar.el.remove();
     }
@@ -1047,21 +1485,44 @@ class ObjectToolbarView implements PluginView {
      * first verb. Where there is none but the caret is in code, a key,
      * emphasis … without a `{…}` (`attributeHolderAt`), a bar of its own with
      * **Attributes…** — never drawn on a caret rest, kept while the selection
-     * stays in its run (`selectionObject`). False where there is neither.
+     * stays in its run (`selectionObject`). `'none'` where there is neither —
+     * the only answer the key says so for (`NO_TARGET_HINT`); `{ title }`
+     * where there is an object and no bar could be drawn for it — the
+     * presentation's title says what it is (led by its label where the title
+     * does not name the object), so the key is not silent there.
      */
-    openFromKeyboard(): boolean {
+    openFromKeyboard(): 'opened' | 'none' | { title: string } {
         const object = objectAtSelection(this.view.state) ?? (currentReadsAttrs() ? attributeHolderAt(this.view.state).inline?.object ?? null : null);
         if (object === null) {
-            return false;
+            return 'none';
         }
         this.cancelPending();
         this.matured = object;
         this.forced = object;
-        this.refresh();
+        // It takes the slot whatever holds it, a dismissal of this object's bar included.
+        this.refresh(true);
         if (!this.selectionBar.visible) {
-            return false;
+            const presentation = this.present(object);
+            // It leads with what the object is; a title that already names it stands as it is.
+            const names = presentation.title.toLowerCase().includes(presentation.label.toLowerCase());
+            return { title: names ? presentation.title : `${presentation.label}: ${presentation.title}` };
         }
         this.selectionBar.focusFirst();
+        return 'opened';
+    }
+
+    /**
+     * Esc in the text (F1, Daniel 2026-10-19): while the caret's bar shows, it
+     * hides until the caret leaves the object, and the key is consumed; with
+     * no bar up, VS Code's Esc is untouched.
+     */
+    escapeInText(): boolean {
+        const claim = this.slot.current;
+        const object = this.selectionBar.object;
+        if (claim === null || claim.kind !== 'bar' || claim.el.hidden || object === null) {
+            return false;
+        }
+        this.dismiss('bar', object);
         return true;
     }
 
@@ -1102,6 +1563,20 @@ class ObjectToolbarView implements PluginView {
         }
     }
 
+    /**
+     * Whether the selection says where the caret is, for ending a dismissal: by
+     * the selection, not by where the focus is — a node view's control focused
+     * while the selection moved ends it too. Not while the window is away (the
+     * caret is where it was) or the focus is in the bars' own chrome (a field).
+     */
+    private selectionSpeaks(): boolean {
+        if (this.selectionBar.editing || this.hoverBar.editing) {
+            return false;
+        }
+        const kind = focusPlace(this.view).kind;
+        return kind !== 'away' && kind !== 'chrome';
+    }
+
     /** The bare holder `Alt+Enter` opened a bar for (`openFromKeyboard`), while the selection is still in its run. */
     private maturedHolder(): EditorObject | null {
         return this.matured?.kind === 'holder' ? currentObject(this.view.state, this.matured) : null;
@@ -1116,16 +1591,33 @@ class ObjectToolbarView implements PluginView {
 
     // -- the selection's bar ---------------------------------------------------
 
-    private refresh(): void {
+    /**
+     * The caret's bar, through the slot (`placement.ts`): a block object's at
+     * once, an inline object's once the caret has rested in it `REST_MS`; none
+     * while the selection wants the bubble (one layer at a time), none for an
+     * object whose bar Esc dismissed until the caret leaves it — `force`
+     * (`Alt+Enter`) overrides both.
+     */
+    private refresh(force = false): void {
         if (this.destroyed) {
             return;
         }
         const object = this.selectionObject();
+        const key = object === null ? null : barKey('bar', object);
+        // The selection left a dismissed object: its dismissal ends. The focus away, or in the
+        // bars' own chrome, says nothing: it is back where it was.
+        if (this.selectionSpeaks()) {
+            for (const dismissed of this.slot.dismissedOf('bar@')) {
+                if (dismissed !== key) {
+                    this.slot.caretLeft(dismissed);
+                }
+            }
+        }
         if (object === null) {
             this.cancelPending();
             this.matured = null;
             this.forced = null;
-            this.selectionBar.hide();
+            this.hideBar(this.selectionBar);
         } else if (isBlockObject(object) || sameObject(object, this.matured)) {
             this.cancelPending();
             this.matured = isBlockObject(object) ? null : object;
@@ -1135,43 +1627,98 @@ class ObjectToolbarView implements PluginView {
             this.forced = keyed ? this.forced : null;
             if (barless(object, presentation) && !keyed) {
                 // A heading's verbs are other extensions' lenses and actions; with none, no bar.
-                this.selectionBar.hide();
-            } else if (isBlockPlaced(object) && selectionBubbleShown(this.view)) {
-                // One thing at a time: while text is selected its bubble is the bar.
-                this.selectionBar.hide();
+                this.hideBar(this.selectionBar);
+            } else if (!force && (this.slot.holds('bubble') || selectionWantsBubble(this.view))) {
+                // One thing at a time: a non-empty selection has the bubble, not the caret's bar.
+                this.hideBar(this.selectionBar);
             } else {
                 this.selectionBar.show(object, presentation);
-                this.place(this.selectionBar, object);
+                if (this.selectionBar.editing) {
+                    // Its field holds the slot, at what it edits: placed again, not replaced by the bar.
+                    this.slot.replace();
+                } else if (!this.slot.request(this.claim(this.selectionBar, 'bar', object), { force })) {
+                    this.selectionBar.hide();
+                }
             }
         } else if (!sameObject(object, this.pending?.object ?? null)) {
             // A new inline object: nothing until the caret has rested in it.
             this.cancelPending();
             this.matured = null;
             this.forced = null;
-            this.selectionBar.hide();
-            this.pending = {
-                object,
-                timer: setTimeout(() => {
-                    this.pending = null;
-                    this.matured = object;
-                    this.refresh();
-                }, INLINE_DELAY_MS),
-            };
+            this.hideBar(this.selectionBar);
+            this.armRest(object);
         }
         this.refreshHover();
         this.syncDecorations();
     }
 
+    /** The caret's rest in `object`: after `REST_MS` its bar asks for the slot. */
+    private armRest(object: EditorObject): void {
+        this.pending = {
+            object,
+            timer: setTimeout(() => {
+                this.pending = null;
+                this.matured = object;
+                this.refresh();
+            }, REST_MS),
+        };
+    }
+
+    /** `bar`'s claim on the slot for `object`. */
+    private claim(bar: ObjectBar, kind: 'bar' | 'hover', object: EditorObject): LayerClaim {
+        return {
+            kind,
+            key: barKey(kind, object),
+            el: bar.el,
+            anchor: () => (bar.object === null ? null : anchorOf(this.view, bar.object)),
+            valid: () => bar.object !== null,
+            // An inline object's bar goes above where text is on both sides (Daniel, 2026-10-20); a block's stays below.
+            bothCovered: isBlockPlaced(object) ? undefined : 'above',
+            hidden: reason => this.barHidden(bar, reason),
+            fit: (room, fresh) => {
+                if (fresh) {
+                    bar.refit();
+                }
+                bar.fit(room);
+            },
+        };
+    }
+
+    /**
+     * The slot hid `bar`: another layer took it, Esc, typing. The caret's bar
+     * comes back only on its own next rest — never by the slot.
+     */
+    private barHidden(bar: ObjectBar, reason: HideReason): void {
+        if (bar === this.selectionBar && (reason === 'displaced' || reason === 'typing')) {
+            this.cancelPending();
+            this.matured = null;
+        }
+        bar.hide();
+        this.syncDecorations();
+    }
+
+    /** Hide `bar`, letting go of the slot where it holds it. */
+    private hideBar(bar: ObjectBar): void {
+        const claim = this.slot.current;
+        if (claim !== null && claim.el === bar.el) {
+            this.slot.release(claim.key);
+        }
+        bar.hide();
+    }
+
     /**
      * What the bars shown need drawn in the document: the tint of the caret's
-     * column of the table whose bar shows. It is a decoration, so the view is
+     * row or column of the table whose bar shows, while the verb acting on it
+     * is active (`activeAxis`, `Verb.axis`). It is a decoration, so the view is
      * told in a transaction of its own — after this update, which may not
      * dispatch one. A tint changes no box, so nothing moves.
      */
     private syncDecorations(): void {
-        const wanted = (): BarDecor => ({
-            tint: this.selectionBar.visible && this.selectionBar.object?.kind === 'table' ? this.selectionBar.object.from : null,
-        });
+        const wanted = (): BarDecor => {
+            const bar = this.selectionBar;
+            const axis = bar.visible && bar.object?.kind === 'table' ? bar.activeAxis() : undefined;
+            return { tint: axis === undefined || bar.object === null ? null : { table: bar.object.from, axis } };
+        };
         if (sameDecor(wanted(), decorKey.getState(this.view.state) ?? NO_DECOR)) {
             return;
         }
@@ -1185,11 +1732,25 @@ class ObjectToolbarView implements PluginView {
 
     // -- the pointer's bar -----------------------------------------------------
 
-    private pointerAt(target: Element | null): void {
+    /**
+     * Whether the pointer is on the pointer's bar. By where it is, not by what
+     * the event names: the bar ignores the pointer for a moment after it appears
+     * or moves (`data-inert`), and the event then names what is under it — the
+     * text, which would start the bar's way out under a pointer that never moved.
+     */
+    private onHoverBar(e: MouseEvent): boolean {
+        if (!this.hoverBar.visible) {
+            return false;
+        }
+        const r = this.hoverBar.el.getBoundingClientRect();
+        return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    }
+
+    private pointerAt(target: Element | null, e: MouseEvent): void {
         if (target === null || typeof target.closest !== 'function') {
             return;
         }
-        if (this.hoverBar.el.contains(target)) {
+        if (this.hoverBar.el.contains(target) || this.onHoverBar(e)) {
             clearTimeout(this.hoverTimer);
             this.hoverTimer = undefined;
             return;
@@ -1207,6 +1768,7 @@ class ObjectToolbarView implements PluginView {
             this.hoverTimer = undefined;
             if (atom !== this.hovered) {
                 this.hovered = atom;
+                this.endHoverDismissals();
                 this.refreshHover();
             }
             return;
@@ -1220,7 +1782,19 @@ class ObjectToolbarView implements PluginView {
         clearTimeout(this.hoverTimer);
         this.hoverTimer = undefined;
         this.hovered = null;
+        this.endHoverDismissals();
         this.refreshHover();
+    }
+
+    /**
+     * The pointer left the block it was on, or is on another: Esc's dismissal of
+     * the pointer's bar ends (`escape`). Only the caret's bar was ever cleared,
+     * so a block dismissed once never had its bar again.
+     */
+    private endHoverDismissals(): void {
+        for (const key of this.slot.dismissedOf('hover@')) {
+            this.slot.caretLeft(key);
+        }
     }
 
     /** The block object whose element the pointer is on, found by the element ProseMirror drew for it. */
@@ -1242,194 +1816,60 @@ class ObjectToolbarView implements PluginView {
         return null;
     }
 
+    /**
+     * The pointer's bar, through the slot: the caret's layer wins (Daniel,
+     * 2026-10-19) — it shows only while the slot is empty; while another layer
+     * holds it, the block under the pointer carries the hover cue
+     * (`mep-hover-cue`) instead, and its bar shows once the slot comes free.
+     */
     private refreshHover(): void {
         const object = this.hoveredObject();
         // The cheap reasons first: the presentation asks for code actions and lenses.
         // While a node view's control has the focus nothing else is offered: the control is the edit.
-        const presentation = object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object)) || selectionBubbleShown(this.view)
+        const presentation = object === null || (this.selectionBar.visible && sameObject(object, this.selectionBar.object))
             || focusPlace(this.view).kind === 'control'
             ? null
             : this.present(object);
-        if (object === null || presentation === null || barless(object, presentation)) {
+        const current = this.slot.current;
+        // A dismissed pointer's bar is not coming: no cue promises it.
+        const dismissed = object !== null && this.slot.dismissedOf('hover@').includes(barKey('hover', object));
+        // Typing hid the caret's bar and its rest is to bring it back: the pointer's bar waits too, at the cue.
+        const typingHold = this.typingHold && this.pending !== null && !this.hoverBar.editing;
+        if (!typingHold) {
+            this.typingHold = false;
+        }
+        if (object === null || presentation === null || barless(object, presentation) || dismissed) {
+            this.cue(null);
+            this.hideBar(this.hoverBar);
+        } else if (typingHold) {
+            this.cue(this.hovered);
+            this.hideBar(this.hoverBar);
+        } else if (current !== null && current.el !== this.hoverBar.el) {
+            this.cue(this.hovered);
             this.hoverBar.hide();
         } else {
             this.hoverBar.show(object, presentation);
-            this.place(this.hoverBar, object);
-        }
-        this.syncDecorations();
-    }
-
-    // -- placing ---------------------------------------------------------------
-
-    private placeAll(): void {
-        for (const bar of [this.selectionBar, this.hoverBar]) {
-            if (bar.visible && bar.object) {
-                this.place(bar, bar.object);
+            if (this.hoverBar.editing) {
+                // Its field holds the slot: placed again, not replaced by the bar.
+                this.slot.replace();
+            } else if (this.slot.request(this.claim(this.hoverBar, 'hover', object))) {
+                this.cue(null);
+            } else {
+                this.hoverBar.hide();
+                this.cue(this.hovered);
             }
         }
         this.syncDecorations();
     }
 
-    /** Where the object's first line starts and its last line ends. */
-    private anchor(object: EditorObject): Anchor {
-        const view = this.view;
-        if (!isMarkObject(object)) {
-            const dom = view.nodeDOM(object.from);
-            if (dom instanceof Element) {
-                // An inline element's own line boxes: a note's body floated
-                // into the margin is not one of them, so the bar keeps to the
-                // reference's lines.
-                const rects = Array.from(dom.getClientRects()).filter(r => r.width > 0 || r.height > 0);
-                if (rects.length > 0) {
-                    return { left: rects[0].left, top: rects[0].top, bottom: rects[rects.length - 1].bottom };
-                }
-            }
-        }
-        const start = view.coordsAtPos(object.from, 1);
-        const end = view.coordsAtPos(object.to, -1);
-        return { left: start.left, top: Math.min(start.top, end.top), bottom: Math.max(start.bottom, end.bottom) };
-    }
-
-    /**
-     * An inline object's bar (a note, a link, a span, an image, a badge):
-     * above the object's first line at its start, else beside that line —
-     * just right of its textblock's text on it — else below its last line;
-     * the first of these `firstFree` finds free, above and below never on the
-     * caret's line. Where none is free, below.
-     */
-    private place(bar: ObjectBar, object: EditorObject): void {
-        // Its width first: the places below are found for the bar as it will be drawn.
-        const base = this.mount.getBoundingClientRect();
-        bar.fit(layerRight(base) - base.left);
-        // A bar that fits the text column keeps to it; only one wider than the column stands past it.
-        const right = bar.el.offsetWidth <= base.width ? base.right : layerRight(base);
-        if (isBlockPlaced(object)) {
-            this.placeBlock(bar, object, base, right);
+    /** The hover cue on `atom`, and on no other block. */
+    private cue(atom: HTMLElement | null): void {
+        if (atom === this.cued) {
             return;
         }
-        const el = bar.el;
-        const view = this.view;
-        const anchor = this.anchor(object);
-        const width = el.offsetWidth;
-        const height = el.offsetHeight;
-        const sel = view.state.selection;
-        const typing = bar === this.selectionBar && sel instanceof TextSelection;
-        const caret = typing ? view.coordsAtPos(sel.head) : null;
-        const offCaret = (y: number) => () => caret === null || y >= caret.bottom || y + height <= caret.top;
-        const x0 = Math.max(base.left, Math.min(anchor.left ?? right - width, right - width));
-        const aboveY = this.clearOfLensRows(anchor.top - GAP - height, height, true);
-        const belowY = this.clearOfLensRows(anchor.bottom + GAP, height, false);
-        const block = this.textblockDOM(object.from);
-        const lineRight = block ? rightEdgeIn(block, anchor.top, anchor.top + height) : -Infinity;
-        const besideX = lineRight + GAP;
-        const places: Place[] = [
-            { x: x0, y: aboveY, when: offCaret(aboveY) },
-            { x: besideX, y: anchor.top, when: () => besideX + width <= right },
-            { x: x0, y: belowY, when: offCaret(belowY) },
-        ];
-        const found = firstFree(view, this.mount, places, { width, height });
-        let x = found?.x ?? x0;
-        let y = found?.y ?? belowY;
-        if (!found && caret !== null && !offCaret(y)()) {
-            y = caret.bottom + GAP;
-        }
-        x = Math.max(base.left, Math.min(x, right - width));
-        el.style.left = `${x - base.left}px`;
-        el.style.top = `${y - base.top}px`;
-    }
-
-    /** The element of the textblock holding position `pos`: the line an inline object stands on. */
-    private textblockDOM(pos: number): Element | null {
-        const $pos = this.view.state.doc.resolve(Math.min(pos, this.view.state.doc.content.size));
-        for (let d = $pos.depth; d > 0; d--) {
-            if ($pos.node(d).isTextblock) {
-                const dom = this.view.nodeDOM($pos.before(d));
-                return dom instanceof Element ? dom : null;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * `y` moved past another extension's lens rows (`lenses.ts`), which sit
-     * right above a block's first line, where a bar goes too — above a row
-     * when going up, below it going down — so a candidate place is not one
-     * that `firstFree` must refuse for the row (a lens row is `OCCUPIED`).
-     */
-    private clearOfLensRows(y: number, height: number, up: boolean): number {
-        const rows = Array.from(this.view.dom.querySelectorAll(':scope > .mep-lens-row'), r => r.getBoundingClientRect());
-        let at = y;
-        for (let hit = rows.find(r => at < r.bottom && at + height > r.top); hit; hit = rows.find(r => at < r.bottom && at + height > r.top)) {
-            at = up ? hit.top - GAP - height : hit.bottom + GAP;
-        }
-        return at;
-    }
-
-    /**
-     * A block's bar covers no content where it can help it, and never moves
-     * layout (Daniel, 2026-09-29 and 2026-09-30). The first of these places
-     * `firstFree` finds free is where it goes:
-     *
-     * 1. beside the block's first line, outside it, top-aligned with it — where
-     *    the block ends short of the text column's right edge (a table, a short
-     *    heading);
-     * 2. above the block, right-aligned to the column — where the line above
-     *    ends short of it, or a margin is there;
-     * 3. inside the block's own box at its top right — a source block, a
-     *    container or an admonition whose first line is short — probing the
-     *    block's own content;
-     * 4. below the block, right-aligned to the column;
-     * 5. where none is free: above the block, right-aligned to the column,
-     *    regardless — over whatever is there, usually the empty tail of the
-     *    line above, as a heading's bar has always stood. Where above is under
-     *    the formatting row (the block's top scrolled up to it), the bar could
-     *    be neither seen nor clicked there: below the block then, and where
-     *    that is past the window's bottom too, at the row's edge — over the
-     *    block's own top, still moving nothing.
-     *
-     * A bar is never given room in the document: a room moved the block down
-     * as its bar appeared, and the layout jumped under the reader (a
-     * full-width table's bar did it on every visit). A block that draws a box
-     * of its own (a table, a source block, a container, an admonition) is its
-     * box; a heading or a block with attributes is its text, whose lines in
-     * the bar's band must all end before the bar.
-     */
-    private placeBlock(bar: ObjectBar, object: EditorObject, base: DOMRect, layerEdge: number): void {
-        const el = bar.el;
-        const view = this.view;
-        const width = el.offsetWidth;
-        const height = el.offsetHeight;
-        const dom = isMarkObject(object) ? null : view.nodeDOM(object.from);
-        if (!(dom instanceof Element)) {
-            return;
-        }
-        const box = dom.getBoundingClientRect();
-        const style = getComputedStyle(view.dom);
-        const columnRight = view.dom.getBoundingClientRect().right - (parseFloat(style.paddingRight) || 0);
-        const textual = object.kind === 'heading' || object.kind === 'block_attrs';
-        const top = (textual ? firstLineTop(dom) : null) ?? box.top;
-        const right = textual
-            ? rightEdgeIn(dom, top, top + height)
-            : box.right - (isBlockObject(object) ? ATOM_INSET : 0);
-        const edge = columnRight - width;
-        const aboveY = this.clearOfLensRows(box.top - GAP - height, height, true);
-        const insideRight = box.right - (isBlockObject(object) ? ATOM_INSET : 0) - GAP;
-        const insideY = box.top + (isBlockObject(object) ? ATOM_INSET : GAP);
-        const belowY = this.clearOfLensRows(box.bottom + GAP, height, false);
-        // Each place where the bar will stand: a bar wider than the column is pushed back to the column's
-        // left edge, and the band `firstFree` checks must be that one, not the one right-aligned to the column.
-        const at = (x: number) => Math.max(base.left, Math.min(x, layerEdge - width));
-        const ladder: Place[] = [
-            { x: at(right + GAP), y: top, when: () => right + GAP + width <= columnRight },
-            { x: at(edge), y: aboveY },
-            ...(textual || object.kind === 'table' ? [] : [{ x: at(insideRight - width), y: insideY, within: dom }]),
-            { x: at(edge), y: belowY },
-        ];
-        const found = firstFree(view, this.mount, ladder, { width, height });
-        const x = found?.x ?? at(edge);
-        const y = found?.y ?? lastResortY(aboveY, belowY, height, rowCeiling(this.mount));
-        el.style.left = `${x - base.left}px`;
-        el.style.top = `${y - base.top}px`;
+        this.cued?.classList.remove('mep-hover-cue');
+        atom?.classList.add('mep-hover-cue');
+        this.cued = atom;
     }
 
     // -- the verbs -------------------------------------------------------------
@@ -1531,12 +1971,12 @@ class ObjectToolbarView implements PluginView {
         }
         const names = holderNames(inside);
         const name = `Attributes of ${names.label}`;
-        // Headed by the element, not by the object whose bar it is on (`Table · Attributes of Bold`).
-        const step = holderAttributesStep(this.view, inside, name);
+        // Headed by the element, not by the object whose bar it is on: `Bold · Attributes` (`attributesField`).
+        const step = holderAttributesStep(this.view, inside);
         const verb: Verb = {
             id: 'inline-attributes',
             label: `${name}…`,
-            title: `The ${names.noun}'s {…}, written right after it: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).`,
+            title: `The ${names.noun}'s {…}, written right after it: ${attributesTyped(literalOfObject(inside.object))} (Enter to apply, Esc to cancel).`,
             slot: 'attributes',
             field: step,
             target: { from: inside.object.from, to: inside.object.to },
@@ -1677,7 +2117,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, 'The link\'s {…}, written after its (…): {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).'),
+                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, typed => `The link's {…}, written after its (…): ${typed} (Enter to apply, Esc to cancel).`),
                         {
                             id: 'remove-link',
                             label: remove.label,
@@ -1734,7 +2174,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, 'The image\'s {…}, written after its (…): {.class}, {#id}, {width=300}; {} removes it (Enter to apply, Esc to cancel).'),
+                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, typed => `The image's {…}, written after its (…): ${typed} (Enter to apply, Esc to cancel).`),
                         { id: 'open-image', label: open.label, short: open.short, title: `Open ${src} (as Ctrl+click on a link does).`, slot: 'open', run: () => host.openLink(src) },
                         {
                             id: 'delete-image',
@@ -1750,12 +2190,25 @@ class ObjectToolbarView implements PluginView {
             }
             case 'span': {
                 const literal = object.mark.attrs.literal as string;
-                const step: FieldStep = {
-                    value: literal,
-                    label: 'Attributes',
-                    commit: value => this.commitLiteral(step, object, value, current =>
-                        current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null),
-                };
+                // The attributes field every route opens; empty removes nothing here — a span is its literal (Remove attributes).
+                // Left as it was shown, Enter changes nothing (`changeSpanTransaction` would rewrite `{ .s }` as `{.s}`).
+                const step = attributesField('Span', literal, (value, refused) => {
+                    const current = currentObject(view.state, object);
+                    if (current?.kind !== 'span') {
+                        // The span is gone (the document changed under the open field): the field closes, the focus back, nothing written.
+                        this.act(object, () => false);
+                        return;
+                    }
+                    // Refused — the field kept open with what was typed and the reason under it — when markdown-it-attrs would not read the value as attributes.
+                    const refusal = changeSpanRefusal(view.state, current, value);
+                    if (refusal !== null) {
+                        return refused(refusal);
+                    }
+                    this.apply(object, now => (now.kind === 'span' ? changeSpanTransaction(view.state, now, value) : null));
+                }, {
+                    removable: false,
+                    unchanged: () => this.act(object, () => false),
+                });
                 // The title says Span, not attributes: the verb keeps its noun however narrow the bar.
                 const remove = wording({ verb: 'Remove', noun: 'attributes', keeps: ', keep text', titled: false });
                 return {
@@ -1768,6 +2221,8 @@ class ObjectToolbarView implements PluginView {
                             title: 'Change the span\'s {…} (Enter to apply, Esc to cancel).',
                             slot: 'attributes',
                             field: step,
+                            // At the span it edits, as every run's attributes field (`markAttributesVerb`).
+                            target: { from: object.from, to: object.to },
                         },
                         {
                             id: 'remove-attributes',
@@ -1787,7 +2242,7 @@ class ObjectToolbarView implements PluginView {
                 return {
                     label: names.label,
                     title: `\`${text}\`: ${names.noun} — Attributes… gives it a {…}`,
-                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Give the ${names.noun} a {…}, written right after it: {.class}, {#id}, {key=value} (Enter to apply, Esc to cancel).`)],
+                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Give the ${names.noun} a {…}, written right after it: ${typed} (Enter to apply, Esc to cancel).`)],
                 };
             }
             case 'styled': {
@@ -1801,7 +2256,7 @@ class ObjectToolbarView implements PluginView {
                     code: literal,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
                     verbs: [
-                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Change the ${name.toLowerCase()}'s {…}; {} removes it (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Change the ${name.toLowerCase()}'s {…}: ${typed} (Enter to apply, Esc to cancel).`),
                         {
                             id: 'remove-attributes',
                             label: remove.label,
@@ -1857,7 +2312,8 @@ class ObjectToolbarView implements PluginView {
                 const title = object.node.attrs.title as string;
                 const remove = wording({ verb: 'Remove', noun: 'admonition', keeps: ', keep content' });
                 return {
-                    label: `Admonition ${type}`,
+                    label: `${titleOf(type)} admonition`,
+                    short: titleOf(type),
                     title: title === '' ? `A ${type} admonition without a title.` : `A ${type} admonition: ${title}`,
                     verbs: [
                         {
@@ -1897,6 +2353,27 @@ class ObjectToolbarView implements PluginView {
             }
             case 'table':
                 return this.tablePresentation(object);
+            case 'code_block': {
+                const indented = object.node.attrs.markup === '';
+                const code = [languageOf(object.node.attrs.params as string), (object.node.attrs.attrsSuffix as string | null) ?? ''].filter(Boolean).join(' ');
+                const remove = wording({ verb: 'Delete', noun: 'code block' });
+                const attributes = this.attributesVerb(object);
+                // The title names only what the bar can do: Attributes… stays out where it is refused (nested, the engine off).
+                const fencers = attributes.refusal ? 'Language… or Edit source' : 'Language…, Attributes… or Edit source';
+                return {
+                    label: indented ? 'Indented code block' : 'Code block',
+                    code: code === '' ? undefined : code,
+                    title: indented
+                        ? `An indented code block: it has no opening line until ${fencers} fences it.`
+                        : 'A fenced code block: its language and its {…} stand on its opening line.',
+                    verbs: [
+                        this.languageVerb(object),
+                        attributes,
+                        this.openingLineVerb(object),
+                        { id: 'delete-code-block', label: remove.label, short: remove.short, title: 'The block goes from the file.', slot: 'destroy', run: () => this.remove(object, remove.done) },
+                    ],
+                };
+            }
             case 'block_attrs': {
                 const literal = (object.node.attrs.attrsSuffix as string | null) ?? '';
                 return {
@@ -2072,24 +2549,25 @@ class ObjectToolbarView implements PluginView {
             title: `A pipe table: ${columns} ${columns === 1 ? 'column' : 'columns'}, a header row and ${rows - 1} ${rows === 2 ? 'row' : 'rows'} under it.`,
             verbs: [
                 {
-                    id: 'row', label: 'Row', slot: 'type', title: 'Insert a row next to the caret\'s, or delete it.',
+                    id: 'row', label: 'Row', slot: 'type', axis: 'row', title: 'Insert a row next to the caret\'s, or delete it.',
                     menu: [
                         entry('insert-row-above', 'Insert above', 'A new row above the caret\'s; above the header row it is the new header.', () => addRowTransaction(view.state, 'above')),
                         entry('insert-row-below', 'Insert below', 'A new row below the caret\'s. Tab in the last cell adds one too.', () => addRowTransaction(view.state, 'below'), { keys: 'Tab at end' }),
+                        // The one that takes something away stands apart, after a divider (Daniel, #4 build critique).
                         entry('delete-row', 'Delete row', 'The caret\'s row goes; deleting the header row makes the next row the header.',
-                            () => deleteRowTransaction(view.state), { refusal: deleteRowRefusal(state) }, 'Row deleted'),
+                            () => deleteRowTransaction(view.state), { refusal: deleteRowRefusal(state), separated: true }, 'Row deleted'),
                     ],
                 },
                 {
-                    id: 'column', label: 'Column', slot: 'type', title: 'Insert a column next to the caret\'s (tinted), or delete it.',
+                    id: 'column', label: 'Column', slot: 'type', axis: 'column', title: 'Insert a column next to the caret\'s (tinted), or delete it.',
                     menu: [
                         entry('insert-column-left', 'Insert left', 'A new column left of the caret\'s.', () => addColumnTransaction(view.state, 'left')),
                         entry('insert-column-right', 'Insert right', 'A new column right of the caret\'s.', () => addColumnTransaction(view.state, 'right')),
-                        entry('delete-column', 'Delete column', 'The caret\'s column goes.', () => deleteColumnTransaction(view.state), { refusal: deleteColumnRefusal(state) }, 'Column deleted'),
+                        entry('delete-column', 'Delete column', 'The caret\'s column goes.', () => deleteColumnTransaction(view.state), { refusal: deleteColumnRefusal(state), separated: true }, 'Column deleted'),
                     ],
                 },
                 {
-                    id: 'align', label: 'Align', slot: 'type', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
+                    id: 'align', label: 'Align', slot: 'type', axis: 'column', title: 'How the caret\'s column (tinted) is aligned: the colons of its delimiter cell.',
                     menu: [alignEntry('left', 'Left', ':--'), alignEntry('center', 'Center', ':-:'), alignEntry('right', 'Right', '--:')],
                 },
                 { ...this.attributesVerb(object), separated: true },
@@ -2112,25 +2590,129 @@ class ObjectToolbarView implements PluginView {
      * reason, on a container and an admonition, whose renderers drop a literal.
      */
     private attributesVerb(object: EditorObject): Verb {
-        const found = isMarkObject(object) ? { refusal: NO_BLOCK_ATTRS_REFUSAL } : attributesTargetOf(object.node, object.from);
+        // A code block is an object at any depth; its literal is written only at the top level.
+        const nested = object.kind === 'code_block' && this.view.state.doc.resolve(object.from).depth > 0;
+        const found = isMarkObject(object) ? { refusal: NO_BLOCK_ATTRS_REFUSAL } : attributesTargetOf(object.node, object.from, nested);
         const refused = 'refusal' in found;
+        const fences = object.kind === 'code_block' && object.node.attrs.markup === '' ? ' Setting one makes the block fenced.' : '';
         return {
             id: 'block-attributes',
             label: VERB.attributes,
             slot: 'attributes',
-            title: 'The block\'s {…}: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).',
+            title: `The block's {…}: ${attributesTyped(refused ? null : literalOf(found.node))} (Enter to apply, Esc to cancel).${fences}`,
             refusal: refused ? found.refusal : null,
             field: refused ? undefined : attributesStep(this.view, found),
         };
     }
 
     /**
+     * A code block's **Language…**: the first word of its info string in a
+     * field, the document's languages offered first, then every language the
+     * preview highlights (`languageCompleter`); any word is taken, `''`
+     * removes it, the rest of the info string and the `{…}` stay. On an
+     * indented block it fences it (`changeLanguageTransaction`), and the hint
+     * says so — the one change a look at the bar's title would not explain.
+     */
+    private languageVerb(object: Extract<EditorObject, { node: unknown }>): Verb {
+        const indented = object.node.attrs.markup === '';
+        const step: FieldStep = {
+            value: languageOf(object.node.attrs.params as string),
+            label: 'Language',
+            keys: '↵ set · Esc cancel · empty: no language',
+            complete: query => Promise.resolve(this.languageCompleter()(query)),
+            commit: value => this.commitCodeBlock(step, object, value, changeLanguageTransaction),
+        };
+        // The fence in the code font: drawn as a part of its own, so three backticks read as the fence, not as noise.
+        const tip: Tip | undefined = indented
+            ? { parts: ['Language — setting one makes the block fenced (', { code: DEFAULT_FENCE }, '); its text stays.'] }
+            : undefined;
+        return {
+            id: 'language',
+            label: VERB.language,
+            slot: 'type',
+            title: tip ? tipText(tip) : 'The fence\'s language — the first word of its info string; the rest stays.',
+            tip,
+            field: step,
+        };
+    }
+
+    /** Language…'s completer for the document as it is: its languages read once, not on each key (`languageCompleter`). */
+    private languageCompleter(): (query: string) => Completion[] {
+        const doc = this.view.state.doc;
+        if (this.languages?.doc !== doc) {
+            this.languages = { doc, complete: languageCompleter(doc) };
+        }
+        return this.languages.complete;
+    }
+
+    /**
+     * A code block's **Edit source**: its opening line — fence, info string,
+     * `{…}` — in the bar's field, read back and refused in one place
+     * (`commitOpeningLine`). An indented block's opens empty, the fence a new
+     * block gets as its placeholder: `Enter` fences it.
+     */
+    private openingLineVerb(object: Extract<EditorObject, { node: unknown }>): Verb {
+        const indented = object.node.attrs.markup === '';
+        const step: FieldStep = {
+            // What the save writes (`savedOpeningLine`), not the node's own fence: the field must show the line the file will hold.
+            value: indented ? '' : openingLineOfBlock(object.node),
+            label: 'Opening line',
+            placeholder: indented ? INDENTED_PLACEHOLDER : undefined,
+            keys: '↵ set · Esc cancel · fence, info, {…}',
+            commit: value => this.commitCodeBlock(step, object, value, commitOpeningLine),
+        };
+        return { id: 'edit-source', label: VERB.editSource, slot: 'source', title: 'Edit source — opening line (fence, language, attributes)', field: step };
+    }
+
+    /**
+     * A code block's field committed through `make`: refused — the field kept
+     * open with what was typed and why (`refusedStep`) — else applied on the
+     * block as it is once the focus is back (`act`), the hint said only when
+     * it fenced an indented block.
+     */
+    private commitCodeBlock(
+        step: FieldStep,
+        object: CodeBlockObject,
+        value: string,
+        make: (state: EditorState, block: CodeBlockObject, value: string) => { tr: Transaction; fenced: boolean } | { refusal: string } | null,
+    ): FieldStep | void {
+        const state = this.view.state;
+        // The node `currentObject` finds is the one the pass reads: no second lookup by position.
+        const found = currentObject(state, object);
+        const current = found !== null && !isMarkObject(found) ? found : null;
+        const asked = current === null ? null : make(state, current, value);
+        if (asked !== null && 'refusal' in asked) {
+            return refusedStep(step, value, asked.refusal);
+        }
+        this.act(object, now => {
+            // The pass made above stands while nothing moved under it; moving the focus back may have (a source box committed).
+            if (isMarkObject(now)) {
+                return false;
+            }
+            const made = current !== null && this.view.state === state && now.from === current.from ? asked : make(this.view.state, now, value);
+            if (made === null || 'refusal' in made) {
+                return false;
+            }
+            const before = this.view.state;
+            this.view.dispatch(made.tr);
+            if (made.fenced && this.view.state !== before) {
+                showChangeHint(this.view, undoHint(FENCED_DONE));
+            }
+            return true;
+        });
+    }
+
+    /**
      * The verb that opens the attributes field of a link, a styled run
      * (`_x_{…}`, `` `x`{…} ``), an image or a bare holder: the one step every
-     * route shares (`holderAttributesStep`).
+     * route shares (`holderAttributesStep`). A run's field opens at the run it
+     * edits (`target`), not where the caret or the bar was; an image's stands
+     * at the image, its object, already.
      */
-    private markAttributesVerb(object: LiteralObject, id: string, label: string, title: string): Verb {
-        return { id, label, title, slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)) };
+    private markAttributesVerb(object: LiteralObject, id: string, label: string, title: (typed: string) => string): Verb {
+        const target = 'mark' in object ? { from: object.from, to: object.to } : undefined;
+        // What the tooltip says an empty value does is what the field's keys line says: it removes only a literal there is.
+        return { id, label, title: title(attributesTyped(literalOfObject(object))), slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)), target };
     }
 
     /** A table's **Edit source**: the table becomes a source block holding its text, the source box open (`tableSourceTransaction`). */
@@ -2159,23 +2741,6 @@ class ObjectToolbarView implements PluginView {
             }
             return tr !== null;
         }, hint);
-    }
-
-    /**
-     * A literal typed into `step`'s field: refused — the field kept open with
-     * what was typed and the reason beside it (`refusedStep`) — when
-     * markdown-it-attrs would not read it as attributes (`''` is allowed where
-     * it means "none"); applied otherwise.
-     */
-    private commitLiteral(step: FieldStep, object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): FieldStep | void {
-        const place = 'node' in object ? literalPlaceOf(object.node) : 'span';
-        const current = currentObject(this.view.state, object);
-        const refusal = hint !== undefined && value.trim() === '' ? null
-            : current?.kind === 'span' ? changeSpanRefusal(this.view.state, current, value) : literalRefusal(value, place);
-        if (refusal !== null) {
-            return refusedStep(step, value, refusal);
-        }
-        this.apply(object, make, hint);
     }
 
     private remove(object: EditorObject, hint: string): void {
@@ -2227,7 +2792,7 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
                 if (!tr.docChanged || value.tint === null) {
                     return value;
                 }
-                return { tint: tr.mapping.map(value.tint) };
+                return { tint: { ...value.tint, table: tr.mapping.map(value.tint.table) } };
             },
         },
         view(editorView) {
@@ -2235,8 +2800,8 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
             toolbarViews.set(editorView, toolbar);
             return toolbar;
         },
-        appendTransaction(transactions) {
-            toolbar?.applied(transactions);
+        appendTransaction(transactions, _oldState, newState) {
+            toolbar?.applied(transactions, newState);
             return null;
         },
         props: {
@@ -2244,6 +2809,10 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
                 return barDecorations(state, decorKey.getState(state) ?? NO_DECOR);
             },
             handleKeyDown(view, event) {
+                if (event.key === 'Escape' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+                    // Consumed only while the caret's bar shows (F1); else VS Code's Esc.
+                    return toolbarViews.get(view)?.escapeInText() ?? false;
+                }
                 if (event.key !== 'Enter' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
                     return false;
                 }
@@ -2252,11 +2821,19 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
                 if (select !== null) {
                     view.dispatch(select);
                 }
-                const opened = toolbarViews.get(view)?.openFromKeyboard() ?? false;
-                if (opened) {
+                const opened = toolbarViews.get(view)?.openFromKeyboard() ?? 'none';
+                if (opened === 'opened') {
                     event.preventDefault();
+                    return true;
                 }
-                return opened;
+                if (view.state.selection instanceof TextSelection) {
+                    // The key is taken, the caret stays (#4); it says there is nothing to act on only where there is no object — one
+                    // whose bar could not be drawn says what it is instead (its title), never "nothing here".
+                    showHint(view, opened === 'none' ? NO_TARGET_HINT : opened.title, 'neutral');
+                    event.preventDefault();
+                    return true;
+                }
+                return false;
             },
         },
     });

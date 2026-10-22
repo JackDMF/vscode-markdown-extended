@@ -268,8 +268,10 @@ suite('Editor stage 3: review findings, in the page', () => {
         assert.strictEqual(applySpanTransaction(state, '{width = 50%}'), null);
         const reason = literalRefusal('{width = 50%}') ?? '';
         assert.match(reason, /a space beside its = makes it text/);
-        assert.match(reason, /Write it as \{width=50%\}\.$/);
-        assert.match(literalRefusal('{.a title= "x y" b =2}') ?? '', /Write it as \{\.a title="x y" b=2\}\.$/);
+        // Named as the attributes field shows it, between the braces it draws; whole where the field's text holds them.
+        assert.match(reason, /^width = 50% is text.* Write it as width=50%\.$/);
+        assert.match(literalRefusal('{.a title= "x y" b =2}') ?? '', /Write it as \.a title="x y" b=2\.$/);
+        assert.match(literalRefusal('{width = 50%}', 'paragraph', true) ?? '', /^\{width = 50%\} is text.* Write it as \{width=50%\}\.$/);
     });
 
     test('no tightened form is suggested where taking the spaces out would change what it says', () => {

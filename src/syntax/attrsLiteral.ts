@@ -63,6 +63,8 @@ export interface BraceReading {
     separators: number[];
     /** Whether a space stands beside one of those `=` (`isTextBrace`). */
     spaced: boolean;
+    /** Whether the text ended inside a quoted value — the quote that swallowed the closing `}` when `close` is -1. */
+    openQuote: boolean;
 }
 
 /**
@@ -83,7 +85,7 @@ export function readBrace(str: string, open: number): BraceReading {
     for (let i = open + 1; i < str.length; i++) {
         const ch = str.charAt(i);
         if (!quoted && ch === '}') {
-            return { close: i, separators, spaced };
+            return { close: i, separators, spaced, openQuote: false };
         }
         if (ch === '=' && parsingKey) {
             parsingKey = false;
@@ -124,7 +126,7 @@ export function readBrace(str: string, open: number): BraceReading {
             value += ch;
         }
     }
-    return { close: -1, separators, spaced };
+    return { close: -1, separators, spaced, openQuote: quoted };
 }
 
 /**

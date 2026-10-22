@@ -147,8 +147,8 @@ suite('Editor attribute holder: the bubble\'s {…}', () => {
     test('within one element\'s run it names that element; across runs, a span; in a source block, why not', () => {
         const inCode = evaluate(bubble, at(stateOf('A `xy` b.\n'), 'xy', 0, 1), false);
         // Never "on": it is no toggle; what it targets is its name.
-        assert.deepStrictEqual(inCode, { enabled: true, active: false, reason: null, tip: { parts: ['Attributes of Code… — ', { code: '`code`{.class}' }] }, ariaLabel: 'Attributes of Code…' });
-        assert.strictEqual(tipText(inCode.tip as Tip), 'Attributes of Code… — `code`{.class}');
+        assert.deepStrictEqual(inCode, { enabled: true, active: false, reason: null, tip: { parts: ['Attributes of Code… — ', { code: '`code`{.class}' }], note: ['Over plain text: Span with class… — ', { code: '[text]{.class}' }] }, ariaLabel: 'Attributes of Code…' });
+        assert.strictEqual(tipText(inCode.tip as Tip), 'Attributes of Code… — `code`{.class}\nOver plain text: Span with class… — [text]{.class}');
         assert.strictEqual(evaluate(bubble, at(stateOf('A **xy** b.\n'), 'xy', 0, 1), false).ariaLabel, 'Attributes of Bold…');
         const across = evaluate(bubble, at(stateOf('A *b* c.\n'), 'b', 0, 3), false);
         assert.deepStrictEqual(across, { enabled: true, active: false, reason: null, tip: { parts: ['Span with class… — ', { code: '[text]{.class}' }] }, ariaLabel: 'Span with class…' });

@@ -6,7 +6,7 @@ import { WebviewMessage } from '../../../src/editor/protocol';
 import { SIDEBAR_GLUED_BEFORE } from '../../../src/editor/serialize';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { OWN_COPY } from '../../../src/editor/webview/wikiEmbeds';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, MOD, UNDO, editCommand } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, leaveObjects, openEditorPage, pointAt as textPoint, settle, MOD, UNDO, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 /** The selection's object toolbar, shown. */
@@ -34,6 +34,7 @@ suite('Editor object toolbar (e2e)', () => {
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         // Out of any object the last test left the caret or the pointer in, and back at the top it may have scrolled from.
         await page.mouse.move(2, 2);
+        await leaveObjects(page);
         await page.evaluate(() => {
             (document.activeElement as HTMLElement | null)?.blur();
             window.scrollTo(0, 0);
@@ -93,7 +94,7 @@ suite('Editor object toolbar (e2e)', () => {
         await closeEditorPage(this, editor);
     });
 
-    test(`the caret in a sidenote shows no toolbar before ${INLINE_DELAY_MS} ms, then one naming it, above its line, not over the caret's`, async function () {
+    test(`the caret in a sidenote shows no toolbar before ${INLINE_DELAY_MS} ms, then one naming it, above its line where text lies below, not over the caret's`, async function () {
         this.timeout(15000);
         await showDocument('Intro.\n\nAlpha ++beta ref|the body++ gamma.\n\nSecond paragraph.\n', 'Alpha');
         const pressed = await clickBefore('body', 1);
@@ -109,6 +110,7 @@ suite('Editor object toolbar (e2e)', () => {
             const ref = (document.querySelector('.ProseMirror .sn-ref') as HTMLElement).getClientRects()[0];
             return { barTop: bar.top, barBottom: bar.bottom, caretTop: caret.top, caretBottom: caret.bottom, refTop: ref.top };
         }, BAR);
+        // Text under the line ("Second paragraph"), none above where the bar stands ("Intro." ends before it): the tie goes above (`placement.ts`).
         assert.ok(geometry.barBottom <= geometry.refTop, `above the note's first line: ${JSON.stringify(geometry)}`);
         assert.ok(geometry.barBottom <= geometry.caretTop || geometry.barTop >= geometry.caretBottom, `not over the caret's line: ${JSON.stringify(geometry)}`);
 
@@ -118,7 +120,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$(BAR), null);
     });
 
-    test('on a line just under the row, the bar goes beside the line, else below it, and never over text or the caret', async function () {
+    test('on a line just under the row, the bar goes below it at the note\'s start, never under the row or over the caret', async function () {
         this.timeout(15000);
         await showDocument('Alpha ++beta ref|the body++ gamma.\n\nSecond paragraph.\n', 'Alpha');
         // The line scrolled up to just under the row: no room above it for a bar.
@@ -148,8 +150,8 @@ suite('Editor object toolbar (e2e)', () => {
             return { barTop: bar.top, barLeft: bar.left, rowBottom: row.bottom, caretBottom: caret.bottom, caretRight: caret.right, covered };
         }, BAR);
         assert.ok(geometry.barTop >= geometry.rowBottom, `not under the row: ${JSON.stringify(geometry)}`);
-        assert.deepStrictEqual(geometry.covered, [], `over no text: ${JSON.stringify(geometry)}`);
-        assert.ok(geometry.barLeft > geometry.caretRight || geometry.barTop >= geometry.caretBottom, `beside the line or below it: ${JSON.stringify(geometry)}`);
+        // Above is under the row: below, over the next line's text if need be — never on the caret's line.
+        assert.ok(geometry.barTop >= geometry.caretBottom, `below the line: ${JSON.stringify(geometry)}`);
     });
 
     test('Delete note posts the sentence with the reference in it, and says so beside the caret', async function () {
@@ -192,6 +194,9 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$(`${BAR} .mep-inline-field`), null);
         await settle();
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing was edited');
+        // Esc hid the slot until the caret leaves the note (`placement.ts`); Alt+Enter brings the bar back.
+        assert.strictEqual(await page.$(BAR), null, 'Esc hid the bar with its field');
+        await pressAlt('Enter');
 
         await clickVerb('edit-source');
         await page.keyboard.type('++beta ref|a new body++');
@@ -266,7 +271,7 @@ suite('Editor object toolbar (e2e)', () => {
             value: (document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null)?.value ?? null,
             refusal: document.querySelector(`${sel} .mep-field-refusal`)?.textContent ?? null,
         }), BAR);
-        assert.strictEqual(kept.value, '{title=x}');
+        assert.strictEqual(kept.value, 'title=x', 'one outer pair stripped as the closing brace was typed');
         assert.ok(kept.refusal?.includes('href or title'), kept.refusal ?? 'none');
         assert.strictEqual((await active()).field, true, 'the field keeps the focus');
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
@@ -364,8 +369,8 @@ suite('Editor object toolbar (e2e)', () => {
         await clickImage();
         assert.strictEqual(await page.$eval(`${BAR} [data-verb="image-attributes"]`, el => el.textContent), 'Attributes…');
         await clickVerb('image-attributes');
-        assert.deepStrictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => ({ value: (el as HTMLInputElement).value, caret: (el as HTMLInputElement).selectionStart })), { value: '{.}', caret: 2 });
-        await page.keyboard.type('hero width=300');
+        assert.deepStrictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => ({ value: (el as HTMLInputElement).value, caret: (el as HTMLInputElement).selectionStart })), { value: '', caret: 0 });
+        await page.keyboard.type('.hero width=300');
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png){.hero width=300} here.\n');
@@ -375,7 +380,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$eval(BAR, el => el.getAttribute('aria-label')), 'Image {.hero width=300}, 4 actions, arrow keys to choose');
 
         await clickVerb('image-attributes');
-        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '{.hero width=300}', 'prefilled with the literal');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '.hero width=300', 'prefilled with the literal, between the braces the field draws');
         await page.keyboard.type('{}');
         await page.keyboard.press('Enter');
         await settle();
@@ -880,9 +885,9 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.deepStrictEqual(state.verbs, ['row', 'column', 'align', 'block-attributes', 'inline-attributes', 'edit-source', 'delete-table']);
         assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Bold…', 'named as the row names **');
         await clickVerb('inline-attributes');
-        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Table · Attributes of Bold');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Bold · Attributes', 'named by the element it edits, not by the table');
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-pending-range', els => els.map(el => el.textContent).join('')), 'bold', 'the bold the field edits is drawn, not the table');
-        await page.keyboard.type('b');
+        await page.keyboard.type('.b');
         await page.keyboard.press('Enter');
         await settle();
         assert.ok((await lastEdit())?.text.includes('| **bold**{.b} |'), (await lastEdit())?.text);
@@ -931,7 +936,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
             w.holderHidden = [];
             new MutationObserver(() => w.holderHidden.push(bar.hidden)).observe(bar, { attributes: true, attributeFilter: ['hidden'] });
         });
-        await page.keyboard.type('k');
+        await page.keyboard.type('.k');
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Run `x`{.k} to skip the cache.\n');
@@ -945,7 +950,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         await showDocument('Intro.\n\n!!! note "Old title"\n    Body text here.\n\nAfter.\n', 'Body');
         await clickBefore('text here', 1);
         await page.waitForSelector(BAR, { timeout: 2000 });
-        assert.deepStrictEqual(await barState(), { object: 'admonition', label: 'Admonition note', verbs: ['edit-title', 'change-type', 'block-attributes', 'remove-admonition'] });
+        assert.deepStrictEqual(await barState(), { object: 'admonition', label: 'Note admonition', verbs: ['edit-title', 'change-type', 'block-attributes', 'remove-admonition'] });
 
         await clickVerb('change-type');
         const choice = `${BAR} select.mep-inline-choice`;

@@ -515,9 +515,9 @@ Formatting menu names (below).
   other bar shows, and the formatting row is off, saying why at its right end — in a
   source box *Editing source · Ctrl+Enter apply · Esc cancel* (`Cmd` on macOS), in a
   property's field *Editing a property · Enter apply · Esc cancel* — and pointing at that
-  when you press one of its buttons. Where it does not fit beside the buttons, it stands
-  on a thin line of its own under the row while the lock lasts, and the page makes room
-  for it once your click is done; the buttons stay where they are. A source block's box gives the focus up when it
+  when you press one of its buttons. Where it does not fit beside the buttons, it takes
+  their place in the row while the lock lasts — whole, else shortened with its keys kept
+  (*Source · Ctrl+Enter · Esc*) — and the page never moves. A source block's box gives the focus up when it
   closes (`Ctrl+Enter`, `Esc`): click into the text, and the bars are back there. A lens,
   a status badge or a link in a rendered block takes the focus without any of this.
 - The note buttons in the Annotation menu and the bubble still remove a note too: inside
@@ -673,14 +673,17 @@ A toolbar stays at the top of the editor, one line of controls across its full w
 `Block type` | `i` `em` `b` `strong` `code` | `Formatting` `Annotation` `Insert` … problems | `Export`
 
 Each menu is its name followed by VS Code's own dropdown chevron. The problem count and
-**Export** stay pinned at the right end while the row scrolls.
+**Export** stay at the right end; while an export runs, **Export** names it — *Exporting
+PDF…*, or *PDF…* in a narrow row — and its icon spins.
 
 It is drawn as part of VS Code rather than of the page: the colours of the tab strip above
 it, the workbench's font, its menus drawn as VS Code's context menus and each object's bar
 as an editor widget — every colour taken from the current theme, so a light, dark or high
 contrast theme needs nothing of its own. Every control has the same height, and nothing
-wraps: in a narrow window the row scrolls sideways, so each control stays where you learned
-it. The five marks show their real
+wraps or scrolls: in a narrow window what does not fit moves into a **…** menu — first
+Annotation, Formatting and Insert, then the marks from the right — where a mark keeps its
+glyph, word, syntax and key, and a dot on **…** says one of them is on. An object's bar and
+the selection's bubble do the same with their own **…**. The five marks show their real
 element (the italic, emphasis, bold, strong and code your stylesheets draw) as their
 glyph; rest the pointer on one, or reach it with `Tab`, and the editor's hover names it, its
 delimiter, its element and its key — *Italic (`*`, `<i>`) — Ctrl+I*, *Emphasis (`_`, `<em>`)*,
@@ -747,8 +750,9 @@ opens a submenu), choose with `Enter` and close with `Esc`.
   the document as the page shows it, unsaved changes included: a source box or a property
   value you are editing is applied first, as a save applies it. VS Code then asks only which
   exporter, where two can make the format. It is about the document, not the selection,
-  so it stays on while the rest of the row is off. While an export runs, the face reads
-  *Exporting…* and another cannot start.
+  so it stays on while the rest of the row is off. While an export runs, the face spins
+  and names the format — *Exporting PDF…*, or *PDF…* in a narrower row — and another cannot
+  start; in a row too narrow for any name Export is its icon alone, the name in its tooltip.
 
   *Limits:* a new property not yet added with `Enter` is left out, as a save leaves it out;
   and typing during the first moments of an export may still reach the exported file.
@@ -824,7 +828,8 @@ comes back. **Edit as source** and a nested row's link open the YAML between the
 lines in a box (`Ctrl+Enter` or clicking away applies, `Esc` cancels). While a row, the box
 or the header's buttons have the focus, the formatting row is off and no bar shows for what
 is selected in the text; on a button the row says *Focus is outside the text · Esc or click
-into the text*. `Esc` until the caret is back in the text, or a click into it, brings them
+into the text*, or *Outside the text* where that does not fit beside the buttons (the buttons
+move into the disabled **…** to make room; narrower still, they only dim, and their tooltips say why). `Esc` until the caret is back in the text, or a click into it, brings them
 back. A document without
 front matter has no panel; **Insert → Properties** adds one at the top and asks for the
 first key.

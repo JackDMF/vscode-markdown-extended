@@ -8,7 +8,7 @@ import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
-    INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, submenuOf, tipOf,
+    BUBBLE_OVERFLOW, INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, ROW_OVERFLOW, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, moreOrder, submenuOf, tipOf,
 } from '../../../src/editor/webview/toolbar/actions';
 import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
 import { tipText } from '../../../src/editor/tips';
@@ -331,12 +331,14 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                 assert.strictEqual(menuOf(a), 'block-type', `${a.id}: only the block types draw their label`);
                 continue;
             }
-            assert.notStrictEqual(menuOf(a), 'block-type', `${a.id}: a block type draws its label`);
+            // Block type's one entry that is no block type — Attributes of Paragraph…, after its divider — has a glyph.
+            assert.ok(menuOf(a) !== 'block-type' || a.id === 'block-type-attributes', `${a.id}: a block type draws its label`);
             if (a.glyph !== undefined && a.glyph !== null && 'text' in a.glyph) {
                 assert.ok(['{…}', '[ ]'].includes(a.glyph.text), `${a.id}: ${a.glyph.text}`);
             }
         }
         const byMenu = (menu: string) => TOOLBAR_ACTIONS.filter(a => menuOf(a) === menu && submenuOf(a) === null && a.separated).map(a => a.id);
+        assert.deepStrictEqual(byMenu('block-type'), ['block-type-attributes']);
         assert.deepStrictEqual(byMenu('formatting'), ['span-class']);
         assert.deepStrictEqual(byMenu('annotation'), ['footnote-reference']);
         assert.deepStrictEqual(byMenu('insert'), ['horizontal-rule', 'task-list', 'include']);
@@ -594,5 +596,29 @@ suite('Editor toolbar: where a block is inserted, and why the block type is lock
         const table = stateOf('| a | b |\n| - | - |\n| cell | 2 |\n');
         assert.strictEqual(table.doc.firstChild?.type.name, 'table');
         assert.strictEqual(blockLockReason(table.apply(table.tr.setSelection(TextSelection.create(table.doc, posOf(table.doc, 'cell'))))), TABLE_LOCK, 'a cell is no block to retype');
+    });
+});
+
+suite('Editor toolbar: what leaves a narrow row for "…"', () => {
+    const rowMarks = TOOLBAR_ACTIONS.filter(inRow).map(a => a.id);
+
+    test('every row control but Block type leaves exactly once: the three menus first — Annotation, Formatting, Insert — then the marks from the right', () => {
+        assert.deepStrictEqual([...ROW_OVERFLOW], ['annotation', 'formatting', 'insert', ...[...rowMarks].reverse()]);
+        assert.deepStrictEqual([...ROW_OVERFLOW].sort(), [...ROW_LAYOUT.flat().filter(g => g !== 'marks' && g !== 'block-type'), ...rowMarks].sort());
+        assert.ok(!ROW_OVERFLOW.includes('block-type'), 'Block type never leaves');
+        assert.deepStrictEqual(rowMarks, ['italic', 'emphasis', 'bold', 'strong', 'code'], 'so the marks leave as code, strong, b, em, i');
+    });
+
+    test('the bubble\'s controls leave as the row\'s do: what it adds to the marks first, from the right, then the marks from the right; each once', () => {
+        const bubble = TOOLBAR_ACTIONS.filter(inBubble).map(a => a.id);
+        const added = bubble.filter(id => !rowMarks.includes(id));
+        assert.deepStrictEqual([...BUBBLE_OVERFLOW], [...[...added].reverse(), ...[...rowMarks].reverse()]);
+        assert.deepStrictEqual([...BUBBLE_OVERFLOW].sort(), [...bubble].sort(), 'every bubble control once');
+        assert.strictEqual(BUBBLE_OVERFLOW[0], 'attrs-bubble', 'its own Attributes, drawn last, leaves first');
+    });
+
+    test('"…" lists what it holds in row order, marks before menus, whatever order they left in', () => {
+        assert.deepStrictEqual(moreOrder(['annotation', 'formatting', 'insert', 'code', 'strong']), { marks: ['strong', 'code'], menus: ['formatting', 'annotation', 'insert'] });
+        assert.deepStrictEqual(moreOrder([]), { marks: [], menus: [] });
     });
 });

@@ -115,13 +115,23 @@ suite('Editor pipe tables (e2e)', () => {
         return covered;
     }, selector, scope);
 
-    /** Whether the bubble stands just right of the table (within 20px of its edge), on the selection's line, overlapping none of it. */
-    const besideTheTable = () => page.evaluate(() => {
+    /**
+     * Whether the bubble stands under the selection's line, 4px from it, at
+     * the selection's start (`placement.ts`): the one policy, in a table as
+     * anywhere — below, since above and below are both a row of cells.
+     */
+    const belowTheSelection = () => page.evaluate(() => {
         const bubble = (document.querySelector('.mep-bubble:not([hidden])') as HTMLElement | null)?.getBoundingClientRect();
-        const table = (document.querySelector('.ProseMirror > table') as HTMLElement).getBoundingClientRect();
         const line = (document.getSelection() as Selection).getRangeAt(0).getBoundingClientRect();
-        return !!bubble && bubble.left >= table.right && bubble.left - table.right <= 20 && Math.abs(bubble.top - line.top) < 2;
+        return !!bubble && Math.abs(bubble.top - (line.bottom + 4)) < 2 && Math.abs(bubble.left - line.left) < 2;
     });
+
+    /** Where the bar stands against the table: below it, at its left, off the caret's line (`placement.ts`). */
+    const barBelowTheTable = () => page.evaluate(sel => {
+        const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+        const table = (document.querySelector('.ProseMirror > table') as HTMLElement).getBoundingClientRect();
+        return { below: bar.top >= table.bottom + 3, atLeft: Math.abs(bar.left - table.left) < 2, bar: bar.top, table: table.bottom };
+    }, BAR);
 
     /** The text of the cell the caret is in. */
     const caretCell = () => page.evaluate(() => {
@@ -244,8 +254,9 @@ suite('Editor pipe tables (e2e)', () => {
         await page.click('.mep-menu [data-action="table"]');
         await delay(100);
         assert.strictEqual(await selected(), 'Column 1');
-        assert.deepStrictEqual(await coveredText('.mep-bubble:not([hidden])'), [], 'the bubble covers no text');
-        assert.ok(await besideTheTable(), 'nor the table\'s cells, empty as they are: it stands just right of the table, on the selection\'s line');
+        // The selection a click made shows its bubble at once, under the selected cell's line.
+        await page.waitForSelector('.mep-bubble:not([hidden])', { timeout: 1000 });
+        assert.ok(await belowTheSelection(), 'the bubble stands under the selection, at its start');
         const empty = await page.$$eval('.ProseMirror td', cells => cells.map(c => {
             const r = c.getBoundingClientRect();
             return { height: r.height, width: r.width, line: getComputedStyle(c).boxShadow !== 'none' };
@@ -270,32 +281,30 @@ suite('Editor pipe tables (e2e)', () => {
         ].join('\n'));
     });
 
-    test('the table\'s bar: Row ▾, Column ▾, Align ▾, a gap, Attributes…, Edit source, a gap and Delete table; the caret\'s column tinted while it shows', async function () {
+    test('the table\'s bar: Row ▾, Column ▾, Align ▾, a gap, Attributes…, Edit source, a gap and Delete table; the caret\'s cell ringed, no tint at rest', async function () {
         this.timeout(15000);
         await showDocument(DOC, 'Alpha');
         await barFor('first');
         assert.deepStrictEqual(await barState(), { object: 'table', label: 'Table', verbs: ['row', 'column', 'align', 'block-attributes', 'edit-source', 'delete-table'] });
         const layout = await page.$eval(BAR, bar => Array.from(bar.children).map(c => (c as HTMLElement).dataset.verb ?? c.className));
         assert.deepStrictEqual(layout, ['mep-object-label', 'mep-object-separator', 'row', 'column', 'align', 'mep-object-separator', 'block-attributes', 'edit-source', 'mep-object-separator', 'delete-table']);
-        await page.waitForSelector('.mep-table-column', { timeout: 1000 });
-        const tinted = await page.$$eval('.ProseMirror .mep-table-column', els => els.map(e => e.textContent));
-        assert.deepStrictEqual(tinted, ['Kind', 'first', 'second'], 'the caret\'s column, every row of it');
-        assert.deepStrictEqual(await coveredText(BAR), [], 'the bar covers no text');
-        const beside = await page.evaluate(sel => {
-            const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
-            const table = (document.querySelector('.ProseMirror table') as HTMLElement).getBoundingClientRect();
-            return { left: bar.left, right: table.right, top: bar.top, tableTop: table.top };
-        }, BAR);
-        assert.ok(beside.left > beside.right && Math.abs(beside.top - beside.tableTop) < 2, `beside the table's first line, top-aligned: ${JSON.stringify(beside)}`);
+        // Wave 2 #4: at rest the caret's cell has a ring; a tint only while Row, Column or Align is active (codeBlock.e2e C1-C3).
+        await page.waitForSelector('.ProseMirror .mep-cell-active', { timeout: 1000 });
+        assert.deepStrictEqual(await page.$$eval('.ProseMirror .mep-cell-active', els => els.map(e => e.textContent)), ['first']);
+        assert.strictEqual(await page.$('.mep-table-column, .mep-table-row'), null, 'no tint at rest');
+        // Text above and below the table: the tie goes below (`placement.ts`).
+        const where = await barBelowTheTable();
+        assert.ok(where.below && where.atLeft, `below the table, at its left: ${JSON.stringify(where)}`);
         await shot('02-table-bar.png');
 
-        await clickAt('After', 2);
+        // Into text the bar does not stand over: it stands below the table, over "After the table." (`placement.ts`).
+        await clickAt('Intro', 2);
         await delay(100);
-        assert.strictEqual(await page.$('.mep-table-column'), null, 'the tint goes with the bar');
+        assert.strictEqual(await page.$('.mep-cell-active'), null, 'the ring goes with the caret');
         assert.strictEqual(await page.$('.ProseMirror table.mep-table-active'), null, 'and the outline with the caret');
     });
 
-    test('a block with text in every place its bar could go shows it above, right-aligned, over the line above; nothing moves', async function () {
+    test('a block with text above and below it shows its bar below, at its left; nothing moves', async function () {
         this.timeout(15000);
         // Text at the column's right edge above the container, below it, and in its own first line.
         const long = 'Inside the container, a first line of prose long enough to run across the whole width of the column and on past its right edge, so its first line is full.';
@@ -314,11 +323,9 @@ suite('Editor pipe tables (e2e)', () => {
         const where = await page.evaluate(sel => {
             const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
             const block = (document.querySelector('.ProseMirror div[data-mep-container]') as HTMLElement).getBoundingClientRect();
-            const root = document.querySelector('.ProseMirror') as HTMLElement;
-            const column = root.getBoundingClientRect().right - (parseFloat(getComputedStyle(root).paddingRight) || 0);
-            return { bottom: bar.bottom, top: block.top, right: bar.right, column };
+            return { top: bar.top, left: bar.left, blockBottom: block.bottom, blockLeft: block.left };
         }, BAR);
-        assert.ok(where.bottom <= where.top && Math.abs(where.right - where.column) < 2, `above the block, right-aligned to the column: ${JSON.stringify(where)}`);
+        assert.ok(where.top >= where.blockBottom + 3 && Math.abs(where.left - where.blockLeft) < 2, `below the block, at its left: ${JSON.stringify(where)}`);
         assert.strictEqual(await page.$('.mep-bar-room'), null, 'no room is made for it');
 
         // A block with a free place for its bar takes it, and nothing moves either: a short line ends far from it.
@@ -386,14 +393,12 @@ suite('Editor pipe tables (e2e)', () => {
         await clickAt('FRS-002', 2);
         const before = await tableTop();
         await page.waitForSelector(BAR, { timeout: 2000 });
-        await page.waitForSelector('.mep-table-column', { timeout: 1000 });
+        await page.waitForSelector('.mep-cell-active', { timeout: 1000 });
         await delay(100);
         assert.deepStrictEqual(await tableTop(), before, 'the table\'s top and the scroll are where they were before its bar showed');
-        const where = await page.evaluate(sel => ({
-            bar: (document.querySelector(sel) as HTMLElement).getBoundingClientRect().bottom,
-            table: (document.querySelector('.ProseMirror > table') as HTMLElement).getBoundingClientRect().top,
-        }), BAR);
-        assert.ok(where.bar <= where.table, `the bar stands above the table: ${JSON.stringify(where)}`);
+        // Text above (the intro under the bar's band) and below: the tie goes below.
+        const where = await barBelowTheTable();
+        assert.ok(where.below && where.atLeft, `the bar stands below the table, at its left: ${JSON.stringify(where)}`);
         await shot('02-table-bar-fullwidth.png');
     });
 
@@ -553,12 +558,17 @@ suite('Editor pipe tables (e2e)', () => {
         const raw = await (await page.$('.mep-raw-block table'))?.boundingBox();
         assert.ok(raw);
         await page.mouse.move(raw.x + raw.width / 2, raw.y + raw.height / 2);
+        await delay(200);
+        // One layer at a time, the caret's first (`placement.ts`): the source block under the pointer gets the cue, not a bar.
+        assert.strictEqual(await page.$(HOVER_BAR), null, 'no pointer\'s bar while the table\'s holds the slot');
+        assert.strictEqual((await barState()).label, 'Table', 'the native table keeps its own bar');
+        assert.strictEqual(await page.$eval('.ProseMirror > .mep-raw-block', el => el.classList.contains('mep-hover-cue')), true, 'the hover cue');
+        // Esc frees the slot: the source block's own bar shows, saying what it is.
+        await press('Escape');
         await page.waitForSelector(HOVER_BAR, { timeout: 2000 });
         assert.deepStrictEqual(await barState(HOVER_BAR), { object: 'raw_block', label: 'Source · multimd table', verbs: ['show-in-text-editor', 'edit-source', 'delete-block'] });
-        assert.strictEqual((await barState()).label, 'Table', 'the native table keeps its own bar');
         await delay(100);
         assert.deepStrictEqual(await coveredText(HOVER_BAR), [], 'the source block\'s bar covers no text');
-        assert.deepStrictEqual(await coveredText(BAR), [], 'nor does the table\'s');
         await shot('05-multimd-raw.png');
     });
 
@@ -576,8 +586,7 @@ suite('Editor pipe tables (e2e)', () => {
         await delay(INLINE_DELAY_MS + 100);
         assert.ok(await page.$('.mep-bubble:not([hidden])'), 'the bubble shows over the selected text');
         assert.strictEqual(await page.$(BAR), null, 'and no block\'s bar beside it: one thing at a time');
-        assert.deepStrictEqual(await coveredText('.mep-bubble:not([hidden])', '.ProseMirror table'), [], 'the bubble covers no row of the table');
-        assert.ok(await besideTheTable(), 'and stands just right of the table, close to the cell it acts on');
+        assert.ok(await belowTheSelection(), 'and stands under the cell\'s line, at the selection\'s start');
         await shot('07-cell-mark.png');
         await settle();
         assert.ok((await lastEdit())?.text.includes('| Beta  | **sec**ond |    22 |'), (await lastEdit())?.text);

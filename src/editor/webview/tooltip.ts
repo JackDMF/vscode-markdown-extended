@@ -15,16 +15,12 @@
  * reader sees, and the two cannot drift apart — but for a key the control's
  * `aria-keyshortcuts` names already, which is not said twice.
  */
-import { Tip, tipText, withoutKeys } from '../tips';
+import { MODIFIER_KEYS } from '../keys';
+import { Tip, TipPart, tipText, withoutKeys } from '../tips';
 import { HOVER_DELAY_MS } from './hover';
+import { placeTip } from './placement';
 
 export const TOOLTIP_CLASS = 'mep-tooltip';
-
-/** Between the control and its hover. */
-const GAP = 4;
-
-/** The keys that only modify another: none of them hides the hover, nor makes a focus the keyboard's. */
-const MODIFIERS: ReadonlySet<string> = new Set(['Shift', 'Control', 'Alt', 'Meta']);
 
 const byMount = new WeakMap<HTMLElement, Tooltips>();
 
@@ -44,7 +40,7 @@ export function describeAs(el: HTMLElement, text: string | null): void {
 
 export class Tooltips {
     private readonly el: HTMLElement;
-    private readonly tips = new WeakMap<HTMLElement, { tip: () => Tip | null; place: TipPlace }>();
+    private readonly tips = new WeakMap<HTMLElement, { tip: () => Tip | null; place: TipPlace; described: boolean }>();
     /** The control whose hover is shown. */
     private owner: HTMLElement | null = null;
     /** The control whose rest is being waited for, and the wait. */
@@ -84,7 +80,8 @@ export class Tooltips {
         // A key acts — the hover would stand over what it changes. On the window and
         // capturing, so a handler that stops the key (Esc on a card, Ctrl+S) still lets it be seen.
         this.listen(window, 'keydown', e => {
-            if (!MODIFIERS.has((e as KeyboardEvent).key)) {
+            // A modifier alone neither hides the hover nor makes a focus the keyboard's.
+            if (!MODIFIER_KEYS.has((e as KeyboardEvent).key)) {
                 this.pointerLast = false;
                 this.refocusing = false;
                 this.hide();
@@ -115,11 +112,12 @@ export class Tooltips {
      * `el` shows `tip()` on a rest and on keyboard focus, and says it as its
      * `aria-description` from now on; `null` is no hover and no description.
      * `place`: under the control, or beside it — a menu's entry, whose hover
-     * under it would cover the next entry.
+     * under it would cover the next entry. `described` false: the hover only,
+     * no `aria-description` — for a control whose `aria-label` already says it.
      */
-    attach(el: HTMLElement, tip: () => Tip | null, place: TipPlace = 'below'): void {
+    attach(el: HTMLElement, tip: () => Tip | null, place: TipPlace = 'below', described = true): void {
         const first = !this.tips.has(el);
-        this.tips.set(el, { tip, place });
+        this.tips.set(el, { tip, place, described });
         this.describe(el);
         if (!first) {
             return;
@@ -235,7 +233,11 @@ export class Tooltips {
     }
 
     private describe(el: HTMLElement): void {
-        const tip = this.tips.get(el)?.tip() ?? null;
+        const entry = this.tips.get(el);
+        if (entry?.described === false) {
+            return;
+        }
+        const tip = entry?.tip() ?? null;
         describeAs(el, tip === null ? null : tipText(el.hasAttribute('aria-keyshortcuts') ? withoutKeys(tip) : tip));
     }
 
@@ -264,34 +266,38 @@ export class Tooltips {
     }
 
     /**
-     * The shown hover under `el`, its left edge at the control's, kept inside
-     * the window — above the control where there is no room below; or,
-     * `beside`, right of it at its top, left of it where there is no room right.
+     * The shown hover under `el`, its left edge at the control's — above the
+     * control where there is no room below; or, `beside`, right of it at its
+     * top, left of it where there is no room right: the one policy
+     * (`placement.ts`, `placeTip`), in the window's frame.
      */
     private position(el: HTMLElement): void {
-        const place = this.tips.get(el)?.place ?? 'below';
+        // Measured at the window's corner: its width is its own, not what room is left where it stood.
         this.el.style.left = '0px';
         this.el.style.top = '0px';
-        const r = el.getBoundingClientRect();
-        const width = this.el.offsetWidth;
-        const height = this.el.offsetHeight;
-        let left: number;
-        let top: number;
-        if (place === 'beside') {
-            left = r.right + GAP + width <= window.innerWidth ? r.right + GAP : r.left - GAP - width;
-            top = r.top;
-        } else {
-            const below = r.bottom + GAP;
-            left = r.left;
-            top = below + height <= window.innerHeight ? below : r.top - GAP - height;
-        }
-        this.el.style.left = `${Math.max(0, Math.min(left, window.innerWidth - width))}px`;
-        this.el.style.top = `${Math.max(0, Math.min(top, window.innerHeight - height))}px`;
+        placeTip(this.el, el, this.tips.get(el)?.place ?? 'below');
     }
 }
 
 /** Where a control's hover stands: under it, or beside it. */
 export type TipPlace = 'below' | 'beside';
+
+/**
+ * One part of a tip drawn: words as text, a `code` part in `<code>`, a key chord spelled as `tipText`
+ * spells it (` — Ctrl+I`). The one renderer of a part — the tip's note and the field's aside (a keys
+ * line, a refusal's reason, `FieldRow`) draw with it; the tip's own line sets a chord apart as chips instead.
+ */
+export function partNode(part: TipPart): string | Node {
+    if (typeof part === 'string') {
+        return part;
+    }
+    if ('code' in part) {
+        const code = document.createElement('code');
+        code.textContent = part.code;
+        return code;
+    }
+    return ` — ${part.keys}`;
+}
 
 /** A tip's nodes: its words with the code parts in `<code>`, the keys as keybinding labels, the note on a line of its own. */
 function drawTip(tip: Tip): Node[] {
@@ -299,12 +305,8 @@ function drawTip(tip: Tip): Node[] {
     line.className = 'mep-tip-line';
     const nodes: Node[] = [line];
     for (const part of tip.parts) {
-        if (typeof part === 'string') {
-            line.append(part);
-        } else if ('code' in part) {
-            const code = document.createElement('code');
-            code.textContent = part.code;
-            line.append(code);
+        if (typeof part === 'string' || 'code' in part) {
+            line.append(partNode(part));
         } else {
             const keys = document.createElement('span');
             keys.className = 'mep-keys';
@@ -322,10 +324,15 @@ function drawTip(tip: Tip): Node[] {
             nodes.push(keys);
         }
     }
-    if (tip.note) {
+    if (tip.note && tip.note.length > 0) {
         const note = document.createElement('span');
         note.className = 'mep-tip-note';
-        note.textContent = tip.note;
+        if (typeof tip.note === 'string') {
+            note.textContent = tip.note;
+        } else {
+            // A note that names syntax sets it in the code font, as the line does; a key chord is spelled as `tipText` spells it.
+            note.append(...tip.note.map(partNode));
+        }
         nodes.push(note);
     }
     return nodes;

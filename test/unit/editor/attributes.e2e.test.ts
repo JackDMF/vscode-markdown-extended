@@ -4,7 +4,9 @@ import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } from '../../../src/editor/webview/attributes';
+import { keysLine } from '../../../src/editor/attributeLiteral';
+import { tipText } from '../../../src/editor/tips';
+import { ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } from '../../../src/editor/webview/attributes';
 import { CONTAINER_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
 import { INLINE_ATTRS_LOCK } from '../../../src/editor/webview/toolbar/actions';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
@@ -79,7 +81,7 @@ const ENTRY = '.mep-menu [data-action="block-attributes"]';
 /**
  * **Formatting → Attributes…** and the bars' verb of the same name in the real
  * page: the field opens at the block the caret is in, named after it,
- * prefilled `{.}`; `Enter` writes the literal where markdown-it-attrs reads it
+ * empty between the braces it draws; `Enter` writes the literal where markdown-it-attrs reads it
  * for that block and the page draws the class at once; `Esc` changes nothing;
  * where no literal can go, the entry is disabled and says why.
  */
@@ -199,8 +201,8 @@ suite('Editor Attributes… (e2e)', () => {
                 focused: document.activeElement === input,
             };
         }, FIELD);
-        assert.deepStrictEqual(opened, { heading: 'Paragraph · Attributes', value: '{.}', caret: [2, 2], focused: true });
-        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-field-keys`, el => el.textContent), ATTRIBUTES_FIELD_KEYS, 'the keys and the syntax at the field\'s right');
+        assert.deepStrictEqual(opened, { heading: 'Paragraph · Attributes', value: '', caret: [0, 0], focused: true });
+        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-field-keys`, el => el.textContent), tipText({ parts: keysLine({ kind: 'set', hadLiteral: false }) }), 'the keys and the syntax at the field\'s right');
         const placed = await page.evaluate(sel => {
             const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
             const para = Array.from(document.querySelectorAll('.ProseMirror p')).find(p => p.textContent?.includes('configurable')) as HTMLElement;
@@ -209,7 +211,7 @@ suite('Editor Attributes… (e2e)', () => {
         }, FIELD_BAR);
         assert.ok(placed.barTop >= placed.paraTop - 60 && placed.barTop <= placed.paraBottom + 60, `at the paragraph: ${JSON.stringify(placed)}`);
 
-        await page.keyboard.type('note-');
+        await page.keyboard.type('.note-');
         await shot('02-field-on-paragraph.png');
         await page.keyboard.press('Backspace');
         await page.keyboard.press('Enter');
@@ -228,7 +230,7 @@ suite('Editor Attributes… (e2e)', () => {
         await openFormatting();
         await page.click(ENTRY);
         await page.waitForSelector(FIELD, { visible: true });
-        assert.strictEqual(await page.$eval(FIELD, el => (el as HTMLInputElement).value), '{.note}');
+        assert.strictEqual(await page.$eval(FIELD, el => (el as HTMLInputElement).value), '.note', 'the literal between the braces the field draws');
         await page.keyboard.type('{}');
         await page.keyboard.press('Enter');
         await settle();
@@ -257,8 +259,8 @@ suite('Editor Attributes… (e2e)', () => {
         await clickVerb('block-attributes');
         const field = `${BAR} .mep-inline-field`;
         await page.waitForSelector(field, { visible: true });
-        assert.deepStrictEqual(await page.$eval(field, el => [(el as HTMLInputElement).value, (el as HTMLInputElement).selectionStart]), ['{.}', 2]);
-        await page.keyboard.type('wide');
+        assert.deepStrictEqual(await page.$eval(field, el => [(el as HTMLInputElement).value, (el as HTMLInputElement).selectionStart]), ['', 0]);
+        await page.keyboard.type('.wide');
         await page.keyboard.press('Enter');
         await settle();
         assert.ok((await lastEdit())?.text.startsWith('## Overview {.wide}\n'), (await lastEdit())?.text);
@@ -272,7 +274,7 @@ suite('Editor Attributes… (e2e)', () => {
         await page.waitForSelector(BAR, { visible: true, timeout: INLINE_DELAY_MS + 2000 });
         await clickVerb('block-attributes');
         await page.waitForSelector(`${BAR} .mep-inline-field`, { visible: true });
-        await page.keyboard.type('wide');
+        await page.keyboard.type('.wide');
         await page.keyboard.press('Enter');
         await settle();
         assert.ok((await lastEdit())?.text.includes(`${TABLE}\n\n{.wide}\n\n<div>`), (await lastEdit())?.text);
@@ -301,14 +303,14 @@ suite('Editor Attributes… (e2e)', () => {
         await page.click(INLINE);
         await page.waitForSelector(FIELD, { visible: true });
         assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-object-label`, el => el.textContent), 'Code · Attributes');
-        await page.keyboard.type('k');
+        await page.keyboard.type('.k');
         await page.keyboard.press('Enter');
         await settle();
         assert.ok((await lastEdit())?.text.startsWith('Run `x`{.k} now'), (await lastEdit())?.text);
         assert.ok(await page.$('.ProseMirror code.k'));
     });
 
-    test('a refused literal keeps the field open with what was typed and the reason beside it; Esc then closes it', async function () {
+    test('a refused literal keeps the field open with what was typed, the keys line and the reason under it; Esc then closes it', async function () {
         this.timeout(15000);
         await showDocument(DOC);
         const before = (await (editor as EditorPage).edits()).length;
@@ -316,9 +318,8 @@ suite('Editor Attributes… (e2e)', () => {
         await openFormatting();
         await page.click(ENTRY);
         await page.waitForSelector(FIELD, { visible: true });
-        // `{.}`, the caret after the dot: `{.a` is typed by taking the `}` away.
-        await page.keyboard.press('Delete');
-        await page.keyboard.type('a');
+        // The braces are the field's: an open quote is what leaves the list unclosed.
+        await page.keyboard.type('title="a');
         await page.keyboard.press('Enter');
         await delay(100);
         const kept = await page.evaluate(sel => {
@@ -333,8 +334,9 @@ suite('Editor Attributes… (e2e)', () => {
                 refusal: refusal?.textContent ?? null,
             };
         }, FIELD_BAR);
-        assert.deepStrictEqual({ ...kept, refusal: null }, { value: '{.a', focused: true, selected: [3, 3], role: 'alert', keys: false, refusal: null });
-        assert.ok(kept.refusal?.includes('is not closed'), kept.refusal ?? 'none');
+        // Read once, as the focus enters the field shown again (`aria-describedby`), not announced a second time.
+        assert.deepStrictEqual({ ...kept, refusal: null }, { value: 'title="a', focused: true, selected: [8, 8], role: null, keys: true, refusal: null });
+        assert.strictEqual(kept.refusal, 'title="a has an open quote: close it with ".');
         await shot('06-refusal-kept-open.png');
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
         await page.keyboard.press('Escape');
@@ -370,6 +372,11 @@ suite('Editor Attributes… (e2e)', () => {
         assert.strictEqual(onRaw.disabled, true);
         assert.match(onRaw.title, /source block is edited as Markdown/);
 
+        // The source block's bar stands below it, over the container's first line (`placement.ts`): Esc hides
+        // it first — the pointer moved off the block, or its own bar would take the slot once it is free.
+        await page.mouse.move(2, 2);
+        await page.keyboard.press('Escape');
+        await delay(400);
         await clickAt('Inside the container', 3);
         await openFormatting();
         const inContainer = await entryState();

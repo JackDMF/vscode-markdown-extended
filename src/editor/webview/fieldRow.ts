@@ -1,0 +1,219 @@
+/**
+ * The row a bar draws while it shows a field: its heading and divider, the
+ * field, and the aside — the keys line, a refusal's reason. One drawer for
+ * both owners of a field bar, the object bars (`ObjectBar.openField`) and the
+ * formatting row's field bar (`ToolbarView.openFieldBar`): each keeps its own
+ * lifecycle — the commit, the cancel, the next step, its claim on the slot —
+ * and hands the drawing here, so what the row says and how it is announced
+ * cannot differ between them.
+ *
+ * Two heading rules, one per kind of field, chosen by the step: a field that
+ * edits a value of its object is headed by the object and the value
+ * (`fieldHeading`: *Link · Address*, *Code block · Language*); an attributes
+ * field by the element whose attributes it edits (`FieldStep.heading`,
+ * `attributesTitle`: *Bold · Attributes*), whichever bar opened it.
+ *
+ * The keys line stays while the field is open. A refusal adds its reason on a
+ * line of its own under the field — the input marked `aria-invalid` and
+ * described by the reason — until the next edit takes it away. The refused
+ * value comes back in a new input that takes the focus (`refusedStep`), so the
+ * reason is read once, as the focus enters it: no `role="alert"` besides,
+ * which would say it a second time. Where the bar's room is too narrow for the
+ * keys line beside the field, it goes under the field (`mep-narrow`, `fit`).
+ */
+import type { TipPart } from '../tips';
+import type { FieldStep, InlineChoice, InlineField, KeysLine } from './inlineField';
+import { partNode } from './tooltip';
+
+let rowSeq = 0;
+
+/** A keys line's parts drawn: words as text, a `code` part in the code font — the tips' own renderer (`partNode`). */
+function drawParts(el: HTMLElement, parts: readonly TipPart[]): void {
+    el.replaceChildren(...parts.map(partNode));
+}
+
+/** The keys line of `step` for the value as it is now; `null` when it has none. */
+function keysOf(step: FieldStep, value: string): KeysLine | null {
+    const keys = typeof step.keys === 'function' ? step.keys(value) : step.keys;
+    return keys === undefined || keys === '' ? null : keys;
+}
+
+/** One bar's field row: drawn by `render`, redrawn as the value changes (`changed`), fitted to the room before it is placed (`fit`). */
+export class FieldRow {
+    private readonly id = ++rowSeq;
+    private keys: HTMLElement | null = null;
+    private reason: HTMLElement | null = null;
+    /** What the keys line says now, as one string: it is redrawn only when that changes. */
+    private said: string | null = null;
+    /** What the last fit measured (`fit`): the room and what the row says. Measuring again before any of it changed would only force a layout. */
+    private fitted = '';
+
+    /**
+     * `head`: what stands before the field — the heading and its divider — as
+     * the owner made them; `step`: the field's step, `null` for a choice
+     * (which has no aside); `events.contentChanged`: the row changed size, the
+     * owner's slot places it again.
+     */
+    constructor(
+        private readonly bar: HTMLElement,
+        private readonly head: readonly HTMLElement[],
+        private readonly field: InlineField | InlineChoice,
+        private readonly step: FieldStep | null,
+        private readonly events: { contentChanged(): void },
+    ) {}
+
+    /** The heading, the field, the keys line and a refusal's reason, in place of whatever the bar showed. */
+    render(): void {
+        const step = this.step;
+        this.bar.classList.add('mep-field-bar');
+        this.bar.classList.toggle('mep-attr-bar', step?.adorn !== undefined);
+        this.bar.classList.remove('mep-narrow', 'mep-title-alone', 'mep-refused');
+        this.keys = null;
+        this.reason = null;
+        this.said = null;
+        this.fitted = '';
+        if (step !== null) {
+            this.drawKeys(this.field.el.value);
+            if (step.refusal) {
+                const el = document.createElement('span');
+                el.className = 'mep-field-refusal';
+                el.id = `mep-field-reason-${this.id}`;
+                // The line takes the row; its text is the capped, amber-marked box inside it (`.mep-field-refusal-text`).
+                const text = document.createElement('span');
+                text.className = 'mep-field-refusal-text';
+                if (step.refusalParts) {
+                    drawParts(text, step.refusalParts(step.refusal, step.value));
+                } else {
+                    text.textContent = step.refusal;
+                }
+                el.append(text);
+                this.reason = el;
+            }
+        }
+        this.bar.replaceChildren(...this.head, this.field.box, ...(this.keys ? [this.keys] : []), ...(this.reason ? [this.reason] : []));
+        // The input is named by the heading — the element and the value, *Bold · Attributes* — so whichever bar opened it, a screen reader says what it edits. The heading may be hidden for room: a reference reads it all the same.
+        const heading = this.head[0];
+        if (heading === undefined) {
+            this.field.el.removeAttribute('aria-labelledby');
+        } else {
+            heading.id = `mep-field-heading-${this.id}`;
+            this.field.el.setAttribute('aria-labelledby', heading.id);
+        }
+        this.describe();
+    }
+
+    /** The value changed: the keys line says what Enter does with it now, and a refusal's reason goes. */
+    changed(value: string): void {
+        if (this.step === null) {
+            return;
+        }
+        const redrawn = this.drawKeys(value);
+        const refused = this.reason !== null;
+        if (refused) {
+            this.reason?.remove();
+            this.reason = null;
+            this.describe();
+        }
+        if (redrawn || refused) {
+            this.events.contentChanged();
+        }
+    }
+
+    /**
+     * Before the bar is placed, at most `room` wide: measured at the mount's
+     * left edge (an absolute box's room is what lies right of its `left`), a
+     * keys line that no longer fits beside the field goes under it; a field
+     * that no longer fits beside the title goes under that, and the title,
+     * alone on its row, takes its divider with it (`mep-title-alone`).
+     *
+     * The two answers depend on each other — the divider's width decides whether the field
+     * fits beside the title, and whether the keys line is under the field decides how wide
+     * the field is — so each class, once measured on, stays on while the other is measured
+     * again with it applied: they settle in a pass or two, and cannot flap. Measured again
+     * only when the room or what the row says changed since the last time (or `fresh`: a
+     * font loaded and the widths with it); the same row at the same room fits the same.
+     */
+    fit(room: number, fresh = false): void {
+        const title = this.head[0];
+        const signature = [Math.floor(room), this.bar.isConnected, this.said ?? '', this.reason?.textContent ?? '', title?.textContent ?? '', title?.hidden === true].join('|');
+        if (!fresh && signature === this.fitted) {
+            return;
+        }
+        this.fitted = signature;
+        this.bar.style.maxWidth = `${Math.floor(room)}px`;
+        this.bar.classList.remove('mep-narrow', 'mep-title-alone');
+        const left = this.bar.style.left;
+        this.bar.style.left = '0px';
+        const box = this.field.box;
+        const keys = this.keys;
+        const titleAlone = () => title !== undefined && !title.hidden && box.offsetTop >= title.offsetTop + title.offsetHeight - 1;
+        const keysUnder = () => keys !== null && box.offsetTop + box.offsetHeight - 1 <= keys.offsetTop;
+        for (let pass = 0; pass < 3; pass++) {
+            const before = this.bar.className;
+            if (titleAlone()) {
+                this.bar.classList.add('mep-title-alone');
+            }
+            if (keysUnder()) {
+                this.bar.classList.add('mep-narrow');
+            }
+            if (this.bar.className === before) {
+                break;
+            }
+        }
+        this.bar.style.left = left;
+    }
+
+    /** The field went: the bar is its owner's again. */
+    destroy(): void {
+        this.bar.classList.remove('mep-field-bar', 'mep-attr-bar', 'mep-narrow', 'mep-title-alone', 'mep-refused');
+    }
+
+    /** The keys line for `value`, drawn anew when what it says changed; true when it did (its width may have). */
+    private drawKeys(value: string): boolean {
+        const keys = this.step === null ? null : keysOf(this.step, value);
+        const parts: readonly TipPart[] = keys === null ? [] : typeof keys === 'string' ? [keys] : 'parts' in keys ? keys.parts : keys;
+        const removes = keys !== null && typeof keys !== 'string' && 'removes' in keys;
+        const said = keys === null ? '' : JSON.stringify([parts, removes]);
+        if (said === this.said) {
+            return false;
+        }
+        this.said = said;
+        if (keys === null) {
+            this.keys?.remove();
+            this.keys = null;
+            this.describe();
+            return true;
+        }
+        const el = this.keys ?? document.createElement('span');
+        el.className = 'mep-field-keys';
+        el.id = `mep-field-keys-${this.id}`;
+        // Read as the field's description (`aria-describedby`), not as text of its own.
+        el.setAttribute('aria-hidden', 'true');
+        el.classList.toggle('mep-keys-removes', removes);
+        drawParts(el, parts);
+        if (this.keys === null && this.field.box.isConnected) {
+            this.field.box.after(el);
+        }
+        this.keys = el;
+        this.describe();
+        return true;
+    }
+
+    /** The input described by the refusal's reason while there is one, else by the keys line; invalid while refused. */
+    private describe(): void {
+        const input = this.field.el;
+        const by = this.reason ?? this.keys;
+        if (by === null) {
+            input.removeAttribute('aria-describedby');
+        } else {
+            input.setAttribute('aria-describedby', by.id);
+        }
+        if (this.reason !== null) {
+            input.setAttribute('aria-invalid', 'true');
+        } else {
+            input.removeAttribute('aria-invalid');
+        }
+        // The frame of an attributes field turns amber with it (`mep-attr-bar`, `mep-refused`).
+        this.bar.classList.toggle('mep-refused', this.reason !== null);
+    }
+}

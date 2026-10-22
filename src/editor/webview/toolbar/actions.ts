@@ -98,14 +98,16 @@ export type ActionApply =
     | { kind: 'wrap-node'; node: NoteNodeName }
     | { kind: 'block'; node: BlockTarget; level?: number }
     /**
-     * An attribute span made of the selection (`[text]{…}`): the inline field
-     * asks for the literal, prefilled `{.}` with the caret after the dot.
+     * An attribute span made of the selection (`[text]{…}`): the attributes
+     * field asks for what goes between the braces it draws, empty, `.class`
+     * its placeholder (`attributesField`).
      */
     | { kind: 'attr-span' }
     /**
      * The `{…}` literal of the block at the caret (`attributesTargetAt`): the
-     * inline field asks for it, prefilled with the block's literal, or `{.}`
-     * with the caret after the dot when it has none; `{}` removes it.
+     * attributes field asks for it — the block's literal between the braces
+     * the field draws, or empty with the placeholder `.class` when it has
+     * none; an emptied field removes it.
      */
     | { kind: 'block-attrs' }
     /**
@@ -409,11 +411,22 @@ const M = INLINE_MARKERS;
 /** The literal the attribute entries, the bubble's `{…}` and their tooltips write a class with. */
 export const CLASS_LITERAL = '{.class}';
 
-/** What the span action's field starts with, and where its caret goes: after the dot, to type the class. */
-export const SPAN_FIELD_PREFILL = { value: '{.}', caret: 2 } as const;
-
 /** The literal the block-attributes entry's example is written with. */
 const BLOCK_LITERAL_EXAMPLE = '{.x}';
+
+/**
+ * **Attributes of Block…** as both menus offer it — Formatting and Block type:
+ * named by the block (`Attributes of Paragraph…`); refused, `Attributes of
+ * Block…`; one syntax, sample, example and card.
+ */
+const BLOCK_ATTRIBUTES = {
+    named: true, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`, glyph: { text: '{…}' },
+    sample: el('p.x', 'Attributes…'), apply: { kind: 'block-attrs' }, example: `Attributes… ${BLOCK_LITERAL_EXAMPLE}`,
+    preview: {
+        markdown: 'A paragraph with a class of its own. {.lead}',
+        nodes: [el('p.lead', 'A paragraph with a class of its own.')],
+    },
+} satisfies Omit<ToolbarAction, 'id' | 'place'>;
 
 
 /** Why Attributes of Code… is disabled: nothing inline at the caret carries a {…}. */
@@ -447,17 +460,17 @@ const formatting: ToolbarAction[] = [
             nodes: [el('p', 'Run ', el('code.k', '--flag'), ' to skip the cache.')],
         },
     },
-    {
-        // markdown-it-attrs on the block at the caret: written where the plugin reads it for that block.
-        // Named by the block (`Attributes of Paragraph…`); refused, `Attributes of Block…`.
-        id: 'block-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`, glyph: { text: '{…}' },
-        sample: el('p.x', 'Attributes…'), apply: { kind: 'block-attrs' }, example: `Attributes… ${BLOCK_LITERAL_EXAMPLE}`,
-        preview: {
-            markdown: 'A paragraph with a class of its own. {.lead}',
-            nodes: [el('p.lead', 'A paragraph with a class of its own.')],
-        },
-    },
+    // markdown-it-attrs on the block at the caret: written where the plugin reads it for that block.
+    { id: 'block-attributes', place: { menu: 'formatting' }, ...BLOCK_ATTRIBUTES },
 ];
+
+/**
+ * The Block type menu's way to the same field, last, after a divider (Daniel,
+ * wave 2 #13): one entry in two menus, so its label, its state and its card
+ * are Formatting's (`BLOCK_ATTRIBUTES`, `stateOf`'s `block-attrs`). A plain
+ * entry, not one of the menu's block types: it is never the current one.
+ */
+const blockTypeAttributes: ToolbarAction = { id: 'block-type-attributes', place: { menu: 'block-type' }, separated: true, ...BLOCK_ATTRIBUTES };
 
 // ---------------------------------------------------------------------------
 // Annotations — notes and sidebars, edited in place; the footnote as source
@@ -542,7 +555,8 @@ function insertAction(id: string, label: string, template: string, sample: Sampl
     return { id, place: { menu: 'insert' }, label, syntax: template, sample, apply: { kind: 'insert-source', template }, example, preview, ...look };
 }
 
-function titleOf(type: string): string {
+/** An admonition type as the Insert menu and the bars spell it: `warning` → `Warning`. */
+export function titleOf(type: string): string {
     return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
@@ -723,10 +737,52 @@ const bubbleOnly: ToolbarAction[] = [
     },
 ];
 
-export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, ...formatting, ...annotations, ...insert, ...bubbleOnly];
+export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, blockTypeAttributes, ...formatting, ...annotations, ...insert, ...bubbleOnly];
 
 /** The row, left to right; hairlines between the groups. */
 export const ROW_LAYOUT: readonly (readonly ('marks' | ToolbarMenu)[])[] = [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']];
+
+/** A control of the row: a mark action's id, or a menu. */
+export type RowControl = ToolbarMenu | string;
+
+const ROW_MENUS = ROW_LAYOUT.flat().filter((g): g is ToolbarMenu => g !== 'marks');
+const ROW_MARKS = TOOLBAR_ACTIONS.filter(inRow).map(a => a.id);
+
+/**
+ * The order controls leave the row for "…" when it is too narrow (Daniel,
+ * 2026-10-19): the three menus — Annotation, Formatting, Insert — then the
+ * marks one at a time from the right. Block type never leaves. The mark order
+ * is `ROW_LAYOUT`'s, reversed — not written twice.
+ */
+export const ROW_OVERFLOW: readonly RowControl[] = ['annotation', 'formatting', 'insert', ...[...ROW_MARKS].reverse()];
+
+/** The order "…" lists what it holds: the marks in row order, then (after a divider) the menus in row order. */
+export function moreOrder(moved: readonly RowControl[]): { marks: string[]; menus: ToolbarMenu[] } {
+    return {
+        marks: ROW_MARKS.filter(id => moved.includes(id)),
+        menus: ROW_MENUS.filter(id => moved.includes(id)),
+    };
+}
+
+const BUBBLE_ITEMS = TOOLBAR_ACTIONS.filter(inBubble).map(a => a.id);
+
+/**
+ * The order the bubble's controls leave it for its "…" where it is too
+ * narrow (Daniel, 2026-10-20: the bubble gets the row's overflow), derived as
+ * the row's is: what the bubble adds to the row's marks leaves first — the
+ * extension's marks, the notes and Attributes — from the right, as the row's
+ * menus leave before its marks; then the row's own marks, from the right, in
+ * `ROW_OVERFLOW`'s order. The marks with keys stay longest.
+ */
+export const BUBBLE_OVERFLOW: readonly string[] = [
+    ...BUBBLE_ITEMS.filter(id => !ROW_MARKS.includes(id)).reverse(),
+    ...ROW_OVERFLOW.filter(id => ROW_MARKS.includes(id)),
+];
+
+/** Whether a bubble control is one of the row's marks: "…" lists those first, the rest after a divider. */
+export function isRowMark(id: string): boolean {
+    return ROW_MARKS.includes(id);
+}
 
 /** What a menu's face says (the block-type face says the current type instead, when there is one). */
 export const MENU_LABELS: Readonly<Record<ToolbarMenu | ToolbarSubmenu, string>> = {
