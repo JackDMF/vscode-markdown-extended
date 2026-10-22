@@ -268,6 +268,9 @@ function resyntax(item: HTMLElement, syntax: string): void {
 /** What the span's entry, and the bubble's `{…}` outside an element, are called (`actions.ts`). */
 const SPAN_LABEL = TOOLBAR_ACTIONS.find(a => a.apply.kind === 'attr-span')?.label ?? 'Span with class…';
 
+/** The bubble's `{…}` within an element's run says what it does over plain text as well (wave 2 #13). */
+const SPAN_NOTE = `Over plain text: ${SPAN_LABEL} — [text]${CLASS_LITERAL}`;
+
 /** Why Span with class makes no span where its literal alone is fine: the note around it, or the block read whole, would not hold it. */
 const SPAN_REFUSED = 'These attributes cannot be given to this text here.';
 
@@ -362,8 +365,9 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
             const inline = currentReadsAttrs() && !state.selection.empty ? attributeHolderAt(state).inline : null;
             // Never drawn as on: it is no toggle. What it targets is its name and its tooltip.
             if (inline !== null) {
+                // What it does over plain text too, on a line of its own: the same button makes a span there.
                 const entry = inlineEntry(inline);
-                return { enabled: true, active: false, reason: null, tip: { parts: [`${entry.label} — `, { code: entry.syntax }] }, ariaLabel: entry.label };
+                return { enabled: true, active: false, reason: null, tip: { parts: [`${entry.label} — `, { code: entry.syntax }], note: SPAN_NOTE }, ariaLabel: entry.label };
             }
             const reason = spanLockReason(state);
             return { enabled: reason === null, active: false, reason, tip: { parts: [`${SPAN_LABEL} — `, { code: `[text]${CLASS_LITERAL}` }] }, ariaLabel: SPAN_LABEL };
@@ -663,7 +667,8 @@ class ToolbarView implements PluginView {
                 }
                 continue;
             }
-            this.tipOfControl.set(tool.el, s.tip ? { ...s.tip, note } : tipOf(tool.action, { label: s.label, reason: note, mac }));
+            // A refusal is the note when there is one; else the tip's own (the bubble's {…} over plain text).
+            this.tipOfControl.set(tool.el, s.tip ? { ...s.tip, note: note ?? s.tip.note ?? null } : tipOf(tool.action, { label: s.label, reason: note, mac }));
             this.tips.refresh(tool.el);
             if (s.ariaLabel !== undefined) {
                 tool.el.setAttribute('aria-label', s.ariaLabel);

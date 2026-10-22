@@ -412,6 +412,20 @@ export const CLASS_LITERAL = '{.class}';
 /** The literal the block-attributes entry's example is written with. */
 const BLOCK_LITERAL_EXAMPLE = '{.x}';
 
+/**
+ * **Attributes of Block…** as both menus offer it — Formatting and Block type:
+ * named by the block (`Attributes of Paragraph…`); refused, `Attributes of
+ * Block…`; one syntax, sample, example and card.
+ */
+const BLOCK_ATTRIBUTES = {
+    named: true, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`, glyph: { text: '{…}' },
+    sample: el('p.x', 'Attributes…'), apply: { kind: 'block-attrs' }, example: `Attributes… ${BLOCK_LITERAL_EXAMPLE}`,
+    preview: {
+        markdown: 'A paragraph with a class of its own. {.lead}',
+        nodes: [el('p.lead', 'A paragraph with a class of its own.')],
+    },
+} satisfies Omit<ToolbarAction, 'id' | 'place'>;
+
 
 /** Why Attributes of Code… is disabled: nothing inline at the caret carries a {…}. */
 export const INLINE_ATTRS_LOCK = 'Put the caret in code, a key, a link, emphasis, superscript, subscript, a highlight or a span, or select an image. Alt+Enter opens its bar.';
@@ -444,17 +458,17 @@ const formatting: ToolbarAction[] = [
             nodes: [el('p', 'Run ', el('code.k', '--flag'), ' to skip the cache.')],
         },
     },
-    {
-        // markdown-it-attrs on the block at the caret: written where the plugin reads it for that block.
-        // Named by the block (`Attributes of Paragraph…`); refused, `Attributes of Block…`.
-        id: 'block-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Block…', syntax: `text ${CLASS_LITERAL}`, glyph: { text: '{…}' },
-        sample: el('p.x', 'Attributes…'), apply: { kind: 'block-attrs' }, example: `Attributes… ${BLOCK_LITERAL_EXAMPLE}`,
-        preview: {
-            markdown: 'A paragraph with a class of its own. {.lead}',
-            nodes: [el('p.lead', 'A paragraph with a class of its own.')],
-        },
-    },
+    // markdown-it-attrs on the block at the caret: written where the plugin reads it for that block.
+    { id: 'block-attributes', place: { menu: 'formatting' }, ...BLOCK_ATTRIBUTES },
 ];
+
+/**
+ * The Block type menu's way to the same field, last, after a divider (Daniel,
+ * wave 2 #13): one entry in two menus, so its label, its state and its card
+ * are Formatting's (`BLOCK_ATTRIBUTES`, `stateOf`'s `block-attrs`). A plain
+ * entry, not one of the menu's block types: it is never the current one.
+ */
+const blockTypeAttributes: ToolbarAction = { id: 'block-type-attributes', place: { menu: 'block-type' }, separated: true, ...BLOCK_ATTRIBUTES };
 
 // ---------------------------------------------------------------------------
 // Annotations — notes and sidebars, edited in place; the footnote as source
@@ -721,7 +735,7 @@ const bubbleOnly: ToolbarAction[] = [
     },
 ];
 
-export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, ...formatting, ...annotations, ...insert, ...bubbleOnly];
+export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [...marks, ...blockTypes, blockTypeAttributes, ...formatting, ...annotations, ...insert, ...bubbleOnly];
 
 /** The row, left to right; hairlines between the groups. */
 export const ROW_LAYOUT: readonly (readonly ('marks' | ToolbarMenu)[])[] = [['block-type'], ['marks'], ['formatting', 'annotation', 'insert']];

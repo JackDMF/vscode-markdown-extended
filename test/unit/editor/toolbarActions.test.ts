@@ -331,12 +331,14 @@ suite('Editor toolbar: every action makes the element it shows', () => {
                 assert.strictEqual(menuOf(a), 'block-type', `${a.id}: only the block types draw their label`);
                 continue;
             }
-            assert.notStrictEqual(menuOf(a), 'block-type', `${a.id}: a block type draws its label`);
+            // Block type's one entry that is no block type — Attributes of Paragraph…, after its divider — has a glyph.
+            assert.ok(menuOf(a) !== 'block-type' || a.id === 'block-type-attributes', `${a.id}: a block type draws its label`);
             if (a.glyph !== undefined && a.glyph !== null && 'text' in a.glyph) {
                 assert.ok(['{…}', '[ ]'].includes(a.glyph.text), `${a.id}: ${a.glyph.text}`);
             }
         }
         const byMenu = (menu: string) => TOOLBAR_ACTIONS.filter(a => menuOf(a) === menu && submenuOf(a) === null && a.separated).map(a => a.id);
+        assert.deepStrictEqual(byMenu('block-type'), ['block-type-attributes']);
         assert.deepStrictEqual(byMenu('formatting'), ['span-class']);
         assert.deepStrictEqual(byMenu('annotation'), ['footnote-reference']);
         assert.deepStrictEqual(byMenu('insert'), ['horizontal-rule', 'task-list', 'include']);

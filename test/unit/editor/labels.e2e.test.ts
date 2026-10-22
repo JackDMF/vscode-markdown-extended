@@ -265,7 +265,7 @@ suite('Editor labels, menus and states (e2e)', () => {
             await delay(200);
             const tool = await page.$eval('.mep-bubble [data-action="attrs-bubble"]', el => [el.classList.contains('mep-active'), el.getAttribute('aria-label')]);
             assert.deepStrictEqual(tool, [false, 'Attributes of Bold…']);
-            assert.strictEqual(await describedTip(page, '.mep-bubble [data-action="attrs-bubble"]'), 'Attributes of Bold… — **text**{.class}');
+            assert.strictEqual(await describedTip(page, '.mep-bubble [data-action="attrs-bubble"]'), 'Attributes of Bold… — **text**{.class}\nOver plain text: Span with class… — [text]{.class}');
             assert.strictEqual((await style('.mep-bubble', 'padding-top'))['padding-top'], '4px');
             await pointTo('.mep-bubble [data-action="attrs-bubble"]', 700);
         });
