@@ -51,6 +51,8 @@ export interface FieldStep {
     adorn?: FieldAdorn;
     /** Why what was typed was refused: drawn under the field, the keys line kept, until the next edit. */
     refusal?: string;
+    /** The refusal drawn with the values it names set apart in the code font (`refusalParts`); its plain words where not given. */
+    refusalParts?(refusal: string, typed: string): readonly TipPart[];
     commit(value: string): FieldStep | void;
 }
 
@@ -299,22 +301,35 @@ export class InlineField extends InlineControl<HTMLInputElement> {
             input.setAttribute('aria-controls', this.listId);
             input.autocomplete = 'off';
         }
-        input.addEventListener('input', () => this.changed());
+        input.addEventListener('input', e => {
+            // The edit the strip itself makes (`replaceValue`) is not asked about again.
+            if (!this.stripping) {
+                // Not mid-composition (an IME's text is not whole yet: its `{` and `}` may arrive apart, or be taken
+                // back), and not on an undo or redo, which brings back exactly what the user asked to have.
+                const inputType = (e as InputEvent).inputType ?? '';
+                this.changed(!(e as InputEvent).isComposing && !inputType.startsWith('history'));
+            }
+        });
+        // What a composition brought in is judged when it ends.
+        input.addEventListener('compositionend', () => this.changed(true));
     }
 
     get box(): HTMLElement {
         return this.frame ?? this.el;
     }
 
+    /** Set while the strip edits the input, so the `input` event that edit raises is not read as typing. */
+    private stripping = false;
+
     /**
      * What was typed or pasted is the value now: the fixed text it brought in
-     * stripped (`adorn`), completions asked for it, the owner told. The caret
-     * stays where it was in what is left — at the end after a paste or a typed
-     * closing brace.
+     * stripped (`adorn`, unless `strip` is false: mid-composition, an undo),
+     * completions asked for it, the owner told. The caret stays where it was in
+     * what is left — at the end after a paste or a typed closing brace.
      */
-    private changed(): void {
+    private changed(strip: boolean): void {
         const adorn = this.options.adorn;
-        if (adorn) {
+        if (adorn && strip) {
             const value = this.el.value;
             const stripped = adorn.strip(value);
             if (stripped !== value) {
@@ -322,7 +337,7 @@ export class InlineField extends InlineControl<HTMLInputElement> {
                 // What came off before the caret is the opening text; whatever came off is the same length at each end.
                 const off = (value.length - stripped.length) / 2;
                 const at = Math.max(0, Math.min(stripped.length, end - off));
-                this.el.value = stripped;
+                this.replaceValue(stripped);
                 this.el.setSelectionRange(at, at);
             }
         }
@@ -333,6 +348,29 @@ export class InlineField extends InlineControl<HTMLInputElement> {
             this.scheduleQuery();
         }
         this.options.onChange?.(this.el.value);
+    }
+
+    /**
+     * `value` in place of what the input holds, as an edit the input's own undo
+     * keeps (`insertText` over the whole text): Ctrl+Z takes the strip back, as
+     * it takes any typing. An assigned `value` would empty that history. Where
+     * the browser will not make the edit (no focus, no `execCommand`), it is
+     * assigned, and the undo of what came before is lost — the strip still holds.
+     */
+    private replaceValue(value: string): void {
+        const el = this.el;
+        this.stripping = true;
+        try {
+            if (typeof document.execCommand === 'function' && document.activeElement === el) {
+                el.setSelectionRange(0, el.value.length);
+                document.execCommand('insertText', false, value);
+            }
+            if (el.value !== value) {
+                el.value = value;
+            }
+        } finally {
+            this.stripping = false;
+        }
     }
 
     /** Take the focus, the value selected — or the caret where the options put it — and ask for completions. */

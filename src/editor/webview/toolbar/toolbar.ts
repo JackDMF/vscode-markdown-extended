@@ -36,7 +36,7 @@ import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
-import { LayerSlot, REST_MS, caretRect, placeCard, placeMenu, rangeAnchor } from '../placement';
+import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, placeCard, placeMenu, rangeAnchor } from '../placement';
 import { showHint } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
@@ -59,7 +59,7 @@ import {
 } from './actions';
 import { moreControl, moreName, moveUntilFits, overflows } from '../overflow';
 import { ariaKeyshortcuts, keyLabel } from '../../keys';
-import { Tip, plainTip } from '../../tips';
+import { Tip, TipPart, plainTip } from '../../tips';
 import { macKeys } from '../hint';
 import { Tooltips, describeAs } from '../tooltip';
 import {
@@ -269,7 +269,7 @@ function resyntax(item: HTMLElement, syntax: string): void {
 const SPAN_LABEL = TOOLBAR_ACTIONS.find(a => a.apply.kind === 'attr-span')?.label ?? 'Span with class…';
 
 /** The bubble's `{…}` within an element's run says what it does over plain text as well (wave 2 #13). */
-const SPAN_NOTE = `Over plain text: ${SPAN_LABEL} — [text]${CLASS_LITERAL}`;
+const SPAN_NOTE: readonly TipPart[] = [`Over plain text: ${SPAN_LABEL} — `, { code: `[text]${CLASS_LITERAL}` }];
 
 /** Why Span with class makes no span where its literal alone is fine: the note around it, or the block read whole, would not hold it. */
 const SPAN_REFUSED = 'These attributes cannot be given to this text here.';
@@ -1228,8 +1228,12 @@ class ToolbarView implements PluginView {
             const active = menu.tools.map(t => t.action).find(a => a.apply.kind === 'block' && isCurrent(current, a.apply.node, a.apply.level));
             face.dataset.shows = active?.id ?? '';
             label = active?.label ?? label;
-            reason = lock ?? blockLockReason(this.view.state);
-            enabled = reason === null;
+            // The face opens while any of its entries applies: under a block-type lock (a table cell, a
+            // requirement heading) the types are dimmed, each saying why (`stateOf`), while its
+            // Attributes of … entry keeps the state Formatting's has. Under the control lock all are dimmed.
+            const locked = lock ?? blockLockReason(this.view.state);
+            enabled = locked === null || all.some(t => stateOf(t.action).enabled);
+            reason = enabled ? null : locked;
         } else {
             enabled = all.some(t => stateOf(t.action).enabled);
             reason = enabled ? null : all.map(t => stateOf(t.action).reason).find(r => r !== null) ?? null;
@@ -1854,7 +1858,8 @@ class ToolbarView implements PluginView {
             showHint(this.view, target.refusal, 'refusal');
             return;
         }
-        this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target));
+        // At the block's left edge, where its own bar stands (`blockAnchor`) — not at the caret, which a menu leaves wherever it was.
+        this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target), undefined, () => blockAnchor(this.view, target.pos));
     }
 
     /**
@@ -1976,7 +1981,7 @@ class ToolbarView implements PluginView {
      * field has the focus; a re-sync meanwhile maps it, so the commit applies
      * where the field was opened.
      */
-    private openFieldBar(object: string, barLabel: string, verb: string, first: FieldStep, range?: { from: number; to: number }): void {
+    private openFieldBar(object: string, barLabel: string, verb: string, first: FieldStep, range?: { from: number; to: number }, anchorAt?: () => Rect | null): void {
         this.closeFieldBar();
         const view = this.view;
         const bar = div('mep-object-toolbar mep-layer');
@@ -2051,7 +2056,9 @@ class ToolbarView implements PluginView {
             kind: 'field',
             key,
             el: bar,
-            anchor: () => (this.fieldBar?.bar !== bar ? null : from === to ? caretRect(view, Math.min(from, view.state.doc.content.size)) : rangeAnchor(view, from, to)),
+            anchor: () => (this.fieldBar?.bar !== bar ? null
+                : anchorAt ? anchorAt()
+                : from === to ? caretRect(view, Math.min(from, view.state.doc.content.size)) : rangeAnchor(view, from, to)),
             valid: () => this.fieldBar?.bar === bar,
             hidden: () => {
                 if (this.fieldBar?.bar === bar) {

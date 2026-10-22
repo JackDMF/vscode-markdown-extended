@@ -98,14 +98,16 @@ export type ActionApply =
     | { kind: 'wrap-node'; node: NoteNodeName }
     | { kind: 'block'; node: BlockTarget; level?: number }
     /**
-     * An attribute span made of the selection (`[text]{…}`): the inline field
-     * asks for the literal, prefilled `{.}` with the caret after the dot.
+     * An attribute span made of the selection (`[text]{…}`): the attributes
+     * field asks for what goes between the braces it draws, empty, `.class`
+     * its placeholder (`attributesField`).
      */
     | { kind: 'attr-span' }
     /**
      * The `{…}` literal of the block at the caret (`attributesTargetAt`): the
-     * inline field asks for it, prefilled with the block's literal, or `{.}`
-     * with the caret after the dot when it has none; `{}` removes it.
+     * attributes field asks for it — the block's literal between the braces
+     * the field draws, or empty with the placeholder `.class` when it has
+     * none; an emptied field removes it.
      */
     | { kind: 'block-attrs' }
     /**

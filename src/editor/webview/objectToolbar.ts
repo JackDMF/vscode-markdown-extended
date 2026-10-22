@@ -74,6 +74,7 @@ import {
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
 import { attributesField, attributesStep, holderAttributesStep } from './attributes';
+import { ATTRIBUTES_TYPED } from '../attributeLiteral';
 import { currentReadsAttrs } from '../inlineEngine';
 import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
 import { barSeparator, followPointer, selectionWantsBubble, separator } from './toolbar/toolbar';
@@ -1826,7 +1827,7 @@ class ObjectToolbarView implements PluginView {
         const verb: Verb = {
             id: 'inline-attributes',
             label: `${name}…`,
-            title: `The ${names.noun}'s {…}, written right after it: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).`,
+            title: `The ${names.noun}'s {…}, written right after it: ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`,
             slot: 'attributes',
             field: step,
             target: { from: inside.object.from, to: inside.object.to },
@@ -1967,7 +1968,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, 'The link\'s {…}, written after its (…): {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).'),
+                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, `The link's {…}, written after its (…): ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`),
                         {
                             id: 'remove-link',
                             label: remove.label,
@@ -2024,7 +2025,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, 'The image\'s {…}, written after its (…): {.class}, {#id}, {width=300}; {} removes it (Enter to apply, Esc to cancel).'),
+                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, `The image's {…}, written after its (…): ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`),
                         { id: 'open-image', label: open.label, short: open.short, title: `Open ${src} (as Ctrl+click on a link does).`, slot: 'open', run: () => host.openLink(src) },
                         {
                             id: 'delete-image',
@@ -2041,8 +2042,12 @@ class ObjectToolbarView implements PluginView {
             case 'span': {
                 const literal = object.mark.attrs.literal as string;
                 // The attributes field every route opens; empty removes nothing here — a span is its literal (Remove attributes).
+                // Left as it was shown, Enter changes nothing (`changeSpanTransaction` would rewrite `{ .s }` as `{.s}`).
                 const step = attributesField('Span', literal, (value, refused) => this.commitLiteral(refused, object, value, current =>
-                    current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null), false);
+                    current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null), {
+                    removable: false,
+                    unchanged: () => this.act(object, () => false),
+                });
                 // The title says Span, not attributes: the verb keeps its noun however narrow the bar.
                 const remove = wording({ verb: 'Remove', noun: 'attributes', keeps: ', keep text', titled: false });
                 return {
@@ -2076,7 +2081,7 @@ class ObjectToolbarView implements PluginView {
                 return {
                     label: names.label,
                     title: `\`${text}\`: ${names.noun} — Attributes… gives it a {…}`,
-                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Give the ${names.noun} a {…}, written right after it: {.class}, {#id}, {key=value} (Enter to apply, Esc to cancel).`)],
+                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Give the ${names.noun} a {…}, written right after it: ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`)],
                 };
             }
             case 'styled': {
@@ -2090,7 +2095,7 @@ class ObjectToolbarView implements PluginView {
                     code: literal,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
                     verbs: [
-                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Change the ${name.toLowerCase()}'s {…}; {} removes it (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Change the ${name.toLowerCase()}'s {…}: ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`),
                         {
                             id: 'remove-attributes',
                             label: remove.label,
@@ -2430,7 +2435,7 @@ class ObjectToolbarView implements PluginView {
             id: 'block-attributes',
             label: VERB.attributes,
             slot: 'attributes',
-            title: `The block's {…}: {.class}, {#id}, {key=value}; {} removes it (Enter to apply, Esc to cancel).${fences}`,
+            title: `The block's {…}: ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).${fences}`,
             refusal: refused ? found.refusal : null,
             field: refused ? undefined : attributesStep(this.view, found),
         };
@@ -2571,18 +2576,16 @@ class ObjectToolbarView implements PluginView {
     /**
      * A literal committed from an attributes field: refused — the field kept
      * open with what was typed and the reason under it (`refused`) — when
-     * markdown-it-attrs would not read it as attributes (`''` is allowed where
-     * it means "none"); applied otherwise.
+     * markdown-it-attrs would not read it as attributes; applied otherwise.
      */
-    private commitLiteral(refused: (reason: string) => FieldStep, object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): FieldStep | void {
+    private commitLiteral(refused: (reason: string) => FieldStep, object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null): FieldStep | void {
         const place = 'node' in object ? literalPlaceOf(object.node) : 'span';
         const current = currentObject(this.view.state, object);
-        const refusal = hint !== undefined && value.trim() === '' ? null
-            : current?.kind === 'span' ? changeSpanRefusal(this.view.state, current, value) : literalRefusal(value, place);
+        const refusal = current?.kind === 'span' ? changeSpanRefusal(this.view.state, current, value) : literalRefusal(value, place);
         if (refusal !== null) {
             return refused(refusal);
         }
-        this.apply(object, make, hint);
+        this.apply(object, make);
     }
 
     private remove(object: EditorObject, hint: string): void {

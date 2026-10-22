@@ -334,8 +334,10 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
         for (const literal of ['{.}', '{ }', 'x', '{.a}}']) {
             assert.match(literalRefusal(literal) ?? '', /is no attribute list/, literal);
         }
-        // One whose `}` stands inside a quote it never closes is named as unclosed.
-        assert.match(literalRefusal('{k="a\\"b') ?? '', /is not closed/);
+        // One whose `}` stands inside a quote it never closes — an escaped quote does not close it — is named as an open quote,
+        // as the reading ended (`BraceReading.openQuote`); one the text simply never ends is named as not closed.
+        assert.match(literalRefusal('{k="a\\"b') ?? '', /has an open quote/);
+        assert.match(literalRefusal('{.a') ?? '', /is not closed/);
     });
 
     test('no value is written with a backslash, and one that needs quotes and holds a quote is not written at all', () => {

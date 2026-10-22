@@ -46,7 +46,7 @@ import { showChangeHint, undoHint } from './hint';
 import { wording } from '../verbs';
 import { FENCED_DONE } from '../fences';
 import { FieldAdorn, FieldStep, KeysLine, refusedStep } from './inlineField';
-import { ATTR_BRACES, ATTR_PLACEHOLDER, attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, stripOuterPair } from '../attributeLiteral';
+import { ATTR_BRACES, ATTR_PLACEHOLDER, attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, refusalParts, stripOuterPair } from '../attributeLiteral';
 import { tipText } from '../tips';
 import {
     AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, holderNames, literalObjectOf, literalOf,
@@ -74,15 +74,23 @@ const ATTR_ADORN: FieldAdorn = { ...ATTR_BRACES, strip: stripOuterPair };
  * what was typed and the reason (`refusedStep`). Where an empty value removes
  * nothing (`removable` false: a span is its literal, Remove attributes undoes
  * it), the keys line never says it does.
+ *
+ * Enter in a field left as it was shown commits nothing — `unchanged` runs
+ * instead, the focus back where it was — so a literal the author wrote with
+ * spaces inside its braces (`{ .a }`) is not rewritten, no undo step is made
+ * and nothing is said to have been set. Only where there is a shown value to
+ * leave: an empty field over `{}` or over no literal commits as it always did.
  */
 export function attributesField(
     name: string,
     literal: string | null,
     commit: (literal: string, refused: (reason: string) => FieldStep) => FieldStep | void,
-    removable = true,
+    options: { removable?: boolean; unchanged?: () => void } = {},
 ): FieldStep {
+    const removable = options.removable ?? true;
+    const shown = innerOf(literal);
     const step: FieldStep = {
-        value: innerOf(literal),
+        value: shown,
         label: ATTRIBUTES_FIELD_LABEL,
         heading: attributesTitle(name),
         placeholder: literal === null ? ATTR_PLACEHOLDER : '',
@@ -91,7 +99,13 @@ export function attributesField(
             return state.kind === 'removes' ? { parts: keysLine(state), removes: true } : keysLine(state);
         },
         adorn: ATTR_ADORN,
-        commit: typed => commit(literalFrom(typed), reason => refusedStep(step, typed, reason)),
+        refusalParts,
+        commit: typed => {
+            if (options.unchanged !== undefined && shown.trim() !== '' && typed === shown) {
+                return options.unchanged();
+            }
+            return commit(literalFrom(typed), reason => refusedStep(step, typed, reason));
+        },
     };
     return step;
 }
@@ -132,7 +146,7 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
         if (view.state !== before) {
             showChangeHint(view, undoHint(made.fenced ? FENCED_DONE : made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
         }
-    });
+    }, { unchanged: () => view.focus() });
 }
 
 /**
@@ -172,5 +186,5 @@ export function holderAttributesStep(view: EditorView, at: InlineHolderAt): Fiel
         if (view.state !== before) {
             showChangeHint(view, undoHint(removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
         }
-    });
+    }, { unchanged: () => view.focus() });
 }

@@ -264,6 +264,8 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
             return made.refusal;
         };
         assert.strictEqual(refusal('{title="a}'), 'title="a has an open quote: close it with ".');
+        // The reading says it ended inside a quote — a quote the plugin opens anywhere a value is empty, not only after an `=`.
+        assert.strictEqual(refusal('{.a "b}'), '.a "b has an open quote: close it with ".');
         const spaced = refusal('{width = 300}');
         assert.ok(spaced.startsWith('width = 300 is text, not an attribute list'), spaced);
         assert.ok(spaced.endsWith('Write it as width=300.'), spaced);

@@ -874,14 +874,20 @@ where there never was one (none once an existing one is emptied). A paste or a t
 brace that brings in a whole `{…}` loses one outer pair (`stripOuterPair`); `Enter` drops a
 stray leading `{` or trailing `}` and braces the rest (`literalFrom`). It is titled by the
 element it edits, whichever bar opened it (*Paragraph · Attributes*, *Bold · Attributes*:
-`FieldStep.heading`, `attributesTitle`), stands at that element (a run's verb carries it as
-`target`), and its keys line follows the value (`keysFor`): `↵ set · Esc cancel · empty
+`FieldStep.heading`, `attributesTitle`), stands at that element — a run's verb carries it as
+`target`, a block's field stands at the block's left edge from every route (`blockAnchor`) —
+and its keys line follows what `Enter` will commit (`keysFor`): `↵ set · Esc cancel · empty
 removes · .class #id key=value`, the syntax in the code font, and once an existing literal is
-emptied `↵ removes .x #y · Esc keeps them` in the text's colour. `Enter` sets it in one
-transaction, so one undo step, and the hint says *Attributes set — Ctrl+Z*; an empty field
-removes it (*Attributes removed — Ctrl+Z*); `Esc` changes nothing. A refusal names the
+emptied (or only a stray brace left) `↵ removes .x #y · Esc keeps them` in the text's colour.
+`Enter` sets it in one transaction, so one undo step, and the hint says *Attributes set —
+Ctrl+Z*; an empty field removes it (*Attributes removed — Ctrl+Z*); `Esc` changes nothing, and
+so does `Enter` in a field left as it was shown (`attributesField`'s `unchanged`: a literal the
+author wrote as `{ .a }` is not rewritten, nothing is said to be set). A refusal names the
 literal as the field shows it, without its braces (`literalRefusal`; the code block's
-opening line, whose text holds them, has it named whole). A literal markdown-it-attrs would not read
+opening line, whose text holds them, has it named whole), the values it names in the code
+font (`refusalParts`) and its line kept to about 80 characters. The braces a paste or a
+typed `}` brings in are stripped as an edit of the input's own undo history, not while an IME
+composes (`InlineField.changed`). A literal markdown-it-attrs would not read
 back whole is refused with the reason beside the field, which stays open with it
 (`literalRefusal`, the stage-3 reader; `refusedStep`). The block is the innermost list item holding the selection, else the top-level
 block: a nested paragraph's literal is not written, so the caret in a paragraph in a quote
@@ -1015,7 +1021,9 @@ takes the row away again and leaves the table for a new paragraph after it, as `
 empty last item leaves a list. `Shift+Enter`, a hard break, is refused with the reason beside
 the caret (`CELL_BREAK_REFUSAL`, the one sentence any refused break says). Arrows, a drag across cells (a
 `CellSelection`, drawn in the selection colour) and pasting cells are `tableEditing`'s; a cell
-has no block type, so the block-type control is locked there (`TABLE_LOCK`, on `isInTable`).
+has no block type, so the block types are locked there (`TABLE_LOCK`, on `isInTable`): dimmed in
+the Block type menu with that reason, while the menu itself opens for its one entry that is not a type,
+**Attributes of Table…**, which keeps the state Formatting's has (`ToolbarView.updateFace`).
 
 **What the page adds to a table's look**, each an affordance or feedback, not decoration
 (Daniel, 2026-09-29, after the screenshots): a hairline around the table the caret is in, the

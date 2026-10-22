@@ -14,14 +14,20 @@ export type TipPart = string | { code: string } | { keys: string };
 
 export interface Tip {
     parts: readonly TipPart[];
-    /** The reason or refusal, on a second line. */
-    note?: string | null;
+    /** The reason or refusal, on a second line: words, or parts where it names syntax (`Over plain text: … — [text]{.class}`). */
+    note?: string | readonly TipPart[] | null;
 }
 
-/** The tip as one string: `Italic (*, <i>) — Ctrl+I`, the note after a newline. A `keys` part is set off by an em dash. */
+/** Parts as one string: a `keys` part is set off by an em dash. */
+function partsText(parts: readonly TipPart[]): string {
+    return parts.map(p => typeof p === 'string' ? p : 'code' in p ? p.code : ` — ${p.keys}`).join('');
+}
+
+/** The tip as one string: `Italic (*, <i>) — Ctrl+I`, the note after a newline. */
 export function tipText(tip: Tip): string {
-    const line = tip.parts.map(p => typeof p === 'string' ? p : 'code' in p ? p.code : ` — ${p.keys}`).join('');
-    return tip.note ? `${line}\n${tip.note}` : line;
+    const line = partsText(tip.parts);
+    const note = typeof tip.note === 'string' ? tip.note : tip.note ? partsText(tip.note) : '';
+    return note ? `${line}\n${note}` : line;
 }
 
 /** The tip without its key chord: what a control whose `aria-keyshortcuts` names the key describes itself with. */

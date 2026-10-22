@@ -430,24 +430,18 @@ suite('Editor placement (e2e)', () => {
         assert.ok(bubble.top >= last.bottom + GAP - 1, `below the last line: ${JSON.stringify({ bubble, last })}`);
     });
 
-    test('s4: the row\'s Attributes… and Insert → Link… fields open at the caret, under its line', async function () {
+    test('s4: the row\'s Attributes… opens at its block\'s left edge, under the block; Insert → Link… at the caret, under its line', async function () {
         this.timeout(15000);
         await s4();
         const field = await box(ROW_FIELD);
-        // The caret as it was: the field holds the focus now, the selection stays in the state.
-        const at = await page.evaluate(() => {
-            const range = document.createRange();
-            const walker = document.createTreeWalker(document.querySelector('.ProseMirror blockquote') as HTMLElement, NodeFilter.SHOW_TEXT);
-            const node = walker.nextNode() as Text;
-            const i = (node.textContent ?? '').indexOf('words that') + 2;
-            range.setStart(node, i);
-            range.setEnd(node, i + 1);
-            const r = range.getBoundingClientRect();
+        // A block's attributes field stands where the block's own bar does, whichever route opened it (wave 2 · #13, the build critique).
+        const quote = await page.evaluate(() => {
+            const r = (document.querySelector('.ProseMirror blockquote') as HTMLElement).getBoundingClientRect();
             return { left: r.left, bottom: r.bottom };
         });
         assert.ok(field);
-        assert.ok(Math.abs(field.left - at.left) <= 2, `at the caret's x: ${JSON.stringify({ field, at })}`);
-        assert.ok(Math.abs(field.top - (at.bottom + GAP)) <= 2, `under the caret's line: ${JSON.stringify({ field, at })}`);
+        assert.ok(Math.abs(field.left - quote.left) <= 2, `at the block's left edge: ${JSON.stringify({ field, quote })}`);
+        assert.ok(Math.abs(field.top - (quote.bottom + GAP)) <= 2, `under the block: ${JSON.stringify({ field, quote })}`);
         await page.keyboard.press('Escape');
         await delay(100);
 

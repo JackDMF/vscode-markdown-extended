@@ -12,4 +12,10 @@ suite('Editor tips: a tooltip as data, and as one string', () => {
         assert.strictEqual(tipText(plainTip('Export')), 'Export');
         assert.strictEqual(tipText(plainTip('Export', null)), 'Export');
     });
+
+    test('a note of parts: its syntax in the code font to the eye, the same words to the ear; an empty one says nothing', () => {
+        const note = ['Over plain text: Span with class… — ', { code: '[text]{.class}' }] as const;
+        assert.strictEqual(tipText({ parts: ['Attributes — ', { code: '**text**{.class}' }], note }), 'Attributes — **text**{.class}\nOver plain text: Span with class… — [text]{.class}');
+        assert.strictEqual(tipText({ parts: ['Export'], note: [] }), 'Export');
+    });
 });

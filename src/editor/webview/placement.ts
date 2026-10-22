@@ -293,6 +293,24 @@ export function openLayers(mount: HTMLElement, except?: Element): Rect[] {
 }
 
 /**
+ * The box of the block at `pos`, in the window's coordinates: where a field for the block's
+ * own attributes stands — at the block's left edge, as its bar does — whichever menu or bar
+ * opened it, not at the caret or the text's last line. `null` where it is not drawn.
+ */
+export function blockAnchor(view: EditorView, pos: number): Rect | null {
+    try {
+        const dom = view.nodeDOM(pos);
+        if (!(dom instanceof Element)) {
+            return null;
+        }
+        const box = dom.getBoundingClientRect();
+        return { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
+    } catch {
+        return null;
+    }
+}
+
+/**
  * An object's anchor, in the window's coordinates: an inline object's first
  * line's start and top, its last line's bottom; a block's box — an atom's
  * less its inset, a heading's or an attributed block's from its text's first

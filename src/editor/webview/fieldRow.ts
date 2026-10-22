@@ -74,7 +74,7 @@ export class FieldRow {
         const step = this.step;
         this.bar.classList.add('mep-field-bar');
         this.bar.classList.toggle('mep-attr-bar', step?.adorn !== undefined);
-        this.bar.classList.remove('mep-narrow');
+        this.bar.classList.remove('mep-narrow', 'mep-title-alone', 'mep-refused');
         this.keys = null;
         this.reason = null;
         this.said = null;
@@ -84,7 +84,15 @@ export class FieldRow {
                 const el = document.createElement('span');
                 el.className = 'mep-field-refusal';
                 el.id = `mep-field-reason-${this.id}`;
-                el.textContent = step.refusal;
+                // The line takes the row; its text is the capped, amber-marked box inside it (`.mep-field-refusal-text`).
+                const text = document.createElement('span');
+                text.className = 'mep-field-refusal-text';
+                if (step.refusalParts) {
+                    drawParts(text, step.refusalParts(step.refusal, step.value));
+                } else {
+                    text.textContent = step.refusal;
+                }
+                el.append(text);
                 this.reason = el;
             }
         }
@@ -112,25 +120,30 @@ export class FieldRow {
     /**
      * Before the bar is placed, at most `room` wide: measured at the mount's
      * left edge (an absolute box's room is what lies right of its `left`), a
-     * keys line that no longer fits beside the field goes under it.
+     * keys line that no longer fits beside the field goes under it; a field
+     * that no longer fits beside the title goes under that, and the title,
+     * alone on its row, takes its divider with it (`mep-title-alone`).
      */
     fit(room: number): void {
         this.bar.style.maxWidth = `${Math.floor(room)}px`;
-        this.bar.classList.remove('mep-narrow');
-        const keys = this.keys;
-        if (keys === null) {
-            return;
-        }
+        this.bar.classList.remove('mep-narrow', 'mep-title-alone');
         const left = this.bar.style.left;
         this.bar.style.left = '0px';
         const box = this.field.box;
-        this.bar.classList.toggle('mep-narrow', keys.offsetTop >= box.offsetTop + box.offsetHeight - 1);
+        const keys = this.keys;
+        if (keys !== null) {
+            this.bar.classList.toggle('mep-narrow', keys.offsetTop >= box.offsetTop + box.offsetHeight - 1);
+        }
+        const title = this.head[0];
+        if (title !== undefined && !title.hidden) {
+            this.bar.classList.toggle('mep-title-alone', box.offsetTop >= title.offsetTop + title.offsetHeight - 1);
+        }
         this.bar.style.left = left;
     }
 
     /** The field went: the bar is its owner's again. */
     destroy(): void {
-        this.bar.classList.remove('mep-field-bar', 'mep-attr-bar', 'mep-narrow');
+        this.bar.classList.remove('mep-field-bar', 'mep-attr-bar', 'mep-narrow', 'mep-title-alone', 'mep-refused');
     }
 
     /** The keys line for `value`, drawn anew when what it says changed; true when it did (its width may have). */
@@ -178,5 +191,7 @@ export class FieldRow {
         } else {
             input.removeAttribute('aria-invalid');
         }
+        // The frame of an attributes field turns amber with it (`mep-attr-bar`, `mep-refused`).
+        this.bar.classList.toggle('mep-refused', this.reason !== null);
     }
 }

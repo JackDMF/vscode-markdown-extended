@@ -20,6 +20,9 @@ export const ATTR_PLACEHOLDER = '.class';
 /** The syntax the keys line shows: what goes between the braces. */
 const ATTR_SYNTAX = '.class #id key=value';
 
+/** What a verb's tooltip says to type, in the keys line's own terms (`keysLine`): the syntax, and that an empty value removes. */
+export const ATTRIBUTES_TYPED = `${ATTR_SYNTAX}; empty removes it`;
+
 /** What the field shows for `literal`: one outer pair of braces off; none (`null`) is ''. */
 export function innerOf(literal: string | null): string {
     if (literal === null) {
@@ -82,8 +85,46 @@ export function keysLine(state: KeysState): readonly TipPart[] {
     return [`↵ set · Esc cancel · ${state.hadLiteral ? 'empty removes · ' : ''}`, { code: ATTR_SYNTAX }];
 }
 
-/** The keys state for the field's `value` now: a literal it had (`hadLiteral`) emptied is removed by Enter; else Enter sets. */
+/**
+ * What a refusal says before the spelling it suggests (`Write it as width=300.`): the one wording
+ * the message (`literalRefusal`) and `refusalParts` share.
+ */
+export const WRITE_IT_AS = 'Write it as ';
+
+/**
+ * A refusal's reason as the field draws it: the values it names — the one typed, which it begins
+ * with, and the one it suggests after `WRITE_IT_AS` — in the code font, the sentence plain. The
+ * reason is read as the message is built (`literalRefusal`), not re-worded: a reason that does
+ * not begin with the value, or suggests nothing, has no part to set apart. `typed` is the field's
+ * value as it was, which the commit read as `literalFrom(typed)`.
+ */
+export function refusalParts(reason: string, typed: string): readonly TipPart[] {
+    const value = innerOf(literalFrom(typed));
+    const parts: TipPart[] = [];
+    let rest = reason;
+    if (value !== '' && rest.startsWith(value)) {
+        parts.push({ code: value });
+        rest = rest.slice(value.length);
+    }
+    const at = rest.lastIndexOf(WRITE_IT_AS);
+    if (at >= 0 && rest.endsWith('.')) {
+        const before = rest.slice(0, at);
+        if (before !== '') {
+            parts.push(before);
+        }
+        parts.push(WRITE_IT_AS, { code: rest.slice(at + WRITE_IT_AS.length, -1) }, '.');
+    } else if (rest !== '') {
+        parts.push(rest);
+    }
+    return parts;
+}
+
+/**
+ * The keys state for the field's `value` now, read from what Enter will commit (`literalFrom`): a
+ * literal it had (`hadLiteral`) that commits as a removal — emptied, or only a stray brace left —
+ * is removed by Enter; else Enter sets.
+ */
 export function keysFor(value: string, hadLiteral: string | null): KeysState {
     const had = hadLiteral === null ? '' : innerOf(hadLiteral).trim();
-    return value.trim() === '' && had !== '' ? { kind: 'removes', literal: had } : { kind: 'set', hadLiteral: had !== '' };
+    return had !== '' && isRemoval(literalFrom(value)) ? { kind: 'removes', literal: had } : { kind: 'set', hadLiteral: had !== '' };
 }

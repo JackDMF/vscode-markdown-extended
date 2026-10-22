@@ -60,9 +60,12 @@
 - A field with no literal yet shows the placeholder ".class"; an emptied one shows none.
 - The Block type menu offers "Attributes of Paragraph…" after a divider, as Formatting does.
 - The bubble's {…} tooltip says what it does over plain text: Span with class….
-- A refusal names the value as the field shows it, without braces.
-- An attributes field opens at the element it edits, not at the bar that opened it.
-- In a narrow editor a field's keys line moves under the field instead of being cut; the title never truncates.
+- A refusal names the value as the field shows it, without braces, the values in the code font; it keeps to about 80 characters.
+- An attributes field opens at the element it edits — a block's at its left edge, a run's at the run — not at the bar that opened it.
+- In a narrow editor a field's keys line moves under the field instead of being cut; the title never truncates, and loses its divider when alone on its row.
+- Enter in an attributes field left as it was changes nothing: no rewrite of `{ .a }`, no undo step, no hint.
+- The Block type menu opens where only its attributes entry applies (a table cell); the block types are dimmed with the reason.
+- The bubble's note and the verbs' tooltips speak the field's terms: `.class #id key=value`, empty removes.
 
 ## v4.8.0 — Bars, Labels and Notes That Fit
 

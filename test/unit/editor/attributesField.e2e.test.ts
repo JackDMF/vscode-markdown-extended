@@ -33,6 +33,21 @@ const DOC = [
     '',
 ].join('\n');
 
+/** Literals written with spaces inside the braces, the way an author may: an unchanged field must leave them as they are. */
+const SPACED_DOC = [
+    'First paragraph. { .a }',
+    '',
+    'A **bold**{ .b } run.',
+    '',
+    'A [span]{ .s } run.',
+    '',
+    '> A quote.',
+    '> { .q #long-identifier title="a rather long title that keeps the field wide" data-one=1 data-two=2 }',
+    '',
+    'The last paragraph.',
+    '',
+].join('\n');
+
 const THEMES: readonly [string, Theme][] = [['light', LIGHT_MODERN], ['dark', DARK_MODERN], ['hc', HC_DARK]];
 
 /** The open field's bar as the eye and a screen reader meet it. */
@@ -418,6 +433,8 @@ suite('Attributes field (e2e)', () => {
         await delay(400);
         const shown = await hoverTip(page, '.mep-bubble [data-action="attrs-bubble"]');
         assert.ok(shown?.text.includes('Over plain text'), `the hover draws the note too: ${shown?.text}`);
+        const noteCode = await page.$$eval('.mep-tooltip .mep-tip-note code', els => els.map(el => el.textContent));
+        assert.deepStrictEqual(noteCode, ['[text]{.class}'], 'the note\'s syntax in the code font, as the line\'s is');
         await shots('routes-bubble-1280', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
     });
 
@@ -503,6 +520,191 @@ suite('Attributes field (e2e)', () => {
         assert.ok(s.reason?.includes('has an open quote'), s.reason ?? 'none');
         assert.strictEqual(s.labelCut, false);
         await shots('narrow-refused-420', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+    });
+
+    test('R6 where the block type is locked (a table cell) the Block type face still opens: its types dimmed with the reason, Attributes of Table… enabled and working', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('first', 0);
+        const face = await page.$eval('.mep-toolbar .mep-menu-face[data-menu="block-type"]', el => el.getAttribute('aria-disabled'));
+        assert.strictEqual(face, 'false', 'the face opens: one of its entries applies');
+        await openMenu('block-type');
+        const entries = await page.$$eval('.mep-menu[data-menu="block-type"] .mep-menu-item', els => els.map(el => ({ id: (el as HTMLElement).dataset.action ?? '', disabled: el.getAttribute('aria-disabled'), reason: el.getAttribute('aria-description') ?? '' })));
+        const types = entries.filter(e => e.id !== 'block-type-attributes');
+        assert.ok(types.length > 5 && types.every(e => e.disabled === 'true' && e.reason !== ''), `every type drawn disabled, saying why: ${JSON.stringify(types)}`);
+        const attrs = entries.find(e => e.id === 'block-type-attributes');
+        assert.deepStrictEqual({ disabled: attrs?.disabled, reason: attrs?.reason }, { disabled: 'false', reason: '' }, 'the attributes entry keeps Formatting\'s state');
+        await page.click(BLOCK_TYPE_ENTRY);
+        await page.waitForSelector(`${ROW_FIELD} .mep-inline-field`, { visible: true });
+        assert.strictEqual((await field()).heading, 'Table · Attributes');
+    });
+
+    /** What the caret hint says, or `''` while it is hidden. */
+    const hintText = (): Promise<string> => page.$eval('.mep-hint', el => ((el as HTMLElement).hidden ? '' : el.textContent ?? ''));
+
+    test('U1 Enter in a field left as it was commits nothing: no edit, no undo step, no hint — a literal spaced inside its braces stays spaced, on every route', async function () {
+        this.timeout(40000);
+        await showDocument(SPACED_DOC);
+        const routes: [string, () => Promise<void>, string][] = [
+            ['a block, from Formatting', async () => { await clickAt('First paragraph', 3); await chooseEntry('formatting', FORMATTING_ENTRY); }, ' .a '],
+            ['a bold run, from its bar', async () => { await clickAt('bold', 2); await pressAlt('Enter'); await clickVerb('edit-attributes'); }, ' .b '],
+            ['a span, from its bar', async () => { await clickAt('span', 2); await clickVerb('edit-attributes'); }, ' .s '],
+        ];
+        for (const [route, open, shown] of routes) {
+            const before = (await (editor as EditorPage).edits()).length;
+            await open();
+            assert.strictEqual((await field()).value, shown, `${route}: the literal as it stands, spaces and all`);
+            await page.keyboard.press('Enter');
+            await settle();
+            assert.strictEqual((await (editor as EditorPage).edits()).length, before, `${route}: nothing written`);
+            assert.strictEqual(await page.$(ANY_FIELD_BAR), null, `${route}: the field is closed`);
+            assert.ok(!(await hintText()).includes('Attributes set'), `${route}: no hint — ${await hintText()}`);
+            await page.keyboard.press('Escape');
+            await page.mouse.click(2, 890);
+        }
+        // Changed, it still commits: the spaces the author wrote are theirs to change.
+        await clickAt('First paragraph', 3);
+        await chooseEntry('formatting', FORMATTING_ENTRY);
+        await page.keyboard.type('.x');
+        await page.keyboard.press('Enter');
+        await settle();
+        assert.ok((await lastEdit())?.text.includes('First paragraph. {.x}'), (await lastEdit())?.text);
+    });
+
+    test('K1 a lone brace typed over an existing literal says Enter removes it, as it will', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('warning to', 3);
+        await clickVerb('block-attributes');
+        await page.keyboard.type('{');
+        await delay(80);
+        const s = await field();
+        assert.deepStrictEqual({ keys: s.keys, removes: s.keysRemoves }, { keys: '↵ removes .warning #intro · Esc keeps them', removes: true });
+    });
+
+    test('M1 a refusal sets the values it names in muted mono and keeps its sentence plain; the line is capped near 80 characters and wraps', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('configurable', 3);
+        await chooseEntry('formatting', FORMATTING_ENTRY);
+        await page.keyboard.type('width = 300');
+        await page.keyboard.press('Enter');
+        await delay(150);
+        const look = await page.$eval(`${ANY_FIELD_BAR} > .mep-field-refusal > .mep-field-refusal-text`, el => {
+            const text = getComputedStyle(el);
+            const bar = (el.closest('.mep-field-bar') as HTMLElement).getBoundingClientRect().width;
+            const muted = document.createElement('span');
+            muted.style.color = 'var(--vscode-descriptionForeground, GrayText)';
+            el.append(muted);
+            const mutedColour = getComputedStyle(muted).color;
+            muted.remove();
+            const eighty = document.createElement('span');
+            eighty.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;width:80ch';
+            el.append(eighty);
+            const cap = eighty.getBoundingClientRect().width;
+            eighty.remove();
+            return {
+                codes: Array.from(el.querySelectorAll('code')).map(c => ({ text: c.textContent, family: getComputedStyle(c).fontFamily, colour: getComputedStyle(c).color })),
+                sentenceFamily: text.fontFamily,
+                mutedColour,
+                width: el.getBoundingClientRect().width,
+                bar,
+                height: el.getBoundingClientRect().height,
+                lineHeight: parseFloat(text.lineHeight),
+                cap,
+            };
+        });
+        assert.deepStrictEqual(look.codes.map(c => c.text), ['width = 300', 'width=300'], 'the typed value and the suggestion');
+        assert.ok(look.codes.every(c => c.family !== look.sentenceFamily && c.colour === look.mutedColour), JSON.stringify(look));
+        assert.ok(look.width <= look.cap + 1 && look.width > look.cap * 0.5, `capped at about 80 characters: ${look.width} against ${look.cap}`);
+        const kids = await page.$eval(ANY_FIELD_BAR, el => Array.from(el.children).map(c => `${c.className}:${Math.round(c.getBoundingClientRect().width)}`).join(' | '));
+        assert.ok(look.bar <= look.cap + 60, `the bar is not stretched by the reason: ${look.bar} against ${look.cap} — ${kids}`);
+        assert.ok(look.height > look.lineHeight * 1.5, `the long reason wraps instead of stretching the bar: ${JSON.stringify(look)}`);
+        await shots('field-refused-1280', [['light', LIGHT_MODERN], ['dark', DARK_MODERN], ['hc', HC_DARK]]);
+    });
+
+    test('B1 a block\'s attributes field stands at the block\'s left edge from every route; a mark\'s at its run', async function () {
+        this.timeout(40000);
+        const left = (selector: string) => page.$eval(selector, el => el.getBoundingClientRect().left);
+        const barLeft = () => page.$eval(ANY_FIELD_BAR, el => el.getBoundingClientRect().left);
+        // Each route from a document of its own: no bar, dismissal or menu left over from the one before.
+        const routes: [string, string, () => Promise<void>][] = [
+            ['Formatting, a paragraph', '.ProseMirror > p', async () => { await clickAt('configurable', 5); await chooseEntry('formatting', FORMATTING_ENTRY); }],
+            ['Block type, a paragraph', '.ProseMirror > p', async () => { await clickAt('configurable', 5); await chooseEntry('block-type', BLOCK_TYPE_ENTRY); }],
+            ['the quote\'s bar', '.ProseMirror > blockquote', async () => { await clickAt('warning to', 7); await clickVerb('block-attributes'); }],
+            ['Formatting, a quote', '.ProseMirror > blockquote', async () => { await clickAt('warning to', 7); await chooseEntry('formatting', FORMATTING_ENTRY); }],
+        ];
+        for (const [route, block, open] of routes) {
+            await showDocument();
+            await open();
+            const at = [await barLeft(), await left(block)];
+            assert.ok(Math.abs(at[0] - at[1]) <= 2, `${route}: ${at}`);
+            if (route === 'the quote\'s bar') {
+                await shots('routes-bar-block-1280', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+            }
+        }
+        await showDocument();
+        await clickAt('configurable', 3);
+        await pressAlt('Enter');
+        await clickVerb('edit-attributes');
+        const b = await boxes('configurable');
+        assert.ok(Math.abs(b.bar.left - b.run.left) <= 2, `a mark's field still at its run: ${JSON.stringify(b)}`);
+    });
+
+    test('T1 a title left alone on its row takes its divider with it; beside the field it keeps it', async function () {
+        this.timeout(30000);
+        await showDocument(SPACED_DOC);
+        const state = () => page.evaluate(sel => {
+            const bar = document.querySelector(sel) as HTMLElement;
+            const label = bar.querySelector('.mep-object-label') as HTMLElement;
+            const box = bar.querySelector('.mep-attr-field') as HTMLElement;
+            const divider = bar.querySelector('.mep-object-separator') as HTMLElement;
+            return { alone: box.getBoundingClientRect().top >= label.getBoundingClientRect().bottom - 1, divider: getComputedStyle(divider).display };
+        }, ANY_FIELD_BAR);
+        await clickAt('First paragraph', 3);
+        await chooseEntry('formatting', FORMATTING_ENTRY);
+        const beside = await state();
+        assert.deepStrictEqual(beside, { alone: false, divider: beside.divider }, 'beside the field at 1280');
+        assert.notStrictEqual(beside.divider, 'none');
+        await page.keyboard.press('Escape');
+        await width(420, 640);
+        await clickAt('A quote', 3);
+        await clickVerb('block-attributes');
+        const wide = await state();
+        assert.deepStrictEqual(wide, { alone: true, divider: 'none' }, 'the long literal sends the field to a line of its own');
+        await shots('narrow-title-alone-420', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+    });
+
+    test('C1 a composition keeps its braces until it ends; the strip leaves the field\'s own undo working', async function () {
+        this.timeout(20000);
+        await showDocument();
+        await clickAt('configurable', 3);
+        await chooseEntry('formatting', FORMATTING_ENTRY);
+        // An IME composes `{.a}` as one text: mid-composition nothing is stripped, at its end one pair is.
+        await page.evaluate(() => {
+            const input = document.activeElement as HTMLInputElement;
+            input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+            input.setRangeText('{.a}', 0, input.value.length, 'end');
+            input.dispatchEvent(new InputEvent('input', { inputType: 'insertCompositionText', isComposing: true, bubbles: true }));
+        });
+        assert.strictEqual((await field()).value, '{.a}', 'mid-composition');
+        await page.evaluate(() => (document.activeElement as HTMLInputElement).dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
+        assert.strictEqual((await field()).value, '.a', 'after it');
+        // Typed with real keys: the closing brace strips the pair, and Ctrl+Z is the field's own — it undoes the strip, not the page's.
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a');
+        await page.keyboard.up(MOD);
+        await page.keyboard.type('{.lead}');
+        assert.strictEqual((await field()).value, '.lead');
+        const before = (await (editor as EditorPage).edits()).length;
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('z');
+        await page.keyboard.up(MOD);
+        await delay(80);
+        const undone = await field();
+        assert.ok(undone.value !== '.lead' && undone.value.includes('.lead'), `the field's own undo took the strip back: ${undone.value}`);
+        assert.strictEqual(undone.focused, true);
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'the document untouched');
     });
 
     test('N3 at 420 the Block type menu shows the entry inside the window', async function () {

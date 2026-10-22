@@ -41,7 +41,7 @@ import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
-import { innerOf, isRemoval } from '../attributeLiteral';
+import { WRITE_IT_AS, innerOf, isRemoval } from '../attributeLiteral';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
@@ -648,16 +648,18 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph
     }
     const value = literal.trim();
     const shown = braced ? value : innerOf(value);
-    if (value.startsWith('{') && readBrace(value, 0).close < 0) {
-        // With the braces the field's, an open quote is what leaves the list unclosed: it swallows the closing brace.
-        return /="[^"]*$/.test(value)
+    const reading = value.startsWith('{') ? readBrace(value, 0) : null;
+    if (reading !== null && reading.close < 0) {
+        // With the braces the field's, an open quote is what leaves the list unclosed — it swallows the closing brace —
+        // as the plugin's own reading says it ended (`openQuote`), not as a pattern over the text guesses.
+        return reading.openQuote
             ? `${shown} has an open quote: close it with ".`
             : `${shown} is not closed: end the attribute list with }.`;
     }
     if (value.startsWith('{') && isTextBrace(value, 0)) {
         const text = `${shown} is text, not an attribute list: a space beside its = makes it text, as in PowerShell's @{a = 1}.`;
         const tightened = tightenedSuggestion(value);
-        return tightened === null ? text : `${text} Write it as ${braced ? tightened : innerOf(tightened)}.`;
+        return tightened === null ? text : `${text} ${WRITE_IT_AS}${braced ? tightened : innerOf(tightened)}.`;
     }
     if (parseAttrsLiteral(value) === null) {
         const examples = braced ? '{.class}, {#id} or {key="value"}' : '.class, #id or key="value"';

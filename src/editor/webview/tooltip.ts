@@ -306,10 +306,25 @@ function drawTip(tip: Tip): Node[] {
             nodes.push(keys);
         }
     }
-    if (tip.note) {
+    if (tip.note && tip.note.length > 0) {
         const note = document.createElement('span');
         note.className = 'mep-tip-note';
-        note.textContent = tip.note;
+        if (typeof tip.note === 'string') {
+            note.textContent = tip.note;
+        } else {
+            // A note that names syntax sets it in the code font, as the line does; a key chord is spelled as `tipText` spells it.
+            for (const part of tip.note) {
+                if (typeof part === 'string') {
+                    note.append(part);
+                } else if ('code' in part) {
+                    const code = document.createElement('code');
+                    code.textContent = part.code;
+                    note.append(code);
+                } else {
+                    note.append(` — ${part.keys}`);
+                }
+            }
+        }
         nodes.push(note);
     }
     return nodes;

@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, stripOuterPair } from '../../../src/editor/attributeLiteral';
+import { WRITE_IT_AS, attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, refusalParts, stripOuterPair } from '../../../src/editor/attributeLiteral';
 import { tipText } from '../../../src/editor/tips';
 
 /** The attributes field's spelling rules: the braces drawn by the field, the value what stands between them. */
@@ -74,5 +74,25 @@ suite('Attribute literal: what the field shows and what it commits', () => {
         assert.deepStrictEqual(keysFor('.x', '{.x}'), { kind: 'set', hadLiteral: true });
         assert.deepStrictEqual(keysFor('', null), { kind: 'set', hadLiteral: false });
         assert.deepStrictEqual(keysFor('.y', null), { kind: 'set', hadLiteral: false });
+    });
+
+    test('keysFor reads what Enter will do: a lone brace commits as a removal, so the line says it removes', () => {
+        for (const typed of ['{', '}', '{}', ' { ']) {
+            assert.deepStrictEqual(keysFor(typed, '{.x}'), { kind: 'removes', literal: '.x' }, JSON.stringify(typed));
+            assert.strictEqual(isRemoval(literalFrom(typed)), true, `${JSON.stringify(typed)} commits as a removal`);
+        }
+        assert.deepStrictEqual(keysFor('{', null), { kind: 'set', hadLiteral: false }, 'nothing to remove');
+        assert.deepStrictEqual(keysFor('{.y', '{.x}'), { kind: 'set', hadLiteral: true });
+    });
+
+    test('refusalParts: the typed value and the suggestion in code parts, the sentence plain', () => {
+        const typed = 'width = 300';
+        const reason = `${typed} is text, not an attribute list: a space beside its = makes it text. ${WRITE_IT_AS}width=300.`;
+        assert.deepStrictEqual(refusalParts(reason, typed), [
+            { code: typed }, ' is text, not an attribute list: a space beside its = makes it text. ', WRITE_IT_AS, { code: 'width=300' }, '.',
+        ]);
+        assert.strictEqual(tipText({ parts: refusalParts(reason, typed) }), reason, 'the same words, drawn apart');
+        assert.deepStrictEqual(refusalParts('href is the link\'s own: change it.', '.a'), ['href is the link\'s own: change it.'], 'a reason that does not start with the value has none to set');
+        assert.deepStrictEqual(refusalParts('An empty value is no attribute list.', ''), ['An empty value is no attribute list.']);
     });
 });
