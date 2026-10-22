@@ -130,6 +130,60 @@ img.mep-pending-range {
 
 .mep-raw-source { margin: 0; opacity: 0.8; }
 
+/*
+ * Wave 3 #5a: the "source" chip on every source block, always shown — editor chrome, never in the
+ * file, the preview or an export (only this sheet draws it). A pseudo-element: no node, not copied,
+ * no target for the pointer, and empty alt text (the block names itself, `nameSourceBlock`). No hover
+ * tint: it is no control (#11). Paragraph-like blocks: floated top-right, the first line wraps around it.
+ */
+.ProseMirror .mep-raw-block::before {
+    content: "source" / "";
+    float: right;
+    margin: 3px 0 0 12px;
+    padding: 0 5px;
+    font: 11px/14px var(--vscode-font-family, sans-serif);
+    font-style: normal;
+    font-weight: normal;
+    color: var(--vscode-descriptionForeground, GrayText);
+    border: 1px dashed var(--vscode-editorWidget-border, var(--vscode-contrastBorder, GrayText));
+    border-radius: 3px;
+    pointer-events: none;
+    user-select: none;
+}
+.vscode-high-contrast .ProseMirror .mep-raw-block::before { border-color: var(--vscode-contrastBorder, GrayText); }
+/* Source shown as source (`pre.mep-raw-source`): inside its box, top-right, in room the box keeps free. */
+.ProseMirror .mep-raw-block.mep-raw-boxed::before {
+    float: none;
+    position: absolute;
+    top: 3px;
+    right: 14px;
+    margin: 0;
+    /* Over the box, whose opacity paints it after the chip in tree order. */
+    z-index: 1;
+}
+.ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-source { padding-right: 72px; }
+/* A note or sidebar floating at the right (`clear: right`) would be pushed below a floated chip: the chip follows the last line instead. */
+.ProseMirror .mep-raw-block.mep-raw-noted::before { content: none; }
+.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :last-child::after {
+    content: "source" / "";
+    display: inline-block;
+    margin-left: 8px;
+    padding: 0 5px;
+    font: 11px/14px var(--vscode-font-family, sans-serif);
+    font-style: normal;
+    font-weight: normal;
+    text-indent: 0;
+    color: var(--vscode-descriptionForeground, GrayText);
+    border: 1px dashed var(--vscode-editorWidget-border, var(--vscode-contrastBorder, GrayText));
+    border-radius: 3px;
+    vertical-align: 1px;
+    pointer-events: none;
+    user-select: none;
+}
+.vscode-high-contrast .ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :last-child::after { border-color: var(--vscode-contrastBorder, GrayText); }
+/* The open source box is the edit: no chip over it. */
+.ProseMirror .mep-raw-block.mep-editing::before { content: none; }
+
 .mep-raw-editor {
     box-sizing: border-box;
     width: 100%;
@@ -1094,6 +1148,18 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 /* A neutral hint is one short line (what was done, or that Alt+Enter has nothing to act on): it keeps to one where the window has the room. */
 .mep-hint[data-tone="neutral"] { max-width: 48em; }
 .mep-hint[data-tone="refusal"] { border-left: 3px solid var(--vscode-editorWarning-foreground, #bf8803); }
+/* Said to a screen reader only (`announceHint`): what the page already shows, read out, drawn nowhere. */
+.mep-hint[data-quiet] {
+    position: fixed;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
 
 /* ------------------------------------------------------------------------- */
 /* Requirement heading: the id is shown, not edited                          */

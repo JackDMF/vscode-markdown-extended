@@ -332,11 +332,13 @@ function sameDecor(a: BarDecor, b: BarDecor): boolean {
 }
 
 /**
- * What a source block's bar calls it: a source block, or — for a table the
- * editor leaves as source — the kind of table, so the bar says why this table
- * has no Row and Column menus when the one above it has them.
+ * What a source block's bar calls it: "Source · <why>" (`construct`, the
+ * classifier's reason in words: `footnote`, `definition list` …), or a source
+ * block when no word says more. A table the editor leaves as source says the
+ * kind of table, so the bar says why this table has no Row and Column menus
+ * when the one above it has them.
  */
-function rawBlockLabel(construct: string | null): { label: string; title: string } {
+export function rawBlockLabel(construct: string | null): { label: string; title: string } {
     switch (construct) {
         case 'multimd table':
             return {
@@ -348,8 +350,10 @@ function rawBlockLabel(construct: string | null): { label: string; title: string
                 label: 'Source · table',
                 title: 'A pipe table holding what a cell cannot hold here — a note, code with a |, HTML, a row of another width — shown as the preview renders it, edited as Markdown.',
             };
-        default:
+        case null:
             return { label: 'Source block', title: 'Shown as the preview renders it, edited as Markdown.' };
+        default:
+            return { label: `Source · ${construct}`, title: `Source because of its ${construct}, which the editor does not edit as text — shown as the preview renders it, edited as Markdown.` };
     }
 }
 

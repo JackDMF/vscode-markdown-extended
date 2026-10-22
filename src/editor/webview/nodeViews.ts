@@ -161,6 +161,11 @@ export class RawBlockView extends AtomView implements SourceEditor {
         } else {
             this.content.replaceChildren(element('pre', 'mep-raw-source', this.node.attrs.src as string));
         }
+        nameSourceBlock(this.dom, this.node.attrs.construct as string | null);
+        // Where the "source" chip stands (`editor.css`): inside the box of source shown as source;
+        // after the last line when a note floats at the right, which a chip floating there would push down.
+        this.dom.classList.toggle('mep-raw-boxed', !html);
+        this.dom.classList.toggle('mep-raw-noted', html !== '' && this.content.querySelector(RIGHT_FLOATS) !== null);
     }
 
     /**
@@ -270,6 +275,24 @@ export class RawBlockView extends AtomView implements SourceEditor {
         }
         this.port.commitRawSource(pos, next);
     }
+}
+
+/**
+ * What a stylesheet may float at a block's right, each with `clear: right` — the notes and
+ * sidebars (`markdown-extended.css`), images in a person's own: a chip floating there first
+ * would push them below it.
+ */
+const RIGHT_FLOATS = '.sidenote, .mnote, .right-sidebar, img';
+
+/**
+ * A source block's name for a screen reader: a group that says what it is on entry
+ * (`aria-roledescription`) and why it is source (`construct`, the classifier's reason in words).
+ * The "source" chip is CSS with empty alt text, so it is not read twice.
+ */
+export function nameSourceBlock(dom: HTMLElement, reason: string | null): void {
+    dom.setAttribute('role', 'group');
+    dom.setAttribute('aria-roledescription', 'source block');
+    dom.setAttribute('aria-label', reason ? `Source block: ${reason}` : 'Source block');
 }
 
 /**

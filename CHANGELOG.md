@@ -1,5 +1,13 @@
 # Change Log
 
+## Unreleased
+
+- Every source block shows a muted "source" chip at its top-right, in the editor only, never copied or exported.
+- Raw source keeps the chip inside its box; beside a right-floating note it follows the last line instead.
+- A source block's bar names why: "Source · footnote", "· definition list", "· footnote text" and more.
+- Screen readers hear "Source block: <reason>", and on selection the reason with Alt+Enter for its actions.
+- Typing, pasting, Backspace or Delete on a selected source block is refused with a hint, not deleting it.
+
 ## v4.9.0 — Layers That Keep Their Place
 
 - The floating layers — bars, bubble, fields, menus, cards, hints — follow one rule: below, else above.

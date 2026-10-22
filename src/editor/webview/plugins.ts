@@ -14,6 +14,7 @@ import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
+import { sourceBlockPlugin } from './sourceBlock';
 import { tableKeymap, tablesPlugins } from './tables';
 import { TOOLBAR_ACTIONS } from './toolbar/actions';
 import { toggleMarkType } from './toolbar/commands';
@@ -143,6 +144,8 @@ export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds
     return [
         // First: every key below reads the selection the DOM shows.
         domSelectionFirst(),
+        // Before every rule and key that would replace a selection: a selected source block refuses them.
+        sourceBlockPlugin(),
         markdownInputRules(),
         // `![[name]]` typed: an embed atom, where the engine reads embeds; a plugin of its own,
         // which a note's own text insertion runs and no other rule (`wikiEmbeds.ts`).
