@@ -72,6 +72,12 @@ suite('Editor code blocks: the opening line', () => {
             assert.deepStrictEqual(parseOpeningLine('```{r, echo = FALSE}', 'x', '{r, echo = FALSE}'), { markup: '```', params: '{r, echo = FALSE}', literal: null });
             assert.deepStrictEqual(parseOpeningLine('```js {.}', 'x', 'js {}'), { markup: '```', params: 'js', literal: '{.}' }, 'another pair is a typed one');
         });
+
+        test('only a pair the info string ENDS with is text the file has: the same pair elsewhere in it does not hide a typed one', () => {
+            assert.deepStrictEqual(parseOpeningLine('```x {.} y {.}', 'x', 'x {.} y'), { markup: '```', params: 'x {.} y', literal: '{.}' }, 'held in the middle: typed at the end');
+            assert.deepStrictEqual(parseOpeningLine('```x {.} y {.}', 'x', 'x {.} y {.}'), { markup: '```', params: 'x {.} y {.}', literal: null }, 'held at the end: text');
+            assert.deepStrictEqual(parseOpeningLine('```x {.} y {.}', 'x', 'x {.} y {.}  '), { markup: '```', params: 'x {.} y {.}', literal: null }, 'trailing spaces of the old line do not change that');
+        });
     });
 
     suite('minimumFence', () => {

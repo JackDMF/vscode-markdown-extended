@@ -6,7 +6,8 @@ import { inputRules, textblockTypeInputRule, undoInputRule, wrappingInputRule } 
 import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
 import type { Node } from 'prosemirror-model';
-import { Command, Plugin } from 'prosemirror-state';
+import { Command, Plugin, Transaction } from 'prosemirror-state';
+import { AttrStep, Mapping } from 'prosemirror-transform';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import { DEFAULT_FENCE, languageOf } from '../fences';
 import { fidelityPlugin } from '../fidelity';
@@ -135,11 +136,16 @@ export function domSelectionFirst(): Plugin {
     });
 }
 
-/** A node decoration per fenced code block that names a language: its `data-lang`, the corner tag's text (`editor.css`). */
-function languageDecorations(doc: Node): DecorationSet {
+/**
+ * A node decoration per fenced code block that names a language and stands in `from`…`to`:
+ * its `data-lang`, the corner tag's text (`editor.css`). A block counts when it touches the
+ * range, its ends included — the same overlap `DecorationSet.find` answers by.
+ */
+function languageDecorationsBetween(doc: Node, from: number, to: number): Decoration[] {
     const decorations: Decoration[] = [];
-    doc.descendants((node, pos) => {
-        if (node.type === editorSchema.nodes.code_block) {
+    // One more on each side: `nodesBetween` leaves out a node that only ends where the range starts.
+    doc.nodesBetween(Math.max(0, from - 1), Math.min(doc.content.size, to + 1), (node, pos) => {
+        if (node.type === editorSchema.nodes.code_block && pos <= to && pos + node.nodeSize >= from) {
             const language = languageOf(String(node.attrs.params ?? ''));
             if (language !== '') {
                 decorations.push(Decoration.node(pos, pos + node.nodeSize, { 'data-lang': language }));
@@ -148,7 +154,45 @@ function languageDecorations(doc: Node): DecorationSet {
         // Blocks stand in blocks; nothing inside a textblock is one.
         return !node.isTextblock;
     });
+    return decorations;
+}
+
+function languageDecorations(doc: Node): DecorationSet {
+    const decorations = languageDecorationsBetween(doc, 0, doc.content.size);
     return decorations.length === 0 ? DecorationSet.empty : DecorationSet.create(doc, decorations);
+}
+
+/**
+ * The set after `tr`: mapped through it, and drawn again only where it changed the document.
+ * A key in a paragraph of a long document with a thousand fences used to rebuild every
+ * decoration (7.7 ms a key at 81 KB, 57 ms at 250 KB, nearly all of it `DecorationSet.create`);
+ * now it maps them and looks at the few blocks the edit touched.
+ */
+function updatedLanguageDecorations(set: DecorationSet, tr: Transaction): DecorationSet {
+    let from = Infinity;
+    let to = -Infinity;
+    const touch = (start: number, end: number, after: Mapping) => {
+        from = Math.min(from, after.map(start, -1));
+        to = Math.max(to, after.map(end, 1));
+    };
+    tr.steps.forEach((step, index) => {
+        const after = tr.mapping.slice(index + 1);
+        if (step instanceof AttrStep) {
+            // An attribute set changes no position, so its step map is empty: the node's own start is the range.
+            touch(step.pos, step.pos + 1, after);
+            return;
+        }
+        tr.mapping.maps[index].forEach((_oldStart, _oldEnd, newStart, newEnd) => touch(newStart, newEnd, after));
+    });
+    const mapped = set.map(tr.mapping, tr.doc);
+    if (from > to) {
+        return mapped;
+    }
+    // Everything that touches the changed range goes and is read again from the new document.
+    const stale = mapped.find(from, to);
+    const kept = stale.length === 0 ? mapped : mapped.remove(stale);
+    const added = languageDecorationsBetween(tr.doc, from, to);
+    return added.length === 0 ? kept : kept.add(tr.doc, added);
 }
 
 /**
@@ -161,7 +205,7 @@ export function codeLanguagesPlugin(): Plugin<DecorationSet> {
     return new Plugin<DecorationSet>({
         state: {
             init: (_config, state) => languageDecorations(state.doc),
-            apply: (tr, set, _old, state) => (tr.docChanged ? languageDecorations(state.doc) : set),
+            apply: (tr, set) => (tr.docChanged ? updatedLanguageDecorations(set, tr) : set),
         },
         props: {
             decorations(state) {

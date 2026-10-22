@@ -1338,7 +1338,8 @@ class ObjectToolbarView implements PluginView {
      * stays in its run (`selectionObject`). `'none'` where there is neither —
      * the only answer the key says so for (`NO_TARGET_HINT`); `{ title }`
      * where there is an object and no bar could be drawn for it — the
-     * presentation's title says what it is, so the key is not silent there.
+     * presentation's title says what it is (led by its label where the title
+     * does not name the object), so the key is not silent there.
      */
     openFromKeyboard(): 'opened' | 'none' | { title: string } {
         const object = objectAtSelection(this.view.state) ?? (currentReadsAttrs() ? attributeHolderAt(this.view.state).inline?.object ?? null : null);
@@ -1351,7 +1352,10 @@ class ObjectToolbarView implements PluginView {
         // It takes the slot whatever holds it, a dismissal of this object's bar included.
         this.refresh(true);
         if (!this.selectionBar.visible) {
-            return { title: this.present(object).title };
+            const presentation = this.present(object);
+            // It leads with what the object is; a title that already names it stands as it is.
+            const names = presentation.title.toLowerCase().includes(presentation.label.toLowerCase());
+            return { title: names ? presentation.title : `${presentation.label}: ${presentation.title}` };
         }
         this.selectionBar.focusFirst();
         return 'opened';
@@ -2182,15 +2186,18 @@ class ObjectToolbarView implements PluginView {
                 const indented = object.node.attrs.markup === '';
                 const code = [languageOf(object.node.attrs.params as string), (object.node.attrs.attrsSuffix as string | null) ?? ''].filter(Boolean).join(' ');
                 const remove = wording({ verb: 'Delete', noun: 'code block' });
+                const attributes = this.attributesVerb(object);
+                // The title names only what the bar can do: Attributes… stays out where it is refused (nested, the engine off).
+                const fencers = attributes.refusal ? 'Language… or Edit source' : 'Language…, Attributes… or Edit source';
                 return {
                     label: indented ? 'Indented code block' : 'Code block',
                     code: code === '' ? undefined : code,
                     title: indented
-                        ? 'An indented code block: it has no opening line until Language…, Attributes… or Edit source fences it.'
+                        ? `An indented code block: it has no opening line until ${fencers} fences it.`
                         : 'A fenced code block: its language and its {…} stand on its opening line.',
                     verbs: [
                         this.languageVerb(object),
-                        this.attributesVerb(object),
+                        attributes,
                         this.openingLineVerb(object),
                         { id: 'delete-code-block', label: remove.label, short: remove.short, title: 'The block goes from the file.', slot: 'destroy', run: () => this.remove(object, remove.done) },
                     ],

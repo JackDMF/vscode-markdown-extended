@@ -148,7 +148,7 @@ export function minimumFence(markup: string, content: string): string {
  * ends with a brace pair the plugin would not take, that pair, so the
  * literal's own check (`literalRefusal`) says why rather than the pair
  * silently staying text in the info string — unless `current`, the block's
- * info string as it is, already holds that pair: text the file has, which
+ * info string as it is, already ends with that pair: text the file has, which
  * stays text.
  */
 export function parseOpeningLine(line: string, content: string, current = ''): OpeningLine | { refusal: string } {
@@ -170,8 +170,8 @@ export function parseOpeningLine(line: string, content: string, current = ''): O
         const start = findLeftDelimiter(info);
         literal = start >= 0 ? info.slice(start) : null;
     }
-    // Only a literal typed now: one the block's info string already holds is text the file has (a nested fence's, a knitr header's), which nobody asked to read as a literal.
-    if (literal !== null && current.includes(literal)) {
+    // Only a literal typed now: one the block's info string already ends with is text the file has (a nested fence's, a knitr header's), which nobody asked to read as a literal. The same pair elsewhere in it is no such text.
+    if (literal !== null && current.trimEnd().endsWith(literal)) {
         literal = null;
     }
     const params = literal === null ? info : info.slice(0, info.length - literal.length).trim();

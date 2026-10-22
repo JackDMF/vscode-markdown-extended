@@ -580,9 +580,16 @@ suite('Code block (e2e)', () => {
         });
         await pressAlt('Enter');
         assert.strictEqual(await page.$(BAR), null, 'a heading with no lenses has no bar');
-        // The presentation's title (`ownPresentation`): a requirement heading's reads "A requirement heading: its id and anchor are Req Explorer's."
-        assert.deepStrictEqual(await hint(), { text: 'A heading.', shown: true, tone: 'neutral' }, 'the object\'s own title, neutral — not NO_TARGET_HINT');
+        // The presentation's label, then its title (`ownPresentation`) — the label leads where the title does not name the object: "Heading 1: A heading."
+        // A requirement heading's title names it already: "A requirement heading: its id and anchor are Req Explorer's."
+        assert.deepStrictEqual(await hint(), { text: 'Heading 1: A heading.', shown: true, tone: 'neutral' }, 'the object\'s label and own title, neutral — not NO_TARGET_HINT');
         assert.notStrictEqual((await hint()).text, NO_TARGET_HINT);
+        const rows = await page.$eval('.mep-hint', el => {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            return new Set(Array.from(range.getClientRects()).map(r => Math.round(r.top))).size;
+        });
+        assert.strictEqual(rows, 1, 'the hint stays one line');
         assert.strictEqual(await page.evaluate(() => (window as unknown as { altEnter: boolean | null }).altEnter), true, 'the key is still taken');
     });
 
@@ -595,6 +602,21 @@ suite('Code block (e2e)', () => {
         assert.strictEqual(b.focus, 'language');
         assert.strictEqual(await page.$eval(`${BAR} [data-verb="block-attributes"]`, el => el.getAttribute('aria-disabled')), 'true');
         assert.ok((await describedTip(page, `${BAR} [data-verb="block-attributes"]`)).includes(NESTED_CODE_ATTRS_REFUSAL));
+    });
+
+    test('H4 an indented block\'s title names Attributes… only where it is offered: not in a quote', async function () {
+        this.timeout(30000);
+        await showDocument('Text.\n\n    top block\n\nAfter.\n', 'top block');
+        await barFor('top block');
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="block-attributes"]`, el => el.getAttribute('aria-disabled')), 'false');
+        const top = await describedTip(page, `${BAR} .mep-object-label`);
+        assert.ok(top.includes('Language…, Attributes… or Edit source'), top);
+        await showDocument('> Quoted.\n>\n>     nested block\n\nAfter.\n', 'nested block');
+        await barFor('nested block');
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="block-attributes"]`, el => el.getAttribute('aria-disabled')), 'true');
+        const nested = await describedTip(page, `${BAR} .mep-object-label`);
+        assert.ok(nested.includes('Language… or Edit source'), nested);
+        assert.ok(!nested.includes('Attributes…'), nested);
     });
 
     // -- the table's active cell (the same item: the caret's place in a table, the tint on demand) --
