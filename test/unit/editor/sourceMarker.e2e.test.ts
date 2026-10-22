@@ -200,6 +200,43 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
         assert.strictEqual((await (editor as EditorPage).edits()).pop()?.text, FOOTNOTE, 'undo brings it back');
     });
 
+    test('a paste of one source block over a selection holding another says the other went, and undo brings it back', async function () {
+        this.timeout(10000);
+        const two = [
+            'Para one.', '', 'Alpha holds one.[^1]', '', 'Para two here.', '', 'Beta holds two.[^2]', '', 'Para three here.', '',
+            '[^1]: n1', '[^2]: n2', '',
+        ].join('\n');
+        await showDocument(two);
+        const alpha = await (await page.$('.ProseMirror > .mep-raw-block .mep-atom-content'))?.boundingBox();
+        assert.ok(alpha);
+        await page.mouse.click(alpha.x + 20, alpha.y + alpha.height / 2);
+        await delay(120);
+        const clip = await page.evaluate(() => {
+            const data = new DataTransfer();
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+            return { html: data.getData('text/html'), text: data.getData('text/plain') };
+        });
+        assert.ok(clip.html.includes('Alpha holds one'), 'the copy holds Alpha');
+        // From "Para two" across Beta to "Para three": the block's bar stands over the paragraph below it, so the selection is made in the page.
+        await page.evaluate(() => {
+            const text = (n: number) => (document.querySelector(`.ProseMirror > p:nth-of-type(${n})`) as HTMLElement).firstChild as Text;
+            window.getSelection()?.setBaseAndExtent(text(2), 5, text(3), 5);
+        });
+        await delay(150);
+        await page.evaluate(c => {
+            const data = new DataTransfer();
+            data.setData('text/html', c.html);
+            data.setData('text/plain', c.text);
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+        }, clip);
+        await settle();
+        assert.ok(!(await (editor as EditorPage).edits()).pop()?.text.includes('Beta holds two'), 'Beta went with the selection');
+        const hint = await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden, tone: (el as HTMLElement).dataset.tone }));
+        assert.deepStrictEqual(hint, { text: `Source block removed — ${UNDO}`, shown: true, tone: 'neutral' });
+        await undo();
+        assert.strictEqual((await (editor as EditorPage).edits()).pop()?.text, two, 'undo brings Beta back');
+    });
+
     test('Backspace at the start of the paragraph after it selects it; a second Backspace is refused', async function () {
         this.timeout(10000);
         await showDocument(FOOTNOTE);
@@ -396,6 +433,13 @@ function tallBoxDocument(): string {
     return ['Words before.[^t1]', '', ...notes, '', 'Words after.', ''].join('\n');
 }
 
+/** A 60-item list with a footnote on each item: one tall, rendered source block, its top far above where a person reads. */
+function tallListDocument(): string {
+    const items = Array.from({ length: 60 }, (_, i) => `- Item ${i + 1} of the list, stating a finding.[^l${i + 1}]`);
+    const notes = Array.from({ length: 60 }, (_, i) => `[^l${i + 1}]: The minutes, item ${i + 1}.`);
+    return ['Words before.', '', ...items, '', 'Words after.', '', ...notes, ''].join('\n');
+}
+
 suite('Editor source block marker (e2e)', () => {
     const { state, show, open } = sourcePage({ width: 1280, height: 900, styles: ['markdown-extended.css'] });
     const page = () => state.page;
@@ -534,6 +578,70 @@ suite('Editor source block marker (e2e)', () => {
         }
     });
 
+    /** Where the chip of block `n` stands against the toolbar row, the viewport, the block, and every rendered line of text. */
+    const stickyGeometry = (n: number) => page().$eval(block(n), (el, chipSel) => {
+        const c = (el.querySelector(chipSel) as HTMLElement).getBoundingClientRect();
+        const row = (document.querySelector('.mep-toolbar') as HTMLElement).getBoundingClientRect();
+        const b = el.getBoundingClientRect();
+        let covered = 0;
+        const walker = document.createTreeWalker(el.querySelector('.mep-atom-content') as HTMLElement, NodeFilter.SHOW_TEXT);
+        for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+            const range = document.createRange();
+            range.selectNodeContents(t);
+            for (const r of Array.from(range.getClientRects())) {
+                covered += r.left < c.right - 0.5 && r.right > c.left + 0.5 && r.top < c.bottom - 0.5 && r.bottom > c.top + 0.5 && r.width > 0 ? 1 : 0;
+            }
+        }
+        return {
+            tall: el.classList.contains('mep-raw-tall'),
+            chip: { top: c.top, right: c.right, left: c.left, bottom: c.bottom },
+            rowBottom: row.bottom,
+            blockTop: b.top,
+            blockBottom: b.bottom,
+            blockRight: b.right,
+            viewport: { width: document.documentElement.clientWidth, height: window.innerHeight },
+            covered,
+            scrollWidth: document.documentElement.scrollWidth,
+        };
+    }, CHIP);
+
+    test('a tall rendered block keeps its chip in sight under the toolbar while its top is scrolled away, in a gutter that covers no text', async function () {
+        this.timeout(20000);
+        await page().setViewport({ width: 1280, height: 500 });
+        try {
+            await show(tallListDocument());
+            await delay(250);
+            const at = await stickyGeometry(0);
+            assert.ok(at.tall, `the 60-line list is tall: ${JSON.stringify(at)}`);
+            assert.ok(at.chip.top - at.blockTop < 8 && at.chip.right <= at.blockRight && at.covered === 0, `at rest the chip is at the block's top-right, over no text: ${JSON.stringify(at)}`);
+            const top = await page().$eval(block(0), el => el.getBoundingClientRect().top + window.scrollY);
+            for (const down of [300, 700, 1100]) {
+                await page().evaluate(y => window.scrollTo(0, y), top + down);
+                await delay(100);
+                const g = await stickyGeometry(0);
+                assert.ok(g.blockTop < g.rowBottom && g.blockBottom > g.chip.bottom, `the block's top is scrolled away, its bottom is below the chip: ${JSON.stringify(g)}`);
+                assert.ok(g.chip.top >= g.rowBottom && g.chip.top <= g.rowBottom + 8, `${down}: the chip stands right under the row: ${JSON.stringify(g)}`);
+                assert.ok(g.chip.bottom <= g.viewport.height && g.chip.right <= g.viewport.width && g.scrollWidth <= g.viewport.width, `${down}: within the viewport, no sideways scroll: ${JSON.stringify(g)}`);
+                assert.ok(g.chip.right <= g.blockRight, `${down}: inside the block's own gutter: ${JSON.stringify(g)}`);
+                assert.strictEqual(g.covered, 0, `${down}: over no line of text: ${JSON.stringify(g)}`);
+            }
+            await page().evaluate(() => window.scrollTo(0, 0));
+        } finally {
+            await page().setViewport({ width: 1280, height: 900 });
+        }
+    });
+
+    test('a block that is not tall, or has a note at its right, keeps its chip as it was: not sticky', async function () {
+        this.timeout(10000);
+        await show(MARKED);
+        for (const n of [0, 2]) {
+            assert.strictEqual(await page().$eval(block(n), el => el.classList.contains('mep-raw-tall')), false, `block ${n}`);
+        }
+        assert.strictEqual(await page().$eval(`${block(0)} .mep-raw-chip`, el => getComputedStyle(el).position), 'relative');
+        const rest = await stickyGeometry(2);
+        assert.ok(rest.chip.bottom <= rest.blockTop, `the noted block's chip stays above it: ${JSON.stringify(rest)}`);
+    });
+
     test('a block whose note floats at the right keeps the note on its line: the chip stands above the block, top-left, with a stub on its edge', async function () {
         this.timeout(10000);
         await show(MARKED);
@@ -664,6 +772,18 @@ suite('Editor source block marker (e2e)', () => {
                 await show(clutterDocument());
                 await page().mouse.move(5, 5);
                 await shot(page(), `clutter-1280-${name}.png`);
+            }
+            // A tall block, its top scrolled away: the chip stays under the toolbar row.
+            for (const [theme, name] of themes.slice(0, 2)) {
+                await applyTheme(page(), theme);
+                await page().setViewport({ width: 1280, height: 600 });
+                await show(tallListDocument());
+                await delay(250);
+                const top = await page().$eval(block(0), el => el.getBoundingClientRect().top + window.scrollY);
+                await page().evaluate(y => window.scrollTo(0, y), top + 500);
+                await page().mouse.move(5, 5);
+                await delay(200);
+                await shot(page(), `scroll-sticky-1280-${name}.png`);
             }
             // The refusal at the block: a character typed over a selected source block.
             for (const [theme, name] of themes) {

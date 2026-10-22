@@ -80,51 +80,62 @@ function refuse(view: EditorView, sel: NodeSelection): true {
     return true;
 }
 
-/** Source blocks in `doc` wholly between `from` and `to`. */
-function sourceBlocksIn(doc: Node, from: number, to: number): number {
-    let n = 0;
+/** The `src` of each source block in `doc` wholly between `from` and `to`, appended to `into`. */
+function sourceSrcsIn(doc: Node, from: number, to: number, into: string[]): void {
     if (from < to) {
         doc.nodesBetween(from, to, (node, pos) => {
             if (node.type === editorSchema.nodes.raw_block) {
-                n += pos >= from && pos + node.nodeSize <= to ? 1 : 0;
+                if (pos >= from && pos + node.nodeSize <= to) {
+                    into.push(node.attrs.src as string);
+                }
                 return false;
             }
             return !node.isTextblock;
         });
     }
-    return n;
 }
 
-/**
- * How many source blocks `tr` takes out of the document, net of those it puts in (a block
- * moved by a drag, re-marked by `setNodeMarkup`, counts as kept). Reads only what the steps
- * replace: a keystroke's few positions.
- */
-export function sourceBlocksRemoved(tr: Transaction): number {
-    let net = 0;
-    tr.steps.forEach((step, i) => {
-        const doc = tr.docs[i];
-        if (step instanceof ReplaceStep) {
-            const s = step as unknown as { from: number; to: number; slice: { content: Node['content'] } };
-            net += sourceBlocksIn(doc, s.from, s.to) - countIn(s.slice.content);
-        } else if (step instanceof ReplaceAroundStep) {
-            const s = step as unknown as { from: number; to: number; gapFrom: number; gapTo: number; slice: { content: Node['content'] } };
-            net += sourceBlocksIn(doc, s.from, s.to) - sourceBlocksIn(doc, s.gapFrom, s.gapTo) - countIn(s.slice.content);
-        }
-    });
-    return net;
-}
-
-function countIn(content: Node['content']): number {
-    let n = 0;
+/** The `src` of each source block in `content`, appended to `into`. */
+function sourceSrcsOf(content: Node['content'], into: string[]): void {
     content.descendants(node => {
         if (node.type === editorSchema.nodes.raw_block) {
-            n++;
+            into.push(node.attrs.src as string);
             return false;
         }
         return !node.isTextblock;
     });
-    return n;
+}
+
+/**
+ * How many source blocks `tr` takes out of the document and does not put back: a block counts
+ * as kept only when what the steps insert holds a source block with the same `src` (a block
+ * moved by a drag, re-marked by `setNodeMarkup`), so one replaced by another source block still
+ * counts as removed. Reads only what the steps replace: a keystroke's few positions.
+ */
+export function sourceBlocksRemoved(tr: Transaction): number {
+    const out: string[] = [];
+    const put: string[] = [];
+    tr.steps.forEach((step, i) => {
+        const doc = tr.docs[i];
+        if (step instanceof ReplaceStep) {
+            const s = step as unknown as { from: number; to: number; slice: { content: Node['content'] } };
+            sourceSrcsIn(doc, s.from, s.to, out);
+            sourceSrcsOf(s.slice.content, put);
+        } else if (step instanceof ReplaceAroundStep) {
+            const s = step as unknown as { from: number; to: number; gapFrom: number; gapTo: number; slice: { content: Node['content'] } };
+            sourceSrcsIn(doc, s.from, s.gapFrom, out);
+            sourceSrcsIn(doc, s.gapTo, s.to, out);
+            sourceSrcsOf(s.slice.content, put);
+        }
+    });
+    // Each inserted block keeps one removed block of its src.
+    return out.filter(src => {
+        const at = put.indexOf(src);
+        if (at >= 0) {
+            put.splice(at, 1);
+        }
+        return at < 0;
+    }).length;
 }
 
 /** A transaction that may remove a source block without a word: undo/redo, a verb's, the host's re-sync. */

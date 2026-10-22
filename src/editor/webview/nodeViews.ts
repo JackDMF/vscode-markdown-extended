@@ -118,11 +118,20 @@ export class RawBlockView extends AtomView implements SourceEditor {
     private readonly content: HTMLElement;
     private editor: HTMLTextAreaElement | null = null;
     private untrack: (() => void) | null = null;
+    private readonly sizes: ResizeObserver | null;
+    private measuring = 0;
 
     constructor(node: Node, private readonly getPos: GetPos, private readonly port: EditorPort) {
         super(node, 'div', 'mep-raw-block');
         this.content = element('div', 'mep-atom-content');
         this.dom.append(sourceChip(), this.content);
+        // A tall rendering gets a gutter for its chip, which then stays in sight (`mep-raw-tall`).
+        // Measured after the layout pass, not inside the observer's, so it never loops.
+        this.sizes = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+            cancelAnimationFrame(this.measuring);
+            this.measuring = requestAnimationFrame(() => this.measure());
+        });
+        this.sizes?.observe(this.dom);
         inertControls(this.content);
         followLinksIn(this.content, href => this.port.openLink(href));
         // A double click on the rendering opens the source, as a double click on
@@ -169,6 +178,19 @@ export class RawBlockView extends AtomView implements SourceEditor {
         const first = Array.from(this.content.children).find(el => el.getAttribute('aria-hidden') !== 'true');
         this.dom.classList.toggle('mep-raw-boxed', !html);
         this.dom.classList.toggle('mep-raw-above', html !== '' && (this.content.querySelector(RIGHT_FLOATS) !== null || first === undefined || !TEXT_LIKE.has(first.tagName)));
+    }
+
+    /**
+     * Whether the rendering is tall enough that its top may scroll away (`mep-raw-tall`): only a
+     * chip floated top-right, which a gutter then holds, sticky, with no line under it. Boxes and
+     * chips above a block stay as they are. Hysteresis, as the gutter narrows the lines and
+     * makes the block taller. Run on a size change (the observer), not on every render.
+     */
+    private measure(): void {
+        const cl = this.dom.classList;
+        const height = this.dom.offsetHeight;
+        const floats = !cl.contains('mep-raw-boxed') && !cl.contains('mep-raw-above') && !cl.contains('mep-editing');
+        cl.toggle('mep-raw-tall', floats && height > (cl.contains('mep-raw-tall') ? TALL_BLOCK * 0.8 : TALL_BLOCK));
     }
 
     /**
@@ -251,6 +273,8 @@ export class RawBlockView extends AtomView implements SourceEditor {
     destroy(): void {
         this.untrack?.();
         this.untrack = null;
+        this.sizes?.disconnect();
+        cancelAnimationFrame(this.measuring);
     }
 
     private stopEditing(commit: boolean): void {
@@ -286,6 +310,9 @@ export class RawBlockView extends AtomView implements SourceEditor {
  * would push them below it.
  */
 const RIGHT_FLOATS = '.sidenote, .mnote, .right-sidebar, img';
+
+/** The height in px from which a rendered source block counts as tall: its chip stays in sight (`mep-raw-tall`). */
+const TALL_BLOCK = 400;
 
 /** A rendering's first element whose lines a floated chip can wrap: no box of its own beside a float. */
 const TEXT_LIKE: ReadonlySet<string> = new Set(['P', 'UL', 'OL', 'DL', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);

@@ -185,6 +185,26 @@ img.mep-pending-range {
 }
 .ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-source { padding-right: 72px; }
 /*
+ * A tall rendering (`mep-raw-tall`, set from 400px up by the node view): its chip gets a gutter of
+ * its own at the right edge, where no line runs, and sticks under the toolbar row there while the
+ * block's top is scrolled away. Only where the chip floats top-right: a block with a note at its
+ * right, or one that starts with a box of its own (`mep-raw-above`), keeps its chip above the top-left
+ * corner and is not sticky, as nothing in its margins is free of the notes.
+ */
+.ProseMirror .mep-raw-block.mep-raw-tall { padding-right: 60px; }
+.ProseMirror .mep-raw-block.mep-raw-tall > .mep-raw-rail {
+    float: none;
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    right: 6px;
+    margin: 0;
+}
+.ProseMirror .mep-raw-block.mep-raw-tall .mep-raw-chip {
+    position: sticky;
+    top: calc(var(--mep-row-height, 27px) + 4px);
+}
+/*
  * Above the block, at its top-left: where a note or sidebar floats at the right (`clear: right`: a
  * floated chip would push it down), or where the rendering starts with a box of its own (a table, an
  * admonition: a float would narrow it or push it below). Absolutely placed, so it takes no room and

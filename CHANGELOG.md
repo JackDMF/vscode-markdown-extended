@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Every source block shows a muted "source" chip at its top-right, in the editor only, never copied or exported.
-- Raw source keeps the chip inside its box, in sight while scrolling; beside right notes or tables it stands above.
+- Raw source and tall blocks keep the chip in sight while scrolling; beside right notes or tables it stands above.
 - The chip takes the page's own text colour and leaves a stylesheet's own ::after labels alone.
 - A source block's bar names why: "Source · has a footnote", "· definition list", "· footnote text" and more.
 - Screen readers hear the reason as the block's name, and on selection the reason with Alt+Enter.
