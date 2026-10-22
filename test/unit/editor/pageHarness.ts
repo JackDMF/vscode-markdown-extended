@@ -230,7 +230,7 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         assert.ok(fs.existsSync(sheet), `no stylesheet at ${sheet}`);
     }
 
-    const browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', ...FRAME_ARGS] });
     try {
         return await preparePage(browser, bundle, extensionPath as string, sheets, options);
     } catch (error) {
@@ -239,6 +239,17 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         throw error;
     }
 }
+
+/**
+ * Frames whatever the screen does. Headless Chromium on macOS takes its frames
+ * from the display's refresh: with the display asleep — a full run left to
+ * itself past the energy saver's minutes — no frame comes, no
+ * `requestAnimationFrame` runs, and every layer placed once per frame
+ * (`placement.ts`) stays where it was; the suites then fail by the dozen, or
+ * one here and there as the display dims. Without the frame-rate limit the
+ * frames come from a timer of the browser's own.
+ */
+export const FRAME_ARGS = ['--disable-frame-rate-limit'];
 
 /** The page in `browser`: the host's page written, its stylesheets and the bundle loaded. */
 async function preparePage(browser: puppeteer.Browser, bundle: string, extensionPath: string, sheets: readonly string[], options: EditorPageOptions): Promise<EditorPage> {
