@@ -1034,12 +1034,12 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         const removeNote = await verbState('delete-note');
         assert.strictEqual(removeNote.disabled, 'true');
         assert.ok(removeNote.title.endsWith(SIDEBAR_GLUED_BEFORE), removeNote.title);
-        // Disabled, a click runs nothing: no success is said and nothing is posted.
+        // Disabled, a click runs nothing — no success is said and nothing is posted — but says why at the verb (#10).
         const edits = (await (editor as EditorPage).edits()).length;
-        const hintBefore = await hint();
         await clickVerb('delete-note');
+        await delay(100);
+        assert.deepStrictEqual(await hint(), { text: SIDEBAR_GLUED_BEFORE, tone: 'refusal', shown: true }, 'the refusal, said at the verb');
         await settle();
-        assert.deepStrictEqual(await hint(), hintBefore, 'the hint is as it was: nothing said');
         assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'nothing posted');
     });
 });

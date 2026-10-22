@@ -431,6 +431,72 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         assert.deepStrictEqual([await page.$eval(menu, el => (el as HTMLElement).hidden), await shown()], [true, false], 'the menu closed, the hint gone with it');
     });
 
+    test('D5/D6: a refused entry of a table bar\'s menu says why beside the menu, at the entry; the menu stays open', async function () {
+        this.timeout(20000);
+        await fresh('| Only | Row |\n| ---- | --- |\n\nAfter the table.\n', 'After');
+        await clickText(page, 'Only', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await chooseEntry('row', 'delete-row');
+        const entry = `${MENU} [data-entry="delete-row"]`;
+        assert.strictEqual(await page.$eval(entry, el => el.getAttribute('aria-disabled')), 'true');
+        let p = await placed(entry, MENU);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'A table needs at least one row — Delete table deletes the whole table.']);
+        assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1, `at the entry's top: ${JSON.stringify(p)}`);
+        assert.ok(p.hint.left >= p.controls[1].right + 3 || p.hint.right <= p.controls[1].left - 3, `beside the menu, not over it: ${JSON.stringify(p)}`);
+        assert.ok(await page.$(MENU), 'the menu stays open');
+        await shotAs('s7-bar-entry');
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(), false, 'gone with the menu');
+
+        await fresh('| Only |\n| ---- |\n| x |\n\nAfter the table.\n', 'After');
+        await clickText(page, 'x', 0);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await chooseEntry('column', 'delete-column');
+        p = await placed(`${MENU} [data-entry="delete-column"]`, MENU);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'A table needs at least one column — Delete table deletes the whole table.']);
+        await page.keyboard.press('Escape');
+    });
+
+    test('D5b: a refused bar verb says why under the bar at the verb; moved into the bar\'s "…", at its entry', async function () {
+        this.timeout(30000);
+        await fresh('Alpha ++beta|the body++@y@ gamma.\n', 'Alpha');
+        await clickText(page, 'body', 1);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        const verb = `${BAR} [data-verb="delete-note"]`;
+        assert.deepStrictEqual(await page.$eval(verb, el => [el.getAttribute('aria-disabled'), el.hasAttribute('disabled')]), ['true', false]);
+        const reason = (await page.$eval(verb, el => el.getAttribute('aria-description') ?? '')).split('\n').pop() ?? '';
+        const edits = (await (editor as EditorPage).edits()).length;
+        await page.click(verb);
+        await delay(80);
+        const p = await placed(verb, BAR);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'control', reason]);
+        assert.ok(Math.abs(p.hint.left - p.controls[0].left) <= 2, `at the verb: ${JSON.stringify(p)}`);
+        assert.ok(p.hint.top >= p.controls[1].bottom + 3 || p.hint.bottom <= p.controls[0].top - 3, `under the bar (or above the verb at the floor): ${JSON.stringify(p)}`);
+        assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'nothing posted');
+        await shotAs('s6-bar-verb');
+        await page.setViewport({ width: 360, height: 800 });
+        await delay(400);
+        await clickText(page, 'body', 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        const more = `${BAR} .mep-more-face`;
+        if (await page.$(`${more}:not([hidden])`) !== null && await page.$(`${verb}:not([hidden])`) === null) {
+            await page.click(more);
+            await page.waitForSelector(MENU, { visible: true, timeout: 2000 });
+            const entry = `${MENU} [data-entry="delete-note"]`;
+            await page.click(entry);
+            await delay(80);
+            const q = await placed(entry, MENU);
+            assert.deepStrictEqual([q.shown, q.at, q.text], [true, 'menu-entry', reason]);
+            assert.ok(q.hint.bottom <= 800 && q.hint.right <= 360, `inside the window: ${JSON.stringify(q)}`);
+            await shotAs('s6-bar-entry');
+        } else {
+            assert.fail('at 360 px Delete note moves into the bar\'s "…"');
+        }
+        await page.setViewport({ width: 1280, height: 800 });
+        await delay(300);
+    });
+
     /** Open the bar's `verb` menu and press `entry` with the mouse. */
     async function chooseEntry(verb: string, entry: string): Promise<void> {
         const button = await page.waitForSelector(`${BAR} [data-verb="${verb}"]`, { visible: true, timeout: 2000 });
