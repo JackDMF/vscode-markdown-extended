@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## v4.9.0 — Layers That Keep Their Place
 
 - The floating layers — bars, bubble, fields, menus, cards, hints — follow one rule: below, else above.
 - The completion list at the caret keeps its own placement for now.
