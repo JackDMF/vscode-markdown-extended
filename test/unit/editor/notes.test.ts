@@ -414,7 +414,7 @@ suite('Editor notes: what the serializer cannot write back is not made', () => {
         const ref = stateOf('Alpha ++the `ab` ref|body++ gamma.\n');
         const inCode = caretAt(ref, posOf(ref.doc, 'ab') + 1);
         assert.strictEqual(inCode.apply(inCode.tr.insertText('|')).doc, inCode.doc, '| in code in a reference');
-        assert.ok(noteRefusal(inCode.tr.insertText('|'))?.includes('"|"'));
+        assert.ok(saidText(noteRefusal(inCode.tr.insertText('|')) ?? '').includes('"|"'));
         assert.notStrictEqual(inCode.apply(inCode.tr.insertText('x')).doc, inCode.doc, 'other characters type');
         // ++ in a code span in a body: the first + is fine, the second would close the note.
         const bodyDoc = stateOf('Alpha ++ref|see `i` here++ gamma.\n');
@@ -441,7 +441,7 @@ suite('Editor notes: what the serializer cannot write back is not made', () => {
         assert.strictEqual(noteRefusal(glued.tr.insertText('x', after)), null, 'a letter after it is fine');
         // A note made of a code span that holds |: its reference would.
         const made = select(stateOf('A `a|b` c.\n'), 'a|b');
-        assert.ok(wrapNodeLockReason(made, 'sidenote')?.includes('"|"'));
+        assert.ok(saidText(wrapNodeLockReason(made, 'sidenote') ?? '').includes('"|"'));
         assert.strictEqual(wrapInNote('sidenote')(made), false);
         assert.strictEqual(wrapNodeLockReason(made, 'right_sidebar'), null, 'a sidebar may hold | in code');
     });

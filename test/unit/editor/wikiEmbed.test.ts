@@ -681,12 +681,12 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         };
         for (const [source, literal] of [['X $![[x]]$ y.\n', '{title="p$q"}'], ['X @![[x]]@ y.\n', '{title="p@q"}'], ['X ++ref|![[x]]++ y.\n', '{title="p|q"}']]) {
             const state = spanned(source, literal);
-            assert.ok(noteRefusal(asText(state))?.includes('attribute span'), source);
+            assert.match(saidText(noteRefusal(asText(state)) ?? ''), /the attributes .* hold a note marker/, source);
             const [at] = embedPositions(state.doc);
             assert.strictEqual(noteRefusal(state.tr.delete(at, at + 1)), null, `the atom alone is removable: ${source}`);
         }
         const inCell = spanned('| a |\n| - |\n| ![[x]] |\n', '{title="p|q"}');
-        assert.ok(tableRefusal(asText(inCell))?.includes('attribute span'));
+        assert.match(saidText(tableRefusal(asText(inCell)) ?? ''), /the attributes .* hold a "\|" or a backtick/);
         // No span, no refusal.
         for (const source of ['X $![[x]]$ y.\n', '| a |\n| - |\n| ![[x]] |\n', 'Plain ![[x]].\n']) {
             const state = EditorState.create({ doc: parseDocument(md, source).doc });

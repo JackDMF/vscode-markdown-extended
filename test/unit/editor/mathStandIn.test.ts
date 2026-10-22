@@ -195,7 +195,7 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         const q = posIn(coded.doc, 'Q', '');
         const code = coded.tr.replaceWith(q, q + 1, editorSchema.text('$(pwd)', [editorSchema.marks.code.create()]));
         assert.deepStrictEqual(noteRefusal(code), literalLostReason({ literal: span }));
-        assert.ok(noteRefusal(code)?.includes(span));
+        assert.ok(saidText(noteRefusal(code) ?? '').includes(span));
         assert.ok(coded.apply(code).doc === coded.doc, 'the filter drops it');
 
         // A span pasted before a paragraph's own literal: their two `$` pair as math, and both are lost.
@@ -369,7 +369,7 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
             const removal = removeSpanTransaction(state, span);
             const saved = serializeDocument({ doc: writtenEdit(removal).doc, eol: '\n', tail: '' }, { defaultWrap: 90 });
             assert.ok(!host.parse(saved, {}).some(t => t.type === 'heading_open' && (t.attrs ?? []).length > 0), `math ${math}: ${saved} loses the id`);
-            assert.ok(removeSpanRefusal(state, span)?.includes('{#size}'), `math ${math}: refused, naming the id`);
+            assert.ok(saidText(removeSpanRefusal(state, span) ?? '').includes('{#size}'), `math ${math}: refused, naming the id`);
         }
     });
 

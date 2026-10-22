@@ -143,7 +143,7 @@ suite('Editor objects: a note\'s verbs', () => {
         // Code in a sidenote may hold `!!`; in a marginal note it would end the note.
         const state = caretAt(stateOf('A ++ref|see `a!!b` here++ b.\n'), 'ref');
         const reason = convertNoteRefusal(state, objectHere(state).from);
-        assert.ok(reason?.includes('"!!"'), String(reason));
+        assert.strictEqual(saidText(reason ?? ''), 'A !! can\'t go in inline code inside a marginal note — it would end the note there. Type it outside the code.');
         // Superscript may hold `@` in either sidebar: in a right one it is written `\@`, which it unescapes.
         const raised = caretAt(stateOf('A $see ^a@b^ here$ b.\n'), 'see');
         assert.strictEqual(convertNoteRefusal(raised, objectHere(raised).from), null);
