@@ -488,7 +488,7 @@ suite('Editor placement (e2e)', () => {
         // A window so low the menu takes it all: no room below the menu either.
         await page.setViewport({ width: 420, height: 240 });
         await s5();
-        const low = { card: await box(CARD), menu: await box('.mep-menu[data-menu="formatting"]') };
+        const low = { card: await box(CARD), menu: await box('.mep-menu[data-menu="formatting"]'), more: await box('.mep-menu[data-menu="more"]') };
         assert.strictEqual(low.card, null, `no room beside, below or above: no card ${JSON.stringify(low)}`);
         await page.keyboard.press('Escape');
     });
@@ -851,6 +851,46 @@ suite('Editor placement (e2e)', () => {
         await delay(200);
         assert.strictEqual(await shown('.mep-menu[data-menu="admonition"]:not([hidden])'), true, 'the submenu stays open under the pointer');
         assert.strictEqual(await page.evaluate(() => document.querySelector('.mep-menu[data-menu="admonition"] .mep-menu-item:hover') !== null), true, 'the pointer is on its first entry');
+        await page.keyboard.press('Escape');
+    });
+
+    test('r4-1: at 420 a submenu taller than the room on both sides stands below its entry, else above it, never over it, its height the room: it scrolls', async function () {
+        this.timeout(30000);
+        // Low enough that the admonition list (70vh at most) fits neither under nor over its entry.
+        await page.setViewport({ width: 420, height: 400 });
+        await showDocument('Alpha beta gamma.\n', 'Alpha');
+        await clickBefore('beta', 1);
+        if (await page.$eval('.mep-toolbar .mep-menu-face[data-menu="insert"]', el => (el as HTMLElement).hidden)) {
+            await page.focus('.mep-toolbar .mep-more-face');
+            await page.keyboard.press('Enter');
+            await page.waitForSelector('.mep-menu[data-menu="more"]:not([hidden])', { timeout: 3000 });
+            await page.focus('.mep-menu[data-menu="more"] [data-submenu="insert"]');
+            await page.keyboard.press('ArrowRight');
+        } else {
+            await page.focus('.mep-toolbar .mep-menu-face[data-menu="insert"]');
+            await page.keyboard.press('ArrowDown');
+        }
+        await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])', { timeout: 3000 });
+        const entry = '.mep-menu[data-menu="insert"] [data-submenu="admonition"]';
+        const opener = await box(entry);
+        assert.ok(opener);
+        await page.mouse.move((opener.left + opener.right) / 2, (opener.top + opener.bottom) / 2);
+        await page.waitForSelector('.mep-menu[data-menu="admonition"]:not([hidden])', { timeout: 3000 });
+        await delay(300);
+        const sub = await box('.mep-menu[data-menu="admonition"]');
+        assert.ok(sub);
+        const state = await page.$eval('.mep-menu[data-menu="admonition"]', el => ({ scrolls: el.scrollHeight > el.clientHeight + 1, maxHeight: (el as HTMLElement).style.maxHeight, window: window.innerHeight }));
+        const said = JSON.stringify({ opener, sub, state });
+        assert.ok(!overlap(sub, opener), `not over its own entry: ${said}`);
+        assert.ok(sub.top >= -1 && sub.bottom <= state.window + 1, `inside the window: ${said}`);
+        assert.ok(sub.top >= opener.bottom - 1 || sub.bottom <= opener.top + 1, `below the entry or above it: ${said}`);
+        assert.ok(state.scrolls && state.maxHeight.endsWith('px'), `shrunk to the room, it scrolls: ${said}`);
+        // The entry it hangs from is in sight: the panel does not stand over it.
+        assert.strictEqual(await page.evaluate(sel => {
+            const r = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+            const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+            return hit !== null && hit.closest(sel) !== null;
+        }, entry), true, `its entry is not covered: ${said}`);
         await page.keyboard.press('Escape');
     });
 

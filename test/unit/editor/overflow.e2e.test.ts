@@ -1211,9 +1211,15 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         }
         const request = (await asked()).pop() as { requestId: number; blockIndex: number } | undefined;
         assert.ok(request && (await asked()).length > before, 'the page asked for the table\'s actions');
+        // The person is on the list's second entry when the bar is drawn again.
+        await page.keyboard.press('ArrowDown');
+        const onEntry = () => page.evaluate(() => (document.activeElement as HTMLElement).dataset.entry ?? null);
+        const was = await onEntry();
+        assert.ok(was !== null, 'the focus is on an entry of the list');
         await (editor as EditorPage).send({ type: 'actions', requestId: request.requestId, blockIndex: request.blockIndex, items: [{ id: 'f4.0', title: 'Fix the table (f4)', kind: 'quickfix' }] });
         await page.waitForSelector(`${BAR} [data-verb="code-action:f4.0"]`, { timeout: 3000 });
         await delay(300);
+        assert.strictEqual(await onEntry(), was, 'the reopened list has the focus on the entry it was on');
         assert.strictEqual(await page.$eval(`${BAR} .mep-object-menu`, el => el.getAttribute('aria-label')), 'More actions', 'its list is open again');
         assert.strictEqual(await page.$eval(barMore, el => el.getAttribute('aria-expanded')), 'true');
         assert.ok((await moreMenu()).some(e => e.startsWith('code-action:f4.0')), 'with the verb the bar drew since');
@@ -1318,5 +1324,80 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         assert.strictEqual(await page.$(`${panel('bubble-more')}:not([hidden])`), null, 'the menu closed');
         assert.ok(await page.$(BUBBLE), 'the bubble stays');
         assert.ok(await page.evaluate(() => (document.querySelector('.ProseMirror') as HTMLElement).textContent?.includes('words, then')), 'the text is still there');
+    });
+
+    test('f9 a caret in the text, the row laid out again — narrower, then wider: the focus stays in the text', async function () {
+        this.timeout(30000);
+        await resize(1280, 640);
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        const inText = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.closest('.ProseMirror') !== null && document.activeElement !== document.body);
+        assert.ok(await inText(), 'the caret is in the text');
+        await resize(420, 640);
+        await delay(150);
+        assert.ok((await rowState()).moved.length > 0, 'the row moved controls into "…"');
+        assert.ok(await inText(), 'narrower: the focus stays in the text');
+        await resize(1280, 640);
+        await delay(150);
+        assert.deepStrictEqual((await rowState()).moved, [], 'everything back in the row');
+        assert.ok(await inText(), 'wider: the focus stays in the text');
+        await refit();
+        await delay(150);
+        assert.ok(await inText(), 'a measurement alone: the focus stays in the text');
+    });
+
+    test('f10 the focus on a bubble control that a fit hides goes to the bubble\'s "…" — the bubble stays', async function () {
+        this.timeout(60000);
+        const first = BUBBLE_OVERFLOW[0];
+        await resize(900, 640);
+        await showDocument();
+        await selectAndBubble('words, then', 5);
+        const control = `${BUBBLE} [data-action="${first}"]`;
+        const face = `${BUBBLE} .mep-more-face`;
+        assert.ok((await bubbleState()).moved.length === 0 && await page.$(control), 'at 900 nothing has left the bubble');
+        await page.focus(control);
+        assert.ok(await focused(control), 'the control has the focus');
+        await resize(420, 640);
+        await delay(300);
+        const s = await page.evaluate(() => {
+            const a = document.activeElement as HTMLElement;
+            return { tag: a.tagName, className: a.className, data: a.dataset.action ?? null, bubble: document.querySelector('.mep-bubble:not([hidden])') !== null };
+        });
+        assert.ok(s.bubble, `the bubble stays: ${JSON.stringify(s)}`);
+        assert.ok((await bubbleState()).moved.includes(first as string), `the control moved into "…": ${JSON.stringify(await bubbleState())}`);
+        assert.ok(await focused(face), `the focus is on the bubble's "…": ${JSON.stringify(s)}`);
+    });
+
+    test('f11 "…" with the focus, nothing left in it after a layout: the focus goes to a control of the row, not to the body', async function () {
+        this.timeout(30000);
+        await resize(420, 640);
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        await page.focus(MORE);
+        assert.ok(await focused(MORE), 'the row "…" has the focus');
+        await resize(1280, 640);
+        await delay(200);
+        const s = await page.evaluate(() => {
+            const a = document.activeElement as HTMLElement;
+            return { tag: a.tagName, menu: a.dataset.menu ?? null, inRow: a.closest('.mep-toolbar') !== null };
+        });
+        assert.ok(s.inRow && s.menu === 'block-type', `the focus is on Block type: ${JSON.stringify(s)}`);
+    });
+
+    test('f12 Esc on the bubble\'s "…" with its menu open closes the menu and no more: the bubble stays', async function () {
+        this.timeout(30000);
+        await resize(420, 640);
+        await showDocument();
+        await selectAndBubble('words, then', 5);
+        const face = `${BUBBLE} .mep-more-face`;
+        // The menu opened by a press, the focus on the face (the keys' own opening puts it in the menu).
+        await page.focus(face);
+        await page.click(face);
+        await page.waitForSelector(`${panel('bubble-more')}:not([hidden])`);
+        assert.ok(await focused(face), 'the focus is on the face, the menu open');
+        await page.keyboard.press('Escape');
+        await delay(200);
+        assert.strictEqual(await page.$(`${panel('bubble-more')}:not([hidden])`), null, 'the menu closed');
+        assert.ok(await page.$(BUBBLE), 'the bubble stays');
     });
 });

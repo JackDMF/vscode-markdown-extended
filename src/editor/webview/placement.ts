@@ -88,6 +88,8 @@ export interface Placement {
     x: number;
     y: number;
     side: Side;
+    /** Set where the layer is taller than the room on both sides of its opener: the height it is shrunk to (it scrolls), the room of the side it stands on. */
+    maxHeight?: number;
 }
 
 function overlaps(a: Rect, b: Rect): boolean {
@@ -231,7 +233,9 @@ export function moved(a: Placement | null, b: Placement): boolean {
  * opener's, 'end': its right at the opener's), `gap` away (`GAP`; a submenu
  * under its entry has none: a band between them would belong to the next
  * entry, whose pointer-enter closes the submenu), flipping above where the
- * window ends; kept inside `frame`.
+ * window ends; kept inside `frame`. Taller than the room on both sides, it
+ * goes below, else above — the larger room, below on a tie — with `maxHeight`
+ * that room: never over its opener.
  */
 export function placeMenuAt(size: Size, opener: Rect, frame: Frame, align: 'start' | 'end' = 'start', gap = GAP): Placement {
     const left = align === 'end' ? opener.right - size.width : opener.left;
@@ -244,7 +248,14 @@ export function placeMenuAt(size: Size, opener: Rect, frame: Frame, align: 'star
     if (above >= frame.ceiling) {
         return { x, y: above, side: 'above' };
     }
-    return { x, y: Math.max(frame.ceiling, frame.floor - size.height), side: 'below' };
+    // Taller than the room on both sides: never over its opener (it would cover the entry or face it
+    // was opened from). On the larger side, below on a tie, its height shrunk to that room.
+    const roomBelow = Math.max(0, frame.floor - below);
+    const roomAbove = Math.max(0, opener.top - gap - frame.ceiling);
+    if (roomBelow >= roomAbove) {
+        return { x, y: below, side: 'below', maxHeight: roomBelow };
+    }
+    return { x, y: opener.top - gap - roomAbove, side: 'above', maxHeight: roomAbove };
 }
 
 // -- B. Readers and writers (DOM) ----------------------------------------------
@@ -470,6 +481,8 @@ export function placeLayer(el: HTMLElement, anchor: Rect, opts: PlaceOptions): P
  */
 export function placeMenu(panel: HTMLElement, opener: Element, parentPanel?: HTMLElement, align: 'start' | 'end' = 'start'): Placement {
     const frame = VIEWPORT();
+    // A height a former placement shrank the panel to is not its height now ("…" moves entries; a re-place measures anew).
+    panel.style.maxHeight = '';
     const size = { width: panel.offsetWidth, height: panel.offsetHeight };
     const r = rectOf(opener.getBoundingClientRect());
     let p: Placement;
@@ -487,18 +500,23 @@ export function placeMenu(panel: HTMLElement, opener: Element, parentPanel?: HTM
         p = placeMenuAt(size, r, frame, align);
     }
     writeAt(panel, p.x, p.y, 'viewport');
+    if (p.maxHeight !== undefined) {
+        panel.style.maxHeight = `${p.maxHeight}px`;
+    }
     return p;
 }
 
 /**
  * The preview card (`position: fixed`, shown) beside its menu — right, else
  * left — top-aligned at the highlighted entry, else below or above the menu,
- * never over it or the entry. False where none of those has room: the caller
- * hides it.
+ * never over it or the entry, nor over `others` (the menu's open parents: a
+ * menu that stands under its entry covers part of the room above it). False
+ * where none of those has room: the caller hides it.
  */
-export function placeCard(card: HTMLElement, menuPanel: HTMLElement, entry: HTMLElement): boolean {
+export function placeCard(card: HTMLElement, menuPanel: HTMLElement, entry: HTMLElement, others: readonly HTMLElement[] = []): boolean {
     const size = { width: card.offsetWidth, height: card.offsetHeight };
-    const p = placeBeside(size, rectOf(menuPanel.getBoundingClientRect()), entry.getBoundingClientRect().top, VIEWPORT(), {}, 'stacked');
+    const avoid = others.map(el => rectOf(el.getBoundingClientRect()));
+    const p = placeBeside(size, rectOf(menuPanel.getBoundingClientRect()), entry.getBoundingClientRect().top, VIEWPORT(), { avoid }, 'stacked');
     if (p.side === 'none') {
         return false;
     }

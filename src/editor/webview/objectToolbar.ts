@@ -481,6 +481,8 @@ class ObjectBar {
      * (`MORE_LIST`): `fit` opens it where its verb stands now, or where "…" still is.
      */
     private reopenVia: string | null = null;
+    /** The entry of "…"'s own list the focus was on when it was drawn again (`reopenVia` `MORE_LIST`): the reopened list puts the focus on it where it still stands. */
+    private reopenEntry: string | null = null;
 
     constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents, private readonly tips: Tooltips) {
         this.el = document.createElement('div');
@@ -528,6 +530,7 @@ class ObjectBar {
             const via = this.menu?.viaMore === true;
             // "…"'s own list, open: it holds the verbs as they are now, so it is drawn again with them where "…" is still in the bar.
             const list = this.menu !== null && this.menu.button === this.more && reopen === undefined;
+            this.reopenEntry = list ? this.menu?.entries.find(m => m.el === document.activeElement)?.entry.id ?? null : null;
             this.signature = signature;
             this.reopenVia = null;
             this.render(presentation);
@@ -615,7 +618,7 @@ class ObjectBar {
         }
         this.moved = [];
         // "…" is in the bar only while it holds a verb: taken out and put back as it is measured, it keeps the focus it had.
-        const keepMore = holdFocus(this.more, this.el);
+        const keepMore = holdFocus(this.buttons.map(b => b.el), this.more, this.el);
         this.more?.remove();
         this.el.style.maxWidth = `${Math.floor(room)}px`;
         // Measured at the mount's left edge: an absolute box's room is what lies right of its `left`, and `place` sets it after.
@@ -681,9 +684,16 @@ class ObjectBar {
             }
         }
         const pending = this.reopenVia;
+        const entry = this.reopenEntry;
         this.reopenVia = null;
-        if (pending === MORE_LIST && this.menu === null && this.more?.isConnected) {
-            this.openMenu(this.moreEntries(), this.more, { name: moreName('bar', []), viaMore: true });
+        this.reopenEntry = null;
+        if (pending === MORE_LIST && this.menu === null) {
+            if (this.more?.isConnected) {
+                this.openMenu(this.moreEntries(), this.more, { name: moreName('bar', []), viaMore: true, focus: entry ?? undefined });
+            } else {
+                // "…" is gone — the verbs it held fit the bar now: the focus the list had stays in the bar.
+                this.el.focus({ preventScroll: true });
+            }
             return;
         }
         const b = pending === null || pending === MORE_LIST ? undefined : this.buttons.find(x => x.verb.id === pending);
@@ -802,7 +812,8 @@ class ObjectBar {
             e.preventDefault();
             this.toggleMore();
         });
-        this.tips.attach(more, () => plainTip(more.getAttribute('aria-label') ?? 'More actions'));
+        // Its hover is its name: said once, as the `aria-label`, not again as a description.
+        this.tips.attach(more, () => plainTip(more.getAttribute('aria-label') ?? 'More actions'), 'below', false);
         more.hidden = false;
         this.more = this.buttons.length > 0 ? more : null;
         this.el.replaceChildren(label, ...(this.buttons.length > 0 ? [barSeparator()] : []), ...this.buttons.flatMap((b, i) => b.verb.separated && i > 0 ? [barSeparator(), b.el] : [b.el]));
@@ -849,7 +860,7 @@ class ObjectBar {
      * to the marked entry, else the first that can be chosen. Inside the bar's
      * element, so the bar counts the focus in it as its own.
      */
-    private openMenu(entries: readonly MenuEntry[], button: HTMLButtonElement, from: { name: string; verb?: string; viaMore?: boolean }): void {
+    private openMenu(entries: readonly MenuEntry[], button: HTMLButtonElement, from: { name: string; verb?: string; viaMore?: boolean; focus?: string }): void {
         const viaMore = from.viaMore === true;
         const panel = document.createElement('div');
         panel.className = 'mep-menu mep-object-menu';
@@ -903,7 +914,8 @@ class ObjectBar {
         // `position: fixed`, a child of the bar so the bar counts its focus as its own: placed as the row's menus are.
         this.el.append(panel);
         placeMenu(panel, button);
-        const first = made.find(m => m.entry.checked && !m.entry.refusal) ?? made.find(m => !m.entry.refusal);
+        const first = made.find(m => m.entry.id === from.focus && !m.entry.refusal)
+            ?? made.find(m => m.entry.checked && !m.entry.refusal) ?? made.find(m => !m.entry.refusal);
         (first?.el ?? panel).focus({ preventScroll: true });
     }
 

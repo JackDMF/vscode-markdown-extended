@@ -705,8 +705,10 @@ class ToolbarView implements PluginView {
         }
         // After the faces: a face relabelled ("Paragraph", "Heading 2") changes what fits in the row.
         this.lockRole = place.kind === 'control' ? place.role : null;
-        this.layoutRow();
-        this.updateMore(lock);
+        // A layout that moved something named "…" itself (`layoutRow`); else what it holds is as it was, its marks' state is not.
+        if (!this.layoutRow()) {
+            this.updateMore(lock);
+        }
         this.updateBubbleMore();
         this.syncBubble();
     }
@@ -735,21 +737,22 @@ class ToolbarView implements PluginView {
      *
      * Measured, not set by a width, so it holds for any font and label; and
      * measured again only when what it was measured for changed
-     * (`rowLayoutKey`).
+     * (`rowLayoutKey`). True where it named "…" (`updateMore`) for what it
+     * holds now: what moved changed.
      */
-    private layoutRow(): void {
+    private layoutRow(): boolean {
         if (this.destroyed) {
-            return;
+            return false;
         }
         const key = this.rowLayoutKey();
         if (key === this.layoutKey) {
-            return;
+            return false;
         }
         const before = this.moved.join(',');
-        // The focus on the row's control or on "…" across the fit: a control that leaves goes to "…", "…" itself is measured in and out.
+        // The focus on the row's control or on "…" across the fit: a control that leaves goes to "…", "…" itself is measured in and out,
+        // and where "…" is hidden after (nothing moved), a control of the row that is shown (`holdFocus`).
         const active = document.activeElement as HTMLElement | null;
-        const held = Array.from(this.rowControls.values()).find(el => el === active);
-        const keepMore = holdFocus(this.moreFace);
+        const keepMore = holdFocus(this.rowControls.values(), this.moreFace);
         // The focus in an open menu: the fit shows every control, and hides the entries of "…" for it, which drops the focus out of the menu.
         const inMenus = active === null ? [] : this.menus.filter(m => !m.panel.hidden && m.panel.contains(active));
         const role = this.lockRole;
@@ -769,12 +772,15 @@ class ToolbarView implements PluginView {
         this.exportLabel.textContent = running === null ? EXPORT_LABEL : exportBusyLabel(running, 'short');
         // The tools fitted to the row alone, the reason (if any) not yet there.
         const fitTools = (): RowControl[] => {
-            const left = fitWithMore(ROW_OVERFLOW, () => overflows(this.row), c => this.showInRow(c), c => this.moveToMore(c), shown => {
+            const fit = () => fitWithMore(ROW_OVERFLOW, () => overflows(this.row), c => this.showInRow(c), c => this.moveToMore(c), shown => {
                 this.moreGroup.hidden = !shown;
             });
+            let left = fit();
             // Everything that may leave has left and the row is still past its box: Export gives its name up for its icon (a pinned item is never cut).
             if (overflows(this.row)) {
                 this.exportIconOnly(true);
+                // The room its name gave up may bring a control back from "…": measured once more.
+                left = fit();
                 // Narrower still: Block type is what gives — its type's name cuts to an ellipsis, the face stays in the row.
                 this.row.classList.toggle(ROW_TIGHT_CLASS, overflows(this.row));
             }
@@ -833,18 +839,17 @@ class ToolbarView implements PluginView {
         this.more.children = menus.map(id => this.rowMenus.get(id) as Menu);
         this.layoutKey = this.rowLayoutKey();
         keepMore();
-        if (held?.hidden && !this.moreGroup.hidden) {
-            // The control the focus was on left the row: "…" holds it now, and keeps the focus.
-            this.moreFace.focus({ preventScroll: true });
-        } else if (active !== null && inMenus.length > 0 && active.isConnected && document.activeElement !== active && active.closest('[hidden]') === null) {
+        if (active !== null && inMenus.length > 0 && active.isConnected && document.activeElement !== active && active.closest('[hidden]') === null) {
             // The entry the person was on is there still: so is the focus.
             active.focus({ preventScroll: true });
         }
-        if (moved.join(',') !== before) {
-            // "…" is named for what it holds now, whoever laid the row out (a resize, a font — no transaction).
-            this.updateMore(this.refusal);
-            this.closeMenusAfterLayout(before === '' ? [] : before.split(','), moved, inMenus);
+        if (moved.join(',') === before) {
+            return false;
         }
+        // "…" is named for what it holds now, whoever laid the row out (a resize, a font — no transaction).
+        this.updateMore(this.refusal);
+        this.closeMenusAfterLayout(before === '' ? [] : before.split(','), moved, inMenus);
+        return true;
     }
 
     /**
@@ -1155,8 +1160,9 @@ class ToolbarView implements PluginView {
             (this.bubbleEntries.get(id) as HTMLElement).hidden = false;
         };
         // "…" is taken out of the bubble and put back by the measurement, and an element that is hidden or removed gives its focus up
-        // at once — which the bubble takes for the focus having left it. The bubble holds it meanwhile, and "…" has it again after.
-        const keepMore = holdFocus(this.bubbleMoreFace, bubble);
+        // at once — which the bubble takes for the focus having left it. The bubble holds it meanwhile, and the control has it again
+        // after; one the fit hid hands it to "…", which holds it now (else the first control still shown).
+        const keepMore = holdFocus(this.bubbleControls.values(), this.bubbleMoreFace, bubble);
         const moved = fitWithMore(BUBBLE_OVERFLOW, () => overflows(bubble), show, hide, shown => {
             if (shown) {
                 bubble.append(this.bubbleMoreFace);
@@ -1317,6 +1323,10 @@ class ToolbarView implements PluginView {
                 this.openMenu(menu, true);
             } else if (e.key === 'Escape' && !menu.panel.hidden) {
                 e.preventDefault();
+                // The bubble's "…" is in the bubble, whose own Esc dismisses it: this one closes the menu and no more.
+                if (menu.ofLayer) {
+                    e.stopPropagation();
+                }
                 this.closeAll();
             }
         });
@@ -1796,7 +1806,8 @@ class ToolbarView implements PluginView {
         this.card.dataset.menu = menu.id;
         this.card.hidden = false;
         // Beside the menu, else below or above it — never over the menu or the entry; with no room, no card.
-        if (!placeCard(this.card, menu.panel, item)) {
+        const others = this.menus.filter(m => m !== menu && !m.panel.hidden).map(m => m.panel);
+        if (!placeCard(this.card, menu.panel, item, others)) {
             this.hideCard();
         }
     }

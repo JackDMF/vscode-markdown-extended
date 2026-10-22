@@ -97,6 +97,21 @@ suite('Editor placement: the policy', () => {
         assert.deepStrictEqual(placeMenuAt(panel, rect(100, 500, 360, 526), viewport, 'start', 0), { x: 100, y: 300, side: 'above' });
     });
 
+    test('r4-1: a menu taller than the room on both sides goes below, else above, never over its opener, its height shrunk to that room', () => {
+        const viewport: Frame = { columnLeft: 0, layerEdge: 800, ceiling: 0, floor: 400 };
+        const tall = { width: 260, height: 500 };
+        // More room below (400 - 126 = 274 against 100): below the entry, scrolling.
+        assert.deepStrictEqual(placeMenuAt(tall, rect(100, 100, 360, 126), viewport, 'start', 0), { x: 100, y: 126, side: 'below', maxHeight: 274 });
+        // More room above (300 against 400 - 326 = 74): above it, from the ceiling down to the entry.
+        assert.deepStrictEqual(placeMenuAt(tall, rect(100, 300, 360, 326), viewport, 'start', 0), { x: 100, y: 0, side: 'above', maxHeight: 300 });
+        // A gap away: the room is what is left of it.
+        assert.deepStrictEqual(placeMenuAt(tall, rect(100, 300, 360, 326), viewport), { x: 100, y: 0, side: 'above', maxHeight: 300 - GAP });
+        // A tie goes below.
+        assert.strictEqual(placeMenuAt(tall, rect(100, 190, 360, 210), viewport, 'start', 0).side, 'below');
+        // A menu that fits is not shrunk.
+        assert.strictEqual(placeMenuAt({ width: 260, height: 100 }, rect(100, 100, 360, 126), viewport, 'start', 0).maxHeight, undefined);
+    });
+
     test('r1-6: an anchor out of the window at the bottom only, no place qualifying, keeps the layer at the visible edge, off the caret', () => {
         const runsOut = rect(60, 60, 300, 400);
         const caret = rect(26, 215, 604, 245);

@@ -141,25 +141,34 @@ export function setMoreEntryState(el: HTMLElement, state: MoreEntryState): void 
 }
 
 /**
- * The focus, kept across a fit. A control that is hidden or taken out of its
- * container — a measurement does that to "…" — gives its focus up at once,
- * to the body, and whatever listens for the focus leaving a bubble or a bar
- * hears it there and then. So the focus rests on `holder` (the container,
- * focusable for it) while the fit runs, and is on the control again after,
- * where the control is in the container and shown; where it is not, `holder`
- * keeps it. Call it before the fit; call what it returns after.
+ * The focus, kept across a fit, for the row, the bubble and a bar alike. A
+ * control that is hidden or taken out of its container — a measurement does
+ * that to "…", a fit does it to an item — gives its focus up at once, to the
+ * body, and whatever listens for the focus leaving a bubble or a bar hears it
+ * there and then. So the focus on one of `items` or on `more` rests on
+ * `holder` (the container, focusable for it) while the fit runs, and is after
+ * it on the first of these that is in the container and shown: the control it
+ * was on, else "…" (which holds what left), else the first shown item; where
+ * none is, `holder` keeps it. Call it before the fit; call what it returns
+ * after.
  */
-export function holdFocus(el: HTMLElement | null, holder?: HTMLElement): () => void {
-    const held = el !== null && document.activeElement === el;
-    if (held) {
+export function holdFocus(items: Iterable<HTMLElement>, more: HTMLElement | null, holder?: HTMLElement): () => void {
+    const all = Array.from(items);
+    const active = document.activeElement as HTMLElement | null;
+    const held = active !== null && (active === more || all.includes(active)) ? active : null;
+    if (held !== null) {
         holder?.focus({ preventScroll: true });
     }
+    const shown = (el: HTMLElement | null): el is HTMLElement => el !== null && el.isConnected && el.closest('[hidden]') === null;
     return () => {
-        if (!held || el === null || document.activeElement === el) {
+        if (held === null) {
             return;
         }
-        const target = el.isConnected && el.closest('[hidden]') === null ? el : holder;
-        target?.focus({ preventScroll: true });
+        // `activeElement` still names a control that was hidden (not removed) until the next frame's style pass: it is not read as "still focused" unless it is shown.
+        const target = [held, more, ...all].find(shown) ?? holder;
+        if (target !== undefined && target !== document.activeElement) {
+            target.focus({ preventScroll: true });
+        }
     };
 }
 
