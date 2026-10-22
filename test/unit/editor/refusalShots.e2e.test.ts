@@ -18,9 +18,10 @@ const MENU = `${BAR} .mep-object-menu`;
 
 /**
  * A long refusal that names a table's row (C13's family, #10 build critique F5): an edit in row 2 is refused because
- * the save would write row 1 again, whose sidebar comes back otherwise (it spells a character as `&#116;`).
+ * the save would write row 1 again, whose sidebar `@x@` comes back otherwise (it spells a character as `&#116;`; a
+ * `$…$` there reads as math, which makes the table a source block).
  */
-const LONG_DOC = '| Name | Note |\n| ---- | ---- |\n| one | See h&#116;tp://e.com/$x$ here. |\n| edit me | two |\n\nAfter.\n';
+const LONG_DOC = '| Name | Note |\n| ---- | ---- |\n| one | See h&#116;tp://e.com/@x@ here. |\n| edit me | two |\n\nAfter.\n';
 const PROPS_DOC = '---\ntitle: Demo\nstream: UXD\n---\n\nSome words here to select.\n\nLast paragraph.\n';
 
 type Step = (page: puppeteer.Page, show: (text: string, marker: string) => Promise<void>) => Promise<void>;
