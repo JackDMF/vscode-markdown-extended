@@ -135,6 +135,8 @@ img.mep-pending-range {
  * file, the preview or an export (only this sheet draws it). A pseudo-element: no node, not copied,
  * no target for the pointer, and empty alt text (the block names itself, `nameSourceBlock`). No hover
  * tint: it is no control (#11). Paragraph-like blocks: floated top-right, the first line wraps around it.
+ * Its colour is the page's own text colour, thinned — a person's stylesheet may paint a dark page in the
+ * light theme, so no theme token is safe — and so is its dashed edge.
  */
 .ProseMirror .mep-raw-block::before {
     content: "source" / "";
@@ -144,8 +146,8 @@ img.mep-pending-range {
     font: 11px/14px var(--vscode-font-family, sans-serif);
     font-style: normal;
     font-weight: normal;
-    color: var(--vscode-descriptionForeground, GrayText);
-    border: 1px dashed var(--vscode-editorWidget-border, var(--vscode-contrastBorder, GrayText));
+    color: color-mix(in srgb, currentColor 80%, transparent);
+    border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
     border-radius: 3px;
     pointer-events: none;
     user-select: none;
@@ -162,25 +164,45 @@ img.mep-pending-range {
     z-index: 1;
 }
 .ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-source { padding-right: 72px; }
-/* A note or sidebar floating at the right (`clear: right`) would be pushed below a floated chip: the chip follows the last line instead. */
+/*
+ * A note or sidebar floating at the right (`clear: right`) would be pushed below a floated chip: the chip
+ * stands top-left instead, in the gap above the block's first line — absolutely placed, so it takes no
+ * room, moves no note and touches none (they float right). It hangs from the first element of the
+ * rendering (a `span[aria-hidden]` the preview's Mermaid support puts before it does not count), and the
+ * gap above that is wherever the page's margins put it: below the block before, or inside this one.
+ * The block keeps 6px of its own above, so the chip clears the text before it even at a 16px margin.
+ */
+.ProseMirror .mep-raw-block.mep-raw-noted { margin-top: 6px; }
 .ProseMirror .mep-raw-block.mep-raw-noted::before { content: none; }
-.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :last-child::after {
+.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :first-child:not([aria-hidden="true"]),
+.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > [aria-hidden="true"]:first-child + * { position: relative; }
+.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :first-child:not([aria-hidden="true"])::after,
+.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > [aria-hidden="true"]:first-child + *::after {
     content: "source" / "";
-    display: inline-block;
-    margin-left: 8px;
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 2px);
+    float: none;
+    clear: none;
+    width: auto;
+    margin: 0;
     padding: 0 5px;
     font: 11px/14px var(--vscode-font-family, sans-serif);
     font-style: normal;
     font-weight: normal;
+    letter-spacing: normal;
     text-indent: 0;
-    color: var(--vscode-descriptionForeground, GrayText);
-    border: 1px dashed var(--vscode-editorWidget-border, var(--vscode-contrastBorder, GrayText));
+    text-transform: none;
+    white-space: nowrap;
+    color: color-mix(in srgb, currentColor 80%, transparent);
+    background: none;
+    border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
     border-radius: 3px;
-    vertical-align: 1px;
     pointer-events: none;
     user-select: none;
 }
-.vscode-high-contrast .ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :last-child::after { border-color: var(--vscode-contrastBorder, GrayText); }
+.vscode-high-contrast .ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :first-child:not([aria-hidden="true"])::after,
+.vscode-high-contrast .ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > [aria-hidden="true"]:first-child + *::after { border-color: var(--vscode-contrastBorder, GrayText); }
 /* The open source box is the edit: no chip over it. */
 .ProseMirror .mep-raw-block.mep-editing::before { content: none; }
 

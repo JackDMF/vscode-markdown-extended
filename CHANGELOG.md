@@ -3,7 +3,8 @@
 ## Unreleased
 
 - Every source block shows a muted "source" chip at its top-right, in the editor only, never copied or exported.
-- Raw source keeps the chip inside its box; beside a right-floating note it follows the last line instead.
+- Raw source keeps the chip inside its box; beside a right-floating note it stands top-left, in the gap above the first line, touching no note.
+- The chip takes the page's own text colour, so it stays legible on a page a stylesheet paints itself.
 - A source block's bar names why: "Source · footnote", "· definition list", "· footnote text" and more.
 - Screen readers hear "Source block: <reason>", and on selection the reason with Alt+Enter for its actions.
 - Typing, pasting, Backspace or Delete on a selected source block is refused with a hint, not deleting it.

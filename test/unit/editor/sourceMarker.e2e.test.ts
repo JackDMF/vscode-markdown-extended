@@ -111,7 +111,7 @@ suite('Editor source block, selected, against typing over it (e2e)', () => {
     });
 });
 
-/** Source blocks of each placement: a footnote paragraph (float), a definition list, one with a right sidebar (after the last line), the footnotes' text (in its box). */
+/** Source blocks of each placement: a footnote paragraph (float), a definition list, one with a right sidebar (chip top-left above its first line), the footnotes' text (in its box). */
 const MARKED = [
     'Intro paragraph.',
     '',
@@ -174,6 +174,72 @@ function sourcePage(options: Parameters<typeof openEditorPage>[0]) {
 
 /** The `n`th top-level source block (0-based). */
 const block = (n: number) => `.ProseMirror > .mep-raw-block[data-test-n="${n}"]`;
+
+/** The first element of a block's rendering, the frame of the top-left chip (`editor.css`): not the Mermaid support's hidden span before it. */
+const FIRST_CONTENT = ':scope > .mep-atom-content > :first-child:not([aria-hidden="true"]), :scope > .mep-atom-content > [aria-hidden="true"]:first-child + *';
+
+/** Where the top-left chip of a block with a right-floating note stands, against the first line, the text of the block before and the note. */
+function noteChipGeometry(page: puppeteer.Page, sel: string) {
+    return page.$eval(sel, (el, firstSel) => {
+        const first = el.querySelector(firstSel) as HTMLElement;
+        const fr = first.getBoundingClientRect();
+        const s = getComputedStyle(first, '::after');
+        const border = parseFloat(s.borderTopWidth) + parseFloat(s.borderBottomWidth);
+        const w = parseFloat(s.width) + (s.boxSizing === 'border-box' ? 0 : parseFloat(s.paddingLeft) + parseFloat(s.paddingRight) + 2 * parseFloat(s.borderLeftWidth));
+        const h = parseFloat(s.height) + (s.boxSizing === 'border-box' ? 0 : border + parseFloat(s.paddingTop) + parseFloat(s.paddingBottom));
+        const left = fr.left + parseFloat(s.left);
+        const top = fr.top + parseFloat(s.top);
+        const previous = el.previousElementSibling as HTMLElement;
+        const range = document.createRange();
+        range.selectNodeContents(previous);
+        const note = el.querySelector('.right-sidebar') as HTMLElement;
+        return {
+            chip: { left, top, right: left + w, bottom: top + h },
+            firstTop: fr.top,
+            firstLeft: fr.left,
+            previousTextBottom: Math.max(...Array.from(range.getClientRects()).map(r => r.bottom)),
+            noteLeft: note.getBoundingClientRect().left,
+        };
+    }, FIRST_CONTENT);
+}
+
+/** WCAG contrast of the chip's text colour, as the page composites it, on the page behind the block `sel`. */
+function chipContrast(page: puppeteer.Page, sel: string) {
+    return page.$eval(sel, (el, firstSel) => {
+        const noted = el.classList.contains('mep-raw-noted');
+        const s = noted ? getComputedStyle(el.querySelector(firstSel) as HTMLElement, '::after') : getComputedStyle(el, '::before');
+        const ctx = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
+        const rgba = (css: string): number[] => {
+            ctx.clearRect(0, 0, 1, 1);
+            ctx.fillStyle = css;
+            ctx.fillRect(0, 0, 1, 1);
+            const d = ctx.getImageData(0, 0, 1, 1).data;
+            return [d[0], d[1], d[2], d[3] / 255];
+        };
+        const over = (top: number[], under: number[]) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3])).concat([1]);
+        // The page behind: the outermost background that paints, the editor's own where none does.
+        const layers: number[][] = [];
+        for (let n: Element | null = el; n; n = n.parentElement) {
+            const c = rgba(getComputedStyle(n).backgroundColor);
+            if (c[3] > 0) {
+                layers.push(c);
+            }
+        }
+        const editorBg = getComputedStyle(document.body).getPropertyValue('--vscode-editor-background').trim();
+        let bg = rgba(editorBg || 'white');
+        bg[3] = 1;
+        for (const c of layers.reverse()) {
+            bg = over(c, bg);
+        }
+        const fg = over(rgba(s.color), bg);
+        const lum = (c: number[]) => {
+            const [r, g, b] = c.slice(0, 3).map(v => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        const [a, b] = [lum(fg), lum(bg)];
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    }, FIRST_CONTENT);
+}
 
 suite('Editor source block marker (e2e)', () => {
     const { state, show, open } = sourcePage({ width: 1280, height: 900, styles: ['markdown-extended.css'] });
@@ -242,18 +308,45 @@ suite('Editor source block marker (e2e)', () => {
         assert.ok(box.padRight >= 60, `the box keeps room for it: ${JSON.stringify(box)}`);
     });
 
-    test('a block whose note floats at the right keeps the note on its line: the chip follows the last line instead', async function () {
+    test('a block whose note floats at the right keeps the note on its line: the chip stands top-left, in the gap above the first line', async function () {
         this.timeout(10000);
         await show(MARKED);
         assert.ok(await page().$eval(block(2), el => el.classList.contains('mep-raw-noted')));
         assert.strictEqual((await chip(block(2))).content, 'none');
-        assert.strictEqual((await chip(block(2), '::after', ' > .mep-atom-content > :last-child')).content, '"source" / ""');
+        const c = await chip(block(2), '::after', ' > .mep-atom-content > p');
+        assert.deepStrictEqual([c.content, c.position, c.float, c.pointerEvents, c.userSelect], ['"source" / ""', 'absolute', 'none', 'none', 'none']);
         const tops = await page().$eval(block(2), el => ({
             note: (el.querySelector('.right-sidebar') as HTMLElement).getBoundingClientRect().top,
             p: (el.querySelector('p') as HTMLElement).getBoundingClientRect().top,
             float: getComputedStyle(el.querySelector('.right-sidebar') as HTMLElement).float,
         }));
         assert.ok(Math.abs(tops.note - tops.p) < 2, `the note is not pushed down: ${JSON.stringify(tops)}`);
+        for (const [theme, name] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as [Theme, string][]) {
+            await applyTheme(page(), theme);
+            await show(MARKED);
+            const g = await noteChipGeometry(page(), block(2));
+            assert.ok(g.chip.bottom <= g.firstTop, `${name}: the chip is above the first line: ${JSON.stringify(g)}`);
+            assert.ok(Math.abs(g.chip.left - g.firstLeft) < 1.5, `${name}: top-left, at the text's edge: ${JSON.stringify(g)}`);
+            assert.ok(g.previousTextBottom <= g.chip.top, `${name}: the previous block's text stays clear of it: ${JSON.stringify(g)}`);
+            assert.ok(g.chip.right <= g.noteLeft, `${name}: it stands left of the note, which it neither covers nor displaces: ${JSON.stringify(g)}`);
+        }
+        await applyTheme(page(), LIGHT_MODERN);
+    });
+
+    test('the chip is legible in the page\'s own colours: at least 4.5:1 in Light, Dark and High Contrast, on each placement', async function () {
+        this.timeout(20000);
+        const found: string[] = [];
+        for (const [theme, name] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark'], [HC_DARK, 'hc']] as [Theme, string][]) {
+            await applyTheme(page(), theme);
+            await show(MARKED);
+            for (const [n, what] of [[0, 'float'], [2, 'top-left'], [3, 'in the box']] as [number, string][]) {
+                const ratio = await chipContrast(page(), block(n));
+                found.push(`${name} ${what} ${ratio.toFixed(2)}`);
+                assert.ok(ratio >= 4.5, `${name}, ${what}: ${ratio.toFixed(2)}:1`);
+            }
+        }
+        console.log('chip contrast (default sheets): ' + found.join('; '));
+        await applyTheme(page(), LIGHT_MODERN);
     });
 
     test('the chip takes no hover tint (#11: no tint on what is no control)', async function () {
@@ -350,7 +443,7 @@ suite('Editor source block marker under a user stylesheet (e2e)', () => {
     const page = () => state.page;
 
     suiteSetup(async function () {
-        if (!userStyles || !fs.existsSync(userStyles) || !SHOTS_DIR) {
+        if (!userStyles || !fs.existsSync(userStyles)) {
             this.skip();
         }
         await open(this);
@@ -360,7 +453,55 @@ suite('Editor source block marker under a user stylesheet (e2e)', () => {
         await closeEditorPage(this, state.editor);
     });
 
+    test('on the person\'s own page the chip keeps 4.5:1 and a top-left chip stands clear of every note and of the text above', async function () {
+        this.timeout(60000);
+        const text = realDoc && fs.existsSync(realDoc) ? fs.readFileSync(realDoc, 'utf8') : clutterDocument();
+        const found: string[] = [];
+        try {
+            for (const [theme, name] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as [Theme, string][]) {
+                await applyTheme(page(), theme);
+                await page().setViewport({ width: 1280, height: 2000 });
+                for (const [label, doc] of [['marks', MARKED], ['real document', text]] as [string, string][]) {
+                    await show(doc);
+                    const count = await page().$$eval('.ProseMirror > .mep-raw-block', els => els.length);
+                    let lowest = Infinity;
+                    for (let n = 0; n < count; n++) {
+                        lowest = Math.min(lowest, await chipContrast(page(), block(n)));
+                    }
+                    found.push(`${name} ${label} (${count} blocks) lowest ${lowest.toFixed(2)}`);
+                    assert.ok(lowest >= 4.5, `${name}, ${label}: the lowest chip contrast is ${lowest.toFixed(2)}:1`);
+                    const noted = await page().$$eval('.ProseMirror > .mep-raw-block.mep-raw-noted', (els, firstSel) => els.flatMap(el => {
+                        const first = el.querySelector(firstSel) as HTMLElement | null;
+                        if (!first) {
+                            return [];
+                        }
+                        const fr = first.getBoundingClientRect();
+                        const s = getComputedStyle(first, '::after');
+                        const left = fr.left + parseFloat(s.left);
+                        const top = fr.top + parseFloat(s.top);
+                        const chip = { left, top, right: left + parseFloat(s.width) + 12, bottom: top + parseFloat(s.height) + 2 };
+                        const meets = (r: DOMRect) => r.left < chip.right && r.right > chip.left && r.top < chip.bottom && r.bottom > chip.top;
+                        const hits = Array.from(el.querySelectorAll('.sidenote, .mnote, .right-sidebar, .left-sidebar, img')).filter(n => meets(n.getBoundingClientRect())).map(n => n.outerHTML.slice(0, 60));
+                        const range = document.createRange();
+                        range.selectNodeContents(el.previousElementSibling as Element);
+                        const above = Math.max(...Array.from(range.getClientRects()).map(r => r.bottom));
+                        const covered = above > chip.top + 0.5 ? [`text above ends ${above.toFixed(1)}, chip starts ${chip.top.toFixed(1)}`] : [];
+                        return [...hits, ...covered];
+                    }), FIRST_CONTENT);
+                    assert.deepStrictEqual(noted, [], `${name}, ${label}: nothing under a top-left chip`);
+                }
+            }
+        } finally {
+            await page().setViewport({ width: 1280, height: 900 });
+            await applyTheme(page(), LIGHT_MODERN);
+        }
+        console.log('chip contrast (user stylesheet): ' + found.join('; '));
+    });
+
     test('no note pushed down by a chip; shots of the marks and the real document in light and dark', async function () {
+        if (!SHOTS_DIR) {
+            this.skip();
+        }
         this.timeout(180000);
         const text = realDoc && fs.existsSync(realDoc) ? fs.readFileSync(realDoc, 'utf8') : clutterDocument();
         try {
