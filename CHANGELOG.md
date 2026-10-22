@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- PNG and JPEG export no longer hangs on macOS while the display sleeps.
+
 ## v4.9.0 — Layers That Keep Their Place
 
 - The floating layers — bars, bubble, fields, menus, cards, hints — follow one rule: below, else above.
