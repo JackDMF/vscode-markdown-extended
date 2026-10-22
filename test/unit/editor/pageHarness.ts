@@ -255,9 +255,10 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
  * `requestAnimationFrame` runs, and every layer placed once per frame
  * (`placement.ts`) stays where it was; the suites then fail by the dozen, or
  * one here and there as the display dims. Without the frame-rate limit the
- * frames come from a timer of the browser's own.
+ * frames come from a timer of the browser's own. Only on macOS: elsewhere the
+ * flag only burns CPU on animated pages.
  */
-export const FRAME_ARGS = ['--disable-frame-rate-limit'];
+export const FRAME_ARGS = process.platform === 'darwin' ? ['--disable-frame-rate-limit'] : [];
 
 /** The page in `browser`: the host's page written, its stylesheets and the bundle loaded. */
 async function preparePage(browser: puppeteer.Browser, bundle: string, extensionPath: string, sheets: readonly string[], options: EditorPageOptions): Promise<EditorPage> {

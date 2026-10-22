@@ -88,7 +88,8 @@ export class PuppeteerExporter implements MarkdownExporter {
                 headless: true, // Use headless mode
                 // For compatibility; and frames of its own: headless Chromium on macOS takes its frames from the
                 // display's refresh, so with the display asleep a PNG/JPEG screenshot waited for a frame forever.
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-frame-rate-limit']
+                // Only there: elsewhere the flag burns CPU on animated pages.
+                args: ['--no-sandbox', '--disable-setuid-sandbox', ...(process.platform === 'darwin' ? ['--disable-frame-rate-limit'] : [])]
             });
             page = await browser.newPage();
 

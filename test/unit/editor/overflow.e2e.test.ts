@@ -5,6 +5,7 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { BUBBLE_OVERFLOW, ROW_OVERFLOW } from '../../../src/editor/webview/toolbar/actions';
 import { moreName } from '../../../src/editor/webview/overflow';
+import { GAP, LAYER_GUTTER } from '../../../src/editor/webview/placement';
 import { EXTENSION_ID, EditorPage, clickText, closeEditorPage, delay, describedTip, hoverTip, openEditorPage, shot as saveShot, showDiagnostics } from './pageHarness';
 import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, MOD_NAME, assertReasonShown, assertRowLocked, inRowForm, narrowestWidth, noteRoom, rowBoxes } from './rowLock';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
@@ -637,13 +638,23 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         }
     });
 
-    test('b3 at 520 no bar needs "…" and the admonition\'s title is its short form "Warning" with Segoe UI (measured: the macOS font is wider), at 1280 "Warning admonition"; the link\'s title hidden', async function () {
+    test('b3 at 520 each bar shows "…" only where its verbs do not fit, and its title whole, short or hidden as the room allows (measured); at 1280 the admonition\'s "Warning admonition"', async function () {
         this.timeout(60000);
         // What the bar needs, measured on a copy without the room's cap — every verb on it, its title (the form it took) shown
-        // whole or left out — against the room the bar was given (its max-width: the column, or past it up to the gutter or a
-        // notes lane, `layerEdge`). Where that falls is the font's.
-        const needs = () => page.$eval(BAR, bar => {
-            const room = parseFloat((bar as HTMLElement).style.maxWidth);
+        // whole or left out — against the room it may take, worked out here and not read from the product's own max-width: from
+        // its column's left edge to the editor's right edge less the gutter (a bar may go past the column), but `GAP` short of
+        // the notes where the stylesheet reserves a margin lane for them (the page's right padding; the lane begins at the
+        // column plus the nearer of the note and sidebar gaps), and never less than the column. Where that falls is the font's.
+        const needs = () => page.$eval(BAR, (bar, gutter, gap) => {
+            const mount = (bar.parentElement as HTMLElement).getBoundingClientRect();
+            let edge = document.documentElement.clientWidth - gutter;
+            if (parseFloat(getComputedStyle(document.documentElement).paddingRight) > 0) {
+                const body = getComputedStyle(document.body);
+                const column = document.body.getBoundingClientRect().right - (parseFloat(body.paddingRight) || 0);
+                const gaps = ['--md-note-gap', '--md-sidebar-gap'].map(n => parseFloat(body.getPropertyValue(n))).filter(n => !isNaN(n));
+                edge = Math.min(edge, column + (gaps.length > 0 ? Math.min(...gaps) : 0) - gap);
+            }
+            const room = Math.max(mount.right, edge) - mount.left;
             const width = (title: boolean) => {
                 const copy = bar.cloneNode(true) as HTMLElement;
                 copy.querySelector(':scope > .mep-object-more')?.remove();
@@ -666,7 +677,7 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
                 // The title whole where it fits; cut where it does not; hidden where what is left of it is under the stub (42 px).
                 title: titled.bar <= room + 1 ? 'whole' : room - (titled.bar - titled.label) < 42 ? 'hidden' : 'cut',
             };
-        });
+        }, LAYER_GUTTER, GAP);
         for (const [theme, t] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as const) {
             await applyTheme(page, theme);
             await resize(520);

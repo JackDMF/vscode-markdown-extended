@@ -844,7 +844,7 @@ suite('Editor placement (e2e)', () => {
         await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])', { timeout: 3000 });
         const opener = await box('.mep-menu[data-menu="insert"] [data-submenu="admonition"]');
         assert.ok(opener);
-        const x =(opener.left + opener.right) / 2;
+        const x = (opener.left + opener.right) / 2;
         await page.mouse.move(x, (opener.top + opener.bottom) / 2);
         await page.waitForSelector('.mep-menu[data-menu="admonition"]:not([hidden])', { timeout: 3000 });
         await delay(300);

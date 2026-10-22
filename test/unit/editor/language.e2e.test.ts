@@ -110,9 +110,10 @@ suite('Editor completion, diagnostics and hover (e2e)', () => {
         // Req Explorer's case: an id's prefix, whose `-` is the trigger; the letters before it ask nothing.
         // The space before them is a trigger too, asked the ask delay after it unless a later trigger came
         // first: typed key by key, a loaded machine let it ask once the letters were in, a second question.
-        // Inserted with them as one input, its last character a letter, it asks nothing.
-        await page.keyboard.sendCharacter(' FRS');
-        await page.keyboard.type('-');
+        // Inserted with the first letter as one input, its last character a letter, it asks nothing; the rest of the
+        // letters, typed key by key, ask nothing either.
+        await page.keyboard.sendCharacter(' F');
+        await page.keyboard.type('RS-');
         const asked = await waitFor('complete', before);
         assert.strictEqual(asked.triggerCharacter, '-');
         assert.strictEqual(asked.baseVersion, version);
