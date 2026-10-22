@@ -566,6 +566,8 @@ suite('Editor object bars (e2e)', () => {
         await page.focus(`${BAR} [data-verb="align"]`);
         await page.keyboard.press('Enter');
         await page.waitForSelector(`${BAR} .mep-object-menu`);
+        // The bar just appeared ignores the pointer for INERT_MS (`placement.ts`): the move must reach the entry, not the text under it.
+        await page.waitForSelector(`${BAR}:not([data-inert])`, { timeout: 2000 });
         await delay(100);
         const second = await entryCentre(1);
         await page.mouse.move(second.x, second.y);
