@@ -363,7 +363,7 @@ suite('Editor inline literals: inline code, an image, superscript, subscript and
             assert.strictEqual(said === null ? null : saidText(said), `Not set: ${key} is ${what[key]} changes it. Here, give it a class, an id or another attribute.`, literal);
         }
         const href = literalRefusal('{href=x}', 'link');
-        assert.deepStrictEqual(href, ['Not set: ', { code: 'href' }, ' is the link\'s address — Edit link… changes it. Here, give it a class, an id or another attribute.']);
+        assert.deepStrictEqual(href, ['Not set: ', { code: 'href' }, ' is the link\'s address — "Edit link…" changes it. Here, give it a class, an id or another attribute.']);
         assert.strictEqual(literalRefusal('{.hero width=300}', 'image'), null);
     });
 

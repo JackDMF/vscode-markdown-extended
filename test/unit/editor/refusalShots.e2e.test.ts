@@ -1,3 +1,4 @@
+import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -5,8 +6,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { EditorPage, EXTENSION_ID, SHOTS_DIR, closeEditorPage, clickText, delay, openEditorPage, pointAt } from './pageHarness';
-import { REFUSALS_DOC, contrastOf } from './refusals.e2e.test';
+import { EditorPage, EXTENSION_ID, SHOTS_DIR, closeEditorPage, clickText, delay, openEditorPage, pointAt } from './pageHarness';import { REFUSALS_DOC, contrastOf } from './refusals.e2e.test';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 /** Daniel's full user stylesheet (read, never copied): the page as his documents show it. */
@@ -16,8 +16,11 @@ const ROW = '.mep-toolbar';
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
 const MENU = `${BAR} .mep-object-menu`;
 
-/** A reference's code: a `|` typed there is refused with a message longer than 80 characters (C1), which wraps at 80ch. */
-const LONG_DOC = 'A sentence with a note ++the `ab` reference|and its body++ in the middle of it, and more words after the note.\n\nAfter.\n';
+/**
+ * A long refusal that names a table's row (C13's family, #10 build critique F5): an edit in row 2 is refused because
+ * the save would write row 1 again, whose sidebar comes back otherwise (it spells a character as `&#116;`).
+ */
+const LONG_DOC = '| Name | Note |\n| ---- | ---- |\n| one | See h&#116;tp://e.com/$x$ here. |\n| edit me | two |\n\nAfter.\n';
 const PROPS_DOC = '---\ntitle: Demo\nstream: UXD\n---\n\nSome words here to select.\n\nLast paragraph.\n';
 
 type Step = (page: puppeteer.Page, show: (text: string, marker: string) => Promise<void>) => Promise<void>;
@@ -133,8 +136,8 @@ const SHOTS: { name: string; widths: number[]; themes: Theme[]; petrol: Theme[];
         name: 's10-long', widths: [1280, 520], themes: [LIGHT_MODERN, DARK_MODERN], petrol: [LIGHT_MODERN],
         step: async (page, show) => {
             await show(LONG_DOC, 'After');
-            await clickText(page, 'ab', 1);
-            await page.keyboard.type('|');
+            await clickText(page, 'edit me', 4);
+            await page.keyboard.type('Z');
         },
     },
     {
@@ -203,6 +206,80 @@ function measure(page: puppeteer.Page) {
     });
 }
 
+/** A state's `show` for `editor`: what was open put away, then `text` posted as the host does, `marker` waited for. */
+function shower(editor: EditorPage): (text: string, marker: string) => Promise<void> {
+    const page = editor.page;
+    let version = 0;
+    return async (text, marker) => {
+        await page.mouse.move(2, 2);
+        await page.evaluate(() => {
+            for (const menu of Array.from(document.querySelectorAll('.mep-menu:not([hidden])'))) {
+                menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            }
+            (document.activeElement as HTMLElement | null)?.blur();
+            window.scrollTo(0, 0);
+        });
+        const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
+        version++;
+        await editor.send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
+        await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
+        await editor.send({ type: 'exportDone', outcome: 'settled' });
+        // Long enough that the step's first click is no double click with the last one.
+        await delay(600);
+    };
+}
+
+/**
+ * #10 build critique F1: Daniel's stylesheet narrows the body at 520 px, and
+ * the hints and the field's bar shrank with it to 64–139 px. Standing beside
+ * the body (the hint) or as wide as what they hold (a bar), they keep their
+ * width now: the caret's hint, a bar verb's and the field's bar, each at least
+ * 200 px and inside the window. Skipped where the stylesheet is not
+ * (`MEP_USER_CSS`, else its place in Theokratie-Archiv), as the shots are.
+ */
+suite('Editor refusals: a user stylesheet that narrows the body, at 520 px (e2e)', () => {
+    let editor: EditorPage | undefined;
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        if (!fs.existsSync(PETROL)) {
+            this.skip();
+        }
+        editor = await openEditorPage({ width: 520, height: 800, styles: ['markdown-extended.css'], stylesheets: [PETROL] });
+        if (!editor) {
+            this.skip();
+        }
+        await applyTheme((editor as EditorPage).page, LIGHT_MODERN);
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    test('the caret\'s hint, a bar verb\'s hint and the field\'s bar keep their width', async function () {
+        this.timeout(60000);
+        const page = (editor as EditorPage).page;
+        const show = shower(editor as EditorPage);
+        const box = (sel: string) => page.$eval(sel, el => {
+            const r = el.getBoundingClientRect();
+            return { left: r.left, right: r.right, width: r.width };
+        });
+        const wide = (what: string, r: { left: number; right: number; width: number }) => {
+            assert.ok(r.width >= 200, `${what} ${Math.round(r.width)} px wide`);
+            assert.ok(r.left >= 0 && r.right <= 520, `${what} inside the window: ${JSON.stringify(r)}`);
+        };
+        await (SHOTS.find(s => s.name === 's2-field') as (typeof SHOTS)[number]).step(page, show);
+        await page.waitForSelector('.mep-field-refusal-text', { timeout: 2000 });
+        wide('the field\'s bar', await box('.mep-object-toolbar.mep-field-bar'));
+        await page.keyboard.press('Escape');
+        for (const name of ['s1-caret', 's6-bar-verb']) {
+            await (SHOTS.find(s => s.name === name) as (typeof SHOTS)[number]).step(page, show);
+            await page.waitForSelector('.mep-hint:not([hidden])', { timeout: 2000 });
+            wide(name, await box('.mep-hint'));
+        }
+    });
+});
+
 /**
  * #10's screenshots (plan section 7): with `MEP_SHOTS_DIR` set, each state of
  * the shot list in its widths and themes, with the default stylesheets and
@@ -233,24 +310,7 @@ suite('Editor refusals: screenshots (e2e)', () => {
                 this.skip();
             }
             const page = (editor as EditorPage).page;
-            let version = 0;
-            const show = async (text: string, marker: string) => {
-                await page.mouse.move(2, 2);
-                await page.evaluate(() => {
-                    for (const menu of Array.from(document.querySelectorAll('.mep-menu:not([hidden])'))) {
-                        menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-                    }
-                    (document.activeElement as HTMLElement | null)?.blur();
-                    window.scrollTo(0, 0);
-                });
-                const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
-                version++;
-                await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
-                await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
-                await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
-                // Long enough that the step's first click is no double click with the last one.
-                await delay(600);
-            };
+            const show = shower(editor as EditorPage);
             try {
                 for (const shot of SHOTS.filter(s => process.env.MEP_SHOTS_ONLY === undefined || s.name.startsWith(process.env.MEP_SHOTS_ONLY))) {
                     const themes = set === 'default' ? shot.themes : shot.petrol;

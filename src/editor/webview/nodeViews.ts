@@ -209,7 +209,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
                 e.preventDefault();
                 e.stopPropagation();
                 this.stopEditing(false);
-            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            } else if (bindingMatches(APPLY_BINDING, e, macKeys())) {
                 e.preventDefault();
                 e.stopPropagation();
                 this.stopEditing(true);

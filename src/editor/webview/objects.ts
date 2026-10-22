@@ -49,7 +49,7 @@ import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, 
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
-import { VERB, wording } from '../verbs';
+import { VERB, quotedVerb, wording } from '../verbs';
 import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_LITERAL_REFUSAL, LANGUAGE_WORD_REFUSAL, isLanguageWord, languageOf, parseOpeningLine, savedFence, savedOpeningLine, withLanguage } from '../fences';
 
 const nodes = editorSchema.nodes;
@@ -696,7 +696,7 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph
     if (holder !== undefined && own !== undefined) {
         // The one key at fault, what it is, and the verb on the element's bar that changes it.
         const named = OWN_ATTRIBUTE[holder.holder]?.[own] ?? { what: `the ${holder.noun}'s own`, verb: VERB.showInTextEditor };
-        return said`Not set: ${value(own)} is ${named.what} — ${named.verb} changes it. Here, give it a class, an id or another attribute.`;
+        return said`Not set: ${value(own)} is ${named.what} — ${quotedVerb(named.verb)} changes it. Here, give it a class, an id or another attribute.`;
     }
     if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(typed)) {
         return said`Not set: the ${value('{')} inside ${v} would cut this rule's attributes off. Remove it.`;
@@ -716,7 +716,7 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph
  * but not together with the block it is written in (`literalsReadBack`): a `$`
  * in it pairing with another as a left sidebar or math, say.
  */
-export const LITERAL_READ_WITH_BLOCK_REFUSAL: Said = said`Not set: a ${value('$')} here would pair with a ${value('$')} elsewhere in the block. Remove it, or use ${VERB.showInTextEditor}.`;
+export const LITERAL_READ_WITH_BLOCK_REFUSAL: Said = said`Not set: a ${value('$')} here would pair with a ${value('$')} elsewhere in the block. Remove it, or use ${quotedVerb(VERB.showInTextEditor)}.`;
 
 /**
  * Why a literal is refused in a block that, before it was set, already held a
@@ -728,7 +728,7 @@ export function literalAlreadyLostRefusal(existing: LiteralLoss): Said {
         return literalLostReason(existing);
     }
     if (existing.cause !== undefined || existing.literal === null) {
-        return `Not set: this block already doesn't save as shown — not because of what you typed. Use ${VERB.showInTextEditor} to change the block once first.`;
+        return `Not set: this block already doesn't save as shown — not because of what you typed. Change the block once with ${quotedVerb(VERB.showInTextEditor)} first.`;
     }
     return said`Not set: this block's attributes ${value(existing.literal)} already don't save as shown — not because of what you typed. Remove or change them first.`;
 }
@@ -1193,7 +1193,7 @@ function fencedFor(node: Node, literal: string): { markup?: string } {
 }
 
 /** Why a list item is given no literal: it is written at the end of the item's first paragraph. */
-export const ITEM_ATTRS_REFUSAL = `This item's attributes go at the end of its first paragraph, and it doesn't start with one — use ${VERB.showInTextEditor}.`;
+export const ITEM_ATTRS_REFUSAL = `This item's attributes go at the end of its first paragraph, and it doesn't start with one — use ${quotedVerb(VERB.showInTextEditor)}.`;
 
 /** Why nothing at the selection takes a literal. */
 export const NO_BLOCK_ATTRS_REFUSAL = 'Put the caret in one paragraph, heading, list item, quote, table or code block to give it attributes.';

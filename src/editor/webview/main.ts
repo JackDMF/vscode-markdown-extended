@@ -890,7 +890,10 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
     hideError();
     const doc = Node.fromJSON(editorSchema, json.doc);
     current = { eol: json.eol, tail: json.tail, version, defaultWrap };
-    hostText = serialize(doc);
+    const incoming = serialize(doc);
+    // Whether the host's text differs from what the page shows: a reparse or a save's echo of the same text leaves a refusal standing.
+    const changesText = view !== undefined && incoming !== serialize(view.state.doc);
+    hostText = incoming;
     if (view) {
         // Changed in place rather than rebuilt, so the undo history survives a
         // change made elsewhere (a save that trims whitespace is one). Applied
@@ -899,8 +902,10 @@ function showDocument(json: ParsedDocumentJSON, version: number, defaultWrap: nu
         // replaced blocks stays where it was — and its line stays in place on
         // screen when the change opens or closes the margin lane.
         const shown = view;
-        // A refusal was about the text before.
-        dismissRefusal(shown);
+        // A refusal was about the text before — where the host's text is another.
+        if (changesText) {
+            dismissRefusal(shown);
+        }
         const resync = resyncTransaction(shown.state, doc);
         keepingLine(shown, shown.state.selection.head, resync.mapping, () => shown.updateState(shown.state.apply(resync)));
         sendDeferredActions();

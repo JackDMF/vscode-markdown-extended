@@ -15,7 +15,7 @@ import { NOTE_CLOSE_TOKENS, NOTE_OPEN_TOKENS } from './blocks';
 import { INLINE_LITERAL_HOLDERS, holderOfCarrier, namesOf } from './inlineLiterals';
 import { markNoun, noteNoun, partLabel } from './refusal';
 import { Said, said, value } from './tips';
-import { VERB } from './verbs';
+import { VERB, quotedVerb } from './verbs';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
@@ -1358,10 +1358,10 @@ function noteUnwritable(note: Node): Said | null {
             } else if (raw !== undefined && terminator !== undefined && text.includes(terminator)) {
                 // C1: named by the one mark that holds it.
                 const mark = markNoun(raw);
-                reason = said`A ${value(terminator)} can't go in ${mark} inside a ${noun} — it would end the note there. Type it outside the ${mark}.`;
+                reason = said`${value(terminator)} can't go in ${mark} in a ${noun} — it would end the note there. Type it outside the ${mark}.`;
             } else if (code && marker !== null && text.includes(marker)) {
                 // C2
-                reason = said`A ${value(marker)} can't go in inline code inside a ${noun} — it would end the note there. Type it outside the code.`;
+                reason = said`${value(marker)} can't go in inline code in a ${noun} — it would end the note there. Type it outside the code.`;
             }
         });
         if (reason !== null) {
@@ -1690,15 +1690,15 @@ interface WrittenTextblock {
 }
 
 /** Why a sidebar right after a letter or digit is not made. */
-export const SIDEBAR_GLUED_BEFORE = 'A sidebar right after a letter or digit would not be read as a sidebar: put a space before it.';
+export const SIDEBAR_GLUED_BEFORE = 'Not applied: a sidebar right after a letter or digit wouldn\'t be read as one — put a space before it.';
 /** Why a left sidebar right before a digit is not made. */
 export const SIDEBAR_GLUED_AFTER = 'A left sidebar right before a digit would not be read as a sidebar: put a space after it.';
 /** Why a sidebar right after a URL is not made. */
 export const SIDEBAR_GLUED_URL = 'A sidebar right after a web address would be read as part of the address: put a space before it.';
 /** Why an edit is refused in a line whose character reference, written as its character, changes what is a sidebar (X4). */
-export const SIDEBAR_REWRITTEN_REFERENCE: Said = said`Not applied: this line spells a character as ${value('&#…;')}, which the editor saves as the character, and the sidebar would change. Use ${VERB.showInTextEditor} to change the line once.`;
+export const SIDEBAR_REWRITTEN_REFERENCE: Said = said`Not applied: this line spells a character as ${value('&#…;')}, which the editor saves as the character, and the sidebar would change. Change the line once with ${quotedVerb(VERB.showInTextEditor)}.`;
 /** Why an edit is refused in a line the editor would write so that a sidebar does not read back, for another reason than a character reference (X5). */
-export const SIDEBAR_REWRITTEN = `This line can't be changed here yet: its sidebar wouldn't be saved as shown. Use ${VERB.showInTextEditor} to change it once; then this works.`;
+export const SIDEBAR_REWRITTEN = `This line can't be changed here: its sidebar wouldn't be saved as shown. Change it once with ${quotedVerb(VERB.showInTextEditor)}.`;
 /** Why a sidebar is not made that would not read back, for none of the reasons above (C14a). */
 export const SIDEBAR_NOT_READ = 'Not applied: the sidebar here wouldn\'t be saved as a sidebar. Keep a space before and after it.';
 /** Why an edit is refused after which text would read as a sidebar the editor does not show (C14b). */
@@ -1731,7 +1731,7 @@ export function sidebarRewrittenBeside(block: Node, textblock: Node, reference: 
     const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
     const part = partLabel(block, textblock);
     const cause = reference ? said` — it spells a character as ${value('&#…;')}` : [];
-    return said`This ${whole} can't be changed here yet: ${part} of it wouldn't keep its sidebar${cause}. Use ${VERB.showInTextEditor} and change ${part} once; then this works.`;
+    return said`This ${whole} can't be changed here: ${part} of it wouldn't keep its sidebar${cause}. Fix ${part} once with ${quotedVerb(VERB.showInTextEditor)}.`;
 }
 
 /** The sidebars the engine read in a text, by the text: a textblock is parsed once however often it is asked about. */
@@ -2142,7 +2142,7 @@ export function mergedReason(noun: string): string {
  * points at the text editor naming the verb that opens it.
  */
 export function causeReason(cause: ReadCause): string {
-    const editor = VERB.showInTextEditor;
+    const editor = quotedVerb(VERB.showInTextEditor);
     switch (cause.kind) {
         case 'merged':
             return mergedReason(cause.noun);
@@ -2151,7 +2151,7 @@ export function causeReason(cause: ReadCause): string {
         case 'made':
             return `Not applied: these characters would turn into ${cause.noun} when saved. Add a space between them.`;
         case 'text':
-            return `Not applied: some of this text would be saved as formatting. Use ${editor} to change it.`;
+            return `Not applied: some of this text would be saved as formatting. Change it with ${editor}.`;
         case 'address':
             return `Not applied: the ${cause.noun === 'image' ? 'image\'s path' : 'link\'s address'} can't be saved as shown here. Change it, or use ${editor}.`;
         case 'title':
@@ -2164,7 +2164,7 @@ export function causeReason(cause: ReadCause): string {
 }
 
 /** Why an edit is refused after which text would be read as attributes no literal gives (X8). */
-export const LITERAL_MADE: Said = said`Not applied: text here would turn into attributes when saved. Change the text around the ${value('{')}, or use ${VERB.showInTextEditor}.`;
+export const LITERAL_MADE: Said = said`Not applied: text here would turn into attributes when saved. Change the text around the ${value('{')}, or use ${quotedVerb(VERB.showInTextEditor)}.`;
 
 /**
  * Why an edit is refused after which the literal `lost` names would not read
@@ -2181,22 +2181,22 @@ export function literalLostReason(lost: LiteralLoss): Said {
         return LITERAL_MADE;
     }
     // X9
-    return said`Not applied: ${value(lost.literal)} wouldn't stay attributes — something else in the block (a ${value('$')}, code, a line break) would take them. Use ${VERB.showInTextEditor} to change the block.`;
+    return said`Not applied: ${value(lost.literal)} wouldn't stay attributes — something else in the block (a ${value('$')}, code, a line break) would take them. Change the block with ${quotedVerb(VERB.showInTextEditor)}.`;
 }
 
 /** Why an edit is refused in a line whose literal `lost` names already does not read back as it is shown, edited or not — or, `literal` `null`, which already reads text as attributes (X10). */
 export function literalRewritten(lost: LiteralLoss): Said {
-    const once = `Use ${VERB.showInTextEditor} to change it once; then this works.`;
+    const editor = quotedVerb(VERB.showInTextEditor);
     if (lost.cause?.kind === 'unread') {
         return causeReason(lost.cause);
     }
     if (lost.cause !== undefined) {
-        return `This line can't be changed here yet: it wouldn't be saved as shown. ${once}`;
+        return `This line can't be changed here: it wouldn't be saved as shown. Change it once with ${editor}.`;
     }
     if (lost.literal === null) {
-        return `This line can't be changed here yet: text in it would turn into attributes. ${once}`;
+        return `This line can't be changed here: text in it would turn into attributes. Change it once with ${editor}.`;
     }
-    return said`This line can't be changed here yet: its attributes ${value(lost.literal)} wouldn't stay attributes. Remove them, or use ${VERB.showInTextEditor} to change it once; then this works.`;
+    return said`This line can't be changed here: its attributes ${value(lost.literal)} wouldn't stay attributes. Remove them, or change the line once with ${editor}.`;
 }
 
 /**
@@ -2208,21 +2208,21 @@ export function literalRewritten(lost: LiteralLoss): Said {
 export function literalRewrittenBeside(block: Node, textblock: Node, lost: LiteralLoss): Said {
     // C13: the part named (`partLabel`: "row 3", "item 2") so it can be found once the hint is gone, and the verb that opens the text editor.
     const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
-    const editor = VERB.showInTextEditor;
+    const editor = quotedVerb(VERB.showInTextEditor);
     if (lost.cause?.kind === 'unread') {
         return causeReason(lost.cause);
     }
     if (lost.literal !== null && lost.cause === undefined && !textblock.isTextblock && textblock.type.name !== 'list_item') {
-        return said`This ${whole} can't be changed here: its attributes ${value(lost.literal)} wouldn't stay attributes. Remove them, or use ${editor} to fix them once.`;
+        return said`This ${whole} can't be changed here: its attributes ${value(lost.literal)} wouldn't stay attributes. Remove them, or fix them once with ${editor}.`;
     }
     const part = partLabel(block, textblock);
     if (lost.cause !== undefined) {
-        return `This ${whole} can't be changed here: ${part} wouldn't be saved as shown. Use ${editor} to fix ${part} once.`;
+        return `This ${whole} can't be changed here: ${part} wouldn't be saved as shown. Fix ${part} once with ${editor}.`;
     }
     if (lost.literal === null) {
-        return `This ${whole} can't be changed here: text in ${part} would turn into attributes. Use ${editor} to fix ${part} once.`;
+        return `This ${whole} can't be changed here: text in ${part} would turn into attributes. Fix ${part} once with ${editor}.`;
     }
-    return said`This ${whole} can't be changed here: the attributes ${value(lost.literal)} in ${part} wouldn't stay attributes. Use ${editor} to fix ${part} once.`;
+    return said`This ${whole} can't be changed here: the attributes ${value(lost.literal)} in ${part} wouldn't stay attributes. Fix ${part} once with ${editor}.`;
 }
 
 /**

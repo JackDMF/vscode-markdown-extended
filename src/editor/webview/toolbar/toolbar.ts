@@ -166,6 +166,13 @@ const LOCK_FLASH_MS = 900;
 /** On the row while the lock's reason stands in the refused tools' place: they give way to it (`layoutRow`, `editor.css`). */
 const LOCK_INROW_CLASS = 'mep-row-lock-inrow';
 
+/**
+ * Below this row width a button's lock (the quiet lock) shows no note: the
+ * tools only dim, a press says the short reason under them (Daniel,
+ * 2026-10-20: "Outside the text" at ≈600–880 px, dimmed only below that).
+ */
+const QUIET_LOCK_NOTE_MIN = 600;
+
 /** On the row while even "…" with every tool in it and Export as its icon leave it too narrow: Block type shortens its label (`layoutRow`, `editor.css`). */
 const ROW_TIGHT_CLASS = 'mep-row-tight';
 
@@ -752,8 +759,9 @@ class ToolbarView implements PluginView {
      * - else, for a button, its short form ("Outside the text") beside the
      *   tools where that fits, else the refused tools give way into "…"
      *   (disabled meanwhile) until it fits; where even that leaves it no
-     *   room, no note: the tools only dim, the reason their tooltips and the
-     *   row's description. The whole reason is the note's hover wherever the
+     *   room — or on a row narrower than `QUIET_LOCK_NOTE_MIN` — no note: the
+     *   tools only dim, the reason their tooltips, the row's description and
+     *   a press's hint. The whole reason is the note's hover wherever the
      *   short form shows.
      *
      * Measured, not set by a width, so it holds for any font and label; and
@@ -816,14 +824,17 @@ class ToolbarView implements PluginView {
                 if (role === 'button') {
                     // The short form beside the tools where it fits; else the refused tools give way into "…"
                     // (disabled under the lock) until it does; where even all of them gone leaves it no room, no
-                    // note — the tools only dim, the reason in their tooltips and the row's description.
+                    // note — the tools only dim, the reason in their tooltips and the row's description. Below
+                    // `QUIET_LOCK_NOTE_MIN` that is so at once: the tools stay where they are, dimmed.
                     text.textContent = forms.short;
-                    if (!whole() && !this.exportIcon) {
+                    if (this.row.clientWidth < QUIET_LOCK_NOTE_MIN) {
+                        note.hidden = true;
+                    } else if (!whole() && !this.exportIcon) {
                         moved = fitWithMore(ROW_OVERFLOW, () => overflows(this.row) || overflows(note), c => this.showInRow(c), c => this.moveToMore(c), shown => {
                             this.moreGroup.hidden = !shown;
                         });
                     }
-                    if (!whole()) {
+                    if (!note.hidden && !whole()) {
                         note.hidden = true;
                         moved = fitTools();
                     }

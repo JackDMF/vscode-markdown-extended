@@ -397,7 +397,7 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         const already = saidText(literalAlreadyLostRefusal(none));
         assert.match(already, /this block already doesn't save as shown/, already);
         assert.doesNotMatch(already, /Remove or change/, already);
-        assert.match(saidText(literalRewritten({ literal: '{.a}' })), /its attributes \{\.a\} wouldn't stay attributes\. Remove them, or use Show in text editor/);
+        assert.match(saidText(literalRewritten({ literal: '{.a}' })), /its attributes \{\.a\} wouldn't stay attributes\. Remove them, or change the line once with "Show in text editor"/);
     });
 
     test('typing in a long list parses the one item typed in: the other items\' read-back is remembered', () => {

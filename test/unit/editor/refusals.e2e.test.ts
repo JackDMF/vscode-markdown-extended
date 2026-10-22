@@ -135,10 +135,23 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         assert.strictEqual(await shown(), false, 'gone with the source box opened');
         await page.keyboard.press('Escape');
         await delay(100);
-        // (e) The host's document.
+        // (e) The host's document — one with another text; the same text again (a reparse, a save's echo) leaves it.
         await refuseInCell();
         await showDocument();
+        assert.strictEqual(await shown(), true, 'kept through a document with the same text');
+        await showDocument(REFUSALS_DOC.replace('Last paragraph.', 'Last paragraph, changed.'));
         assert.strictEqual(await shown(), false, 'gone with the document the host sent');
+    });
+
+    test('D13: an accepted edit that leaves the caret in place — a forward Delete — ends the refusal', async function () {
+        this.timeout(15000);
+        await fresh();
+        await refuseInCell();
+        await delay(150);
+        await page.keyboard.press('Delete');
+        await delay(100);
+        assert.ok(await page.evaluate(() => document.querySelector('.ProseMirror')?.textContent?.includes('oneatwo')), 'the Delete was taken');
+        assert.strictEqual(await shown(), false, 'gone with the change of the document');
     });
 
     test('D11: the refused keystroke itself does not end its refusal', async function () {
@@ -183,6 +196,18 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         await page.keyboard.type('|');
         await delay(200);
         assert.strictEqual((await said()).length, 1, 'two refusals 300 ms apart at one place: said once');
+        // A held key: the same refusal every 300 ms for two seconds — the window slides, it is said once.
+        await fresh();
+        await page.evaluate(() => {
+            (window as unknown as { said: string[] }).said = [];
+        });
+        await refuseInCell('ab');
+        for (let t = 300; t <= 2100; t += 300) {
+            await delay(300);
+            await page.keyboard.type('|');
+        }
+        await delay(200);
+        assert.strictEqual((await said()).length, 1, 'repeats every 300 ms for two seconds: said once');
     });
 
     test('D9: a refusal stays its time (2 s + 50 ms a character); a neutral hint three seconds', async function () {
@@ -363,18 +388,20 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         await delay(120);
         await page.click(BOLD);
         await delay(80);
-        assert.deepStrictEqual([(await hint()).text, (await hint()).at], ['Formatting is off while the focus is outside the text — press Esc or click into the text', 'control']);
+        const quiet = 'Formatting is off outside the text — click into the text or press Esc.';
+        assert.deepStrictEqual([(await hint()).text, (await hint()).at], [quiet, 'control']);
         await shotAs('s4-quiet-lock');
         await page.setViewport({ width: 520, height: 800 });
         await delay(300);
         await page.focus('.mep-properties .mep-props-toggle');
         await delay(120);
-        const more = `${ROW} .mep-more-face`;
-        assert.strictEqual(await page.$eval(more, el => el.getAttribute('aria-disabled')), 'true', 'the refused tools gave way into a disabled "…"');
-        await page.click(more);
+        // Below 600 px (Daniel, 2026-10-20): no note in the row — the tools stay where they are, dimmed; a press says the short reason.
+        assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock`, el => (el as HTMLElement).hidden), true, 'no note in the row at 520');
+        assert.deepStrictEqual(await page.$eval(BOLD, el => [(el as HTMLElement).getClientRects().length > 0, el.getAttribute('aria-disabled')]), [true, 'true'], 'Bold stays in the row, dimmed');
+        await page.click(BOLD);
         await delay(80);
-        const p = await placed(more, ROW);
-        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'control', 'Formatting is off while the focus is outside the text — press Esc or click into the text']);
+        const p = await placed(BOLD, ROW);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'control', quiet]);
         assert.ok(p.hint.left >= 0 && p.hint.right <= 520, `inside the window: ${JSON.stringify(p.hint)}`);
         await shotAs('s4-quiet-lock-520');
         await page.setViewport({ width: 1280, height: 800 });
@@ -399,7 +426,7 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         await page.click(entry);
         await delay(80);
         const p = await placed(entry, menu);
-        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'No block here to change — Insert adds one at this spot.']);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'No block here — Insert adds one at this spot.']);
         assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1);
         await shotAs('s11-gap-lock');
         await page.click(face);
@@ -419,7 +446,7 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         await page.click(entry);
         await delay(80);
         const p = await placed(entry, menu);
-        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'A table cell has no block type — the table\'s bar adds rows and columns.']);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'A table cell keeps its block type — text formatting still works here.']);
         assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1, `at the entry's top: ${p.hint.top} vs ${p.controls[0].top}`);
         assert.ok(Math.abs(p.hint.left - (p.controls[1].right + 4)) <= 1 || Math.abs(p.hint.right - (p.controls[1].left - 4)) <= 1, `beside the menu: ${JSON.stringify(p)}`);
         assert.strictEqual(await page.$eval('.mep-preview-card', el => (el as HTMLElement).hidden), true, 'the card put away');
@@ -498,8 +525,12 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
             await page.click(entry);
             await delay(80);
             const q = await placed(entry, MENU);
-            assert.deepStrictEqual([q.shown, q.at, q.text], [true, 'menu-entry', reason]);
+            // No room beside the menu at this width (#10 build critique F2): a row in the menu, right under the entry, the menu's width.
+            assert.deepStrictEqual([q.shown, q.at, q.text], [true, 'menu-row', reason]);
+            assert.ok(q.hint.top >= q.controls[0].bottom && q.hint.top - q.controls[0].bottom <= 4, `right under the entry: ${JSON.stringify(q)}`);
+            assert.ok(q.hint.left >= q.controls[1].left && q.hint.right <= q.controls[1].right, `inside the menu: ${JSON.stringify(q)}`);
             assert.ok(q.hint.bottom <= 800 && q.hint.right <= width, `inside the window: ${JSON.stringify(q)}`);
+            assert.strictEqual(await page.$eval(entry, el => el.nextElementSibling?.classList.contains('mep-hint')), true, 'the row follows the entry in the menu');
             await shotAs('s6-bar-entry');
         } else {
             assert.fail(`Delete note moves into the bar's "…" by ${width} px`);

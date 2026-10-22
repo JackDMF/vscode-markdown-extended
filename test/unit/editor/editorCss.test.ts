@@ -235,7 +235,7 @@ suite('Editor stylesheet colours', () => {
         assert.ok(rule('html').includes(`--mep-refusal-bar: ${FLASH_AMBER}`), rule('html').join('; '));
     });
 
-    test('one refusal component (#10): the bar in the one variable, 80ch, above every menu, the values muted mono, High Contrast a 4 px double bar', () => {
+    test('one refusal component (#10): the bar in the one variable, 44ch balanced, above every menu, beside the body, the values muted mono, High Contrast a 4 px double bar', () => {
         const rule = (selector: string) => {
             const at = css.indexOf(`\n${selector} {`);
             assert.ok(at >= 0, `editor.css has ${selector}`);
@@ -248,11 +248,15 @@ suite('Editor stylesheet colours', () => {
         assert.ok(hint.includes('pointer-events: none'));
         assert.ok(hint.includes('font-family: var(--vscode-font-family, sans-serif)'), 'the chrome\'s font, not the document\'s');
         const refusal = rule('.mep-hint[data-tone="refusal"]');
-        assert.ok(refusal.includes('max-width: 80ch') && refusal.includes('border-left: 3px solid var(--mep-refusal-bar)'), refusal.join('; '));
+        assert.ok(refusal.includes('max-width: min(44ch, calc(100vw - 32px))') && refusal.includes('width: max-content') && refusal.includes('text-wrap: balance'), refusal.join('; '));
+        assert.ok(refusal.includes('border-left: 3px solid var(--mep-refusal-bar)'), refusal.join('; '));
+        // Beside the body a user stylesheet may narrow: the window's width, above the menus.
+        const overlay = rule('.mep-overlay');
+        assert.ok(overlay.includes('width: 100%') && overlay.includes('pointer-events: none') && z('.mep-overlay') >= z('.mep-hint'), overlay.join('; '));
         assert.ok(rule('.mep-field-refusal-text').includes('border-left: 3px solid var(--mep-refusal-bar)'), 'the field\'s reason: the same bar');
         const code = rule('.mep-hint code');
         assert.ok(code.includes('background: none') && code.some(d => d.startsWith('color: var(--vscode-descriptionForeground')), code.join('; '));
-        assert.deepStrictEqual(rule('.vscode-high-contrast .mep-hint[data-tone="refusal"]'), ['border-left-width: 4px', 'border-left-style: double']);
+        assert.deepStrictEqual(rule(':root:has(> body.vscode-high-contrast) .mep-hint[data-tone="refusal"]'), ['border-left-width: 4px', 'border-left-style: double']);
         assert.ok(rule('.mep-live').includes('clip-path: inset(50%)'), 'the live region drawn nowhere');
     });
 

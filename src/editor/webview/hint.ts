@@ -9,12 +9,13 @@
  * control (a row tool, a bar's verb: under the row or the bar), at a pressed
  * menu entry (beside the menu). The fourth placement, in a field, is the
  * field's own line (`fieldRow.ts`), drawn with the same bar. A refusal goes
- * at the next caret move, press, focus elsewhere, mode change or document
- * from the host — whatever comes first after the gesture that caused it (it
- * is *armed* one frame later) — else after its time, which grows with its
- * length (`refusalMs`). The same refusal again is placed and timed anew and
- * said again, unless it is a repeat at the same place within a second (a
- * held key).
+ * at the next caret move, change of the document, press, focus elsewhere,
+ * mode change or document from the host with another text — whatever comes
+ * first after the gesture that caused it (it is *armed* one frame later) —
+ * else after its time, which grows with its length (`refusalMs`). The same
+ * refusal again is placed and timed anew and said again, unless it is a
+ * repeat at the same place within a second of the last one (a held key,
+ * silent for as long as it is held).
  *
  * A **neutral** hint announces the result of a verb that leaves nothing
  * visible behind but a disappearance ("Note deleted — Ctrl+Z"). A hint that
@@ -34,7 +35,7 @@ import { APPLY_BINDING, UNDO_BINDING, keyLabel } from '../keys';
 import { REANNOUNCE_GAP_MS, refusalMs } from '../refusal';
 import { Said, saidParts, saidText } from '../tips';
 import { placeOfElement } from './focusPlace';
-import { Placement, Rect, VIEWPORT, caretRect, placeAtControl, placeAtEntry, placeLayer, readFrame } from './placement';
+import { Frame, LAYER_GUTTER, Placement, Rect, VIEWPORT, caretRect, placeAtControl, placeAtEntry, placeLayer, readFrame } from './placement';
 import { partNode } from './tooltip';
 
 export type HintTone = 'refusal' | 'neutral';
@@ -56,9 +57,34 @@ function rectOf(r: DOMRect): Rect {
     return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
 }
 
+/**
+ * The editor's overlay: a layer of its own beside `<body>`, not in it, so a
+ * user stylesheet that narrows or styles the body (Styles.petrol.css at 520
+ * px left a hint 64 px wide) gives a hint neither its width nor its type: its
+ * room is the window's. Absolute at the page's origin, it scrolls with the
+ * text as the mount does. One per page, made on first use.
+ */
+export function editorOverlay(): HTMLElement {
+    let el = document.querySelector<HTMLElement>(':root > .mep-overlay');
+    if (el === null) {
+        el = document.createElement('div');
+        el.className = 'mep-overlay';
+        document.documentElement.append(el);
+    }
+    return el;
+}
+
 class CaretHint {
     private readonly el: HTMLElement;
     private readonly live: HTMLElement;
+    /** Where the hint stands (`editorOverlay`) — but in a menu, as a row under its entry, where the menu has no room beside it. */
+    private readonly overlay: HTMLElement;
+    /** A press is down: a refusal standing as a row in a menu ends after it (`endSoon`), so the entries under it do not move under the pointer. */
+    private pressing = false;
+    /** The hint a press found showing (`shownCount` then), to end once the press is up; `null` for none. */
+    private endAfterPress: number | null = null;
+    /** How many hints were shown: a hint shown since a press began is not the one it ends. */
+    private shownCount = 0;
     private timer: ReturnType<typeof setTimeout> | undefined;
     private sayFrame = 0;
     private armFrame = 0;
@@ -84,22 +110,37 @@ class CaretHint {
         this.live.setAttribute('role', 'status');
         this.live.setAttribute('aria-live', 'polite');
         this.live.setAttribute('aria-atomic', 'true');
-        const mount = view.dom.parentElement;
-        mount?.append(this.el, this.live);
+        this.overlay = editorOverlay();
+        this.overlay.append(this.el);
+        view.dom.parentElement?.append(this.live);
         // Each returns at once unless an armed refusal shows: nothing per keystroke.
         this.listen(document, 'pointerdown', () => {
+            this.pressing = true;
             if (this.armedRefusal()) {
-                this.dismiss();
+                this.endSoon();
+            }
+        });
+        this.listen(document, 'pointerup', () => {
+            this.pressing = false;
+            const ending = this.endAfterPress;
+            if (ending !== null) {
+                this.endAfterPress = null;
+                // After the click this press makes (the entry under the pointer is the one pressed), unless that click showed another.
+                setTimeout(() => {
+                    if (this.shownCount === ending) {
+                        this.dismiss();
+                    }
+                }, 0);
             }
         });
         this.listen(document, 'focusin', e => {
             if (this.armedRefusal() && e.target !== this.view.dom) {
-                this.dismiss();
+                this.endSoon();
             }
         });
         this.listen(document, 'focusout', e => {
             if (this.armedRefusal() && e.target instanceof Element && placeOfElement(this.view, e.target).kind === 'control') {
-                this.dismiss();
+                this.endSoon();
             }
         });
         this.listen(window, 'resize', () => {
@@ -116,6 +157,29 @@ class CaretHint {
 
     private armedRefusal(): boolean {
         return this.refusal && this.armed && !this.el.hidden;
+    }
+
+    /** End the refusal — at once, but a row in a menu while a press is down only once it is up: it would move the entries under it. */
+    private endSoon(): void {
+        if (this.pressing && this.el.dataset.at === 'menu-row') {
+            this.endAfterPress = this.shownCount;
+            return;
+        }
+        this.dismiss();
+    }
+
+    /** The hint back in the overlay, out of a menu it stood in as a row. */
+    private home(): void {
+        if (this.el.parentElement !== this.overlay) {
+            this.overlay.append(this.el);
+        }
+    }
+
+    /** `p` (window coordinates) as the hint's place in the overlay. */
+    private writeAt(p: Placement): void {
+        const base = this.overlay.getBoundingClientRect();
+        this.el.style.left = `${p.x - base.left}px`;
+        this.el.style.top = `${p.y - base.top}px`;
     }
 
     /** A neutral hint (`kind` its lifetime) at the caret, or under `near`. */
@@ -159,6 +223,8 @@ class CaretHint {
     }
 
     private render(message: Said, tone: HintTone, kind: HintKind): void {
+        this.home();
+        this.shownCount++;
         this.el.replaceChildren(...saidParts(message).map(partNode));
         this.el.dataset.tone = tone;
         this.el.dataset.kind = kind;
@@ -169,7 +235,7 @@ class CaretHint {
     private placeCaret(near?: Element): Placement | null {
         this.el.dataset.at = 'caret';
         this.el.removeAttribute('data-fixed');
-        const mount = this.el.parentElement;
+        const mount = this.view.dom.parentElement;
         if (mount === null) {
             return null;
         }
@@ -182,17 +248,24 @@ class CaretHint {
         } else {
             at = caretRect(this.view, sel.head);
         }
-        // Measured at the mount's left edge: its width is its text's, not the room left where it stood.
+        // Measured at the overlay's left edge: its width is its text's, not the room left where it stood.
         this.el.style.left = '0px';
         this.el.style.top = '0px';
-        const p = placeLayer(this.el, at, { view: this.view, mount, space: 'mount', caret: near === undefined });
+        // Placed in the mount's frame, written in the overlay's coordinates.
+        const p = placeLayer(this.el, at, { view: this.view, mount, space: 'viewport', caret: near === undefined });
+        this.writeAt(p);
         this.el.toggleAttribute('data-flipped', p.side === 'above');
         return p;
     }
 
-    /** Under a pressed control (in the row's coordinates where the row is fixed), or beside a pressed menu entry. */
+    /**
+     * Under a pressed control (in the row's coordinates where the row is
+     * fixed), or beside a pressed menu entry — where the window has no room
+     * beside the menu (520 px and less), a row inside the menu right under the
+     * entry, the menu's width (`menu-row`), never off at the window's corner.
+     */
     private placeAt(place: Exclude<RefusalPlace, { at: 'caret' }>): Placement | null {
-        const mount = this.el.parentElement;
+        const mount = this.view.dom.parentElement;
         if (mount === null) {
             return null;
         }
@@ -205,12 +278,28 @@ class CaretHint {
         this.el.style.top = '0px';
         const size = { width: this.el.offsetWidth, height: this.el.offsetHeight };
         const control = rectOf(place.el.getBoundingClientRect());
+        // The window less the layers' gutter at its right edge.
+        const viewport = VIEWPORT();
+        const inWindow: Frame = { ...viewport, layerEdge: viewport.layerEdge - LAYER_GUTTER };
         const p = place.at === 'menu-entry'
-            ? placeAtEntry(size, rectOf(place.menu.getBoundingClientRect()), control, VIEWPORT())
-            : placeAtControl(size, control, rectOf(surface.getBoundingClientRect()), fixed ? VIEWPORT() : readFrame(mount));
-        const base = fixed ? { left: 0, top: 0 } : mount.getBoundingClientRect();
-        this.el.style.left = `${p.x - base.left}px`;
-        this.el.style.top = `${p.y - base.top}px`;
+            ? placeAtEntry(size, rectOf(place.menu.getBoundingClientRect()), control, inWindow)
+            : placeAtControl(size, control, rectOf(surface.getBoundingClientRect()), fixed ? inWindow : readFrame(mount));
+        if (place.at === 'menu-entry' && p.side !== 'left' && p.side !== 'right') {
+            // No room beside the menu: a row in it, under the entry (CSS: `.mep-hint[data-at="menu-row"]`).
+            this.el.dataset.at = 'menu-row';
+            this.el.removeAttribute('data-fixed');
+            this.el.style.left = '';
+            this.el.style.top = '';
+            place.el.after(this.el);
+            const row = this.el.getBoundingClientRect();
+            return { x: row.left, y: row.top, side: 'below' };
+        }
+        if (fixed) {
+            this.el.style.left = `${p.x}px`;
+            this.el.style.top = `${p.y}px`;
+        } else {
+            this.writeAt(p);
+        }
         return p;
     }
 
@@ -221,6 +310,8 @@ class CaretHint {
         const now = performance.now();
         const last = this.lastSaid;
         if (last !== null && last.text === text && last.x === x && last.y === y && now - last.time < REANNOUNCE_GAP_MS) {
+            // A sliding window: a held key repeats faster than the gap, so it stays silent for the whole hold.
+            last.time = now;
             return;
         }
         this.lastSaid = { text, x, y, time: now };
@@ -249,6 +340,8 @@ class CaretHint {
     hide(): void {
         clearTimeout(this.timer);
         this.el.hidden = true;
+        // Out of a menu it stood in as a row: the menu is as it was.
+        this.home();
         // What is said next is said, whatever was said last: the repeat guard is for a hint still showing (a held key).
         this.lastSaid = null;
         this.endRefusal();
@@ -271,14 +364,19 @@ class CaretHint {
         cancelAnimationFrame(this.armFrame);
     }
 
-    /** The plugin's per-transaction look: until armed the refusal follows the selection; armed, a different selection ends it. O(1). */
-    selectionChanged(state: EditorState): void {
+    /**
+     * The plugin's per-transaction look: until armed the refusal follows the
+     * selection; armed, a different selection ends it, and so does a changed
+     * document (`docChanged`) — an accepted edit that leaves the caret in place,
+     * a forward Delete. A refused transaction never changes the document. O(1).
+     */
+    selectionChanged(state: EditorState, docChanged = false): void {
         if (!this.showingRefusal()) {
             return;
         }
         if (!this.armed) {
             this.shownSel = state.selection;
-        } else if (this.shownSel !== null && !state.selection.eq(this.shownSel)) {
+        } else if (docChanged || (this.shownSel !== null && !state.selection.eq(this.shownSel))) {
             this.dismiss();
         }
     }
@@ -413,8 +511,8 @@ export function hintPlugin(): Plugin {
             return {
                 // Before the plugins after it, whose views may show a hint for this very change.
                 update(view, prevState) {
-                    // A refusal ends at the next caret move once armed (O(1): `Selection.eq`).
-                    hint.selectionChanged(view.state);
+                    // A refusal ends at the next caret move or change of the document once armed (O(1): `Selection.eq`, a reference).
+                    hint.selectionChanged(view.state, view.state.doc !== prevState.doc);
                     if (view.state.doc !== prevState.doc) {
                         hint.staleAfterChange();
                         // A hint flipped above the caret's line stands over the text being typed: the next change takes it away.

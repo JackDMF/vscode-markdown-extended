@@ -749,6 +749,9 @@ img.mep-pending-range {
     align-items: center;
     gap: 2px;
     box-sizing: border-box;
+    /* As wide as what it holds up to the room `fit` gives it — not the mount's width, which a user stylesheet may
+       narrow (Styles.petrol.css at 520 px left a field's bar 85 px wide). */
+    width: max-content;
     max-width: 100%;
     padding: 2px;
     font-family: var(--vscode-font-family, sans-serif);
@@ -1091,7 +1094,20 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
  * entry. Above every layer (#9: the menus stand at 30): it never takes the
  * pointer, so what it covers can still be pressed. The chrome's font, not
  * the document's (a user stylesheet setting the body's font `!important`).
+ * It stands in the editor's overlay (`editorOverlay`), beside the body, not
+ * in it: a user stylesheet that narrows the body (Styles.petrol.css at 520
+ * px) gives it neither its width nor its type. The window's width at the
+ * page's origin; it scrolls with the text.
  */
+.mep-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 0;
+    z-index: 35;
+    pointer-events: none;
+}
 .mep-hint {
     position: absolute;
     z-index: 35;
@@ -1110,15 +1126,26 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 /* At a pressed control or menu entry: in the row's coordinates, so it stays with the row (and the menus) on scroll. */
 .mep-hint[data-fixed] { position: fixed; }
 /* A neutral hint is one short line (what was done, or that Alt+Enter has nothing to act on): it keeps to one where the window has the room. */
-.mep-hint[data-tone="neutral"] { max-width: 48em; }
-/* One refusal component: the bar's amber drawn a third towards the text colour (Light Modern's own #bf8803 is 2.5:1 on the surface; this ≥3:1). */
+.mep-hint[data-tone="neutral"] { max-width: min(48em, calc(100vw - 32px)); }
+/*
+ * One refusal component: the bar's amber drawn a third towards the text colour (Light Modern's own #bf8803 is 2.5:1
+ * on the surface; this ≥3:1). As wide as its text, at most 44 characters or the window less a 16 px gutter each side
+ * (#10 build critique), its lines balanced.
+ */
 .mep-hint[data-tone="refusal"] {
-    max-width: 80ch;
+    width: max-content;
+    max-width: min(44ch, calc(100vw - 32px));
     padding: 4px 10px 4px 8px;
     border-left: 3px solid var(--mep-refusal-bar);
+    text-wrap: balance;
 }
-/* Beside a menu the room is a menu's width, not the column's. */
-.mep-hint[data-at="menu-entry"] { max-width: 44ch; }
+/* No room beside the menu (520 px and less): a row in the menu, right under the refused entry, the menu's width. */
+.mep-hint[data-at="menu-row"] {
+    position: static;
+    width: auto;
+    max-width: none;
+    margin: 2px 0 4px;
+}
 /* A value the message names: plain muted mono, as in the field (#13 build critique) — no chip. */
 .mep-hint code {
     padding: 0;
@@ -1129,7 +1156,8 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     border: none;
 }
 /* High Contrast: the bar changes form as well as colour, as the refused field's frame does. */
-.vscode-high-contrast .mep-hint[data-tone="refusal"] { border-left-width: 4px; border-left-style: double; }
+/* The body's theme class, read from the root: the hint stands beside the body (`.mep-overlay`). */
+:root:has(> body.vscode-high-contrast) .mep-hint[data-tone="refusal"] { border-left-width: 4px; border-left-style: double; }
 /*
  * The source box's buttons (#10): under the box, at its right end, the workbench's button colours; each
  * names its key. A press never blurs the textarea first (blur applies): pointerdown is prevented on them.

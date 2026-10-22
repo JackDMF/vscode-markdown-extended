@@ -58,7 +58,7 @@ import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, la
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
 import { HintTone, RefusalPlace, applyKey, dismissRefusal, showChangeHint, showHint, showRefusal, undoHint, undoKey } from './hint';
-import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
+import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, quotedVerb, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
 import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
@@ -2104,7 +2104,7 @@ class ObjectToolbarView implements PluginView {
                             label: VERB.editSource,
                             title: `Edit ${source} as Markdown (Enter to apply, Esc to cancel).`,
                             slot: 'source',
-                            refusal: source.includes('\n') ? `It holds a line break, which a one-line field can't show — use ${VERB.showInTextEditor}.` : null,
+                            refusal: source.includes('\n') ? `It holds a line break, which a one-line field can't show — use ${quotedVerb(VERB.showInTextEditor)}.` : null,
                             field: { value: source, label: 'Markdown', commit: value => this.commitNoteSource(object, source, value) },
                         },
                     ],
@@ -2789,7 +2789,7 @@ class ObjectToolbarView implements PluginView {
         }
         const tr = inlineSourceTransaction(this.view.state, current.from, current.to, value, current.node.marks, this.host.sourceContext());
         if (tr === null) {
-            this.say(`Not applied: this note can't be saved as typed here. Use ${VERB.showInTextEditor} to change it.`, 'refusal');
+            this.say(`Not applied: this note can't be saved as typed here. Change it with ${quotedVerb(VERB.showInTextEditor)}.`, 'refusal');
             return;
         }
         this.view.dispatch(tr);
