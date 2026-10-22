@@ -93,6 +93,13 @@ export async function clickText(page: puppeteer.Page, needle: string, index = 0)
 }
 
 /**
+ * ProseMirror counts clicks itself (`prosemirror-view`'s `mousedown`): one within
+ * 500 ms and 10 px of the one before is a double click, the next a triple click,
+ * which selects the whole paragraph — whatever `clickCount` the protocol sent.
+ */
+export const PM_MULTI_CLICK_MS = 500;
+
+/**
  * What a control's tooltip says (`tooltip.ts`): its `aria-description`, which
  * the hover shows — the reason after a newline — or `''` where it has none.
  * The one way the suites read a tooltip; no control carries a `title`.
