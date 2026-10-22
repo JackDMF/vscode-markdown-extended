@@ -48,7 +48,7 @@ import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLitera
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
-import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
+import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteLiteralHost, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
 import { VERB, wording } from '../verbs';
 import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_LITERAL_REFUSAL, LANGUAGE_WORD_REFUSAL, isLanguageWord, languageOf, parseOpeningLine, savedFence, savedOpeningLine, withLanguage } from '../fences';
@@ -1150,8 +1150,19 @@ function newPlacement(node: Node): string {
     }
 }
 
-/** Why a quote cannot be given a literal: the plugin gives a `> {…}` line to the block it ends. */
-export const QUOTE_ATTRS_REFUSAL = 'A quote\'s {…} stands on a line under its last paragraph, and this quote ends in another block: markdown-it-attrs would give the literal to that block.';
+/**
+ * Why `quote` cannot be given a literal (#8, critique 13): a `> {…}` line under
+ * it goes to the block it ends in — a list, a table, a code block, a quote —
+ * named here, what happened first, then what to do.
+ */
+export function quoteAttrsRefusal(quote: Node): Said {
+    const host = quoteLiteralHost(quote);
+    if (host === null) {
+        return 'This quote has no text yet, so attributes here would have nothing to style. Write a paragraph in it first.';
+    }
+    const kind = (BLOCK_NAMES[host.type.name] ?? 'block').toLowerCase();
+    return `This quote ends in a ${kind}, so attributes here would style the ${kind}. End the quote with a paragraph to give it attributes.`;
+}
 
 /**
  * Why `node` cannot be given a literal, or `null` — the one rule the menu
@@ -1174,7 +1185,7 @@ export function literalHomeRefusal(node: Node): Said | null {
             // An indented one is fenced as it takes the literal (`blockAttrsTransaction`).
             return null;
         case 'blockquote':
-            return quoteTakesLiteral(node) ? null : QUOTE_ATTRS_REFUSAL;
+            return quoteTakesLiteral(node) ? null : quoteAttrsRefusal(node);
         case 'list_item':
             return itemTakesLiteral(node) ? null : ITEM_ATTRS_REFUSAL;
     }
@@ -1239,14 +1250,52 @@ export const BLOCK_NAMES: Readonly<Record<string, string>> = {
 };
 
 /**
- * Why a container is given no literal here: the preview draws a `{…}` on its
- * `:::` line (`markdownItContainer.ts`), but the container node has no slot for
- * one, so a container written with one stays a source block (`blocks.ts`).
+ * Why a container is given no literal here (#8, critique 11): the preview draws
+ * a `{…}` on its `:::` line or on a line of its own just before the closing
+ * `:::` (`markdownItContainer.ts`, probe c3), but the container node has no
+ * slot for one, so a container written either way stays a source block
+ * (`blocks.ts`). Its classes here are its name and info.
  */
-export const CONTAINER_ATTRS_REFUSAL = `A container's {…} is not edited here: the preview gives a literal on its ::: line to the container, but the editor has no place for it — a container written with one is a source block, edited as Markdown. Its classes here are its name and info (${VERB.editClasses}).`;
+export const CONTAINER_ATTRS_REFUSAL: Said = said`A container's attributes can't be set here. Written in the file (on its ${value(':::')} line or just before the closing ${value(':::')}), they make it open as source. To add classes here, use ${VERB.editClasses}`;
 
-/** Why an admonition is given no literal: the plugin hands it to the title bar. */
-export const ADMONITION_ATTRS_REFUSAL = `An admonition takes no {…}: on its !!! line, {…} styles the title, not the box. Its class is its type — choose it under ${VERB.type}▾ on the admonition's bar.`;
+/**
+ * Why an admonition is given no literal here (#8, critique 10): a `{…}` as the
+ * last line of its body does class the box (probe a4) — on the `!!!` line it
+ * styles only the title — but the admonition node keeps neither, so one
+ * written so opens as source. Its look here is its type.
+ */
+export const ADMONITION_ATTRS_REFUSAL: Said = `An admonition's attributes can't be set here. In the file they go on the last line of its body (the admonition then opens as source). To change its look here, choose a ${VERB.type}▾.`;
+
+/**
+ * What a source block made by an admonition's title literal says (F12, shown
+ * once #5a's source marker carries the reason): `!!! note {.x}` with no title
+ * draws an empty one.
+ */
+export const ADMONITION_TITLE_LITERAL_EMPTY: Said = said`The ${value('{.x}')} on the ${value('!!!')} line styles the title, so with no title it draws an empty one. To style the box, put ${value('{.x}')} on the last line of its body; for a styled title, write one: ${value('!!! note "Title" {.x}')}.`;
+
+/** The same with a title: the literal styles it, not the box. */
+export const ADMONITION_TITLE_LITERAL: Said = said`The ${value('{.x}')} on the ${value('!!!')} line styles the title, not the box. To style the box, put ${value('{.x}')} on the last line of its body.`;
+
+/** What a quote whose paragraph carries its own literal says (F12, critique 12): it stays a source block. */
+export const QUOTE_PARAGRAPH_LITERAL: Said = said`A paragraph inside a quote can't keep its own ${value('{.x}')} here, so the quote shows as source. Change it with ${VERB.showInTextEditor}, or style the whole quote instead with a last line ${value('> {.x}')}.`;
+
+/**
+ * Why a source block the classifier made for an attribute literal is one, in
+ * words (F12): `reason` the classifier's own (`attributes on …`), `src` the
+ * block's text. `null` for any other reason. Pure: whichever of #5a's source
+ * marker and #8 merges second shows it in the bar's title and aria name.
+ */
+export function sourceExplanation(reason: string, src: string): Said | null {
+    if (reason === 'attributes on admonition_title_open') {
+        // The title is the quoted string after the type on the `!!!` line.
+        const opening = src.split(/\r?\n/, 1)[0];
+        return /^\s*(?:!!!|\?\?\?\+?)\s*\S+\s+"[^"]*"/.test(opening) ? ADMONITION_TITLE_LITERAL : ADMONITION_TITLE_LITERAL_EMPTY;
+    }
+    if (reason === 'attributes on paragraph_open' && /^\s*>/.test(src)) {
+        return QUOTE_PARAGRAPH_LITERAL;
+    }
+    return null;
+}
 
 /**
  * Why a code block inside a quote, a list or a container is given no literal:

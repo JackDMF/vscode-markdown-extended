@@ -386,7 +386,7 @@ suite('Editor object toolbar (e2e)', () => {
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png) here.\n');
         assert.deepStrictEqual(await page.$eval('.ProseMirror img', el => ({ width: el.getAttribute('width'), hero: el.classList.contains('hero') })), { width: null, hero: false });
-        assert.strictEqual((await hint()).text, `Attributes removed — ${UNDO}`);
+        assert.strictEqual((await hint()).text, `Image attributes removed — ${UNDO}`, 'the hint names the part (#8)');
     });
 
     test('the caret in code carrying a literal: the bar names it Code, with Attributes… and Remove attributes, keep formatting', async function () {

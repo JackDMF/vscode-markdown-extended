@@ -2906,7 +2906,7 @@ function isEmptyParagraph(node: Node): boolean {
  * empty paragraph — an empty one writes a bare `>` line, which reads back as
  * nothing, so the literal is written before it — or `null` when there is none.
  */
-function quoteLiteralHost(quote: Node): Node | null {
+export function quoteLiteralHost(quote: Node): Node | null {
     for (let i = quote.childCount - 1; i >= 0; i--) {
         if (!isEmptyParagraph(quote.child(i))) {
             return quote.child(i);

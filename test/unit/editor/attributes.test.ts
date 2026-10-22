@@ -11,7 +11,7 @@ import { plugins } from '../../../src/plugin/plugins';
 import { withoutId } from '../../../src/editor/attrs';
 import { editorSchema } from '../../../src/editor/schema';
 import {
-    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, NESTED_CODE_ATTRS_REFUSAL, NESTED_LIST_ATTRS_REFUSAL, LITERAL_READ_WITH_BLOCK_REFUSAL, NO_ATTRS_REFUSAL, QUOTE_ATTRS_REFUSAL, attributesTargetAt, attributesTargetOf,
+    ADMONITION_ATTRS_REFUSAL, AttributesTarget, CONTAINER_ATTRS_REFUSAL, NESTED_CODE_ATTRS_REFUSAL, NESTED_LIST_ATTRS_REFUSAL, LITERAL_READ_WITH_BLOCK_REFUSAL, NO_ATTRS_REFUSAL, quoteAttrsRefusal, attributesTargetAt, attributesTargetOf,
     commitAttributes, containerNameOf, literalOf, literalRefusal, spanLockReason,
 } from '../../../src/editor/webview/objects';
 import { FieldStep, refusedStep } from '../../../src/editor/webview/inlineField';
@@ -156,8 +156,14 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
         assert.strictEqual(text(set(caretAt(again, 'next'), '{}')), '> A quoted line,\n> and the next.\n');
     });
 
-    test('a quote ending in a list is refused: the plugin would give the literal to the list', () => {
-        assert.strictEqual(refusalAt(caretAt(stateOf('> Text.\n>\n> - item\n'), 'Text')), QUOTE_ATTRS_REFUSAL);
+    test('a quote ending in a list, a code block or a quote is refused, naming it: the plugin would give the literal to that block', () => {
+        const ends = (source: string) => refusalAt(caretAt(stateOf(source), 'Text'));
+        const said = (kind: string) => `This quote ends in a ${kind}, so attributes here would style the ${kind}. End the quote with a paragraph to give it attributes.`;
+        assert.strictEqual(ends('> Text.\n>\n> - item\n'), said('list'));
+        assert.strictEqual(ends('> Text.\n>\n> ```\n> x\n> ```\n'), said('code block'));
+        assert.strictEqual(ends('> Text.\n>\n> > inner\n'), said('quote'));
+        const quote = stateOf('> Text.\n>\n> - item\n').doc.firstChild as Node;
+        assert.strictEqual(saidText(quoteAttrsRefusal(quote)), said('list'), 'one function for the bars, the menu and the commit');
     });
 
     test('a table: its own line under a blank line after it', () => {
@@ -221,9 +227,9 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
 
     test('a container and an admonition are refused, and so is a paragraph inside one', () => {
         const container = stateOf('::: warning\nInside.\n:::\n');
-        assert.strictEqual(refusalAt(caretAt(container, 'Inside')), CONTAINER_ATTRS_REFUSAL);
+        assert.strictEqual(refusalAt(caretAt(container, 'Inside')), saidText(CONTAINER_ATTRS_REFUSAL));
         const admonition = stateOf('!!! note "Title"\n    Body text.\n');
-        assert.strictEqual(refusalAt(caretAt(admonition, 'Body')), ADMONITION_ATTRS_REFUSAL);
+        assert.strictEqual(refusalAt(caretAt(admonition, 'Body')), saidText(ADMONITION_ATTRS_REFUSAL));
     });
 
     test('a source block, the front matter and a rule selected: refused, refused, the rule', () => {

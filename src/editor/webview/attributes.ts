@@ -29,17 +29,21 @@
  *
  * | Block | Why |
  * | --- | --- |
- * | Container | the preview draws a literal on the `:::` line, but the container node has no slot for it: one written so is a source block |
- * | Admonition | the plugin gives a literal on the `!!!` line to the title bar, not the box |
+ * | Container | the preview draws a literal on the `:::` line or on a line of its own before the closing `:::`, but the container node has no slot for it: one written either way is a source block |
+ * | Admonition | a literal on the `!!!` line styles the title; the box's (a last line of its body) opens as source |
  * | Quote ending in a list, code or a quote | a `> {…}` line under it goes to that block, not the quote |
  * | List item not starting with a paragraph that ends in text | there is no line end to put it at |
+ * | List inside a quote, an admonition or a container | only a top-level list's literal is written; a nested one's is source |
  * | Requirement heading | its anchor is Req Explorer's |
  * | Source block, front matter, injected content | not rich text, or not in the file |
  * | A literal the plugin would not read back whole | `literalRefusal`: not `{…}`, `{.}`, two lines, a `{` in a rule's value |
  *
- * The caret in a nested block acts on the list item or the top-level block
- * around it (`attributesTargetAt`): only a top-level block's literal is written
- * (`fidelity.ts`), and a list item's at any depth.
+ * A heading inside a quote, an admonition or a container takes one where it
+ * stands, at the end of its line (`> ## Title {.x}`): the save writes a
+ * heading's literal at any depth. Otherwise the caret in a nested block acts
+ * on the list item or the top-level block around it (`attributesTargetAt`):
+ * only a top-level block's literal is written (`fidelity.ts`), and a list
+ * item's at any depth.
  */
 import { EditorView } from 'prosemirror-view';
 import { showChangeHint, undoHint } from './hint';
@@ -108,8 +112,14 @@ export function attributesField(
 
 /** What the caret hint says once a literal is set or removed: the change is on the page, the way back is named. */
 export const ATTRIBUTES_SET_HINT = 'Attributes set';
-/** As the bars' Remove attributes words it (`verbs.ts`): one hint, whichever route removed them. */
-export const ATTRIBUTES_REMOVED_HINT = wording({ verb: 'Remove', noun: 'attributes' }).done;
+/**
+ * What the caret hint says once the literal of the element called `name` is
+ * removed (#8): the part named, as the bars' Remove words it (`verbs.ts`) —
+ * "List item attributes removed" — whichever route removed them.
+ */
+export function attributesRemovedHint(name: string): string {
+    return wording({ verb: 'Remove', noun: `${name} attributes` }).done;
+}
 
 /**
  * The attributes field for `target` (`attributesField`), named by its block.
@@ -140,7 +150,7 @@ export function attributesStep(view: EditorView, target: AttributesTarget): Fiel
         const before = view.state;
         view.dispatch(made.tr);
         if (view.state !== before) {
-            showChangeHint(view, undoHint(made.fenced ? FENCED_DONE : made.removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
+            showChangeHint(view, undoHint(made.fenced ? FENCED_DONE : made.removed ? attributesRemovedHint(target.name) : ATTRIBUTES_SET_HINT));
         }
     }, { unchanged: () => view.focus() });
 }
@@ -180,7 +190,7 @@ export function holderAttributesStep(view: EditorView, at: InlineHolderAt): Fiel
         const before = view.state;
         view.dispatch(tr);
         if (view.state !== before) {
-            showChangeHint(view, undoHint(removed ? ATTRIBUTES_REMOVED_HINT : ATTRIBUTES_SET_HINT));
+            showChangeHint(view, undoHint(removed ? attributesRemovedHint(holderNames(at).label) : ATTRIBUTES_SET_HINT));
         }
     }, { unchanged: () => view.focus() });
 }

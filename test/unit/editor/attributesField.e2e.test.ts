@@ -3,7 +3,7 @@ import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { ATTRIBUTES_REMOVED_HINT } from '../../../src/editor/webview/attributes';
+import { attributesRemovedHint } from '../../../src/editor/webview/attributes';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { closeEditorPage, delay, describedTip, hoverTip, EditMessage, EditorPage, editCommand, EXTENSION_ID, MOD, openEditorPage, pointAt, settle, shot, UNDO } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
@@ -378,7 +378,7 @@ suite('Attributes field (e2e)', () => {
         await page.keyboard.press('Enter');
         await settle();
         assert.ok(!(await lastEdit())?.text.includes('{.warning'), (await lastEdit())?.text);
-        assert.strictEqual(await page.$eval('.mep-hint', el => el.textContent), `${ATTRIBUTES_REMOVED_HINT} — ${UNDO}`);
+        assert.strictEqual(await page.$eval('.mep-hint', el => el.textContent), `${attributesRemovedHint('Quote')} — ${UNDO}`);
         await page.keyboard.down(MOD);
         await page.keyboard.press('z');
         await page.keyboard.up(MOD);
@@ -474,7 +474,8 @@ suite('Attributes field (e2e)', () => {
         await openMenu('block-type');
         const entry = await page.$eval(BLOCK_TYPE_ENTRY, el => ({
             label: el.querySelector('.mep-entry-label')?.textContent ?? el.textContent,
-            last: el.nextElementSibling === null,
+            // The last drawn: the outer block's entry (#8) after it is not drawn at a paragraph.
+            last: el.nextElementSibling === null || (el.nextElementSibling as HTMLElement).hidden,
             divider: el.previousElementSibling?.getAttribute('role') === 'separator' || (el.previousElementSibling?.className ?? '').includes('separator'),
             syntax: el.querySelector('.mep-entry-syntax')?.textContent,
             role: el.getAttribute('role'),
@@ -572,7 +573,9 @@ suite('Attributes field (e2e)', () => {
         const face = await page.$eval('.mep-toolbar .mep-menu-face[data-menu="block-type"]', el => el.getAttribute('aria-disabled'));
         assert.strictEqual(face, 'false', 'the face opens: one of its entries applies');
         await openMenu('block-type');
-        const entries = await page.$$eval('.mep-menu[data-menu="block-type"] .mep-menu-item', els => els.map(el => ({ id: (el as HTMLElement).dataset.action ?? '', disabled: el.getAttribute('aria-disabled'), reason: el.getAttribute('aria-description') ?? '' })));
+        // A table has no outer block: the second attributes entry (#8) is not drawn.
+        const entries = await page.$$eval('.mep-menu[data-menu="block-type"] .mep-menu-item:not([hidden])', els => els.map(el => ({ id: (el as HTMLElement).dataset.action ?? '', disabled: el.getAttribute('aria-disabled'), reason: el.getAttribute('aria-description') ?? '' })));
+        assert.ok(!entries.some(e => e.id === 'block-type-outer-attributes'), 'no outer entry at a table');
         const types = entries.filter(e => e.id !== 'block-type-attributes');
         assert.ok(types.length > 5 && types.every(e => e.disabled === 'true' && e.reason !== ''), `every type drawn disabled, saying why: ${JSON.stringify(types)}`);
         const attrs = entries.find(e => e.id === 'block-type-attributes');
