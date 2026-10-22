@@ -396,9 +396,9 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
-    test('l4 a button\'s lock: at 900 and 860 "Outside the text" beside the tools; at 800, 640 and 520 the refused tools give way into the disabled "…" and it stands in the row; the whole reason its hover', async function () {
+    test('l4 a button\'s lock: at 900 and 860 "Outside the text" beside the tools; at 800 and 640 the refused tools give way into the disabled "…" and it stands in the row; the whole reason its hover', async function () {
         this.timeout(120000);
-        for (const width of [900, 860, 800, 640, 520]) {
+        for (const width of [900, 860, 800, 640]) {
             await resize(width);
             await showDocument();
             await clickText(page, 'Plain', 2);
@@ -422,28 +422,19 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         }
     });
 
-    test('l7 a button\'s lock still shows "Outside the text" down to the last width it fits (Segoe UI about 380, the system font on macOS wider); below it, and at 340, no note — the tools only dim, the row describes itself with the whole reason', async function () {
+    test('l7 a button\'s lock shows "Outside the text" down to 600 px; below (599, 520, 340) no note — the tools stay, only dim, the row describes itself with the whole reason (#10 build critique, the 2026-10-20 thresholds)', async function () {
         this.timeout(120000);
-        const buttonLock = async (width: number) => {
+        for (const [width, where] of [[600, 'short'], [599, 'hidden'], [520, 'hidden'], [340, 'hidden']] as const) {
             await resize(width);
             await showDocument();
             await clickText(page, 'Plain', 2);
+            const idle = (await rowState()).moved;
             await openYaml();
             await page.keyboard.press('Escape');
             await delay(150);
-        };
-        // Where even the short form stops fitting is the font's: found, and the row checked to have had no room to spare there.
-        const last = await narrowestWidth(340, 520, async width => {
-            await buttonLock(width);
-            const shown = await page.$eval(`${ROW} .mep-row-lock`, el => !(el as HTMLElement).hidden && el.getClientRects().length > 0);
-            await page.keyboard.press('Escape');
-            return shown;
-        });
-        for (const [width, where] of [[last, 'short'], [last - 1, 'hidden'], [340, 'hidden']] as const) {
-            await buttonLock(width);
             await assertReasonShown(page, `${width}, a button`, LOCK_BUTTON, where);
-            if (where === 'short') {
-                assert.ok((await noteRoom(page) as number) < 1.5, `${width}: the note went at the last width it fit (${await noteRoom(page)} px to spare)`);
+            if (where === 'hidden') {
+                assert.deepStrictEqual((await rowState()).moved, idle, `${width}: no tool gave way for a note`);
             }
             await shot(`lock-button-${width}-light.png`);
             await page.keyboard.press('Escape');

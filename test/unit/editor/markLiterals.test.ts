@@ -356,7 +356,7 @@ suite('Editor inline literals: inline code, an image, superscript, subscript and
         assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){alt=b} b.\n')), 'A ![a](s.png) b.\n', 'the preview takes the alt from the text');
         assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){title=t} b.\n')), 'A ![a](s.png "t") b.\n');
         // F8: the key, what it is, and the verb that changes it — the image bar's own label, or Show in text editor for a title.
-        const what: Record<string, string> = { src: 'the image\'s path — Edit image…', alt: 'the image\'s alt text — Edit image…', title: 'the image\'s title — Show in text editor' };
+        const what: Record<string, string> = { src: 'the image\'s path — "Edit image…"', alt: 'the image\'s alt text — "Edit image…"', title: 'the image\'s title — "Show in text editor"' };
         for (const literal of ['{src=x.png}', '{alt=x}', '{title=x}', '{.c title=x}']) {
             const key = /\{\.?c? ?(\w+)=/.exec(literal)?.[1] as string;
             const said = literalRefusal(literal, 'image');
