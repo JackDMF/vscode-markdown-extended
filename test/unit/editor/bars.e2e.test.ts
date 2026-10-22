@@ -47,10 +47,10 @@ interface Row {
     /** Where `Alt+Enter` puts the focus: a verb's id, or the bar itself. */
     focus: string | 'bar';
     /**
-     * At 520 px: the verbs drawn in their short form, and with what text; whether the title is cut even so,
-     * or hidden (cut below the stub, the verbs needing its room); whether the bar stands past the text column.
+     * At 520 px: the verbs drawn in their short form, and with what text. Whether the title is cut even so, or
+     * hidden, and whether the bar stands past the text column, the test measures (`checkRow`): they move with the font.
      */
-    narrow?: { short: [id: string, text: string][]; titleCut?: boolean; titleHidden?: boolean; pastColumn?: boolean };
+    narrow?: { short: [id: string, text: string][] };
 }
 
 /**
@@ -172,6 +172,20 @@ suite('Editor object bars (e2e)', () => {
             verbsWhole: buttons.every(b => b.scrollWidth <= b.clientWidth),
             width: Math.round(bar.getBoundingClientRect().width),
             mount: Math.round(mount.width),
+            // Measured, so it holds for the platform's font: what the bar would need with the title it now holds shown whole
+            // (a copy without the room's cap, its title unhidden), the room it may take, and the title's share of that room.
+            ...(() => {
+                const copy = bar.cloneNode(true) as HTMLElement;
+                const copyLabel = copy.querySelector(':scope > .mep-object-label') as HTMLElement;
+                copyLabel.hidden = false;
+                Object.assign(copy.style, { maxWidth: 'none', left: '0px', visibility: 'hidden' });
+                (bar.parentElement as HTMLElement).append(copy);
+                const need = copy.getBoundingClientRect().width;
+                const title = copyLabel.getBoundingClientRect().width;
+                copy.remove();
+                const room = document.documentElement.clientWidth - 16 - mount.left;
+                return { need: Math.round(need), room: Math.round(room), titleRoom: Math.round(room - (need - title)) };
+            })(),
         };
     });
 
@@ -224,8 +238,8 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['open-link', 'Open', false, false], ['edit-link', 'Edit link…', false, false], ['link-attributes', 'Attributes…', false, false],
                 ['inline-attributes', 'Attributes of Bold…', false, false], ['remove-link', 'Remove link, keep text', false, true]],
             focus: 'edit-link',
-            // At the harness's 520 px the column is 416 px and the verbs alone are wider: the bar stands past it.
-            narrow: { short: [['edit-link', 'Edit…'], ['remove-link', 'Remove, keep text']], pastColumn: true },
+            // At the harness's 520 px the column is 416 px and the verbs alone are wider: the bar stands past it (measured in `checkRow`).
+            narrow: { short: [['edit-link', 'Edit…'], ['remove-link', 'Remove, keep text']] },
         },
         {
             n: 3, slug: 'image', source: 'A picture: ![Setup](img/setup.png) here.\n', marker: 'picture',
@@ -318,7 +332,7 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['edit-classes', 'Edit classes…', false, false], ['block-attributes', 'Attributes…', true, false], ['remove-container', 'Remove container, keep content', false, true]],
             focus: 'edit-classes',
             // The title does not name the classes: Edit classes… keeps its noun; Remove drops it.
-            narrow: { short: [['remove-container', 'Remove, keep content']], pastColumn: true },
+            narrow: { short: [['remove-container', 'Remove, keep content']] },
         },
         {
             n: 15, slug: 'admonition', source: '!!! warning "Check the inputs"\n    Body text here.\n', marker: 'Body',
@@ -326,7 +340,7 @@ suite('Editor object bars (e2e)', () => {
             label: 'Warning admonition',
             verbs: [['edit-title', 'Edit title…', false, false], ['change-type', 'Type', false, false], ['block-attributes', 'Attributes…', true, false], ['remove-admonition', 'Remove admonition, keep content', false, true]],
             focus: 'edit-title',
-            // The title's short form, "Warning", before it truncates (wave 2 #2): it fits the column now.
+            // The title's short form, "Warning", before it truncates (wave 2 #2): with Segoe UI it fits the column now.
             narrow: { short: [['remove-admonition', 'Remove, keep content']] },
         },
         {
@@ -336,7 +350,7 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['row', 'Row', false, false], ['column', 'Column', false, false], ['align', 'Align', false, false], ['block-attributes', 'Attributes…', false, true],
                 ['edit-source', 'Edit source', false, false], ['delete-table', 'Delete table', false, true]],
             focus: 'row',
-            narrow: { short: [['delete-table', 'Delete']], pastColumn: true },
+            narrow: { short: [['delete-table', 'Delete']] },
         },
         {
             n: 18, slug: 'source-block', source: 'Before.\n\n| a | b |\n| = | = |\n| 1 | 2 |\n\nAfter.\n', marker: 'Before',
@@ -345,8 +359,8 @@ suite('Editor object bars (e2e)', () => {
             label: 'Source · multimd table',
             verbs: [['show-in-text-editor', 'Show in text editor', false, false], ['edit-source', 'Edit source', false, false], ['code-action:fix', 'Fix all', false, true], ['delete-block', 'Delete block', false, true]],
             focus: 'edit-source',
-            // Delete drops its noun, and the title is still cut: verbs never are.
-            narrow: { short: [['delete-block', 'Delete']], pastColumn: true },
+            // Delete drops its noun, and (Segoe UI) the title is still cut: verbs never are.
+            narrow: { short: [['delete-block', 'Delete']] },
         },
         {
             n: 19, slug: 'snippet', marker: 'Snippet body', includes: true,
@@ -376,7 +390,7 @@ suite('Editor object bars (e2e)', () => {
             verbs: [['open-snippet', 'Open snippet', false, false], ['show-in-text-editor', 'Show in text editor', false, false], ['change-snippet', 'Change snippet…', false, false], ['delete-directive', 'Delete directive', false, true]],
             // Change snippet… asks the host for a choice: nothing opens in place, so the bar takes the focus.
             focus: 'bar',
-            narrow: { short: [['open-snippet', 'Open'], ['change-snippet', 'Change…']], titleCut: true, pastColumn: true },
+            narrow: { short: [['open-snippet', 'Open'], ['change-snippet', 'Change…']] },
         },
         {
             n: 20, slug: 'requirement-heading', marker: 'Intro',
@@ -404,8 +418,8 @@ suite('Editor object bars (e2e)', () => {
             label: 'Requirement FRS-RXE-040',
             verbs: [['lens:a.0', 'Show trace', false, false], ['lens:a.1', 'Open in matrix', false, false], ['lens:a.2', 'Add test', false, false], ['lens-overflow', 'Actions', false, false]],
             focus: 'bar',
-            // At the title's 11px (#11) it fits whole at 520 px; the bar still stands past the column.
-            narrow: { short: [], pastColumn: true },
+            // At the title's 11px (#11) it fits whole at 520 px with Segoe UI; the bar still stands past the column.
+            narrow: { short: [] },
         },
         {
             n: 21, slug: 'block-attrs', source: 'A paragraph with attributes.\n{.lead}\n\nAfter.\n', marker: 'paragraph',
@@ -423,7 +437,7 @@ suite('Editor object bars (e2e)', () => {
                 ['delete-code-block', 'Delete code block', false, true]],
             focus: 'language',
             // #2's rule: the noun drops first, then the title cuts; at 520 that is enough — no verb moves into "…".
-            narrow: { short: [['delete-code-block', 'Delete']], titleCut: true, pastColumn: true },
+            narrow: { short: [['delete-code-block', 'Delete']] },
         },
         {
             n: 23, slug: 'code-block-indented', source: 'Text.\n\n    indented code\n\nAfter.\n', marker: 'indented',
@@ -506,11 +520,19 @@ suite('Editor object bars (e2e)', () => {
         assert.ok(narrow.inside, `${row.slug}: inside the editor at ${NARROW} px, nothing past the bar's edge: ${JSON.stringify(narrow)}`);
         assert.ok(narrow.verbsWhole, `${row.slug}: no verb truncated: ${JSON.stringify(narrow)}`);
         assert.deepStrictEqual(narrow.short, row.narrow?.short ?? [], `${row.slug}: the short forms at ${NARROW} px (${JSON.stringify(narrow)})`);
+        // Where the title cuts and whether the bar stands past the column depend on the platform's font (Segoe UI
+        // on Windows, the system font on macOS): measured, not set per row. The bar takes what it needs, up to
+        // its room; past the column only where the column is too narrow for that; the title cut only where
+        // even the room is, hidden only where what is left of it is under the stub (`TITLE_STUB`, 42 px).
+        const cut = narrow.need > narrow.room + 1;
         assert.deepStrictEqual(
-            { titleCut: narrow.titleCut, titleHidden: narrow.titleHidden, pastColumn: narrow.pastColumn },
-            { titleCut: row.narrow?.titleCut ?? false, titleHidden: row.narrow?.titleHidden ?? false, pastColumn: row.narrow?.pastColumn ?? false },
+            { titleGives: narrow.titleCut || narrow.titleHidden, pastColumn: narrow.pastColumn },
+            { titleGives: cut, pastColumn: Math.min(narrow.need, narrow.room) > narrow.mount + 1 },
             `${row.slug}: the title and the column at ${NARROW} px (${JSON.stringify(narrow)})`,
         );
+        if (cut) {
+            assert.strictEqual(narrow.titleHidden, narrow.titleRoom < 42, `${row.slug}: hidden only below the stub (${JSON.stringify(narrow)})`);
+        }
         await shot(page, name(row, NARROW, 'light'));
         await applyTheme(page, DARK_MODERN);
         await shot(page, name(row, NARROW, 'dark'));
