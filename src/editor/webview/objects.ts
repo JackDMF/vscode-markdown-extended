@@ -41,6 +41,7 @@ import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
+import { isRemoval } from '../attributeLiteral';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
@@ -800,8 +801,7 @@ export function inlineLiteralPlace(object: LiteralObject): LiteralPlace {
  * the literal trimmed otherwise.
  */
 function typedMarkLiteral(literal: string): string | null {
-    const value = literal.trim();
-    return value === '' || value === '{}' ? null : value;
+    return isRemoval(literal) ? null : literal.trim();
 }
 
 /**
@@ -1254,7 +1254,7 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
         return null;
     }
     const value = literal.trim();
-    const removed = value === '' || value === '{}';
+    const removed = isRemoval(value);
     const node = current.node;
     const refusal = blockAttrsRefusal(node)
         ?? (removed ? null : literalRefusal(value, literalPlaceOf(node)) ?? literalHomeRefusal(node));

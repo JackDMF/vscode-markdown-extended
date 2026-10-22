@@ -44,6 +44,7 @@ import { showChangeHint, undoHint } from './hint';
 import { wording } from '../verbs';
 import { FENCED_DONE } from '../fences';
 import { FieldStep, refusedStep } from './inlineField';
+import { isRemoval } from '../attributeLiteral';
 import {
     AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, literalObjectOf, literalOf,
     literalOfObject,
@@ -143,7 +144,7 @@ export function holderAttributesStep(view: EditorView, at: InlineHolderAt, label
                 const after = now === null ? null : changeInlineLiteralRefusal(view.state, now, value);
                 return after === null ? undefined : refusedStep(step, value, after);
             }
-            const removed = value.trim() === '' || value.trim() === '{}';
+            const removed = isRemoval(value);
             const before = view.state;
             view.dispatch(tr);
             if (view.state !== before) {
