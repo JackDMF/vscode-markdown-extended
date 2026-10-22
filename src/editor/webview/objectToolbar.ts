@@ -585,6 +585,8 @@ class ObjectBar {
     private buttons: { verb: Verb; el: HTMLButtonElement }[] = [];
     /** The breadcrumb's parts (#8), outer then current, as drawn: a part's button, or a title part's span. */
     private parts: { view: CrumbView; el: HTMLElement }[] = [];
+    /** The outer part moved into "…" by `fitCrumbs` (#8, step 3 of the ladder): its entry is first there. */
+    private outerMoved = false;
     /** "…" (`moreControl`), last on the bar: the verbs `fit` moved into it, in the order they left. */
     private more: HTMLButtonElement | null = null;
     private moved: { verb: Verb; el: HTMLButtonElement }[] = [];
@@ -797,9 +799,15 @@ class ObjectBar {
     }
 
     /**
-     * A two-part bar fitted to `room` (#8): its verbs keep their nouns — no
-     * short forms — and where the bar is still past the room they move into
-     * the bar's "…" in `overflowOrder`.
+     * A two-part bar fitted to `room` (#8, section 4.6), one step at a time
+     * while it is past the room: (1) the outer part's literal is cut, (2) then
+     * hidden — a title part takes its short form ("Warning"); (3) the outer
+     * part moves into the bar's "…" as "Attributes of List… {.steps}", the
+     * chevron with it, "…" drawn even where every verb fits (a title part
+     * never moves: it is no control); (4) the current part's literal is cut —
+     * never hidden, and no part's name is ever cut; (5) the verbs move into
+     * "…" in `overflowOrder`. Its verbs keep their nouns throughout: no short
+     * forms on a two-part bar. Measured, from the whole bar each time.
      */
     private fitCrumbs(room: number): void {
         const movedBefore = this.moved.map(b => b.verb.id).join(',');
@@ -807,16 +815,57 @@ class ObjectBar {
             this.showVerb(b);
         }
         this.moved = [];
+        this.outerMoved = false;
         const keepMore = holdFocus([...this.parts.map(p => p.el), ...this.buttons.map(b => b.el)], this.more, this.el);
         this.more?.remove();
+        const [outer, current] = this.parts;
+        const sep = this.el.querySelector<HTMLElement>(':scope > .mep-crumbs > .mep-crumb-sep');
+        for (const p of this.parts) {
+            p.el.hidden = false;
+            p.el.classList.remove('mep-crumb-cut');
+            p.el.classList.toggle('mep-crumb-bare', p.view.literal === null);
+            const name = p.el.querySelector('.mep-crumb-name');
+            if (name !== null) {
+                name.textContent = p.view.name;
+            }
+        }
+        if (sep !== null) {
+            sep.hidden = false;
+        }
         this.el.style.maxWidth = `${Math.floor(room)}px`;
         const left = this.el.style.left;
         this.el.style.left = '0px';
         const more = this.more;
-        if (more && overflows(this.el)) {
+        const past = () => overflows(this.el);
+        if (outer !== undefined && current !== undefined && past()) {
+            // (1) The outer literal is cut, (2) then hidden; a title takes its short form.
+            outer.el.classList.add('mep-crumb-cut');
+            if (past()) {
+                outer.el.classList.add('mep-crumb-bare');
+                const name = outer.el.querySelector('.mep-crumb-name');
+                if (outer.view.short !== undefined && name !== null) {
+                    name.textContent = outer.view.short;
+                }
+            }
+            // (3) The outer part, a control, moves into "…" — first there — the chevron with it.
+            if (past() && outer.view.verb !== null && more) {
+                outer.el.hidden = true;
+                if (sep !== null) {
+                    sep.hidden = true;
+                }
+                this.outerMoved = true;
+                this.el.append(more);
+            }
+            // (4) The current literal is cut, never hidden.
+            if (past()) {
+                current.el.classList.add('mep-crumb-cut');
+            }
+        }
+        if (more && past()) {
+            // (5) The verbs, in `overflowOrder`; "…" stays while it holds the outer part.
             const order = overflowOrder(this.buttons.map(b => slotted(b.verb))).map(k => this.buttons[k]);
             this.moved = fitWithMore(order, () => overflows(this.el), b => this.showVerb(b), b => this.hideVerb(b), shown => {
-                if (shown) {
+                if (shown || this.outerMoved) {
                     this.el.append(more);
                 } else {
                     more.remove();
@@ -907,7 +956,17 @@ class ObjectBar {
      * divider; a set-verb's entry opens its own menu under "…" (F4).
      */
     private moreEntries(): MenuEntry[] {
-        return this.buttons.filter(b => this.moved.includes(b)).map(({ verb }) => ({
+        // The breadcrumb's outer part, moved there by the fit (#8): first, named as the menu names it, its literal after it.
+        const outer = this.outerMoved ? this.parts.find(p => p.view.role === 'outer') : undefined;
+        const crumb: MenuEntry[] = outer?.view.verb ? [{
+            id: outer.view.verb.id,
+            label: outer.view.verb.label,
+            code: outer.view.literal ?? undefined,
+            title: outer.view.verb.title,
+            refusal: outer.view.verb.refusal,
+            run: () => this.choose(outer.view.verb as Verb),
+        }] : [];
+        return [...crumb, ...this.buttons.filter(b => this.moved.includes(b)).map(({ verb }): MenuEntry => ({
             id: verb.id,
             label: lensName(verb.label),
             title: verb.title,
@@ -921,7 +980,7 @@ class ObjectBar {
                     this.choose(verb);
                 }
             },
-        }));
+        }))];
     }
 
     /** The open field's row fitted to `room` before the slot places it (`FieldRow.fit`). */
@@ -949,6 +1008,7 @@ class ObjectBar {
         label.textContent = presentation.label;
         this.title = { label: presentation.label, short: presentation.short };
         this.moved = [];
+        this.outerMoved = false;
         this.el.dataset.name = presentation.label;
         if (presentation.code !== undefined) {
             const code = document.createElement('span');

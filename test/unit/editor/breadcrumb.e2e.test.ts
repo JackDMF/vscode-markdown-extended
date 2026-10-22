@@ -476,3 +476,131 @@ suite('Editor breadcrumb: Remove and the first focus (e2e)', () => {
         assert.ok(!text.includes('{.other}') && !text.includes('{.steps}') && text.includes('{.lead}'), text);
     });
 });
+
+/** Long literals, as the sketch's narrow frames (#8 narrow-light.png). */
+export const NARROW_DOC = [
+    '- Queue the edit locally {.lead data-step=1}',
+    '- Send the batch',
+    '',
+    '{.steps .numbered data-flow=sync}',
+    '',
+    '> Conflicts are shown to the user.',
+    '> {.warning}',
+    '',
+    '!!! warning',
+    '    ## Sync rules {#sync-rules .anchored}',
+    '',
+    '    Body text.',
+    '',
+    'The last paragraph.',
+    '',
+].join('\n');
+
+/** Where a bar's fit ladder stands (#8 section 4.6), read off its parts and verbs. */
+async function ladder(page: puppeteer.Page) {
+    return page.$eval(BAR, bar => {
+        const outer = bar.querySelector('[data-part="outer"]') as HTMLElement | null;
+        const current = bar.querySelector('[data-part="current"]') as HTMLElement | null;
+        const verbs = Array.from(bar.querySelectorAll(':scope > button[data-verb]')) as HTMLElement[];
+        const more = bar.querySelector(':scope > .mep-object-more') as HTMLElement | null;
+        const names = Array.from(bar.querySelectorAll('.mep-crumb-name')) as HTMLElement[];
+        return {
+            steps: [
+                outer?.classList.contains('mep-crumb-cut') ?? false,
+                outer?.classList.contains('mep-crumb-title') ? outer.querySelector('.mep-crumb-name')?.textContent === 'Warning' : outer?.classList.contains('mep-crumb-bare') ?? false,
+                outer?.hidden ?? false,
+                current?.classList.contains('mep-crumb-cut') ?? false,
+                verbs.some(v => v.hidden),
+            ],
+            more: more !== null,
+            hiddenVerbs: verbs.filter(v => v.hidden).map(v => v.dataset.verb),
+            shownLabels: verbs.filter(v => !v.hidden).map(v => v.textContent),
+            namesCut: names.some(n => n.offsetParent !== null && n.scrollWidth > n.clientWidth + 1),
+            currentName: current?.querySelector('.mep-crumb-name')?.textContent ?? null,
+            right: bar.getBoundingClientRect().right,
+            width: window.innerWidth,
+        };
+    });
+}
+
+/**
+ * The fit at narrow widths (#8 step 8): the outer literal cut, then hidden,
+ * then the outer part into the bar's "…" (first there), then the current
+ * literal cut, then the verbs into "…" — in that order, at any width; the
+ * verbs keep their nouns, no part's name is cut, Alt+Enter's verb never
+ * leaves, the bar never passes the window.
+ */
+suite('Editor breadcrumb: the fit at narrow widths (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    const b = breadcrumbPage(() => editor as EditorPage);
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 520, height: 900, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    teardown(async () => {
+        await page.keyboard.press('Escape');
+        await page.setViewport({ width: 520, height: 900 });
+        await page.mouse.click(510, 890);
+    });
+
+    for (const [what, needle, first] of [['List › List item', 'Queue the edit', 'block-attributes'], ['Admonition › Heading', 'Sync rules', 'block-attributes']] as const) {
+        test(`${what}: each step in order from 900 px down to 340 px`, async function () {
+            this.timeout(30000);
+            await page.setViewport({ width: 900, height: 900 });
+            await b.show(NARROW_DOC);
+            await b.restAt(needle, 2);
+            await page.waitForSelector(CRUMBS, { visible: true, timeout: 2000 });
+            const seen: number[] = [];
+            for (const width of [900, 760, 640, 560, 520, 470, 420, 380, 340]) {
+                await page.setViewport({ width, height: 900 });
+                await delay(250);
+                const state = await ladder(page);
+                // A title part has no step 3: it never moves.
+                const order = what === 'List › List item' ? state.steps : state.steps.filter((_, k) => k !== 2);
+                const reached = order.lastIndexOf(true) + 1;
+                assert.ok(order.slice(0, reached).every(Boolean), `${width}: the steps in order: ${JSON.stringify(state.steps)}`);
+                assert.ok(!state.namesCut, `${width}: no part's name is cut`);
+                assert.ok(!state.hiddenVerbs.includes(first), `${width}: Alt+Enter's verb never leaves`);
+                assert.ok(state.shownLabels.every(l => l !== 'Remove' || what === 'Admonition › Heading') && !state.shownLabels.includes('Edit…'), `${width}: verbs keep their nouns: ${JSON.stringify(state.shownLabels)}`);
+                assert.ok(state.right <= state.width, `${width}: inside the window: ${state.right}`);
+                if (what === 'Admonition › Heading') {
+                    assert.strictEqual(state.steps[2], false, `${width}: a title part never moves`);
+                }
+                seen.push(reached);
+            }
+            assert.ok(seen.every((s, k) => k === 0 || s >= seen[k - 1]), `narrower never undoes a step: ${JSON.stringify(seen)}`);
+            assert.ok(seen[seen.length - 1] >= 2, `at 340 px the ladder is well down: ${JSON.stringify(seen)}`);
+        });
+    }
+
+    test('narrow, the outer part moved into "…" is its first entry: "Attributes of List… {.steps …}", opening the List\'s field', async function () {
+        this.timeout(20000);
+        await page.setViewport({ width: 420, height: 900 });
+        await b.show(NARROW_DOC);
+        await b.restAt('Queue the edit', 2);
+        await page.waitForSelector(CRUMBS, { visible: true, timeout: 2000 });
+        await delay(250);
+        const state = await ladder(page);
+        assert.ok(state.steps[2], `the outer part moved: ${JSON.stringify(state.steps)}`);
+        await page.click(`${BAR} .mep-object-more`);
+        await page.waitForSelector(`${BAR} .mep-object-menu`, { visible: true, timeout: 2000 });
+        const first = await page.$eval(`${BAR} .mep-object-menu .mep-menu-item`, el => [el.querySelector('.mep-entry-label')?.textContent, el.querySelector('.mep-entry-code')?.textContent]);
+        assert.deepStrictEqual(first, ['Attributes of List…', '{.steps .numbered data-flow=sync}']);
+        const name = await page.$eval(`${BAR} .mep-object-more`, el => el.getAttribute('aria-label') ?? '');
+        assert.ok(name.startsWith('More actions: Attributes of List…'), name);
+        await page.click(`${BAR} .mep-object-menu .mep-menu-item`);
+        await page.waitForSelector(`${BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'List · Attributes');
+    });
+});
