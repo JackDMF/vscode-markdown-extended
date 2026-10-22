@@ -87,7 +87,7 @@ import {
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
-import { Said, Tip, plainTip, said, saidText, tipText, value } from '../tips';
+import { Said, Tip, plainTip, said, tipText, value } from '../tips';
 import { Tooltips } from './tooltip';
 import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, caretRect, placeMenu, rangeAnchor } from './placement';
 

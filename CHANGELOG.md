@@ -1,5 +1,17 @@
 # Change Log
 
+## Unreleased
+
+- Refusals share one look — an amber bar, what happened, what to do — at the caret, field or control.
+- A refusal goes at the next caret move, click, focus or mode change, or a reloaded document.
+- The same refusal again restarts its time and is announced again; longer messages stay longer, up to ten seconds.
+- Pressing a locked tool says why under it, e.g. "Formatting is off while editing source — Ctrl+Enter applies".
+- A refused bar verb or menu entry says why where it was pressed, instead of doing nothing.
+- While an export runs, Export says "One export at a time"; pressing a waiting format says when to retry.
+- The source box has Apply and Cancel buttons; Cancel never applies on the way out.
+- Refusal messages reworded in plain language; values you typed appear in code font.
+- Screen readers hear each hint through one status region, once.
+
 ## v4.9.0 — Layers That Keep Their Place
 
 - The floating layers — bars, bubble, fields, menus, cards, hints — follow one rule: below, else above.

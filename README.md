@@ -515,13 +515,19 @@ Formatting menu names (below).
   other bar shows, and the formatting row is off, saying why at its right end — in a
   source box *Editing source · Ctrl+Enter apply · Esc cancel* (`Cmd` on macOS), in a
   property's field *Editing a property · Enter apply · Esc cancel* — and pointing at that
-  when you press one of its buttons. Where it does not fit beside the buttons, it takes
+  when you press one of its buttons, which also says why under the button itself
+  (*Formatting is off while editing source — Ctrl+Enter applies*). Where it does not fit beside the buttons, it takes
   their place in the row while the lock lasts — whole, else shortened with its keys kept
   (*Source · Ctrl+Enter · Esc*) — and the page never moves. A source block's box gives the focus up when it
   closes (`Ctrl+Enter`, `Esc`): click into the text, and the bars are back there. A lens,
   a status badge or a link in a rendered block takes the focus without any of this.
 - The note buttons in the Annotation menu and the bubble still remove a note too: inside
   one they show as active, and choosing one removes it, text kept.
+- **A refusal says why where you are, then what to do.** Something the editor will not do —
+  a `|` typed into code in a table cell, a refused button, bar verb or menu entry, a second
+  export while one runs — is said at the caret, under the pressed control or beside the
+  menu, with an amber bar and the values it names in code font. It goes at your next caret
+  move, click or focus change, else after a few seconds (longer messages stay longer).
 
 | Keys | Does |
 | ---- | ---- |
@@ -860,7 +866,8 @@ place — each for a reason:
   or admonition nested more than one level deep, or closed by its parent's fence rather
   than its own. Hover or
   select one and choose **Edit source** in its bar — or double-click it — to edit its
-  Markdown in place: `Ctrl+Enter` or clicking away applies it, `Esc` cancels; while the box
+  Markdown in place: **Apply** (`Ctrl+Enter`) or clicking away applies it, **Cancel** (`Esc`)
+  drops what you typed — the two buttons under the box at its right end; while the box
   is open, its bar is the only one, and the formatting row waits. Or choose
   **Show in text editor** to jump to it. A source block that you edit back into plain Markdown (the
   inline HTML removed, say) becomes an ordinary paragraph again once applied.
