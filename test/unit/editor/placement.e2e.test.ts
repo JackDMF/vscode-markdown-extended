@@ -5,7 +5,7 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { GAP, INERT_MS, REST_MS } from '../../../src/editor/webview/placement';
 import { LensRow } from '../../../src/editor/protocol';
-import { closeEditorPage, delay, EditorPage, EXTENSION_ID, openEditorPage, pointAt, shot } from './pageHarness';
+import { closeEditorPage, delay, EditorPage, EXTENSION_ID, MOD, openEditorPage, pointAt, shot } from './pageHarness';
 import { DARK_MODERN, LIGHT_MODERN, applyTheme } from './themes';
 
 /** The caret's bar, shown. */
@@ -171,8 +171,12 @@ suite('Editor placement (e2e)', () => {
         await delay(50);
     };
 
-    /** s5: the Formatting menu open, the pointer on Highlight: its preview card. */
-    const s5 = async () => {
+    /**
+     * s5: the Formatting menu open, the pointer on Highlight: its preview card, waited for — it shows a
+     * delay after the pointer enters (`toolbar.ts`), which a loaded machine stretches past any fixed wait.
+     * `card: false` where the window leaves it no room: the delay then passes with none shown.
+     */
+    const s5 = async (card = true) => {
         await showDocument('Alpha beta gamma.\n', 'Alpha');
         await clickBefore('beta', 1);
         // From the keyboard; in a row too narrow for it, Formatting is in "…" (wave 2 · #2) and opens from its entry there.
@@ -188,7 +192,11 @@ suite('Editor placement (e2e)', () => {
         }
         await page.waitForSelector('.mep-menu[data-menu="formatting"]:not([hidden])', { timeout: 3000 });
         await page.hover('.mep-menu[data-menu="formatting"] [data-action="mark"]');
-        await delay(600);
+        if (card) {
+            await page.waitForSelector(`${CARD}[data-action="mark"]`, { timeout: 3000 });
+        } else {
+            await delay(600);
+        }
     };
 
     /** s6: a heading with attributes, scrolled to just under the row, the caret in it. */
@@ -401,14 +409,20 @@ suite('Editor placement (e2e)', () => {
         const paragraphs = Array.from({ length: 60 }, (_, i) => `Line ${i + 1} of a long selection.`).join('\n\n');
         await showDocument(`${paragraphs}\n`, 'Line 60');
         await clickBefore('Line 1 of', 0);
+        // To the document's end: Shift+Ctrl+End, on macOS Shift+Cmd+Down — whose command the protocol does not run there unless named (`editCommand`).
+        const mac = process.platform === 'darwin';
         await page.keyboard.down('Shift');
-        await page.keyboard.down('Control');
-        await page.keyboard.press('End');
-        await page.keyboard.up('Control');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press(mac ? 'ArrowDown' : 'End', mac ? { commands: ['MoveToEndOfDocumentAndModifySelection'] } : undefined);
+        await page.keyboard.up(MOD);
         await page.keyboard.up('Shift');
-        await delay(REST_MS + 200);
+        await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 }).catch(() => undefined);
         await page.evaluate(() => window.scrollTo(0, (document.scrollingElement as Element).scrollHeight / 3));
-        await delay(200);
+        // Placed again in the frame after the scroll (`placement.ts`): waited for, not given a fixed time.
+        await page.waitForFunction((sel, gap) => {
+            const el = document.querySelector(sel);
+            return el !== null && Math.abs(el.getBoundingClientRect().bottom - (window.innerHeight - gap)) <= 1;
+        }, { timeout: 2000, polling: 20 }, BUBBLE, GAP).catch(() => undefined);
         const bubble = await box(BUBBLE);
         const height = await page.evaluate(() => window.innerHeight);
         assert.ok(bubble, 'the bubble shows');
@@ -481,7 +495,7 @@ suite('Editor placement (e2e)', () => {
 
         // A window so low the menu takes it all: no room below the menu either.
         await page.setViewport({ width: 420, height: 240 });
-        await s5();
+        await s5(false);
         const low = { card: await box(CARD), menu: await box('.mep-menu[data-menu="formatting"]'), more: await box('.mep-menu[data-menu="more"]') };
         assert.strictEqual(low.card, null, `no room beside, below or above: no card ${JSON.stringify(low)}`);
         await page.keyboard.press('Escape');
@@ -830,7 +844,7 @@ suite('Editor placement (e2e)', () => {
         await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])', { timeout: 3000 });
         const opener = await box('.mep-menu[data-menu="insert"] [data-submenu="admonition"]');
         assert.ok(opener);
-        const x = (opener.left + opener.right) / 2;
+        const x =(opener.left + opener.right) / 2;
         await page.mouse.move(x, (opener.top + opener.bottom) / 2);
         await page.waitForSelector('.mep-menu[data-menu="admonition"]:not([hidden])', { timeout: 3000 });
         await delay(300);
