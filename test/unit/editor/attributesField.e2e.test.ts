@@ -5,7 +5,7 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { ATTRIBUTES_REMOVED_HINT } from '../../../src/editor/webview/attributes';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
-import { closeEditorPage, delay, describedTip, hoverTip, EditMessage, EditorPage, EXTENSION_ID, MOD, openEditorPage, pointAt, settle, shot, UNDO } from './pageHarness';
+import { closeEditorPage, delay, describedTip, hoverTip, EditMessage, EditorPage, editCommand, EXTENSION_ID, MOD, openEditorPage, pointAt, settle, shot, UNDO } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 /** The caret's bar, shown. */
@@ -266,7 +266,7 @@ suite('Attributes field (e2e)', () => {
         assert.deepStrictEqual([s.value, s.selected], ['.x #y', [5, 5]]);
         await shots('field-pasted-1280', [['light', LIGHT_MODERN]]);
         await page.keyboard.down(MOD);
-        await page.keyboard.press('a');
+        await page.keyboard.press('a', editCommand('a'));
         await page.keyboard.up(MOD);
         await page.keyboard.type('{.lead');
         assert.strictEqual((await field()).value, '{.lead', 'one brace alone stays while typing');
@@ -766,13 +766,13 @@ suite('Attributes field (e2e)', () => {
         assert.strictEqual((await field()).value, '.a', 'after it');
         // Typed with real keys: the closing brace strips the pair, and Ctrl+Z is the field's own — it undoes the strip, not the page's.
         await page.keyboard.down(MOD);
-        await page.keyboard.press('a');
+        await page.keyboard.press('a', editCommand('a'));
         await page.keyboard.up(MOD);
         await page.keyboard.type('{.lead}');
         assert.strictEqual((await field()).value, '.lead');
         const before = (await (editor as EditorPage).edits()).length;
         await page.keyboard.down(MOD);
-        await page.keyboard.press('z');
+        await page.keyboard.press('z', editCommand('z'));
         await page.keyboard.up(MOD);
         await delay(80);
         const undone = await field();

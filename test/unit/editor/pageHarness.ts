@@ -143,14 +143,15 @@ export const UNDO = process.platform === 'darwin' ? 'Cmd+Z' : 'Ctrl+Z';
 
 /**
  * The options for pressing `key` with `MOD` held where the browser's own editing
- * command should run (select all, copy, cut, paste): on macOS the protocol
- * delivers the keys but not the command they stand for, so it is named.
+ * command should run (select all, copy, cut, paste, a native field's undo): on
+ * macOS the protocol delivers the keys but not the command they stand for, so it
+ * is named.
  */
 export function editCommand(key: string, shift = false): puppeteer.KeyPressOptions | undefined {
     if (process.platform !== 'darwin') {
         return undefined;
     }
-    const command = ({ a: 'SelectAll', c: 'Copy', x: 'Cut', v: shift ? 'PasteAndMatchStyle' : 'Paste' } as Record<string, string>)[key.replace(/^Key/, '').toLowerCase()];
+    const command = ({ a: 'SelectAll', c: 'Copy', x: 'Cut', v: shift ? 'PasteAndMatchStyle' : 'Paste', z: shift ? 'Redo' : 'Undo' } as Record<string, string>)[key.replace(/^Key/, '').toLowerCase()];
     return command ? { commands: [command] } : undefined;
 }
 
