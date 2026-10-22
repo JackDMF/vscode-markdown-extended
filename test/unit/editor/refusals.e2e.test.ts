@@ -541,6 +541,73 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
+    test('D8: the source box\'s Apply and Cancel — Cancel never applies on the way out, Apply is one undo step, the keys still work, the buttons never take the focus', async function () {
+        this.timeout(30000);
+        await fresh();
+        const open = async () => {
+            await delay(500);
+            const raw = await pointAt(page, 'raw block', 1);
+            await page.mouse.click(raw.x, raw.y, { clickCount: 2 });
+            await page.waitForSelector('.mep-raw-editor', { timeout: 2000 });
+            await delay(80);
+        };
+        const centre = (sel: string) => page.$eval(sel, el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+        const edits = async () => (await (editor as EditorPage).edits()).length;
+        const lastText = async () => (await (editor as EditorPage).edits()).pop()?.text ?? '';
+        await open();
+        const buttons = await page.$$eval('.mep-raw-actions > button', els => els.map(b => ({
+            cls: b.className, text: b.textContent, key: b.querySelector('.mep-raw-key')?.textContent, tab: (b as HTMLElement).tabIndex, shortcut: b.getAttribute('aria-keyshortcuts'),
+        })));
+        assert.deepStrictEqual(buttons, [
+            { cls: 'mep-raw-apply', text: `Apply${MOD_NAME}+Enter`, key: `${MOD_NAME}+Enter`, tab: -1, shortcut: process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter' },
+            { cls: 'mep-raw-cancel', text: 'CancelEsc', key: 'Esc', tab: -1, shortcut: 'Escape' },
+        ]);
+        const box = await page.$eval('.mep-raw-editor', el => el.getBoundingClientRect().right);
+        const actions = await page.$eval('.mep-raw-actions', el => el.getBoundingClientRect().right);
+        assert.ok(Math.abs(actions - box) <= 2, `at the box's right end: ${actions} vs ${box}`);
+        await shotAs('s3-source-box');
+        // D8a: Cancel, after typing: nothing posted.
+        const before = await edits();
+        await page.keyboard.type(' X');
+        const cancel = await centre('.mep-raw-cancel');
+        // D8d: a press keeps the focus in the box.
+        await page.mouse.move(cancel.x, cancel.y);
+        await page.mouse.down();
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).className), 'mep-raw-editor', 'the press keeps the focus in the box');
+        await page.mouse.up();
+        await delay(400);
+        assert.strictEqual(await page.$('.mep-raw-editor'), null, 'the box closed');
+        assert.strictEqual(await edits(), before, 'Cancel posts nothing');
+        assert.ok((await page.$eval('.ProseMirror', el => el.textContent ?? '')).includes('raw block'), 'the block as it was');
+        // D8b: Apply, one edit; one undo restores it.
+        await open();
+        await page.keyboard.type(' Y');
+        await page.click('.mep-raw-apply');
+        await delay(400);
+        assert.strictEqual(await page.$('.mep-raw-editor'), null);
+        assert.strictEqual(await edits(), before + 1, 'Apply posts one edit');
+        assert.ok((await lastText()).includes('<div>raw block</div> Y'), await lastText());
+        await clickText(page, 'Last paragraph', 2);
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('z');
+        await page.keyboard.up(MOD);
+        await delay(400);
+        assert.ok(!(await lastText()).includes(' Y'), `one undo step: ${await lastText()}`);
+        // D8c: the keys still apply and cancel.
+        await open();
+        await page.keyboard.type(' Z');
+        await page.keyboard.press('Escape');
+        await delay(400);
+        assert.ok(!(await lastText()).includes(' Z'), 'Esc cancels');
+        await open();
+        await page.keyboard.type(' W');
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('Enter');
+        await page.keyboard.up(MOD);
+        await delay(400);
+        assert.ok((await lastText()).includes(' W'), `${MOD_NAME}+Enter applies`);
+    });
+
     /** Open the bar's `verb` menu and press `entry` with the mouse. */
     async function chooseEntry(verb: string, entry: string): Promise<void> {
         const button = await page.waitForSelector(`${BAR} [data-verb="${verb}"]`, { visible: true, timeout: 2000 });
