@@ -468,7 +468,7 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
                 await page.waitForSelector(`${panel('export')}:not([hidden])`);
                 await page.click(`${panel('export')} [data-export="html"]`);
                 await delay(120);
-                assert.deepStrictEqual(await face(), { label, spins: true, busy: 'true', title: 'Exporting HTML…\nExporting HTML — the other formats wait for it' }, `${width} ${t}`);
+                assert.deepStrictEqual(await face(), { label, spins: true, busy: 'true', title: 'Exporting HTML…\nOne export at a time — HTML is running' }, `${width} ${t}`);
                 assert.deepStrictEqual((await rowState()).moved, idle, `${width} ${t}: the busy label moved no tool`);
                 await shot(`export-busy-${width}-${t}.png`);
                 if (width === 520 && t === 'light') {
@@ -484,7 +484,7 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
                     })));
                     assert.deepStrictEqual(entries.map(e => [e.id, e.disabled, e.spins]), [['html', 'true', true], ['pdf', 'true', false], ['png', 'true', false], ['jpg', 'true', false], ['settings', null, false]]);
                     assert.strictEqual(entries[0].detail, 'exporting…');
-                    assert.deepStrictEqual(entries.slice(1, 4).map(e => e.note), Array(3).fill('Exporting HTML — the other formats wait for it'));
+                    assert.deepStrictEqual(entries.slice(1, 4).map(e => e.note), ['PDF', 'PNG image', 'JPEG image'].map(f => `${f} waits for HTML — choose it again when HTML is done.`));
                     await shot('export-menu-busy-520-light.png');
                     await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
                     await delay(50);
@@ -1006,7 +1006,7 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         await (editor as EditorPage).send({ type: 'exportDone', outcome: 'busy', format: 'pdf' });
         await delay(120);
         assert.strictEqual(await page.$eval(`${EXPORT} .mep-face-label`, el => el.textContent), 'Exporting PDF…', 'busy: the host\'s running format');
-        assert.strictEqual(await page.$eval(`${EXPORT}`, el => el.getAttribute('aria-description')), 'Exporting PDF…\nExporting PDF — the other formats wait for it');
+        assert.strictEqual(await page.$eval(`${EXPORT}`, el => el.getAttribute('aria-description')), 'Exporting PDF…\nOne export at a time — PDF is running');
         await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
         await delay(120);
     });

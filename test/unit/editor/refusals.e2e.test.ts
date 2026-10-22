@@ -508,6 +508,39 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         await delay(300);
     });
 
+    test('D7: while an export runs, Export says "One export at a time" atop its menu; a waiting format pressed says when to retry at it', async function () {
+        this.timeout(20000);
+        await fresh();
+        const FACE = `${ROW} .mep-menu-face[data-menu="export"]`;
+        const PANEL = '.mep-menu[data-menu="export"]';
+        const exports = async () => (await (editor as EditorPage).posted()).filter(m => m.type === 'export');
+        const before = (await exports()).length;
+        await page.click(FACE);
+        await page.click(`${PANEL} [data-export="pdf"]`);
+        await delay(80);
+        await page.click(FACE);
+        await page.waitForSelector(`${PANEL}:not([hidden])`);
+        assert.deepStrictEqual(await page.$eval(`${PANEL} .mep-menu-caption`, el => ({
+            text: el.textContent, hidden: (el as HTMLElement).hidden, first: el === el.parentElement?.firstElementChild, aria: el.getAttribute('aria-hidden'),
+        })), { text: 'One export at a time — PDF is running', hidden: false, first: true, aria: 'true' });
+        const html = `${PANEL} [data-export="html"]`;
+        assert.strictEqual(await page.$eval(html, el => el.getAttribute('aria-description')), 'HTML waits for PDF — choose it again when PDF is done.');
+        await page.click(html);
+        await delay(80);
+        const p = await placed(html, PANEL);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'HTML waits for PDF — choose it again when PDF is done.']);
+        assert.ok(Math.abs(p.hint.right - (p.controls[1].left - 4)) <= 1, `its right edge 4 px left of the menu: ${JSON.stringify(p)}`);
+        assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1, `at the entry's top: ${JSON.stringify(p)}`);
+        assert.strictEqual(await page.$eval(PANEL, el => (el as HTMLElement).hidden), false, 'the menu stays open');
+        assert.strictEqual((await exports()).length - before, 1, 'refused, not queued: no second export asked for');
+        await shotAs('s5-export-busy');
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
+        await delay(80);
+        assert.strictEqual(await shown(), false, 'gone when the export is done');
+        assert.strictEqual(await page.$eval(`${PANEL} .mep-menu-caption`, el => (el as HTMLElement).hidden), true, 'the caption hidden');
+        await page.keyboard.press('Escape');
+    });
+
     /** Open the bar's `verb` menu and press `entry` with the mouse. */
     async function chooseEntry(verb: string, entry: string): Promise<void> {
         const button = await page.waitForSelector(`${BAR} [data-verb="${verb}"]`, { visible: true, timeout: 2000 });
