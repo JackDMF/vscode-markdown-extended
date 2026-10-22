@@ -35,6 +35,7 @@ import { Mapping } from 'prosemirror-transform';
 import { HISTORY_META, PRESERVE_SOURCE_META, asRepair, isRepair, writtenEdit } from '../fidelity';
 import { textblockSource } from '../positions';
 import { NOTE_LABELS as NOTE_NAMES } from '../refusal';
+import type { Said } from '../tips';
 import { NOTE_NODES, NOTE_PART_NODES, editorSchema, noteRef } from '../schema';
 import { RAW_TEXT_MARKS, causeReason, frontMatterTakeover, unplacedEmoji, unwritableEmbed, unwritableEmoji, unwritableInNote } from '../serialize';
 import { emojiAsTextTransaction, emojiTextStillRead } from './emoji';
@@ -348,7 +349,7 @@ function typingAtNoteEdge(state: EditorState): boolean {
  * and the one a verb asks before it is dispatched, so a button is disabled with
  * the filter's own reason.
  */
-export function noteRefusal(tr: Transaction): string | null {
+export function noteRefusal(tr: Transaction): Said | null {
     const range = refusableRange(tr);
     if (range === null) {
         return null;
@@ -364,7 +365,7 @@ export function noteRefusal(tr: Transaction): string | null {
 }
 
 /** `noteRefusal`'s answer for the edit's `range`: the reads that may throw. */
-function filterRefusal(tr: Transaction, range: { from: number; to: number }): string | null {
+function filterRefusal(tr: Transaction, range: { from: number; to: number }): Said | null {
     const before = tr.before;
     const written = writtenEdit(tr);
     // The written document is the edit's with atoms made text (`writtenEdit`): positions are read in it.
@@ -631,7 +632,7 @@ function sharedMarks(state: EditorState, from: number, to: number): readonly Mar
  * `name`, also why that kind of note, made of this selection, could not be
  * written back (`unwritableInNote`: selected inline code holding `|`, say).
  */
-export function wrapNodeLockReason(state: EditorState, name?: NoteNodeName): string | null {
+export function wrapNodeLockReason(state: EditorState, name?: NoteNodeName): Said | null {
     const sel = state.selection;
     if (!(sel instanceof TextSelection)) {
         return NOTE_LOCK;
@@ -731,8 +732,8 @@ export function unwrapNote(name: NoteNodeName): Command {
  * dispatch (`noteRefusal`) — a sidebar's text glued to a letter, a reference's
  * to a sidebar — or that there is no such note at the selection.
  */
-export function unwrapNoteRefusal(state: EditorState, name: NoteNodeName): string | null {
-    let reason: string | null = 'There is no note here.';
+export function unwrapNoteRefusal(state: EditorState, name: NoteNodeName): Said | null {
+    let reason: Said | null = 'There is no note here.';
     unwrapNote(name)(state, tr => {
         reason = noteRefusal(tr);
     });

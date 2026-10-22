@@ -332,7 +332,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         await (editor as EditorPage).send({ type: 'exportDone', outcome: 'refused' });
         await delay(80);
         assert.deepStrictEqual(await page.$eval('.mep-hint', el => ({ text: el.textContent, shown: !(el as HTMLElement).hidden })),
-            { text: 'Not exported: this format is not offered.', shown: true });
+            { text: 'Not exported — this format isn\'t available. Choose one from Export.', shown: true });
         assert.strictEqual(await page.$eval(`${FACE} .mep-face-label`, el => el.textContent), 'Export');
     });
 

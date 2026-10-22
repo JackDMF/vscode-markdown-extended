@@ -387,7 +387,7 @@ function refusalOnce(state: EditorState, key: string, read: () => Said | null): 
  * disabled button instead of making the filter say it after the click — or `null`.
  * No transaction is no atom to act on: `none` says so.
  */
-function filterRefusal(tr: Transaction | null, none: string): string | null {
+function filterRefusal(tr: Transaction | null, none: string): Said | null {
     return tr === null ? none : noteRefusal(tr) ?? tableRefusal(tr);
 }
 
@@ -2025,7 +2025,7 @@ class ObjectToolbarView implements PluginView {
                 label: item.title,
                 title: `${item.tooltip ?? label} (from another extension)`,
                 slot: 'actions',
-                refusal: id === undefined ? 'The extension that shows it gave it no command.' : null,
+                refusal: id === undefined ? 'The extension that shows it gave it no action to run.' : null,
                 run: () => {
                     if (id !== undefined) {
                         run(id);
@@ -2104,7 +2104,7 @@ class ObjectToolbarView implements PluginView {
                             label: VERB.editSource,
                             title: `Edit ${source} as Markdown (Enter to apply, Esc to cancel).`,
                             slot: 'source',
-                            refusal: source.includes('\n') ? 'It holds a line break, which a one-line field cannot show: edit it in the text editor.' : null,
+                            refusal: source.includes('\n') ? `It holds a line break, which a one-line field can't show — use ${VERB.showInTextEditor}.` : null,
                             field: { value: source, label: 'Markdown', commit: value => this.commitNoteSource(object, source, value) },
                         },
                     ],
@@ -2789,7 +2789,7 @@ class ObjectToolbarView implements PluginView {
         }
         const tr = inlineSourceTransaction(this.view.state, current.from, current.to, value, current.node.marks, this.host.sourceContext());
         if (tr === null) {
-            this.say('This note cannot be written as source here.', 'refusal');
+            this.say(`Not applied: this note can't be saved as typed here. Use ${VERB.showInTextEditor} to change it.`, 'refusal');
             return;
         }
         this.view.dispatch(tr);

@@ -14,6 +14,7 @@ import { PRESERVE_SOURCE_META } from '../../fidelity';
 import { SUFFIX_NODES, editorSchema } from '../../schema';
 import { serializeNode } from '../../serialize';
 import { noteRefusal } from '../notes';
+import type { Said } from '../../tips';
 import { ActionApply, BlockTarget, FOOTNOTE_LABEL } from './actions';
 
 const nodes = editorSchema.nodes;
@@ -152,7 +153,7 @@ function addKeepingLiterals(tr: Transaction, from: number, to: number, type: Mar
  * would glue a sidebar to a letter or digit (`a **x**$y$`, `a x$y$` once
  * code is taken off `x`).
  */
-function markRefusalOf(tr: Transaction | null): string | null {
+function markRefusalOf(tr: Transaction | null): Said | null {
     return tr === null ? null : noteRefusal(tr);
 }
 
@@ -168,7 +169,7 @@ function toggleMarkWith(type: MarkType, markup: string | null, removes: (state: 
 }
 
 /** Why a toolbar button's mark cannot be toggled here, for its tooltip; `null` when nothing refuses it. */
-export function markRefusal(state: EditorState, type: MarkType, markup: string | null): string | null {
+export function markRefusal(state: EditorState, type: MarkType, markup: string | null): Said | null {
     return markRefusalOf(markTransaction(state, type, markup, s => markActive(s, type, markup)));
 }
 

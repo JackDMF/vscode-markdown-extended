@@ -323,7 +323,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             for (const mark of [schema.marks.code, schema.marks.sup, schema.marks.sub]) {
                 const tr = state.tr.addMark(at, at + 1, mark.create());
                 // The order the filters run in (`editorPlugins`): the notes' first, then the tables'.
-                assert.match(noteRefusal(tr) ?? tableRefusal(tr) ?? '', /wiki embed/, `${mark.name} in a ${doc.firstChild!.type.name}`);
+                assert.match(saidText(noteRefusal(tr) ?? tableRefusal(tr) ?? ''), /wiki embed/, `${mark.name} in a ${doc.firstChild!.type.name}`);
                 assert.strictEqual(state.apply(tr).doc, state.doc, `${mark.name} in a ${doc.firstChild!.type.name}: the filter refuses it`);
             }
             assert.notStrictEqual(state.apply(state.tr.addMark(at, at + 1, schema.marks.em.create())).doc, state.doc, 'emphasis is let through');
@@ -707,7 +707,7 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
             const [at] = embedPositions(start.doc);
             return start.apply(start.tr.addMark(from(at), from(at) + 1, schema.marks.attr_span.create({ literal })));
         };
-        const marker = 'An attribute span in a note cannot hold {title="p$q"}';
+        const marker = 'Not applied: the attributes {title="p$q"} hold a note marker';
 
         // The span over the atom itself: its text would be unwritable, the atom's removal leaves no span.
         const over = spanned('X $![[x]]$ y.\n', '{title="p$q"}', at => at);

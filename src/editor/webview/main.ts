@@ -30,7 +30,7 @@ import { focusPlace } from './focusPlace';
 import { dismissRefusal, showChangeHint, showHint } from './hint';
 import { hoverDocumentShown, hoverMessage, hoverPlugin } from './hover';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
-import { DROP_LOCK, IMAGE_LOCK, insertFilesTransaction, insertLockReason } from './objects';
+import { DROP_LOCK, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLockReason } from './objects';
 import { pendingRangePlugin } from './pendingRange';
 import { EditorPort, HeadingView, InjectedBlockView, InlineAtomView, RawBlockView, SourceEditor } from './nodeViews';
 import { PropertiesView } from './properties';
@@ -406,7 +406,7 @@ function invalidateActions(refused: string | undefined): void {
     }
     view.dispatch(view.state.tr.setMeta(ACTIONS_ARRIVED_META, true).setMeta('addToHistory', false));
     if (refused !== undefined) {
-        showHint(view, `"${refused}" was not applied: the text changed since it was offered — choose it again`, 'refusal');
+        showHint(view, `Not applied: "${refused}" — the text changed after it was offered. Choose it again.`, 'refusal');
     }
 }
 
@@ -486,7 +486,7 @@ function applyInclude(requestId: number, insert: string | undefined): void {
         });
         const tr = pos < 0 ? null : changeIncludeTransaction(view.state, pos, insert);
         if (tr === null) {
-            showHint(view, 'The snippet was not changed: the block changed while it was being chosen — choose again', 'refusal');
+            showHint(view, 'Snippet not changed — the block changed meanwhile. Choose again.', 'refusal');
             return;
         }
         view.dispatch(tr);
@@ -558,7 +558,7 @@ function insertLinkedFiles(files: readonly LinkedFile[], gesture: FileGesture): 
     }
     const tr = insertFilesTransaction(view.state, files);
     if (tr === null) {
-        showHint(view, insertLockReason(view.state, gesture === 'drop' ? DROP_LOCK : IMAGE_LOCK) ?? 'The file cannot be inserted here.', 'refusal');
+        showHint(view, insertLockReason(view.state, gesture === 'drop' ? DROP_LOCK : IMAGE_LOCK) ?? IMAGE_PLACE_REFUSAL, 'refusal');
         return;
     }
     // A single image is selected by the transaction, for **Insert → Image…**'s alt field; here the caret goes after it.
@@ -580,7 +580,7 @@ function saveBitmap(file: File, gesture: FileGesture): void {
     }, () => {
         pendingFiles.delete(requestId);
         if (view) {
-            showHint(view, 'The image could not be read.', 'refusal');
+            showHint(view, 'Couldn\'t read this image — try the file itself (drag it from the Explorer view).', 'refusal');
         }
     });
 }
@@ -719,7 +719,7 @@ function exportFinished(msg: Extract<HostMessage, { type: 'exportDone' }>): void
     }
     setExporting(null);
     if (msg.outcome === 'refused' && view) {
-        showHint(view, 'Not exported: this format is not offered.', 'refusal');
+        showHint(view, 'Not exported — this format isn\'t available. Choose one from Export.', 'refusal');
     }
 }
 

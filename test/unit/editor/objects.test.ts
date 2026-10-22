@@ -485,7 +485,7 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
         const ts = lang(state, 'ts');
         assert.ok(ts !== null && 'tr' in ts);
         assert.strictEqual(text(state.apply(ts.tr)), '> ```ts\n> inner\n> ```\n');
-        assert.strictEqual(refusalOf(edit(state, '```js {.x}')), NESTED_CODE_ATTRS_REFUSAL);
+        assert.strictEqual(refusalOf(edit(state, '```js {.x}')), saidText(NESTED_CODE_ATTRS_REFUSAL));
     });
 
     test('a nested fence with a literal in its info string: Language… changes the word, emptying names the literal, the line typed back is unchanged', () => {
@@ -504,7 +504,7 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
             assert.deepStrictEqual(lang(state, ''), { refusal: LANGUAGE_LITERAL_REFUSAL }, 'a literal follows, not "other words"');
             assert.strictEqual(lang(state, 'py'), null, 'the same language');
             assert.strictEqual(edit(state, '~~~ py {.x}'), null, 'the line typed back');
-            assert.strictEqual(refusalOf(edit(state, '~~~ py {.y}')), NESTED_CODE_ATTRS_REFUSAL, 'a literal typed now is the nested refusal');
+            assert.strictEqual(refusalOf(edit(state, '~~~ py {.y}')), saidText(NESTED_CODE_ATTRS_REFUSAL), 'a literal typed now is the nested refusal');
         } finally {
             setInlineEngine(DEFAULT_INLINE_ENGINE);
         }

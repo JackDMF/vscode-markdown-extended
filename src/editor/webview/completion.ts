@@ -227,7 +227,7 @@ class CaretCompletion implements PluginView {
         }
         this.awaitingApply = null;
         if (msg.caret === null) {
-            showHint(this.view, 'The completion was not applied: the text changed since it was offered — ask again', 'refusal');
+            showHint(this.view, 'Completion not applied — the text changed meanwhile. Ask again.', 'refusal');
             return;
         }
         const map = this.port.map();

@@ -47,7 +47,7 @@ import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
-    applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, insertFilesTransaction, insertLinkTransaction,
+    applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLinkTransaction,
     insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLockReason,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
@@ -2128,7 +2128,7 @@ class ToolbarView implements PluginView {
                 }
                 const tr = insertLinkTransaction(view.state, text, href);
                 if (tr === null) {
-                    showHint(view, 'The link cannot be made here: the note around it could not be written back with it.', 'refusal');
+                    showHint(view, 'No link made — the note around it wouldn\'t be saved as shown. Link text outside the note.', 'refusal');
                     return;
                 }
                 view.dispatch(tr);
@@ -2153,7 +2153,7 @@ class ToolbarView implements PluginView {
         }
         const tr = insertFilesTransaction(view.state, files);
         if (tr === null) {
-            showHint(view, insertLockReason(view.state, IMAGE_LOCK) ?? 'The image cannot be inserted here.', 'refusal');
+            showHint(view, insertLockReason(view.state, IMAGE_LOCK) ?? IMAGE_PLACE_REFUSAL, 'refusal');
             return;
         }
         view.dispatch(tr);

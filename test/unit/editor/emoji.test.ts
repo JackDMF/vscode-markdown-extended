@@ -6,7 +6,8 @@ import { EDITABLE_TOP_NODES, ParsedDocument, editorSchema, parseDocument, serial
 import { groupSourceBlocks, splitLines } from '../../../src/editor/blocks';
 import { definitionOf } from '../../../src/editor/inlineEngine';
 import { createPositionMap } from '../../../src/editor/positions';
-import { EMOJI_RAW_REFUSAL, onUnreadEmojiSaved, unreadEmoji, unwritableEmoji } from '../../../src/editor/serialize';
+import { emojiRawRefusal, onUnreadEmojiSaved, unreadEmoji, unwritableEmoji } from '../../../src/editor/serialize';
+import { markNoun } from '../../../src/editor/refusal';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { notePasteTransaction, noteRefusal } from '../../../src/editor/webview/notes';
 import { inlineForNote, wikiEmbedPastePlugin } from '../../../src/editor/webview/wikiEmbeds';
@@ -227,7 +228,7 @@ suite('Editor: an emoji atom that an edit makes unreadable becomes text at once'
         const at = atomAt(state);
         for (const mark of [schema.marks.code, schema.marks.sup, schema.marks.sub]) {
             const tr = state.tr.addMark(at, at + 1, mark.create());
-            assert.strictEqual(noteRefusal(tr), EMOJI_RAW_REFUSAL, mark.name);
+            assert.strictEqual(noteRefusal(tr), emojiRawRefusal(markNoun(mark.create())), mark.name);
             assert.strictEqual(state.apply(tr).doc, state.doc, `${mark.name}: refused`);
         }
         assert.strictEqual(unwritableEmoji(state.doc), null);

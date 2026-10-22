@@ -432,7 +432,7 @@ export function convertNoteTransaction(state: EditorState, pos: number): Transac
  * `@y@5` reads as a sidebar, `$y$5` would not), which the notes plugin would
  * refuse anyway.
  */
-export function convertNoteRefusal(state: EditorState, pos: number): string | null {
+export function convertNoteRefusal(state: EditorState, pos: number): Said | null {
     const tr = convertNoteTransaction(state, pos);
     return tr === null ? 'There is no note here.' : noteRefusal(tr);
 }
@@ -471,7 +471,7 @@ export function changeLinkTransaction(state: EditorState, link: Extract<EditorOb
  * (`noteRefusal`): with `](…)` gone its text may touch a sidebar's marker
  * (`[x](u)$y$` would be `x$y$`).
  */
-export function removeLinkRefusal(state: EditorState, link: Extract<EditorObject, { kind: 'link' }>): string | null {
+export function removeLinkRefusal(state: EditorState, link: Extract<EditorObject, { kind: 'link' }>): Said | null {
     return noteRefusal(removeLinkTransaction(state, link));
 }
 
@@ -484,9 +484,11 @@ export function removeLinkTransaction(state: EditorState, link: Extract<EditorOb
 /** Why no link is made here — said to the gesture that asked (the key, the menu entry). */
 export const LINK_LOCK = 'Put the caret in text, or select text within one paragraph, heading or list item (not code), to link it.';
 /** Why no image or file goes in here, after Insert → Image… or a paste. */
-export const IMAGE_LOCK = 'Put the caret in text (not code) to insert an image there.';
+export const IMAGE_LOCK = 'An image goes into text — put the caret in a line of text (not code).';
 /** The same, after a drop: the place is where the file was let go. */
-export const DROP_LOCK = 'Drop onto text (not code) to insert an image there.';
+export const DROP_LOCK = 'An image goes into text — drop it onto a line of text (not code).';
+/** The same where no lock names the place: what a paste, a drop or Insert → Image… says when nothing goes in (C17c). */
+export const IMAGE_PLACE_REFUSAL = 'The image can\'t go here — put the caret in a line of text.';
 
 /**
  * `lock` — the refusal of the gesture asking — when nothing inline can go at
@@ -580,7 +582,7 @@ export function editImageTransaction(state: EditorState, pos: number, alt: strin
  * check (`noteRefusal`): an image gone from between a letter and a sidebar
  * leaves the two touching (`a![i](u.png)$y$` would be `a$y$`).
  */
-export function deleteObjectRefusal(state: EditorState, object: EditorObject): string | null {
+export function deleteObjectRefusal(state: EditorState, object: EditorObject): Said | null {
     return noteRefusal(deleteObjectTransaction(state, object));
 }
 
@@ -966,7 +968,7 @@ export function changeSpanTransaction(state: EditorState, span: Extract<EditorOb
  * check (`noteRefusal`): with `]{…}` gone its text may touch a sidebar's
  * marker (`[x]{.c}$y$` would be `x$y$`).
  */
-export function removeSpanRefusal(state: EditorState, span: Extract<EditorObject, { kind: 'span' }>): string | null {
+export function removeSpanRefusal(state: EditorState, span: Extract<EditorObject, { kind: 'span' }>): Said | null {
     return noteRefusal(removeSpanTransaction(state, span));
 }
 

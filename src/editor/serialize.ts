@@ -13,6 +13,9 @@ import { NOTE_NODES, SOURCE_NODES, TableAlign, editorSchema } from './schema';
 import { parseDocument } from './parse';
 import { NOTE_CLOSE_TOKENS, NOTE_OPEN_TOKENS } from './blocks';
 import { INLINE_LITERAL_HOLDERS, holderOfCarrier, namesOf } from './inlineLiterals';
+import { markNoun, noteNoun, partLabel } from './refusal';
+import { Said, said, value } from './tips';
+import { VERB } from './verbs';
 import { HOLD_CLOSE, HOLD_OPEN, HOLD_RE, characterCount, wrapInline } from './wrap';
 import { MarkdownIt } from '../@types/markdown-it';
 import { CHARACTER_REFERENCE } from '../plugin/markdownItSidenote';
@@ -1310,41 +1313,55 @@ export const RAW_TEXT_MARKS: ReadonlySet<string> = new Set(['code', 'sup', 'sub'
 /** The terminator a reference must not hold under a raw mark (`PART_TERMINATORS`): the plugin finds it in the raw source. */
 const REFERENCE_TERMINATOR = PART_TERMINATORS.ref?.raw ?? '|';
 
+/** The first mark of `marks` whose text is written as it is (`RAW_TEXT_MARKS`): what a refusal names. */
+function rawMarkOf(marks: readonly Mark[]): Mark | undefined {
+    return marks.find(m => RAW_TEXT_MARKS.has(m.type.name));
+}
+
 /** Why `note` cannot be written so that it reads back as itself, or `null`. */
-function noteUnwritable(note: Node): string | null {
-    if (note.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
-        return 'Superscript, subscript and inline code cannot hold a note: their text is written as it is, and the note would not survive a save.';
+function noteUnwritable(note: Node): Said | null {
+    const around = rawMarkOf(note.marks);
+    if (around !== undefined) {
+        // X1
+        const mark = markNoun(around);
+        return `A note can't go inside ${mark} — it would be lost when saved. Put it outside the ${mark}.`;
     }
     const name = note.type.name;
+    const noun = noteNoun(note);
     const marker = name === 'sidenote' ? NOTE_SYNTAX.sidenote.marker : name === 'marginal_note' ? NOTE_SYNTAX.marginalNote.marker : null;
     const parts: Node[] = [];
     note.forEach(child => {
         parts.push(child);
     });
+    // X2: a literal holding a note marker.
+    const literalReason = (lit: string): Said => said`Not applied: the attributes ${value(lit)} hold a note marker, which would end the ${noun} there. Remove it from the attributes.`;
     // A part holds no note or sidebar (`note_inline`), so its text is all there is to check.
     for (const part of marker === null ? [note] : parts) {
         // Only a reference's `|` is found in the raw source. A sidebar's end
         // is found by the inline parser, which skips a code span whole and
         // reads the backslash escape superscript and subscript keep there.
         const terminator = part.type.name === 'note_ref' ? REFERENCE_TERMINATOR : undefined;
-        let reason: string | null = null;
+        let reason: Said | null = null;
         part.forEach(child => {
             if (reason === null && holderOfCarrier(child.type.name) !== undefined && NOTE_SYNTAX_CHARS.test(markLiteralOf(child) ?? '')) {
-                reason = `${literalSubject(child)} in a note cannot hold ${markLiteralOf(child) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
+                reason = literalReason(markLiteralOf(child) as string);
             }
             if (reason !== null || !child.isText) {
                 return;
             }
             const text = child.text ?? '';
             const code = child.marks.some(m => m.type.name === 'code');
-            const raw = child.marks.some(m => RAW_TEXT_MARKS.has(m.type.name));
+            const raw = rawMarkOf(child.marks);
             const span = child.marks.find(m => NOTE_SYNTAX_CHARS.test(markLiteralOf(m) ?? ''));
             if (span !== undefined) {
-                reason = `${literalSubject(span)} in a note cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the notes plugin would read a marker in it.`;
-            } else if (raw && terminator !== undefined && text.includes(terminator)) {
-                reason = `Inline code, superscript and subscript in this part of a note cannot hold "${terminator}": the notes plugin reads it as the part's end, and nothing escapes it there.`;
+                reason = literalReason(markLiteralOf(span) as string);
+            } else if (raw !== undefined && terminator !== undefined && text.includes(terminator)) {
+                // C1: named by the one mark that holds it.
+                const mark = markNoun(raw);
+                reason = said`A ${value(terminator)} can't go in ${mark} inside a ${noun} — it would end the note there. Type it outside the ${mark}.`;
             } else if (code && marker !== null && text.includes(marker)) {
-                reason = `Inline code in a note cannot hold "${marker}": the notes plugin reads it as the note's end, and nothing escapes it there.`;
+                // C2
+                reason = said`A ${value(marker)} can't go in inline code inside a ${noun} — it would end the note there. Type it outside the code.`;
             }
         });
         if (reason !== null) {
@@ -1365,16 +1382,19 @@ export function unwritableEmbed(doc: Node, from = 0, to = doc.content.size): str
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
     doc.nodesBetween(start, end, node => {
-        if (reason === null && node.type.name === 'wiki_embed' && node.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
-            reason = 'A wiki embed cannot be inline code, superscript or subscript: their text is written as it is, and the embed would be plain text after a save.';
+        const raw = node.type.name === 'wiki_embed' ? rawMarkOf(node.marks) : undefined;
+        if (reason === null && raw !== undefined) {
+            reason = `A wiki embed can't be ${markNoun(raw)} — it would be saved as plain text. Format the text beside it instead.`;
         }
         return reason === null;
     });
     return reason;
 }
 
-/** Why an emoji is not made code, superscript or subscript (`unwritableEmoji`). */
-export const EMOJI_RAW_REFUSAL = 'An emoji cannot be inline code, superscript or subscript: their text is written as it is, and the emoji would be plain text after a save.';
+/** Why an emoji is not made `markNoun` — inline code, superscript or subscript (`unwritableEmoji`, C5). */
+export function emojiRawRefusal(markNoun: string): string {
+    return `An emoji can't be ${markNoun} — it would be saved as plain text. Format the text beside it instead.`;
+}
 /**
  * Why an emoji atom between `from` and `to` cannot be written so that it
  * reads back as itself, where the read-back is not asked (`unreadEmoji`
@@ -1389,8 +1409,9 @@ export function unwritableEmoji(doc: Node, from = 0, to = doc.content.size): str
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
     doc.nodesBetween(start, end, node => {
-        if (reason === null && node.type.name === 'emoji' && node.marks.some(m => RAW_TEXT_MARKS.has(m.type.name))) {
-            reason = EMOJI_RAW_REFUSAL;
+        const raw = node.type.name === 'emoji' ? rawMarkOf(node.marks) : undefined;
+        if (reason === null && raw !== undefined) {
+            reason = emojiRawRefusal(markNoun(raw));
         }
         return reason === null;
     });
@@ -1465,8 +1486,8 @@ export function emojiBeyondAtoms(block: Node): number {
  * buttons, the object bar's verbs — goes through here with the transaction's
  * origin (`noteRefusal`).
  */
-export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin, causes = true): string | null {
-    let reason: string | null = null;
+export function unwritableInNote(doc: Node, from = 0, to = doc.content.size, origin?: EditOrigin, causes = true): Said | null {
+    let reason: Said | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
     doc.nodesBetween(start, end, node => {
@@ -1674,18 +1695,18 @@ export const SIDEBAR_GLUED_BEFORE = 'A sidebar right after a letter or digit wou
 export const SIDEBAR_GLUED_AFTER = 'A left sidebar right before a digit would not be read as a sidebar: put a space after it.';
 /** Why a sidebar right after a URL is not made. */
 export const SIDEBAR_GLUED_URL = 'A sidebar right after a web address would be read as part of the address: put a space before it.';
-/** Why an edit is refused in a line whose character reference, written as its character, changes what is a sidebar. */
-export const SIDEBAR_REWRITTEN_REFERENCE = 'This line spells a character as a character reference (&#…;), which the editor writes as the character itself, and saved that way a sidebar here would not read back as it is shown: edit the line once in the text editor to unlock it.';
-/** Why an edit is refused in a line the editor would write so that a sidebar does not read back, for another reason than a character reference. */
-export const SIDEBAR_REWRITTEN = 'Written by the editor, this line would not read a sidebar back as it is shown, edited or not: edit the line once in the text editor to unlock it.';
-/** Why a sidebar is not made that would not read back, for none of the reasons above. */
-export const SIDEBAR_NOT_READ = 'After this edit a sidebar here would not be read back as a sidebar.';
-/** Why an edit is refused after which text would read as a sidebar the editor does not show. */
-export const SIDEBAR_MADE = 'After this edit text here would be read as a sidebar, which the editor does not show (a $…$ or @…@ in a web address, say).';
-/** Why an edit is refused after which VS Code's math would read text here as a formula, which the editor does not show. */
-export const MATH_MADE = 'After this edit VS Code\'s math would read text here as a formula ($…$), which the editor does not show (a $…$ a web address no longer holds, say).';
-/** Why a left sidebar is not made, nor an edit applied that leaves one, that VS Code's math would read as math (`InlineEngineDefinition.math`). */
-export const SIDEBAR_LEFT_MATH = 'Left sidebars need markdown.math.enabled off: math reads $…$.';
+/** Why an edit is refused in a line whose character reference, written as its character, changes what is a sidebar (X4). */
+export const SIDEBAR_REWRITTEN_REFERENCE: Said = said`Not applied: this line spells a character as ${value('&#…;')}, which the editor saves as the character, and the sidebar would change. Use ${VERB.showInTextEditor} to change the line once.`;
+/** Why an edit is refused in a line the editor would write so that a sidebar does not read back, for another reason than a character reference (X5). */
+export const SIDEBAR_REWRITTEN = `This line can't be changed here yet: its sidebar wouldn't be saved as shown. Use ${VERB.showInTextEditor} to change it once; then this works.`;
+/** Why a sidebar is not made that would not read back, for none of the reasons above (C14a). */
+export const SIDEBAR_NOT_READ = 'Not applied: the sidebar here wouldn\'t be saved as a sidebar. Keep a space before and after it.';
+/** Why an edit is refused after which text would read as a sidebar the editor does not show (C14b). */
+export const SIDEBAR_MADE: Said = said`Not applied: text here would turn into a sidebar when saved (a ${value('$…$')} or ${value('@…@')} in a web address). Keep a space between the characters that would do it.`;
+/** Why an edit is refused after which VS Code's math would read text here as a formula, which the editor does not show (C14c). */
+export const MATH_MADE: Said = said`Not applied: VS Code's math would read text here as a formula (${value('$…$')}). Keep a space between the characters that would do it.`;
+/** Why a left sidebar is not made, nor an edit applied that leaves one, that VS Code's math would read as math (`InlineEngineDefinition.math`, X6). */
+export const SIDEBAR_LEFT_MATH: Said = said`Left sidebars don't work while VS Code's math is on — it reads ${value('$…$')}. Turn off Markdown › Math: Enabled to use them.`;
 
 /** What a block is called in a refusal that names it. */
 const BLOCK_NOUNS: Readonly<Record<string, string>> = {
@@ -1705,11 +1726,12 @@ const BLOCK_NOUNS: Readonly<Record<string, string>> = {
  * not touch: with `reference`, a character reference the editor writes as
  * the character.
  */
-export function sidebarRewrittenBeside(block: Node, textblock: Node, reference: boolean): string {
+export function sidebarRewrittenBeside(block: Node, textblock: Node, reference: boolean): Said {
+    // X7: the part named so it can be found once the hint is gone (ux-critic #10, finding 4).
     const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
-    const part = textblock.type.name === 'table_cell' || textblock.type.name === 'table_header' ? 'cell' : textblock.type.name === 'heading' ? 'heading' : 'paragraph';
-    const cause = reference ? `: that ${part} spells a character as a character reference (&#…;), which the editor writes as the character itself` : '';
-    return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then not read a sidebar back as it is shown${cause}. Edit that ${part} once in the text editor to unlock this ${whole}.`;
+    const part = partLabel(block, textblock);
+    const cause = reference ? said` — it spells a character as ${value('&#…;')}` : [];
+    return said`This ${whole} can't be changed here yet: ${part} of it wouldn't keep its sidebar${cause}. Use ${VERB.showInTextEditor} and change ${part} once; then this works.`;
 }
 
 /** The sidebars the engine read in a text, by the text: a textblock is parsed once however often it is asked about. */
@@ -2007,7 +2029,7 @@ function writtenOf(textblock: Node): WrittenTextblock {
  * (`sidebarCanOpen`, `sidebarCanClose`), or a web address that reads it in —
  * the sidebar comes back with linkify off.
  */
-function lostReason(text: string, lost: ReadSidebar): string {
+function lostReason(text: string, lost: ReadSidebar): Said {
     const marker = text.charAt(lost.open);
     const gluedBefore = lost.open > 0 && !sidebarCanOpen(text.charAt(lost.open - 1), marker);
     const gluedAfter = lost.close + 1 < text.length && !sidebarCanClose(marker, text.charAt(lost.close + 1));
@@ -2048,7 +2070,7 @@ function lostReason(text: string, lost: ReadSidebar): string {
  * written again beside the edit (`beside`: a textblock outside its range), the
  * reason names the block the edit rewrites whole.
  */
-function unitRefusal(block: { node: Node; offset: number; copyOf?: number | null }, unit: WrittenUnit, index: number, verdict: UnitVerdict, beside: boolean, origin?: EditOrigin): string {
+function unitRefusal(block: { node: Node; offset: number; copyOf?: number | null }, unit: WrittenUnit, index: number, verdict: UnitVerdict, beside: boolean, origin?: EditOrigin): Said {
     const before = origin === undefined ? null : unitBefore(origin, block, unit, index);
     if (verdict.lost !== null) {
         if (before?.verdict.lost == null) {
@@ -2109,33 +2131,40 @@ function unitBefore(origin: EditOrigin, block: { node: Node; offset: number; cop
  * reads as one: the two differ only in their `{…}`, and the first's would be lost.
  */
 export function mergedReason(noun: string): string {
-    return `After this edit two pieces of ${noun} would stand side by side, and the preview would read them as one, losing a {…}: give both the same attributes, or keep a character between them.`;
+    // C12, as the critique words it.
+    return `Not applied: the two ${noun} parts would join into one and lose their attributes. Give both the same attributes, or keep a character between them.`;
 }
 
-/** Why an edit is refused after which the save would not read back as the page shows it, by what the comparison found (`ReadCause`). */
+/**
+ * Why an edit is refused after which the save would not read back as the page
+ * shows it, by what the comparison found (`ReadCause`): the "Not applied:"
+ * family (#10 C6–C12), its nouns the row's own (`markNoun`), a way out that
+ * points at the text editor naming the verb that opens it.
+ */
 export function causeReason(cause: ReadCause): string {
+    const editor = VERB.showInTextEditor;
     switch (cause.kind) {
         case 'merged':
             return mergedReason(cause.noun);
         case 'lost':
-            return `After this edit the preview would not read the ${cause.noun} here back as written: the delimiters around it would touch what stands beside it. Keep a space or another character between them.`;
+            return `Not applied: this ${cause.noun} would lose its formatting when saved — it touches the text beside it. Add a space next to it.`;
         case 'made':
-            return `After this edit the preview would read text here as ${cause.noun}, which the editor does not show: keep a space or another character between the delimiters that would make it.`;
+            return `Not applied: these characters would turn into ${cause.noun} when saved. Add a space between them.`;
         case 'text':
-            return 'After this edit the preview would not read this text back as written: part of it would be taken as markup.';
+            return `Not applied: some of this text would be saved as formatting. Use ${editor} to change it.`;
         case 'address':
-            return `After this edit the preview would not read the ${cause.noun === 'image' ? 'image\'s path' : 'link\'s address'} back as it is shown: no way of writing it here reads back. Change it, or edit it in the text editor.`;
+            return `Not applied: the ${cause.noun === 'image' ? 'image\'s path' : 'link\'s address'} can't be saved as shown here. Change it, or use ${editor}.`;
         case 'title':
-            return `After this edit the preview would not read the ${cause.noun}'s title back as it is shown: no way of writing it here reads back. Change it, or edit it in the text editor.`;
+            return `Not applied: the ${cause.noun}'s title can't be saved as shown here. Change it, or use ${editor}.`;
         case 'block':
-            return `After this edit the preview would read this text as ${cause.noun}, which the editor does not show here. Edit it in the text editor to write that.`;
+            return `Not applied: this would become ${cause.noun}, which this editor can't show. Write it via ${editor}.`;
         case 'unread':
-            return 'After this edit the editor could not read this text back to check what the preview would show, so it is not applied. Edit it in the text editor.';
+            return `Not applied: the editor couldn't check how this would be saved. Use ${editor}.`;
     }
 }
 
-/** Why an edit is refused after which text would be read as attributes no literal gives. */
-export const LITERAL_MADE = 'After this edit text here would be read as attributes, which the editor does not show.';
+/** Why an edit is refused after which text would be read as attributes no literal gives (X8). */
+export const LITERAL_MADE: Said = said`Not applied: text here would turn into attributes when saved. Change the text around the ${value('{')}, or use ${VERB.showInTextEditor}.`;
 
 /**
  * Why an edit is refused after which the literal `lost` names would not read
@@ -2144,28 +2173,30 @@ export const LITERAL_MADE = 'After this edit text here would be read as attribut
  * wrap puts before it — or, `literal` `null`, text would be read as
  * attributes.
  */
-export function literalLostReason(lost: LiteralLoss): string {
+export function literalLostReason(lost: LiteralLoss): Said {
     if (lost.cause !== undefined) {
         return causeReason(lost.cause);
     }
     if (lost.literal === null) {
         return LITERAL_MADE;
     }
-    return `After this edit the preview would not read ${lost.literal} back as written: read with the rest of its block — a $ pairing with another $ as math or a left sidebar, say, code reaching into it, or a line break before it — it would be shown as text.`;
+    // X9
+    return said`Not applied: ${value(lost.literal)} wouldn't stay attributes — something else in the block (a ${value('$')}, code, a line break) would take them. Use ${VERB.showInTextEditor} to change the block.`;
 }
 
-/** Why an edit is refused in a line whose literal `lost` names already does not read back as it is shown, edited or not — or, `literal` `null`, which already reads text as attributes. */
-export function literalRewritten(lost: LiteralLoss): string {
+/** Why an edit is refused in a line whose literal `lost` names already does not read back as it is shown, edited or not — or, `literal` `null`, which already reads text as attributes (X10). */
+export function literalRewritten(lost: LiteralLoss): Said {
+    const once = `Use ${VERB.showInTextEditor} to change it once; then this works.`;
     if (lost.cause?.kind === 'unread') {
         return causeReason(lost.cause);
     }
     if (lost.cause !== undefined) {
-        return 'Written by the editor, this line would not read back as it is shown, edited or not: edit the line once in the text editor to unlock it.';
+        return `This line can't be changed here yet: it wouldn't be saved as shown. ${once}`;
     }
     if (lost.literal === null) {
-        return 'Written by the editor, this line would read text here as attributes the editor does not show, edited or not: edit the line once in the text editor to unlock it.';
+        return `This line can't be changed here yet: text in it would turn into attributes. ${once}`;
     }
-    return `Written by the editor, this line would not read ${lost.literal} back as written, edited or not: remove that literal, or edit the line once in the text editor to unlock it.`;
+    return said`This line can't be changed here yet: its attributes ${value(lost.literal)} wouldn't stay attributes. Remove them, or use ${VERB.showInTextEditor} to change it once; then this works.`;
 }
 
 /**
@@ -2174,23 +2205,24 @@ export function literalRewritten(lost: LiteralLoss): string {
  * on or in — a cell, a heading, a paragraph, an item — or the block itself
  * for its own literal (a list's, a table's, a quote's).
  */
-export function literalRewrittenBeside(block: Node, textblock: Node, lost: LiteralLoss): string {
+export function literalRewrittenBeside(block: Node, textblock: Node, lost: LiteralLoss): Said {
+    // C13: the part named (`partLabel`: "row 3", "item 2") so it can be found once the hint is gone, and the verb that opens the text editor.
     const whole = BLOCK_NOUNS[block.type.name] ?? 'block';
-    const name = textblock.type.name;
+    const editor = VERB.showInTextEditor;
     if (lost.cause?.kind === 'unread') {
         return causeReason(lost.cause);
     }
+    if (lost.literal !== null && lost.cause === undefined && !textblock.isTextblock && textblock.type.name !== 'list_item') {
+        return said`This ${whole} can't be changed here: its attributes ${value(lost.literal)} wouldn't stay attributes. Remove them, or use ${editor} to fix them once.`;
+    }
+    const part = partLabel(block, textblock);
     if (lost.cause !== undefined) {
-        return `This edit makes the editor write the whole ${whole} again, and another part of it would then not read back as it is shown. Edit that part once in the text editor to unlock this ${whole}.`;
+        return `This ${whole} can't be changed here: ${part} wouldn't be saved as shown. Use ${editor} to fix ${part} once.`;
     }
-    if (lost.literal !== null && !textblock.isTextblock && name !== 'list_item') {
-        return `This edit makes the editor write the whole ${whole} again, and the ${whole}'s own literal ${lost.literal} would then not read back as written. Remove that literal, or edit the ${whole} once in the text editor to unlock it.`;
-    }
-    const part = name === 'table_cell' || name === 'table_header' ? 'cell' : name === 'heading' ? 'heading' : name === 'list_item' ? 'item' : name === 'paragraph' ? 'paragraph' : 'part';
     if (lost.literal === null) {
-        return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then read text as attributes the editor does not show. Edit that ${part} once in the text editor to unlock this ${whole}.`;
+        return `This ${whole} can't be changed here: text in ${part} would turn into attributes. Use ${editor} to fix ${part} once.`;
     }
-    return `This edit makes the editor write the whole ${whole} again, and another ${part} of it would then not read ${lost.literal} back as written. Remove that literal, or edit that ${part} once in the text editor to unlock this ${whole}.`;
+    return said`This ${whole} can't be changed here: the attributes ${value(lost.literal)} in ${part} wouldn't stay attributes. Use ${editor} to fix ${part} once.`;
 }
 
 /**
@@ -2350,7 +2382,10 @@ export function tableLines(table: Node): string[] {
 }
 
 /** Why a cell holds no line break: said wherever a hard break is refused, by key (`webview/tables.ts`) or by any other edit. */
-export const CELL_BREAK_REFUSAL = 'A table cell holds one line: a pipe table has no line break inside a cell.';
+export const CELL_BREAK_REFUSAL = 'A table cell holds one line — no line break inside it. Tab moves to the next cell.';
+
+/** Why inline code in a table cell holds no `|` (C3, as the critique words it). */
+export const CELL_PIPE_REFUSAL: Said = said`${value('|')} can't go in inline code in a table cell — it would split the row. Type it outside the code.`;
 
 /**
  * Why a table between `from` and `to` cannot be written so that it reads back
@@ -2359,8 +2394,8 @@ export const CELL_BREAK_REFUSAL = 'A table cell holds one line: a pipe table has
  * note: a hard break in a cell (a sidebar can hold one), code holding a `|`,
  * an attribute span, emphasis or a link whose literal holds a `|` or a backtick.
  */
-export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): string | null {
-    let reason: string | null = null;
+export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): Said | null {
+    let reason: Said | null = null;
     const start = Math.max(0, Math.min(from, to));
     const end = Math.min(doc.content.size, Math.max(from, to));
     doc.nodesBetween(start, end, node => {
@@ -2377,11 +2412,12 @@ export function unwritableInTable(doc: Node, from = 0, to = doc.content.size): s
             if (child.type.name === 'hard_break') {
                 reason = CELL_BREAK_REFUSAL;
             } else if (child.isText && (child.text ?? '').includes('|') && child.marks.some(m => m.type.name === 'code')) {
-                reason = 'Inline code in a table cell cannot hold "|": the table plugin splits the row at it, and nothing escapes it there.';
+                reason = CELL_PIPE_REFUSAL;
             } else {
                 const span = [child, ...child.marks].find(c => holderOfCarrier(c.type.name) !== undefined && /[|`]/.test(markLiteralOf(c) ?? ''));
                 if (span !== undefined) {
-                    reason = `${literalSubject(span)} in a table cell cannot hold ${markLiteralOf(span) as string}: its literal is written as it is, and the table plugin would read a cell boundary or code in it.`;
+                    // X3
+                    reason = said`Not applied: the attributes ${value(markLiteralOf(span) as string)} hold a ${value('|')} or a backtick, which would split the table row. Remove it from the attributes.`;
                 }
             }
             return true;
@@ -3689,11 +3725,6 @@ function readItems(textblock: Node): ReadItem[] {
     return out;
 }
 
-/** What a mark is called in a reason, by its delimiter (`namesOf`). */
-function markNoun(mark: Mark): string {
-    const holder = holderOfCarrier(mark.type.name);
-    return holder === undefined ? mark.type.name : namesOf(holder, mark.attrs.markup).noun;
-}
 
 /**
  * Whether `unit`, as the save writes it, reads back as the page shows it, by

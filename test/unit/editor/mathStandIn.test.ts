@@ -194,14 +194,14 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         const coded = stateOf('[x]{title="a $b"} and Q\n');
         const q = posIn(coded.doc, 'Q', '');
         const code = coded.tr.replaceWith(q, q + 1, editorSchema.text('$(pwd)', [editorSchema.marks.code.create()]));
-        assert.strictEqual(noteRefusal(code), literalLostReason({ literal: span }));
+        assert.deepStrictEqual(noteRefusal(code), literalLostReason({ literal: span }));
         assert.ok(noteRefusal(code)?.includes(span));
         assert.ok(coded.apply(code).doc === coded.doc, 'the filter drops it');
 
         // A span pasted before a paragraph's own literal: their two `$` pair as math, and both are lost.
         const para = stateOf('Para {title="d$ e"}\n');
         const pasted = para.tr.insert(1, [editorSchema.text('x', [editorSchema.marks.attr_span.create({ literal: span })]), editorSchema.text(' ')]);
-        assert.strictEqual(noteRefusal(pasted), literalLostReason({ literal: span }));
+        assert.deepStrictEqual(noteRefusal(pasted), literalLostReason({ literal: span }));
         assert.ok(para.apply(pasted).doc === para.doc, 'the filter drops it');
 
         // Prose `$` beside a literal is written escaped and reads as text: typed, applied, and every literal kept.
@@ -254,7 +254,7 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         assert.ok(!('refusal' in target));
         const existing = { literal: '{title="a $b"}' };
         assert.deepStrictEqual(commitAttributes(state, target, '{.c}'), { refusal: literalAlreadyLostRefusal(existing) }, 'the cause named is the span, not the literal typed');
-        assert.strictEqual(noteRefusal(state.tr.insertText('Z', 2)), literalRewritten(existing), 'typing in it is refused, naming the span');
+        assert.deepStrictEqual(noteRefusal(state.tr.insertText('Z', 2)), literalRewritten(existing), 'typing in it is refused, naming the span');
         // Removing the block's literal leaves the span lost: the same rule refuses it, and the field says so.
         assert.deepStrictEqual(commitAttributes(state, target, ''), { refusal: literalRewritten(existing) }, 'removing another literal does not make the block read back');
         // The span itself: given a value the block reads back, or none, the edit applies.
@@ -293,7 +293,7 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
                     assert.deepStrictEqual(reads(saved), [['paragraph_open', [['class', 'spec']]]], `math ${math}, +${k}: allowed, so the class reads back (${saved})`);
                 } else {
                     refused++;
-                    assert.strictEqual(reason, literalLostReason({ literal: '{.spec}' }), `math ${math}, +${k}`);
+                    assert.deepStrictEqual(reason, literalLostReason({ literal: '{.spec}' }), `math ${math}, +${k}`);
                     assert.deepStrictEqual(reads(saved), [], `math ${math}, +${k}: refused, as the save would lose the class (${saved})`);
                 }
             }
@@ -389,15 +389,15 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
 
     test('a refusal names what it is: text read as attributes is not a literal to remove', () => {
         const none = { literal: null };
-        for (const reason of [literalRewritten(none), literalRewrittenBeside(editorSchema.nodes.bullet_list.create(null, []), editorSchema.nodes.paragraph.create(), none)]) {
-            assert.match(reason, /would (then )?read text/, reason);
-            assert.doesNotMatch(reason, /not read text|remove that literal|Remove that literal|Remove or change it/, reason);
+        for (const reason of [literalRewritten(none), literalRewrittenBeside(editorSchema.nodes.bullet_list.create(null, []), editorSchema.nodes.paragraph.create(), none)].map(saidText)) {
+            assert.match(reason, /would turn into attributes/, reason);
+            assert.doesNotMatch(reason, /Remove them|Remove or change/, reason);
         }
         // In a field (F10): the block, not a literal to remove, is what to change.
         const already = saidText(literalAlreadyLostRefusal(none));
         assert.match(already, /this block already doesn't save as shown/, already);
         assert.doesNotMatch(already, /Remove or change/, already);
-        assert.match(literalRewritten({ literal: '{.a}' }), /would not read \{\.a\} back as written, edited or not: remove that literal/);
+        assert.match(saidText(literalRewritten({ literal: '{.a}' })), /its attributes \{\.a\} wouldn't stay attributes\. Remove them, or use Show in text editor/);
     });
 
     test('typing in a long list parses the one item typed in: the other items\' read-back is remembered', () => {
@@ -574,8 +574,8 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
         const doc = replaceChild(parsed, 0, list.type.create({ ...list.attrs, attrsSuffix: '{title="$x$"}' }, list.content));
         const state = EditorState.create({ doc, plugins: editorPlugins() });
         const reason = noteRefusal(state.tr.insertText('Z', posIn(state.doc, 'one', '') + 3));
-        assert.strictEqual(reason, literalRewrittenBeside(state.doc.child(0), state.doc.child(0), { literal: '{title="$x$"}' }));
-        assert.match(reason ?? '', /the list's own literal \{title="\$x\$"\} would then not read back/);
+        assert.deepStrictEqual(reason, literalRewrittenBeside(state.doc.child(0), state.doc.child(0), { literal: '{title="$x$"}' }));
+        assert.match(saidText(reason ?? ''), /This list can't be changed here: its attributes \{title="\$x\$"\} wouldn't stay attributes/);
     });
 
     test('typing in a long quote, container or admonition parses the one block typed in, not the wrapper', () => {

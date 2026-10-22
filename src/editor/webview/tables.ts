@@ -46,6 +46,7 @@ import { TableAlign, editorSchema } from '../schema';
 import { CELL_BREAK_REFUSAL, serializeNode, unwritableInTable } from '../serialize';
 import { showHint } from './hint';
 import { refusableRange } from './notes';
+import type { Said } from '../tips';
 import { insertionPoint } from './toolbar/commands';
 import type { SourceContext } from './toolbar/commands';
 
@@ -435,7 +436,7 @@ export function tableKeymap(): Plugin {
 // ---------------------------------------------------------------------------
 
 /** Why the transaction must not be applied: it leaves in a table what the tidy form cannot write (`unwritableInTable`). */
-export function tableRefusal(tr: Transaction): string | null {
+export function tableRefusal(tr: Transaction): Said | null {
     const range = refusableRange(tr);
     return range === null ? null : unwritableInTable(tr.doc, range.from, range.to);
 }

@@ -24,6 +24,7 @@ import { MarkdownIt } from '../../../src/@types/markdown-it';
 import { createEditorEngine } from '../../../src/editor';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, repoRoot, topChildren, touched } from './helpers';
+import { saidText } from '../../../src/editor/tips';
 import * as fs from 'fs';
 import * as path from 'path';
 import { touchesNote } from '../../../src/editor/webview/lane';
@@ -395,7 +396,7 @@ suite('Editor notes: what the serializer cannot write back is not made', () => {
         const note = base.doc.nodeAt(notePos) as Node;
         for (const type of [sup, sub, code]) {
             const tr = base.tr.replaceWith(notePos, notePos + note.nodeSize, note.mark([type.create()]));
-            assert.ok(noteRefusal(tr)?.includes('cannot hold a note'), type.name);
+            assert.ok(saidText(noteRefusal(tr) ?? '').startsWith('A note can\'t go inside'), type.name);
             assert.strictEqual(base.apply(tr).doc, base.doc, `${type.name}: the edit is not applied`);
         }
         const bold = base.tr.replaceWith(notePos, notePos + note.nodeSize, note.mark([editorSchema.marks.strong.create()]));
@@ -996,7 +997,7 @@ suite('Editor notes: what the save writes again is what is read back', () => {
             assert.deepStrictEqual(sidebarsIn(source), before, label);
             const tr = state.tr.insertText('Z', posOf(state.doc, 'edit'));
             const other = textblockOf(state.doc, 'e.com');
-            assert.strictEqual(noteRefusal(tr), sidebarRewrittenBeside(other.block, other.textblock, true), label);
+            assert.deepStrictEqual(noteRefusal(tr), sidebarRewrittenBeside(other.block, other.textblock, true), label);
             assert.ok(state.apply(tr).doc === state.doc, `${label}: the filter refuses it`);
             // What it prevents: the fidelity plugin clears the block's `src`, and the save writes the other textblock out.
             const unfiltered = EditorState.create({ doc: state.doc, plugins: [fidelityPlugin()] }).apply(tr);
@@ -1006,15 +1007,15 @@ suite('Editor notes: what the save writes again is what is read back', () => {
 
     test('the refusal beside an edit names the block and the textblock, and the reference only where that textblock spells one', () => {
         const state = read('| a | b |\n| - | - |\n| edit me | See h&#116;tp://e.com/$x$ here. |\n');
-        const reason = noteRefusal(state.tr.insertText('Z', posOf(state.doc, 'edit')));
-        assert.ok(reason?.includes('the whole table') && reason.includes('another cell') && reason.includes('character reference'), reason ?? 'none');
+        const reason = saidText(noteRefusal(state.tr.insertText('Z', posOf(state.doc, 'edit'))) ?? 'none');
+        assert.strictEqual(reason, `This table can't be changed here yet: row 1 of it wouldn't keep its sidebar — it spells a character as &#…;. Use Show in text editor and change row 1 once; then this works.`);
         // `&amp;` stands in the first item; the second reads otherwise for another cause (`\/` written out as `/`).
         const source = '- Tom &amp; Jerry\n- See http:\\/\\/e.com/$x$ here.\n';
         assert.deepStrictEqual(sidebarsIn(source), ['left_sidebar']);
         const list = read(source);
         assert.strictEqual(noteRefusal(list.tr.insertText('Z', posOf(list.doc, 'here'))), SIDEBAR_REWRITTEN, 'its own text holds no reference');
         const other = textblockOf(list.doc, 'e.com');
-        assert.strictEqual(noteRefusal(list.tr.insertText('Z', posOf(list.doc, 'Tom'))), sidebarRewrittenBeside(other.block, other.textblock, false), 'beside it, neither');
+        assert.deepStrictEqual(noteRefusal(list.tr.insertText('Z', posOf(list.doc, 'Tom'))), sidebarRewrittenBeside(other.block, other.textblock, false), 'beside it, neither');
     });
 
     test('a line whose source an earlier edit has cleared is refused without naming a cause it can no longer see', () => {

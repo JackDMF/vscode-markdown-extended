@@ -203,7 +203,7 @@ export interface FileTarget {
 }
 
 /** What a drop of files from the system that are not images is told: only the Explorer view's files are linked. */
-export const SYSTEM_FILE_LOCK = 'Drop a file from the Explorer view to link it.';
+export const SYSTEM_FILE_LOCK = 'A file from outside VS Code can\'t be dropped here — drag it from the Explorer.';
 
 /**
  * The files a drop or a paste names by uri: VS Code's `resourceurls` (the
