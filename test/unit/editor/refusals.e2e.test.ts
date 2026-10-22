@@ -4,7 +4,8 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { refusalMs } from '../../../src/editor/refusal';
-import { EditorPage, EXTENSION_ID, closeEditorPage, clickText, delay, editCommand, openEditorPage, pointAt, MOD, UNDO } from './pageHarness';
+import { EditorPage, EXTENSION_ID, closeEditorPage, clickText, delay, editCommand, openEditorPage, pointAt, shot, MOD, UNDO } from './pageHarness';
+import { MOD_NAME } from './rowLock';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, applyTheme } from './themes';
 
 /** One document holding every place a refusal is made in: a table with code in its cells, a one-row table, a list, a source block, bold text. */
@@ -75,6 +76,9 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         });
         await delay(200);
     };
+
+    /** The page as it stands, saved as `<name>-<width>.png` in `MEP_SHOTS_DIR` (none without it). */
+    const shotAs = async (name: string) => shot(page, `${name}-${page.viewport()?.width ?? 0}.png`);
 
     const hint = () => page.$eval('.mep-hint', el => ({ text: el.textContent ?? '', shown: !(el as HTMLElement).hidden, tone: (el as HTMLElement).dataset.tone, at: (el as HTMLElement).dataset.at }));
     const shown = async () => (await hint()).shown;
@@ -283,6 +287,137 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         });
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
         await page.keyboard.press('Escape');
+    });
+
+    /** The hint's box and its placement, and the boxes of `controls` (selectors), in the window's coordinates. */
+    const placed = (...controls: string[]) => page.evaluate(sels => {
+        const box = (el: Element | null) => {
+            const r = (el as HTMLElement).getBoundingClientRect();
+            return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+        };
+        const hint = document.querySelector('.mep-hint') as HTMLElement;
+        return {
+            hint: box(hint),
+            at: hint.dataset.at,
+            shown: !hint.hidden,
+            text: hint.textContent ?? '',
+            controls: sels.map(s => box(document.querySelector(s))),
+        };
+    }, controls);
+
+    const BOLD = '.mep-toolbar [data-action="bold"]';
+    const ITALIC = '.mep-toolbar [data-action="italic"]';
+    const ROW = '.mep-toolbar';
+    /** A document with properties, for the property field's and the panel button's locks. */
+    const PROPS_DOC = '---\ntitle: Demo\nstream: UXD\n---\n\nSome words here to select.\n\nLast paragraph.\n';
+
+    test('D4: a press on a locked tool says why under it — the source box\'s key — the note at the row\'s end still flashes, the tool keeps aria-disabled', async function () {
+        this.timeout(20000);
+        await fresh();
+        const raw = await pointAt(page, 'raw block', 1);
+        await page.mouse.click(raw.x, raw.y, { clickCount: 2 });
+        await page.waitForSelector('.mep-raw-editor', { timeout: 2000 });
+        await delay(100);
+        const bold = await page.$eval(BOLD, el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+        await page.mouse.click(bold.x, bold.y);
+        await delay(80);
+        const p = await placed(BOLD, ROW);
+        assert.strictEqual(p.shown, true, 'a hint at the pressed tool');
+        assert.strictEqual(p.at, 'control');
+        assert.strictEqual(p.text, `Formatting is off while editing source — ${MOD_NAME}+Enter applies`);
+        assert.ok(Math.abs(p.hint.left - p.controls[0].left) <= 2, `at Bold's left: ${p.hint.left} vs ${p.controls[0].left}`);
+        assert.ok(Math.abs(p.hint.top - (p.controls[1].bottom + 4)) <= 1, `under the row: ${p.hint.top} vs ${p.controls[1].bottom + 4}`);
+        assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock`, el => el.classList.contains('mep-row-lock-flash')), true, 'the note at the row\'s end flashes');
+        assert.deepStrictEqual(await page.$eval(BOLD, el => [el.getAttribute('aria-disabled'), el.hasAttribute('disabled')]), ['true', false]);
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).className), 'mep-raw-editor', 'the box keeps the focus');
+        await shotAs('s3-source-lock');
+        // D10: the hint never takes the pointer — a press on what it covers reaches that.
+        const covered = await page.evaluate(sel => {
+            const hint = (document.querySelector('.mep-hint') as HTMLElement).getBoundingClientRect();
+            const el = document.elementFromPoint(hint.left + 4, hint.top + 4);
+            return el?.closest('.mep-hint') === null;
+        }, ITALIC);
+        assert.strictEqual(covered, true, 'pointer-events: none');
+        await page.keyboard.press('Escape');
+        await delay(100);
+    });
+
+    test('D4b/D4c: a property\'s field says Enter applies; a panel button says Esc or click into the text — at 520 at "…"', async function () {
+        this.timeout(30000);
+        await fresh(PROPS_DOC, 'Some words');
+        await page.click('.mep-properties .mep-props-toggle');
+        await page.waitForSelector('.mep-prop-row', { visible: true });
+        await page.click('.mep-prop-row[data-key="stream"] input');
+        await delay(120);
+        await page.click(BOLD);
+        await delay(80);
+        assert.strictEqual((await hint()).text, 'Formatting is off while editing a property — Enter applies');
+        assert.strictEqual((await hint()).at, 'control');
+        await page.keyboard.press('Escape');
+        await delay(120);
+        await page.focus('.mep-properties .mep-props-toggle');
+        await delay(120);
+        await page.click(BOLD);
+        await delay(80);
+        assert.deepStrictEqual([(await hint()).text, (await hint()).at], ['Formatting is off while the focus is outside the text — press Esc or click into the text', 'control']);
+        await shotAs('s4-quiet-lock');
+        await page.setViewport({ width: 520, height: 800 });
+        await delay(300);
+        await page.focus('.mep-properties .mep-props-toggle');
+        await delay(120);
+        const more = `${ROW} .mep-more-face`;
+        assert.strictEqual(await page.$eval(more, el => el.getAttribute('aria-disabled')), 'true', 'the refused tools gave way into a disabled "…"');
+        await page.click(more);
+        await delay(80);
+        const p = await placed(more, ROW);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'control', 'Formatting is off while the focus is outside the text — press Esc or click into the text']);
+        assert.ok(p.hint.left >= 0 && p.hint.right <= 520, `inside the window: ${JSON.stringify(p.hint)}`);
+        await shotAs('s4-quiet-lock-520');
+        await page.setViewport({ width: 1280, height: 800 });
+        await delay(300);
+    });
+
+    test('D4d: a state lock — the gap cursor — said at the Block type face', async function () {
+        this.timeout(20000);
+        await fresh('| a | b |\n| - | - |\n| 1 | 2 |\n\nAfter the table.\n', 'After');
+        await clickText(page, 'a', 0);
+        await page.keyboard.press('Home');
+        await page.keyboard.press('ArrowLeft');
+        await delay(120);
+        assert.ok(await page.$('.ProseMirror-gapcursor'), 'a gap cursor before the table');
+        const face = `${ROW} .mep-menu-face[data-menu="block-type"]`;
+        assert.strictEqual(await page.$eval(face, el => el.getAttribute('aria-disabled')), 'true');
+        await page.click(face);
+        await delay(80);
+        const p = await placed(face, ROW);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'control', 'No block here to change — Insert adds one at this spot.']);
+        assert.ok(Math.abs(p.hint.left - p.controls[0].left) <= 2);
+        await shotAs('s11-gap-lock');
+    });
+
+    test('D4e: a refused Block type entry (a table cell) says why beside the menu, at the entry; the card is put away', async function () {
+        this.timeout(20000);
+        await fresh();
+        await clickText(page, 'one', 1);
+        const face = `${ROW} .mep-menu-face[data-menu="block-type"]`;
+        await page.click(face);
+        const menu = '.mep-menu[data-menu="block-type"]';
+        await page.waitForSelector(`${menu}:not([hidden])`);
+        const entry = `${menu} [data-action="heading-2"]`;
+        await page.hover(entry);
+        await delay(400);
+        await page.click(entry);
+        await delay(80);
+        const p = await placed(entry, menu);
+        assert.deepStrictEqual([p.shown, p.at, p.text], [true, 'menu-entry', 'A table cell has no block type — the table\'s bar adds rows and columns.']);
+        assert.ok(Math.abs(p.hint.top - p.controls[0].top) <= 1, `at the entry's top: ${p.hint.top} vs ${p.controls[0].top}`);
+        assert.ok(Math.abs(p.hint.left - (p.controls[1].right + 4)) <= 1 || Math.abs(p.hint.right - (p.controls[1].left - 4)) <= 1, `beside the menu: ${JSON.stringify(p)}`);
+        assert.strictEqual(await page.$eval('.mep-preview-card', el => (el as HTMLElement).hidden), true, 'the card put away');
+        assert.strictEqual(await page.$eval(menu, el => (el as HTMLElement).hidden), false, 'the menu stays open');
+        await shotAs('s8-blocktype-entry');
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(), false, 'gone with the menu');
     });
 
     /** Open the bar's `verb` menu and press `entry` with the mouse. */
