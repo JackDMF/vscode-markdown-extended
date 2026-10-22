@@ -16,8 +16,8 @@ const ROW = '.mep-toolbar';
 const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
 const MENU = `${BAR} .mep-object-menu`;
 
-/** The table whose third row spells a character as a reference beside a sidebar: an edit in row 1 is refused, naming row 3 (C13/X7, the long message). */
-const LONG_DOC = '| a | b |\n| - | - |\n| edit me | x |\n| two | y |\n| See h&#116;tp://e.com/$x$ here. | z |\n\nAfter.\n';
+/** A reference's code: a `|` typed there is refused with a message longer than 80 characters (C1), which wraps at 80ch. */
+const LONG_DOC = 'A sentence with a note ++the `ab` reference|and its body++ in the middle of it, and more words after the note.\n\nAfter.\n';
 const PROPS_DOC = '---\ntitle: Demo\nstream: UXD\n---\n\nSome words here to select.\n\nLast paragraph.\n';
 
 type Step = (page: puppeteer.Page, show: (text: string, marker: string) => Promise<void>) => Promise<void>;
@@ -52,8 +52,9 @@ const SHOTS: { name: string; widths: number[]; themes: Theme[]; petrol: Theme[];
             await page.mouse.click(raw.x, raw.y, { clickCount: 2 });
             await page.waitForSelector('.mep-raw-editor');
             await delay(100);
-            const bold = `${ROW} [data-action="bold"]:not([hidden])`;
-            if (await page.$(bold)) {
+            // At 520 the lock note stands in the tools' place: nothing to press, the box's Apply and Cancel shown.
+            const bold = `${ROW} [data-action="bold"]`;
+            if (await visible(page, bold)) {
                 await page.click(bold);
             }
         },
@@ -64,8 +65,8 @@ const SHOTS: { name: string; widths: number[]; themes: Theme[]; petrol: Theme[];
             await show(PROPS_DOC, 'Some words');
             await page.focus('.mep-properties .mep-props-toggle');
             await delay(150);
-            const bold = `${ROW} [data-action="bold"]:not([hidden])`;
-            await page.click((await page.$(bold)) ? bold : `${ROW} .mep-more-face`);
+            const bold = `${ROW} [data-action="bold"]`;
+            await page.click((await visible(page, bold)) ? bold : `${ROW} .mep-more-face`);
         },
     },
     {
@@ -73,12 +74,16 @@ const SHOTS: { name: string; widths: number[]; themes: Theme[]; petrol: Theme[];
         step: async (page, show) => {
             await show(REFUSALS_DOC, 'Refusals');
             const face = `${ROW} .mep-menu-face[data-menu="export"]`;
-            await page.click(face);
-            await page.click('.mep-menu[data-menu="export"] [data-export="pdf"]');
-            await delay(80);
-            await page.click(face);
-            await page.waitForSelector('.mep-menu[data-menu="export"]:not([hidden])');
-            await page.click('.mep-menu[data-menu="export"] [data-export="html"]');
+            const open = () => visible(page, '.mep-menu[data-menu="export"]');
+            if (!(await open())) {
+                await page.click(face);
+            }
+            await (await page.waitForSelector('.mep-menu[data-menu="export"] [data-export="pdf"]', { visible: true }))?.click();
+            await delay(150);
+            if (!(await open())) {
+                await page.click(face);
+            }
+            await (await page.waitForSelector('.mep-menu[data-menu="export"] [data-export="html"]', { visible: true }))?.click();
         },
     },
     {
@@ -101,7 +106,13 @@ const SHOTS: { name: string; widths: number[]; themes: Theme[]; petrol: Theme[];
         name: 's7-bar-entry', widths: [1280, 520], themes: [LIGHT_MODERN, DARK_MODERN], petrol: [],
         step: async (page, show) => {
             await show('| Only | Row |\n| ---- | --- |\n\nAfter the table.\n', 'After');
-            await clickText(page, 'Only', 1);
+            // The caret out of the table and in again until its bar comes (a bar left dismissed by the last state).
+            for (let tries = 0; tries < 3 && (await page.$(BAR)) === null; tries++) {
+                await clickText(page, 'After', 2);
+                await delay(600);
+                await clickText(page, 'Only', 1);
+                await delay(800);
+            }
             await page.waitForSelector(BAR, { timeout: 2000 });
             await page.click(`${BAR} [data-verb="row"]`);
             await page.waitForSelector(MENU);
@@ -122,8 +133,8 @@ const SHOTS: { name: string; widths: number[]; themes: Theme[]; petrol: Theme[];
         name: 's10-long', widths: [1280, 520], themes: [LIGHT_MODERN, DARK_MODERN], petrol: [LIGHT_MODERN],
         step: async (page, show) => {
             await show(LONG_DOC, 'After');
-            await clickText(page, 'edit me', 2);
-            await page.keyboard.type('Z');
+            await clickText(page, 'ab', 1);
+            await page.keyboard.type('|');
         },
     },
     {
@@ -140,6 +151,14 @@ const SHOTS: { name: string; widths: number[]; themes: Theme[]; petrol: Theme[];
         },
     },
 ];
+
+/** Whether `selector` is drawn (laid out, not `display: none`). */
+function visible(page: puppeteer.Page, selector: string): Promise<boolean> {
+    return page.evaluate(sel => {
+        const el = document.querySelector(sel) as HTMLElement | null;
+        return el !== null && el.getClientRects().length > 0;
+    }, selector);
+}
 
 /** A row menu opened by its face, or — moved into "…" at a narrow width — by its entry there. */
 async function openRowMenu(page: puppeteer.Page, menu: string): Promise<void> {
@@ -192,8 +211,6 @@ function measure(page: puppeteer.Page) {
  * they stand on — written beside them (`measure.json`). Without it, skipped.
  */
 suite('Editor refusals: screenshots (e2e)', () => {
-    const results: Record<string, unknown> = {};
-
     suiteSetup(function () {
         if (!SHOTS_DIR) {
             this.skip();
@@ -203,6 +220,9 @@ suite('Editor refusals: screenshots (e2e)', () => {
     for (const set of ['default', 'petrol'] as const) {
         test(`the shot list with the ${set} stylesheets`, async function () {
             this.timeout(600000);
+            // A run of some states (`MEP_SHOTS_ONLY`) adds to what an earlier run measured.
+            const file = path.join(SHOTS_DIR as string, `measure-${set}.json`);
+            const results: Record<string, unknown> = process.env.MEP_SHOTS_ONLY !== undefined && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
             if (set === 'petrol' && !fs.existsSync(PETROL)) {
                 this.skip();
             }
@@ -228,10 +248,11 @@ suite('Editor refusals: screenshots (e2e)', () => {
                 await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
                 await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
                 await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
-                await delay(500);
+                // Long enough that the step's first click is no double click with the last one.
+                await delay(600);
             };
             try {
-                for (const shot of SHOTS) {
+                for (const shot of SHOTS.filter(s => process.env.MEP_SHOTS_ONLY === undefined || s.name.startsWith(process.env.MEP_SHOTS_ONLY))) {
                     const themes = set === 'default' ? shot.themes : shot.petrol;
                     for (const width of shot.widths) {
                         for (const theme of themes) {
@@ -252,6 +273,7 @@ suite('Editor refusals: screenshots (e2e)', () => {
                                 await page.screenshot({ path: path.join(SHOTS_DIR as string, `${name}.png`) });
                             } catch (error) {
                                 results[name] = { error: String(error).split('\n')[0] };
+                                console.log(`shot ${name}: ${String(error).split('\n')[0]}`);
                             }
                         }
                     }
@@ -287,7 +309,8 @@ suite('Editor refusals: screenshots (e2e)', () => {
                 }
             } finally {
                 fs.writeFileSync(path.join(SHOTS_DIR as string, `measure-${set}.json`), `${JSON.stringify(results, null, 2)}\n`);
-                await closeEditorPage(this, editor);
+                // Not `closeEditorPage`: that sets this test's timeout to the hook's.
+                await (editor as EditorPage).close();
             }
         });
     }
