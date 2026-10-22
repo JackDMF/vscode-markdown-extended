@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
-import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
+import { DEFAULT_INLINE_ENGINE, InlineEngineDefinition } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { EXTENSION_ID, EditMessage, EditorPage, MOD, delay, pointAt } from './pageHarness';
@@ -17,7 +17,8 @@ export const ANY_FIELD = '.mep-object-toolbar .mep-inline-field';
 
 /** What the breadcrumb suites (#8) do on the page: show a document, put the caret, read the bar, the field and the edits. */
 export interface BreadcrumbPage {
-    show(text: string, marker?: string): Promise<void>;
+    /** `text` as the host's document, the page waited for `marker`; with `inline`, read by that engine (the default: the registry's). */
+    show(text: string, marker?: string, inline?: InlineEngineDefinition): Promise<void>;
     /** The host's document again, as after a change made elsewhere: nothing on the page touched (no blur, no scroll). */
     resync(text: string): Promise<void>;
     clickAt(needle: string, index?: number): Promise<void>;
@@ -39,7 +40,7 @@ export function breadcrumbPage(editor: () => EditorPage): BreadcrumbPage {
     let version = 0;
     const page = () => editor().page;
     return {
-        show: async (text: string, marker = 'last paragraph') => {
+        show: async (text: string, marker = 'last paragraph', inline: InlineEngineDefinition = DEFAULT_INLINE_ENGINE) => {
             const p = page();
             await p.mouse.move(2, 2);
             await p.evaluate(() => {
@@ -55,7 +56,7 @@ export function breadcrumbPage(editor: () => EditorPage): BreadcrumbPage {
             });
             const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
             version++;
-            await editor().send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
+            await editor().send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline });
             await p.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
             // Long enough that the next click is no double click with the last one.
             await delay(600);

@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
+import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { EditorPage, UNDO, closeEditorPage, delay, openEditorPage, settle } from './pageHarness';
 import { BAR, CRUMBS, ROW_FIELD, blockRect, breadcrumbPage, rectOf } from './breadcrumbPage';
 
@@ -687,5 +688,77 @@ suite('Editor breadcrumb: an open field through a host resync (e2e)', () => {
         await settle();
         const after = await (editor as EditorPage).edits();
         assert.ok(after.slice(before).every(e => !e.text.includes('.zzz')), 'nothing written');
+    });
+});
+
+/**
+ * What a key costs in a long list (#8 step 10): the breadcrumb's resolver is
+ * O(depth), once per state (`crumbsAt`), and no fit runs while typing — so
+ * typing in the first item of a 1000-item list with a literal costs, key for
+ * key from keydown to the next painted frame, no more than 1.15× typing in the
+ * same list where the engine reads no `{…}` (no breadcrumb, no part entries,
+ * no list literal). Typing in 1000 paragraphs is measured beside it: a list
+ * item's key costs more than a paragraph's before #8 already (the changed
+ * top-level block, the whole list, is written again; 1.34× at 818b1d1).
+ */
+suite('Editor breadcrumb: the cost of a key (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    const b = breadcrumbPage(() => editor as EditorPage);
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    /** The mean time from each of 50 keydowns in `needle`'s block to the frame painted after it, in ms. */
+    const perKey = async (text: string, needle: string, inline = DEFAULT_INLINE_ENGINE): Promise<number> => {
+        await b.show(text, 'last paragraph', inline);
+        await b.clickAt(needle, 3);
+        await page.evaluate(() => {
+            const w = window as unknown as { keyTimes: number[] };
+            w.keyTimes = [];
+            document.addEventListener('keydown', () => {
+                const start = performance.now();
+                requestAnimationFrame(() => setTimeout(() => w.keyTimes.push(performance.now() - start), 0));
+            }, { capture: true });
+        });
+        for (const ch of 'the quick brown fox jumps over the lazy dog again!') {
+            await page.keyboard.type(ch);
+            await delay(40);
+        }
+        await delay(300);
+        const times = await page.evaluate(() => (window as unknown as { keyTimes: number[] }).keyTimes);
+        assert.ok(times.length >= 50, `${times.length} keys measured`);
+        return times.reduce((a, t) => a + t, 0) / times.length;
+    };
+
+    test('typing in a 1000-item list with a literal costs no more than 1.15× the same list where no {…} is read', async function () {
+        this.timeout(240000);
+        const items = Array.from({ length: 1000 }, (_, k) => `- Item ${k + 1} of the list`).join('\n');
+        const list = `${items}\n\n{.steps}\n\nThe last paragraph.\n`;
+        const plain = `${items}\n\nThe last paragraph.\n`;
+        const paragraphs = `${Array.from({ length: 1000 }, (_, k) => `Paragraph ${k + 1} of the document.`).join('\n\n')}\n\nThe last paragraph.\n`;
+        const off = { ...DEFAULT_INLINE_ENGINE, attrs: false };
+        // Twice each, interleaved: the better run of each, so a busy moment of the machine is not the editor's.
+        const runs = { list: [] as number[], off: [] as number[], paragraphs: [] as number[] };
+        for (let k = 0; k < 2; k++) {
+            runs.off.push(await perKey(plain, 'Item 1 of', off));
+            runs.list.push(await perKey(list, 'Item 1 of'));
+            runs.paragraphs.push(await perKey(paragraphs, 'Paragraph 1 of'));
+        }
+        const best = (xs: number[]) => Math.min(...xs);
+        const ratio = best(runs.list) / best(runs.off);
+        console.log(`#8 cost per key (ms, best of 2): list ${best(runs.list).toFixed(2)}, list with no {…} read ${best(runs.off).toFixed(2)}, 1000 paragraphs ${best(runs.paragraphs).toFixed(2)}; `
+            + `list/no-{…} ${ratio.toFixed(3)}, list/paragraphs ${(best(runs.list) / best(runs.paragraphs)).toFixed(3)}`);
+        assert.ok(ratio <= 1.15, `per key in the list ${best(runs.list).toFixed(2)} ms vs ${best(runs.off).toFixed(2)} ms with no {…} read: ${ratio.toFixed(3)}×`);
     });
 });

@@ -12,6 +12,17 @@
 - Refusal messages reworded in plain language; values you typed appear in code font.
 - Screen readers hear each hint through one status region, once.
 - PNG and JPEG export no longer hangs on macOS while the display sleeps.
+- Nested blocks show a breadcrumb bar, e.g. "List › List item"; each part opens its own attributes field.
+- Bar and Block type menu now name the same block: in a list, the list item.
+- A block's bar shows its literal, e.g. "Quote {.warning}", and offers Remove attributes.
+- Remove names the part: "Remove attributes of List", or a menu when both parts carry one.
+- Block type offers the outer block too, e.g. "Attributes of List…", each with its own preview card.
+- Headings inside quotes, admonitions and containers take attributes; an admonition offers "Attributes of Heading…".
+- The outer part's field scrolls into view, and the scroll returns when it closes.
+- A list inside a quote is refused attributes with a reason, instead of losing them on save.
+- Admonition, container and quote refusals now say correctly where attributes go.
+- An open attributes field stays open, with what you typed, when the file changes above it.
+- In narrow windows a two-part bar keeps its verbs' names; the outer part moves into "…".
 
 ## v4.9.0 — Layers That Keep Their Place
 
