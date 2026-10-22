@@ -173,7 +173,8 @@ suite('Editor toolbar (e2e)', () => {
         assert.deepStrictEqual([...inMenus].sort(), TOOLBAR_ACTIONS.filter(a => menuOf(a) !== null).map(a => a.id).sort(), 'every action but the row\'s and the bubble\'s own is in a menu');
         for (const menu of ['block-type', 'formatting', 'annotation', 'insert']) {
             await openMenu(menu);
-            const entries = await page.$$eval(`${panel(menu)} .mep-menu-item`, items => items.map(item => {
+            // The entries drawn: the Block type menu's outer attributes entry (#8) is not, where the caret has no outer block.
+            const entries = await page.$$eval(`${panel(menu)} .mep-menu-item:not([hidden])`, items => items.map(item => {
                 // A Block type entry draws its label as the element; every other one has a glyph, clipped, never zoomed.
                 const holder = (item.querySelector('.mep-entry-sample') ?? item.querySelector('.mep-entry-glyph')) as HTMLElement;
                 const sample = holder.querySelector('.mep-sample > *') as HTMLElement | null;

@@ -48,13 +48,13 @@ import { addPropertyAt } from '../properties';
 import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
     applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLinkTransaction,
-    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLockReason,
+    insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, NO_BLOCK_ATTRS_REFUSAL, objectAtSelection, spanLockReason, blockPartsAt, AttributesTarget,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
 import { attributesField, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    ActionPreview, BUBBLE_OVERFLOW, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
+    ActionPreview, BLOCK_CARDS, BUBBLE_OVERFLOW, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
     TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, isRowMark, menuOf, moreOrder, submenuOf, tipOf,
 } from './actions';
 import { buildMoreEntry, fitWithMore, holdFocus, moreControl, moreName, overflows, setMoreEntryState } from '../overflow';
@@ -306,6 +306,21 @@ export interface ActionState {
     preview?: ActionPreview;
     /** The button's accessible name, where the selection decides what it does (the bubble's `{…}`). */
     ariaLabel?: string;
+    /** Not drawn here at all: a menu's second attributes entry where there is no outer block (#8). */
+    hidden?: boolean;
+}
+
+/**
+ * The card a block's attributes entry shows, by the block at `pos` (#8,
+ * `BLOCK_CARDS`): a list item's by its list's kind, a list's, a quote's … —
+ * the paragraph's for any block without one of its own.
+ */
+function blockCardAt(state: EditorState, pos: number): { syntax: string; preview: ActionPreview } {
+    const node = state.doc.nodeAt(pos);
+    const parent = pos <= state.doc.content.size ? state.doc.resolve(pos).parent : null;
+    const key = node?.type.name === 'list_item' && parent?.type.name === 'ordered_list' ? 'ordered_list_item' : node?.type.name ?? 'paragraph';
+    const card = BLOCK_CARDS[key] ?? BLOCK_CARDS.paragraph;
+    return { syntax: card.column, preview: card.preview };
 }
 
 /** Whether each action applies at the selection, and whether it is what the selection already has. */
@@ -354,11 +369,23 @@ export function evaluate(action: ToolbarAction, state: EditorState, includes: bo
             return { enabled: reason === null, active: false, reason };
         }
         case 'block-attrs': {
-            // Named by the block it acts on (`attributeHolderAt`'s block half), the refused form by none.
+            if (apply.part === 'outer') {
+                // The Block type menu's second entry (#8): the block around the caret's, from the one resolver the bar reads.
+                const outer = blockPartsAt(state).outer;
+                if (outer === null) {
+                    return { enabled: false, active: false, reason: null, label: action.label, hidden: true };
+                }
+                const card = blockCardAt(state, outer.from);
+                const label = `Attributes of ${outer.name}…`;
+                return outer.refusal !== null || outer.target === null
+                    ? { enabled: false, active: false, reason: outer.refusal ?? NO_BLOCK_ATTRS_REFUSAL, label, ...card }
+                    : { enabled: true, active: false, reason: null, label, ...card };
+            }
+            // Named by the block it acts on (`attributeHolderAt`'s block half), the refused form by none; carded by it (#8).
             const target = attributeHolderAt(state).block;
             return 'refusal' in target
                 ? { enabled: false, active: false, reason: target.refusal, label: 'Attributes of Block…' }
-                : { enabled: true, active: false, reason: null, label: `Attributes of ${target.name}…` };
+                : { enabled: true, active: false, reason: null, label: `Attributes of ${target.name}…`, ...blockCardAt(state, target.pos) };
         }
         case 'inline-attrs': {
             // Named by the inline element it acts on, the one its bar and the bubble name (`attributeHolderAt`),
@@ -698,6 +725,9 @@ class ToolbarView implements PluginView {
                 if (tool.action.named) {
                     relabel(tool.el, s.label ?? tool.action.label);
                     resyntax(tool.el, s.syntax ?? tool.action.column ?? tool.action.syntax.split('\n')[0]);
+                    // The second attributes entry (#8) is drawn only where there is an outer block, and not while the row is locked.
+                    const outer = tool.action.apply.kind === 'block-attrs' && tool.action.apply.part === 'outer';
+                    tool.el.hidden = s.hidden === true || (outer && lock !== null);
                 }
                 continue;
             }
@@ -1993,7 +2023,7 @@ class ToolbarView implements PluginView {
                 this.askSpanLiteral();
                 return;
             case 'block-attrs':
-                this.askBlockAttributes();
+                this.askBlockAttributes(apply.part);
                 return;
             case 'inline-attrs':
                 this.askInlineAttributes();
@@ -2056,8 +2086,18 @@ class ToolbarView implements PluginView {
      * with its literal — empty, `.class` its placeholder, when it has none — and `Enter` sets it
      * where markdown-it-attrs reads it for that block (`commitAttributes`).
      */
-    private askBlockAttributes(): void {
-        const target = attributesTargetAt(this.view.state);
+    private askBlockAttributes(part?: 'outer'): void {
+        let target: AttributesTarget | { refusal: Said };
+        if (part === 'outer') {
+            // The block around the caret's (#8): its part read again now, from the one resolver the bar reads.
+            const outer = blockPartsAt(this.view.state).outer;
+            if (outer === null) {
+                return;
+            }
+            target = outer.target !== null && 'pos' in outer.target ? outer.target : { refusal: outer.refusal ?? NO_BLOCK_ATTRS_REFUSAL };
+        } else {
+            target = attributesTargetAt(this.view.state);
+        }
         if ('refusal' in target) {
             showHint(this.view, target.refusal, 'refusal');
             return;
