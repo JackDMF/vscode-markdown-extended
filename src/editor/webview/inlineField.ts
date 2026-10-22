@@ -66,6 +66,8 @@ export interface InlineFieldOptions {
      * commits, `Esc` closes the list first.
      */
     complete?: Completer;
+    /** The value as it is now, after every change typed or pasted into the field (the bar redraws its keys line from it). */
+    onChange?(value: string): void;
     /** `Enter`: the value as typed. The field is already closed. */
     onCommit(value: string): void;
     /** `Esc`, or the focus leaving the field. The field is already closed. */
@@ -80,31 +82,6 @@ export interface InlineFieldOptions {
  */
 export function fieldHeading(object: string, field: string): string {
     return object === '' || object.toLowerCase().endsWith(field.toLowerCase()) ? object || field : `${object} · ${field}`;
-}
-
-/** The keys line a bar draws at a field's right (`FieldStep.keys`). */
-export function fieldKeys(text: string): HTMLElement {
-    const el = document.createElement('span');
-    el.className = 'mep-field-keys';
-    el.setAttribute('aria-hidden', 'true');
-    el.textContent = text;
-    return el;
-}
-
-/**
- * What a bar draws at a field's right, the one rule for every bar that shows
- * a field: the reason a commit was refused (`FieldStep.refusal`), announced,
- * else the keys line (`fieldKeys`), else nothing.
- */
-export function fieldAside(step: { keys?: string; refusal?: string }): HTMLElement[] {
-    if (step.refusal) {
-        const el = document.createElement('span');
-        el.className = 'mep-field-refusal';
-        el.setAttribute('role', 'alert');
-        el.textContent = step.refusal;
-        return [el];
-    }
-    return step.keys ? [fieldKeys(step.keys)] : [];
 }
 
 /** The completion list's footer: its keys, the glyphs VS Code's own keybinding labels use. */
@@ -256,13 +233,19 @@ export class InlineField extends InlineControl<HTMLInputElement> {
             input.setAttribute('aria-expanded', 'false');
             input.setAttribute('aria-controls', this.listId);
             input.autocomplete = 'off';
-            input.addEventListener('input', () => {
-                // What is typed now is the value: `Enter` before the next
-                // answer commits it, not a choice made for the earlier text.
-                this.choose(-1);
-                this.scheduleQuery();
-            });
         }
+        input.addEventListener('input', () => this.changed());
+    }
+
+    /** What was typed or pasted is the value now: completions asked for it, the owner told. */
+    private changed(): void {
+        if (this.options.complete) {
+            // What is typed now is the value: `Enter` before the next
+            // answer commits it, not a choice made for the earlier text.
+            this.choose(-1);
+            this.scheduleQuery();
+        }
+        this.options.onChange?.(this.el.value);
     }
 
     /** Take the focus, the value selected — or the caret where the options put it — and ask for completions. */

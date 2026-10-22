@@ -38,7 +38,8 @@ import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { LayerSlot, REST_MS, caretRect, placeCard, placeMenu, rangeAnchor } from '../placement';
 import { showHint } from '../hint';
-import { FieldStep, InlineField, fieldAside, fieldHeading, refusedStep } from '../inlineField';
+import { FieldStep, InlineField, fieldHeading, refusedStep } from '../inlineField';
+import { FieldRow } from '../fieldRow';
 import { chevronNode, lensLabelNodes } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { ControlRole, FocusPlace, RowScope, focusPlace, lockForms, placeOfElement, rowLock } from '../focusPlace';
@@ -462,7 +463,7 @@ class ToolbarView implements PluginView {
     private readonly listeners: [EventTarget, string, EventListener, boolean][] = [];
     private cardTimer: ReturnType<typeof setTimeout> | undefined;
     /** The field an action asked for a value in (a span's literal, a link's address, an image's alt text), while it is open. */
-    private fieldBar: { bar: HTMLElement; field: InlineField } | null = null;
+    private fieldBar: { bar: HTMLElement; field: InlineField; row: FieldRow } | null = null;
     private destroyed = false;
     /** The row's reason while it is locked (`layoutRow`), in the row, and what kind of control locked it; `null` when none does. */
     private lockNote!: HTMLElement;
@@ -1997,6 +1998,7 @@ class ToolbarView implements PluginView {
         const key = `field@${from}-${to}`;
         const close = () => {
             if (this.fieldBar?.bar === bar) {
+                this.fieldBar.row.destroy();
                 this.fieldBar = null;
             }
             this.slot.release(key);
@@ -2004,12 +2006,13 @@ class ToolbarView implements PluginView {
             clearPendingRange(view);
         };
         const open = (step: FieldStep) => {
-            const field = new InlineField({
+            const field: InlineField = new InlineField({
                 value: step.value,
                 caret: step.caret,
                 label: step.label,
                 placeholder: step.placeholder,
                 complete: step.complete,
+                onChange: value => (this.fieldBar?.field === field ? this.fieldBar.row.changed(value) : undefined),
                 onCommit: value => {
                     const next = step.commit(value);
                     if (next) {
@@ -2028,9 +2031,11 @@ class ToolbarView implements PluginView {
             field.el.dataset.verb = verb;
             label.textContent = fieldHeading(barLabel, step.label);
             // Its title drawn as every bar's: a muted label, a divider after it.
-            bar.replaceChildren(label, barSeparator(), field.el, ...fieldAside(step));
             const again = this.fieldBar?.bar === bar;
-            this.fieldBar = { bar, field };
+            this.fieldBar?.row.destroy();
+            const row = new FieldRow(bar, [label, barSeparator()], field, step, { contentChanged: () => this.slot.contentChanged(key) });
+            row.render();
+            this.fieldBar = { bar, field, row };
             if (again) {
                 // A next step, or a refusal's line: the bar's size changed under the same claim.
                 this.slot.contentChanged(key);
@@ -2053,6 +2058,7 @@ class ToolbarView implements PluginView {
                     this.closeFieldBar();
                 }
             },
+            fit: room => (this.fieldBar?.bar === bar ? this.fieldBar.row.fit(room) : undefined),
         }, { force: true });
         if (!granted) {
             this.closeFieldBar();
@@ -2066,6 +2072,7 @@ class ToolbarView implements PluginView {
     private closeFieldBar(): void {
         const open = this.fieldBar;
         this.fieldBar = null;
+        open?.row.destroy();
         open?.field.dispose();
         open?.bar.remove();
         const claim = this.slot.current;

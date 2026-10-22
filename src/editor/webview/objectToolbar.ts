@@ -59,7 +59,8 @@ import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
 import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
 import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
-import { FieldStep, InlineChoice, InlineField, fieldAside, fieldHeading, refusedStep } from './inlineField';
+import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
+import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
 import { embedAsTextTransaction } from './wikiEmbeds';
 import { emojiAsTextTransaction, emojiTextStillRead, selectEmojiBeside } from './emoji';
@@ -465,6 +466,8 @@ interface BarEvents {
     /** A field opened for `object`, editing `target` within it when given: what it acts on is drawn (`pendingRange.ts`). */
     fieldOpened(object: EditorObject, target?: { from: number; to: number }): void;
     fieldClosed(committed: boolean): void;
+    /** The open field's row changed size (its keys line, a refusal cleared): the slot places it again. */
+    fieldResized(): void;
     /** The bar went with its field open: the view hides it from inside an update, so the drawing goes after it. */
     fieldDropped(): void;
     /** A verb's menu opened or closed, or its button took or lost the focus or the pointer: what it drives (a table's row or column tint) is drawn anew (`activeVerb`). */
@@ -476,6 +479,8 @@ class ObjectBar {
     readonly el: HTMLElement;
     object: EditorObject | null = null;
     private field: InlineField | InlineChoice | null = null;
+    /** What draws the field's row while it is open (`fieldRow.ts`). */
+    private row: FieldRow | null = null;
     private signature = '';
     /** What the last `fit` was for — the room and the signature — so a scroll frame that changed neither measures nothing (`refit` forgets it). */
     private fitted = '';
@@ -555,6 +560,7 @@ class ObjectBar {
         this.tips.hide(this.el);
         this.closeMenu(false);
         if (this.field) {
+            this.dropRow();
             this.field.dispose();
             this.events.fieldDropped();
         }
@@ -704,6 +710,17 @@ class ObjectBar {
                 }
             },
         }));
+    }
+
+    /** The open field's row fitted to `room` before the slot places it (`FieldRow.fit`). */
+    fitField(room: number): void {
+        this.row?.fit(room);
+    }
+
+    /** The field's row is gone with its field: what it set on the bar goes too. */
+    private dropRow(): void {
+        this.row?.destroy();
+        this.row = null;
     }
 
     /** Fit again at the next placing, though neither the room nor the bar changed: a font loaded late changed the labels' widths. */
@@ -1000,9 +1017,13 @@ class ObjectBar {
             ? (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
                 new InlineChoice({ choices: spec.options, value: spec.value, label: spec.label, ...callbacks })
             : (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
-                new InlineField({ value: spec.value, caret: spec.caret, label: spec.label, placeholder: spec.placeholder, complete: spec.complete, ...callbacks });
+                new InlineField({
+                    value: spec.value, caret: spec.caret, label: spec.label, placeholder: spec.placeholder, complete: spec.complete,
+                    onChange: value => this.row?.changed(value), ...callbacks,
+                });
         const field = make({
             onCommit: value => {
+                this.dropRow();
                 this.field = null;
                 this.signature = '';
                 const next = spec.commit(value);
@@ -1013,6 +1034,7 @@ class ObjectBar {
                 this.events.fieldClosed(true);
             },
             onCancel: reason => {
+                this.dropRow();
                 this.field = null;
                 this.signature = '';
                 if (reason === 'escape') {
@@ -1034,9 +1056,10 @@ class ObjectBar {
             this.el.setAttribute('aria-label', this.name);
         }
         this.fitted = '';
-        const aside = 'options' in spec ? [] : fieldAside(spec);
         this.tips.hide(this.el);
-        this.el.replaceChildren(...(label ? [label, barSeparator()] : []), field.el, ...aside);
+        this.dropRow();
+        this.row = new FieldRow(this.el, label ? [label, barSeparator()] : [], field, 'options' in spec ? null : spec, { contentChanged: () => this.events.fieldResized() });
+        this.row.render();
         field.focus();
         if (this.object) {
             this.events.fieldOpened(this.object, verb.target);
@@ -1193,6 +1216,11 @@ class ObjectToolbarView implements PluginView {
                 clearPendingRange(this.view);
                 this.refresh();
             },
+            fieldResized: () => {
+                if (this.fieldKey !== null) {
+                    this.slot.contentChanged(this.fieldKey);
+                }
+            },
             fieldDropped: () => {
                 this.fieldGone();
                 setTimeout(() => {
@@ -1245,6 +1273,7 @@ class ObjectToolbarView implements PluginView {
             },
             valid: () => bar.editing,
             hidden: () => this.barHidden(bar, 'displaced'),
+            fit: room => bar.fitField(room),
         }, { force: true });
     }
 
