@@ -3,9 +3,11 @@
  * block — the Formatting menu's entry for the block at the caret, and the verb
  * of the same name on the bars of the blocks that have one (a heading, a table,
  * a block already carrying a literal — a bar is not drawn for this verb alone).
- * One step for every surface, so the menu
- * and a bar cannot prefill, refuse or announce differently; what the literal
- * does to the document is `commitAttributes` (`objects.ts`).
+ * One field for every surface (`attributesField`), so the menus, a bar and
+ * the bubble cannot prefill, refuse or announce differently; how it shows a
+ * literal and reads one back — the braces its own, the value between them —
+ * is `attributeLiteral.ts`; what the literal does to the document is
+ * `commitAttributes` (`objects.ts`).
  *
  * Where each block's literal goes — where markdown-it-attrs reads it for that
  * construct, checked against the plugin's patterns and the engine

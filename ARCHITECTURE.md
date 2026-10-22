@@ -771,8 +771,8 @@ condition of it, so a holder around the object hides none inside it; its field d
 element, not the object, while it is open) — and, where there is no
 object, a bar of the bare holder's own, never drawn on a caret rest and kept while the
 selection stays in its run; and the bubble's `{…}`, which gives a selection within one
-holder's run that holder's attributes — marked meanwhile, its accessible name saying which —
-and any other selection a span. The block half is
+holder's run that holder's attributes — marked meanwhile, its accessible name saying which,
+its tooltip's second line what it does over plain text — and any other selection a span. The block half is
 `attributesTargetAt`, which names **Attributes of Paragraph…**. A link's bar has
 **Attributes…**, an image's has it after *Edit image…*, and a run of emphasis,
 strikethrough, a highlight, code, superscript, subscript or a key carrying a literal is an
@@ -783,8 +783,11 @@ makes a removal and which, on a bare holder, gives its mark the literal over its
 **A refused field stays open** (`FieldStep.refusal`, `refusedStep` in `inlineField.ts`):
 a commit that refuses what was typed returns the same step with the typed value and the
 reason, and both bars that show fields (`ObjectBar.openField`, `Toolbar.openFieldBar`)
-draw it again with the reason in the keys' place, announced as an alert (`fieldAside`), the
-caret at the end of what was typed. The refusal is asked before the focus goes back to the
+hand the drawing to one row (`FieldRow`, `webview/fieldRow.ts`): the keys line stays, the
+reason goes on a line of its own under the field, the input `aria-invalid` and described by
+the reason — read once as the focus enters the field shown again, so no `role="alert"`
+besides — framed in `inputValidation-warningBorder` (thicker and dashed in High Contrast),
+the caret at the end of what was typed; the next edit clears it all. The refusal is asked before the focus goes back to the
 text; the transaction is built after, since that may commit a source box. Every
 attributes field answers so; a caret hint for a refusal would close the field and lose what
 was typed.
@@ -862,13 +865,23 @@ would be *Attributes…* on a block with no literal yet — every plain heading 
 quote and a list item without a literal, and a plain heading with no lenses or actions,
 reach it through the menu only. Both surfaces open the same field step (`attributesStep`) and commit through the same
 rule (`commitAttributes` in `objects.ts`), so they cannot prefill, refuse or announce
-differently. The field is labelled with the block's name (*Paragraph · Attributes*),
-placed at the block by the bars' ladder, prefilled with the literal — or `{.}` with the
-caret after the dot when there is none — and takes the whole literal (`.class`, `#id`,
-`key=value`, `key="a value"`); at its right the bar says so, `↵ set · Esc cancel ·
-{.class #id key=value}` (`FieldStep.keys`), and **Span with class**'s field says the same. `Enter` sets it in one transaction, so one undo step, and
-the hint says *Attributes set — Ctrl+Z*; `{}` or an empty field removes it (*Attributes
-removed — Ctrl+Z*); `Esc` changes nothing. A literal markdown-it-attrs would not read
+differently. **The attributes field** is one for every route — a block's, an inline
+element's, Span with class's (`attributesField` in `attributes.ts`; its spelling rules in
+`attributeLiteral.ts`, pure). It draws the braces itself, fixed, muted, hidden from a screen
+reader and unselectable (`InlineFieldOptions.adorn`), so the value is only what stands
+between them: the literal prefilled and selected, or empty with the placeholder `.class`
+where there never was one (none once an existing one is emptied). A paste or a typed closing
+brace that brings in a whole `{…}` loses one outer pair (`stripOuterPair`); `Enter` drops a
+stray leading `{` or trailing `}` and braces the rest (`literalFrom`). It is titled by the
+element it edits, whichever bar opened it (*Paragraph · Attributes*, *Bold · Attributes*:
+`FieldStep.heading`, `attributesTitle`), stands at that element (a run's verb carries it as
+`target`), and its keys line follows the value (`keysFor`): `↵ set · Esc cancel · empty
+removes · .class #id key=value`, the syntax in the code font, and once an existing literal is
+emptied `↵ removes .x #y · Esc keeps them` in the text's colour. `Enter` sets it in one
+transaction, so one undo step, and the hint says *Attributes set — Ctrl+Z*; an empty field
+removes it (*Attributes removed — Ctrl+Z*); `Esc` changes nothing. A refusal names the
+literal as the field shows it, without its braces (`literalRefusal`; the code block's
+opening line, whose text holds them, has it named whole). A literal markdown-it-attrs would not read
 back whole is refused with the reason beside the field, which stays open with it
 (`literalRefusal`, the stage-3 reader; `refusedStep`). The block is the innermost list item holding the selection, else the top-level
 block: a nested paragraph's literal is not written, so the caret in a paragraph in a quote
@@ -931,7 +944,7 @@ splitting the wrapper in two, as ProseMirror's `liftEmptyBlock` would; `Backspac
 start of an empty first paragraph lifts the wrapper's blocks out (`unwrapTransaction`, the
 same transaction as the bars' *Remove …, keep content*). The toolbar inserts both natively
 (`insertWrapperTransaction`, `insert-wrapper`), and **Span with class** (`attr-span`) asks
-for the literal in the inline field, prefilled `{.}` with the caret after the dot;
+for the literal in the attributes field (above), empty between the braces it draws;
 **Attributes…** (`block-attrs`) does the same for the block at the caret (above).
 
 ### Tables
@@ -1561,7 +1574,10 @@ heavy as frequent ones. So the surfaces now divide the work:
   line) is cut first. A Block type entry draws its word as the element instead
   (`drawnLabel`): "Heading 1" in h1's style, without the headings' rules; such a sample is
   scaled into the entry with `zoom`, measured when the menu opens (`fitSamples`), but no
-  lower than 0.75 — beyond, it is clipped (the code block's stood at 0.42). Groups are divided
+  lower than 0.75 — beyond, it is clipped (the code block's stood at 0.42). The one Block type
+  entry that is no block type, **Attributes of Paragraph…** (`block-type-attributes`), stands
+  last after a divider with its `{…}` glyph: Formatting's entry again (`BLOCK_ATTRIBUTES`), its
+  name, state and card from the same `block-attrs` case. Groups are divided
   (`separated`), as the workbench divides its menus; an entry has no hover — its card shows the
   construct and the refusal — and a refused one says why in its `aria-description`. The
   admonition types are a submenu of Insert: the eleven canonical types, then "More types…
@@ -2017,8 +2033,11 @@ command's keybinding. The hint is the one the notes plugin shows a refusal in; o
 
 **The inline field** (`webview/inlineField.ts`) is one reusable component for every place a
 value is asked for where it is used — the verbs' fields, and the toolbar's **Span with
-class**, which opens it prefilled `{.}` with the caret after the dot (`caret`) in a bar of
-the same kind under the selection. `InlineChoice` is its counterpart for a value out of a
+class**, which opens the attributes field (empty between its fixed braces, `adorn`) in a
+bar of the same kind under the selection. A field bar's row — heading, field, keys line, a
+refusal's reason — is drawn by one `FieldRow` for both bars; it wraps rather than clipping,
+and where the bar's room is too narrow for the keys line beside the field (`FieldRow.fit`,
+before the slot places it) the keys line goes under it (`mep-narrow`). `InlineChoice` is its counterpart for a value out of a
 list (an admonition's type): a `<select>` with the same contract, picking a value commits
 it. The field is a one-line `<input>` opened prefilled with the value selected; `Enter` commits, `Esc`
 cancels, the focus moving elsewhere in the page cancels — a click elsewhere never applies a

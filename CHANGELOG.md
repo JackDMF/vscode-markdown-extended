@@ -52,6 +52,17 @@
 - Copying a code block no longer carries the editor's language tag.
 - The "No actions here" hint fits one line; the fence in an indented block's tooltip is in the code font.
 - The Row and Column menus set Delete apart after a divider; the cell's ring no longer matches the focus outline.
+- The attributes field draws its braces as a fixed frame; you type only what goes between them.
+- A pasted or typed {…} loses its outer braces; a stray brace is dropped on Enter.
+- Every attributes field is titled by the element it edits: "Bold · Attributes", "Quote · Attributes", "Span · Attributes".
+- The keys line says when Enter removes: "↵ removes .x #y · Esc keeps them".
+- A refused value keeps the keys line and shows the reason under the field, in amber; the next edit clears it.
+- A field with no literal yet shows the placeholder ".class"; an emptied one shows none.
+- The Block type menu offers "Attributes of Paragraph…" after a divider, as Formatting does.
+- The bubble's {…} tooltip says what it does over plain text: Span with class….
+- A refusal names the value as the field shows it, without braces.
+- An attributes field opens at the element it edits, not at the bar that opened it.
+- In a narrow editor a field's keys line moves under the field instead of being cut; the title never truncates.
 
 ## v4.8.0 — Bars, Labels and Notes That Fit
 
