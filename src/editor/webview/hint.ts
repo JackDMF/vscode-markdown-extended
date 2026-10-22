@@ -30,7 +30,7 @@
  */
 import { EditorState, NodeSelection, Plugin, PluginKey, Selection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { UNDO_BINDING, keyLabel } from '../keys';
+import { APPLY_BINDING, UNDO_BINDING, keyLabel } from '../keys';
 import { REANNOUNCE_GAP_MS, refusalMs } from '../refusal';
 import { Said, saidParts, saidText } from '../tips';
 import { placeOfElement } from './focusPlace';
@@ -386,9 +386,9 @@ export function undoHint(done: string): string {
     return `${done} — ${undoKey()}`;
 }
 
-/** The key that applies a source box, as the platform names it. */
+/** The key that applies a source box (`APPLY_BINDING`), as the platform names it: `Cmd+Enter` on macOS, `Ctrl+Enter` elsewhere. */
 export function applyKey(): string {
-    return macKeys() ? 'Cmd+Enter' : 'Ctrl+Enter';
+    return keyLabel(APPLY_BINDING, macKeys());
 }
 
 /** The hint's element for the view, made with the view and removed with it. */

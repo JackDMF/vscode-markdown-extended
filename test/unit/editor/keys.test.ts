@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { MODIFIER_KEYS, REDO_BINDINGS, UNDO_BINDING, ariaKeyshortcuts, bindingMatches, keyLabel, typesText } from '../../../src/editor/keys';
+import { APPLY_BINDING, MODIFIER_KEYS, REDO_BINDINGS, UNDO_BINDING, ariaKeyshortcuts, bindingMatches, keyLabel, typesText } from '../../../src/editor/keys';
 
 /**
  * The key a hint names is the binding the page's keymap binds (`keys.ts`),
@@ -11,6 +11,13 @@ suite('Editor keys: a binding as the platform names it', () => {
         assert.strictEqual(keyLabel('Mod-z', true), 'Cmd+Z');
         assert.strictEqual(keyLabel('Mod-Enter', false), 'Ctrl+Enter');
         assert.strictEqual(keyLabel('Mod-Shift-z', false), 'Ctrl+Shift+Z');
+    });
+
+    test('the apply binding spells the source box\'s key exactly as it was written before: Cmd+Enter on a Mac, Ctrl+Enter elsewhere (#10 R8b)', () => {
+        assert.strictEqual(APPLY_BINDING, 'Mod-Enter');
+        assert.strictEqual(keyLabel(APPLY_BINDING, true), 'Cmd+Enter');
+        assert.strictEqual(keyLabel(APPLY_BINDING, false), 'Ctrl+Enter');
+        assert.deepStrictEqual([ariaKeyshortcuts(APPLY_BINDING, true), ariaKeyshortcuts(APPLY_BINDING, false)], ['Meta+Enter', 'Control+Enter']);
     });
 
     test('the undo binding is the one the undo hints name', () => {

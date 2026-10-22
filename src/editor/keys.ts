@@ -17,6 +17,9 @@
 /** What undoes in the page (`plugins.ts`), in ProseMirror's keymap notation. */
 export const UNDO_BINDING = 'Mod-z';
 
+/** What applies a source box (`nodeViews.ts`): its Apply button and the row's lock name it (`applyKey`). */
+export const APPLY_BINDING = 'Mod-Enter';
+
 /** What redoes in the page (`plugins.ts`). */
 export const REDO_BINDINGS: readonly string[] = ['Mod-y', 'Mod-Shift-z'];
 

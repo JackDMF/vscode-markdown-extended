@@ -2,8 +2,8 @@ import { DOMOutputSpec, DOMSerializer, Node } from 'prosemirror-model';
 import { EditorView, NodeView, ViewMutationRecord } from 'prosemirror-view';
 import type { DeclaredControl } from './focusPlace';
 import { followLinksIn } from './links';
-import { REDO_BINDINGS, UNDO_BINDING, bindingMatches } from '../keys';
-import { macKeys } from './hint';
+import { APPLY_BINDING, REDO_BINDINGS, UNDO_BINDING, ariaKeyshortcuts, bindingMatches } from '../keys';
+import { applyKey, macKeys } from './hint';
 
 /** What the node views need from the page around them. */
 export interface EditorPort {
@@ -117,6 +117,8 @@ abstract class AtomView implements NodeView {
 export class RawBlockView extends AtomView implements SourceEditor {
     private readonly content: HTMLElement;
     private editor: HTMLTextAreaElement | null = null;
+    /** Apply and Cancel under the open box (`sourceActions`), gone with it. */
+    private actions: HTMLElement | null = null;
     private untrack: (() => void) | null = null;
 
     constructor(node: Node, private readonly getPos: GetPos, private readonly port: EditorPort) {
@@ -173,7 +175,8 @@ export class RawBlockView extends AtomView implements SourceEditor {
      */
     stopEvent(event: Event): boolean {
         const target = event.target as globalThis.Node | null;
-        return target !== null && this.holdsFocusOf(target);
+        // Apply and Cancel under the box are the box's too: ProseMirror's mousedown would select the block.
+        return target !== null && (this.holdsFocusOf(target) || (this.actions?.contains(target) ?? false));
     }
 
     /** Whether `el` is in the open source box: the block's one control (`rawBlockControl`). */
@@ -215,9 +218,10 @@ export class RawBlockView extends AtomView implements SourceEditor {
         area.addEventListener('blur', () => this.stopEditing(true));
         this.dom.classList.remove('ProseMirror-selectednode');
         this.editor = area;
+        this.actions = sourceActions(apply => this.stopEditing(apply));
         this.untrack = this.port.trackSourceEditor(this);
         this.dom.classList.add('mep-editing');
-        this.content.replaceChildren(area);
+        this.content.replaceChildren(area, this.actions);
         area.focus();
         // At the end, where a person adding to the block starts; the source
         // lines do not map to points of the rendering, so a double click cannot
@@ -251,6 +255,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
             return;
         }
         this.editor = null;
+        this.actions = null;
         this.untrack?.();
         this.untrack = null;
         this.dom.classList.remove('mep-editing');
@@ -284,6 +289,39 @@ function inertControls(content: HTMLElement): void {
             e.preventDefault();
         }
     });
+}
+
+/**
+ * Apply and Cancel under an open source box, at its right end (#10, Daniel
+ * 2026-10-22), each naming its key. A press never takes the focus from the
+ * textarea — whose blur applies — so Cancel cannot apply on the way out:
+ * pointerdown and mousedown are prevented, and the buttons are out of the
+ * Tab order (Tab onto one would blur the box and apply it).
+ */
+function sourceActions(stop: (apply: boolean) => void): HTMLElement {
+    const actions = element('div', 'mep-raw-actions');
+    const button = (cls: string, label: string, key: string, shortcut: string, apply: boolean) => {
+        const b = element('button', cls, label);
+        b.type = 'button';
+        b.tabIndex = -1;
+        b.setAttribute('aria-keyshortcuts', shortcut);
+        const k = element('span', 'mep-raw-key', key);
+        k.setAttribute('aria-hidden', 'true');
+        b.append(k);
+        b.addEventListener('click', e => {
+            e.preventDefault();
+            stop(apply);
+        });
+        return b;
+    };
+    const keep = (e: Event) => e.preventDefault();
+    actions.addEventListener('pointerdown', keep);
+    actions.addEventListener('mousedown', keep);
+    actions.append(
+        button('mep-raw-apply', 'Apply', applyKey(), ariaKeyshortcuts(APPLY_BINDING, macKeys()), true),
+        button('mep-raw-cancel', 'Cancel', 'Esc', 'Escape', false),
+    );
+    return actions;
 }
 
 /** Each raw block's view by its DOM, so the page can reach the view ProseMirror made for a block. */

@@ -1130,6 +1130,31 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 /* High Contrast: the bar changes form as well as colour, as the refused field's frame does. */
 .vscode-high-contrast .mep-hint[data-tone="refusal"] { border-left-width: 4px; border-left-style: double; }
+/*
+ * The source box's buttons (#10): under the box, at its right end, the workbench's button colours; each
+ * names its key. A press never blurs the textarea first (blur applies): pointerdown is prevented on them.
+ */
+.mep-raw-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 4px;
+}
+.mep-raw-actions > button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 8px;
+    font: 12px/20px var(--vscode-font-family, sans-serif);
+    border: 1px solid var(--vscode-button-border, transparent);
+    border-radius: 2px;
+    cursor: pointer;
+}
+.mep-raw-actions > .mep-raw-apply { color: var(--vscode-button-foreground, inherit); background: var(--vscode-button-background, transparent); }
+.mep-raw-actions > .mep-raw-cancel { color: var(--vscode-button-secondaryForeground, inherit); background: var(--vscode-button-secondaryBackground, transparent); }
+.mep-raw-actions .mep-raw-key { font-size: 11px; }
+
 /* Busy Export (#10): why the other formats wait, said once above them at full contrast — a waiting entry is
    dimmed to 0.4, where a reason in its detail column would not be readable. Not focusable; each waiting
    entry's aria-description says the same. */
