@@ -12,6 +12,7 @@
 
 import { lensLabelNodes } from './lenses';
 import { describeAs } from './tooltip';
+import { Said, saidText } from '../tips';
 
 /**
  * Hide the items of `order`, in that order, until `fits()` answers yes.
@@ -73,7 +74,7 @@ export interface MoreEntryOptions {
     /** It opens a menu of its own. */
     opens?: boolean;
     /** Why it cannot be chosen: it is drawn disabled and says why. */
-    refusal?: string | null;
+    refusal?: Said | null;
     /** What the entry says beyond its whole label: its description. Inside "…" the label is whole, so there is no hover. */
     description?: string | null;
 }
@@ -108,7 +109,7 @@ export interface MoreEntryState extends Pick<MoreEntryOptions, 'role' | 'checked
     /** The active class alone, for an entry that has no check (a menu's current type); `checked`, where given, decides it. */
     active?: boolean;
     /** Why it cannot be chosen, `''` when there is nothing to say: drawn disabled. `null` offers it again; `undefined` leaves it as it is. */
-    refusal?: string | null;
+    refusal?: Said | null;
 }
 
 /**
@@ -135,7 +136,8 @@ export function setMoreEntryState(el: HTMLElement, state: MoreEntryState): void 
         el.setAttribute('aria-disabled', String(refused));
     }
     if (state.refusal !== undefined || state.description !== undefined) {
-        const said = [state.description, state.refusal].filter((s): s is string => s !== undefined && s !== null && s !== '').join('\n');
+        const refusal = state.refusal === undefined || state.refusal === null ? state.refusal : saidText(state.refusal);
+        const said = [state.description, refusal].filter((s): s is string => s !== undefined && s !== null && s !== '').join('\n');
         describeAs(el, said);
     }
 }

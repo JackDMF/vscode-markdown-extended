@@ -45,7 +45,7 @@
 import { ADMONITION_FAMILIES, ADMONITION_MARKER, INLINE_MARKERS, KBD_MARKERS, MARKER_NAMES, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
 import { holderNamed, namesOf } from '../../inlineLiterals';
 import { keyLabel } from '../../keys';
-import { Tip, TipPart } from '../../tips';
+import { Said, Tip, TipPart } from '../../tips';
 import { NOTE_LABELS, NoteNodeName } from '../notes';
 
 /** The menus of the row, left to right after the marks' group. */
@@ -268,7 +268,7 @@ export interface TipState {
     /** Its name where the selection names it (`Attributes of Paragraph…`); its own otherwise. */
     label?: string;
     /** Why it is refused here: the tip's second line. */
-    reason?: string | null;
+    reason?: Said | null;
     /** Keys named as on macOS (`macKeys`). */
     mac?: boolean;
 }

@@ -21,7 +21,7 @@
  * which would say it a second time. Where the bar's room is too narrow for the
  * keys line beside the field, it goes under the field (`mep-narrow`, `fit`).
  */
-import type { TipPart } from '../tips';
+import { TipPart, saidParts } from '../tips';
 import type { FieldStep, InlineChoice, InlineField, KeysLine } from './inlineField';
 import { partNode } from './tooltip';
 
@@ -81,11 +81,8 @@ export class FieldRow {
                 // The line takes the row; its text is the capped, amber-marked box inside it (`.mep-field-refusal-text`).
                 const text = document.createElement('span');
                 text.className = 'mep-field-refusal-text';
-                if (step.refusalParts) {
-                    drawParts(text, step.refusalParts(step.refusal, step.value));
-                } else {
-                    text.textContent = step.refusal;
-                }
+                // The refusal component's message (#10): the values it names in muted mono, carried as parts, never recovered from prose.
+                drawParts(text, saidParts(step.refusal));
                 el.append(text);
                 this.reason = el;
             }

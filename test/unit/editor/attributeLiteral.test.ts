@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { VALUE_PREDICATE, WRITE_IT_AS, attributesTitle, attributesTyped, holdsLiteral, innerOf, isRemoval, keysFor, keysLine, literalFrom, refusalParts, stripOuterPair } from '../../../src/editor/attributeLiteral';
+import { attributesTitle, attributesTyped, holdsLiteral, innerOf, isRemoval, keysFor, keysLine, literalFrom, stripOuterPair } from '../../../src/editor/attributeLiteral';
 import { tipText } from '../../../src/editor/tips';
 
 /** The attributes field's spelling rules: the braces drawn by the field, the value what stands between them. */
@@ -83,28 +83,6 @@ suite('Attribute literal: what the field shows and what it commits', () => {
         }
         assert.deepStrictEqual(keysFor('{', null), { kind: 'set', hadLiteral: false }, 'nothing to remove');
         assert.deepStrictEqual(keysFor('{.y', '{.x}'), { kind: 'set', hadLiteral: true });
-    });
-
-    test('refusalParts: the typed value and the suggestion in code parts, the sentence plain', () => {
-        const typed = 'width = 300';
-        const reason = `${typed} is text, not an attribute list: a space beside its = makes it text. ${WRITE_IT_AS}width=300.`;
-        assert.deepStrictEqual(refusalParts(reason, typed), [
-            { code: typed }, ' is text, not an attribute list: a space beside its = makes it text. ', WRITE_IT_AS, { code: 'width=300' }, '.',
-        ]);
-        assert.strictEqual(tipText({ parts: refusalParts(reason, typed) }), reason, 'the same words, drawn apart');
-        assert.deepStrictEqual(refusalParts('href is the link\'s own: change it.', '.a'), ['href is the link\'s own: change it.'], 'a reason that does not start with the value has none to set');
-        assert.deepStrictEqual(refusalParts('An empty value is no attribute list.', ''), ['An empty value is no attribute list.']);
-    });
-
-    test('refusalParts: the value is set apart only where a refusal names it, not where a sentence merely begins with the same letters', () => {
-        // Typing `A` in a quote: a reason that opens "A quote's …" is prose, not the value `A` followed by words about it.
-        const prose = 'A quote\'s literal is written under its last line, which the preview would read as text.';
-        assert.deepStrictEqual(refusalParts(prose, 'A'), [prose], 'plain, though it starts with the typed A');
-        // The same value where a refusal does name it: set apart, whatever follows (each predicate the messages are built with).
-        for (const predicate of Object.values(VALUE_PREDICATE)) {
-            const reason = `A ${predicate} here.`;
-            assert.deepStrictEqual(refusalParts(reason, 'A'), [{ code: 'A' }, ` ${predicate} here.`], predicate);
-        }
     });
 
     test('attributesTyped: "empty removes it" only where there is a literal to remove', () => {

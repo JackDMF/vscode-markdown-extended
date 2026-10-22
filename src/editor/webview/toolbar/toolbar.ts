@@ -59,9 +59,9 @@ import {
 } from './actions';
 import { buildMoreEntry, fitWithMore, holdFocus, moreControl, moreName, overflows, setMoreEntryState } from '../overflow';
 import { ariaKeyshortcuts, keyLabel } from '../../keys';
-import { Tip, TipPart, plainTip } from '../../tips';
+import { Said, Tip, TipPart, plainTip, saidParts, saidText } from '../../tips';
 import { macKeys } from '../hint';
-import { Tooltips, describeAs } from '../tooltip';
+import { Tooltips, describeAs, partNode } from '../tooltip';
 import {
     SourceContext, WRAP_LOCK, blockCommand, blockLockReason, canWrapSource, currentBlock, insertPropertiesTransaction, insertSourceTransaction, insertWrapperTransaction, isCurrent,
     markActive, markRefusal, toggleMarkup, wrapSourceTransaction,
@@ -286,8 +286,8 @@ function div(className: string): HTMLElement {
 export interface ActionState {
     enabled: boolean;
     active: boolean;
-    /** Why a disabled action is disabled, when there is something to say. */
-    reason: string | null;
+    /** Why a disabled action is disabled, when there is something to say: in its tooltip, and at it when pressed (#10). */
+    reason: Said | null;
     /**
      * What the selection names the action (`Attributes of Paragraph…`, `Attributes of Code…`):
      * its sample's text and its tooltip's name, where the action's own label is only the resting form.
@@ -1347,7 +1347,7 @@ class ToolbarView implements PluginView {
         const face = menu.face as HTMLElement;
         const all = [...menu.tools, ...menu.children.flatMap(c => c.tools)];
         let label = MENU_LABELS[menu.id];
-        let reason: string | null = null;
+        let reason: Said | null = null;
         let enabled: boolean;
         if (menu.id === 'block-type') {
             // Named also while locked: a requirement heading is still a heading.
@@ -1809,7 +1809,7 @@ class ToolbarView implements PluginView {
         // A disabled entry says why where the eye already is, not only in its tooltip.
         if (!now.enabled && now.reason) {
             const why = div('mep-preview-refusal');
-            why.textContent = now.reason;
+            why.replaceChildren(...saidParts(now.reason).map(partNode));
             this.card.append(why);
         }
         this.card.dataset.action = action.id;

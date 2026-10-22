@@ -41,14 +41,15 @@ import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
-import { VALUE_PREDICATE, WRITE_IT_AS, innerOf, isRemoval } from '../attributeLiteral';
+import { innerOf, isRemoval } from '../attributeLiteral';
+import { Said, TipPart, said, value } from '../tips';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
-import { VERB } from '../verbs';
+import { VERB, wording } from '../verbs';
 import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_LITERAL_REFUSAL, LANGUAGE_WORD_REFUSAL, isLanguageWord, languageOf, parseOpeningLine, savedFence, savedOpeningLine, withLanguage } from '../fences';
 
 const nodes = editorSchema.nodes;
@@ -245,7 +246,7 @@ function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[]
  * on (`attributesTargetAt`) or why there is none. Where the bars show a mark's
  * object or an image, `inline` is that same object.
  */
-export function attributeHolderAt(state: EditorState): { inline: InlineHolderAt | null; block: AttributesTarget | { refusal: string } } {
+export function attributeHolderAt(state: EditorState): { inline: InlineHolderAt | null; block: AttributesTarget | { refusal: Said } } {
     // Asked by every surface on every update: once per state — and per engine, whose reading of attributes the block's half asks.
     const definition = currentInlineDefinition();
     const known = holderCache.get(state);
@@ -630,7 +631,20 @@ function tightenedSuggestion(value: string): string | null {
  * Why no literal is offered at all: the host's engine reads none
  * (`InlineEngineDefinition.attrs`), so the preview shows any `{…}` as text.
  */
-export const NO_ATTRS_REFUSAL = 'The preview reads no attributes here: markdown-it-attrs does not run (markdownExtended.plugins.disabled names attrs, or another extension turned it off), so a {…} shows as text.';
+export const NO_ATTRS_REFUSAL: Said = said`Attributes are turned off, so a ${value('{…}')} would show as text. Remove ${value('attrs')} from Markdown Extended › Plugins: Disabled.`;
+
+/** What an image's or a link's own attribute is, and the verb that changes it (F8: the bar's own label, `wording`). */
+const OWN_ATTRIBUTE: Readonly<Record<string, Readonly<Record<string, { what: string; verb: string }>>>> = {
+    link: {
+        href: { what: 'the link\'s address', verb: wording({ verb: 'Edit', noun: 'link', opens: true }).label },
+        title: { what: 'the link\'s title', verb: VERB.showInTextEditor },
+    },
+    image: {
+        src: { what: 'the image\'s path', verb: wording({ verb: 'Edit', noun: 'image', opens: true }).label },
+        alt: { what: 'the image\'s alt text', verb: wording({ verb: 'Edit', noun: 'image', opens: true }).label },
+        title: { what: 'the image\'s title', verb: VERB.showInTextEditor },
+    },
+};
 
 /**
  * Why `literal` cannot be an attribute span's or a block's literal at `place`
@@ -642,76 +656,79 @@ export const NO_ATTRS_REFUSAL = 'The preview reads no attributes here: markdown-
  * never asks for a brace one cannot type there; `braced` names it whole, for
  * a field whose text holds the braces (a code block's opening line).
  */
-export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph', braced = false): string | null {
+export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph', braced = false): Said | null {
     if (!currentReadsAttrs()) {
         return NO_ATTRS_REFUSAL;
     }
-    const value = literal.trim();
-    const shown = braced ? value : innerOf(value);
-    const reading = value.startsWith('{') ? readBrace(value, 0) : null;
+    const typed = literal.trim();
+    const shown = braced ? typed : innerOf(typed);
+    // The value as the message names it (#10): carried as a part, never recovered from the prose.
+    const v = value(shown);
+    const reading = typed.startsWith('{') ? readBrace(typed, 0) : null;
     if (reading !== null && reading.close < 0) {
         // With the braces the field's, an open quote is what leaves the list unclosed — it swallows the closing brace —
         // as the plugin's own reading says it ended (`openQuote`), not as a pattern over the text guesses.
-        return reading.openQuote
-            ? `${shown} ${VALUE_PREDICATE.openQuote}: close it with ".`
-            : `${shown} ${VALUE_PREDICATE.notClosed}: end the attribute list with }.`;
+        if (reading.openQuote) {
+            return said`Not set: ${v} has an open quote — close it with a double quote.`;
+        }
+        // F3: the attributes field draws the braces and drops a stray one (`literalFrom`), so only a field whose text holds them
+        // (a code block's opening line) reaches this — pinned in attributes.test.ts.
+        return said`Not set: ${v} isn't closed — end it with ${value('}')}.`;
     }
-    if (value.startsWith('{') && isTextBrace(value, 0)) {
-        const text = `${shown} ${VALUE_PREDICATE.isText}: a space beside its = makes it text, as in PowerShell's @{a = 1}.`;
-        const tightened = tightenedSuggestion(value);
-        return tightened === null ? text : `${text} ${WRITE_IT_AS}${braced ? tightened : innerOf(tightened)}.`;
+    if (typed.startsWith('{') && isTextBrace(typed, 0)) {
+        const tightened = tightenedSuggestion(typed);
+        return tightened === null
+            ? said`Not set: ${v} has spaces around ${value('=')}, so it would show as text. Remove the spaces around it.`
+            : said`Not set: ${v} has spaces around ${value('=')}, so it would show as text. Write it as ${value(braced ? tightened : innerOf(tightened))}.`;
     }
-    if (parseAttrsLiteral(value) === null) {
-        const examples = braced ? '{.class}, {#id} or {key="value"}' : '.class, #id or key="value"';
-        return `${shown || 'An empty value'} ${VALUE_PREDICATE.noList}: write it as ${examples}, as markdown-it-attrs reads it.`;
+    if (parseAttrsLiteral(typed) === null) {
+        const examples = braced ? [value('{.class}'), value('{#id}'), value('{key="value"}')] : [value('.class'), value('#id'), value('key="value"')];
+        const what: TipPart[] = shown === '' ? ['an empty value'] : v;
+        return said`Not set: ${what} isn't an attribute. Write ${examples[0]}, ${examples[1]} or ${examples[2]}.`;
     }
-    if (INLINE_PLACES.has(place) && hasInnerBrace(value)) {
-        return `${shown} ${VALUE_PREDICATE.innerBrace}: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
+    if (INLINE_PLACES.has(place) && hasInnerBrace(typed)) {
+        return said`Not set: the ${value('}')} inside ${v} would end the attributes there and leave the rest as text. Remove it.`;
     }
     const holder = holderNamed(place);
-    const own = holder === undefined ? undefined : (parseAttrsLiteral(value) ?? []).find(([name]) => holder.own.includes(name))?.[0];
-    if (place === 'link' && own !== undefined) {
-        return `${shown} ${VALUE_PREDICATE.linkOwn}, which the link writes in its (…): give it a class, an id or another attribute.`;
-    }
+    const own = holder === undefined ? undefined : (parseAttrsLiteral(typed) ?? []).find(([name]) => holder.own.includes(name))?.[0];
     if (holder !== undefined && own !== undefined) {
-        // The one key at fault, and where it is changed instead.
-        return `${own} is the ${holder.noun}'s own: change it with Edit ${holder.noun}…. Here, give it a class, an id or another attribute.`;
+        // The one key at fault, what it is, and the verb on the element's bar that changes it.
+        const named = OWN_ATTRIBUTE[holder.holder]?.[own] ?? { what: `the ${holder.noun}'s own`, verb: VERB.showInTextEditor };
+        return said`Not set: ${value(own)} is ${named.what} — ${named.verb} changes it. Here, give it a class, an id or another attribute.`;
     }
-    if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(value)) {
-        return `${shown} ${VALUE_PREDICATE.ruleBrace}: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
+    if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(typed)) {
+        return said`Not set: the ${value('{')} inside ${v} would cut this rule's attributes off. Remove it.`;
     }
-    if (place === fenceHolder('```') && value.includes('`')) {
-        return `${shown} ${VALUE_PREDICATE.backtick}: the line opening a \`\`\` fence holds none, and the block would no longer be code. A ~~~ fence takes it.`;
+    if (place === fenceHolder('```') && typed.includes('`')) {
+        return said`Not set: a backtick in ${v} would end the ${value('```')} fence's code. Use a ${value('~~~')} fence, or remove it.`;
     }
-    if (attrsReadAt(value, place) === null) {
-        const math = currentInlineDefinition().math ? ', math' : '';
-        return `${shown} ${VALUE_PREDICATE.readBefore} — a \\, an entity, code, emphasis, HTML, a link${math} or a plugin's markup — and the preview would show it as text.`;
+    if (attrsReadAt(typed, place) === null) {
+        const last = currentInlineDefinition().math ? 'HTML, a link or math' : 'HTML or a link';
+        return said`Not set: ${v} holds formatting (${value('\\')}, "${{ code: '&…;' }}", code, emphasis, ${last}), so it would show as text. Remove it.`;
     }
     return null;
 }
 
 /**
  * Why a literal is refused that reads as attributes alone (`literalRefusal`)
- * but not together with the block it is written in (`literalsReadBack`).
+ * but not together with the block it is written in (`literalsReadBack`): a `$`
+ * in it pairing with another as a left sidebar or math, say.
  */
-export const LITERAL_READ_WITH_BLOCK_REFUSAL = 'Read together with the rest of its block — a $ pairing with a $ in another {…} as a left sidebar or as math, say — the preview would not read these attributes back as written.';
+export const LITERAL_READ_WITH_BLOCK_REFUSAL: Said = said`Not set: a ${value('$')} here would pair with a ${value('$')} elsewhere in the block. Remove it, or use ${VERB.showInTextEditor}.`;
 
 /**
  * Why a literal is refused in a block that, before it was set, already held a
  * literal the preview would not read back (`existing`): that one is the cause,
  * whatever is typed.
  */
-export function literalAlreadyLostRefusal(existing: LiteralLoss): string {
+export function literalAlreadyLostRefusal(existing: LiteralLoss): Said {
     if (existing.cause?.kind === 'unread') {
         return literalLostReason(existing);
     }
-    if (existing.cause !== undefined) {
-        return 'Read with the rest of this block, the preview already would not read it back as the page shows it: that is the cause, not the literal typed. Edit the block once in the text editor first.';
+    if (existing.cause !== undefined || existing.literal === null) {
+        return `Not set: this block already doesn't save as shown — not because of what you typed. Use ${VERB.showInTextEditor} to change the block once first.`;
     }
-    if (existing.literal === null) {
-        return 'Read with the rest of this block, the preview already would read text in it as attributes the editor does not show: that is the cause, not the literal typed. Edit the block once in the text editor first.';
-    }
-    return `Read with the rest of this block, the preview already would not read ${existing.literal} back as written: that is the cause, not the literal typed. Remove or change it first.`;
+    return said`Not set: this block's attributes ${value(existing.literal)} already don't save as shown — not because of what you typed. Remove or change them first.`;
 }
 
 /** The top-level block holding `pos` in `doc`, or `null`. */
@@ -729,7 +746,7 @@ function topBlockAt(doc: Node, pos: number): Node | null {
  * is the literal being changed (`changing`, its value before): then the new
  * value is what is judged.
  */
-export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, changing?: string | null): string | null {
+export function literalsReadBackRefusal(doc: Node, pos: number, before?: Node, changing?: string | null): Said | null {
     const block = topBlockAt(doc, pos);
     const lost = block === null ? null : literalNotReadBack(block);
     if (lost === null) {
@@ -836,7 +853,7 @@ function literalChange(state: EditorState, object: LiteralObject, literal: strin
  * (`noteRefusal`). An empty field or `{}` removes it, which only its block and
  * a note can refuse.
  */
-export function changeInlineLiteralRefusal(state: EditorState, object: LiteralObject, literal: string): string | null {
+export function changeInlineLiteralRefusal(state: EditorState, object: LiteralObject, literal: string): Said | null {
     const value = typedMarkLiteral(literal);
     const alone = value === null ? null : literalRefusal(value, inlineLiteralPlace(object));
     if (alone !== null) {
@@ -860,7 +877,7 @@ export function changeInlineLiteralTransaction(state: EditorState, object: Liter
 }
 
 /** Why `literal` cannot be given to the selection as an attribute span, or `null`: the span's literal alone (`literalRefusal`), then read with its block (`literalsReadBackRefusal`). */
-export function spanLiteralRefusal(state: EditorState, literal: string): string | null {
+export function spanLiteralRefusal(state: EditorState, literal: string): Said | null {
     const value = literal.trim();
     const alone = literalRefusal(value, 'span');
     if (alone !== null || spanLockReason(state) !== null) {
@@ -872,7 +889,7 @@ export function spanLiteralRefusal(state: EditorState, literal: string): string 
 }
 
 /** Why the span's literal cannot be changed to `literal`, or `null`: as `spanLiteralRefusal` asks it. */
-export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject, { kind: 'span' }>, literal: string): string | null {
+export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject, { kind: 'span' }>, literal: string): Said | null {
     const value = literal.trim();
     const alone = literalRefusal(value, 'span');
     if (alone !== null) {
@@ -890,7 +907,7 @@ export function changeSpanRefusal(state: EditorState, span: Extract<EditorObject
  * span made (`noteRefusal`) — the one reason its field gives, before and after
  * the focus is back.
  */
-export function applySpanRefusal(state: EditorState, literal: string): string | null {
+export function applySpanRefusal(state: EditorState, literal: string): Said | null {
     const applied = spanApplied(state, literal);
     return 'refusal' in applied ? applied.refusal : null;
 }
@@ -901,7 +918,7 @@ export function applySpanRefusal(state: EditorState, literal: string): string | 
  * the literal alone and read with its block (`spanLiteralRefusal`), the
  * selection (`spanLockReason`), then the edit filter (`noteRefusal`).
  */
-function spanApplied(state: EditorState, literal: string): { tr: Transaction } | { refusal: string } {
+function spanApplied(state: EditorState, literal: string): { tr: Transaction } | { refusal: Said } {
     const alone = spanLiteralRefusal(state, literal) ?? spanLockReason(state);
     if (alone !== null) {
         return { refusal: alone };
@@ -913,7 +930,7 @@ function spanApplied(state: EditorState, literal: string): { tr: Transaction } |
 }
 
 /** Why an attribute span cannot be made of the selection, or `null`: it needs an engine that reads attributes, and selected text in one textblock that is not code. */
-export function spanLockReason(state: EditorState): string | null {
+export function spanLockReason(state: EditorState): Said | null {
     if (!currentReadsAttrs()) {
         return NO_ATTRS_REFUSAL;
     }
@@ -1067,18 +1084,18 @@ export const QUOTE_ATTRS_REFUSAL = 'A quote\'s {…} stands on a line under its 
  * entry, the bars and every commit ask, so none can offer what another would
  * refuse. Removing a literal is refused only on a requirement heading.
  */
-export function literalHomeRefusal(node: Node): string | null {
+export function literalHomeRefusal(node: Node): Said | null {
     switch (node.type.name) {
         case 'container':
             return CONTAINER_ATTRS_REFUSAL;
         case 'admonition':
             return ADMONITION_ATTRS_REFUSAL;
         case 'raw_block':
-            return 'A source block is edited as Markdown: write its {…} there (Edit source).';
+            return said`A source block is edited as Markdown — ${VERB.editSource} and write its ${value('{…}')} there.`;
         case 'front_matter':
-            return 'The front matter is YAML: it renders nothing that could carry attributes.';
+            return 'Front matter is YAML — it takes no attributes.';
         case 'injected_block':
-            return 'Injected content is not in the file: there is no block here to give attributes to.';
+            return 'This content comes from another extension, not the file — it takes no attributes.';
         case 'code_block':
             // An indented one is fenced as it takes the literal (`blockAttrsTransaction`).
             return null;
@@ -1159,7 +1176,7 @@ export const ADMONITION_ATTRS_REFUSAL = `An admonition takes no {…}: on its !!
  * the save writes a fence's literal only at the top level (a nested one is
  * kept as source, `fidelity.ts`). Its other verbs work at any depth.
  */
-export const NESTED_CODE_ATTRS_REFUSAL = `A code block inside a quote, a list or a container takes no {…} here: the editor writes a fence's attributes only at the top level. ${VERB.language} and ${VERB.editSource} work here.`;
+export const NESTED_CODE_ATTRS_REFUSAL: Said = said`A code block inside a quote, a list or a container takes no ${value('{…}')} here. ${VERB.language} and ${VERB.editSource} still work.`;
 
 /**
  * What an indented code block given `literal` becomes as well: a fenced one,
@@ -1174,7 +1191,7 @@ function fencedFor(node: Node, literal: string): { markup?: string } {
 }
 
 /** Why a list item is given no literal: it is written at the end of the item's first paragraph. */
-export const ITEM_ATTRS_REFUSAL = 'A list item\'s {…} stands at the end of its first paragraph, and this item does not start with a paragraph ending in text.';
+export const ITEM_ATTRS_REFUSAL = `This item's attributes go at the end of its first paragraph, and it doesn't start with one — use ${VERB.showInTextEditor}.`;
 
 /** Why nothing at the selection takes a literal. */
 export const NO_BLOCK_ATTRS_REFUSAL = 'Put the caret in one paragraph, heading, list item, quote, table or code block to give it attributes.';
@@ -1204,7 +1221,7 @@ export function literalOf(node: Node): string | null {
  * another block (`NESTED_CODE_ATTRS_REFUSAL`); every other caller targets a
  * top-level block or a list item.
  */
-export function attributesTargetOf(node: Node, pos: number, nested = false): AttributesTarget | { refusal: string } {
+export function attributesTargetOf(node: Node, pos: number, nested = false): AttributesTarget | { refusal: Said } {
     const refusal = (currentReadsAttrs() ? null : NO_ATTRS_REFUSAL)
         ?? (nested && node.type === nodes.code_block ? NESTED_CODE_ATTRS_REFUSAL : null)
         ?? blockAttrsRefusal(node) ?? (literalOf(node) === null ? literalHomeRefusal(node) : null);
@@ -1221,7 +1238,7 @@ export function attributesTargetOf(node: Node, pos: number, nested = false): Att
  * a paragraph in a container meets the container's refusal. A selected block
  * (a rule, a source block) is itself; a selected image, its paragraph.
  */
-export function attributesTargetAt(state: EditorState): AttributesTarget | { refusal: string } {
+export function attributesTargetAt(state: EditorState): AttributesTarget | { refusal: Said } {
     const sel = state.selection;
     if (sel instanceof NodeSelection && sel.$from.depth === 0) {
         return attributesTargetOf(sel.node, sel.from);
@@ -1250,7 +1267,7 @@ export function currentTarget(state: EditorState, target: AttributesTarget): Att
  * it removed the literal and whether it fenced an indented code block (the
  * hint says so), a refusal, or nothing (unchanged).
  */
-export type AttributesCommit = { tr: Transaction; removed: boolean; fenced: boolean } | { refusal: string } | null;
+export type AttributesCommit = { tr: Transaction; removed: boolean; fenced: boolean } | { refusal: Said } | null;
 
 /**
  * The target given `literal` — `{}` or nothing removes its literal — as the
@@ -1307,7 +1324,7 @@ export function commitAttributes(state: EditorState, target: AttributesTarget, l
 export type CodeBlockObject = Extract<EditorObject, { node: Node }>;
 
 /** The code block at `block` with `line` as its opening line, read (`parseOpeningLine`); the refusal of the line itself otherwise. */
-function withOpeningLine(state: EditorState, { from: pos, node }: CodeBlockObject, line: string): Transaction | { refusal: string } {
+function withOpeningLine(state: EditorState, { from: pos, node }: CodeBlockObject, line: string): Transaction | { refusal: Said } {
     const parsed = parseOpeningLine(line, node.textContent, String(node.attrs.params ?? ''));
     if ('refusal' in parsed) {
         return parsed;
@@ -1335,7 +1352,7 @@ function withOpeningLine(state: EditorState, { from: pos, node }: CodeBlockObjec
  * (`savedOpeningLine`): a block whose fence the save lengthens, given that
  * longer fence by hand, is unchanged; an indented block given a fence is not.
  */
-function openingLineChange(state: EditorState, block: CodeBlockObject, line: string): { tr: Transaction } | { refusal: string } | null {
+function openingLineChange(state: EditorState, block: CodeBlockObject, line: string): { tr: Transaction } | { refusal: Said } | null {
     const { from: pos, node } = block;
     if (node.attrs.markup !== '' && line === savedOpeningLine(node)) {
         return null;
@@ -1377,7 +1394,7 @@ function openingLineChange(state: EditorState, block: CodeBlockObject, line: str
  * Edit source; so is an emptied language while words or a {…} follow it, which
  * would become the language. `null` when the language is as it is.
  */
-export function changeLanguageTransaction(state: EditorState, block: CodeBlockObject, language: string): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
+export function changeLanguageTransaction(state: EditorState, block: CodeBlockObject, language: string): { tr: Transaction; fenced: boolean } | { refusal: Said } | null {
     const { from: pos, node } = block;
     if (!isLanguageWord(language)) {
         return { refusal: LANGUAGE_WORD_REFUSAL };
@@ -1405,7 +1422,7 @@ export function changeLanguageTransaction(state: EditorState, block: CodeBlockOb
 }
 
 /** An opening-line change with whether it fenced an indented block, a refusal or nothing as it is. */
-function withFenced(change: ReturnType<typeof openingLineChange>, fenced: boolean): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
+function withFenced(change: ReturnType<typeof openingLineChange>, fenced: boolean): { tr: Transaction; fenced: boolean } | { refusal: Said } | null {
     if (change === null) {
         return null;
     }
@@ -1419,7 +1436,7 @@ function withFenced(change: ReturnType<typeof openingLineChange>, fenced: boolea
  * on the fence a new block gets. `null` when the file stays as it is; a
  * refusal for a line `openingLineChange` refuses.
  */
-export function commitOpeningLine(state: EditorState, block: CodeBlockObject, line: string): { tr: Transaction; fenced: boolean } | { refusal: string } | null {
+export function commitOpeningLine(state: EditorState, block: CodeBlockObject, line: string): { tr: Transaction; fenced: boolean } | { refusal: Said } | null {
     const fenced = block.node.attrs.markup === '';
     return withFenced(openingLineChange(state, block, fenced && line.trim() === '' ? savedFence(block.node) : line), fenced);
 }

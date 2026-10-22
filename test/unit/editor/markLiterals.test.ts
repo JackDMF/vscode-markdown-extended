@@ -12,6 +12,7 @@ import {
 } from '../../../src/editor/webview/objects';
 import { toggleMarkup } from '../../../src/editor/webview/toolbar/commands';
 import { hostEngine, readText, repoRoot, topChildren, touched } from './helpers';
+import { saidText } from '../../../src/editor/tips';
 
 const options = { defaultWrap: 90 };
 
@@ -354,10 +355,15 @@ suite('Editor inline literals: inline code, an image, superscript, subscript and
     test('an image\'s src, alt and title are its own: a {…} setting them is no literal, as a link\'s href', () => {
         assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){alt=b} b.\n')), 'A ![a](s.png) b.\n', 'the preview takes the alt from the text');
         assert.strictEqual(byRule(parseDocument(md, 'A ![a](s.png){title=t} b.\n')), 'A ![a](s.png "t") b.\n');
+        // F8: the key, what it is, and the verb that changes it — the image bar's own label, or Show in text editor for a title.
+        const what: Record<string, string> = { src: 'the image\'s path — Edit image…', alt: 'the image\'s alt text — Edit image…', title: 'the image\'s title — Show in text editor' };
         for (const literal of ['{src=x.png}', '{alt=x}', '{title=x}', '{.c title=x}']) {
             const key = /\{\.?c? ?(\w+)=/.exec(literal)?.[1] as string;
-            assert.strictEqual(literalRefusal(literal, 'image'), `${key} is the image's own: change it with Edit image…. Here, give it a class, an id or another attribute.`, literal);
+            const said = literalRefusal(literal, 'image');
+            assert.strictEqual(said === null ? null : saidText(said), `Not set: ${key} is ${what[key]} changes it. Here, give it a class, an id or another attribute.`, literal);
         }
+        const href = literalRefusal('{href=x}', 'link');
+        assert.deepStrictEqual(href, ['Not set: ', { code: 'href' }, ' is the link\'s address — Edit link… changes it. Here, give it a class, an id or another attribute.']);
         assert.strictEqual(literalRefusal('{.hero width=300}', 'image'), null);
     });
 
@@ -523,7 +529,8 @@ suite('Editor inline literals: edits keep the literal of code, an image, supersc
         const note = select(stateOf('Text ++ref|a `q`{.c} body++ end.\n'), 'q', 1);
         const inNote = objectAtSelection(note) as Extract<EditorObject, { kind: 'styled' }>;
         assert.strictEqual(inNote.kind, 'styled');
-        assert.ok(changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}')?.startsWith('Inline code in a note cannot hold'), changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}') ?? 'none');
+        const inNoteRefusal = saidText(changeInlineLiteralRefusal(note, inNote, '{data-x="a|b"}') ?? 'none');
+        assert.ok(inNoteRefusal.startsWith('Inline code in a note cannot hold'), inNoteRefusal);
     });
 });
 

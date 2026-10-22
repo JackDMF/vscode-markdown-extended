@@ -7,11 +7,18 @@ import { createEditorEngine } from '../../../src/editor/engine';
 import { DEFAULT_INLINE_ENGINE, currentInlineDefinition, definitionOf, setCurrentInlineDefinition } from '../../../src/editor/inlineEngine';
 import { parseDocument } from '../../../src/editor/parse';
 import { serializeDocument } from '../../../src/editor/serialize';
-import { literalRefusal } from '../../../src/editor/webview/objects';
+import { literalRefusal as literalRefusalSaid } from '../../../src/editor/webview/objects';
+import { saidText } from '../../../src/editor/tips';
 import { INLINE_LITERAL_HOLDERS } from '../../../src/editor/inlineLiterals';
 import { attrsCutsIn, attrsGivenTo } from '../../../src/plugin/markdownItAttrs';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
+
+/** A literal's refusal as the words it says (`saidText`): its values are parts, which the field draws in the code font. */
+function literalRefusal(...args: Parameters<typeof literalRefusalSaid>): string | null {
+    const said = literalRefusalSaid(...args);
+    return said === null ? null : saidText(said);
+}
 
 /** The attributes of the first `<tag …>` in `html`, in order. */
 function attrsOfFirst(html: string, tag: string): [string, string][] {
@@ -228,7 +235,7 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
                 } else {
                     assert.strictEqual(host, null, `${literal} on a ${shape}: the host shows it as text`);
                     assert.strictEqual(at, null, `${literal} on a ${shape}: the editor takes it for none`);
-                    assert.match(literalRefusal(literal, holder) ?? '', /the preview would show it as text/, `${literal} on a ${shape}: the field refuses it, with the reason`);
+                    assert.match(literalRefusal(literal, holder) ?? '', /so it would show as text/, `${literal} on a ${shape}: the field refuses it, with the reason`);
                     const kept = pairs.some(([n]) => n === 'id') ? null : literal;
                     assert.strictEqual(withoutId(literal, holder), kept, `${literal} on a ${shape}: a copy carries no id the preview does not read`);
                 }
@@ -332,12 +339,12 @@ suite('Editor attribute literals: the port reads a literal as the plugin does', 
 
     test('a malformed literal is refused as no attribute list, whatever it holds', () => {
         for (const literal of ['{.}', '{ }', 'x', '{.a}}']) {
-            assert.match(literalRefusal(literal) ?? '', /is no attribute list/, literal);
+            assert.match(literalRefusal(literal) ?? '', /isn't an attribute/, literal);
         }
         // One whose `}` stands inside a quote it never closes — an escaped quote does not close it — is named as an open quote,
         // as the reading ended (`BraceReading.openQuote`); one the text simply never ends is named as not closed.
         assert.match(literalRefusal('{k="a\\"b') ?? '', /has an open quote/);
-        assert.match(literalRefusal('{.a') ?? '', /is not closed/);
+        assert.match(literalRefusal('{.a') ?? '', /isn't closed/);
     });
 
     test('no value is written with a backslash, and one that needs quotes and holds a quote is not written at all', () => {

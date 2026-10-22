@@ -6,6 +6,7 @@ import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_WORD_REFUSAL, NO_FENCE_REFUSAL, shortFenceRefusal } from '../../../src/editor/fences';
 import { NO_TARGET_HINT } from '../../../src/editor/verbs';
 import { NESTED_CODE_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
+import { saidText } from '../../../src/editor/tips';
 import { LAYER_SELECTOR } from '../../../src/editor/webview/placement';
 import { closeEditorPage, delay, describedTip, EditMessage, EditorPage, EXTENSION_ID, hoverTip, MOD, openEditorPage, pointAt, settle, shot, UNDO } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, applyTheme } from './themes';
@@ -373,7 +374,7 @@ suite('Code block (e2e)', () => {
         assert.strictEqual(await refused('``'), NO_FENCE_REFUSAL);
         assert.strictEqual(await refused('```md'), shortFenceRefusal('````'));
         assert.strictEqual(await refused('````a`b'), BACKTICK_INFO_REFUSAL);
-        assert.match(await refused('````md {.}'), /\{\.\} is no attribute list/);
+        assert.match(await refused('````md {.}'), /\{\.\} isn't an attribute/);
     });
 
     test('S4 Edit source on an indented block opens empty with a ``` placeholder; Enter fences it', async function () {
@@ -603,7 +604,7 @@ suite('Code block (e2e)', () => {
         assert.deepStrictEqual(b.verbs, ['language', 'block-attributes', 'edit-source', 'delete-code-block']);
         assert.strictEqual(b.focus, 'language');
         assert.strictEqual(await page.$eval(`${BAR} [data-verb="block-attributes"]`, el => el.getAttribute('aria-disabled')), 'true');
-        assert.ok((await describedTip(page, `${BAR} [data-verb="block-attributes"]`)).includes(NESTED_CODE_ATTRS_REFUSAL));
+        assert.ok((await describedTip(page, `${BAR} [data-verb="block-attributes"]`)).includes(saidText(NESTED_CODE_ATTRS_REFUSAL)));
     });
 
     test('H4 an indented block\'s title names Attributes… only where it is offered: not in a quote', async function () {

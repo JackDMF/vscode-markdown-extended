@@ -19,6 +19,7 @@ import {
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, replaceChild, topChildren } from './helpers';
+import { saidText } from '../../../src/editor/tips';
 
 type MathApi = { extendMarkdownIt(md: MarkdownIt): MarkdownIt };
 
@@ -388,10 +389,14 @@ suite('Editor math: the page reads $ as VS Code\'s math does', () => {
 
     test('a refusal names what it is: text read as attributes is not a literal to remove', () => {
         const none = { literal: null };
-        for (const reason of [literalRewritten(none), literalRewrittenBeside(editorSchema.nodes.bullet_list.create(null, []), editorSchema.nodes.paragraph.create(), none), literalAlreadyLostRefusal(none)]) {
+        for (const reason of [literalRewritten(none), literalRewrittenBeside(editorSchema.nodes.bullet_list.create(null, []), editorSchema.nodes.paragraph.create(), none)]) {
             assert.match(reason, /would (then )?read text/, reason);
             assert.doesNotMatch(reason, /not read text|remove that literal|Remove that literal|Remove or change it/, reason);
         }
+        // In a field (F10): the block, not a literal to remove, is what to change.
+        const already = saidText(literalAlreadyLostRefusal(none));
+        assert.match(already, /this block already doesn't save as shown/, already);
+        assert.doesNotMatch(already, /Remove or change/, already);
         assert.match(literalRewritten({ literal: '{.a}' }), /would not read \{\.a\} back as written, edited or not: remove that literal/);
     });
 

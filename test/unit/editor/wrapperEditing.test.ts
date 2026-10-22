@@ -5,12 +5,19 @@ import { parseDocument, serializeDocument } from '../../../src/editor';
 import { editorSchema } from '../../../src/editor/schema';
 import {
     EditorObject, applySpanTransaction, changeAdmonitionTransaction, changeBlockAttrsTransaction, changeContainerTransaction, changeSpanTransaction,
-    literalPlaceOf, literalRefusal, objectAtSelection, removeSpanTransaction, unwrapTransaction,
+    literalPlaceOf, literalRefusal as literalRefusalSaid, objectAtSelection, removeSpanTransaction, unwrapTransaction,
 } from '../../../src/editor/webview/objects';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { blockCommand, insertWrapperTransaction } from '../../../src/editor/webview/toolbar/commands';
 import { leaveWrapper, unwrapFromStart } from '../../../src/editor/webview/wrappers';
 import { hostEngine, topChildren } from './helpers';
+import { saidText } from '../../../src/editor/tips';
+
+/** A literal's refusal as the words it says (`saidText`). */
+function literalRefusal(...args: Parameters<typeof literalRefusalSaid>): string | null {
+    const said = literalRefusalSaid(...args);
+    return said === null ? null : saidText(said);
+}
 
 const options = { defaultWrap: 90 };
 
@@ -267,29 +274,30 @@ suite('Editor stage 3: review findings, in the page', () => {
         const state = select(stateOf('Alpha beta gamma.\n'), 'beta');
         assert.strictEqual(applySpanTransaction(state, '{width = 50%}'), null);
         const reason = literalRefusal('{width = 50%}') ?? '';
-        assert.match(reason, /a space beside its = makes it text/);
+        assert.match(reason, /has spaces around "=", so it would show as text/);
         // Named as the attributes field shows it, between the braces it draws; whole where the field's text holds them.
-        assert.match(reason, /^width = 50% is text.* Write it as width=50%\.$/);
+        assert.match(reason, /^Not set: width = 50% has spaces.* Write it as width=50%\.$/);
         assert.match(literalRefusal('{.a title= "x y" b =2}') ?? '', /Write it as \.a title="x y" b=2\.$/);
-        assert.match(literalRefusal('{width = 50%}', 'paragraph', true) ?? '', /^\{width = 50%\} is text.* Write it as \{width=50%\}\.$/);
+        assert.match(literalRefusal('{width = 50%}', 'paragraph', true) ?? '', /^Not set: \{width = 50%\} has spaces.* Write it as \{width=50%\}\.$/);
     });
 
     test('no tightened form is suggested where taking the spaces out would change what it says', () => {
         for (const literal of ['{.a =b}', '{#x =y}', '{a="b" =c}', '{a = b = c}', '{ = b}']) {
             const reason = literalRefusal(literal) ?? '';
-            assert.match(reason, /makes it text/, literal);
+            assert.match(reason, /so it would show as text\. Remove the spaces around it\.$/, literal);
             assert.doesNotMatch(reason, /Write it as/, literal);
         }
     });
 
     test('an unclosed literal is refused as unclosed, not for its spacing', () => {
-        assert.strictEqual(literalRefusal('{a = 1'), '{a = 1 is not closed: end the attribute list with }.');
+        // F3: reached from a field whose text holds the braces (the opening line); the attributes field never gets here (attributes.test.ts).
+        assert.strictEqual(literalRefusal('{a = 1', 'paragraph', true), 'Not set: {a = 1 isn\'t closed — end it with "}".');
     });
 
     test('5. a span literal with a quoted } is refused, with the reason', () => {
         const state = select(stateOf('Alpha beta gamma.\n'), 'beta');
         assert.strictEqual(applySpanTransaction(state, '{title="a}b"}'), null);
-        assert.match(literalRefusal('{title="a}b"}', 'span') ?? '', /cuts the literal at its first \}/);
+        assert.match(literalRefusal('{title="a}b"}', 'span') ?? '', /the "\}" inside title="a\}b" would end the attributes there/);
         const made = apply(state, applySpanTransaction(state, '{.ok}'));
         const span = objectHere(caretAt(made, 'beta', 2));
         assert.strictEqual(span.kind === 'span' ? changeSpanTransaction(made, span, '{title="a}b"}') : 'not a span', null);
@@ -300,7 +308,7 @@ suite('Editor stage 3: review findings, in the page', () => {
         const at = state.doc.child(0).nodeSize;
         assert.strictEqual(state.doc.nodeAt(at)?.type.name, 'horizontal_rule');
         assert.strictEqual(changeBlockAttrsTransaction(state, at, '{.a title="x{y"}'), null);
-        assert.match(literalRefusal('{.a title="x{y"}', literalPlaceOf(state.doc.nodeAt(at) as Node)) ?? '', /from its last \{/);
+        assert.match(literalRefusal('{.a title="x{y"}', literalPlaceOf(state.doc.nodeAt(at) as Node)) ?? '', /the "\{" inside .* would cut this rule's attributes off/);
         const quotedClose = apply(state, changeBlockAttrsTransaction(state, at, '{title="a}b"}'));
         assert.strictEqual(text(quotedClose), 'Text.\n\n--- {title="a}b"}\n', 'a quoted } the plugin reads correctly after a rule');
         const paragraph = stateOf('Some text. {.lead}\n');
@@ -311,7 +319,7 @@ suite('Editor stage 3: review findings, in the page', () => {
         const paragraph = stateOf('Some text. {.lead}\n');
         for (const literal of ['{k="a\\"b"}', '{k="a&amp;b"}', '{title="a *b*"}', '{k="<b>"}']) {
             assert.strictEqual(changeBlockAttrsTransaction(paragraph, 0, literal), null, literal);
-            assert.match(literalRefusal(literal) ?? '', /the preview would show it as text/, literal);
+            assert.match(literalRefusal(literal) ?? '', /holds formatting \("\\", "&…;", code, emphasis, HTML or a link\), so it would show as text\. Remove it\.$/, literal);
             const state = select(stateOf('Alpha beta gamma.\n'), 'beta');
             assert.strictEqual(applySpanTransaction(state, literal), null, `${literal}: not as a span either`);
         }

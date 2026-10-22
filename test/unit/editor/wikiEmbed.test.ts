@@ -20,6 +20,7 @@ import { plainWikiEmbed } from '../../../src/syntax/markers';
 import { EMBED_WAY_BACK } from '../../../src/editor/verbs';
 import { plugins } from '../../../src/plugin/plugins';
 import { hostEngine, topChildren, touched } from './helpers';
+import { saidText } from '../../../src/editor/tips';
 import { attrsReadAt } from '../../../src/editor/attrs';
 import { PAGE_PLUGINS } from '../../../src/plugin/inlinePlugins';
 import { FakeNode, fakeDocument } from './fakeDom';
@@ -712,14 +713,15 @@ suite('Editor: a wiki embed is an atom carrying its source (qjebbs/vscode-markdo
         const over = spanned('X $![[x]]$ y.\n', '{title="p$q"}', at => at);
         const [asText, remove] = bar(over);
         assert.deepStrictEqual([asText.id, remove.id], ['convert-embed-to-text', 'delete-embed']);
-        assert.ok(asText.refusal?.startsWith(marker), `Convert to text: ${asText.refusal}`);
+        const asTextRefusal = asText.refusal ? saidText(asText.refusal) : null;
+        assert.ok(asTextRefusal?.startsWith(marker), `Convert to text: ${asTextRefusal}`);
         const [at] = embedPositions(over.doc);
         assert.strictEqual(noteRefusal(over.tr.delete(at, at + 1)), null, 'the filters let the atom go');
         assert.strictEqual(remove.refusal, null, 'Delete embed is offered');
 
         // The span over the text beside it, in a note the filters would refuse a change to: both verbs carry the reason.
         const beside = spanned('X $a![[x]]$ y.\n', '{title="p$q"}', at => at - 1);
-        assert.deepStrictEqual(bar(beside).map(v => v.refusal?.startsWith(marker)), [true, true], 'both disabled with the reason');
+        assert.deepStrictEqual(bar(beside).map(v => (v.refusal ? saidText(v.refusal) : null)?.startsWith(marker)), [true, true], 'both disabled with the reason');
 
         for (const source of ['X $![[x]]$ y.\n', 'Plain ![[x]].\n', '| a |\n| - |\n| ![[x]] |\n']) {
             assert.deepStrictEqual(bar(EditorState.create({ doc: parseDocument(md, source).doc })).map(v => v.refusal), [null, null], source);

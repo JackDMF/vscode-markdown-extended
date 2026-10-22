@@ -657,7 +657,7 @@ suite('Attributes field (e2e)', () => {
                 cap,
             };
         });
-        assert.deepStrictEqual(look.codes.map(c => c.text), ['width = 300', 'width=300'], 'the typed value and the suggestion');
+        assert.deepStrictEqual(look.codes.map(c => c.text), ['width = 300', '=', 'width=300'], 'the typed value, the character it names (quoted) and the suggestion');
         assert.ok(look.codes.every(c => c.family !== look.sentenceFamily && c.colour === look.mutedColour), JSON.stringify(look));
         assert.ok(look.width <= look.cap + 1 && look.width > look.cap * 0.5, `capped at about 80 characters: ${look.width} against ${look.cap}`);
         const kids = await page.$eval(ANY_FIELD_BAR, el => Array.from(el.children).map(c => `${c.className}:${Math.round(c.getBoundingClientRect().width)}`).join(' | '));

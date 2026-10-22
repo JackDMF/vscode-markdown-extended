@@ -336,7 +336,7 @@ suite('Editor Attributes… (e2e)', () => {
         }, FIELD_BAR);
         // Read once, as the focus enters the field shown again (`aria-describedby`), not announced a second time.
         assert.deepStrictEqual({ ...kept, refusal: null }, { value: 'title="a', focused: true, selected: [8, 8], role: null, keys: true, refusal: null });
-        assert.strictEqual(kept.refusal, 'title="a has an open quote: close it with ".');
+        assert.strictEqual(kept.refusal, 'Not set: title="a has an open quote — close it with a double quote.');
         await shot('06-refusal-kept-open.png');
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
         await page.keyboard.press('Escape');

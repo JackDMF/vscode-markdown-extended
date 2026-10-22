@@ -272,7 +272,7 @@ suite('Editor object toolbar (e2e)', () => {
             refusal: document.querySelector(`${sel} .mep-field-refusal`)?.textContent ?? null,
         }), BAR);
         assert.strictEqual(kept.value, 'title=x', 'one outer pair stripped as the closing brace was typed');
-        assert.ok(kept.refusal?.includes('href or title'), kept.refusal ?? 'none');
+        assert.strictEqual(kept.refusal, 'Not set: title is the link\'s title — Show in text editor changes it. Here, give it a class, an id or another attribute.');
         assert.strictEqual((await active()).field, true, 'the field keeps the focus');
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
         await page.keyboard.press('Escape');

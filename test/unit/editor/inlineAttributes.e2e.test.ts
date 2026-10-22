@@ -118,7 +118,7 @@ suite('Editor inline attributes (e2e)', () => {
             refusal: document.querySelector(`${sel} .mep-field-refusal`)?.textContent ?? null,
         }), BAR);
         assert.strictEqual(refused.value, '.hero src=other.png');
-        assert.strictEqual(refused.refusal, 'src is the image\'s own: change it with Edit image…. Here, give it a class, an id or another attribute.');
+        assert.strictEqual(refused.refusal, 'Not set: src is the image\'s path — Edit image… changes it. Here, give it a class, an id or another attribute.');
         await shot(page, 'inline-attrs-04-image-field-refused.png');
     });
 

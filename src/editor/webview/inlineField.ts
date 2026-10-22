@@ -17,7 +17,7 @@
  * it is, without the field's value.
  */
 import type { Completer, Completion } from '../completions';
-import type { TipPart } from '../tips';
+import type { Said, TipPart } from '../tips';
 import { CompletionListView } from './completionList';
 
 /**
@@ -49,10 +49,8 @@ export interface FieldStep {
     keys?: KeysLine | ((value: string) => KeysLine);
     /** The braces drawn around the value, fixed (`InlineFieldOptions.adorn`). */
     adorn?: FieldAdorn;
-    /** Why what was typed was refused: drawn under the field, the keys line kept, until the next edit. */
-    refusal?: string;
-    /** The refusal drawn with the values it names set apart in the code font (`refusalParts`); its plain words where not given. */
-    refusalParts?(refusal: string, typed: string): readonly TipPart[];
+    /** Why what was typed was refused: drawn under the field (its values in the code font), the keys line kept, until the next edit. */
+    refusal?: Said;
     commit(value: string): FieldStep | void;
 }
 
@@ -78,7 +76,7 @@ export interface FieldAdorn {
  * commit's answer to a refusal. The caret at its end, so what was typed is
  * corrected, not lost to the next key (a prefilled value is selected instead).
  */
-export function refusedStep(step: FieldStep, typed: string, refusal: string): FieldStep {
+export function refusedStep(step: FieldStep, typed: string, refusal: Said): FieldStep {
     return { ...step, value: typed, caret: typed.length, refusal };
 }
 

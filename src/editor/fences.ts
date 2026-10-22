@@ -57,7 +57,7 @@ export const LANGUAGE_LITERAL_REFUSAL = 'A {…} follows the language — Edit s
  * one word, and a word with more would change the info string or the literal
  * behind the field's back.
  */
-export const LANGUAGE_WORD_REFUSAL = 'A language is one word, without spaces or { }: Edit source changes the whole line.';
+export const LANGUAGE_WORD_REFUSAL = 'A language is one word, without spaces or { } — Edit source changes the whole line.';
 
 /** Whether `language` is one word the info string's first word can be: no whitespace, no braces. */
 export function isLanguageWord(language: string): boolean {

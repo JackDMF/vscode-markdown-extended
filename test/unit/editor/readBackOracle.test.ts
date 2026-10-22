@@ -12,6 +12,7 @@ import {
     EditorObject, LITERAL_READ_WITH_BLOCK_REFUSAL, applySpanRefusal, applySpanTransaction, changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, literalAlreadyLostRefusal, objectAtSelection, sameObject,
 } from '../../../src/editor/webview/objects';
 import { hostEngine, touched } from './helpers';
+import { saidText } from '../../../src/editor/tips';
 
 /** `text` read with the page's engine as it now is, in a state with the edit filter. */
 function stateOf(text: string): EditorState {
@@ -538,7 +539,8 @@ suite('Editor read-back oracle: the targeted check', () => {
         state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, posOf(state.doc, 'b') + 1)));
         const span = objectAtSelection(state) as Extract<EditorObject, { kind: 'span' }>;
         assert.strictEqual(span.kind, 'span');
-        const refusal = changeSpanRefusal(state, span, '{title="x|y"}');
+        const said = changeSpanRefusal(state, span, '{title="x|y"}');
+        const refusal = said === null ? null : saidText(said);
         assert.ok(refusal !== null && refusal.includes('note'), refusal ?? 'none');
         assert.strictEqual(changeSpanTransaction(state, span, '{title="x|y"}'), null);
     });

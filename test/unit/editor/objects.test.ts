@@ -18,6 +18,7 @@ import {
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { inlineSourceTransaction } from '../../../src/editor/webview/toolbar/commands';
 import { hostEngine } from './helpers';
+import { saidText } from '../../../src/editor/tips';
 
 function stateOf(text: string): EditorState {
     const { doc } = parseDocument(hostEngine(), text, {});
@@ -312,7 +313,7 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
 
     /** What Edit source does with `line` on the block the caret is in: the opening line's transaction, or why not. */
     const edit = (state: EditorState, line: string) => commitOpeningLine(state, blockHere(state), line);
-    const refusalOf = (done: ReturnType<typeof commitOpeningLine>) => done !== null && 'refusal' in done ? done.refusal : null;
+    const refusalOf = (done: ReturnType<typeof commitOpeningLine>) => done !== null && 'refusal' in done ? saidText(done.refusal) : null;
     const trOf = (done: ReturnType<typeof commitOpeningLine>) => done !== null && 'tr' in done ? done.tr : null;
     /** What Language… does with `word` on the block the caret is in. */
     const lang = (state: EditorState, word: string) => changeLanguageTransaction(state, blockHere(state), word);
@@ -344,7 +345,7 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
         assert.strictEqual(edit(state, '```js {.numbered}'), null, 'unchanged');
         assert.strictEqual(refusalOf(edit(state, 'js {.x}')), NO_FENCE_REFUSAL);
         assert.strictEqual(refusalOf(edit(state, '```a`b')), BACKTICK_INFO_REFUSAL);
-        assert.match(refusalOf(edit(state, '```js {.}')) ?? '', /\{\.\} is no attribute list/);
+        assert.match(refusalOf(edit(state, '```js {.}')) ?? '', /\{\.\} isn't an attribute\. Write \{\.class\}/);
         assert.strictEqual(trOf(edit(state, 'js')), null);
         const holding = caretAt(stateOf('````\na\n```\nb\n````\n'), 'a');
         assert.strictEqual(refusalOf(edit(holding, '```')), shortFenceRefusal('````'));
@@ -376,9 +377,9 @@ suite('Editor code blocks: the object, its opening line and its language', () =>
 
     test('a brace pair typed now is read as a literal and refused for what it is', () => {
         const state = caretAt(stateOf('```js\ncode\n```\n'), 'code');
-        assert.match(refusalOf(edit(state, '```js {}')) ?? '', /no attribute list/);
-        assert.match(refusalOf(edit(state, '```js {.}')) ?? '', /\{\.\} is no attribute list/);
-        assert.match(refusalOf(edit(state, '```{r, echo = FALSE}')) ?? '', /is text, not an attribute list/);
+        assert.match(refusalOf(edit(state, '```js {}')) ?? '', /isn't an attribute/);
+        assert.match(refusalOf(edit(state, '```js {.}')) ?? '', /\{\.\} isn't an attribute/);
+        assert.match(refusalOf(edit(state, '```{r, echo = FALSE}')) ?? '', /has spaces around "=", so it would show as text/);
     });
 
     test('Edit source on an indented block: empty fences it with ```; a typed line fences it with that', () => {
