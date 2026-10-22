@@ -57,7 +57,7 @@ import type { Completion } from '../completions';
 import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, languageOf, savedOpeningLine } from '../fences';
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
-import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
+import { HintTone, RefusalPlace, applyKey, dismissRefusal, showChangeHint, showHint, showRefusal, undoHint, undoKey } from './hint';
 import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
 import { FieldRow } from './fieldRow';
@@ -495,6 +495,10 @@ interface BarEvents {
     fieldDropped(): void;
     /** A verb's menu opened or closed, or its button took or lost the focus or the pointer: what it drives (a table's row or column tint) is drawn anew (`activeVerb`). */
     verbActive(): void;
+    /** A refused verb or entry was pressed: why, at it (#10). */
+    refuse(message: Said, place: RefusalPlace): void;
+    /** A menu closed: a refusal said at one of its entries goes with it. */
+    menuClosed(panel: HTMLElement): void;
 }
 
 /** One bar: a label and verbs, or a label and the inline field. */
@@ -862,7 +866,7 @@ class ObjectBar {
             }
             el.addEventListener('click', e => {
                 e.preventDefault();
-                this.choose(verb);
+                this.choose(verb, el);
             });
             // Open, focused or hovered: the verb is active, and a table draws what it acts on (`activeVerb`).
             el.addEventListener('pointerenter', () => this.verbHovered(verb.id, true));
@@ -938,8 +942,13 @@ class ObjectBar {
         }
     }
 
-    private choose(verb: Verb): void {
+    /** `verb` chosen — pressed at `el`, where a refused one says why (#10): under the bar, never a silent nothing. */
+    private choose(verb: Verb, el?: HTMLElement): void {
         if (verb.refusal) {
+            if (el) {
+                this.tips.hide();
+                this.events.refuse(verb.refusal, { at: 'control', el });
+            }
             return;
         }
         if (verb.menu) {
@@ -1003,7 +1012,7 @@ class ObjectBar {
             }
             el.addEventListener('click', e => {
                 e.preventDefault();
-                this.pick(entry);
+                this.pick(entry, el);
             });
             el.addEventListener('mouseenter', () => {
                 followPointer(panel, el);
@@ -1044,14 +1053,22 @@ class ObjectBar {
         menu.button.setAttribute('aria-expanded', 'false');
         // An entry's hover goes with its menu: once the panel is out of the bar, `hide(this.el)` finds it no more.
         this.tips.hide(menu.panel);
+        // So does a refusal said at one of its entries.
+        this.events.menuClosed(menu.panel);
         menu.panel.remove();
         if (focusButton) {
             menu.button.focus({ preventScroll: true });
         }
     }
 
-    private pick(entry: MenuEntry): void {
+    /** `entry` picked — pressed at `el`, where a refused one says why beside the menu, which stays open (#10). */
+    private pick(entry: MenuEntry, el?: HTMLElement): void {
         if (entry.refusal) {
+            const panel = this.menu?.panel;
+            if (el && panel) {
+                this.tips.hide(panel);
+                this.events.refuse(entry.refusal, { at: 'menu-entry', el, menu: panel });
+            }
             return;
         }
         this.closeMenu(false);
@@ -1331,6 +1348,8 @@ class ObjectToolbarView implements PluginView {
                 }, 0);
             },
             verbActive: () => this.syncDecorations(),
+            refuse: (message, place) => showRefusal(this.view, message, place),
+            menuClosed: panel => dismissRefusal(this.view, panel),
         };
         const bar: ObjectBar = new ObjectBar(trigger, events, this.tips);
         return bar;

@@ -475,11 +475,22 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
         assert.ok(p.hint.top >= p.controls[1].bottom + 3 || p.hint.bottom <= p.controls[0].top - 3, `under the bar (or above the verb at the floor): ${JSON.stringify(p)}`);
         assert.strictEqual((await (editor as EditorPage).edits()).length, edits, 'nothing posted');
         await shotAs('s6-bar-verb');
-        await page.setViewport({ width: 360, height: 800 });
-        await delay(400);
-        await clickText(page, 'body', 2);
-        await page.waitForSelector(BAR, { timeout: 2000 });
-        const more = `${BAR} .mep-more-face`;
+        // The narrowest of these widths moves Delete note — Delete/Remove moves first — into the bar's "…".
+        const more = `${BAR} .mep-object-more`;
+        let width = 0;
+        for (const w of [520, 420, 360, 300, 260]) {
+            width = w;
+            await page.setViewport({ width: w, height: 800 });
+            await delay(300);
+            // The caret out of the note and back: the bar comes at the rest in it, laid out for the width.
+            await clickText(page, 'Alpha', 1);
+            await delay(500);
+            await clickText(page, 'body', 2);
+            await page.waitForSelector(BAR, { timeout: 2000 });
+            if (await page.$(`${verb}:not([hidden])`) === null) {
+                break;
+            }
+        }
         if (await page.$(`${more}:not([hidden])`) !== null && await page.$(`${verb}:not([hidden])`) === null) {
             await page.click(more);
             await page.waitForSelector(MENU, { visible: true, timeout: 2000 });
@@ -488,10 +499,10 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
             await delay(80);
             const q = await placed(entry, MENU);
             assert.deepStrictEqual([q.shown, q.at, q.text], [true, 'menu-entry', reason]);
-            assert.ok(q.hint.bottom <= 800 && q.hint.right <= 360, `inside the window: ${JSON.stringify(q)}`);
+            assert.ok(q.hint.bottom <= 800 && q.hint.right <= width, `inside the window: ${JSON.stringify(q)}`);
             await shotAs('s6-bar-entry');
         } else {
-            assert.fail('at 360 px Delete note moves into the bar\'s "…"');
+            assert.fail(`Delete note moves into the bar's "…" by ${width} px`);
         }
         await page.setViewport({ width: 1280, height: 800 });
         await delay(300);
