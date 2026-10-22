@@ -510,6 +510,28 @@ suite('Attributes field (e2e)', () => {
         }
     });
 
+    test('R6 the attributes input is named by its heading, whichever bar opened it: "Bold · Attributes", not "Attributes" alone', async function () {
+        this.timeout(30000);
+        const accessibleName = async (): Promise<string> => {
+            const input = await page.waitForSelector(`${ANY_FIELD_BAR} .mep-inline-field`, { visible: true });
+            assert.ok(input, 'the field input');
+            const snapshot = await page.accessibility.snapshot({ root: input, interestingOnly: false });
+            return snapshot?.name ?? '';
+        };
+        await showDocument();
+        // A table's bar: "Attributes of Bold…" for the bold the caret is in.
+        await clickAt('Alpha', 2);
+        await pressAlt('Enter');
+        await clickVerb('inline-attributes');
+        assert.strictEqual(await accessibleName(), 'Bold · Attributes');
+        await page.keyboard.press('Escape');
+        await delay(100);
+        // The formatting row's field bar.
+        await clickAt('configurable', 3);
+        await chooseEntry('formatting', FORMATTING_ENTRY);
+        assert.strictEqual(await accessibleName(), 'Paragraph · Attributes');
+    });
+
     test('N1–N2 at 420 the keys line goes under the field, the title whole; refused, the reason on a line of its own', async function () {
         this.timeout(20000);
         await width(420, 640);

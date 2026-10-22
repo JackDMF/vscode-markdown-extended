@@ -91,6 +91,14 @@ export class FieldRow {
             }
         }
         this.bar.replaceChildren(...this.head, this.field.box, ...(this.keys ? [this.keys] : []), ...(this.reason ? [this.reason] : []));
+        // The input is named by the heading — the element and the value, *Bold · Attributes* — so whichever bar opened it, a screen reader says what it edits. The heading may be hidden for room: a reference reads it all the same.
+        const heading = this.head[0];
+        if (heading === undefined) {
+            this.field.el.removeAttribute('aria-labelledby');
+        } else {
+            heading.id = `mep-field-heading-${this.id}`;
+            this.field.el.setAttribute('aria-labelledby', heading.id);
+        }
         this.describe();
     }
 

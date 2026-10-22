@@ -69,7 +69,7 @@ import { FocusPlace, focusPlace } from './focusPlace';
 import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
-    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
+    deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine, CodeBlockObject,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, literalOfObject, attributeHolderAt, holderInside,
 } from './objects';
@@ -2192,8 +2192,20 @@ class ObjectToolbarView implements PluginView {
                 const literal = object.mark.attrs.literal as string;
                 // The attributes field every route opens; empty removes nothing here — a span is its literal (Remove attributes).
                 // Left as it was shown, Enter changes nothing (`changeSpanTransaction` would rewrite `{ .s }` as `{.s}`).
-                const step = attributesField('Span', literal, (value, refused) => this.commitLiteral(refused, object, value, current =>
-                    current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null), {
+                const step = attributesField('Span', literal, (value, refused) => {
+                    const current = currentObject(view.state, object);
+                    if (current?.kind !== 'span') {
+                        // The span is gone (the document changed under the open field): the field closes, the focus back, nothing written.
+                        this.act(object, () => false);
+                        return;
+                    }
+                    // Refused — the field kept open with what was typed and the reason under it — when markdown-it-attrs would not read the value as attributes.
+                    const refusal = changeSpanRefusal(view.state, current, value);
+                    if (refusal !== null) {
+                        return refused(refusal);
+                    }
+                    this.apply(object, now => (now.kind === 'span' ? changeSpanTransaction(view.state, now, value) : null));
+                }, {
                     removable: false,
                     unchanged: () => this.act(object, () => false),
                 });
@@ -2729,21 +2741,6 @@ class ObjectToolbarView implements PluginView {
             }
             return tr !== null;
         }, hint);
-    }
-
-    /**
-     * A literal committed from an attributes field: refused — the field kept
-     * open with what was typed and the reason under it (`refused`) — when
-     * markdown-it-attrs would not read it as attributes; applied otherwise.
-     */
-    private commitLiteral(refused: (reason: string) => FieldStep, object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null): FieldStep | void {
-        const place = 'node' in object ? literalPlaceOf(object.node) : 'span';
-        const current = currentObject(this.view.state, object);
-        const refusal = current?.kind === 'span' ? changeSpanRefusal(this.view.state, current, value) : literalRefusal(value, place);
-        if (refusal !== null) {
-            return refused(refusal);
-        }
-        this.apply(object, make);
     }
 
     private remove(object: EditorObject, hint: string): void {

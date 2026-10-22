@@ -2,11 +2,12 @@
 
 ## Unreleased
 
-- The floating layers — bars, bubble, fields, menus, cards, hints — follow one rule: below, else above. The completion list at the caret keeps its own placement for now.
+- The floating layers — bars, bubble, fields, menus, cards, hints — follow one rule: below, else above.
+- The completion list at the caret keeps its own placement for now.
 - With text on both sides, an inline object's bar goes above; block bars and the bubble stay below.
 - A layer never covers the caret's line, the formatting row or another open layer.
 - A layer stands at its object's start and stops at the editor's edge, 4 px short of the margin lane.
-- One floating layer at a time: a selection shows the bubble, a caret rest the bar, a field replaces its bar.
+- One floating layer at a time: selection shows the bubble, a caret rest the bar, a field replaces its bar.
 - The bar hides while you type and returns on a rest; Esc hides it until the caret leaves the object.
 - The bubble appears once the selection rests or on mouse-up, not while a keyboard selection grows.
 - A layer that just appeared or moved ignores the pointer for 250 ms.
@@ -14,7 +15,7 @@
 - A bar on a block or selection taller than the window sticks to the window's edge.
 - The caret hint keeps clear of open layers and the margin lane, flipping above the caret's line when needed.
 - A hovered block shows a cue while another layer is up; its bar shows once the slot is free.
-- Menus open 4 px from their opener, like every layer.
+- Menus open below their opener, else above, like every layer; a submenu stands against its entry.
 - The formatting row never scrolls: controls that do not fit move into a "…" menu; Export and the count stay.
 - Controls leave the row by priority — Annotation, Formatting, Insert, then marks from the right; Block type never.
 - A mark in "…" keeps glyph, word, syntax and key; on, a check and a dot on "…" show it.
@@ -45,18 +46,18 @@
 - A code block in a list, quote or container has the bar too; Attributes… there says why not.
 - A fenced block shows its language as a muted tag in its top-right corner, in the editor only.
 - Alt+Enter with nothing to act on says so in a hint, and the caret stays.
-- The caret's table cell carries a ring; its row or column is tinted only while Row, Column or Align is active.
-- A block's Language… and Edit source fields open where its bar stood, under the block.
+- The caret's table cell carries a ring; its row or column tints only while Row, Column or Align is active.
+- A block's field (Language…, Edit source, Attributes) opens under the block at its left edge; a run's at the run.
 - Language… takes one word: a space or a brace is refused, and the reason points to Edit source.
 - Edit source shows the opening line the file will hold, with the longer fence a ``` line inside needs.
 - Only a closing-shaped line inside a fence needs a longer fence; a ```python line does not.
 - A language the document names by one word is offered once, not again under its aliases.
-- A table verb moved into "…" tints its row or column while its entry is focused or its menu is open.
-- Alt+Enter on an object whose bar cannot show says what the object is, not that there is nothing to act on.
+- A table verb inside "…" tints its row or column while its entry is focused or its menu open.
+- Alt+Enter on an object whose bar cannot show names the object, not "nothing to act on".
 - Lenses from other extensions on a code block show in its bar after a caret rest, like on every object.
 - Enter on an unchanged opening line, or on a Language… that did not change, rewrites nothing.
 - Braces in a fence's info string that were text stay text: only a {…} you type is read as attributes.
-- A first word that opens with a brace ({r, echo = FALSE}) is no language: no corner tag, none shown in Language….
+- A first word opening with a brace ({r, echo = FALSE}) is no language: no corner tag, none in Language….
 - Language… keeps the info string's spacing around the word it replaces; the document's languages count by lowercase.
 - Copying a code block no longer carries the editor's language tag.
 - The "No actions here" hint fits one line; the fence in an indented block's tooltip is in the code font.
@@ -64,16 +65,17 @@
 - The attributes field draws its braces as a fixed frame; you type only what goes between them.
 - A pasted or typed {…} loses its outer braces; a stray brace is dropped on Enter.
 - Every attributes field is titled by the element it edits: "Bold · Attributes", "Quote · Attributes", "Span · Attributes".
+- A screen reader names the attributes field by that title, from whichever bar opened it.
 - The keys line says when Enter removes: "↵ removes .x #y · Esc keeps them".
-- A refused value keeps the keys line and shows the reason under the field, in amber; the next edit clears it.
+- A refused value keeps the keys line and shows its reason under the field, in amber; an edit clears it.
 - A field with no literal yet shows the placeholder ".class"; an emptied one shows none.
 - The Block type menu offers "Attributes of Paragraph…" after a divider, as Formatting does.
 - The bubble's {…} tooltip says what it does over plain text: Span with class….
-- A refusal names the value as the field shows it, without braces, the values in the code font; it keeps to about 80 characters.
-- An attributes field opens at the element it edits — a block's at its left edge, a run's at the run — not at the bar that opened it.
-- In a narrow editor a field's keys line moves under the field instead of being cut; the title never truncates, and loses its divider when alone on its row.
-- Enter in an attributes field left as it was changes nothing: no rewrite of `{ .a }`, no undo step, no hint.
-- The Block type menu opens where only its attributes entry applies (a table cell); the block types are dimmed with the reason.
+- A refusal names the value as the field shows it: no braces, values in code font, within about 80 characters.
+- In a narrow editor a field's keys line moves under the field instead of being cut.
+- A field's title never truncates; alone on its row it loses its divider.
+- Enter in an unchanged attributes field changes nothing: no rewrite of `{ .a }`, no undo step, no hint.
+- In a table cell the Block type menu still opens; only Attributes applies, the types dimmed with the reason.
 - The bubble's note and the verbs' tooltips speak the field's terms: `.class #id key=value`, empty removes.
 
 ## v4.8.0 — Bars, Labels and Notes That Fit

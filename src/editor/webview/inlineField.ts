@@ -316,6 +316,15 @@ export class InlineField extends InlineControl<HTMLInputElement> {
                 this.changed(!(e as InputEvent).isComposing && !inputType.startsWith('history'));
             }
         });
+        // Chromium raises no `input` after `compositionend`, so the guard ends with the user's next move: left standing, an edit that
+        // happened to leave the same text (a typed letter deleted again) would pass for the echo and go unjudged. Firefox's echo is
+        // a composition-text event, which is not the user's next edit.
+        input.addEventListener('keydown', () => (this.composed = null));
+        input.addEventListener('beforeinput', e => {
+            if ((e as InputEvent).inputType !== 'insertCompositionText') {
+                this.composed = null;
+            }
+        });
         // What a composition brought in is judged when it ends.
         input.addEventListener('compositionend', () => {
             this.changed(true);
