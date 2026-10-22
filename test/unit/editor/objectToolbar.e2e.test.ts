@@ -6,7 +6,7 @@ import { WebviewMessage } from '../../../src/editor/protocol';
 import { SIDEBAR_GLUED_BEFORE } from '../../../src/editor/serialize';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
 import { OWN_COPY } from '../../../src/editor/webview/wikiEmbeds';
-import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt as textPoint, settle, MOD, UNDO, editCommand } from './pageHarness';
+import { closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, leaveObjects, openEditorPage, pointAt as textPoint, settle, MOD, UNDO, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 
 /** The selection's object toolbar, shown. */
@@ -34,6 +34,7 @@ suite('Editor object toolbar (e2e)', () => {
         await page.waitForFunction(m => document.querySelector('.ProseMirror')?.textContent?.includes(m), {}, marker);
         // Out of any object the last test left the caret or the pointer in, and back at the top it may have scrolled from.
         await page.mouse.move(2, 2);
+        await leaveObjects(page);
         await page.evaluate(() => {
             (document.activeElement as HTMLElement | null)?.blur();
             window.scrollTo(0, 0);

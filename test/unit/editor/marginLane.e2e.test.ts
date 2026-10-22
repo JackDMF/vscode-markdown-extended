@@ -239,7 +239,7 @@ suite('Editor margin lane (e2e)', () => {
 
         await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
         await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden])');
-        await page.click('.mep-menu [data-action="sidenote"]');
+        await page.click('.mep-menu[data-menu="annotation"] [data-action="sidenote"]');
         await delay(150);
         assert.strictEqual(await lanePadding(), '250px', 'the first note opened the lane');
         near(await anchorTop(), before, 'the reference line after the lane opened');
@@ -281,12 +281,12 @@ suite('Editor margin lane (e2e)', () => {
         await page.evaluate(() => window.scrollTo(0, 0));
         await page.click('.mep-toolbar .mep-menu-face[data-menu="annotation"]');
         await page.waitForSelector('.mep-menu[data-menu="annotation"]:not([hidden])');
-        await page.hover('.mep-menu [data-action="sidenote"]');
+        await page.hover('.mep-menu[data-menu="annotation"] [data-action="sidenote"]');
         await page.waitForSelector(`.${PREVIEW_CARD_CLASS}[data-action="sidenote"]:not([hidden])`, { timeout: 2000 });
         assert.ok(await page.$(`.${PREVIEW_CARD_CLASS} .sidenote`), 'the card shows a sidenote');
         assert.strictEqual(await lanePadding(), '26px', 'and the page reserves nothing for it');
         // The pointer on the entry: its glyph keeps the underline, and takes no pairing tint.
-        const glyph = await page.$eval('.mep-menu [data-action="sidenote"] .sn-anchor', el => {
+        const glyph = await page.$eval('.mep-menu[data-menu="annotation"] [data-action="sidenote"] .sn-anchor', el => {
             const style = getComputedStyle(el);
             return [style.textDecorationStyle, style.backgroundColor];
         });

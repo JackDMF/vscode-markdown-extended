@@ -81,6 +81,7 @@ suite('Bubble samples (e2e)', () => {
         }, needle);
         // A selection no pointer drew rests before its bubble shows (`placement.ts`).
         await delay(REST_MS + 150);
+        await page.waitForSelector('.mep-bubble:not([hidden])', { timeout: 5000 });
     };
 
     /** The whole document's text selected, and the page scrolled to its middle: a selection taller than the window. */
@@ -93,8 +94,14 @@ suite('Bubble samples (e2e)', () => {
             (document.getSelection() as Selection).setBaseAndExtent(first, 0, last, (last.textContent ?? '').length);
         });
         await delay(REST_MS + 150);
+        await page.waitForSelector('.mep-bubble:not([hidden])', { timeout: 5000 });
         await page.evaluate(() => window.scrollTo(0, (document.scrollingElement as Element).scrollHeight / 3));
-        await delay(150);
+        // The scroll places the bubble again in the next frame (`placement.ts`, once per frame): on a loaded
+        // machine a fixed wait read it where the scroll had carried it, not yet at the window's visible edge.
+        await page.waitForFunction(() => {
+            const bubble = document.querySelector('.mep-bubble') as HTMLElement;
+            return !bubble.hidden && Math.abs(bubble.getBoundingClientRect().bottom - (window.innerHeight - 4)) < 1;
+        }, { timeout: 5000 });
     };
 
     /** Which branch the bubble stands in, and every sample whose painted box its button cuts. */
