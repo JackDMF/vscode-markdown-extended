@@ -724,6 +724,8 @@ img.mep-pending-range {
 }
 
 .mep-bubble[hidden] { display: none; }
+/* The bubble takes the focus for a moment while its "…" is measured (`holdFocus`), and keeps it where "…" went: it is no control to draw a ring on. */
+.mep-bubble:focus { outline: none; }
 
 /*
  * A note, a link, an image, a source block, injected content: each shows the

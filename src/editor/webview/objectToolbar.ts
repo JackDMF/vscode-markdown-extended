@@ -72,7 +72,7 @@ import { attributesStep, holderAttributesStep } from './attributes';
 import { currentReadsAttrs } from '../inlineEngine';
 import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
 import { barSeparator, followPointer, selectionWantsBubble, separator } from './toolbar/toolbar';
-import { buildMoreEntry, fitWithMore, moreControl, moreName, overflows } from './overflow';
+import { buildMoreEntry, fitWithMore, holdFocus, moreControl, moreName, overflows } from './overflow';
 import { SourceContext, inlineSourceTransaction } from './toolbar/commands';
 import {
     addColumnTransaction, addRowTransaction, alignColumnTransaction, columnAlign, deleteColumnRefusal, deleteColumnTransaction, deleteRowRefusal,
@@ -142,6 +142,9 @@ const HOVER_GRACE_MS = 300;
 
 /** Narrower than this, a cut title says nothing: `fit` hides it (the bar's `aria-label` still names the object). */
 const TITLE_STUB = 42;
+
+/** What `reopenVia` holds for "…"'s own list, which no verb id is. */
+const MORE_LIST = '…';
 
 /** One verb as the bar draws it. */
 export interface Verb {
@@ -473,7 +476,10 @@ class ObjectBar {
      * whose menu it is (none for "…"'s own), and whether it was opened through "…" (`viaMore`: its entries have no hover).
      */
     private menu: { panel: HTMLElement; button: HTMLButtonElement; entries: { entry: MenuEntry; el: HTMLElement }[]; verb?: string; viaMore: boolean } | null = null;
-    /** A set-verb's menu that was open through "…" when the bar was drawn again: `fit` opens it where its verb stands now. */
+    /**
+     * A menu that was open through "…" when the bar was drawn again: a set-verb's, by its id, or "…"'s own list
+     * (`MORE_LIST`): `fit` opens it where its verb stands now, or where "…" still is.
+     */
     private reopenVia: string | null = null;
 
     constructor(trigger: 'selection' | 'hover', private readonly events: BarEvents, private readonly tips: Tooltips) {
@@ -520,11 +526,15 @@ class ObjectBar {
             // (An open menu holds the focus — it closes when the focus leaves it — so the rebuilt one takes it.)
             const reopen = this.menu?.verb;
             const via = this.menu?.viaMore === true;
+            // "…"'s own list, open: it holds the verbs as they are now, so it is drawn again with them where "…" is still in the bar.
+            const list = this.menu !== null && this.menu.button === this.more && reopen === undefined;
             this.signature = signature;
             this.reopenVia = null;
             this.render(presentation);
             const again = reopen === undefined ? undefined : this.buttons.find(b => b.verb.id === reopen);
-            if (again?.verb.menu && !again.verb.refusal) {
+            if (list) {
+                this.reopenVia = MORE_LIST;
+            } else if (again?.verb.menu && !again.verb.refusal) {
                 if (via) {
                     // Where the verb stands is not known before the bar is fitted: it may be in "…" still.
                     this.reopenVia = again.verb.id;
@@ -604,7 +614,8 @@ class ObjectBar {
             this.showVerb(b);
         }
         this.moved = [];
-        // "…" is in the bar only while it holds a verb.
+        // "…" is in the bar only while it holds a verb: taken out and put back as it is measured, it keeps the focus it had.
+        const keepMore = holdFocus(this.more, this.el);
         this.more?.remove();
         this.el.style.maxWidth = `${Math.floor(room)}px`;
         // Measured at the mount's left edge: an absolute box's room is what lies right of its `left`, and `place` sets it after.
@@ -645,6 +656,7 @@ class ObjectBar {
         // A title the room hid still names the object on a rest on the bar (its `aria-label` names it too).
         this.tips.attach(this.el, () => (label.hidden ? plainTip(this.name) : null));
         this.el.style.left = left;
+        keepMore();
         this.menuAfterFit(movedBefore);
     }
 
@@ -670,7 +682,11 @@ class ObjectBar {
         }
         const pending = this.reopenVia;
         this.reopenVia = null;
-        const b = pending === null ? undefined : this.buttons.find(x => x.verb.id === pending);
+        if (pending === MORE_LIST && this.menu === null && this.more?.isConnected) {
+            this.openMenu(this.moreEntries(), this.more, { name: moreName('bar', []), viaMore: true });
+            return;
+        }
+        const b = pending === null || pending === MORE_LIST ? undefined : this.buttons.find(x => x.verb.id === pending);
         if (b?.verb.menu && !b.verb.refusal && this.menu === null) {
             const name = lensName(b.verb.label);
             if (this.moved.includes(b) && this.more?.isConnected) {

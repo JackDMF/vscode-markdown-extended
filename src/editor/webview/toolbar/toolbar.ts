@@ -56,7 +56,7 @@ import {
     ActionPreview, BUBBLE_OVERFLOW, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
     TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, isRowMark, menuOf, moreOrder, submenuOf, tipOf,
 } from './actions';
-import { buildMoreEntry, fitWithMore, moreControl, moreName, overflows } from '../overflow';
+import { buildMoreEntry, fitWithMore, holdFocus, moreControl, moreName, overflows, setMoreEntryState } from '../overflow';
 import { ariaKeyshortcuts, keyLabel } from '../../keys';
 import { Tip, plainTip } from '../../tips';
 import { macKeys } from '../hint';
@@ -585,6 +585,13 @@ class ToolbarView implements PluginView {
             }
         }, true);
         this.listen(window, 'resize', () => this.closeAll());
+        // The row never scrolls, yet a box that clips can be scrolled — by a control focused past its edge, by a script.
+        // (Not `overflow: clip`: `overflows` reads `scrollWidth`, which counts the end padding only for a scroll container.)
+        this.listen(this.row, 'scroll', () => {
+            if (this.row.scrollLeft !== 0) {
+                this.row.scrollLeft = 0;
+            }
+        });
         // The main button held: a selection it draws shows its bubble at the
         // release (`bubbleReleased`). Only the main button — a right press
         // opens a menu that may take its release.
@@ -658,16 +665,15 @@ class ToolbarView implements PluginView {
         const mac = macKeys();
         for (const tool of this.tools) {
             const s = stateOf(tool.action);
-            setState(tool.el, s.enabled, s.active);
             const note = s.enabled ? null : s.reason;
             if (tool.el.classList.contains('mep-menu-item')) {
                 // A menu entry shows its word and syntax, and its card the construct and the refusal: no hover.
-                // A refused one says why to a screen reader.
-                describeAs(tool.el, note);
-                // A mark's entry in "…" is checked as its button is pressed.
-                if (tool.el.getAttribute('role') === 'menuitemcheckbox') {
-                    tool.el.setAttribute('aria-checked', String(s.active));
-                }
+                // A refused one says why to a screen reader. A mark's entry in "…" is checked as its button is pressed.
+                setMoreEntryState(tool.el, {
+                    checked: tool.el.getAttribute('role') === 'menuitemcheckbox' ? s.active : undefined,
+                    active: s.active,
+                    refusal: s.enabled ? null : note ?? '',
+                });
                 // A named entry says one name: the selection's, or — the row locked — its resting one.
                 if (tool.action.named) {
                     relabel(tool.el, s.label ?? tool.action.label);
@@ -675,6 +681,7 @@ class ToolbarView implements PluginView {
                 }
                 continue;
             }
+            setState(tool.el, s.enabled, s.active);
             this.tipOfControl.set(tool.el, s.tip ? { ...s.tip, note } : tipOf(tool.action, { label: s.label, reason: note, mac }));
             this.tips.refresh(tool.el);
             if (s.ariaLabel !== undefined) {
@@ -739,6 +746,12 @@ class ToolbarView implements PluginView {
             return;
         }
         const before = this.moved.join(',');
+        // The focus on the row's control or on "…" across the fit: a control that leaves goes to "…", "…" itself is measured in and out.
+        const active = document.activeElement as HTMLElement | null;
+        const held = Array.from(this.rowControls.values()).find(el => el === active);
+        const keepMore = holdFocus(this.moreFace);
+        // The focus in an open menu: the fit shows every control, and hides the entries of "…" for it, which drops the focus out of the menu.
+        const inMenus = active === null ? [] : this.menus.filter(m => !m.panel.hidden && m.panel.contains(active));
         const role = this.lockRole;
         const forms = role === null ? null : lockForms(role);
         const note = this.lockNote;
@@ -819,13 +832,48 @@ class ToolbarView implements PluginView {
         this.moreDivider.hidden = marks.length === 0 || menus.length === 0;
         this.more.children = menus.map(id => this.rowMenus.get(id) as Menu);
         this.layoutKey = this.rowLayoutKey();
+        keepMore();
+        if (held?.hidden && !this.moreGroup.hidden) {
+            // The control the focus was on left the row: "…" holds it now, and keeps the focus.
+            this.moreFace.focus({ preventScroll: true });
+        } else if (active !== null && inMenus.length > 0 && active.isConnected && document.activeElement !== active && active.closest('[hidden]') === null) {
+            // The entry the person was on is there still: so is the focus.
+            active.focus({ preventScroll: true });
+        }
         if (moved.join(',') !== before) {
             // "…" is named for what it holds now, whoever laid the row out (a resize, a font — no transaction).
             this.updateMore(this.refusal);
-            if (this.menus.some(m => !m.panel.hidden)) {
-                // A menu open over a row that changed stands where nothing opens it now.
-                this.closeAll();
+            this.closeMenusAfterLayout(before === '' ? [] : before.split(','), moved, inMenus);
+        }
+    }
+
+    /**
+     * What a changed row did to an open menu, as `menuAfterFit` does for a bar:
+     * a menu whose trigger moved — its face left the row, or it was opened
+     * through "…", whose contents changed, "…" itself among them — hangs from
+     * nothing now and closes, the focus it held (`held`: the menus it was in
+     * before the layout) going to its face where that stands in the row, else
+     * to "…". Every other open menu is the person's to read and stays.
+     */
+    private closeMenusAfterLayout(was: readonly string[], now: readonly RowControl[], held: readonly Menu[]): void {
+        const closing = this.menus.filter(menu => {
+            if (menu.panel.hidden) {
+                return false;
             }
+            const rowMenu = this.rowMenus.get(menu.id as ToolbarMenu) === menu;
+            return menu === this.more || (rowMenu && (was.includes(menu.id) || now.includes(menu.id as RowControl)));
+        });
+        for (const menu of closing) {
+            this.closeMenu(menu);
+        }
+        if (closing.length > 0) {
+            this.hideCard();
+            this.tips.hide();
+        }
+        if (held.some(menu => menu.panel.hidden)) {
+            const visible = (el: HTMLElement | undefined) => (el !== undefined && el.isConnected && el.closest('[hidden]') === null ? el : undefined);
+            const face = closing.map(menu => menu.face).find(visible);
+            (visible(face) ?? visible(this.moreFace))?.focus({ preventScroll: true });
         }
     }
 
@@ -1029,6 +1077,8 @@ class ToolbarView implements PluginView {
             this.bubbleControls.set(action.id, button);
             bubble.append(button);
         }
+        // Focusable for the focus to rest on while "…" is measured in and out (`holdFocus`); never by the keys.
+        bubble.tabIndex = -1;
         this.buildBubbleMore();
         return bubble;
     }
@@ -1069,8 +1119,7 @@ class ToolbarView implements PluginView {
     private moreMark(more: Menu, action: ToolbarAction): HTMLElement {
         const item = this.menuEntry(more, action, true);
         if (action.apply.kind === 'mark' || action.apply.kind === 'wrap-node') {
-            item.setAttribute('role', 'menuitemcheckbox');
-            item.setAttribute('aria-checked', 'false');
+            setMoreEntryState(item, { role: 'menuitemcheckbox', checked: false });
         }
         if (action.key !== undefined) {
             item.append(span('mep-entry-key', keyLabel(action.key, macKeys())));
@@ -1105,6 +1154,9 @@ class ToolbarView implements PluginView {
             (this.bubbleControls.get(id) as HTMLElement).hidden = true;
             (this.bubbleEntries.get(id) as HTMLElement).hidden = false;
         };
+        // "…" is taken out of the bubble and put back by the measurement, and an element that is hidden or removed gives its focus up
+        // at once — which the bubble takes for the focus having left it. The bubble holds it meanwhile, and "…" has it again after.
+        const keepMore = holdFocus(this.bubbleMoreFace, bubble);
         const moved = fitWithMore(BUBBLE_OVERFLOW, () => overflows(bubble), show, hide, shown => {
             if (shown) {
                 bubble.append(this.bubbleMoreFace);
@@ -1112,6 +1164,7 @@ class ToolbarView implements PluginView {
                 this.bubbleMoreFace.remove();
             }
         });
+        keepMore();
         bubble.style.left = left;
         this.bubbleMoved = moved;
         this.bubbleDivider.hidden = !(moved.some(isRowMark) && moved.some(id => !isRowMark(id)));
@@ -1329,12 +1382,15 @@ class ToolbarView implements PluginView {
             const mine = running !== null && item.dataset.export === running;
             setState(item, running === null, false);
             describeAs(item, running === null ? null : mine ? exportBusyLabel(running, 'full') : exportBusyNote(running));
-            item.querySelector(':scope > .mep-entry-busy')?.remove();
-            if (mine) {
+            // As the face's icon is: drawn only when whether it spins changes, so the animation runs on through every update.
+            const spinning = item.querySelector(':scope > .mep-entry-busy');
+            if (mine && spinning === null) {
                 const busy = span('mep-entry-busy');
                 busy.setAttribute('aria-hidden', 'true');
                 busy.append(...spinner());
                 item.prepend(busy);
+            } else if (!mine) {
+                spinning?.remove();
             }
             const detail = item.querySelector<HTMLElement>(':scope > .mep-entry-detail');
             if (detail) {

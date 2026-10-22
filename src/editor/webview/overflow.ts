@@ -11,6 +11,7 @@
  */
 
 import { lensLabelNodes } from './lenses';
+import { describeAs } from './tooltip';
 
 /**
  * Hide the items of `order`, in that order, until `fits()` answers yes.
@@ -89,23 +90,77 @@ export function buildMoreEntry(options: MoreEntryOptions = {}): HTMLElement {
     const el = document.createElement('div');
     el.className = 'mep-menu-item';
     el.tabIndex = -1;
-    el.setAttribute('role', options.role ?? 'menuitem');
-    if (options.checked !== undefined) {
-        el.setAttribute('aria-checked', String(options.checked));
-        el.classList.toggle('mep-active', options.checked);
-    }
     if (options.opens) {
         el.setAttribute('aria-haspopup', 'menu');
     }
-    if (options.refusal) {
-        el.classList.add('mep-disabled');
-        el.setAttribute('aria-disabled', 'true');
-    }
-    const description = [options.description, options.refusal].filter((s): s is string => s !== undefined && s !== null && s !== '').join('\n');
-    if (description !== '') {
-        el.setAttribute('aria-description', description);
-    }
+    setMoreEntryState(el, {
+        role: options.role ?? 'menuitem',
+        checked: options.checked,
+        // An entry built with no refusal says nothing of being refused: `aria-disabled` is for the update that follows.
+        refusal: options.refusal ? options.refusal : undefined,
+        description: options.description,
+    });
     return el;
+}
+
+/** What an entry of a "…" menu is and shows, to be set again as the state it shows changes (`setMoreEntryState`). */
+export interface MoreEntryState extends Pick<MoreEntryOptions, 'role' | 'checked' | 'description'> {
+    /** The active class alone, for an entry that has no check (a menu's current type); `checked`, where given, decides it. */
+    active?: boolean;
+    /** Why it cannot be chosen, `''` when there is nothing to say: drawn disabled. `null` offers it again; `undefined` leaves it as it is. */
+    refusal?: string | null;
+}
+
+/**
+ * The one writer of an entry's role, check, refusal and description — the
+ * skeleton `buildMoreEntry` makes and the row's `update` keeps current, so an
+ * entry is the same thing at its birth and after. A property that is not given
+ * is left as it is; the description is read with the refusal after it, and
+ * written only where it changes (`describeAs`).
+ */
+export function setMoreEntryState(el: HTMLElement, state: MoreEntryState): void {
+    if (state.role !== undefined) {
+        el.setAttribute('role', state.role);
+    }
+    if (state.checked !== undefined) {
+        el.setAttribute('aria-checked', String(state.checked));
+    }
+    const active = state.checked ?? state.active;
+    if (active !== undefined) {
+        el.classList.toggle('mep-active', active);
+    }
+    if (state.refusal !== undefined) {
+        const refused = state.refusal !== null;
+        el.classList.toggle('mep-disabled', refused);
+        el.setAttribute('aria-disabled', String(refused));
+    }
+    if (state.refusal !== undefined || state.description !== undefined) {
+        const said = [state.description, state.refusal].filter((s): s is string => s !== undefined && s !== null && s !== '').join('\n');
+        describeAs(el, said);
+    }
+}
+
+/**
+ * The focus, kept across a fit. A control that is hidden or taken out of its
+ * container — a measurement does that to "…" — gives its focus up at once,
+ * to the body, and whatever listens for the focus leaving a bubble or a bar
+ * hears it there and then. So the focus rests on `holder` (the container,
+ * focusable for it) while the fit runs, and is on the control again after,
+ * where the control is in the container and shown; where it is not, `holder`
+ * keeps it. Call it before the fit; call what it returns after.
+ */
+export function holdFocus(el: HTMLElement | null, holder?: HTMLElement): () => void {
+    const held = el !== null && document.activeElement === el;
+    if (held) {
+        holder?.focus({ preventScroll: true });
+    }
+    return () => {
+        if (!held || el === null || document.activeElement === el) {
+            return;
+        }
+        const target = el.isConnected && el.closest('[hidden]') === null ? el : holder;
+        target?.focus({ preventScroll: true });
+    };
 }
 
 /** Whether `el`'s content stands past its box, with half a pixel of slack for subpixel widths. */
