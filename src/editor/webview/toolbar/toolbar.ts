@@ -38,7 +38,7 @@ import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
 import { LayerSlot, REST_MS, caretRect, placeCard, placeMenu, rangeAnchor } from '../placement';
 import { showHint } from '../hint';
-import { FieldStep, InlineField, fieldHeading, refusedStep } from '../inlineField';
+import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
 import { chevronNode, lensLabelNodes } from '../lenses';
 import { clearPendingRange, showPendingRange } from '../pendingRange';
@@ -51,10 +51,10 @@ import {
     insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, objectAtSelection, spanLockReason,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
-import { ATTRIBUTES_FIELD_KEYS, attributesStep, holderAttributesStep } from '../attributes';
+import { attributesField, attributesStep, holderAttributesStep } from '../attributes';
 import { insertTableTransaction } from '../tables';
 import {
-    ActionPreview, BUBBLE_OVERFLOW, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SPAN_FIELD_PREFILL, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
+    ActionPreview, BUBBLE_OVERFLOW, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
     TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, isRowMark, menuOf, moreOrder, submenuOf, tipOf,
 } from './actions';
 import { moreControl, moreName, moveUntilFits, overflows } from '../overflow';
@@ -1807,9 +1807,9 @@ class ToolbarView implements PluginView {
 
     /**
      * **Span with class**: the inline field, in a bar of the object toolbar's
-     * kind under the selection, asks for the `{…}` literal — `{.}` with the caret
-     * after the dot, so the class is typed at once — and `Enter` makes the
-     * selection `[text]{literal}`. The selection stays in the state while the
+     * kind under the selection, asks for the `{…}` literal — the attributes
+     * field (`attributesField`), the braces drawn, `.class` its placeholder —
+     * and `Enter` makes the selection `[text]{literal}`. The selection stays in the state while the
      * field has the focus; a re-sync meanwhile maps it, so the commit applies to
      * the text it was opened for.
      */
@@ -1818,35 +1818,29 @@ class ToolbarView implements PluginView {
         if (spanLockReason(view.state) !== null) {
             return;
         }
-        const step: FieldStep = {
-            value: SPAN_FIELD_PREFILL.value,
-            caret: SPAN_FIELD_PREFILL.caret,
-            label: 'Attributes',
-            keys: ATTRIBUTES_FIELD_KEYS,
-            commit: value => {
-                // Asked before the focus goes back: a refusal keeps the field open with what was typed.
-                // The transaction is built after it is back, which may commit a source box. Both are
-                // decided in one place (`applySpanRefusal`, `applySpanTransaction`): no refusal, a transaction.
-                const refusal = applySpanRefusal(view.state, value);
-                if (refusal !== null) {
-                    return refusedStep(step, value, refusal);
-                }
-                view.focus();
-                const tr = applySpanTransaction(view.state, value);
-                if (tr === null) {
-                    // What the focus moved (a source box's commit) changed the answer: the field stays, saying why.
-                    return refusedStep(step, value, applySpanRefusal(view.state, value) ?? SPAN_REFUSED);
-                }
-                view.dispatch(tr);
-            },
-        };
+        const step = attributesField('Span', null, (value, refused) => {
+            // Asked before the focus goes back: a refusal keeps the field open with what was typed.
+            // The transaction is built after it is back, which may commit a source box. Both are
+            // decided in one place (`applySpanRefusal`, `applySpanTransaction`): no refusal, a transaction.
+            const refusal = applySpanRefusal(view.state, value);
+            if (refusal !== null) {
+                return refused(refusal);
+            }
+            view.focus();
+            const tr = applySpanTransaction(view.state, value);
+            if (tr === null) {
+                // What the focus moved (a source box's commit) changed the answer: the field stays, saying why.
+                return refused(applySpanRefusal(view.state, value) ?? SPAN_REFUSED);
+            }
+            view.dispatch(tr);
+        });
         this.openFieldBar('span', 'Span attributes', 'span-attributes', step);
     }
 
     /**
      * **Attributes…**: the inline field, in a bar at the block the caret is in,
      * labelled with that block's name (`Paragraph · Attributes`) and prefilled
-     * with its literal — or `{.}`, the caret after the dot — and `Enter` sets it
+     * with its literal — empty, `.class` its placeholder, when it has none — and `Enter` sets it
      * where markdown-it-attrs reads it for that block (`commitAttributes`).
      */
     private askBlockAttributes(): void {
@@ -2012,6 +2006,7 @@ class ToolbarView implements PluginView {
                 label: step.label,
                 placeholder: step.placeholder,
                 complete: step.complete,
+                adorn: step.adorn,
                 onChange: value => (this.fieldBar?.field === field ? this.fieldBar.row.changed(value) : undefined),
                 onCommit: value => {
                     const next = step.commit(value);
@@ -2029,7 +2024,7 @@ class ToolbarView implements PluginView {
                 },
             });
             field.el.dataset.verb = verb;
-            label.textContent = fieldHeading(barLabel, step.label);
+            label.textContent = step.heading ?? fieldHeading(barLabel, step.label);
             // Its title drawn as every bar's: a muted label, a divider after it.
             const again = this.fieldBar?.bar === bar;
             this.fieldBar?.row.destroy();

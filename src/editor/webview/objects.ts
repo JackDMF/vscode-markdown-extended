@@ -41,7 +41,7 @@ import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
-import { isRemoval } from '../attributeLiteral';
+import { innerOf, isRemoval } from '../attributeLiteral';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
@@ -637,45 +637,53 @@ export const NO_ATTRS_REFUSAL = 'The preview reads no attributes here: markdown-
  * (a paragraph's by default), or `null`: the preview must read it there as
  * attributes, all of it (`attrsReadAt`, the rule the host's parse recognises
  * a literal by) — and reads none where the host's engine reads no
- * attributes (`NO_ATTRS_REFUSAL`).
+ * attributes (`NO_ATTRS_REFUSAL`). The literal is named as the attributes
+ * field shows it, between the braces it draws (`innerOf`), so the reason
+ * never asks for a brace one cannot type there; `braced` names it whole, for
+ * a field whose text holds the braces (a code block's opening line).
  */
-export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph'): string | null {
+export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph', braced = false): string | null {
     if (!currentReadsAttrs()) {
         return NO_ATTRS_REFUSAL;
     }
     const value = literal.trim();
+    const shown = braced ? value : innerOf(value);
     if (value.startsWith('{') && readBrace(value, 0).close < 0) {
-        return `${value} is not closed: end the attribute list with }.`;
+        // With the braces the field's, an open quote is what leaves the list unclosed: it swallows the closing brace.
+        return /="[^"]*$/.test(value)
+            ? `${shown} has an open quote: close it with ".`
+            : `${shown} is not closed: end the attribute list with }.`;
     }
     if (value.startsWith('{') && isTextBrace(value, 0)) {
-        const text = `${value} is text, not an attribute list: a space beside its = makes it text, as in PowerShell's @{a = 1}.`;
+        const text = `${shown} is text, not an attribute list: a space beside its = makes it text, as in PowerShell's @{a = 1}.`;
         const tightened = tightenedSuggestion(value);
-        return tightened === null ? text : `${text} Write it as ${tightened}.`;
+        return tightened === null ? text : `${text} Write it as ${braced ? tightened : innerOf(tightened)}.`;
     }
     if (parseAttrsLiteral(value) === null) {
-        return `${value || 'An empty value'} is no attribute list: write it as {.class}, {#id} or {key="value"}, as markdown-it-attrs reads it.`;
+        const examples = braced ? '{.class}, {#id} or {key="value"}' : '.class, #id or key="value"';
+        return `${shown || 'An empty value'} is no attribute list: write it as ${examples}, as markdown-it-attrs reads it.`;
     }
     if (INLINE_PLACES.has(place) && hasInnerBrace(value)) {
-        return `${value} holds a } inside a value: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
+        return `${shown} holds a } inside a value: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
     }
     const holder = holderNamed(place);
     const own = holder === undefined ? undefined : (parseAttrsLiteral(value) ?? []).find(([name]) => holder.own.includes(name))?.[0];
     if (place === 'link' && own !== undefined) {
-        return `${value} sets the link's href or title, which the link writes in its (…): give it a class, an id or another attribute.`;
+        return `${shown} sets the link's href or title, which the link writes in its (…): give it a class, an id or another attribute.`;
     }
     if (holder !== undefined && own !== undefined) {
         // The one key at fault, and where it is changed instead.
         return `${own} is the ${holder.noun}'s own: change it with Edit ${holder.noun}…. Here, give it a class, an id or another attribute.`;
     }
     if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(value)) {
-        return `${value} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
+        return `${shown} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
     }
     if (place === fenceHolder('```') && value.includes('`')) {
-        return `${value} holds a backtick: the line opening a \`\`\` fence holds none, and the block would no longer be code. A ~~~ fence takes it.`;
+        return `${shown} holds a backtick: the line opening a \`\`\` fence holds none, and the block would no longer be code. A ~~~ fence takes it.`;
     }
     if (attrsReadAt(value, place) === null) {
         const math = currentInlineDefinition().math ? ', math' : '';
-        return `${value} holds what markdown-it reads before markdown-it-attrs here — a \\, an entity, code, emphasis, HTML, a link${math} or a plugin's markup — and the preview would show it as text.`;
+        return `${shown} holds what markdown-it reads before markdown-it-attrs here — a \\, an entity, code, emphasis, HTML, a link${math} or a plugin's markup — and the preview would show it as text.`;
     }
     return null;
 }
@@ -1338,7 +1346,8 @@ function openingLineChange(state: EditorState, pos: number, line: string): { tr:
     // A literal is read on the fence it stands on (`fenceHolder`): asked again when either changes.
     if (literal !== null && (literal !== node.attrs.attrsSuffix || fenceHolder(String(next.attrs.markup)) !== fenceHolder(String(node.attrs.markup)))) {
         const refusal = (state.doc.resolve(pos).depth > 0 ? NESTED_CODE_ATTRS_REFUSAL : null)
-            ?? literalRefusal(literal, fenceHolder(String(next.attrs.markup)))
+            // The opening line's field holds the braces as typed: the reason names the literal whole.
+            ?? literalRefusal(literal, fenceHolder(String(next.attrs.markup)), true)
             ?? literalsReadBackRefusal(tr.doc, pos, state.doc, node.attrs.attrsSuffix as string | null);
         if (refusal !== null) {
             return { refusal };

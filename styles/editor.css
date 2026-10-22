@@ -765,7 +765,7 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 /* A title the bar's room hid (`fit`) takes its divider with it. */
 .mep-object-label[hidden] + .mep-object-separator { display: none; }
 /* A field's title is never cut: it says what the field edits (`Paragraph · Attributes`). */
-.mep-object-toolbar:has(> .mep-inline-field) > .mep-object-label { flex: none; overflow: visible; text-overflow: clip; }
+.mep-object-toolbar:has(.mep-inline-field) > .mep-object-label { flex: none; overflow: visible; text-overflow: clip; }
 
 /* An atom's spelling in its label (`Emoji :)`): the editor's code font, no chip. */
 .mep-object-label-code {
@@ -871,14 +871,13 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 }
 
 /*
- * Why what was typed was refused, in the keys' place while the field stays open with it:
- * the text's colour, marked in the refusal's amber as the caret hint's refusal is; it may
- * take two lines rather than run past the window.
+ * Why what was typed was refused, on a line of its own under the field while it stays open
+ * with it (`fieldRow.ts`, the keys line kept): the text's colour, marked in the refusal's
+ * amber as the caret hint's refusal is; it may take two lines rather than run past the window.
  */
 .mep-field-refusal {
     margin-left: 6px;
     padding-left: 6px;
-    max-width: 48ch;
     border-left: 2px solid var(--vscode-editorWarning-foreground, #bf8803);
     font-size: 11px;
     line-height: 14px;
@@ -903,6 +902,80 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     outline: none;
 }
 .mep-inline-field::placeholder { color: var(--vscode-input-placeholderForeground, GrayText); }
+
+/*
+ * A field's bar (`fieldRow.ts`) may take a second line: a refusal's reason always, the keys
+ * line where the room is too narrow for it beside the field (`mep-narrow`, measured by
+ * `FieldRow.fit`). The title never truncates (the rule above). Refused (`aria-invalid`), the
+ * field is framed in the refusal's amber until the next edit — in High Contrast thicker and
+ * dashed too, a change of form, not of colour alone.
+ */
+.mep-object-toolbar.mep-field-bar { flex-wrap: wrap; row-gap: 2px; }
+.mep-field-bar > .mep-field-refusal {
+    flex-basis: 100%;
+    box-sizing: border-box;
+    margin: 2px 4px 2px 6px;
+    padding: 1px 0 1px 8px;
+    font-size: 12px;
+    line-height: 16px;
+}
+.mep-field-bar.mep-narrow > .mep-field-keys {
+    flex-basis: 100%;
+    margin: 0 4px 2px 6px;
+    padding: 2px 0 0;
+    border-left: none;
+    border-top: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, transparent));
+    white-space: normal;
+}
+.mep-field-bar.mep-narrow > .mep-inline-field,
+.mep-field-bar.mep-narrow .mep-attr-field { flex: 1 1 auto; min-width: 0; }
+.mep-inline-field[aria-invalid="true"] { border-color: var(--vscode-inputValidation-warningBorder, #b89500); }
+.vscode-high-contrast .mep-inline-field[aria-invalid="true"] { border-width: 2px; border-style: dashed; }
+/* The keys line's syntax, and a literal it or the reason names: plain muted monospace, no chip. */
+.mep-field-keys code, .mep-field-refusal code {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+}
+/* Enter will remove what the field had: the keys line says so in the text's colour. */
+.mep-field-keys.mep-keys-removes { color: var(--vscode-foreground, inherit); }
+
+/*
+ * The attributes field (`attributeLiteral.ts`): the braces are the field's, drawn fixed inside
+ * its frame — muted, not selectable, not in the value — and the input borderless between them.
+ */
+.mep-attr-field {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    box-sizing: border-box;
+    height: 22px;
+    padding: 0 4px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    line-height: 20px;
+    color: var(--vscode-input-foreground, inherit);
+    background: var(--vscode-input-background, transparent);
+    border: 1px solid var(--vscode-focusBorder, Highlight);
+    border-radius: 2px;
+    cursor: text;
+}
+.mep-attr-field > .mep-inline-field {
+    flex: 1 1 auto;
+    min-width: 10em;
+    height: 20px;
+    padding: 0 2px;
+    border: none;
+    background: transparent;
+}
+.mep-attr-brace {
+    flex: none;
+    color: var(--vscode-descriptionForeground, GrayText);
+    user-select: none;
+}
+.mep-attr-field:has(> [aria-invalid="true"]) { border-color: var(--vscode-inputValidation-warningBorder, #b89500); }
+.vscode-high-contrast .mep-attr-field:has(> [aria-invalid="true"]) { border-width: 2px; border-style: dashed; }
+.mep-attr-field > .mep-inline-field[aria-invalid="true"] { border: none; }
+.mep-field-bar.mep-narrow .mep-attr-field > .mep-inline-field { min-width: 0; width: 100%; }
 
 /*
  * A link's field completes: the files and headings the host offers, listed

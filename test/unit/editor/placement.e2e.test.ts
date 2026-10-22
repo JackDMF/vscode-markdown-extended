@@ -714,13 +714,13 @@ suite('Editor placement (e2e)', () => {
     test('r1-2: a row menu opened over a field bar leaves the field and what was typed in it', async function () {
         this.timeout(15000);
         await s4();
-        await page.keyboard.type('xy');
+        await page.keyboard.type('.xy');
         await page.click(FORMATTING_FACE);
         await page.waitForSelector(FORMATTING_MENU, { timeout: 3000 });
         await delay(150);
         const field = await page.$eval(`${ROW_FIELD} input`, el => ({ value: (el as HTMLInputElement).value, hidden: (el.closest('.mep-layer') as HTMLElement).hidden }));
-        // The field opens on `{.}` with the caret after the dot: what was typed stands in it.
-        assert.deepStrictEqual(field, { value: '{.xy}', hidden: false });
+        // The field opens empty between the braces it draws: what was typed stands in it.
+        assert.deepStrictEqual(field, { value: '.xy', hidden: false });
         await page.keyboard.press('Escape');
         await page.keyboard.press('Escape');
     });

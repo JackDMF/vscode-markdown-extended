@@ -73,7 +73,7 @@ import {
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
-import { attributesStep, holderAttributesStep } from './attributes';
+import { attributesField, attributesStep, holderAttributesStep } from './attributes';
 import { currentReadsAttrs } from '../inlineEngine';
 import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
 import { barSeparator, followPointer, selectionWantsBubble, separator } from './toolbar/toolbar';
@@ -1018,7 +1018,7 @@ class ObjectBar {
                 new InlineChoice({ choices: spec.options, value: spec.value, label: spec.label, ...callbacks })
             : (callbacks: { onCommit(value: string): void; onCancel(reason: 'escape' | 'blur'): void }) =>
                 new InlineField({
-                    value: spec.value, caret: spec.caret, label: spec.label, placeholder: spec.placeholder, complete: spec.complete,
+                    value: spec.value, caret: spec.caret, label: spec.label, placeholder: spec.placeholder, complete: spec.complete, adorn: spec.adorn,
                     onChange: value => this.row?.changed(value), ...callbacks,
                 });
         const field = make({
@@ -1048,7 +1048,8 @@ class ObjectBar {
         if (label) {
             // A prefilled field shows no placeholder: the label says what the value is.
             // The object's name alone: what the field holds (a literal) is not said twice (`Image · Attributes`).
-            label.textContent = fieldHeading(this.el.dataset.name ?? '', spec.label);
+            // An attributes field names the element it edits, whichever bar opened it (`FieldStep.heading`).
+            label.textContent = ('heading' in spec ? spec.heading : undefined) ?? fieldHeading(this.el.dataset.name ?? '', spec.label);
             // The heading says it all: the object's hover, attached for the title, would say something else.
             this.tips.attach(label, () => null);
             // A title `fit` hid for the verbs is the field's heading now, and there are no verbs to count.
@@ -1820,8 +1821,8 @@ class ObjectToolbarView implements PluginView {
         }
         const names = holderNames(inside);
         const name = `Attributes of ${names.label}`;
-        // Headed by the element, not by the object whose bar it is on (`Table · Attributes of Bold`).
-        const step = holderAttributesStep(this.view, inside, name);
+        // Headed by the element, not by the object whose bar it is on: `Bold · Attributes` (`attributesField`).
+        const step = holderAttributesStep(this.view, inside);
         const verb: Verb = {
             id: 'inline-attributes',
             label: `${name}…`,
@@ -2039,12 +2040,9 @@ class ObjectToolbarView implements PluginView {
             }
             case 'span': {
                 const literal = object.mark.attrs.literal as string;
-                const step: FieldStep = {
-                    value: literal,
-                    label: 'Attributes',
-                    commit: value => this.commitLiteral(step, object, value, current =>
-                        current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null),
-                };
+                // The attributes field every route opens; empty removes nothing here — a span is its literal (Remove attributes).
+                const step = attributesField('Span', literal, (value, refused) => this.commitLiteral(refused, object, value, current =>
+                    current.kind === 'span' ? changeSpanTransaction(view.state, current, value) : null), false);
                 // The title says Span, not attributes: the verb keeps its noun however narrow the bar.
                 const remove = wording({ verb: 'Remove', noun: 'attributes', keeps: ', keep text', titled: false });
                 return {
@@ -2566,18 +2564,18 @@ class ObjectToolbarView implements PluginView {
     }
 
     /**
-     * A literal typed into `step`'s field: refused — the field kept open with
-     * what was typed and the reason beside it (`refusedStep`) — when
+     * A literal committed from an attributes field: refused — the field kept
+     * open with what was typed and the reason under it (`refused`) — when
      * markdown-it-attrs would not read it as attributes (`''` is allowed where
      * it means "none"); applied otherwise.
      */
-    private commitLiteral(step: FieldStep, object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): FieldStep | void {
+    private commitLiteral(refused: (reason: string) => FieldStep, object: EditorObject, value: string, make: (current: EditorObject) => Transaction | null, hint?: string): FieldStep | void {
         const place = 'node' in object ? literalPlaceOf(object.node) : 'span';
         const current = currentObject(this.view.state, object);
         const refusal = hint !== undefined && value.trim() === '' ? null
             : current?.kind === 'span' ? changeSpanRefusal(this.view.state, current, value) : literalRefusal(value, place);
         if (refusal !== null) {
-            return refusedStep(step, value, refusal);
+            return refused(refusal);
         }
         this.apply(object, make, hint);
     }

@@ -17,6 +17,7 @@
  * it is, without the field's value.
  */
 import type { Completer, Completion } from '../completions';
+import type { TipPart } from '../tips';
 import { CompletionListView } from './completionList';
 
 /**
@@ -31,13 +32,43 @@ export interface FieldStep {
     value: string;
     caret?: number;
     label: string;
+    /**
+     * The bar's heading while the field is open, where it is not the object's
+     * name and the field's label (`fieldHeading`): an attributes field names
+     * the element it edits (`Bold · Attributes`, `attributesTitle`), whichever
+     * bar opened it.
+     */
+    heading?: string;
     placeholder?: string;
     complete?: Completer;
-    /** The keys and the syntax the field takes, drawn at its right in the bar (`↵ set · Esc cancel · …`). */
-    keys?: string;
-    /** Why what was typed was refused: drawn beside the field in the keys' place, and announced (`role="alert"`), until the next commit. */
+    /**
+     * The keys and the syntax the field takes, drawn at its right in the bar
+     * (`↵ set · Esc cancel · …`); a function of the value as typed where what
+     * Enter does changes with it (`↵ removes .x · Esc keeps them`).
+     */
+    keys?: KeysLine | ((value: string) => KeysLine);
+    /** The braces drawn around the value, fixed (`InlineFieldOptions.adorn`). */
+    adorn?: FieldAdorn;
+    /** Why what was typed was refused: drawn under the field, the keys line kept, until the next edit. */
     refusal?: string;
     commit(value: string): FieldStep | void;
+}
+
+/**
+ * A keys line: words; parts with the syntax in the code font (`tips.ts`); or
+ * parts that say Enter removes what the field had, drawn in the text's colour.
+ */
+export type KeysLine = string | readonly TipPart[] | { parts: readonly TipPart[]; removes: true };
+
+/**
+ * What a field draws around its value and never puts in it: an attributes
+ * field's `{` and `}`. `strip` is what a change typed or pasted loses (one
+ * outer pair, `stripOuterPair`).
+ */
+export interface FieldAdorn {
+    open: string;
+    close: string;
+    strip(value: string): string;
 }
 
 /**
@@ -52,12 +83,19 @@ export function refusedStep(step: FieldStep, typed: string, refusal: string): Fi
 export interface InlineFieldOptions {
     /** What the field starts with, selected, so typing replaces it. */
     value: string;
-    /** Where the caret goes instead of selecting the value: `{.}` with the caret after the dot, to type a class. */
+    /** Where the caret goes instead of selecting the value: a refused value's end, to correct it. */
     caret?: number;
     /** The field's accessible name, and its placeholder unless `placeholder` says more. */
     label: string;
-    /** What the empty field says: what an empty value means (a link's text: the address). */
+    /** What the empty field says: what an empty value means (a link's text: the address); `''` says nothing. */
     placeholder?: string;
+    /**
+     * Fixed text around the value (an attributes field's braces): the input is
+     * framed with them (`box`, `span.mep-attr-field`), muted, hidden from a
+     * screen reader, not selectable; a change that brings them into the value
+     * loses them again (`strip`), the caret kept where it was.
+     */
+    adorn?: FieldAdorn;
     /**
      * Completion (a link's path): asked as the field opens and after each
      * change, the answer to the latest question listed under the field. `↓`/`↑`
@@ -120,12 +158,17 @@ abstract class InlineControl<E extends HTMLInputElement | HTMLSelectElement> {
         return this.done;
     }
 
+    /** What the owner puts in its bar: the control, or the frame around it (`InlineFieldOptions.adorn`). */
+    get box(): HTMLElement {
+        return this.el;
+    }
+
     /** Remove it without committing or cancelling: its owner is going away. */
     dispose(): void {
         this.done = true;
         this.stopAwaitingWindow();
         this.teardown();
-        this.el.remove();
+        this.box.remove();
     }
 
     /** A key the control takes before `Enter` and `Esc` are read; true when it did. */
@@ -195,7 +238,7 @@ abstract class InlineControl<E extends HTMLInputElement | HTMLSelectElement> {
         this.done = true;
         this.stopAwaitingWindow();
         this.teardown();
-        this.el.remove();
+        this.box.remove();
         if (value === null) {
             this.callbacks.onCancel(reason);
         } else {
@@ -216,6 +259,8 @@ export class InlineField extends InlineControl<HTMLInputElement> {
     private asked = 0;
     private timer: ReturnType<typeof setTimeout> | undefined;
     private readonly listId = `mep-completions-${++listSeq}`;
+    /** The frame around the input and its fixed text, when adorned. */
+    private readonly frame: HTMLElement | null = null;
 
     constructor(private readonly options: InlineFieldOptions) {
         const input = document.createElement('input');
@@ -227,6 +272,26 @@ export class InlineField extends InlineControl<HTMLInputElement> {
         // Wide enough for the value, within what the stylesheet allows.
         input.size = Math.max(12, Math.min(60, options.value.length + 2));
         super(input, options.label, options);
+        if (options.adorn) {
+            const brace = (text: string) => {
+                const el = document.createElement('span');
+                el.className = 'mep-attr-brace';
+                el.setAttribute('aria-hidden', 'true');
+                el.textContent = text;
+                return el;
+            };
+            const frame = document.createElement('span');
+            frame.className = 'mep-attr-field';
+            frame.append(brace(options.adorn.open), input, brace(options.adorn.close));
+            // A press on the frame or a brace puts the caret in the input, as a press on its border would.
+            frame.addEventListener('mousedown', e => {
+                if (e.target !== input) {
+                    e.preventDefault();
+                    input.focus();
+                }
+            });
+            this.frame = frame;
+        }
         if (options.complete) {
             input.setAttribute('role', 'combobox');
             input.setAttribute('aria-autocomplete', 'list');
@@ -237,8 +302,30 @@ export class InlineField extends InlineControl<HTMLInputElement> {
         input.addEventListener('input', () => this.changed());
     }
 
-    /** What was typed or pasted is the value now: completions asked for it, the owner told. */
+    get box(): HTMLElement {
+        return this.frame ?? this.el;
+    }
+
+    /**
+     * What was typed or pasted is the value now: the fixed text it brought in
+     * stripped (`adorn`), completions asked for it, the owner told. The caret
+     * stays where it was in what is left — at the end after a paste or a typed
+     * closing brace.
+     */
     private changed(): void {
+        const adorn = this.options.adorn;
+        if (adorn) {
+            const value = this.el.value;
+            const stripped = adorn.strip(value);
+            if (stripped !== value) {
+                const end = this.el.selectionEnd ?? value.length;
+                // What came off before the caret is the opening text; whatever came off is the same length at each end.
+                const off = (value.length - stripped.length) / 2;
+                const at = Math.max(0, Math.min(stripped.length, end - off));
+                this.el.value = stripped;
+                this.el.setSelectionRange(at, at);
+            }
+        }
         if (this.options.complete) {
             // What is typed now is the value: `Enter` before the next
             // answer commits it, not a choice made for the earlier text.

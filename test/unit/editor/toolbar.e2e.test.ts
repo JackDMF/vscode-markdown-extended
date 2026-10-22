@@ -406,7 +406,7 @@ suite('Editor toolbar (e2e)', () => {
         await page.click(BUBBLE_TOOL);
         await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true });
         assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-object-label`, el => el.textContent), 'Code · Attributes');
-        await page.keyboard.type('k');
+        await page.keyboard.type('.k');
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Alpha `xy`{.k} and *b* c here.\n', 'the whole run, not the selection');
@@ -431,7 +431,7 @@ suite('Editor toolbar (e2e)', () => {
         assert.strictEqual(across.width, inCode.width, 'the bubble keeps its width');
         await page.click(BUBBLE_TOOL);
         await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true });
-        await page.keyboard.type('s');
+        await page.keyboard.type('.s');
         await page.keyboard.press('Enter');
         await settle();
         const written = (await lastEdit())?.text ?? '';
@@ -485,8 +485,8 @@ suite('Editor toolbar (e2e)', () => {
             const input = el as HTMLInputElement;
             return { value: input.value, caret: [input.selectionStart, input.selectionEnd], focused: document.activeElement === input };
         });
-        assert.deepStrictEqual(opened, { value: '{.}', caret: [2, 2], focused: true }, 'prefilled, the caret after the dot');
-        await page.keyboard.type('klasse');
+        assert.deepStrictEqual(opened, { value: '', caret: [0, 0], focused: true }, 'empty between the braces the field draws');
+        await page.keyboard.type('.klasse');
         await page.keyboard.press('Enter');
         await settle();
         const edit = await lastEdit();

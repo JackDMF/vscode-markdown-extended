@@ -255,6 +255,21 @@ suite('Editor Attributes…: where each construct\'s literal is written', () => 
         assert.strictEqual(commitAttributes(state, target, '{}'), null, 'removing what is not there does nothing');
     });
 
+    test('a refusal names the literal as the attributes field shows it, between its braces, and never asks for a brace', () => {
+        const state = caretAt(stateOf('Alpha beta.\n'), 'beta');
+        const target = targetAt(state);
+        const refusal = (literal: string) => {
+            const made = commitAttributes(state, target, literal);
+            assert.ok(made !== null && 'refusal' in made, `${literal} is refused`);
+            return made.refusal;
+        };
+        assert.strictEqual(refusal('{title="a}'), 'title="a has an open quote: close it with ".');
+        const spaced = refusal('{width = 300}');
+        assert.ok(spaced.startsWith('width = 300 is text, not an attribute list'), spaced);
+        assert.ok(spaced.endsWith('Write it as width=300.'), spaced);
+        assert.ok(refusal('{.}').startsWith('. is no attribute list: write it as .class, #id or key="value"'), refusal('{.}'));
+    });
+
     test('the literal is kept verbatim: parse(serialize(…)) gives it back as typed, for each construct', () => {
         const literal = '{ .a  #b key="v w" }';
         const cases: [string, string][] = [
@@ -448,9 +463,9 @@ suite('Editor Attributes…: where the engine reads no attributes, nothing offer
 
 suite('Editor fields: a refused commit keeps the field', () => {
     test('refusedStep is the same step with what was typed, the caret at its end, and the reason', () => {
-        const step: FieldStep = { value: '{.}', caret: 2, label: 'Attributes', keys: 'keys', commit: () => undefined };
-        const refused = refusedStep(step, '{.a', 'It is not closed.');
-        assert.deepStrictEqual({ ...refused, commit: null }, { value: '{.a', caret: 3, label: 'Attributes', keys: 'keys', refusal: 'It is not closed.', commit: null });
+        const step: FieldStep = { value: '', label: 'Attributes', keys: 'keys', commit: () => undefined };
+        const refused = refusedStep(step, '.a"', 'It has an open quote.');
+        assert.deepStrictEqual({ ...refused, commit: null }, { value: '.a"', caret: 3, label: 'Attributes', keys: 'keys', refusal: 'It has an open quote.', commit: null });
         assert.strictEqual(refused.commit, step.commit, 'it commits as the step does');
     });
 });

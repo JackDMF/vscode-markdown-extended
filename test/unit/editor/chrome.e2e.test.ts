@@ -280,7 +280,8 @@ suite('Editor chrome (e2e)', () => {
             await page.mouse.click(attributes.x + attributes.width / 2, attributes.y + attributes.height / 2);
             await page.waitForSelector(`${BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
             await delay(80);
-            assert.deepStrictEqual(await style(`${BAR} .mep-inline-field`, 'background-color', 'color'), {
+            // An attributes field: the frame around the braces and the input is the input's surface (`.mep-attr-field`).
+            assert.deepStrictEqual(await style(`${BAR} .mep-attr-field`, 'background-color', 'color'), {
                 'background-color': computed(theme.variables['input-background']), 'color': computed(theme.variables['input-foreground']),
             }, 'the field is an input');
             assert.deepStrictEqual(await style(`${BAR} .mep-field-keys`, 'color'), { 'color': computed(theme.variables['descriptionForeground']) }, 'its keys in the description colour');

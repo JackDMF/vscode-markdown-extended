@@ -106,17 +106,17 @@ suite('Editor inline attributes (e2e)', () => {
         await clickImage();
         await page.click(`${BAR} [data-verb="image-attributes"]`);
         await page.waitForSelector(`${BAR} .mep-inline-field`, { visible: true });
-        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '{.hero width=300}');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '.hero width=300', 'the literal between the braces the field draws');
         await shot(page, 'inline-attrs-03-image-field.png');
         await selectAll();
-        await page.keyboard.type('{.hero src=other.png}');
+        await page.keyboard.type('.hero src=other.png');
         await page.keyboard.press('Enter');
         await delay(150);
         const refused = await page.evaluate(sel => ({
             value: (document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null)?.value ?? null,
             refusal: document.querySelector(`${sel} .mep-field-refusal`)?.textContent ?? null,
         }), BAR);
-        assert.strictEqual(refused.value, '{.hero src=other.png}');
+        assert.strictEqual(refused.value, '.hero src=other.png');
         assert.strictEqual(refused.refusal, 'src is the image\'s own: change it with Edit image…. Here, give it a class, an id or another attribute.');
         await shot(page, 'inline-attrs-04-image-field-refused.png');
     });
@@ -211,7 +211,7 @@ suite('Editor inline attributes (e2e)', () => {
         await shot(page, 'inline-attrs-11-bubble-across.png');
         await page.click(BUBBLE_TOOL);
         await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true });
-        await page.keyboard.type('s');
+        await page.keyboard.type('.s');
         await page.keyboard.press('Enter');
         await settle();
         assert.ok((await lastEdit())?.text.includes('{.s}'), (await lastEdit())?.text);

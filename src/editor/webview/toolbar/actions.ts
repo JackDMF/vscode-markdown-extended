@@ -409,9 +409,6 @@ const M = INLINE_MARKERS;
 /** The literal the attribute entries, the bubble's `{…}` and their tooltips write a class with. */
 export const CLASS_LITERAL = '{.class}';
 
-/** What the span action's field starts with, and where its caret goes: after the dot, to type the class. */
-export const SPAN_FIELD_PREFILL = { value: '{.}', caret: 2 } as const;
-
 /** The literal the block-attributes entry's example is written with. */
 const BLOCK_LITERAL_EXAMPLE = '{.x}';
 

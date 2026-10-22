@@ -270,7 +270,7 @@ suite('Editor object toolbar (e2e)', () => {
             value: (document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null)?.value ?? null,
             refusal: document.querySelector(`${sel} .mep-field-refusal`)?.textContent ?? null,
         }), BAR);
-        assert.strictEqual(kept.value, '{title=x}');
+        assert.strictEqual(kept.value, 'title=x', 'one outer pair stripped as the closing brace was typed');
         assert.ok(kept.refusal?.includes('href or title'), kept.refusal ?? 'none');
         assert.strictEqual((await active()).field, true, 'the field keeps the focus');
         assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
@@ -368,8 +368,8 @@ suite('Editor object toolbar (e2e)', () => {
         await clickImage();
         assert.strictEqual(await page.$eval(`${BAR} [data-verb="image-attributes"]`, el => el.textContent), 'Attributes…');
         await clickVerb('image-attributes');
-        assert.deepStrictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => ({ value: (el as HTMLInputElement).value, caret: (el as HTMLInputElement).selectionStart })), { value: '{.}', caret: 2 });
-        await page.keyboard.type('hero width=300');
+        assert.deepStrictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => ({ value: (el as HTMLInputElement).value, caret: (el as HTMLInputElement).selectionStart })), { value: '', caret: 0 });
+        await page.keyboard.type('.hero width=300');
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'An ![pic](p.png){.hero width=300} here.\n');
@@ -379,7 +379,7 @@ suite('Editor object toolbar (e2e)', () => {
         assert.strictEqual(await page.$eval(BAR, el => el.getAttribute('aria-label')), 'Image {.hero width=300}, 4 actions, arrow keys to choose');
 
         await clickVerb('image-attributes');
-        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '{.hero width=300}', 'prefilled with the literal');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-inline-field`, el => (el as HTMLInputElement).value), '.hero width=300', 'prefilled with the literal, between the braces the field draws');
         await page.keyboard.type('{}');
         await page.keyboard.press('Enter');
         await settle();
@@ -884,9 +884,9 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
         assert.deepStrictEqual(state.verbs, ['row', 'column', 'align', 'block-attributes', 'inline-attributes', 'edit-source', 'delete-table']);
         assert.strictEqual(await verbLabel('inline-attributes'), 'Attributes of Bold…', 'named as the row names **');
         await clickVerb('inline-attributes');
-        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Table · Attributes of Bold');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-label`, el => el.textContent), 'Bold · Attributes', 'named by the element it edits, not by the table');
         assert.strictEqual(await page.$$eval('.ProseMirror .mep-pending-range', els => els.map(el => el.textContent).join('')), 'bold', 'the bold the field edits is drawn, not the table');
-        await page.keyboard.type('b');
+        await page.keyboard.type('.b');
         await page.keyboard.press('Enter');
         await settle();
         assert.ok((await lastEdit())?.text.includes('| **bold**{.b} |'), (await lastEdit())?.text);
@@ -935,7 +935,7 @@ assert.strictEqual(await page.$eval('.ProseMirror .mep-wiki-embed', el => el.clo
             w.holderHidden = [];
             new MutationObserver(() => w.holderHidden.push(bar.hidden)).observe(bar, { attributes: true, attributeFilter: ['hidden'] });
         });
-        await page.keyboard.type('k');
+        await page.keyboard.type('.k');
         await page.keyboard.press('Enter');
         await settle();
         assert.strictEqual((await lastEdit())?.text, 'Run `x`{.k} to skip the cache.\n');
