@@ -10,6 +10,7 @@
 - Typing, pasting, dictation, IME, Ctrl+D/H or Delete over a selected source block is refused, naming why.
 - Backspace or Delete beside a source block selects it first; cut still takes it.
 - Replacing a selection that spans a source block says "Source block removed" with the undo key.
+- PNG and JPEG export no longer hangs on macOS while the display sleeps.
 
 ## v4.9.0 — Layers That Keep Their Place
 

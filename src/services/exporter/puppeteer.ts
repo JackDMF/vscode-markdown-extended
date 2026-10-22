@@ -86,7 +86,10 @@ export class PuppeteerExporter implements MarkdownExporter {
             browser = await puppeteer.launch({
                 executablePath: executablePath || undefined,
                 headless: true, // Use headless mode
-                args: ['--no-sandbox', '--disable-setuid-sandbox'] // For compatibility
+                // For compatibility; and frames of its own: headless Chromium on macOS takes its frames from the
+                // display's refresh, so with the display asleep a PNG/JPEG screenshot waited for a frame forever.
+                // Only there: elsewhere the flag burns CPU on animated pages.
+                args: ['--no-sandbox', '--disable-setuid-sandbox', ...(process.platform === 'darwin' ? ['--disable-frame-rate-limit'] : [])]
             });
             page = await browser.newPage();
 

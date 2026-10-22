@@ -6,7 +6,7 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { FEWER_TYPES, MORE_TYPES } from '../../../src/editor/webview/toolbar/actions';
 import { ADMONITION_FAMILIES } from '../../../src/syntax/markers';
 import {
-    EXTENSION_ID, EditorPage, clickText, closeEditorPage, computedColour as computed, delay, describedTip, hoverTip, openEditorPage, shot as saveShot,
+    EXTENSION_ID, EditorPage, clickText, closeEditorPage, computedColour as computed, delay, describedTip, hoverTip, openEditorPage, PM_MULTI_CLICK_MS, shot as saveShot,
 } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, LIGHT_PLUS, Theme, applyTheme } from './themes';
 
@@ -119,12 +119,19 @@ suite('Editor labels, menus and states (e2e)', () => {
         await delay(80);
     };
 
-    /** Per theme: the document fresh, the caret where `scene` puts it, and the shot `name-{t}.png` after it. */
+    /**
+     * Per theme: the document fresh, the caret where `scene` puts it, and the shot `name-{t}.png` after it.
+     * Each scene starts past ProseMirror's multi-click window after the last: the same click in three
+     * quick scenes (a fast machine) would be its triple click, which selects the whole paragraph.
+     */
     const eachTheme = async (name: string, scene: (theme: Theme, t: string) => Promise<void>) => {
+        let ended = 0;
         for (const [theme, t] of THEMES) {
             await applyTheme(page, theme);
             await showDocument();
+            await delay(Math.max(0, ended + PM_MULTI_CLICK_MS + 20 - Date.now()));
             await scene(theme, t);
+            ended = Date.now();
             await shot(`${name}-${t}.png`);
             await closeMenus();
         }
