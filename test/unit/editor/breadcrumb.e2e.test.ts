@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
 import { EditorPage, closeEditorPage, delay, openEditorPage } from './pageHarness';
-import { BAR, CRUMBS, breadcrumbPage } from './breadcrumbPage';
+import { BAR, CRUMBS, ROW_FIELD, blockRect, breadcrumbPage, rectOf } from './breadcrumbPage';
 
 /** The constructs the breadcrumb is drawn for (#8), and one it is not. */
 export const CRUMBS_DOC = [
@@ -161,5 +161,165 @@ suite('Editor breadcrumb: the bar (e2e)', () => {
         await delay(150);
         const look = await page.$eval(`${CRUMBS} .mep-crumb-title`, el => ({ background: getComputedStyle(el).backgroundColor, tab: (el as HTMLElement).tabIndex }));
         assert.deepStrictEqual(look, { background: 'rgba(0, 0, 0, 0)', tab: -1 });
+    });
+});
+
+/** A list item with a list nested in it, the list carrying a literal; a quote with bold in the middle of a line. */
+export const FIELDS_DOC = [
+    '- Queue the edit locally {.lead}',
+    '  - nested one',
+    '  - nested two',
+    '- Send the batch',
+    '',
+    '{.steps}',
+    '',
+    '> A quoted line with **term**{.term} in the middle of it, and more words after it, enough of them to wrap the paragraph onto a second line under the',
+    '> bold run at any width the suites open, so the run has text above it and below it — where an inline field stands above.',
+    '> {.warning}',
+    '',
+    'The last paragraph.',
+    '',
+].join('\n');
+
+/** The rectangle of the line box of `needle`'s first character. */
+function lineOf(page: puppeteer.Page, needle: string) {
+    return page.evaluate(n => {
+        const root = document.querySelector('.ProseMirror') as HTMLElement;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const at = (node.textContent ?? '').indexOf(n);
+            if (at >= 0) {
+                const range = document.createRange();
+                range.setStart(node, at);
+                range.setEnd(node, at + n.length);
+                const r = range.getBoundingClientRect();
+                return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+            }
+        }
+        throw new Error(`no "${n}"`);
+    }, needle);
+}
+
+/** The text the caret stands in, read from the window's selection. */
+const caretText = (page: puppeteer.Page) => page.evaluate(() => window.getSelection()?.anchorNode?.textContent ?? '');
+
+/**
+ * Each part's field (#8 step 6): the current part's under its own line (an
+ * item's above the list nested in it), the outer part's under its block,
+ * an inline part's at its run; an outer field far below the caret scrolls
+ * into view and gives the scroll back on Esc; the menu's route opens the
+ * same field at the same place.
+ */
+suite('Editor breadcrumb: the parts\' fields (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    const b = breadcrumbPage(() => editor as EditorPage);
+    const FIELD_BAR = '.mep-object-toolbar:has(.mep-inline-field)';
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    teardown(async () => {
+        await page.keyboard.press('Escape');
+        await page.mouse.click(1270, 890);
+    });
+
+    const pressPart = async (part: 'outer' | 'current') => {
+        await page.waitForSelector(`${CRUMBS} [data-part="${part}"]`, { visible: true, timeout: 2000 });
+        await page.click(`${CRUMBS} [data-part="${part}"]`);
+        await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+        await delay(120);
+    };
+    const field = async () => ({
+        heading: await page.$eval(`${FIELD_BAR} .mep-object-label`, el => el.textContent),
+        rect: await rectOf(page, FIELD_BAR),
+    });
+
+    test('the List item part opens its field under the item\'s first line, above the list nested in it; the List part under the list', async function () {
+        this.timeout(20000);
+        await b.show(FIELDS_DOC);
+        await b.restAt('Queue the edit', 2);
+        await pressPart('current');
+        const item = await field();
+        const line = await lineOf(page, 'Queue the edit');
+        const nested = await blockRect(page, 'nested two', 'ul');
+        assert.strictEqual(item.heading, 'List item · Attributes');
+        assert.ok(item.rect.top >= line.bottom + 3 && item.rect.top < nested.bottom, `under the item's line: ${JSON.stringify({ field: item.rect, line, nested })}`);
+        await page.keyboard.press('Escape');
+        await b.restAt('Queue the edit', 2);
+        await b.pressAlt('Enter');
+        await pressPart('outer');
+        const list = await field();
+        const ul = await blockRect(page, 'Send the batch', 'ul');
+        assert.strictEqual(list.heading, 'List · Attributes');
+        assert.ok(list.rect.top >= ul.bottom, `under the list: ${JSON.stringify({ field: list.rect, ul })}`);
+    });
+
+    test('Quote › Bold: the Bold part\'s field at the run, above it with text on both sides; the Quote part\'s under the quote', async function () {
+        this.timeout(20000);
+        await b.show(FIELDS_DOC);
+        await b.restAt('term', 2);
+        await pressPart('current');
+        const bold = await field();
+        const run = await lineOf(page, 'term');
+        assert.strictEqual(bold.heading, 'Bold · Attributes');
+        assert.ok(bold.rect.bottom <= run.top + 1, `above the run: ${JSON.stringify({ field: bold.rect, run })}`);
+        await page.keyboard.press('Escape');
+        await b.restAt('term', 2);
+        await b.pressAlt('Enter');
+        await pressPart('outer');
+        const quote = await field();
+        const box = await blockRect(page, 'quoted line', 'blockquote');
+        assert.strictEqual(quote.heading, 'Quote · Attributes');
+        assert.ok(quote.rect.top >= box.bottom - 1, `under the quote: ${JSON.stringify({ field: quote.rect, box })}`);
+    });
+
+    test('a long list: the List\'s field scrolls into view with the list\'s last line, the caret stays; Esc gives the scroll back exactly', async function () {
+        this.timeout(20000);
+        const items = Array.from({ length: 60 }, (_, k) => `- Item number ${k + 1} of the long list`).join('\n');
+        await b.show(`${items}\n\n{.steps}\n\nThe last paragraph.\n`);
+        await b.restAt('Item number 1 of', 3);
+        const before = await page.evaluate(() => (document.scrollingElement as HTMLElement).scrollTop);
+        await b.pressAlt('Enter');
+        await page.keyboard.press('Home');
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.part), 'outer');
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(`${FIELD_BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+        await delay(200);
+        const rect = await rectOf(page, FIELD_BAR);
+        const last = await lineOf(page, 'Item number 60');
+        const height = await page.evaluate(() => window.innerHeight);
+        assert.ok(rect.top >= 0 && rect.bottom <= height && last.top >= 0 && last.bottom <= height, `in view: ${JSON.stringify({ rect, last, height })}`);
+        await page.keyboard.press('Escape');
+        await delay(150);
+        assert.strictEqual(await page.evaluate(() => (document.scrollingElement as HTMLElement).scrollTop), before, 'the scroll given back');
+        assert.strictEqual(await caretText(page), 'Item number 1 of the long list', 'the caret did not move');
+    });
+
+    test('the menu\'s route opens the same field at the same place as the bar\'s part', async function () {
+        this.timeout(20000);
+        await b.show(FIELDS_DOC);
+        await b.restAt('Send the batch', 2);
+        await pressPart('outer');
+        const bar = await field();
+        await page.keyboard.press('Escape');
+        await b.clickAt('Send the batch', 2);
+        await b.openMenuByKeys('block-type');
+        await page.click('.mep-menu[data-menu="block-type"] [data-action="block-type-outer-attributes"]');
+        await page.waitForSelector(`${ROW_FIELD} .mep-inline-field`, { visible: true, timeout: 2000 });
+        await delay(200);
+        const menu = { heading: await page.$eval(`${ROW_FIELD} .mep-object-label`, el => el.textContent), rect: await rectOf(page, ROW_FIELD) };
+        assert.strictEqual(menu.heading, bar.heading);
+        assert.ok(Math.abs(menu.rect.top - bar.rect.top) <= 1 && Math.abs(menu.rect.left - bar.rect.left) <= 1, `${JSON.stringify(menu.rect)} vs ${JSON.stringify(bar.rect)}`);
     });
 });

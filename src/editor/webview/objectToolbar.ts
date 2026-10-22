@@ -90,7 +90,7 @@ import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
 import { Said, Tip, plainTip, said, tipText, value } from '../tips';
 import { Tooltips } from './tooltip';
-import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, caretRect, placeMenu, rangeAnchor } from './placement';
+import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, caretRect, placeMenu, rangeAnchor, revealField } from './placement';
 
 /**
  * The opening line the save writes for a code block (`savedOpeningLine`), once
@@ -1458,6 +1458,8 @@ class ObjectToolbarView implements PluginView {
     private typingHold = false;
     /** The dismissals Esc made, by the slot's key: where each is about, for `followDismissals`. */
     private readonly dismissals = new Map<string, Dismissal>();
+    /** What puts the window's scroll back once an outer part's field closes (#8, `revealField`). */
+    private unreveal: ((committed: boolean) => void) | null = null;
 
     constructor(private readonly view: EditorView, private readonly host: ObjectToolbarHost) {
         this.mount = view.dom.parentElement as HTMLElement;
@@ -1512,8 +1514,11 @@ class ObjectToolbarView implements PluginView {
                 }
                 this.fieldOpened(bar, object, target, block);
             },
-            fieldClosed: () => {
+            fieldClosed: committed => {
                 this.fieldGone();
+                // An outer part's field scrolled the window to stand in view (#8): the scroll goes back.
+                this.unreveal?.(committed);
+                this.unreveal = null;
                 clearPendingRange(this.view);
                 this.refresh();
             },
@@ -1524,6 +1529,7 @@ class ObjectToolbarView implements PluginView {
             },
             fieldDropped: () => {
                 this.fieldGone();
+                this.unreveal = null;
                 setTimeout(() => {
                     if (!this.destroyed) {
                         clearPendingRange(this.view);
@@ -1560,6 +1566,10 @@ class ObjectToolbarView implements PluginView {
         // object's at the object, a selection's at the selection — only where the caret itself is the anchor, at the caret.
         const atCaret = target === undefined && block === undefined && bar === this.selectionBar && sel instanceof TextSelection && !isBlockPlaced(object);
         const head = sel.head;
+        // An outer part's field stands under a block that may be far from the caret (#8): the window shows it, and gives the scroll back.
+        if (block !== undefined && block.pos !== object.from) {
+            this.unreveal = revealField(view, blockAnchor(view, block), bar.el.offsetHeight);
+        }
         this.slot.request({
             kind: 'field',
             key,
@@ -1579,6 +1589,8 @@ class ObjectToolbarView implements PluginView {
                 return atCaret ? caretRect(view, Math.min(head, size)) : bar.object ? anchorOf(view, bar.object) : null;
             },
             valid: () => bar.editing,
+            // A run's field stands where an inline object's bar does (#8: Bold at the run): above, where text is on both sides.
+            bothCovered: target !== undefined && block === undefined ? 'above' : undefined,
             hidden: () => this.barHidden(bar, 'displaced'),
             fit: (room, fresh) => bar.fitField(room, fresh),
         }, { force: true });

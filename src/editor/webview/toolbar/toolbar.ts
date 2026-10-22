@@ -36,7 +36,7 @@ import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
-import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, placeCard, placeMenu, rangeAnchor } from '../placement';
+import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, placeCard, placeMenu, rangeAnchor, revealField } from '../placement';
 import { dismissRefusal, showHint, showRefusal } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
@@ -2103,7 +2103,8 @@ class ToolbarView implements PluginView {
             return;
         }
         // At the block's left edge, where its own bar stands (`blockAnchor`, the bar's own rule, read for the block as it is now) — not at the caret, which a menu leaves wherever it was.
-        this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target), undefined, () => blockAnchor(this.view, target));
+        const block = target;
+        this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target), undefined, () => blockAnchor(this.view, block), part === 'outer');
     }
 
     /**
@@ -2225,8 +2226,10 @@ class ToolbarView implements PluginView {
      * field has the focus; a re-sync meanwhile maps it, so the commit applies
      * where the field was opened.
      */
-    private openFieldBar(object: string, barLabel: string, verb: string, first: FieldStep, range?: { from: number; to: number }, anchorAt?: () => Rect | null): void {
+    private openFieldBar(object: string, barLabel: string, verb: string, first: FieldStep, range?: { from: number; to: number }, anchorAt?: () => Rect | null, reveal = false): void {
         this.closeFieldBar();
+        // What puts the window's scroll back, where the field scrolled it into view (`reveal`, #8).
+        let restore: ((committed: boolean) => void) | null = null;
         const view = this.view;
         const bar = div('mep-object-toolbar mep-layer');
         bar.dataset.trigger = 'toolbar';
@@ -2268,9 +2271,11 @@ class ToolbarView implements PluginView {
                         open(next).focus();
                         return;
                     }
+                    restore?.(true);
                     close();
                 },
                 onCancel: reason => {
+                    restore?.(false);
                     close();
                     if (reason === 'escape') {
                         view.focus();
@@ -2293,6 +2298,8 @@ class ToolbarView implements PluginView {
         };
         this.mount.append(bar);
         const field = open(first);
+        // A field under a block far from the caret (an outer part's, #8) is scrolled into view with the block's last line, and gives the scroll back.
+        restore = reveal && anchorAt !== undefined ? revealField(view, anchorAt(), bar.offsetHeight) : null;
         // The one floating layer (`placement.ts`): at what it edits — below it, from its
         // last line's start — the bar or bubble that was up gives way. Placed before the
         // field takes the focus, which scrolls it into view.

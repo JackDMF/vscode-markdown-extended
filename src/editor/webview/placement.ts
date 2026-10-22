@@ -381,6 +381,41 @@ export function blockAnchor(view: EditorView, target: AttributesTarget): Rect | 
 }
 
 /**
+ * The window scrolled for a field of `height` about to open under `block`
+ * (#8: an outer part's — the List's under a list far below the caret): when
+ * the field would stand past the window's bottom, or the block's last line
+ * is above its top, by the difference, so the field and that line are in
+ * view. The caret does not move. What it returns puts the scroll back: after
+ * a cancel where it was, after a commit too — unless the caret's line would
+ * then be out of view. `null` where nothing scrolled; only on open and close,
+ * never per key.
+ */
+export function revealField(view: EditorView, block: Rect | null, height: number): ((committed: boolean) => void) | null {
+    const scroller = document.scrollingElement;
+    if (block === null || !(scroller instanceof HTMLElement)) {
+        return null;
+    }
+    const bottom = block.bottom + GAP + height + GAP;
+    const delta = bottom > window.innerHeight ? bottom - window.innerHeight : block.bottom < GAP ? block.bottom - GAP - height : 0;
+    if (delta === 0) {
+        return null;
+    }
+    const saved = scroller.scrollTop;
+    scroller.scrollTop = saved + delta;
+    return committed => {
+        const now = scroller.scrollTop;
+        scroller.scrollTop = saved;
+        if (committed) {
+            // The caret's line out of view once the scroll is back (the commit grew the block above it): left where it is.
+            const caret = caretRect(view, Math.min(view.state.selection.head, view.state.doc.content.size));
+            if (caret !== null && (caret.bottom < 0 || caret.top > window.innerHeight)) {
+                scroller.scrollTop = now;
+            }
+        }
+    };
+}
+
+/**
  * An object's anchor, in the window's coordinates: an inline object's first
  * line's start and top, its last line's bottom; a block's box — an atom's
  * less its inset, a heading's or an attributed block's from its text's first
