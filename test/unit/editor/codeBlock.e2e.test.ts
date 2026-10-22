@@ -449,6 +449,8 @@ suite('Code block (e2e)', () => {
         this.timeout(30000);
         for (const verb of ['language', 'edit-source']) {
             await showDocument(DOC, 'result');
+            // Through plain text first: what Esc dismissed stays dismissed until the caret has left the object, also across a document sent again.
+            await clickBefore('Run', 1);
             await clickBefore('result', 2);
             await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
             await delay(400);
@@ -625,6 +627,16 @@ suite('Code block (e2e)', () => {
 
     const tinted = (cls: string) => page.$$eval(`.ProseMirror .${cls}`, els => els.map(e => e.textContent ?? ''));
 
+    /**
+     * The caret into the cell at `needle`, through plain text first: what Esc dismissed stays dismissed
+     * until the caret has left the object, also across a document sent again, so an earlier test's Esc
+     * would keep this table's bar away.
+     */
+    const intoCell = async (needle: string) => {
+        await clickBefore('Intro', 1);
+        await clickBefore(needle, 1);
+    };
+
     /** Until no layer ignores the pointer (`INERT_MS`): a hover before that reaches nothing. */
     const settledLayers = () => page.waitForFunction(() => document.querySelector('.mep-layer[data-inert]') === null, { timeout: 2000, polling: 20 });
 
@@ -637,7 +649,7 @@ suite('Code block (e2e)', () => {
     test('C1 the caret in a cell, the bar up: the cell ringed 2 px inside, no row or column tinted', async function () {
         this.timeout(20000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('first', 1);
+        await intoCell('first');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         assert.deepStrictEqual(await tinted('mep-cell-active'), ['first']);
         const ring = await page.$eval('.ProseMirror .mep-cell-active', el => getComputedStyle(el).boxShadow);
@@ -650,7 +662,7 @@ suite('Code block (e2e)', () => {
     test('C2 Row ▾ opened, focused or hovered tints the caret\'s row; closed, left and blurred, none', async function () {
         this.timeout(20000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('first', 1);
+        await intoCell('first');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         await settledLayers();
         const row = await page.$(`${BAR} [data-verb="row"]`);
@@ -685,7 +697,7 @@ suite('Code block (e2e)', () => {
     test('C3 Column ▾ or Align ▾ hovered tints the caret\'s column; the cell keeps its ring', async function () {
         this.timeout(20000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('second', 1);
+        await intoCell('second');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         await settledLayers();
         for (const verb of ['column', 'align']) {
@@ -703,7 +715,7 @@ suite('Code block (e2e)', () => {
     test('C3b a field opened while the pointer rests on Row: the row is not tinted for as long as the field is open', async function () {
         this.timeout(20000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('first', 1);
+        await intoCell('first');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         await settledLayers();
         const box = await (await page.$(`${BAR} [data-verb="row"]`))?.boundingBox();
@@ -725,7 +737,7 @@ suite('Code block (e2e)', () => {
         for (const width of [420, 380, 340, 300, 260, 220, 180]) {
             await viewport(width);
             await showDocument(TABLE_DOC, 'Alpha');
-            await clickBefore('second', 1);
+            await intoCell('second');
             await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
             await delay(300);
             moved = await page.$eval(`${BAR} [data-verb="align"]`, el => (el as HTMLElement).hidden);
@@ -763,7 +775,7 @@ suite('Code block (e2e)', () => {
     test('C5 Row and Column menus keep the entry that takes something away apart, after a divider', async function () {
         this.timeout(20000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('first', 1);
+        await intoCell('first');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         await settledLayers();
         for (const [verb, doomed, others] of [['row', 'delete-row', ['insert-row-above', 'insert-row-below']], ['column', 'delete-column', ['insert-column-left', 'insert-column-right']]] as const) {
@@ -786,7 +798,7 @@ suite('Code block (e2e)', () => {
     test('C6 the active cell\'s ring is not the focus outline\'s colour — dark and high contrast included', async function () {
         this.timeout(30000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('first', 1);
+        await intoCell('first');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         const colours = () => page.evaluate(() => {
             const ring = getComputedStyle(document.querySelector('.ProseMirror .mep-cell-active') as HTMLElement).boxShadow;
