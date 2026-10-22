@@ -449,6 +449,8 @@ suite('Code block (e2e)', () => {
         this.timeout(30000);
         for (const verb of ['language', 'edit-source']) {
             await showDocument(DOC, 'result');
+            // Through plain text first: what Esc dismissed stays dismissed until the caret has left the object, also across a document sent again.
+            await clickBefore('Run', 1);
             await clickBefore('result', 2);
             await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
             await delay(400);
@@ -566,7 +568,7 @@ suite('Code block (e2e)', () => {
         assert.strictEqual((await hint()).shown, false);
     });
 
-    test('H3 Alt+Enter at an object whose bar cannot be drawn: the key is taken, but "no actions here" is not said — there was an object', async function () {
+    test('H3 Alt+Enter at an object whose bar cannot be drawn: the key is taken, and the hint says what the object is — not "no actions here", there was an object', async function () {
         this.timeout(20000);
         await showDocument('# Title\n\nText.\n', 'Title');
         await clickBefore('Title', 2);
@@ -580,7 +582,16 @@ suite('Code block (e2e)', () => {
         });
         await pressAlt('Enter');
         assert.strictEqual(await page.$(BAR), null, 'a heading with no lenses has no bar');
-        assert.strictEqual((await hint()).shown, false, 'no hint: it is not that there is nothing here');
+        // The presentation's label, then its title (`ownPresentation`) — the label leads where the title does not name the object: "Heading 1: A heading."
+        // A requirement heading's title names it already: "A requirement heading: its id and anchor are Req Explorer's."
+        assert.deepStrictEqual(await hint(), { text: 'Heading 1: A heading.', shown: true, tone: 'neutral' }, 'the object\'s label and own title, neutral — not NO_TARGET_HINT');
+        assert.notStrictEqual((await hint()).text, NO_TARGET_HINT);
+        const rows = await page.$eval('.mep-hint', el => {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            return new Set(Array.from(range.getClientRects()).map(r => Math.round(r.top))).size;
+        });
+        assert.strictEqual(rows, 1, 'the hint stays one line');
         assert.strictEqual(await page.evaluate(() => (window as unknown as { altEnter: boolean | null }).altEnter), true, 'the key is still taken');
     });
 
@@ -595,11 +606,36 @@ suite('Code block (e2e)', () => {
         assert.ok((await describedTip(page, `${BAR} [data-verb="block-attributes"]`)).includes(NESTED_CODE_ATTRS_REFUSAL));
     });
 
+    test('H4 an indented block\'s title names Attributes… only where it is offered: not in a quote', async function () {
+        this.timeout(30000);
+        await showDocument('Text.\n\n    top block\n\nAfter.\n', 'top block');
+        await barFor('top block');
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="block-attributes"]`, el => el.getAttribute('aria-disabled')), 'false');
+        const top = await describedTip(page, `${BAR} .mep-object-label`);
+        assert.ok(top.includes('Language…, Attributes… or Edit source'), top);
+        await showDocument('> Quoted.\n>\n>     nested block\n\nAfter.\n', 'nested block');
+        await barFor('nested block');
+        assert.strictEqual(await page.$eval(`${BAR} [data-verb="block-attributes"]`, el => el.getAttribute('aria-disabled')), 'true');
+        const nested = await describedTip(page, `${BAR} .mep-object-label`);
+        assert.ok(nested.includes('Language… or Edit source'), nested);
+        assert.ok(!nested.includes('Attributes…'), nested);
+    });
+
     // -- the table's active cell (the same item: the caret's place in a table, the tint on demand) --
 
     const TABLE_DOC = 'Intro paragraph.\n\n| Name  | Kind   | Count |\n| :---- | :----: | ----: |\n| Alpha | first  | 1     |\n| Beta  | second | 22    |\n\nAfter the table.\n';
 
     const tinted = (cls: string) => page.$$eval(`.ProseMirror .${cls}`, els => els.map(e => e.textContent ?? ''));
+
+    /**
+     * The caret into the cell at `needle`, through plain text first: what Esc dismissed stays dismissed
+     * until the caret has left the object, also across a document sent again, so an earlier test's Esc
+     * would keep this table's bar away.
+     */
+    const intoCell = async (needle: string) => {
+        await clickBefore('Intro', 1);
+        await clickBefore(needle, 1);
+    };
 
     /** Until no layer ignores the pointer (`INERT_MS`): a hover before that reaches nothing. */
     const settledLayers = () => page.waitForFunction(() => document.querySelector('.mep-layer[data-inert]') === null, { timeout: 2000, polling: 20 });
@@ -613,7 +649,7 @@ suite('Code block (e2e)', () => {
     test('C1 the caret in a cell, the bar up: the cell ringed 2 px inside, no row or column tinted', async function () {
         this.timeout(20000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('first', 1);
+        await intoCell('first');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         assert.deepStrictEqual(await tinted('mep-cell-active'), ['first']);
         const ring = await page.$eval('.ProseMirror .mep-cell-active', el => getComputedStyle(el).boxShadow);
@@ -626,7 +662,7 @@ suite('Code block (e2e)', () => {
     test('C2 Row ▾ opened, focused or hovered tints the caret\'s row; closed, left and blurred, none', async function () {
         this.timeout(20000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('first', 1);
+        await intoCell('first');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         await settledLayers();
         const row = await page.$(`${BAR} [data-verb="row"]`);
@@ -661,7 +697,7 @@ suite('Code block (e2e)', () => {
     test('C3 Column ▾ or Align ▾ hovered tints the caret\'s column; the cell keeps its ring', async function () {
         this.timeout(20000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('second', 1);
+        await intoCell('second');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         await settledLayers();
         for (const verb of ['column', 'align']) {
@@ -676,6 +712,24 @@ suite('Code block (e2e)', () => {
         }
     });
 
+    test('C3b a field opened while the pointer rests on Row: the row is not tinted for as long as the field is open', async function () {
+        this.timeout(20000);
+        await showDocument(TABLE_DOC, 'Alpha');
+        await intoCell('first');
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        await settledLayers();
+        const box = await (await page.$(`${BAR} [data-verb="row"]`))?.boundingBox();
+        assert.ok(box);
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), ['Alpha', 'first', '1'], 'hovered');
+        // The keyboard opens Attributes… under the resting pointer: its field replaces the row, and no pointerleave comes.
+        await page.$eval(`${BAR} [data-verb="block-attributes"]`, el => (el as HTMLElement).focus());
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(FIELD, { visible: true, timeout: 2000 });
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), [], 'the hover went with the buttons');
+        assert.deepStrictEqual(await tinted('mep-table-column'), []);
+    });
+
     test('C4 a verb moved into "…" stays active there: its entry focused, or its menu open, tints the caret\'s column', async function () {
         this.timeout(60000);
         await showDocument(TABLE_DOC, 'Alpha');
@@ -683,7 +737,7 @@ suite('Code block (e2e)', () => {
         for (const width of [420, 380, 340, 300, 260, 220, 180]) {
             await viewport(width);
             await showDocument(TABLE_DOC, 'Alpha');
-            await clickBefore('second', 1);
+            await intoCell('second');
             await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
             await delay(300);
             moved = await page.$eval(`${BAR} [data-verb="align"]`, el => (el as HTMLElement).hidden);
@@ -721,7 +775,7 @@ suite('Code block (e2e)', () => {
     test('C5 Row and Column menus keep the entry that takes something away apart, after a divider', async function () {
         this.timeout(20000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('first', 1);
+        await intoCell('first');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         await settledLayers();
         for (const [verb, doomed, others] of [['row', 'delete-row', ['insert-row-above', 'insert-row-below']], ['column', 'delete-column', ['insert-column-left', 'insert-column-right']]] as const) {
@@ -744,7 +798,7 @@ suite('Code block (e2e)', () => {
     test('C6 the active cell\'s ring is not the focus outline\'s colour — dark and high contrast included', async function () {
         this.timeout(30000);
         await showDocument(TABLE_DOC, 'Alpha');
-        await clickBefore('first', 1);
+        await intoCell('first');
         await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
         const colours = () => page.evaluate(() => {
             const ring = getComputedStyle(document.querySelector('.ProseMirror .mep-cell-active') as HTMLElement).boxShadow;

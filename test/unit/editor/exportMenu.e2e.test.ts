@@ -296,7 +296,7 @@ suite('Editor toolbar: Export (e2e)', () => {
         await delay(80);
         assert.deepStrictEqual((await posted()).slice(before).filter(m => m.type === 'export'), [{ type: 'export', format: 'html' }], 'a second export is not asked for');
 
-        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'busy' });
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'busy', format: 'html' });
         await delay(80);
         assert.strictEqual((await face()).label, 'Exporting HTML…', 'answered busy: the one running is still shown');
         await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });

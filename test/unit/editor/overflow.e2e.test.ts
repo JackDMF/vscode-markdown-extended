@@ -5,7 +5,7 @@ import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { BUBBLE_OVERFLOW, ROW_OVERFLOW } from '../../../src/editor/webview/toolbar/actions';
 import { moreName } from '../../../src/editor/webview/overflow';
-import { EXTENSION_ID, EditorPage, clickText, closeEditorPage, delay, describedTip, openEditorPage, shot as saveShot, showDiagnostics } from './pageHarness';
+import { EXTENSION_ID, EditorPage, clickText, closeEditorPage, delay, describedTip, hoverTip, openEditorPage, shot as saveShot, showDiagnostics } from './pageHarness';
 import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, MOD_NAME, assertReasonShown, assertRowLocked, rowBoxes } from './rowLock';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
@@ -65,8 +65,11 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
 
     const shot = (name: string) => saveShot(page, name);
 
-    const showDocument = async (text = SOURCE) => {
-        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    /** The host's document for `text`; the focus is let go first unless `keepFocus` (a menu that holds it stays open). */
+    const showDocument = async (text = SOURCE, keepFocus = false) => {
+        if (!keepFocus) {
+            await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        }
         const md = await buildEditorEngine(EXTENSION_ID, () => undefined);
         version++;
         await (editor as EditorPage).send({ type: 'document', json: parsedDocumentToJSON(parseDocument(md, text, {})), version, defaultWrap: 90, includes: false, inline: DEFAULT_INLINE_ENGINE });
@@ -374,25 +377,42 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         await page.keyboard.press('Escape');
     });
 
-    test('l4 a button\'s lock: at 900 "Focus is outside the text" beside the tools, which dim; at 520 no note, Bold\'s tooltip says the whole reason', async function () {
-        this.timeout(40000);
-        for (const width of [900, 520]) {
+    test('l4 a button\'s lock: at 900 and 860 "Outside the text" beside the tools; at 800, 640 and 520 the refused tools give way into the disabled "…" and it stands in the row; the whole reason its hover', async function () {
+        this.timeout(120000);
+        for (const width of [900, 860, 800, 640, 520]) {
             await resize(width);
             await showDocument();
             await clickText(page, 'Plain', 2);
             const before = await rowBoxes(page);
+            const idle = (await rowState()).moved;
             await openYaml();
             await page.keyboard.press('Escape');
             await delay(150);
-            if (width === 900) {
-                await assertReasonShown(page, '900, a button', LOCK_BUTTON, 'short', before);
-            } else {
-                await assertReasonShown(page, '520, a button', LOCK_BUTTON, 'hidden', before);
-                assert.ok((await describedTip(page, `${ROW} [data-action="bold"]`)).endsWith(`\n${LOCK_BUTTON}`), 'Bold\'s tooltip carries the whole reason');
-                // A press on Bold: the flash has no note to point at — the limit #10 lifts.
-                await clickAt(`${ROW} [data-action="bold"]`);
-                assert.strictEqual(await page.$eval(`${ROW} .mep-row-lock`, el => (el as HTMLElement).hidden), true, 'nothing shows');
+            await assertReasonShown(page, `${width}, a button`, LOCK_BUTTON, 'short', before);
+            assert.strictEqual(await describedTip(page, `${ROW} .mep-row-lock`), LOCK_BUTTON, `${width}: the short form's hover is the whole reason`);
+            const s = await rowState();
+            if (width < 860) {
+                assert.ok(s.moved.length > idle.length, `${width}: tools gave way into "…" for it: ${idle} -> ${s.moved}`);
+                assert.deepStrictEqual([...s.moved].sort(), prefix(s.moved.length), `${width}: a prefix of ROW_OVERFLOW`);
+                assert.strictEqual(await page.$eval(MORE, el => el.getAttribute('aria-disabled')), 'true', `${width}: "…" is disabled under the lock`);
             }
+            await shot(`lock-button-${width}-light.png`);
+            await page.keyboard.press('Escape');
+            await delay(150);
+            assert.deepStrictEqual((await rowState()).moved, idle, `${width}: the lock gone, the row is as it was`);
+        }
+    });
+
+    test('l7 a button\'s lock at 400 still shows "Outside the text"; below the width where even that fits (340) no note — the tools only dim, the row describes itself with the whole reason', async function () {
+        this.timeout(60000);
+        for (const [width, where] of [[400, 'short'], [340, 'hidden']] as const) {
+            await resize(width);
+            await showDocument();
+            await clickText(page, 'Plain', 2);
+            await openYaml();
+            await page.keyboard.press('Escape');
+            await delay(150);
+            await assertReasonShown(page, `${width}, a button`, LOCK_BUTTON, where);
             await shot(`lock-button-${width}-light.png`);
             await page.keyboard.press('Escape');
         }
@@ -486,8 +506,16 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
     const BAR = '.mep-object-toolbar[data-trigger="selection"]:not([hidden])';
     const barMore = `${BAR} .mep-object-more`;
 
-    /** The caret at `needle` (+`at`), and its bar shown for `kind`. */
+    /**
+     * The caret at `needle` (+`at`), and its bar shown for `kind`. The caret goes
+     * through plain text first: what Esc dismissed stays dismissed until the
+     * caret has left the object (placement review 2), also across a document
+     * sent again, so an earlier test's Esc would keep this bar away.
+     */
     const barAt = async (needle: string, at: number, kind: string) => {
+        // At the top: a page an earlier test left scrolled has "Plain" out of the window, where no click reaches it.
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await clickText(page, 'Plain', 2);
         await clickText(page, needle, at);
         await page.waitForSelector(`${BAR}[data-object="${kind}"]`, { timeout: 5000 });
         await delay(150);
@@ -765,5 +793,611 @@ suite('Editor overflow: the row\'s "…" (e2e)', () => {
         await page.keyboard.press('Escape');
         await delay(120);
         assert.ok(await page.$eval(bar, el => !(el as HTMLElement).hidden), 'closed: the bar is back');
+    });
+
+    // -- code review 1 of the build (fix round 1) -----------------------------------
+
+    const focused = (selector: string) => page.evaluate(sel => document.activeElement === document.querySelector(sel), selector);
+
+    test('r6 a resize alone — no transaction — names the row\'s "…" for what it holds now, and the dot follows', async function () {
+        this.timeout(30000);
+        await resize(1280, 640);
+        await showDocument();
+        await clickText(page, 'code', 2);
+        await delay(100);
+        assert.strictEqual((await rowState()).more.shown, false, 'nothing moved at 1280');
+        await resize(420, 640);
+        const narrow = await rowState();
+        assert.strictEqual(narrow.more.shown, true);
+        assert.strictEqual(narrow.more.label, moreName('row', ['Strong', 'Code', 'Formatting', 'Annotation', 'Insert'], ['Code']), 'named by the layout, not by the next transaction');
+        assert.strictEqual(narrow.more.hasOn, true, 'the dot');
+        await resize(1280, 640);
+        assert.strictEqual((await rowState()).more.shown, false);
+    });
+
+    test('r7 a menu moved into "…" is refused by its entry as by its face: it opens nothing, pressed or hovered', async function () {
+        this.timeout(30000);
+        await resize(420, 640);
+        await showDocument('# Overflow\n\n```js\nconst x = 1;\n```\n');
+        await clickText(page, 'const', 2);
+        await delay(150);
+        await page.click(MORE);
+        await page.waitForSelector(`${panel('more')}:not([hidden])`);
+        const disabled = await page.$$eval(`${panel('more')} [data-submenu]`, els => els.filter(e => e.getAttribute('aria-disabled') === 'true').map(e => (e as HTMLElement).dataset.submenu as string));
+        assert.ok(disabled.length > 0, 'a code block refuses at least one whole menu');
+        for (const id of disabled) {
+            const entry = `${panel('more')} [data-submenu="${id}"]`;
+            const box = await (await page.$(entry))?.boundingBox();
+            assert.ok(box);
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+            await delay(120);
+            assert.strictEqual(await page.$eval(panel(id), el => (el as HTMLElement).hidden), true, `${id}: hover opens nothing`);
+            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+            await delay(120);
+            assert.strictEqual(await page.$eval(panel(id), el => (el as HTMLElement).hidden), true, `${id}: a press opens nothing`);
+        }
+    });
+
+    test('u3 the bubble\'s "…": a second press on its face closes the menu; opened with the keyboard the bubble stays, Esc returns to the face', async function () {
+        this.timeout(60000);
+        await resize(420, 640);
+        await showDocument();
+        await selectAndBubble('words, then', 5);
+        const face = `${BUBBLE} .mep-more-face`;
+        const menu = `${panel('bubble-more')}:not([hidden])`;
+        await page.click(face);
+        await page.waitForSelector(menu);
+        await page.click(face);
+        await delay(120);
+        assert.strictEqual(await page.$(menu), null, 'the second press closed it');
+        assert.ok(await page.$(BUBBLE), 'the bubble stays');
+        await page.focus(face);
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(menu);
+        await delay(150);
+        assert.ok(await page.$(BUBBLE) && await page.$(menu), 'the keyboard opened it and the bubble is still up');
+        assert.ok(await page.evaluate(() => document.querySelector('.mep-menu[data-menu="bubble-more"]')!.contains(document.activeElement)), 'the focus is in the menu');
+        await page.keyboard.press('Escape');
+        await delay(100);
+        assert.strictEqual(await page.$(menu), null, 'Esc closed the menu');
+        assert.ok(await focused(face), 'Esc returned the focus to "…"');
+        assert.ok(await page.$(BUBBLE), 'the bubble is still there');
+        // The focus leaving the menu for nowhere takes the bubble with it.
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(menu);
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await delay(200);
+        assert.strictEqual(await page.$(`${BUBBLE}`), null, 'the focus left: the bubble and its menu are gone');
+        assert.strictEqual(await page.$(menu), null);
+    });
+
+    test('u4 the bubble\'s "…" entries draw the glyph their control draws in the bubble — sub, strike, the notes — not the Formatting menu\'s', async function () {
+        this.timeout(60000);
+        for (const [theme, t] of [[LIGHT_MODERN, 'light'], [DARK_MODERN, 'dark']] as const) {
+            await applyTheme(page, theme);
+            await resize(420, 640);
+            await showDocument();
+            await selectAndBubble('words, then', 5);
+            await page.click(`${BUBBLE} .mep-more-face`);
+            await page.waitForSelector(`${panel('bubble-more')}:not([hidden])`);
+            await delay(100);
+            const glyphs = await page.evaluate((ids, bubbleSel, menuSel) => ids.map(id => {
+                const button = document.querySelector(`${bubbleSel} [data-action="${id}"]`) as HTMLElement;
+                const entry = document.querySelector(`${menuSel} [data-action="${id}"]`) as HTMLElement;
+                return {
+                    id,
+                    entry: entry.querySelector('.mep-entry-glyph .mep-sample')?.innerHTML ?? null,
+                    face: button.querySelector('.mep-sample')?.innerHTML ?? null,
+                    shown: entry.offsetParent !== null,
+                };
+            }), [...BUBBLE_OVERFLOW] as string[], BUBBLE, panel('bubble-more'));
+            for (const g of glyphs) {
+                assert.ok(g.face !== null && g.face !== '', `${g.id}: the face draws a glyph`);
+                assert.strictEqual(g.entry, g.face, `${t} ${g.id}: the entry draws the face's glyph`);
+            }
+            assert.ok(glyphs.some(g => g.shown), 'some entries are in the menu');
+            await shot(`bubble-more-glyphs-420-${t}.png`);
+            await page.keyboard.press('Escape');
+            await page.mouse.click(5, 630);
+            await delay(80);
+        }
+    });
+
+    test('b6 a bar\'s "…" menu is named "More actions"; inside "…" no entry has a hover, what it would add is its description; a set-verb through it keeps its label, its entries no hover either; a direct set-verb menu keeps its hovers', async function () {
+        this.timeout(90000);
+        await resize(420, 640);
+        await showDocument();
+        await barAt('bold docs', 3, 'link');
+        await page.click(barMore);
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        await delay(100);
+        const named = await page.$eval(`${BAR} .mep-object-menu`, el => ({ label: el.getAttribute('aria-label'), role: el.getAttribute('role') }));
+        assert.deepStrictEqual(named, { label: 'More actions', role: 'menu' });
+        const entry = `${BAR} .mep-object-menu [data-entry="remove-link"]`;
+        assert.strictEqual(await page.$eval(entry, el => el.getAttribute('aria-description')), 'The link goes; its text stays.', 'the hover\'s text is the description');
+        assert.strictEqual(await hoverTip(page, entry), null, 'no floating tooltip inside "…"');
+        await shot('bars-420-link-open-notip-light.png');
+        await page.keyboard.press('Escape');
+        // A set-verb through "…" at 240: its menu is named by the verb, its entries have no hover.
+        await resize(240, 640);
+        await showDocument();
+        await barAt('Alpha', 2, 'table');
+        await page.click(barMore);
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        await page.focus(`${BAR} .mep-object-menu [data-entry="align"]`);
+        await page.keyboard.press('Enter');
+        await delay(120);
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-menu`, el => el.getAttribute('aria-label')), 'Align', 'named by the verb it opened');
+        assert.strictEqual(await hoverTip(page, `${BAR} .mep-object-menu .mep-menu-item:not(.mep-disabled)`), null, 'its entries have no hover');
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        // The same set-verb on the bar itself: named by the verb, its hovers kept.
+        await resize(1280, 640);
+        await showDocument();
+        await barAt('Alpha', 2, 'table');
+        await page.click(`${BAR} [data-verb="align"]`);
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        await delay(100);
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-menu`, el => el.getAttribute('aria-label')), 'Align');
+        assert.ok(await hoverTip(page, `${BAR} .mep-object-menu .mep-menu-item:not(.mep-disabled)`), 'a direct menu\'s entries keep their hover');
+        await page.keyboard.press('Escape');
+    });
+
+    test('b7 a bar\'s menu open when the bar is fitted again closes where its button is gone, or what "…" holds changed under it', async function () {
+        this.timeout(60000);
+        await resize(420, 640);
+        await showDocument();
+        await barAt('Alpha', 2, 'table');
+        await page.click(barMore);
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        await resize(240, 640);
+        await delay(300);
+        assert.strictEqual(await page.$(`${BAR} .mep-object-menu`), null, '"…" grew: its open menu is stale and closed');
+        // A set-verb menu on the bar whose verb then moves into "…": closed, not hanging from a hidden button.
+        await resize(1280, 640);
+        await showDocument();
+        await barAt('Alpha', 2, 'table');
+        await page.click(`${BAR} [data-verb="align"]`);
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        await resize(240, 640);
+        await delay(300);
+        assert.strictEqual(await page.$(`${BAR} .mep-object-menu`), null, 'its verb left the bar: the menu closed');
+    });
+
+    test('b8 a set-verb menu open through "…" opens again, still through "…", when the bar is drawn again', async function () {
+        this.timeout(60000);
+        await resize(240, 640);
+        await showDocument();
+        await barAt('Alpha', 2, 'table');
+        await page.click(barMore);
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        await page.focus(`${BAR} .mep-object-menu [data-entry="align"]`);
+        await page.keyboard.press('Enter');
+        await delay(120);
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-menu`, el => el.getAttribute('aria-label')), 'Align');
+        // Another extension's code action arrives for the table: the bar is drawn again with one verb more under the open menu.
+        const request = (await (editor as EditorPage).posted()).filter(m => m.type === 'actionsFor').pop() as { requestId: number; blockIndex: number } | undefined;
+        assert.ok(request, 'the page asked for the table\'s actions');
+        await (editor as EditorPage).send({ type: 'actions', requestId: request.requestId, blockIndex: request.blockIndex, items: [{ id: 'b.0', title: 'Fix table', kind: 'quickfix' }] });
+        await page.waitForSelector(`${BAR} [data-verb="code-action:b.0"]`, { timeout: 3000 });
+        await delay(300);
+        const again = await page.$eval(`${BAR} .mep-object-menu`, (el, sel) => ({
+            label: el.getAttribute('aria-label'),
+            underMore: (document.querySelector(sel) as HTMLElement).getAttribute('aria-expanded'),
+        }), barMore);
+        assert.deepStrictEqual(again, { label: 'Align', underMore: 'true' });
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+    });
+
+    // -- Export names the running format; Export in the narrowest row ----------------
+
+    test('e2 Export busy answered `busy` names the format that runs — the host\'s, not the one the page asked for', async function () {
+        this.timeout(30000);
+        await resize(1280, 640);
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        const EXPORT = `${ROW} .mep-menu-face[data-menu="export"]`;
+        await page.click(EXPORT);
+        await page.waitForSelector(`${panel('export')}:not([hidden])`);
+        await page.click(`${panel('export')} [data-export="png"]`);
+        await delay(120);
+        assert.strictEqual(await page.$eval(`${EXPORT} .mep-face-label`, el => el.textContent), 'Exporting PNG image…', 'the page shows what it asked for');
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'busy', format: 'pdf' });
+        await delay(120);
+        assert.strictEqual(await page.$eval(`${EXPORT} .mep-face-label`, el => el.textContent), 'Exporting PDF…', 'busy: the host\'s running format');
+        assert.strictEqual(await page.$eval(`${EXPORT}`, el => el.getAttribute('aria-description')), 'Exporting PDF…\nExporting PDF — the other formats wait for it');
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
+        await delay(120);
+    });
+
+    test('e3 below the width where everything fits Export shows its icon alone — its name its accessible name — and is never cut; wider, its name', async function () {
+        this.timeout(120000);
+        const EXPORT = `${ROW} .mep-menu-face[data-menu="export"]`;
+        const face = () => page.$eval(EXPORT, (el, rowSel) => {
+            const row = document.querySelector(rowSel) as HTMLElement;
+            const r = el.getBoundingClientRect();
+            const label = el.querySelector('.mep-face-label') as HTMLElement;
+            const count = document.querySelector('.mep-toolbar .mep-diag-count:not([hidden])') as HTMLElement | null;
+            return {
+                labelShown: label.offsetParent !== null,
+                name: el.getAttribute('aria-label'),
+                inside: r.left >= 0 && r.right <= document.documentElement.clientWidth + 0.5,
+                scrolls: row.scrollWidth > row.clientWidth,
+                chevron: el.querySelector('.mep-menu-caret') !== null && (el.querySelector('.mep-menu-caret') as HTMLElement).offsetParent !== null,
+                icon: el.querySelector(':scope > .mep-face-icon .codicon-export') !== null,
+                countWhole: count === null || count.scrollWidth <= count.clientWidth + 1,
+                tip: el.getAttribute('aria-description'),
+            };
+        }, ROW);
+        for (const [theme, t] of THEMES) {
+            await applyTheme(page, theme);
+            await resize(420, 640);
+            await showDocument();
+            const wide = await face();
+            assert.deepStrictEqual([wide.labelShown, wide.name, wide.inside], [true, null, true], `${t} 420: the name`);
+            for (const width of [280, 240, 200]) {
+                await resize(width, 640);
+                await showDocument();
+                const s = await face();
+                assert.ok(s.inside && !s.scrolls && s.countWhole, `${t} ${width}: Export and the count whole, the row not scrolling: ${JSON.stringify(s)}`);
+                if (!s.labelShown) {
+                    assert.deepStrictEqual([s.name, s.chevron, s.icon, s.tip], ['Export', true, true, 'Export'], `${t} ${width}: icon alone, named`);
+                }
+                if (width === 240) {
+                    assert.strictEqual(s.labelShown, false, `${t} 240: icon alone`);
+                    await shot(`export-240-${t}.png`);
+                }
+            }
+            // Busy at 240: the icon spins, the name of the format is the face's name.
+            await page.click(EXPORT);
+            await page.waitForSelector(`${panel('export')}:not([hidden])`);
+            await page.click(`${panel('export')} [data-export="html"]`);
+            await delay(150);
+            const busy = await face();
+            assert.deepStrictEqual([busy.labelShown, busy.name, busy.inside], [false, 'Exporting HTML…', true], `${t} busy at 240`);
+            await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
+            await delay(120);
+        }
+    });
+
+    test('l6 at 380 the source lock stands whole in the row, its keys kept — the whole reason, else its short form — and Export and the count are not cut', async function () {
+        this.timeout(60000);
+        for (const [theme, t] of THEMES) {
+            await applyTheme(page, theme);
+            await resize(380, 640);
+            await showDocument();
+            await clickText(page, 'Plain', 2);
+            await openYaml();
+            const text = await page.$eval(`${ROW} .mep-row-lock-text`, el => el.textContent);
+            assert.ok(text === LOCK_SOURCE || text === `Source · ${MOD_NAME}+Enter · Esc`, `${t}: a form of the reason: ${text}`);
+            // Not compared with where Export stood: it may give its name up for the reason's room.
+            await assertReasonShown(page, `380 ${t}`, LOCK_SOURCE, text === LOCK_SOURCE ? 'inrow' : 'short');
+            assert.ok(await page.$eval(`${ROW} .mep-menu-face[data-menu="export"]`, el => el.getBoundingClientRect().right <= document.documentElement.clientWidth + 0.5), `${t}: Export inside the window`);
+            await shot(`lock-source-380-${t}.png`);
+            await page.keyboard.press('Escape');
+            await page.keyboard.press('Escape');
+        }
+    });
+
+    // -- review round 3: focus, the menus a layout leaves open, a redrawn bar ------------
+
+    /** The row narrowed to `width` with the window as it is: the observer lays it out, no `resize` is fired (which would close every menu). */
+    const narrowRow = async (width: number) => {
+        await page.$eval(ROW, (row, w) => { (row as HTMLElement).style.right = `${document.documentElement.clientWidth - w}px`; }, width);
+        await delay(120);
+    };
+    const widenRow = () => page.$eval(ROW, row => (row as HTMLElement).style.removeProperty('right'));
+
+    test('f1 the focus on a row control that a layout moves into "…" goes to "…", not to the body', async function () {
+        this.timeout(30000);
+        await resize(1280, 640);
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        const INSERT = `${ROW} .mep-menu-face[data-menu="insert"]`;
+        await page.focus(INSERT);
+        assert.ok(await focused(INSERT), 'Insert has the focus');
+        await resize(420, 640);
+        await delay(100);
+        assert.ok((await rowState()).moved.includes('insert'), 'Insert moved into "…"');
+        assert.ok(await focused(MORE), 'the focus is on "…"');
+    });
+
+    /** What a font that loaded late does: the row, the bubble and the bars measure again, with no change of size or content. */
+    const refit = () => page.evaluate(() => document.fonts.dispatchEvent(new Event('loadingdone')));
+
+    test('f2 "…" with the focus keeps it through a fit — in the bubble, on a bar, in the row', async function () {
+        this.timeout(60000);
+        // The bubble: taken out of it and put back by the measurement.
+        await resize(420, 640);
+        await showDocument();
+        await selectAndBubble('words, then', 5);
+        const bubbleFace = `${BUBBLE} .mep-more-face`;
+        await page.focus(bubbleFace);
+        assert.ok(await focused(bubbleFace), 'the bubble "…" has the focus');
+        await delay(300);
+        assert.ok(await page.$(BUBBLE) && await focused(bubbleFace), 'the bubble stays with the focus on its "…" before any fit');
+        await refit();
+        await delay(250);
+        assert.ok(await page.$(BUBBLE), `the bubble stays: ${await page.evaluate(() => { const a = document.activeElement as HTMLElement; const b = document.querySelector('.mep-bubble') as HTMLElement | null; return `active ${a.tagName}.${a.className}; bubble ${b === null ? 'none' : `hidden=${b.hidden} ${b.innerHTML.length}`}`; })}`);
+        assert.ok(await focused(bubbleFace), 'the bubble "…" still has the focus after the fit');
+        // A bar.
+        await resize(420, 640);
+        await showDocument();
+        await barAt('Alpha', 2, 'table');
+        await page.focus(barMore);
+        assert.ok(await focused(barMore), 'the bar "…" has the focus');
+        await refit();
+        await delay(300);
+        assert.ok(await page.$(BAR), 'the bar stays');
+        assert.ok(await focused(barMore), 'the bar "…" still has the focus after the fit');
+        // The row.
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        await page.focus(MORE);
+        assert.ok(await focused(MORE), 'the row "…" has the focus');
+        await refit();
+        await delay(150);
+        assert.ok(await focused(MORE), 'the row "…" still has the focus after the layout');
+    });
+
+    test('f3 a layout that changes what "…" holds closes the menus whose trigger moved — and no other: a menu read in the row stays open', async function () {
+        this.timeout(60000);
+        await resize(1280, 640);
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        try {
+            const FORMATTING = `${ROW} .mep-menu-face[data-menu="formatting"]`;
+            const open = (menu: string) => page.$eval(panel(menu), el => !(el as HTMLElement).hidden);
+            await narrowRow(1000);
+            assert.deepStrictEqual((await rowState()).moved, [], 'nothing moved at 1000');
+            // By the keys, so the focus is in the menu (a press leaves it in the text).
+            await page.focus(FORMATTING);
+            await page.keyboard.press('ArrowDown');
+            await page.waitForSelector(`${panel('formatting')}:not([hidden])`);
+            assert.ok(await page.evaluate(sel => document.querySelector(sel)!.contains(document.activeElement), panel('formatting')), 'the focus is in the menu');
+            // Ten pixels at a time: Annotation leaves first and Formatting is still in the row, its menu read; then it leaves too.
+            let annotationOnly = 0;
+            for (let width = 1000; width > 200; width -= 10) {
+                await narrowRow(width);
+                const moved = (await rowState()).moved;
+                if (moved.includes('formatting')) {
+                    assert.strictEqual(await open('formatting'), false, `${width}: Formatting itself moved, its menu is closed`);
+                    assert.ok(await focused(MORE), `${width}: the focus it held is on "…"`);
+                    break;
+                }
+                assert.strictEqual(await open('formatting'), true, `${width}: Formatting is in the row still, its menu stays open (moved: ${moved})`);
+                if (moved.includes('annotation')) {
+                    annotationOnly = width;
+                }
+            }
+            assert.ok(annotationOnly > 0, 'a width where Annotation alone had moved was met');
+            // A menu opened through "…" closes when what "…" holds changes under it.
+            await widenRow();
+            await narrowRow(annotationOnly);
+            await page.focus(MORE);
+            await page.keyboard.press('Enter');
+            await page.waitForSelector(`${panel('more')}:not([hidden])`);
+            // The count beside Export changes: the row is laid out again with its entries shown and hidden — and the focus is not dropped out of the menu it is in.
+            await showDiagnostics(editor as EditorPage, version, [{ range: { start: { line: 7, character: 0 }, end: { line: 7, character: 5 } }, severity: 'warning', message: 'One' }]);
+            await delay(150);
+            const inMenu = await page.evaluate(sel => document.querySelector(sel)!.contains(document.activeElement), panel('more'));
+            assert.ok(inMenu ? await open('more') : await focused(MORE), `the focus is in the open menu or, the menu closed, on "…" (open: ${await open('more')})`);
+            if (!(await open('more'))) {
+                await page.focus(MORE);
+                await page.keyboard.press('Enter');
+                await page.waitForSelector(`${panel('more')}:not([hidden])`);
+            }
+            await narrowRow(annotationOnly - 200);
+            assert.strictEqual(await open('more'), false, '"…" holds more now: its open menu is stale and closed');
+            assert.ok(await focused(MORE), 'the focus is on "…"');
+        } finally {
+            await widenRow();
+        }
+    });
+
+    test('f4 "…"\'s list open when the bar is drawn again is open again, where "…" is still in the bar', async function () {
+        this.timeout(60000);
+        await resize(240, 640);
+        // A table no earlier test asked about: the page asks once for a block it still holds as it was.
+        await showDocument(SOURCE.replace('| Alpha | 1 |', '| Alpha | f4 |'));
+        const asked = async () => (await (editor as EditorPage).posted()).filter(m => m.type === 'actionsFor');
+        const before = (await asked()).length;
+        await barAt('Alpha', 2, 'table');
+        await page.click(barMore);
+        await page.waitForSelector(`${BAR} .mep-object-menu`);
+        for (let i = 0; i < 30 && (await asked()).length === before; i++) {
+            await delay(100);
+        }
+        const request = (await asked()).pop() as { requestId: number; blockIndex: number } | undefined;
+        assert.ok(request && (await asked()).length > before, 'the page asked for the table\'s actions');
+        // The person is on the list's second entry when the bar is drawn again.
+        await page.keyboard.press('ArrowDown');
+        const onEntry = () => page.evaluate(() => (document.activeElement as HTMLElement).dataset.entry ?? null);
+        const was = await onEntry();
+        assert.ok(was !== null, 'the focus is on an entry of the list');
+        await (editor as EditorPage).send({ type: 'actions', requestId: request.requestId, blockIndex: request.blockIndex, items: [{ id: 'f4.0', title: 'Fix the table (f4)', kind: 'quickfix' }] });
+        await page.waitForSelector(`${BAR} [data-verb="code-action:f4.0"]`, { timeout: 3000 });
+        await delay(300);
+        assert.strictEqual(await onEntry(), was, 'the reopened list has the focus on the entry it was on');
+        assert.strictEqual(await page.$eval(`${BAR} .mep-object-menu`, el => el.getAttribute('aria-label')), 'More actions', 'its list is open again');
+        assert.strictEqual(await page.$eval(barMore, el => el.getAttribute('aria-expanded')), 'true');
+        assert.ok((await moreMenu()).some(e => e.startsWith('code-action:f4.0')), 'with the verb the bar drew since');
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+    });
+
+    test('f5 the running export\'s spinner in its menu entry is drawn once: an update keeps the node, so the animation runs on', async function () {
+        this.timeout(30000);
+        await resize(1280, 640);
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        const EXPORT = `${ROW} .mep-menu-face[data-menu="export"]`;
+        await page.click(EXPORT);
+        await page.waitForSelector(`${panel('export')}:not([hidden])`);
+        await page.click(`${panel('export')} [data-export="html"]`);
+        await delay(120);
+        const SPIN = `${panel('export')} [data-export="html"] > .mep-entry-busy`;
+        await page.$eval(SPIN, el => { (el as HTMLElement & { drawnOnce?: boolean }).drawnOnce = true; });
+        // Updates: the caret moves, the face and the entries are read again.
+        await clickText(page, 'words', 2);
+        await clickText(page, 'Plain', 2);
+        await delay(100);
+        assert.strictEqual(await page.$eval(SPIN, el => (el as HTMLElement & { drawnOnce?: boolean }).drawnOnce === true), true, 'the same spinner node');
+        await (editor as EditorPage).send({ type: 'exportDone', outcome: 'settled' });
+        await delay(120);
+        assert.strictEqual(await page.$(SPIN), null, 'done: no spinner');
+    });
+
+    test('f6 the row never scrolls — not by a script, nor by a control focused past its edge', async function () {
+        this.timeout(30000);
+        await resize(1280, 640);
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        try {
+            // So narrow that even "…" with everything in it leaves the row too wide: its content stands past the box.
+            await narrowRow(150);
+            const scrollLeft = () => page.$eval(ROW, row => (row as HTMLElement).scrollLeft);
+            await page.focus(`${ROW} .mep-menu-face[data-menu="export"]`);
+            await delay(100);
+            assert.strictEqual(await scrollLeft(), 0, 'a control focused past the edge did not scroll the row');
+            await page.$eval(ROW, row => { (row as HTMLElement).scrollLeft = 40; });
+            await delay(100);
+            assert.strictEqual(await scrollLeft(), 0, 'a script that scrolled it is undone');
+        } finally {
+            await widenRow();
+        }
+    });
+
+    test('f7 an entry of "…" is the same thing at its birth and after each update: role, check, refusal, description', async function () {
+        this.timeout(30000);
+        await resize(420, 640);
+        const entries = () => page.$$eval(`${panel('more')} [data-action]`, els => els.map(el => ({
+            id: (el as HTMLElement).dataset.action as string,
+            role: el.getAttribute('role'),
+            checked: el.getAttribute('aria-checked'),
+            active: el.classList.contains('mep-active'),
+            disabled: el.getAttribute('aria-disabled'),
+            dimmed: el.classList.contains('mep-disabled'),
+            description: el.getAttribute('aria-description'),
+        })));
+        // In bold code the entry of Code is checked, offered, and says nothing; away from it, unchecked.
+        await showDocument();
+        await clickText(page, 'code', 2);
+        await delay(150);
+        assert.deepStrictEqual((await entries()).find(e => e.id === 'code'), { id: 'code', role: 'menuitemcheckbox', checked: 'true', active: true, disabled: 'false', dimmed: false, description: null });
+        await clickText(page, 'Plain', 2);
+        await delay(150);
+        assert.deepStrictEqual((await entries()).find(e => e.id === 'code'), { id: 'code', role: 'menuitemcheckbox', checked: 'false', active: false, disabled: 'false', dimmed: false, description: null });
+        // A code block refuses the marks: the entry is disabled and dimmed together.
+        await showDocument('# Overflow\n\n```js\nconst x = 1;\n```\n');
+        await clickText(page, 'const', 2);
+        await delay(150);
+        const refused = (await entries()).filter(e => e.disabled === 'true');
+        assert.ok(refused.length > 0, 'a code block refuses a mark');
+        assert.ok(refused.every(e => e.dimmed), 'refused is dimmed');
+        // The row locked by a button: every entry is refused and says why, to a screen reader.
+        await showDocument();
+        await openYaml();
+        await page.keyboard.press('Escape');
+        await delay(150);
+        const locked = await entries();
+        assert.ok(locked.length > 0 && locked.every(e => e.disabled === 'true' && e.dimmed && e.description === LOCK_BUTTON), `refused with the reason: ${JSON.stringify(locked.slice(0, 2))}`);
+        await page.keyboard.press('Escape');
+        await delay(150);
+        assert.ok((await entries()).every(e => e.disabled === 'false' && !e.dimmed && e.description === null), 'the lock gone: offered, and nothing said');
+    });
+
+    test('f8 a keyboard Enter on an entry of the bubble\'s "…" applies it and the bubble stays', async function () {
+        this.timeout(30000);
+        await resize(420, 640);
+        await showDocument();
+        await selectAndBubble('words, then', 5);
+        await page.focus(`${BUBBLE} .mep-more-face`);
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(`${panel('bubble-more')}:not([hidden])`);
+        await delay(150);
+        const entry = await page.evaluate(() => (document.activeElement as HTMLElement).dataset.action ?? null);
+        assert.ok(entry !== null, 'the focus is on an entry of the menu');
+        await page.keyboard.press('Enter');
+        await delay(300);
+        assert.strictEqual(await page.$(`${panel('bubble-more')}:not([hidden])`), null, 'the menu closed');
+        assert.ok(await page.$(BUBBLE), 'the bubble stays');
+        assert.ok(await page.evaluate(() => (document.querySelector('.ProseMirror') as HTMLElement).textContent?.includes('words, then')), 'the text is still there');
+    });
+
+    test('f9 a caret in the text, the row laid out again — narrower, then wider: the focus stays in the text', async function () {
+        this.timeout(30000);
+        await resize(1280, 640);
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        const inText = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.closest('.ProseMirror') !== null && document.activeElement !== document.body);
+        assert.ok(await inText(), 'the caret is in the text');
+        await resize(420, 640);
+        await delay(150);
+        assert.ok((await rowState()).moved.length > 0, 'the row moved controls into "…"');
+        assert.ok(await inText(), 'narrower: the focus stays in the text');
+        await resize(1280, 640);
+        await delay(150);
+        assert.deepStrictEqual((await rowState()).moved, [], 'everything back in the row');
+        assert.ok(await inText(), 'wider: the focus stays in the text');
+        await refit();
+        await delay(150);
+        assert.ok(await inText(), 'a measurement alone: the focus stays in the text');
+    });
+
+    test('f10 the focus on a bubble control that a fit hides goes to the bubble\'s "…" — the bubble stays', async function () {
+        this.timeout(60000);
+        const first = BUBBLE_OVERFLOW[0];
+        await resize(900, 640);
+        await showDocument();
+        await selectAndBubble('words, then', 5);
+        const control = `${BUBBLE} [data-action="${first}"]`;
+        const face = `${BUBBLE} .mep-more-face`;
+        assert.ok((await bubbleState()).moved.length === 0 && await page.$(control), 'at 900 nothing has left the bubble');
+        await page.focus(control);
+        assert.ok(await focused(control), 'the control has the focus');
+        await resize(420, 640);
+        await delay(300);
+        const s = await page.evaluate(() => {
+            const a = document.activeElement as HTMLElement;
+            return { tag: a.tagName, className: a.className, data: a.dataset.action ?? null, bubble: document.querySelector('.mep-bubble:not([hidden])') !== null };
+        });
+        assert.ok(s.bubble, `the bubble stays: ${JSON.stringify(s)}`);
+        assert.ok((await bubbleState()).moved.includes(first as string), `the control moved into "…": ${JSON.stringify(await bubbleState())}`);
+        assert.ok(await focused(face), `the focus is on the bubble's "…": ${JSON.stringify(s)}`);
+    });
+
+    test('f11 "…" with the focus, nothing left in it after a layout: the focus goes to a control of the row, not to the body', async function () {
+        this.timeout(30000);
+        await resize(420, 640);
+        await showDocument();
+        await clickText(page, 'Plain', 2);
+        await page.focus(MORE);
+        assert.ok(await focused(MORE), 'the row "…" has the focus');
+        await resize(1280, 640);
+        await delay(200);
+        const s = await page.evaluate(() => {
+            const a = document.activeElement as HTMLElement;
+            return { tag: a.tagName, menu: a.dataset.menu ?? null, inRow: a.closest('.mep-toolbar') !== null };
+        });
+        assert.ok(s.inRow && s.menu === 'block-type', `the focus is on Block type: ${JSON.stringify(s)}`);
+    });
+
+    test('f12 Esc on the bubble\'s "…" with its menu open closes the menu and no more: the bubble stays', async function () {
+        this.timeout(30000);
+        await resize(420, 640);
+        await showDocument();
+        await selectAndBubble('words, then', 5);
+        const face = `${BUBBLE} .mep-more-face`;
+        // The menu opened by a press, the focus on the face (the keys' own opening puts it in the menu).
+        await page.focus(face);
+        await page.click(face);
+        await page.waitForSelector(`${panel('bubble-more')}:not([hidden])`);
+        assert.ok(await focused(face), 'the focus is on the face, the menu open');
+        await page.keyboard.press('Escape');
+        await delay(200);
+        assert.strictEqual(await page.$(`${panel('bubble-more')}:not([hidden])`), null, 'the menu closed');
+        assert.ok(await page.$(BUBBLE), 'the bubble stays');
     });
 });

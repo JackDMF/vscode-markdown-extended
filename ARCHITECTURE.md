@@ -1622,9 +1622,11 @@ every webview receives, each with a fallback after it:
   affordance is the codicon `chevron-down` (`chevronNode` in `lenses.ts`, the one element
   for the row's faces, a submenu's `chevron-right` and an object bar's set-verbs), dim in
   `descriptionForeground`, right after the label (the block-type face keeps the longest
-  type's width after it, so nothing after it moves). A narrow row scrolls sideways with no
-  scrollbar — one would be laid out inside its 26px and clip the controls — by the wheel
-  (`toolbar.ts` turns a vertical wheel sideways) and by the focus.
+  type's width after it, so nothing after it moves). A narrow row neither wraps nor scrolls:
+  what does not fit leaves it for a "…" menu in `ROW_OVERFLOW`'s order — Annotation,
+  Formatting, Insert, then the marks from the right — and where even that is too wide Export
+  shows its icon alone and Block type cuts its label (`layoutRow`, with `fitWithMore` of
+  `overflow.ts`, the one loop the bars' and the bubble's "…" share).
 - **A menu** — the row's four, a submenu, the table bar's Row, Column and Align — is the
   context menu: `menu-background`, `-foreground`, `-border`, the entry under the pointer or
   the focus in `menu-selectionBackground` / `-Foreground` (outlined in
@@ -1710,22 +1712,15 @@ The layers:
   has the focus (`focusPlace.ts`), the reason (`controlLock`, by the control's `role`: a
   source box's *Editing source · Ctrl+Enter apply · Esc cancel*, a property's field's
   *Editing a property · Enter apply · Esc cancel*, a button's *Focus is outside the text ·
-  Esc or click into the text*) shown in the room the tools leave before the status, never
-  pinned over them, and where it does not fit there whole — measured (`placeLock`, on every
-  lock and every size change of the row or its status), not a breakpoint — on a thin line
-  of its own under the row (`mep-row-lock-below`), cut with an ellipsis only where even that
-  line is too narrow. The page makes room for the line (`--mep-lock-room`, `settleRoom`)
-  once a held main button is released — a page that moved between press and release would
-  take the click from the header's toggle or Edit as source; a right press holds nothing
-  back, and a release the page never sees (a menu took it, the window was left) is read
-  from a window `blur` or a pointer move with no button down — keeping its scroll position,
-  so what stood just under the chrome stands just under it still (the browser's scroll
-  anchoring, which would scroll it back under the line, is overruled); the room goes with
-  the lock the same way. The line is part of the row's ceiling for the bars (`rowCeiling`,
-  which re-places them on `CHROME_MOVED`). `scroll-margin-top` keeps the settled room
-  (`--mep-lock-room`); `SCROLL_MARGIN.top` and the panel's source-box scroll keep the line's
-  live height (`lockLineHeight`) — the two differ only while a press holds the room back — as its
-  `aria-description` and in each tooltip, and pointed at in the refusal's
+  Esc or click into the text*) shown in the row, never under it and never moving the page —
+  measured by `layoutRow` (not a breakpoint), again only when what it measured changed
+  (`rowLayoutKey`), in one of the two forms `lockForms` gives: beside the tools where it fits
+  whole; else, for a source box or a property's field, in the refused tools' place
+  (`mep-row-lock-inrow`: they give way, nothing moves into "…"), whole or — cut even there —
+  in its short form, which keeps its keys (*Source · Ctrl+Enter · Esc*); for a button, its
+  short form (*Outside the text*) beside the tools where that fits, else the refused tools
+  give way into the (disabled) "…" until it does, else no note: the tools only dim. The whole reason is the row's `aria-description`, the short form's hover and each
+  tool's tooltip, and it is pointed at in the refusal's
   amber when a refused tool is pressed; read again once per focus move, since a
   box taking the focus changes no state — the block-type face (the
   current type's name, locked with the reason), the menus and their keyboard (arrows, `→` into the submenu,
@@ -1842,7 +1837,9 @@ An indented block has no opening line; Language…, Attributes… and Edit sourc
 apply (`DEFAULT_FENCE`, lengthened as needed), and the hint says "Code block fenced". The
 completions come from `languages.ts`, generated from the installed highlight.js by
 `npm run languages` and pinned by `languages.test.ts`. The language shows at rest as a
-corner tag, `pre[data-lang]::before` — a pseudo-element, so no node, no layer, inert.
+corner tag, `pre[data-lang]::before` — a pseudo-element, so no node, no layer, inert; its
+`data-lang` is set in the schema's `toDOM` — O(1) per node, no decoration set to keep — and
+the clipboard's serializer (`clipboardNodes`) strips it, so no copy carries it. A first word that opens with a brace is no language (`languageOf`).
 
 **The triggers.** The last three objects are *block* objects and show their bar while the
 pointer is on them or they are selected, at once — as the source block's toolbar did. The
@@ -2440,8 +2437,10 @@ the page commits its open boxes and flushes (`exportDocument` in `main.ts`, the 
 pick, the exporter pick, progress and report as the command has them. The formats are one
 table (`services/exporter/formats.ts`, which also declares the `ExportFormat` enum the table
 holds), read by the menu and by `pickFormat`. One export runs at a time: the page shows
-*Exporting…* and refuses its formats until the host's `exportDone`; the host answers a second
-request `busy`; every `document` says whether one runs (`exporting`), so a page loaded
+*Exporting PDF…* — the running format, spinning, *PDF…* where the row is narrower, its icon
+alone below that, the whole in its tooltip and accessible name — and refuses its other formats
+until the host's `exportDone`; the host answers a second request `busy`, naming the format that
+runs (`format`), which the page then shows; every `document` says which one runs (`exporting`), so a page loaded
 meanwhile shows it and a lost `exportDone` keeps the face busy no longer than the next
 document. The host starts the export without waiting for it in its queue — a browser's launch
 would hold up typing — so edits typed just after the press may reach it. *Limits:* an export

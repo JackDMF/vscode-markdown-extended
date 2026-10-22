@@ -42,12 +42,6 @@ export function rowCeiling(mount: HTMLElement): number {
 }
 
 /**
- * Dispatched on the mount when the chrome over the page grew or shrank or the page moved under it: bars placed against it are placed again.
- * Since the lock's note stands in the row (wave 2 #2) the row never changes height, and nothing sends it; the slot (`placement.ts`) still listens.
- */
-export const CHROME_MOVED = 'mep-chrome-moved';
-
-/**
  * Whether anything the page shows as content lies in `band`: a character of a
  * textblock, or what `OCCUPIED` names. Probed at points across the band's
  * middle and near its edges: a point over a line of text resolves to a

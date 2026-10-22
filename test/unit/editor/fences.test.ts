@@ -1,11 +1,15 @@
 import * as assert from 'assert';
+import type { Node } from 'prosemirror-model';
 import { parseDocument, serializeDocument } from '../../../src/editor';
 import {
-    BACKTICK_INFO_REFUSAL, NO_FENCE_REFUSAL, OpeningLine, documentLanguages, languageCompletions, languageName, languageOf, minimumFence, openingLineOf,
+    BACKTICK_INFO_REFUSAL, NO_FENCE_REFUSAL, OpeningLine, documentLanguages, languageCompleter, languageName, languageOf, minimumFence, openingLineOf,
     parseOpeningLine, savedFence, savedOpeningLine, shortFenceRefusal, withLanguage,
 } from '../../../src/editor/fences';
 import { editorSchema } from '../../../src/editor/schema';
 import { hostEngine } from './helpers';
+
+/** What Language… offers for `query` in `doc`: the completer the field asks, asked once. */
+const languageCompletions = (doc: Node, query: string) => languageCompleter(doc)(query);
 
 /** The first block of `text` as the editor parses it: a code block's attributes. */
 function codeBlockOf(text: string): { markup: string; params: string; attrsSuffix: string | null; content: string } {
@@ -58,6 +62,21 @@ suite('Editor code blocks: the opening line', () => {
 
         test('a brace pair the plugin would not take is handed on as the literal, for its own check', () => {
             assert.deepStrictEqual(parseOpeningLine('```js {.}', 'x'), { markup: '```', params: 'js', literal: '{.}' });
+            assert.deepStrictEqual(parseOpeningLine('```js {}', 'x'), { markup: '```', params: 'js', literal: '{}' });
+            assert.deepStrictEqual(parseOpeningLine('```{r, echo = FALSE}', 'x'), { markup: '```', params: '', literal: '{r, echo = FALSE}' });
+        });
+
+        test('a pair the block\'s info string already holds is text the file has: it stays in the info string', () => {
+            assert.deepStrictEqual(parseOpeningLine('~~~js {}', 'x', 'js {}'), { markup: '~~~', params: 'js {}', literal: null });
+            assert.deepStrictEqual(parseOpeningLine('```js {.}', 'x', ' js {.}'), { markup: '```', params: 'js {.}', literal: null });
+            assert.deepStrictEqual(parseOpeningLine('```{r, echo = FALSE}', 'x', '{r, echo = FALSE}'), { markup: '```', params: '{r, echo = FALSE}', literal: null });
+            assert.deepStrictEqual(parseOpeningLine('```js {.}', 'x', 'js {}'), { markup: '```', params: 'js', literal: '{.}' }, 'another pair is a typed one');
+        });
+
+        test('only a pair the info string ENDS with is text the file has: the same pair elsewhere in it does not hide a typed one', () => {
+            assert.deepStrictEqual(parseOpeningLine('```x {.} y {.}', 'x', 'x {.} y'), { markup: '```', params: 'x {.} y', literal: '{.}' }, 'held in the middle: typed at the end');
+            assert.deepStrictEqual(parseOpeningLine('```x {.} y {.}', 'x', 'x {.} y {.}'), { markup: '```', params: 'x {.} y {.}', literal: null }, 'held at the end: text');
+            assert.deepStrictEqual(parseOpeningLine('```x {.} y {.}', 'x', 'x {.} y {.}  '), { markup: '```', params: 'x {.} y {.}', literal: null }, 'trailing spaces of the old line do not change that');
         });
     });
 
@@ -121,6 +140,20 @@ suite('Editor code blocks: the opening line', () => {
             assert.strictEqual(languageOf('  ts  '), 'ts');
         });
 
+        test('a first word that opens with a brace is no language: "{r, echo = FALSE}" names none', () => {
+            assert.strictEqual(languageOf('{r, echo = FALSE}'), '');
+            assert.strictEqual(languageOf('{.x}'), '');
+            assert.strictEqual(languageOf('r {echo}'), 'r');
+            assert.strictEqual(withLanguage('{r, echo = FALSE}', 'ts'), 'ts {r, echo = FALSE}', 'a language is added in front of the text');
+            assert.strictEqual(withLanguage('{r, echo = FALSE}', ''), '{r, echo = FALSE}', 'none to remove');
+        });
+
+        test('a replaced word keeps the spacing around it; a removed one leaves the rest trimmed', () => {
+            assert.strictEqual(withLanguage(' js', 'ts'), ' ts');
+            assert.strictEqual(withLanguage('  js  title=x', 'ts'), '  ts  title=x');
+            assert.strictEqual(withLanguage('  js  title=x', ''), 'title=x');
+        });
+
         const cases: [string, string, string][] = [
             ['js title=x', 'ts', 'ts title=x'],
             ['js title=x', '', 'title=x'],
@@ -141,6 +174,11 @@ suite('Editor code blocks: the opening line', () => {
 
         test('documentLanguages: most used first, then by first appearance', () => {
             assert.deepStrictEqual(documentLanguages(doc), ['js', 'json', 'zzz']);
+        });
+
+        test('documentLanguages counts by lowercase and names the first spelling met', () => {
+            const mixed = parseDocument(hostEngine(), '```JS\na\n```\n\n```json\nb\n```\n\n```js\nc\n```\n\n```Json\nd\n```\n\n```json\ne\n```\n', {}).doc;
+            assert.deepStrictEqual(documentLanguages(mixed), ['json', 'JS'], 'json three times, JS and js two');
         });
 
         test('"j": js and json from the document, then highlight.js\'s by prefix', () => {

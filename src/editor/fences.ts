@@ -49,6 +49,9 @@ export const BACKTICK_INFO_REFUSAL = 'A ``` fence takes no backtick after it: th
  */
 export const LANGUAGE_FOLLOWED_REFUSAL = 'Other words follow the language — Edit source changes the whole line.';
 
+/** Why Language… is not emptied while a {…} follows the language in the info string (a nested fence's literal is text there). */
+export const LANGUAGE_LITERAL_REFUSAL = 'A {…} follows the language — Edit source changes the whole line.';
+
 /**
  * Why Language… refuses a value with a space or a brace in it: the language is
  * one word, and a word with more would change the info string or the literal
@@ -144,9 +147,11 @@ export function minimumFence(markup: string, content: string): string {
  * ends with as markdown-it-attrs finds it (`endLiteralOf`) — or, when the line
  * ends with a brace pair the plugin would not take, that pair, so the
  * literal's own check (`literalRefusal`) says why rather than the pair
- * silently staying text in the info string.
+ * silently staying text in the info string — unless `current`, the block's
+ * info string as it is, already ends with that pair: text the file has, which
+ * stays text.
  */
-export function parseOpeningLine(line: string, content: string): OpeningLine | { refusal: string } {
+export function parseOpeningLine(line: string, content: string, current = ''): OpeningLine | { refusal: string } {
     const match = /^(`{3,}|~{3,})(.*)$/.exec(line.trim());
     if (!match) {
         return { refusal: NO_FENCE_REFUSAL };
@@ -165,24 +170,40 @@ export function parseOpeningLine(line: string, content: string): OpeningLine | {
         const start = findLeftDelimiter(info);
         literal = start >= 0 ? info.slice(start) : null;
     }
+    // Only a literal typed now: one the block's info string already ends with is text the file has (a nested fence's, a knitr header's), which nobody asked to read as a literal. The same pair elsewhere in it is no such text.
+    if (literal !== null && current.trimEnd().endsWith(literal)) {
+        literal = null;
+    }
     const params = literal === null ? info : info.slice(0, info.length - literal.length).trim();
     return { markup, params, literal };
 }
 
-/** The language a fence's info string names: its first word, `''` for none. */
+/**
+ * The language a fence's info string names: its first word, `''` for none —
+ * and for a first word that opens with a brace (```` ```{r, echo = FALSE} ````,
+ * a knitr header): that is text a literal would be, not a language.
+ */
 export function languageOf(params: string): string {
-    return params.trim().split(/\s+/)[0] ?? '';
+    const word = params.trim().split(/\s+/)[0] ?? '';
+    return word.startsWith('{') ? '' : word;
 }
 
 /**
- * `params` with its first word replaced by `language`, added when it has none,
- * or removed when `language` is `''`; the rest of the info string as it was.
+ * `params` with its first word replaced by `language`, added in front when it
+ * has none, or removed when `language` is `''`. A replaced word is replaced in
+ * place: the spacing around it, the leading spacing included, stays as it was.
+ * What follows an added or removed word is the rest of the info string, trimmed.
  */
 export function withLanguage(params: string, language: string): string {
-    const trimmed = params.trim();
-    const rest = trimmed === '' ? '' : trimmed.slice(languageOf(trimmed).length).trim();
     const word = language.trim();
-    return word === '' ? rest : rest === '' ? word : `${word} ${rest}`;
+    const current = languageOf(params);
+    if (current === '') {
+        const rest = params.trim();
+        return word === '' ? rest : rest === '' ? word : `${word} ${rest}`;
+    }
+    const at = params.indexOf(current);
+    const after = params.slice(at + current.length);
+    return word === '' ? after.trim() : `${params.slice(0, at)}${word}${after}`;
 }
 
 /** The display name highlight.js gives `word`, by id or alias, case aside; `null` for a word it does not know. */
@@ -191,21 +212,30 @@ export function languageName(word: string): string | null {
     return LANGUAGES.find(l => l.id === lower || l.aliases.includes(lower))?.name ?? null;
 }
 
-/** The languages the document's fences name, most used first, then in the order they first appear. */
+/**
+ * The languages the document's fences name, most used first, then in the order
+ * they first appear. Counted by lowercase — `JS` and `js` are one language,
+ * highlight.js reads them alike — and named by the spelling met first.
+ */
 export function documentLanguages(doc: Node): string[] {
-    const counts = new Map<string, number>();
+    const counts = new Map<string, { spelling: string; count: number }>();
     doc.descendants(node => {
         if (node.type.name === 'code_block') {
             const language = languageOf(String(node.attrs.params ?? ''));
             if (language !== '') {
-                counts.set(language, (counts.get(language) ?? 0) + 1);
+                const seen = counts.get(language.toLowerCase());
+                if (seen) {
+                    seen.count++;
+                } else {
+                    counts.set(language.toLowerCase(), { spelling: language, count: 1 });
+                }
             }
             return false;
         }
         return true;
     });
     // A stable sort keeps the first appearance among equal counts.
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([language]) => language);
+    return [...counts.values()].sort((a, b) => b.count - a.count).map(entry => entry.spelling);
 }
 
 /**
@@ -243,9 +273,4 @@ export function languageCompleter(doc: Node): (query: string) => Completion[] {
         }
         return completions;
     };
-}
-
-/** `languageCompleter` asked once: what Language… offers for `query` in `doc`. */
-export function languageCompletions(doc: Node, query: string): Completion[] {
-    return languageCompleter(doc)(query);
 }

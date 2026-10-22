@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Every floating layer — bars, bubble, fields, menus, cards, hints — follows one rule: below, else above.
+- The floating layers — bars, bubble, fields, menus, cards, hints — follow one rule: below, else above. The completion list at the caret keeps its own placement for now.
 - With text on both sides, an inline object's bar goes above; block bars and the bubble stay below.
 - A layer never covers the caret's line, the formatting row or another open layer.
 - A layer stands at its object's start and stops at the editor's edge, 4 px short of the margin lane.
@@ -21,7 +21,7 @@
 - Menus moved into "…" open as submenus; "…" names its contents for a screen reader.
 - The row's lock note stands in the row: beside the tools, else in the refused tools' place, else short.
 - The page no longer moves when the row locks or unlocks.
-- A lock nobody ran into says "Focus is outside the text" where it fits; else the tools only dim.
+- A lock nobody ran into says "Outside the text"; the tools give way into "…" for it, else only dim.
 - Export busy names the format: "Exporting PDF…", or "PDF…" in a narrow row; the tooltip says it whole.
 - The Export face spins while an export runs; a still glyph under reduced motion.
 - In the Export menu the running format carries the spinner; the others say which export they wait for.
@@ -30,6 +30,10 @@
 - A bar whose title is hidden still names its object on hover and to a screen reader.
 - Admonition bars read "Warning admonition", shortened to "Warning" before the title truncates.
 - The selection's bubble never spills past the window: what does not fit moves into its own "…".
+- The bubble's "…" shows its controls' own glyphs and closes on a second press, keyboard included.
+- Menus in a bar's "…" are named and have no hover; their extra text is their description.
+- In a row too narrow for its name, Export shows its icon alone; Block type then cuts its label.
+- Export busy shows the format the host runs, even when another was asked for.
 - A fenced or indented code block has a bar: Language…, Attributes…, Edit source, Delete code block.
 - Language… is a field with completions: this document's languages first, then every language the preview highlights.
 - Language… changes only the first word of the fence's info string; the rest and the {…} stay.
@@ -48,7 +52,12 @@
 - Only a closing-shaped line inside a fence needs a longer fence; a ```python line does not.
 - A language the document names by one word is offered once, not again under its aliases.
 - A table verb moved into "…" tints its row or column while its entry is focused or its menu is open.
-- Alt+Enter on an object whose bar cannot show no longer claims there is nothing to act on.
+- Alt+Enter on an object whose bar cannot show says what the object is, not that there is nothing to act on.
+- Lenses from other extensions on a code block show in its bar after a caret rest, like on every object.
+- Enter on an unchanged opening line, or on a Language… that did not change, rewrites nothing.
+- Braces in a fence's info string that were text stay text: only a {…} you type is read as attributes.
+- A first word that opens with a brace ({r, echo = FALSE}) is no language: no corner tag, none shown in Language….
+- Language… keeps the info string's spacing around the word it replaces; the document's languages count by lowercase.
 - Copying a code block no longer carries the editor's language tag.
 - The "No actions here" hint fits one line; the fence in an indented block's tooltip is in the code font.
 - The Row and Column menus set Delete apart after a divider; the cell's ring no longer matches the focus outline.

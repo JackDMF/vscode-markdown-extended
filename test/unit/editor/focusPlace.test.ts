@@ -117,6 +117,6 @@ suite('Editor focus place', () => {
         }
         assert.strictEqual(lockForms('source').short, `Source · ${applyKey()} · Esc`);
         assert.strictEqual(lockForms('property').short, 'Property · Enter · Esc');
-        assert.strictEqual(lockForms('button').short, 'Focus is outside the text');
+        assert.strictEqual(lockForms('button').short, 'Outside the text');
     });
 });

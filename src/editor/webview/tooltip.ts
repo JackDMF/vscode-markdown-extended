@@ -40,7 +40,7 @@ export function describeAs(el: HTMLElement, text: string | null): void {
 
 export class Tooltips {
     private readonly el: HTMLElement;
-    private readonly tips = new WeakMap<HTMLElement, { tip: () => Tip | null; place: TipPlace }>();
+    private readonly tips = new WeakMap<HTMLElement, { tip: () => Tip | null; place: TipPlace; described: boolean }>();
     /** The control whose hover is shown. */
     private owner: HTMLElement | null = null;
     /** The control whose rest is being waited for, and the wait. */
@@ -112,11 +112,12 @@ export class Tooltips {
      * `el` shows `tip()` on a rest and on keyboard focus, and says it as its
      * `aria-description` from now on; `null` is no hover and no description.
      * `place`: under the control, or beside it — a menu's entry, whose hover
-     * under it would cover the next entry.
+     * under it would cover the next entry. `described` false: the hover only,
+     * no `aria-description` — for a control whose `aria-label` already says it.
      */
-    attach(el: HTMLElement, tip: () => Tip | null, place: TipPlace = 'below'): void {
+    attach(el: HTMLElement, tip: () => Tip | null, place: TipPlace = 'below', described = true): void {
         const first = !this.tips.has(el);
-        this.tips.set(el, { tip, place });
+        this.tips.set(el, { tip, place, described });
         this.describe(el);
         if (!first) {
             return;
@@ -232,7 +233,11 @@ export class Tooltips {
     }
 
     private describe(el: HTMLElement): void {
-        const tip = this.tips.get(el)?.tip() ?? null;
+        const entry = this.tips.get(el);
+        if (entry?.described === false) {
+            return;
+        }
+        const tip = entry?.tip() ?? null;
         describeAs(el, tip === null ? null : tipText(el.hasAttribute('aria-keyshortcuts') ? withoutKeys(tip) : tip));
     }
 

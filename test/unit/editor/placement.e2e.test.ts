@@ -482,7 +482,7 @@ suite('Editor placement (e2e)', () => {
         // A window so low the menu takes it all: no room below the menu either.
         await page.setViewport({ width: 420, height: 240 });
         await s5();
-        const low = { card: await box(CARD), menu: await box('.mep-menu[data-menu="formatting"]') };
+        const low = { card: await box(CARD), menu: await box('.mep-menu[data-menu="formatting"]'), more: await box('.mep-menu[data-menu="more"]') };
         assert.strictEqual(low.card, null, `no room beside, below or above: no card ${JSON.stringify(low)}`);
         await page.keyboard.press('Escape');
     });
@@ -626,7 +626,6 @@ suite('Editor placement (e2e)', () => {
         await page.evaluate(() => {
             window.scrollBy(0, 0);
             window.dispatchEvent(new Event('resize'));
-            (document.querySelector('.mep-editor') as HTMLElement).dispatchEvent(new Event('mep-chrome-moved'));
         });
         await delay(100);
         assert.strictEqual(await page.$eval(BAR, el => el.hasAttribute('data-inert')), false);
@@ -783,6 +782,112 @@ suite('Editor placement (e2e)', () => {
         await clickBefore('Below it', 1);
     });
 
+    test('r3-1: Esc on a table\'s bar, a character typed in a cell: the bar stays hidden — the block\'s first edit re-marks it in place, which is no deletion; deleting the table ends the dismissal', async function () {
+        this.timeout(30000);
+        const doc = (cell: string) => `Alpha.\n\n| Kind | Where |\n| --- | --- |\n| ${cell} | second |\n\nAfter.\n`;
+        const shows = (text: string) => page.waitForFunction(t => document.querySelector('.ProseMirror')?.textContent?.includes(t), { timeout: 3000 }, text);
+        await showDocument(doc('first'), 'second');
+        await clickBefore('first', 2);
+        await waitBar();
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BAR), false, 'hidden by Esc');
+        await page.keyboard.type('x');
+        await shows('fixrst');
+        await delay(REST_MS * 2 + 200);
+        assert.strictEqual(await shown(BAR), false, 'still hidden after the typed character');
+        // The host's answer to the edit: the document again, the caret still in the cell.
+        await resendDocument(doc('fixrst'));
+        await delay(REST_MS * 2 + 200);
+        assert.strictEqual(await shown(BAR), false, 'still hidden after the resync');
+
+        // The table deleted, then back where it was: the dismissal did not outlive it.
+        await resendDocument('Alpha.\n\nAfter.\n');
+        await page.waitForFunction(() => !document.querySelector('.ProseMirror table'), { timeout: 3000 });
+        await resendDocument(doc('first'));
+        await shows('second');
+        await clickBefore('first', 2);
+        await waitBar();
+    });
+
+    test('r3-2: at 420 a submenu with no room beside stands against its entry: the pointer goes from the entry into it and it stays open', async function () {
+        this.timeout(20000);
+        // Tall enough for the admonition list under its entry also where Insert is a submenu of "…" and stands lower.
+        await page.setViewport({ width: 420, height: 1100 });
+        await showDocument('Alpha beta gamma.\n', 'Alpha');
+        await clickBefore('beta', 1);
+        // At 420 Insert is in "…" (wave 2 · #2): it opens from its entry there, as a submenu of "…".
+        if (await page.$eval('.mep-toolbar .mep-menu-face[data-menu="insert"]', el => (el as HTMLElement).hidden)) {
+            await page.focus('.mep-toolbar .mep-more-face');
+            await page.keyboard.press('Enter');
+            await page.waitForSelector('.mep-menu[data-menu="more"]:not([hidden])', { timeout: 3000 });
+            await page.focus('.mep-menu[data-menu="more"] [data-submenu="insert"]');
+            await page.keyboard.press('ArrowRight');
+        } else {
+            await page.focus('.mep-toolbar .mep-menu-face[data-menu="insert"]');
+            await page.keyboard.press('ArrowDown');
+        }
+        await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])', { timeout: 3000 });
+        const opener = await box('.mep-menu[data-menu="insert"] [data-submenu="admonition"]');
+        assert.ok(opener);
+        const x = (opener.left + opener.right) / 2;
+        await page.mouse.move(x, (opener.top + opener.bottom) / 2);
+        await page.waitForSelector('.mep-menu[data-menu="admonition"]:not([hidden])', { timeout: 3000 });
+        await delay(300);
+        const sub = await box('.mep-menu[data-menu="admonition"]');
+        const first = await box('.mep-menu[data-menu="admonition"] .mep-menu-item:not([hidden])');
+        assert.ok(sub && first);
+        assert.ok(sub.top >= opener.bottom - 1 && sub.top <= opener.bottom + 1, `under its entry, against it: ${JSON.stringify({ opener, sub })}`);
+        // A pixel at a time: a band between the two would be the next entry's, and entering it closes the submenu.
+        for (let y = Math.round((opener.top + opener.bottom) / 2); y <= (first.top + first.bottom) / 2; y++) {
+            await page.mouse.move(x, y);
+        }
+        await delay(200);
+        assert.strictEqual(await shown('.mep-menu[data-menu="admonition"]:not([hidden])'), true, 'the submenu stays open under the pointer');
+        assert.strictEqual(await page.evaluate(() => document.querySelector('.mep-menu[data-menu="admonition"] .mep-menu-item:hover') !== null), true, 'the pointer is on its first entry');
+        await page.keyboard.press('Escape');
+    });
+
+    test('r4-1: at 420 a submenu taller than the room on both sides stands below its entry, else above it, never over it, its height the room: it scrolls', async function () {
+        this.timeout(30000);
+        // Low enough that the admonition list (70vh at most) fits neither under nor over its entry.
+        await page.setViewport({ width: 420, height: 400 });
+        await showDocument('Alpha beta gamma.\n', 'Alpha');
+        await clickBefore('beta', 1);
+        if (await page.$eval('.mep-toolbar .mep-menu-face[data-menu="insert"]', el => (el as HTMLElement).hidden)) {
+            await page.focus('.mep-toolbar .mep-more-face');
+            await page.keyboard.press('Enter');
+            await page.waitForSelector('.mep-menu[data-menu="more"]:not([hidden])', { timeout: 3000 });
+            await page.focus('.mep-menu[data-menu="more"] [data-submenu="insert"]');
+            await page.keyboard.press('ArrowRight');
+        } else {
+            await page.focus('.mep-toolbar .mep-menu-face[data-menu="insert"]');
+            await page.keyboard.press('ArrowDown');
+        }
+        await page.waitForSelector('.mep-menu[data-menu="insert"]:not([hidden])', { timeout: 3000 });
+        const entry = '.mep-menu[data-menu="insert"] [data-submenu="admonition"]';
+        const opener = await box(entry);
+        assert.ok(opener);
+        await page.mouse.move((opener.left + opener.right) / 2, (opener.top + opener.bottom) / 2);
+        await page.waitForSelector('.mep-menu[data-menu="admonition"]:not([hidden])', { timeout: 3000 });
+        await delay(300);
+        const sub = await box('.mep-menu[data-menu="admonition"]');
+        assert.ok(sub);
+        const state = await page.$eval('.mep-menu[data-menu="admonition"]', el => ({ scrolls: el.scrollHeight > el.clientHeight + 1, maxHeight: (el as HTMLElement).style.maxHeight, window: window.innerHeight }));
+        const said = JSON.stringify({ opener, sub, state });
+        assert.ok(!overlap(sub, opener), `not over its own entry: ${said}`);
+        assert.ok(sub.top >= -1 && sub.bottom <= state.window + 1, `inside the window: ${said}`);
+        assert.ok(sub.top >= opener.bottom - 1 || sub.bottom <= opener.top + 1, `below the entry or above it: ${said}`);
+        assert.ok(state.scrolls && state.maxHeight.endsWith('px'), `shrunk to the room, it scrolls: ${said}`);
+        // The entry it hangs from is in sight: the panel does not stand over it.
+        assert.strictEqual(await page.evaluate(sel => {
+            const r = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+            const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+            return hit !== null && hit.closest(sel) !== null;
+        }, entry), true, `its entry is not covered: ${said}`);
+        await page.keyboard.press('Escape');
+    });
+
     test('r1-7: a character typed with AltGr or Option counts as typing: the bar hides at once', async function () {
         this.timeout(15000);
         await s2();
@@ -890,6 +995,94 @@ suite('Editor placement (e2e)', () => {
         } finally {
             await page.evaluate(() => document.getElementById('stuck-layer')?.remove());
         }
+    });
+
+    // -- fix round 2 (review of 2026-10-20) ---------------------------------------
+
+    test('r2-3: Esc, the focus away, a click back into the same link: the bar stays hidden; Alt+Enter brings it back', async function () {
+        this.timeout(20000);
+        await s2();
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BAR), false, 'hidden by Esc');
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await delay(250);
+        await clickBefore('linkedwords', 5);
+        assert.strictEqual(await page.evaluate(() => (document.getSelection()?.anchorNode?.parentElement?.closest('a') ?? null) !== null), true, 'the caret is in the link');
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BAR), false, 'a click back into the same object does not bring the bar again');
+        await page.keyboard.down('Alt');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Alt');
+        await waitBar(500);
+        await clickBefore('Below it', 1);
+    });
+
+    test('r2-7: a source box focused while the selection is elsewhere ends Esc\'s dismissal: back in the link, its bar comes', async function () {
+        this.timeout(25000);
+        await t6();
+        await page.keyboard.press('Escape');
+        await page.waitForSelector(HOVER_BAR, { timeout: 1000 });
+        await delay(INERT_MS + 50);
+        // The pointer\'s bar on the source block opens its source box: the focus is in a control, the selection on the block.
+        await page.click(`${HOVER_BAR} [data-verb="edit-source"]`);
+        await page.waitForSelector('.mep-raw-block textarea', { timeout: 2000 });
+        await delay(150);
+        assert.strictEqual(await page.evaluate(() => document.activeElement?.tagName), 'TEXTAREA', 'the source box has the focus');
+        await clickBefore('a link', 2);
+        await waitBar();
+    });
+
+    test('r2-9: a field bar has no inert time: its input takes the pointer at once', async function () {
+        this.timeout(15000);
+        await showDocument('A plain paragraph with words in it.\n', 'plain paragraph');
+        await clickBefore('words in', 0);
+        await page.keyboard.down('Control');
+        await page.keyboard.press('k');
+        await page.keyboard.up('Control');
+        await page.waitForSelector(`${ROW_FIELD} .mep-inline-field`, { timeout: 2000 });
+        assert.strictEqual(await page.$eval(ROW_FIELD, el => el.hasAttribute('data-inert')), false, 'the row\'s field bar');
+        await page.keyboard.press('Escape');
+        await delay(100);
+
+        // A bar's own field replaces the bar's verbs: the inert time the bar had is given up with them.
+        await s2();
+        await page.keyboard.down('Alt');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Alt');
+        await delay(30);
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(`${BAR} .mep-inline-field`, { timeout: 2000 });
+        assert.strictEqual(await page.$eval(BAR, el => el.hasAttribute('data-inert')), false, 'the object bar\'s field');
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await clickBefore('Below it', 1);
+    });
+
+    test('r2-10: Esc in the bubble hides it for good: after a focus round trip with the selection unchanged it stays hidden until the selection changes', async function () {
+        this.timeout(20000);
+        await showDocument('Alpha beta gamma delta epsilon zeta.\n\nSecond paragraph.\n', 'Alpha');
+        await clickBefore('beta', 0);
+        await page.keyboard.down('Shift');
+        for (let i = 0; i < 3; i++) {
+            await page.keyboard.press('ArrowRight');
+        }
+        await page.keyboard.up('Shift');
+        await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
+        await page.evaluate(() => (document.querySelector('.mep-bubble .mep-tool') as HTMLElement).focus());
+        await page.keyboard.press('Escape');
+        await delay(80);
+        assert.strictEqual(await shown(BUBBLE), false, 'hidden by Esc');
+        assert.strictEqual(await page.evaluate(() => document.activeElement === document.querySelector('.ProseMirror')), true, 'the focus is back in the text');
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await delay(250);
+        await page.evaluate(() => (document.querySelector('.ProseMirror') as HTMLElement).focus());
+        await delay(REST_MS * 2);
+        assert.strictEqual(await shown(BUBBLE), false, 'still hidden after the round trip');
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.up('Shift');
+        await page.waitForSelector(BUBBLE, { timeout: REST_MS + 2000 });
     });
 
     // -- shots ----------------------------------------------------------------

@@ -711,14 +711,14 @@ function exportDocument(format: ExportFormatName): void {
  * exported — the host knows no such format — and the page says so where the
  * caret is.
  */
-function exportFinished(outcome: 'settled' | 'refused' | 'busy'): void {
-    if (outcome === 'busy') {
-        // Export stays busy with the format the page shows; the host's next `document` names the running one.
-        setExporting(exporting);
+function exportFinished(msg: Extract<HostMessage, { type: 'exportDone' }>): void {
+    if (msg.outcome === 'busy') {
+        // Export shows the format that runs, which the host names — not the one the page asked for meanwhile.
+        setExporting(msg.format);
         return;
     }
     setExporting(null);
-    if (outcome === 'refused' && view) {
+    if (msg.outcome === 'refused' && view) {
         showHint(view, 'Not exported: this format is not offered.', 'refusal');
     }
 }
@@ -1095,7 +1095,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
             }
             break;
         case 'exportDone':
-            exportFinished(msg.outcome);
+            exportFinished(msg);
             break;
     }
 });
