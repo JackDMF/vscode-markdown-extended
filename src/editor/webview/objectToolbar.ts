@@ -57,9 +57,7 @@ import type { Completion } from '../completions';
 import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, languageOf, savedOpeningLine } from '../fences';
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
-import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
-import { SOURCE_VERB_META } from './sourceBlock';
-import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
+import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
 import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
@@ -2751,8 +2749,7 @@ class ObjectToolbarView implements PluginView {
 
     private remove(object: EditorObject, hint: string): void {
         this.act(object, current => {
-            // Delete block of a source block is the way to remove one: not refused (`sourceBlock.ts`).
-            this.view.dispatch(deleteObjectTransaction(this.view.state, current).setMeta(SOURCE_VERB_META, true));
+            this.view.dispatch(deleteObjectTransaction(this.view.state, current));
             return true;
         }, hint, true);
     }
