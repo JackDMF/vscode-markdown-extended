@@ -4,7 +4,9 @@ import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
-import { ATTRIBUTES_FIELD_KEYS, ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } from '../../../src/editor/webview/attributes';
+import { keysLine } from '../../../src/editor/attributeLiteral';
+import { tipText } from '../../../src/editor/tips';
+import { ATTRIBUTES_REMOVED_HINT, ATTRIBUTES_SET_HINT } from '../../../src/editor/webview/attributes';
 import { CONTAINER_ATTRS_REFUSAL } from '../../../src/editor/webview/objects';
 import { INLINE_ATTRS_LOCK } from '../../../src/editor/webview/toolbar/actions';
 import { INLINE_DELAY_MS } from '../../../src/editor/webview/objectToolbar';
@@ -200,7 +202,7 @@ suite('Editor Attributes… (e2e)', () => {
             };
         }, FIELD);
         assert.deepStrictEqual(opened, { heading: 'Paragraph · Attributes', value: '', caret: [0, 0], focused: true });
-        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-field-keys`, el => el.textContent), ATTRIBUTES_FIELD_KEYS, 'the keys and the syntax at the field\'s right');
+        assert.strictEqual(await page.$eval(`${FIELD_BAR} .mep-field-keys`, el => el.textContent), tipText({ parts: keysLine({ kind: 'set', hadLiteral: false }) }), 'the keys and the syntax at the field\'s right');
         const placed = await page.evaluate(sel => {
             const bar = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
             const para = Array.from(document.querySelectorAll('.ProseMirror p')).find(p => p.textContent?.includes('configurable')) as HTMLElement;

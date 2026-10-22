@@ -408,13 +408,28 @@ suite('Attributes field (e2e)', () => {
         await showDocument();
         await clickAt('configurable', 3);
         await pressAlt('Enter');
+        // A bare run has no literal to remove: its verb's tooltip does not say an empty value removes one, as its keys line does not.
+        const bare = await describedTip(page, `${BAR} [data-verb="edit-attributes"]`);
+        assert.ok(bare.includes('.class #id key=value') && !bare.includes('empty removes'), bare);
         await clickVerb('edit-attributes');
         const s = await field();
         assert.strictEqual(s.heading, 'Bold · Attributes');
+        assert.ok(!(s.keys ?? '').includes('empty removes'), s.keys ?? 'no keys line');
         const b = await boxes('configurable');
         assert.ok(Math.abs(b.bar.left - b.run.left) <= 2, `at the run's start: ${JSON.stringify(b)}`);
         assert.ok(b.bar.top >= b.run.bottom - 1 || b.bar.bottom <= b.run.top + 1, `off the run's line: ${JSON.stringify(b)}`);
         await shots('routes-bar-1280', [['light', LIGHT_MODERN], ['dark', DARK_MODERN]]);
+    });
+
+    test('R1b the run that has a literal says an empty value removes it, in its verb\'s tooltip as in the keys line', async function () {
+        this.timeout(20000);
+        await showDocument(SPACED_DOC);
+        await clickAt('bold', 1);
+        await pressAlt('Enter');
+        const tip = await describedTip(page, `${BAR} [data-verb="edit-attributes"]`);
+        assert.ok(tip.includes('.class #id key=value; empty removes it'), tip);
+        await clickVerb('edit-attributes');
+        assert.ok(((await field()).keys ?? '').includes('empty removes'));
     });
 
     test('R2 the bubble\'s {…} over the bold run says what it does there, and over plain text', async function () {
@@ -649,6 +664,41 @@ suite('Attributes field (e2e)', () => {
         await clickVerb('edit-attributes');
         const b = await boxes('configurable');
         assert.ok(Math.abs(b.bar.left - b.run.left) <= 2, `a mark's field still at its run: ${JSON.stringify(b)}`);
+    });
+
+    test('B2 a heading\'s field from Formatting and from its bar stands at the same place where it flips above the heading', async function () {
+        this.timeout(40000);
+        // The heading last in a long page, scrolled to the window's foot (12px short of it): no room under it, so the field flips above
+        // — to where the heading's text starts, whichever route opened it. A stylesheet's padding makes that differ from the box's top.
+        const style = await page.addStyleTag({ content: '.ProseMirror h2 { padding-top: 24px; }' });
+        const doc = [...Array.from({ length: 40 }, (_, i) => `Filler paragraph ${i}.\n`), '## The last paragraph {.wide}', ''].join('\n');
+        const open = async (route: () => Promise<void>) => {
+            await showDocument(doc);
+            await page.evaluate(() => {
+                const h = document.querySelector('.ProseMirror h2') as HTMLElement;
+                window.scrollTo(0, window.scrollY + h.getBoundingClientRect().bottom - window.innerHeight + 12);
+            });
+            await delay(300);
+            await clickAt('The last paragraph', 4);
+            await route();
+            return page.$eval(ANY_FIELD_BAR, el => {
+                const r = el.getBoundingClientRect();
+                const h = document.querySelector('.ProseMirror h2') as HTMLElement;
+                return { top: r.top, bottom: r.bottom, left: r.left, heading: h.getBoundingClientRect().top, floor: window.innerHeight };
+            });
+        };
+        try {
+            const fromMenu = await open(() => chooseEntry('formatting', FORMATTING_ENTRY));
+            await page.keyboard.press('Escape');
+            const fromBar = await open(() => clickVerb('block-attributes'));
+            assert.ok(fromBar.top < fromBar.heading, `above the heading, as the bar flips: ${JSON.stringify(fromBar)}`);
+            assert.ok(fromBar.bottom > fromBar.heading, `above its text, which the padding sets below the box's top: ${JSON.stringify(fromBar)}`);
+            for (const key of ['top', 'bottom', 'left'] as const) {
+                assert.ok(Math.abs(fromMenu[key] - fromBar[key]) <= 1, `${key}: from Formatting ${JSON.stringify(fromMenu)}, from the bar ${JSON.stringify(fromBar)}`);
+            }
+        } finally {
+            await style.evaluate(el => el.remove());
+        }
     });
 
     test('T1 a title left alone on its row takes its divider with it; beside the field it keeps it', async function () {

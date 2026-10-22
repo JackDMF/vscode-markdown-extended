@@ -47,7 +47,6 @@ import { wording } from '../verbs';
 import { FENCED_DONE } from '../fences';
 import { FieldAdorn, FieldStep, KeysLine, refusedStep } from './inlineField';
 import { ATTR_BRACES, ATTR_PLACEHOLDER, attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, refusalParts, stripOuterPair } from '../attributeLiteral';
-import { tipText } from '../tips';
 import {
     AttributesTarget, InlineHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, commitAttributes, currentObject, holderNames, literalObjectOf, literalOf,
     literalOfObject,
@@ -55,9 +54,6 @@ import {
 
 /** The field's own label — its accessible name; its heading names the element (`Paragraph · Attributes`, `attributesTitle`). */
 export const ATTRIBUTES_FIELD_LABEL = 'Attributes';
-
-/** What the attributes field says at its right with no literal yet: its keys, then the syntax that goes between the braces. */
-export const ATTRIBUTES_FIELD_KEYS = tipText({ parts: keysLine({ kind: 'set', hadLiteral: false }) });
 
 /** The braces the attributes field draws, fixed, and what a change typed or pasted loses (`attributeLiteral.ts`). */
 const ATTR_ADORN: FieldAdorn = { ...ATTR_BRACES, strip: stripOuterPair };

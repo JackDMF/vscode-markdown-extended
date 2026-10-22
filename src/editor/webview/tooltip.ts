@@ -16,7 +16,7 @@
  * `aria-keyshortcuts` names already, which is not said twice.
  */
 import { MODIFIER_KEYS } from '../keys';
-import { Tip, tipText, withoutKeys } from '../tips';
+import { Tip, TipPart, tipText, withoutKeys } from '../tips';
 import { HOVER_DELAY_MS } from './hover';
 import { placeTip } from './placement';
 
@@ -277,18 +277,31 @@ export class Tooltips {
 /** Where a control's hover stands: under it, or beside it. */
 export type TipPlace = 'below' | 'beside';
 
+/**
+ * One part of a tip drawn: words as text, a `code` part in `<code>`, a key chord spelled as `tipText`
+ * spells it (` — Ctrl+I`). The one renderer of a part — the tip's note and the field's aside (a keys
+ * line, a refusal's reason, `FieldRow`) draw with it; the tip's own line sets a chord apart as chips instead.
+ */
+export function partNode(part: TipPart): string | Node {
+    if (typeof part === 'string') {
+        return part;
+    }
+    if ('code' in part) {
+        const code = document.createElement('code');
+        code.textContent = part.code;
+        return code;
+    }
+    return ` — ${part.keys}`;
+}
+
 /** A tip's nodes: its words with the code parts in `<code>`, the keys as keybinding labels, the note on a line of its own. */
 function drawTip(tip: Tip): Node[] {
     const line = document.createElement('span');
     line.className = 'mep-tip-line';
     const nodes: Node[] = [line];
     for (const part of tip.parts) {
-        if (typeof part === 'string') {
-            line.append(part);
-        } else if ('code' in part) {
-            const code = document.createElement('code');
-            code.textContent = part.code;
-            line.append(code);
+        if (typeof part === 'string' || 'code' in part) {
+            line.append(partNode(part));
         } else {
             const keys = document.createElement('span');
             keys.className = 'mep-keys';
@@ -313,17 +326,7 @@ function drawTip(tip: Tip): Node[] {
             note.textContent = tip.note;
         } else {
             // A note that names syntax sets it in the code font, as the line does; a key chord is spelled as `tipText` spells it.
-            for (const part of tip.note) {
-                if (typeof part === 'string') {
-                    note.append(part);
-                } else if ('code' in part) {
-                    const code = document.createElement('code');
-                    code.textContent = part.code;
-                    note.append(code);
-                } else {
-                    note.append(` — ${part.keys}`);
-                }
-            }
+            note.append(...tip.note.map(partNode));
         }
         nodes.push(note);
     }

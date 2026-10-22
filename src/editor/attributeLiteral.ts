@@ -20,9 +20,6 @@ export const ATTR_PLACEHOLDER = '.class';
 /** The syntax the keys line shows: what goes between the braces. */
 const ATTR_SYNTAX = '.class #id key=value';
 
-/** What a verb's tooltip says to type, in the keys line's own terms (`keysLine`): the syntax, and that an empty value removes. */
-export const ATTRIBUTES_TYPED = `${ATTR_SYNTAX}; empty removes it`;
-
 /** What the field shows for `literal`: one outer pair of braces off; none (`null`) is ''. */
 export function innerOf(literal: string | null): string {
     if (literal === null) {
@@ -30,6 +27,20 @@ export function innerOf(literal: string | null): string {
     }
     const value = literal.trim();
     return stripOuterPair(value);
+}
+
+/** Whether `literal` holds anything an empty field could remove: none (`null`) and `{}` hold nothing. The one reading of "had a literal" the keys line (`keysFor`) and the verbs' tooltips (`attributesTyped`) share. */
+export function holdsLiteral(literal: string | null): boolean {
+    return innerOf(literal).trim() !== '';
+}
+
+/**
+ * What a verb's tooltip says to type, in the keys line's own terms (`keysLine`): the syntax, and — only
+ * where the element has a literal (`holdsLiteral`) — that an empty value removes it, as the field's keys
+ * line says it. A bare run has nothing to remove.
+ */
+export function attributesTyped(literal: string | null): string {
+    return holdsLiteral(literal) ? `${ATTR_SYNTAX}; empty removes it` : ATTR_SYNTAX;
 }
 
 /**
@@ -92,17 +103,36 @@ export function keysLine(state: KeysState): readonly TipPart[] {
 export const WRITE_IT_AS = 'Write it as ';
 
 /**
+ * What a refusal says of the value it names, the words that follow it: the one list the messages
+ * (`literalRefusal`) are built from and `refusalParts` recognises them by — a reason is `value ` and
+ * one of these, never a sentence that happens to begin with the same letters.
+ */
+export const VALUE_PREDICATE = {
+    openQuote: 'has an open quote',
+    notClosed: 'is not closed',
+    isText: 'is text, not an attribute list',
+    noList: 'is no attribute list',
+    innerBrace: 'holds a } inside a value',
+    ruleBrace: 'holds a { inside a value',
+    backtick: 'holds a backtick',
+    readBefore: 'holds what markdown-it reads before markdown-it-attrs here',
+    linkOwn: 'sets the link\'s href or title',
+} as const;
+
+const VALUE_PREDICATES: readonly string[] = Object.values(VALUE_PREDICATE);
+
+/**
  * A refusal's reason as the field draws it: the values it names — the one typed, which it begins
- * with, and the one it suggests after `WRITE_IT_AS` — in the code font, the sentence plain. The
- * reason is read as the message is built (`literalRefusal`), not re-worded: a reason that does
- * not begin with the value, or suggests nothing, has no part to set apart. `typed` is the field's
- * value as it was, which the commit read as `literalFrom(typed)`.
+ * with (`value` and a `VALUE_PREDICATE`), and the one it suggests after `WRITE_IT_AS` — in the code
+ * font, the sentence plain. The reason is read as the message is built (`literalRefusal`), not
+ * re-worded: a reason that does not name the value, or suggests nothing, has no part to set apart.
+ * `typed` is the field's value as it was, which the commit read as `literalFrom(typed)`.
  */
 export function refusalParts(reason: string, typed: string): readonly TipPart[] {
     const value = innerOf(literalFrom(typed));
     const parts: TipPart[] = [];
     let rest = reason;
-    if (value !== '' && rest.startsWith(value)) {
+    if (value !== '' && VALUE_PREDICATES.some(predicate => rest.startsWith(`${value} ${predicate}`))) {
         parts.push({ code: value });
         rest = rest.slice(value.length);
     }
@@ -125,6 +155,6 @@ export function refusalParts(reason: string, typed: string): readonly TipPart[] 
  * is removed by Enter; else Enter sets.
  */
 export function keysFor(value: string, hadLiteral: string | null): KeysState {
-    const had = hadLiteral === null ? '' : innerOf(hadLiteral).trim();
-    return had !== '' && isRemoval(literalFrom(value)) ? { kind: 'removes', literal: had } : { kind: 'set', hadLiteral: had !== '' };
+    const had = holdsLiteral(hadLiteral);
+    return had && isRemoval(literalFrom(value)) ? { kind: 'removes', literal: innerOf(hadLiteral).trim() } : { kind: 'set', hadLiteral: had };
 }

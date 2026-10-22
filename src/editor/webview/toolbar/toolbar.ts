@@ -1858,8 +1858,8 @@ class ToolbarView implements PluginView {
             showHint(this.view, target.refusal, 'refusal');
             return;
         }
-        // At the block's left edge, where its own bar stands (`blockAnchor`) — not at the caret, which a menu leaves wherever it was.
-        this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target), undefined, () => blockAnchor(this.view, target.pos));
+        // At the block's left edge, where its own bar stands (`blockAnchor`, the bar's own rule, read for the block as it is now) — not at the caret, which a menu leaves wherever it was.
+        this.openFieldBar('block-attributes', target.name, 'block-attributes', attributesStep(this.view, target), undefined, () => blockAnchor(this.view, target));
     }
 
     /**
@@ -2065,7 +2065,7 @@ class ToolbarView implements PluginView {
                     this.closeFieldBar();
                 }
             },
-            fit: room => (this.fieldBar?.bar === bar ? this.fieldBar.row.fit(room) : undefined),
+            fit: (room, fresh) => (this.fieldBar?.bar === bar ? this.fieldBar.row.fit(room, fresh) : undefined),
         }, { force: true });
         if (!granted) {
             this.closeFieldBar();

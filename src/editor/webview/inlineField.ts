@@ -302,6 +302,12 @@ export class InlineField extends InlineControl<HTMLInputElement> {
             input.autocomplete = 'off';
         }
         input.addEventListener('input', e => {
+            // The input Firefox raises straight after `compositionend` leaves the value as the end judged it: not judged twice.
+            const judged = this.composed;
+            this.composed = null;
+            if (judged !== null && input.value === judged) {
+                return;
+            }
             // The edit the strip itself makes (`replaceValue`) is not asked about again.
             if (!this.stripping) {
                 // Not mid-composition (an IME's text is not whole yet: its `{` and `}` may arrive apart, or be taken
@@ -311,8 +317,14 @@ export class InlineField extends InlineControl<HTMLInputElement> {
             }
         });
         // What a composition brought in is judged when it ends.
-        input.addEventListener('compositionend', () => this.changed(true));
+        input.addEventListener('compositionend', () => {
+            this.changed(true);
+            this.composed = input.value;
+        });
     }
+
+    /** The value the end of the last composition judged, until the next `input` event: Firefox raises one after `compositionend`, which changes nothing. */
+    private composed: string | null = null;
 
     get box(): HTMLElement {
         return this.frame ?? this.el;

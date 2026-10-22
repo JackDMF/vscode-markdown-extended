@@ -41,7 +41,7 @@ import { Fragment, Mark, Node, ResolvedPos, Slice } from 'prosemirror-model';
 import { EditorState, NodeSelection, Selection, TextSelection, Transaction } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
-import { WRITE_IT_AS, innerOf, isRemoval } from '../attributeLiteral';
+import { VALUE_PREDICATE, WRITE_IT_AS, innerOf, isRemoval } from '../attributeLiteral';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
@@ -653,39 +653,39 @@ export function literalRefusal(literal: string, place: LiteralPlace = 'paragraph
         // With the braces the field's, an open quote is what leaves the list unclosed — it swallows the closing brace —
         // as the plugin's own reading says it ended (`openQuote`), not as a pattern over the text guesses.
         return reading.openQuote
-            ? `${shown} has an open quote: close it with ".`
-            : `${shown} is not closed: end the attribute list with }.`;
+            ? `${shown} ${VALUE_PREDICATE.openQuote}: close it with ".`
+            : `${shown} ${VALUE_PREDICATE.notClosed}: end the attribute list with }.`;
     }
     if (value.startsWith('{') && isTextBrace(value, 0)) {
-        const text = `${shown} is text, not an attribute list: a space beside its = makes it text, as in PowerShell's @{a = 1}.`;
+        const text = `${shown} ${VALUE_PREDICATE.isText}: a space beside its = makes it text, as in PowerShell's @{a = 1}.`;
         const tightened = tightenedSuggestion(value);
         return tightened === null ? text : `${text} ${WRITE_IT_AS}${braced ? tightened : innerOf(tightened)}.`;
     }
     if (parseAttrsLiteral(value) === null) {
         const examples = braced ? '{.class}, {#id} or {key="value"}' : '.class, #id or key="value"';
-        return `${shown || 'An empty value'} is no attribute list: write it as ${examples}, as markdown-it-attrs reads it.`;
+        return `${shown || 'An empty value'} ${VALUE_PREDICATE.noList}: write it as ${examples}, as markdown-it-attrs reads it.`;
     }
     if (INLINE_PLACES.has(place) && hasInnerBrace(value)) {
-        return `${shown} holds a } inside a value: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
+        return `${shown} ${VALUE_PREDICATE.innerBrace}: after a ${place === 'span' ? 'span' : 'closing delimiter'} markdown-it-attrs cuts the literal at its first }, and the rest would stay behind as text.`;
     }
     const holder = holderNamed(place);
     const own = holder === undefined ? undefined : (parseAttrsLiteral(value) ?? []).find(([name]) => holder.own.includes(name))?.[0];
     if (place === 'link' && own !== undefined) {
-        return `${shown} sets the link's href or title, which the link writes in its (…): give it a class, an id or another attribute.`;
+        return `${shown} ${VALUE_PREDICATE.linkOwn}, which the link writes in its (…): give it a class, an id or another attribute.`;
     }
     if (holder !== undefined && own !== undefined) {
         // The one key at fault, and where it is changed instead.
         return `${own} is the ${holder.noun}'s own: change it with Edit ${holder.noun}…. Here, give it a class, an id or another attribute.`;
     }
     if (place === nodes.horizontal_rule.name && !readsAsRuleLiteral(value)) {
-        return `${shown} holds a { inside a value: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
+        return `${shown} ${VALUE_PREDICATE.ruleBrace}: markdown-it-attrs reads a rule's literal from its last {, and the rule would lose its attributes.`;
     }
     if (place === fenceHolder('```') && value.includes('`')) {
-        return `${shown} holds a backtick: the line opening a \`\`\` fence holds none, and the block would no longer be code. A ~~~ fence takes it.`;
+        return `${shown} ${VALUE_PREDICATE.backtick}: the line opening a \`\`\` fence holds none, and the block would no longer be code. A ~~~ fence takes it.`;
     }
     if (attrsReadAt(value, place) === null) {
         const math = currentInlineDefinition().math ? ', math' : '';
-        return `${shown} holds what markdown-it reads before markdown-it-attrs here — a \\, an entity, code, emphasis, HTML, a link${math} or a plugin's markup — and the preview would show it as text.`;
+        return `${shown} ${VALUE_PREDICATE.readBefore} — a \\, an entity, code, emphasis, HTML, a link${math} or a plugin's markup — and the preview would show it as text.`;
     }
     return null;
 }

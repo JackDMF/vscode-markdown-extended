@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { WRITE_IT_AS, attributesTitle, innerOf, isRemoval, keysFor, keysLine, literalFrom, refusalParts, stripOuterPair } from '../../../src/editor/attributeLiteral';
+import { VALUE_PREDICATE, WRITE_IT_AS, attributesTitle, attributesTyped, holdsLiteral, innerOf, isRemoval, keysFor, keysLine, literalFrom, refusalParts, stripOuterPair } from '../../../src/editor/attributeLiteral';
 import { tipText } from '../../../src/editor/tips';
 
 /** The attributes field's spelling rules: the braces drawn by the field, the value what stands between them. */
@@ -94,5 +94,29 @@ suite('Attribute literal: what the field shows and what it commits', () => {
         assert.strictEqual(tipText({ parts: refusalParts(reason, typed) }), reason, 'the same words, drawn apart');
         assert.deepStrictEqual(refusalParts('href is the link\'s own: change it.', '.a'), ['href is the link\'s own: change it.'], 'a reason that does not start with the value has none to set');
         assert.deepStrictEqual(refusalParts('An empty value is no attribute list.', ''), ['An empty value is no attribute list.']);
+    });
+
+    test('refusalParts: the value is set apart only where a refusal names it, not where a sentence merely begins with the same letters', () => {
+        // Typing `A` in a quote: a reason that opens "A quote's …" is prose, not the value `A` followed by words about it.
+        const prose = 'A quote\'s literal is written under its last line, which the preview would read as text.';
+        assert.deepStrictEqual(refusalParts(prose, 'A'), [prose], 'plain, though it starts with the typed A');
+        // The same value where a refusal does name it: set apart, whatever follows (each predicate the messages are built with).
+        for (const predicate of Object.values(VALUE_PREDICATE)) {
+            const reason = `A ${predicate} here.`;
+            assert.deepStrictEqual(refusalParts(reason, 'A'), [{ code: 'A' }, ` ${predicate} here.`], predicate);
+        }
+    });
+
+    test('attributesTyped: "empty removes it" only where there is a literal to remove', () => {
+        assert.strictEqual(attributesTyped(null), '.class #id key=value', 'a bare run: nothing to remove');
+        assert.strictEqual(attributesTyped('{}'), '.class #id key=value', '{} holds nothing');
+        assert.strictEqual(attributesTyped('{.x}'), '.class #id key=value; empty removes it');
+        assert.strictEqual(holdsLiteral('{ }'), false);
+        assert.strictEqual(holdsLiteral('{.x}'), true);
+        assert.strictEqual(holdsLiteral(null), false);
+        // The tooltip and the keys line read one answer.
+        for (const literal of [null, '{}', '{.x}']) {
+            assert.strictEqual(attributesTyped(literal).includes('empty removes'), keysFor('', literal).kind === 'removes', String(literal));
+        }
     });
 });

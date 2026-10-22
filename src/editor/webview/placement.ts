@@ -30,7 +30,7 @@ import type { EditorView } from 'prosemirror-view';
 import { CHROME_MOVED, PROBING_CLASS, contentIn, firstLineTop, rowCeiling } from './clearance';
 import { focusPlace } from './focusPlace';
 import { rightLaneEdge } from './lane';
-import { EditorObject, isBlockObject, isBlockPlaced, isMarkObject } from './objects';
+import { AttributesTarget, EditorObject, currentTarget, isBlockObject, isBlockPlaced, isMarkObject, objectOfNode } from './objects';
 
 // -- A. The policy (pure) -----------------------------------------------------
 
@@ -293,21 +293,22 @@ export function openLayers(mount: HTMLElement, except?: Element): Rect[] {
 }
 
 /**
- * The box of the block at `pos`, in the window's coordinates: where a field for the block's
- * own attributes stands — at the block's left edge, as its bar does — whichever menu or bar
- * opened it, not at the caret or the text's last line. `null` where it is not drawn.
+ * Where a field for the block `target` names stands — at the block's left edge, as its bar does —
+ * whichever menu or bar opened it, not at the caret or the text's last line: the anchor of the
+ * block's own object (`anchorOf`), the one rule, so a field opened from Formatting and the same
+ * field opened from the block's bar flip to the same top. The block as it is now (`currentTarget`:
+ * the position a field was opened at may have moved or gone in a resync); `null` where it is gone
+ * or not drawn. A block that is no object of its own (a paragraph, a list item) is read as a block
+ * with attributes, its text's first line the top: what its bar would anchor to once it had a literal.
  */
-export function blockAnchor(view: EditorView, pos: number): Rect | null {
-    try {
-        const dom = view.nodeDOM(pos);
-        if (!(dom instanceof Element)) {
-            return null;
-        }
-        const box = dom.getBoundingClientRect();
-        return { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
-    } catch {
+export function blockAnchor(view: EditorView, target: AttributesTarget): Rect | null {
+    const current = currentTarget(view.state, target);
+    if (current === null) {
         return null;
     }
+    const object: EditorObject = objectOfNode(current.node, current.pos)
+        ?? { kind: 'block_attrs', from: current.pos, to: current.pos + current.node.nodeSize, node: current.node };
+    return anchorOf(view, object);
 }
 
 /**

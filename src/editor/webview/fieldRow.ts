@@ -23,22 +23,13 @@
  */
 import type { TipPart } from '../tips';
 import type { FieldStep, InlineChoice, InlineField, KeysLine } from './inlineField';
+import { partNode } from './tooltip';
 
 let rowSeq = 0;
 
-/** A keys line's parts drawn: words as text, a `code` part in the code font. */
+/** A keys line's parts drawn: words as text, a `code` part in the code font — the tips' own renderer (`partNode`). */
 function drawParts(el: HTMLElement, parts: readonly TipPart[]): void {
-    el.replaceChildren(...parts.map(p => {
-        if (typeof p === 'string') {
-            return p;
-        }
-        if ('code' in p) {
-            const code = document.createElement('code');
-            code.textContent = p.code;
-            return code;
-        }
-        return p.keys;
-    }));
+    el.replaceChildren(...parts.map(partNode));
 }
 
 /** The keys line of `step` for the value as it is now; `null` when it has none. */
@@ -54,6 +45,8 @@ export class FieldRow {
     private reason: HTMLElement | null = null;
     /** What the keys line says now, as one string: it is redrawn only when that changes. */
     private said: string | null = null;
+    /** What the last fit measured (`fit`): the room and what the row says. Measuring again before any of it changed would only force a layout. */
+    private fitted = '';
 
     /**
      * `head`: what stands before the field — the heading and its divider — as
@@ -78,6 +71,7 @@ export class FieldRow {
         this.keys = null;
         this.reason = null;
         this.said = null;
+        this.fitted = '';
         if (step !== null) {
             this.drawKeys(this.field.el.value);
             if (step.refusal) {
@@ -123,20 +117,40 @@ export class FieldRow {
      * keys line that no longer fits beside the field goes under it; a field
      * that no longer fits beside the title goes under that, and the title,
      * alone on its row, takes its divider with it (`mep-title-alone`).
+     *
+     * The two answers depend on each other — the divider's width decides whether the field
+     * fits beside the title, and whether the keys line is under the field decides how wide
+     * the field is — so each class, once measured on, stays on while the other is measured
+     * again with it applied: they settle in a pass or two, and cannot flap. Measured again
+     * only when the room or what the row says changed since the last time (or `fresh`: a
+     * font loaded and the widths with it); the same row at the same room fits the same.
      */
-    fit(room: number): void {
+    fit(room: number, fresh = false): void {
+        const title = this.head[0];
+        const signature = [Math.floor(room), this.bar.isConnected, this.said ?? '', this.reason?.textContent ?? '', title?.textContent ?? '', title?.hidden === true].join('|');
+        if (!fresh && signature === this.fitted) {
+            return;
+        }
+        this.fitted = signature;
         this.bar.style.maxWidth = `${Math.floor(room)}px`;
         this.bar.classList.remove('mep-narrow', 'mep-title-alone');
         const left = this.bar.style.left;
         this.bar.style.left = '0px';
         const box = this.field.box;
         const keys = this.keys;
-        if (keys !== null) {
-            this.bar.classList.toggle('mep-narrow', keys.offsetTop >= box.offsetTop + box.offsetHeight - 1);
-        }
-        const title = this.head[0];
-        if (title !== undefined && !title.hidden) {
-            this.bar.classList.toggle('mep-title-alone', box.offsetTop >= title.offsetTop + title.offsetHeight - 1);
+        const titleAlone = () => title !== undefined && !title.hidden && box.offsetTop >= title.offsetTop + title.offsetHeight - 1;
+        const keysUnder = () => keys !== null && box.offsetTop + box.offsetHeight - 1 <= keys.offsetTop;
+        for (let pass = 0; pass < 3; pass++) {
+            const before = this.bar.className;
+            if (titleAlone()) {
+                this.bar.classList.add('mep-title-alone');
+            }
+            if (keysUnder()) {
+                this.bar.classList.add('mep-narrow');
+            }
+            if (this.bar.className === before) {
+                break;
+            }
         }
         this.bar.style.left = left;
     }

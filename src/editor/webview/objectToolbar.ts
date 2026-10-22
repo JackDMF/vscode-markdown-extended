@@ -71,10 +71,10 @@ import {
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine,
-    changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
+    changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, literalOfObject, attributeHolderAt, holderInside,
 } from './objects';
 import { attributesField, attributesStep, holderAttributesStep } from './attributes';
-import { ATTRIBUTES_TYPED } from '../attributeLiteral';
+import { attributesTyped } from '../attributeLiteral';
 import { currentReadsAttrs } from '../inlineEngine';
 import { NO_INCLUDES_REFUSAL, titleOf } from './toolbar/actions';
 import { barSeparator, followPointer, selectionWantsBubble, separator } from './toolbar/toolbar';
@@ -714,8 +714,8 @@ class ObjectBar {
     }
 
     /** The open field's row fitted to `room` before the slot places it (`FieldRow.fit`). */
-    fitField(room: number): void {
-        this.row?.fit(room);
+    fitField(room: number, fresh: boolean): void {
+        this.row?.fit(room, fresh);
     }
 
     /** The field's row is gone with its field: what it set on the bar goes too. */
@@ -1275,7 +1275,7 @@ class ObjectToolbarView implements PluginView {
             },
             valid: () => bar.editing,
             hidden: () => this.barHidden(bar, 'displaced'),
-            fit: room => bar.fitField(room),
+            fit: (room, fresh) => bar.fitField(room, fresh),
         }, { force: true });
     }
 
@@ -1827,7 +1827,7 @@ class ObjectToolbarView implements PluginView {
         const verb: Verb = {
             id: 'inline-attributes',
             label: `${name}…`,
-            title: `The ${names.noun}'s {…}, written right after it: ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`,
+            title: `The ${names.noun}'s {…}, written right after it: ${attributesTyped(literalOfObject(inside.object))} (Enter to apply, Esc to cancel).`,
             slot: 'attributes',
             field: step,
             target: { from: inside.object.from, to: inside.object.to },
@@ -1968,7 +1968,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, `The link's {…}, written after its (…): ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'link-attributes', VERB.attributes, typed => `The link's {…}, written after its (…): ${typed} (Enter to apply, Esc to cancel).`),
                         {
                             id: 'remove-link',
                             label: remove.label,
@@ -2025,7 +2025,7 @@ class ObjectToolbarView implements PluginView {
                                 }),
                             },
                         },
-                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, `The image's {…}, written after its (…): ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(image, 'image-attributes', VERB.attributes, typed => `The image's {…}, written after its (…): ${typed} (Enter to apply, Esc to cancel).`),
                         { id: 'open-image', label: open.label, short: open.short, title: `Open ${src} (as Ctrl+click on a link does).`, slot: 'open', run: () => host.openLink(src) },
                         {
                             id: 'delete-image',
@@ -2081,7 +2081,7 @@ class ObjectToolbarView implements PluginView {
                 return {
                     label: names.label,
                     title: `\`${text}\`: ${names.noun} — Attributes… gives it a {…}`,
-                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Give the ${names.noun} a {…}, written right after it: ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`)],
+                    verbs: [this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Give the ${names.noun} a {…}, written right after it: ${typed} (Enter to apply, Esc to cancel).`)],
                 };
             }
             case 'styled': {
@@ -2095,7 +2095,7 @@ class ObjectToolbarView implements PluginView {
                     code: literal,
                     title: `${name} with the attributes ${literal}, written after its closing delimiter.`,
                     verbs: [
-                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, `Change the ${name.toLowerCase()}'s {…}: ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).`),
+                        this.markAttributesVerb(object, 'edit-attributes', VERB.attributes, typed => `Change the ${name.toLowerCase()}'s {…}: ${typed} (Enter to apply, Esc to cancel).`),
                         {
                             id: 'remove-attributes',
                             label: remove.label,
@@ -2435,7 +2435,7 @@ class ObjectToolbarView implements PluginView {
             id: 'block-attributes',
             label: VERB.attributes,
             slot: 'attributes',
-            title: `The block's {…}: ${ATTRIBUTES_TYPED} (Enter to apply, Esc to cancel).${fences}`,
+            title: `The block's {…}: ${attributesTyped(refused ? null : literalOf(found.node))} (Enter to apply, Esc to cancel).${fences}`,
             refusal: refused ? found.refusal : null,
             field: refused ? undefined : attributesStep(this.view, found),
         };
@@ -2540,9 +2540,10 @@ class ObjectToolbarView implements PluginView {
      * edits (`target`), not where the caret or the bar was; an image's stands
      * at the image, its object, already.
      */
-    private markAttributesVerb(object: LiteralObject, id: string, label: string, title: string): Verb {
+    private markAttributesVerb(object: LiteralObject, id: string, label: string, title: (typed: string) => string): Verb {
         const target = 'mark' in object ? { from: object.from, to: object.to } : undefined;
-        return { id, label, title, slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)), target };
+        // What the tooltip says an empty value does is what the field's keys line says: it removes only a literal there is.
+        return { id, label, title: title(attributesTyped(literalOfObject(object))), slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)), target };
     }
 
     /** A table's **Edit source**: the table becomes a source block holding its text, the source box open (`tableSourceTransaction`). */
