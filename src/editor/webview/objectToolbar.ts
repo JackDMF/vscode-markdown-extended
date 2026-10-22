@@ -2396,6 +2396,15 @@ class ObjectToolbarView implements PluginView {
                     ],
                 };
             }
+            case 'list_item': {
+                const literal = literalOf(object.node);
+                return {
+                    label: BLOCK_NAMES.list_item,
+                    ...(literal === null ? {} : { code: literal }),
+                    title: literal === null ? 'A list item.' : `${literal}: the attributes the item is rendered with.`,
+                    verbs: [this.attributesVerb(object)],
+                };
+            }
             case 'block_attrs': {
                 const literal = (object.node.attrs.attrsSuffix as string | null) ?? '';
                 return {

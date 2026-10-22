@@ -366,8 +366,9 @@ export function openLayers(mount: HTMLElement, except?: Element): Rect[] {
  * block's own object (`anchorOf`), the one rule, so a field opened from Formatting and the same
  * field opened from the block's bar flip to the same top. The block as it is now (`currentTarget`:
  * the position a field was opened at may have moved or gone in a resync); `null` where it is gone
- * or not drawn. A block that is no object of its own (a paragraph, a list item) is read as a block
- * with attributes, its text's first line the top: what its bar would anchor to once it had a literal.
+ * or not drawn. A block that is no object of its own (a paragraph, a list) is read as a block
+ * with attributes, its text's first line the top: what its bar would anchor to once it had a literal;
+ * a list item's is its first block's (`anchorOf`), so its field stands under the item's own line.
  */
 export function blockAnchor(view: EditorView, target: AttributesTarget): Rect | null {
     const current = currentTarget(view.state, target);
@@ -388,13 +389,14 @@ export function blockAnchor(view: EditorView, target: AttributesTarget): Rect | 
 export function anchorOf(view: EditorView, object: EditorObject): Rect | null {
     try {
         if (isBlockPlaced(object)) {
-            const dom = isMarkObject(object) ? null : view.nodeDOM(object.from);
+            // A list item's box is its first block's (#8): its bar and its field stand under the item's own line, not under the list nested in it.
+            const dom = isMarkObject(object) ? null : view.nodeDOM(object.kind === 'list_item' ? object.from + 1 : object.from);
             if (!(dom instanceof Element)) {
                 return null;
             }
             const box = dom.getBoundingClientRect();
             const inset = isBlockObject(object) ? ATOM_INSET : 0;
-            const textual = object.kind === 'heading' || object.kind === 'block_attrs';
+            const textual = object.kind === 'heading' || object.kind === 'block_attrs' || object.kind === 'list_item';
             const top = (textual ? firstLineTop(dom) : null) ?? box.top;
             return { left: box.left + inset, top, right: box.right - inset, bottom: box.bottom };
         }
