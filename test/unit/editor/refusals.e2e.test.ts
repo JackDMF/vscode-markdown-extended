@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { refusalMs } from '../../../src/editor/refusal';
-import { EditorPage, EXTENSION_ID, closeEditorPage, clickText, delay, openEditorPage, pointAt, UNDO } from './pageHarness';
+import { EditorPage, EXTENSION_ID, closeEditorPage, clickText, delay, editCommand, openEditorPage, pointAt, MOD, UNDO } from './pageHarness';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, applyTheme } from './themes';
 
 /** One document holding every place a refusal is made in: a table with code in its cells, a one-row table, a list, a source block, bold text. */
@@ -249,6 +249,40 @@ suite('Editor refusals: one component, one dismiss rule (e2e)', () => {
             await page.keyboard.press('ArrowRight');
         }
         await applyTheme(page, LIGHT_MODERN);
+    });
+
+    test('C24: a container title ending in {…} is refused in its Classes field, which stays open with what was typed', async function () {
+        this.timeout(20000);
+        await fresh('Intro.\n\n::: box\nFirst kept.\n:::\n\nAfter.\n', 'First');
+        const before = (await (editor as EditorPage).edits()).length;
+        await clickText(page, 'First kept', 2);
+        await page.waitForSelector(BAR, { timeout: 2000 });
+        await page.click(`${BAR} [data-verb="edit-classes"]`);
+        const input = await page.waitForSelector(`${BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+        assert.ok(input);
+        await page.keyboard.down(MOD);
+        await page.keyboard.press('a', editCommand('a'));
+        await page.keyboard.up(MOD);
+        await page.keyboard.type('box {.x}');
+        await page.keyboard.press('Enter');
+        await delay(150);
+        const field = await page.evaluate(sel => {
+            const el = document.querySelector(`${sel} .mep-inline-field`) as HTMLInputElement | null;
+            return {
+                value: el?.value ?? null,
+                focused: document.activeElement === el,
+                invalid: el?.getAttribute('aria-invalid') ?? null,
+                reason: document.querySelector(`${sel} .mep-field-refusal-text`)?.textContent ?? null,
+                codes: Array.from(document.querySelectorAll(`${sel} .mep-field-refusal-text code`)).map(c => c.textContent),
+            };
+        }, BAR);
+        assert.deepStrictEqual(field, {
+            value: 'box {.x}', focused: true, invalid: 'true',
+            reason: 'Not set: a container\'s title can\'t end in {…} — it would be read as attributes. Remove the {…} at its end.',
+            codes: ['{…}', '{…}'],
+        });
+        assert.strictEqual((await (editor as EditorPage).edits()).length, before, 'nothing written');
+        await page.keyboard.press('Escape');
     });
 
     /** Open the bar's `verb` menu and press `entry` with the mouse. */

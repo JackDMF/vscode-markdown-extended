@@ -306,9 +306,13 @@ suite('Attributes field (e2e)', () => {
             { value: s.value, focused: s.focused, keys: s.keys !== null, invalid: s.invalid, describedBy: s.describedBy, role: s.reasonRole },
             { value: 'width = 300', focused: true, keys: true, invalid: 'true', describedBy: 'reason', role: null },
         );
-        assert.ok(s.reason?.startsWith('width = 300 is text, not an attribute list'), s.reason ?? 'none');
-        assert.ok(s.reason?.includes('Write it as width=300.'), s.reason ?? 'none');
+        assert.strictEqual(s.reason, 'Not set: width = 300 has spaces around "=", so it would show as text. Write it as width=300.');
         assert.ok(!/\{width|300\}/.test(s.reason ?? ''), 'the value named without the braces the field draws');
+        // D3 (#10): the values carried as parts, in the code font; the refusal component's bar, 3 px.
+        assert.deepStrictEqual(await page.$eval(`${ANY_FIELD_BAR} .mep-field-refusal-text`, el => ({
+            codes: Array.from(el.querySelectorAll('code')).map(c => c.textContent),
+            bar: getComputedStyle(el).borderLeftWidth,
+        })), { codes: ['width = 300', '=', 'width=300'], bar: '3px' });
         assert.strictEqual(s.frameBorder.color, await page.evaluate(() => {
             const probe = document.createElement('div');
             probe.style.color = getComputedStyle(document.documentElement).getPropertyValue('--vscode-inputValidation-warningBorder').trim() || '#b89500';
