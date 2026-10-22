@@ -171,3 +171,86 @@ function reasonLayout(page: puppeteer.Page) {
         };
     });
 }
+
+/*
+ * Where the row has room for which form depends on the platform's font (Segoe UI on
+ * Windows, the system font on macOS: ten pixels and more apart at 400 px). The row is
+ * measured, not set by a width (`layoutRow`), and so are the suites: they find the
+ * width where a form begins (`narrowestWidth`) and check what is shown against the
+ * room the row has (`noteRoom`, `inRowForm`) instead of naming widths that hold for
+ * one font only.
+ */
+
+/**
+ * The narrowest whole width in [`lo`, `hi`] at which `holds` (the page at that
+ * width, as the caller sets it) is true; it must be at `hi` and not at `lo`, and
+ * the row being monotone in its width, the edge is found by halving.
+ */
+export async function narrowestWidth(lo: number, hi: number, holds: (width: number) => Promise<boolean>): Promise<number> {
+    assert.ok(await holds(hi), `it holds at ${hi}`);
+    assert.ok(!(await holds(lo)), `it does not at ${lo}`);
+    while (hi - lo > 1) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (await holds(mid)) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    return hi;
+}
+
+/**
+ * The pixels the reason's note could still grow by before the row runs past its
+ * box (`overflows`): the note set wider, halving, then given its style back.
+ * `null` where no note shows.
+ */
+export function noteRoom(page: puppeteer.Page): Promise<number | null> {
+    return page.$eval('.mep-toolbar', row => {
+        const note = row.querySelector('.mep-row-lock') as HTMLElement;
+        if (note.hidden || note.getClientRects().length === 0) {
+            return null;
+        }
+        const saved = note.style.cssText;
+        const base = note.getBoundingClientRect().width;
+        const fits = (extra: number) => {
+            note.style.flex = 'none';
+            note.style.width = `${base + extra}px`;
+            return row.scrollWidth <= row.clientWidth + 0.5;
+        };
+        let room = 0;
+        if (fits(0)) {
+            let over = 1024;
+            while (over - room > 0.25) {
+                const mid = (room + over) / 2;
+                if (fits(mid)) {
+                    room = mid;
+                } else {
+                    over = mid;
+                }
+            }
+        }
+        note.style.cssText = saved;
+        return room;
+    });
+}
+
+/**
+ * For a box or a field whose reason stands in the refused tools' place: the form
+ * the room calls for — `inrow` (whole) where the whole reason's extra width over
+ * the form shown fits the room left (`noteRoom`), else `short`.
+ */
+export async function inRowForm(page: puppeteer.Page, reason: string): Promise<'inrow' | 'short'> {
+    const extra = await page.$eval('.mep-toolbar .mep-row-lock-text', (text, whole) => {
+        const copy = text.cloneNode(true) as HTMLElement;
+        copy.textContent = whole as string;
+        Object.assign(copy.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'nowrap' });
+        (text.parentElement as HTMLElement).append(copy);
+        const more = copy.getBoundingClientRect().width - text.getBoundingClientRect().width;
+        copy.remove();
+        return more;
+    }, reason);
+    const room = await noteRoom(page);
+    assert.notStrictEqual(room, null, 'a note shows');
+    return extra <= (room as number) + 0.5 ? 'inrow' : 'short';
+}

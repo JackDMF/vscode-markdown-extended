@@ -4,7 +4,7 @@ import { buildEditorEngine } from '../../../src/editor/host/engineHost';
 import { parseDocument, parsedDocumentToJSON } from '../../../src/editor/parse';
 import { clickText, closeEditorPage, delay, EditMessage, EditorPage, EXTENSION_ID, openEditorPage, pointAt, settle, shot, showDiagnostics, MOD, SHOTS_DIR, editCommand } from './pageHarness';
 import { DEFAULT_INLINE_ENGINE } from '../../../src/editor/inlineEngine';
-import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, ReasonPlace, RowBoxes, assertReasonShown, assertRowFree, assertRowLocked, rowBoxes } from './rowLock';
+import { LOCK_BUTTON, LOCK_PROPERTY, LOCK_SOURCE, ReasonPlace, RowBoxes, assertReasonShown, assertRowFree, assertRowLocked, inRowForm, narrowestWidth, rowBoxes } from './rowLock';
 import { DARK_MODERN, HC_DARK, LIGHT_MODERN, Theme, applyTheme } from './themes';
 
 /** A Req Explorer workshop note's front matter, as that corpus writes one, shortened. */
@@ -700,18 +700,33 @@ suite('Editor properties panel (e2e)', () => {
     };
 
     test('the reason stands in the row, never under it: beside the tools where it fits, else in their place, else its short form; a button\'s beside, else the tools give way into "…"; the page and Export never move', async function () {
-        this.timeout(60000);
+        this.timeout(120000);
         // What the row's width leaves (measured on the sketch's fonts, `lockForms`): the forms the model gives, per reason.
         const expected: Record<number, Record<string, ReasonPlace>> = {
             1280: { source: 'beside', button: 'beside', property: 'beside' },
             600: { source: 'inrow', button: 'short', property: 'inrow' },
-            400: { source: 'short', button: 'short', property: 'inrow' },
         };
         try {
-            for (const width of [1280, 600, 400]) {
+            // Narrow: the last width at which a button's short form still fits (about 400 with Segoe UI; the system
+            // font on macOS is wider), found; there a box's or a field's reason takes the form its room calls for, measured.
+            const buttonShows = async (width: number) => {
+                await page.setViewport({ width, height: 800 });
+                let shown = false;
+                await walkReasons(async (_reason, state) => {
+                    if (state === 'button') {
+                        shown = await page.$eval('.mep-toolbar .mep-row-lock', el => !(el as HTMLElement).hidden && el.getClientRects().length > 0);
+                    }
+                });
+                await clickText(page, 'Last paragraph', 2);
+                await delay(120);
+                return shown;
+            };
+            const narrow = await narrowestWidth(340, 600, buttonShows);
+            for (const width of [1280, 600, narrow]) {
                 await page.setViewport({ width, height: 800 });
                 await walkReasons(async (reason, state, before) => {
-                    await assertReasonShown(page, `${width}px, ${state}`, reason, expected[width][state], before);
+                    const where = width !== narrow ? expected[width][state] : state === 'button' ? 'short' : await inRowForm(page, reason);
+                    await assertReasonShown(page, `${width}px, ${state}`, reason, where, before);
                 });
                 await clickText(page, 'Last paragraph', 2);
                 await delay(120);

@@ -93,6 +93,13 @@ export async function clickText(page: puppeteer.Page, needle: string, index = 0)
 }
 
 /**
+ * ProseMirror counts clicks itself (`prosemirror-view`'s `mousedown`): one within
+ * 500 ms and 10 px of the one before is a double click, the next a triple click,
+ * which selects the whole paragraph — whatever `clickCount` the protocol sent.
+ */
+export const PM_MULTI_CLICK_MS = 500;
+
+/**
  * What a control's tooltip says (`tooltip.ts`): its `aria-description`, which
  * the hover shows — the reason after a newline — or `''` where it has none.
  * The one way the suites read a tooltip; no control carries a `title`.
@@ -143,14 +150,15 @@ export const UNDO = process.platform === 'darwin' ? 'Cmd+Z' : 'Ctrl+Z';
 
 /**
  * The options for pressing `key` with `MOD` held where the browser's own editing
- * command should run (select all, copy, cut, paste): on macOS the protocol
- * delivers the keys but not the command they stand for, so it is named.
+ * command should run (select all, copy, cut, paste, a native field's undo): on
+ * macOS the protocol delivers the keys but not the command they stand for, so it
+ * is named.
  */
 export function editCommand(key: string, shift = false): puppeteer.KeyPressOptions | undefined {
     if (process.platform !== 'darwin') {
         return undefined;
     }
-    const command = ({ a: 'SelectAll', c: 'Copy', x: 'Cut', v: shift ? 'PasteAndMatchStyle' : 'Paste' } as Record<string, string>)[key.replace(/^Key/, '').toLowerCase()];
+    const command = ({ a: 'SelectAll', c: 'Copy', x: 'Cut', v: shift ? 'PasteAndMatchStyle' : 'Paste', z: shift ? 'Redo' : 'Undo' } as Record<string, string>)[key.replace(/^Key/, '').toLowerCase()];
     return command ? { commands: [command] } : undefined;
 }
 
@@ -163,6 +171,8 @@ export interface EditorPageOptions {
     styles?: readonly string[];
     /** More stylesheets by absolute path, after the built-in Markdown extension's and before `styles`. */
     stylesheets?: readonly string[];
+    /** A person's `markdown.styles` by absolute path, after `styles` and before the editor's own, where the host links them (`html.ts`). */
+    userStyles?: readonly string[];
     /**
      * Whether VS Code's built-in Markdown extension is there, as it is unless
      * disabled: the page then starts its cascade with that extension's
@@ -230,7 +240,7 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         assert.ok(fs.existsSync(sheet), `no stylesheet at ${sheet}`);
     }
 
-    const browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', ...FRAME_ARGS] });
     try {
         return await preparePage(browser, bundle, extensionPath as string, sheets, options);
     } catch (error) {
@@ -239,6 +249,18 @@ export async function openEditorPage(options: EditorPageOptions = {}): Promise<E
         throw error;
     }
 }
+
+/**
+ * Frames whatever the screen does. Headless Chromium on macOS takes its frames
+ * from the display's refresh: with the display asleep — a full run left to
+ * itself past the energy saver's minutes — no frame comes, no
+ * `requestAnimationFrame` runs, and every layer placed once per frame
+ * (`placement.ts`) stays where it was; the suites then fail by the dozen, or
+ * one here and there as the display dims. Without the frame-rate limit the
+ * frames come from a timer of the browser's own. Only on macOS: elsewhere the
+ * flag only burns CPU on animated pages.
+ */
+export const FRAME_ARGS = process.platform === 'darwin' ? ['--disable-frame-rate-limit'] : [];
 
 /** The page in `browser`: the host's page written, its stylesheets and the bundle loaded. */
 async function preparePage(browser: puppeteer.Browser, bundle: string, extensionPath: string, sheets: readonly string[], options: EditorPageOptions): Promise<EditorPage> {
@@ -262,6 +284,9 @@ async function preparePage(browser: puppeteer.Browser, bundle: string, extension
     }
     for (const sheet of options.styles ?? []) {
         await page.addStyleTag({ path: path.join(extensionPath, 'styles', sheet) });
+    }
+    for (const sheet of options.userStyles ?? []) {
+        await page.addStyleTag({ path: sheet });
     }
     // The codicon font, before the editor's own sheet as the host links it (`html.ts`): the
     // chevrons and `$(icon)`s are drawn with it. The page has no origin to load the font file

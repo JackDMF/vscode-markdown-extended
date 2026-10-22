@@ -24,6 +24,7 @@ import { NOTE_SYNTAX } from '../syntax/markers';
 import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 import { unreadEmoji } from './serialize';
+import { HAS_AN_EMOJI, sourceReasonWords } from './sourceReason';
 
 /**
  * A document as the editor holds it: the ProseMirror tree plus the two facts
@@ -259,10 +260,11 @@ export function parseDocument(md: MarkdownIt, text: string, env: Environment = {
                 stream.push(synthetic('front_matter', { src: block.src ?? '' }));
                 break;
             case 'raw': {
-                // A table the editor leaves as source says why in its bar: multimd's extensions, or a cell it cannot hold.
+                // A source block says why in its bar and its name: a table, multimd's extensions or a cell it
+                // cannot hold; anything else, the classifier's reason in words (`sourceReason.ts`).
                 const [start, end] = block.tokenRange;
                 const table = start < end && tokens[start].type === 'table_open';
-                const construct = table ? (block.reason.includes('(multimd)') ? 'multimd table' : 'table') : null;
+                const construct = table ? (block.reason.includes('(multimd)') ? 'multimd table' : 'table') : sourceReasonWords(block.reason, block.src ?? '');
                 stream.push(synthetic('raw_block', { src: block.src ?? '', gap: block.gap, html: render(block), construct }));
                 break;
             }
@@ -583,7 +585,7 @@ function withUnplacedAsSource(doc: Node, blocks: readonly SourceBlock[], render:
             });
             if (block.kind === 'editable' && holds && unreadEmoji(node) === null) {
                 changed = true;
-                children.push(editorSchema.nodes.raw_block.create({ src: block.src ?? '', gap: block.gap, html: render(block), construct: null }));
+                children.push(editorSchema.nodes.raw_block.create({ src: block.src ?? '', gap: block.gap, html: render(block), construct: HAS_AN_EMOJI }));
             } else {
                 children.push(node);
             }

@@ -48,6 +48,7 @@ import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, 
 import { SUFFIX_NODES, WRAPPER_NODES, editorSchema, noteRef } from '../schema';
 import { LiteralLoss, itemTakesLiteral, literalHolder, literalLostReason, literalNotReadBack, quoteTakesLiteral, serializeInline } from '../serialize';
 import { NoteNodeName, noteContextAt, noteRefusal } from './notes';
+import { SOURCE_VERB_META } from './sourceBlock';
 import { VERB } from '../verbs';
 import { BACKTICK_INFO_REFUSAL, LANGUAGE_FOLLOWED_REFUSAL, LANGUAGE_LITERAL_REFUSAL, LANGUAGE_WORD_REFUSAL, isLanguageWord, languageOf, parseOpeningLine, savedFence, savedOpeningLine, withLanguage } from '../fences';
 
@@ -588,7 +589,8 @@ export function deleteObjectRefusal(state: EditorState, object: EditorObject): s
  * expansion (whose directive line goes with it) — the caret put where it was.
  */
 export function deleteObjectTransaction(state: EditorState, object: EditorObject): Transaction {
-    const tr = state.tr.delete(object.from, object.to);
+    // A verb's removal on purpose: a source block's Delete block is not refused (`sourceBlock.ts`).
+    const tr = state.tr.delete(object.from, object.to).setMeta(SOURCE_VERB_META, true);
     const $at = tr.doc.resolve(Math.min(object.from, tr.doc.content.size));
     return tr.setSelection(Selection.near($at)).scrollIntoView();
 }

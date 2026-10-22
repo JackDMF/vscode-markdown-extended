@@ -36,10 +36,32 @@ class CaretHint {
         view.dom.parentElement?.append(this.el);
     }
 
+    /**
+     * Say `text` to a screen reader only, through the same status element, drawn nowhere
+     * (`data-quiet`, `editor.css`): what the page already shows (a bar's title) is not shown twice.
+     * Never over a hint someone can see.
+     */
+    announce(text: string): void {
+        if (this.showing() && !this.el.hasAttribute('data-quiet')) {
+            return;
+        }
+        this.el.textContent = text;
+        this.el.dataset.tone = 'neutral';
+        this.el.dataset.kind = 'plain';
+        this.el.setAttribute('data-quiet', '');
+        this.el.removeAttribute('data-flipped');
+        this.el.hidden = false;
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+            this.el.hidden = true;
+        }, HINT_MS.neutral);
+    }
+
     show(text: string, tone: HintTone, near?: Element, kind: HintKind = 'plain'): void {
         if (tone === 'refusal' && kind === 'plain' && this.showing() && this.el.textContent === text && this.el.dataset.tone === tone) {
             return;
         }
+        this.el.removeAttribute('data-quiet');
         // At the caret, or at the control that spoke when the focus is in one (a property row).
         const at = near ? near.getBoundingClientRect() : caretRect(this.view, this.view.state.selection.head);
         this.el.textContent = text;
@@ -117,6 +139,11 @@ function paragraphOf(state: EditorState): number {
 /** Show `text` beside the caret of `view`, or under `near`; a no-op for a view built without `hintPlugin`. */
 export function showHint(view: EditorView, text: string, tone: HintTone, near?: Element): void {
     hints.get(view)?.show(text, tone, near);
+}
+
+/** Say `text` through the hint's status role to a screen reader only, drawn nowhere; a no-op for a view built without `hintPlugin`. */
+export function announceHint(view: EditorView, text: string): void {
+    hints.get(view)?.announce(text);
 }
 
 /**

@@ -118,11 +118,20 @@ export class RawBlockView extends AtomView implements SourceEditor {
     private readonly content: HTMLElement;
     private editor: HTMLTextAreaElement | null = null;
     private untrack: (() => void) | null = null;
+    private readonly sizes: ResizeObserver | null;
+    private measuring = 0;
 
     constructor(node: Node, private readonly getPos: GetPos, private readonly port: EditorPort) {
         super(node, 'div', 'mep-raw-block');
         this.content = element('div', 'mep-atom-content');
-        this.dom.append(this.content);
+        this.dom.append(sourceChip(), this.content);
+        // A tall rendering gets a gutter for its chip, which then stays in sight (`mep-raw-tall`).
+        // Measured after the layout pass, not inside the observer's, so it never loops.
+        this.sizes = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+            cancelAnimationFrame(this.measuring);
+            this.measuring = requestAnimationFrame(() => this.measure());
+        });
+        this.sizes?.observe(this.dom);
         inertControls(this.content);
         followLinksIn(this.content, href => this.port.openLink(href));
         // A double click on the rendering opens the source, as a double click on
@@ -161,6 +170,27 @@ export class RawBlockView extends AtomView implements SourceEditor {
         } else {
             this.content.replaceChildren(element('pre', 'mep-raw-source', this.node.attrs.src as string));
         }
+        nameSourceBlock(this.dom, this.node.attrs.construct as string | null);
+        // Where the "source" chip stands (`editor.css`): inside the box of source shown as source;
+        // above the block's top-left when a note floats at the right (a chip floating there would push it
+        // down) or the rendering starts with a box of its own (a table, an admonition: it would be
+        // narrowed or pushed below the chip); floated top-right, the first line around it, otherwise.
+        const first = Array.from(this.content.children).find(el => el.getAttribute('aria-hidden') !== 'true');
+        this.dom.classList.toggle('mep-raw-boxed', !html);
+        this.dom.classList.toggle('mep-raw-above', html !== '' && (this.content.querySelector(RIGHT_FLOATS) !== null || first === undefined || !TEXT_LIKE.has(first.tagName)));
+    }
+
+    /**
+     * Whether the rendering is tall enough that its top may scroll away (`mep-raw-tall`): only a
+     * chip floated top-right, which a gutter then holds, sticky, with no line under it. Boxes and
+     * chips above a block stay as they are. Hysteresis, as the gutter narrows the lines and
+     * makes the block taller. Run on a size change (the observer), not on every render.
+     */
+    private measure(): void {
+        const cl = this.dom.classList;
+        const height = this.dom.offsetHeight;
+        const floats = !cl.contains('mep-raw-boxed') && !cl.contains('mep-raw-above') && !cl.contains('mep-editing');
+        cl.toggle('mep-raw-tall', floats && height > (cl.contains('mep-raw-tall') ? TALL_BLOCK * 0.8 : TALL_BLOCK));
     }
 
     /**
@@ -243,6 +273,8 @@ export class RawBlockView extends AtomView implements SourceEditor {
     destroy(): void {
         this.untrack?.();
         this.untrack = null;
+        this.sizes?.disconnect();
+        cancelAnimationFrame(this.measuring);
     }
 
     private stopEditing(commit: boolean): void {
@@ -269,6 +301,49 @@ export class RawBlockView extends AtomView implements SourceEditor {
             return;
         }
         this.port.commitRawSource(pos, next);
+    }
+}
+
+/**
+ * What a stylesheet may float at a block's right, each with `clear: right` — the notes and
+ * sidebars (`markdown-extended.css`), images in a person's own: a chip floating there first
+ * would push them below it.
+ */
+const RIGHT_FLOATS = '.sidenote, .mnote, .right-sidebar, img';
+
+/** The height in px from which a rendered source block counts as tall: its chip stays in sight (`mep-raw-tall`). */
+const TALL_BLOCK = 400;
+
+/** A rendering's first element whose lines a floated chip can wrap: no box of its own beside a float. */
+const TEXT_LIKE: ReadonlySet<string> = new Set(['P', 'UL', 'OL', 'DL', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+
+/**
+ * The "source" chip: editor chrome, made once with the view (no decoration, nothing per
+ * keystroke), never in the document — the clipboard and the file take the node, not its view.
+ * Hidden from a screen reader: the block names itself (`nameSourceBlock`). The word is the
+ * stylesheet's (`editor.css`, `.mep-raw-chip::before`), so it is no text of the page either.
+ * A rail holds it: the block's height, so the chip can stay in sight (sticky) while a tall
+ * block's top is scrolled away.
+ */
+function sourceChip(): HTMLElement {
+    const rail = element('span', 'mep-raw-rail');
+    rail.setAttribute('aria-hidden', 'true');
+    rail.append(element('span', 'mep-raw-chip'));
+    return rail;
+}
+
+/**
+ * A source block's name for a screen reader: a group that says what it is on entry
+ * (`aria-roledescription`, "source block") and, as its label, only why (`construct`, the
+ * classifier's reason in words: "Has a footnote") — no label when no word says why.
+ */
+export function nameSourceBlock(dom: HTMLElement, reason: string | null): void {
+    dom.setAttribute('role', 'group');
+    dom.setAttribute('aria-roledescription', 'source block');
+    if (reason) {
+        dom.setAttribute('aria-label', reason[0].toUpperCase() + reason.slice(1));
+    } else {
+        dom.removeAttribute('aria-label');
     }
 }
 

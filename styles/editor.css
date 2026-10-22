@@ -130,6 +130,108 @@ img.mep-pending-range {
 
 .mep-raw-source { margin: 0; opacity: 0.8; }
 
+/*
+ * Wave 3 #5a: the "source" chip on every source block, always shown — editor chrome, never in the
+ * file, the preview or an export (only this sheet draws it). An element of the block's node view
+ * (`sourceChip`, nodeViews.ts), hidden from a screen reader (the block names itself) and from the
+ * pointer; its word is its own `::before`, so it is no text of the page. It sits on no element of the
+ * rendering, so a person's stylesheet keeps its own `::before`/`::after` labels there. No hover tint:
+ * it is no control (#11). Its colour is the page's own text colour, thinned — a person's stylesheet
+ * may paint a dark page in the light theme, so no theme token is safe — and so is its dashed edge.
+ *
+ * Paragraph-like blocks: the rail floats top-right, and the first line wraps around the chip.
+ */
+.ProseMirror .mep-raw-block > .mep-raw-rail {
+    float: right;
+    margin: 3px 0 0 12px;
+    pointer-events: none;
+    user-select: none;
+}
+.ProseMirror .mep-raw-chip {
+    display: block;
+    position: relative;
+    padding: 0 5px;
+    font: 11px/14px var(--vscode-font-family, sans-serif);
+    font-style: normal;
+    font-weight: normal;
+    letter-spacing: normal;
+    text-indent: 0;
+    text-transform: none;
+    white-space: nowrap;
+    color: color-mix(in srgb, currentColor 80%, transparent);
+    border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+    border-radius: 3px;
+}
+.ProseMirror .mep-raw-chip::before { content: "source" / ""; }
+.vscode-high-contrast .ProseMirror .mep-raw-chip { border-color: var(--vscode-contrastBorder, GrayText); }
+/*
+ * Source shown as source (`pre.mep-raw-source`): inside its box, top-right, in room the box keeps
+ * free. The rail runs the box's height and the chip sticks under the toolbar row while a tall box's
+ * top is scrolled away — over the room kept free, so it never covers a line.
+ */
+.ProseMirror .mep-raw-block.mep-raw-boxed > .mep-raw-rail {
+    float: none;
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    right: 14px;
+    margin: 0;
+    /* Over the box, whose opacity paints it after the chip in tree order. */
+    z-index: 1;
+}
+.ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-chip {
+    position: sticky;
+    top: calc(var(--mep-row-height, 27px) + 4px);
+}
+.ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-source { padding-right: 72px; }
+/*
+ * A tall rendering (`mep-raw-tall`, set from 400px up by the node view): its chip gets a gutter of
+ * its own at the right edge, where no line runs, and sticks under the toolbar row there while the
+ * block's top is scrolled away. Only where the chip floats top-right: a block with a note at its
+ * right, or one that starts with a box of its own (`mep-raw-above`), keeps its chip above the top-left
+ * corner and is not sticky, as nothing in its margins is free of the notes.
+ */
+.ProseMirror .mep-raw-block.mep-raw-tall { padding-right: 60px; }
+.ProseMirror .mep-raw-block.mep-raw-tall > .mep-raw-rail {
+    float: none;
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    right: 6px;
+    margin: 0;
+}
+.ProseMirror .mep-raw-block.mep-raw-tall .mep-raw-chip {
+    position: sticky;
+    top: calc(var(--mep-row-height, 27px) + 4px);
+}
+/*
+ * Above the block, at its top-left: where a note or sidebar floats at the right (`clear: right`: a
+ * floated chip would push it down), or where the rendering starts with a box of its own (a table, an
+ * admonition: a float would narrow it or push it below). Absolutely placed, so it takes no room and
+ * touches no note: 2px above the block's edge, its left edge on the block's, a dashed stub down that
+ * edge tying it to the block. The block keeps 28px above it (collapsing with the margin before), so the
+ * chip stands at least 8px clear of the element before.
+ */
+.ProseMirror .mep-raw-block.mep-raw-above { margin-top: 28px; }
+.ProseMirror .mep-raw-block.mep-raw-above > .mep-raw-rail {
+    float: none;
+    position: absolute;
+    left: -1px;
+    bottom: calc(100% + 3px);
+    margin: 0;
+}
+.ProseMirror .mep-raw-block.mep-raw-above .mep-raw-chip::after {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 100%;
+    height: 7px;
+    border-left: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+}
+.vscode-high-contrast .ProseMirror .mep-raw-block.mep-raw-above .mep-raw-chip::after { border-left-color: var(--vscode-contrastBorder, GrayText); }
+/* The open source box is the edit: no chip over it. */
+.ProseMirror .mep-raw-block.mep-editing > .mep-raw-rail { display: none; }
+
 .mep-raw-editor {
     box-sizing: border-box;
     width: 100%;
@@ -1094,6 +1196,18 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 /* A neutral hint is one short line (what was done, or that Alt+Enter has nothing to act on): it keeps to one where the window has the room. */
 .mep-hint[data-tone="neutral"] { max-width: 48em; }
 .mep-hint[data-tone="refusal"] { border-left: 3px solid var(--vscode-editorWarning-foreground, #bf8803); }
+/* Said to a screen reader only (`announceHint`): what the page already shows, read out, drawn nowhere. */
+.mep-hint[data-quiet] {
+    position: fixed;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
 
 /* ------------------------------------------------------------------------- */
 /* Requirement heading: the id is shown, not edited                          */
