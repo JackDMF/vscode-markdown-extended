@@ -1818,7 +1818,9 @@ An indented block has no opening line; Language…, Attributes… and Edit sourc
 apply (`DEFAULT_FENCE`, lengthened as needed), and the hint says "Code block fenced". The
 completions come from `languages.ts`, generated from the installed highlight.js by
 `npm run languages` and pinned by `languages.test.ts`. The language shows at rest as a
-corner tag, `pre[data-lang]::before` — a pseudo-element, so no node, no layer, inert.
+corner tag, `pre[data-lang]::before` — a pseudo-element, so no node, no layer, inert; its
+`data-lang` is a node decoration (`codeLanguagesPlugin`), not part of the node's `toDOM`, so
+no copy carries it. A first word that opens with a brace is no language (`languageOf`).
 
 **The triggers.** The last three objects are *block* objects and show their bar while the
 pointer is on them or they are selected, at once — as the source block's toolbar did. The

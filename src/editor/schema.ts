@@ -3,7 +3,6 @@ import { tableNodes } from 'prosemirror-tables';
 import { ADMONITION_TYPES, NOTE_SYNTAX, plainWikiEmbed } from '../syntax/markers';
 import { withoutTextBraceEnd } from '../syntax/attrsLiteral';
 import { domAttrsOf } from './attrs';
-import { languageOf } from './fences';
 import { EMBED_WAY_BACK, VERB } from './verbs';
 
 /**
@@ -556,11 +555,10 @@ export const editorSchema = new Schema({
                 getAttrs: (dom: HTMLElement) => ({ params: dom.getAttribute('data-params') || '' }),
             }],
             toDOM(node): DOMOutputSpec {
-                // The fence's attributes are on its `<code>`, as the engine renders them. `data-lang`
-                // is the editor's corner tag (`editor.css`, `pre[data-lang]::before`): chrome, no node of its own.
+                // The fence's attributes are on its `<code>`, as the engine renders them. The editor's
+                // corner tag (`data-lang`) is a decoration (`codeLanguagesPlugin`), not part of the node.
                 const params = node.attrs.params as string;
-                const language = languageOf(params);
-                return ['pre', { ...(params ? { 'data-params': params } : {}), ...(language ? { 'data-lang': language } : {}) }, ['code', withSuffix(node), 0]];
+                return ['pre', params ? { 'data-params': params } : {}, ['code', withSuffix(node), 0]];
             },
         },
         horizontal_rule: {

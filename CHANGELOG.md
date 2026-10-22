@@ -48,7 +48,12 @@
 - Only a closing-shaped line inside a fence needs a longer fence; a ```python line does not.
 - A language the document names by one word is offered once, not again under its aliases.
 - A table verb moved into "…" tints its row or column while its entry is focused or its menu is open.
-- Alt+Enter on an object whose bar cannot show no longer claims there is nothing to act on.
+- Alt+Enter on an object whose bar cannot show says what the object is, not that there is nothing to act on.
+- Lenses from other extensions on a code block show in its bar after a caret rest, like on every object.
+- Enter on an unchanged opening line, or on a Language… that did not change, rewrites nothing.
+- Braces in a fence's info string that were text stay text: only a {…} you type is read as attributes.
+- A first word that opens with a brace ({r, echo = FALSE}) is no language: no corner tag, none shown in Language….
+- Language… keeps the info string's spacing around the word it replaces; the document's languages count by lowercase.
 - Copying a code block no longer carries the editor's language tag.
 - The "No actions here" hint fits one line; the fence in an indented block's tooltip is in the code font.
 - The Row and Column menus set Delete apart after a divider; the cell's ring no longer matches the focus outline.

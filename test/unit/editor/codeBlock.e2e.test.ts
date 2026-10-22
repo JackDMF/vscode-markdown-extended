@@ -566,7 +566,7 @@ suite('Code block (e2e)', () => {
         assert.strictEqual((await hint()).shown, false);
     });
 
-    test('H3 Alt+Enter at an object whose bar cannot be drawn: the key is taken, but "no actions here" is not said — there was an object', async function () {
+    test('H3 Alt+Enter at an object whose bar cannot be drawn: the key is taken, and the hint says what the object is — not "no actions here", there was an object', async function () {
         this.timeout(20000);
         await showDocument('# Title\n\nText.\n', 'Title');
         await clickBefore('Title', 2);
@@ -580,7 +580,9 @@ suite('Code block (e2e)', () => {
         });
         await pressAlt('Enter');
         assert.strictEqual(await page.$(BAR), null, 'a heading with no lenses has no bar');
-        assert.strictEqual((await hint()).shown, false, 'no hint: it is not that there is nothing here');
+        // The presentation's title (`ownPresentation`): a requirement heading's reads "A requirement heading: its id and anchor are Req Explorer's."
+        assert.deepStrictEqual(await hint(), { text: 'A heading.', shown: true, tone: 'neutral' }, 'the object\'s own title, neutral — not NO_TARGET_HINT');
+        assert.notStrictEqual((await hint()).text, NO_TARGET_HINT);
         assert.strictEqual(await page.evaluate(() => (window as unknown as { altEnter: boolean | null }).altEnter), true, 'the key is still taken');
     });
 
@@ -674,6 +676,24 @@ suite('Code block (e2e)', () => {
             await page.mouse.move(2, 2);
             assert.deepStrictEqual(await tintAfter('mep-table-column'), [], `${verb} left`);
         }
+    });
+
+    test('C3b a field opened while the pointer rests on Row: the row is not tinted for as long as the field is open', async function () {
+        this.timeout(20000);
+        await showDocument(TABLE_DOC, 'Alpha');
+        await clickBefore('first', 1);
+        await page.waitForSelector(BAR, { visible: true, timeout: 3000 });
+        await settledLayers();
+        const box = await (await page.$(`${BAR} [data-verb="row"]`))?.boundingBox();
+        assert.ok(box);
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), ['Alpha', 'first', '1'], 'hovered');
+        // The keyboard opens Attributes… under the resting pointer: its field replaces the row, and no pointerleave comes.
+        await page.$eval(`${BAR} [data-verb="block-attributes"]`, el => (el as HTMLElement).focus());
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(FIELD, { visible: true, timeout: 2000 });
+        assert.deepStrictEqual(await tintAfter('mep-table-row'), [], 'the hover went with the buttons');
+        assert.deepStrictEqual(await tinted('mep-table-column'), []);
     });
 
     test('C4 a verb moved into "…" stays active there: its entry focused, or its menu open, tints the caret\'s column', async function () {

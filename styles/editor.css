@@ -1777,13 +1777,13 @@ td.mep-lens-target[data-lens-kind="set"]:is(:hover, :focus-visible) {
  * The caret's table cell (`mep-cell-active`, tables.ts): a 2 px ring inside it in the caret's
  * colour — a different stroke from a focused control's 1 px outline outside, and a different
  * colour: in the dark themes the focus colour is the very blue of the bar's focused button, and
- * in high contrast the very orange, so the ring and the focus read as one thing. Over the cell's
+ * in high contrast dark the very orange, so the ring and the focus read as one thing. Over the cell's
  * faint inner line, which it replaces while the caret is there.
  */
 .ProseMirror > table td.mep-cell-active, .ProseMirror > table th.mep-cell-active {
     box-shadow: inset 0 0 0 2px var(--vscode-editorCursor-foreground, var(--vscode-editor-foreground, CanvasText));
 }
-/* High contrast: the cells' own borders are the text colour, so the ring takes the contrast border's — still not the focus orange. */
+/* High contrast: the cells' own borders are the text colour, so the ring takes the contrast border's — in HC dark that is not the focus orange (pinned, C6); HC light is not pinned. */
 .vscode-high-contrast .ProseMirror > table td.mep-cell-active, .vscode-high-contrast .ProseMirror > table th.mep-cell-active {
     box-shadow: inset 0 0 0 2px var(--vscode-contrastBorder, var(--vscode-editorCursor-foreground, CanvasText));
 }

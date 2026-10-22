@@ -69,7 +69,7 @@ import {
     BLOCK_NAMES, EditorObject, NOTE_CONVERSION, NO_BLOCK_ATTRS_REFUSAL, NodeObjectKind, attributesTargetOf, literalOf, changeAdmonitionTransaction, changeContainerTransaction,
     changeLinkTransaction, changeSpanRefusal, changeSpanTransaction, editImageTransaction, containerNameOf, convertNoteRefusal, convertNoteTransaction, currentObject,
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, literalPlaceOf, literalRefusal, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
-    removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine,
+    removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine, CodeBlockObject,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, attributeHolderAt, holderInside,
 } from './objects';
 import { attributesStep, holderAttributesStep } from './attributes';
@@ -88,6 +88,22 @@ import { chevronNode, lensLabelNodes, lensName } from './lenses';
 import { Tip, plainTip, tipText } from '../tips';
 import { Tooltips } from './tooltip';
 import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, caretRect, placeMenu, rangeAnchor } from './placement';
+
+/**
+ * The opening line the save writes for a code block (`savedOpeningLine`), once
+ * per node: the bar reads it on every redraw — Edit source's prefill is in its
+ * signature — and composing it scans the block's whole text for a closing run.
+ */
+const openingLines = new WeakMap<CodeBlockObject['node'], string>();
+
+function openingLineOfBlock(node: CodeBlockObject['node']): string {
+    let line = openingLines.get(node);
+    if (line === undefined) {
+        line = savedOpeningLine(node);
+        openingLines.set(node, line);
+    }
+    return line;
+}
 
 /** What the verbs need from the page. */
 export interface ObjectToolbarHost {
@@ -1023,6 +1039,9 @@ class ObjectBar {
         });
         field.el.dataset.verb = verb.id;
         this.field = field;
+        // The buttons go with the replaced row, and no pointerleave comes for a hover on one: forgotten here, it would tint on (`activeVerb`).
+        this.hovered = null;
+        this.hoveredEntry = null;
         if (label) {
             // A prefilled field shows no placeholder: the label says what the value is.
             // The object's name alone: what the field holds (a literal) is not said twice (`Image · Attributes`).
@@ -1317,10 +1336,11 @@ class ObjectToolbarView implements PluginView {
      * emphasis … without a `{…}` (`attributeHolderAt`), a bar of its own with
      * **Attributes…** — never drawn on a caret rest, kept while the selection
      * stays in its run (`selectionObject`). `'none'` where there is neither —
-     * the only answer the key says so for (`NO_TARGET_HINT`); `'unavailable'`
-     * where there is an object and no bar could be drawn for it.
+     * the only answer the key says so for (`NO_TARGET_HINT`); `{ title }`
+     * where there is an object and no bar could be drawn for it — the
+     * presentation's title says what it is, so the key is not silent there.
      */
-    openFromKeyboard(): 'opened' | 'unavailable' | 'none' {
+    openFromKeyboard(): 'opened' | 'none' | { title: string } {
         const object = objectAtSelection(this.view.state) ?? (currentReadsAttrs() ? attributeHolderAt(this.view.state).inline?.object ?? null : null);
         if (object === null) {
             return 'none';
@@ -1331,7 +1351,7 @@ class ObjectToolbarView implements PluginView {
         // It takes the slot whatever holds it, a dismissal of this object's bar included.
         this.refresh(true);
         if (!this.selectionBar.visible) {
-            return 'unavailable';
+            return { title: this.present(object).title };
         }
         this.selectionBar.focusFirst();
         return 'opened';
@@ -2410,7 +2430,7 @@ class ObjectToolbarView implements PluginView {
     /**
      * A code block's **Language…**: the first word of its info string in a
      * field, the document's languages offered first, then every language the
-     * preview highlights (`languageCompletions`); any word is taken, `''`
+     * preview highlights (`languageCompleter`); any word is taken, `''`
      * removes it, the rest of the info string and the `{…}` stay. On an
      * indented block it fences it (`changeLanguageTransaction`), and the hint
      * says so — the one change a look at the bar's title would not explain.
@@ -2457,7 +2477,7 @@ class ObjectToolbarView implements PluginView {
         const indented = object.node.attrs.markup === '';
         const step: FieldStep = {
             // What the save writes (`savedOpeningLine`), not the node's own fence: the field must show the line the file will hold.
-            value: indented ? '' : savedOpeningLine(object.node),
+            value: indented ? '' : openingLineOfBlock(object.node),
             label: 'Opening line',
             placeholder: indented ? INDENTED_PLACEHOLDER : undefined,
             keys: '↵ set · Esc cancel · fence, info, {…}',
@@ -2474,19 +2494,24 @@ class ObjectToolbarView implements PluginView {
      */
     private commitCodeBlock(
         step: FieldStep,
-        object: EditorObject,
+        object: CodeBlockObject,
         value: string,
-        make: (state: EditorState, pos: number, value: string) => { tr: Transaction; fenced: boolean } | { refusal: string } | null,
+        make: (state: EditorState, block: CodeBlockObject, value: string) => { tr: Transaction; fenced: boolean } | { refusal: string } | null,
     ): FieldStep | void {
         const state = this.view.state;
-        const current = currentObject(state, object);
-        const asked = current === null ? null : make(state, current.from, value);
+        // The node `currentObject` finds is the one the pass reads: no second lookup by position.
+        const found = currentObject(state, object);
+        const current = found !== null && !isMarkObject(found) ? found : null;
+        const asked = current === null ? null : make(state, current, value);
         if (asked !== null && 'refusal' in asked) {
             return refusedStep(step, value, asked.refusal);
         }
         this.act(object, now => {
             // The pass made above stands while nothing moved under it; moving the focus back may have (a source box committed).
-            const made = current !== null && this.view.state === state && now.from === current.from ? asked : make(this.view.state, now.from, value);
+            if (isMarkObject(now)) {
+                return false;
+            }
+            const made = current !== null && this.view.state === state && now.from === current.from ? asked : make(this.view.state, now, value);
             if (made === null || 'refusal' in made) {
                 return false;
             }
@@ -2638,10 +2663,8 @@ export function objectToolbarPlugin(host: ObjectToolbarHost): Plugin<BarDecor> {
                 }
                 if (view.state.selection instanceof TextSelection) {
                     // The key is taken, the caret stays (#4); it says there is nothing to act on only where there is no object — one
-                    // whose bar could not be drawn is not "nothing here".
-                    if (opened === 'none') {
-                        showHint(view, NO_TARGET_HINT, 'neutral');
-                    }
+                    // whose bar could not be drawn says what it is instead (its title), never "nothing here".
+                    showHint(view, opened === 'none' ? NO_TARGET_HINT : opened.title, 'neutral');
                     event.preventDefault();
                     return true;
                 }

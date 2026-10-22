@@ -294,13 +294,6 @@ function clipboardNodes(): ReturnType<typeof DOMSerializer.nodesFromSchema> {
         const { title: _title, ...rest } = attrs;
         return [tag, rest, ...content] as unknown as DOMOutputSpec;
     };
-    // A code block's language corner tag is the editor's chrome (`data-lang`): other apps get the block, and its `data-params` for ours.
-    const codeInEditor = nodes.code_block;
-    nodes.code_block = node => {
-        const [tag, attrs, ...content] = codeInEditor(node) as [string, Record<string, string>, ...unknown[]];
-        const { 'data-lang': _lang, ...rest } = attrs;
-        return [tag, rest, ...content] as unknown as DOMOutputSpec;
-    };
     return nodes;
 }
 

@@ -5,8 +5,10 @@ import { history, redo, undo } from 'prosemirror-history';
 import { inputRules, textblockTypeInputRule, undoInputRule, wrappingInputRule } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem } from 'prosemirror-schema-list';
+import type { Node } from 'prosemirror-model';
 import { Command, Plugin } from 'prosemirror-state';
-import { DEFAULT_FENCE } from '../fences';
+import { Decoration, DecorationSet } from 'prosemirror-view';
+import { DEFAULT_FENCE, languageOf } from '../fences';
 import { fidelityPlugin } from '../fidelity';
 import { REDO_BINDINGS, UNDO_BINDING } from '../keys';
 import { emojiKeymap, emojiPlugin } from './emoji';
@@ -133,6 +135,42 @@ export function domSelectionFirst(): Plugin {
     });
 }
 
+/** A node decoration per fenced code block that names a language: its `data-lang`, the corner tag's text (`editor.css`). */
+function languageDecorations(doc: Node): DecorationSet {
+    const decorations: Decoration[] = [];
+    doc.descendants((node, pos) => {
+        if (node.type === editorSchema.nodes.code_block) {
+            const language = languageOf(String(node.attrs.params ?? ''));
+            if (language !== '') {
+                decorations.push(Decoration.node(pos, pos + node.nodeSize, { 'data-lang': language }));
+            }
+        }
+        // Blocks stand in blocks; nothing inside a textblock is one.
+        return !node.isTextblock;
+    });
+    return decorations.length === 0 ? DecorationSet.empty : DecorationSet.create(doc, decorations);
+}
+
+/**
+ * The fence's language at its block's corner: editor chrome, drawn from a
+ * decoration on the node — not part of what the node renders, so a copy, a
+ * drag and the schema's `toDOM` never carry it. Kept with the document, as
+ * the admonitions' title bars are.
+ */
+export function codeLanguagesPlugin(): Plugin<DecorationSet> {
+    return new Plugin<DecorationSet>({
+        state: {
+            init: (_config, state) => languageDecorations(state.doc),
+            apply: (tr, set, _old, state) => (tr.docChanged ? languageDecorations(state.doc) : set),
+        },
+        props: {
+            decorations(state) {
+                return this.getState(state);
+            },
+        },
+    });
+}
+
 /**
  * Every plugin the editor state is built with, in the order they must run.
  * `wikiEmbeds` says whether the host's engine reads wiki embeds: the page's
@@ -164,6 +202,7 @@ export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds
         notesPlugin(embedInput),
         wikiEmbedPastePlugin(wikiEmbeds),
         admonitionTitlesPlugin(),
+        codeLanguagesPlugin(),
         ...tablesPlugins(),
         // Before the fidelity plugin, which then clears `src` for the whole edit, this plugin's included.
         emojiPlugin(),
