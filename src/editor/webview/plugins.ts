@@ -14,7 +14,7 @@ import { currentReadsWikiEmbeds } from '../inlineEngine';
 import { editorSchema } from '../schema';
 import { hintPlugin } from './hint';
 import { noteKeymap, notesPlugin } from './notes';
-import { sourceBlockPlugin } from './sourceBlock';
+import { sourceBlockHintPlugin, sourceBlockKeymap, sourceBlockPlugin } from './sourceBlock';
 import { tableKeymap, tablesPlugins } from './tables';
 import { TOOLBAR_ACTIONS } from './toolbar/actions';
 import { toggleMarkType } from './toolbar/commands';
@@ -144,7 +144,8 @@ export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds
     return [
         // First: every key below reads the selection the DOM shows.
         domSelectionFirst(),
-        // Before every rule and key that would replace a selection: a selected source block refuses them.
+        // Before every rule and key that would replace a selection: a selected source block refuses them
+        // (and any transaction that would remove it, `filterTransaction`).
         sourceBlockPlugin(),
         markdownInputRules(),
         // `![[name]]` typed: an embed atom, where the engine reads embeds; a plugin of its own,
@@ -159,11 +160,15 @@ export function editorPlugins(wikiEmbeds: () => boolean = currentReadsWikiEmbeds
         wrapperKeymap(),
         tableKeymap(),
         markdownKeymap(),
+        // Before the joins of `baseKeymap`, which would delete a source block beside the caret in one keystroke.
+        sourceBlockKeymap(),
         keymap(baseKeymap),
         history(),
         dropCursor(),
         gapCursor(),
         hintPlugin(),
+        // After the hint's own update, which clears the previous change's hint.
+        sourceBlockHintPlugin(),
         notesPlugin(embedInput),
         wikiEmbedPastePlugin(wikiEmbeds),
         admonitionTitlesPlugin(),

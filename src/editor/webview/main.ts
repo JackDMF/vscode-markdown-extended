@@ -29,6 +29,7 @@ import { diagnosticsPlugin, setDiagnosticsTransaction } from './diagnostics';
 import { focusPlace } from './focusPlace';
 import { showChangeHint, showHint } from './hint';
 import { hoverDocumentShown, hoverMessage, hoverPlugin } from './hover';
+import { SOURCE_VERB_META } from './sourceBlock';
 import { FileGesture, ImageSources, ImageView, fileDropPlugin, readBase64, showImagesIn } from './images';
 import { DROP_LOCK, IMAGE_LOCK, insertFilesTransaction, insertLockReason } from './objects';
 import { pendingRangePlugin } from './pendingRange';
@@ -236,13 +237,14 @@ const port: EditorPort = {
         if (!node || node.type !== editorSchema.nodes.raw_block) {
             return;
         }
+        // Edit source is the way to change a source block: not refused (`sourceBlock.ts`).
         if (src === '') {
-            view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize));
+            view.dispatch(view.state.tr.delete(pos, pos + node.nodeSize).setMeta(SOURCE_VERB_META, true));
             return;
         }
         // The old rendering stays until the host's arrives, so the block does
         // not flash empty; `html` is not written to the file.
-        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src }));
+        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src }).setMeta(SOURCE_VERB_META, true));
         port.requestRender(src);
         // What the source now says may not be a source block any more — the
         // markers of a sidenote deleted, a paragraph is left — and only the

@@ -122,7 +122,7 @@ export class RawBlockView extends AtomView implements SourceEditor {
     constructor(node: Node, private readonly getPos: GetPos, private readonly port: EditorPort) {
         super(node, 'div', 'mep-raw-block');
         this.content = element('div', 'mep-atom-content');
-        this.dom.append(this.content);
+        this.dom.append(sourceChip(), this.content);
         inertControls(this.content);
         followLinksIn(this.content, href => this.port.openLink(href));
         // A double click on the rendering opens the source, as a double click on
@@ -163,9 +163,12 @@ export class RawBlockView extends AtomView implements SourceEditor {
         }
         nameSourceBlock(this.dom, this.node.attrs.construct as string | null);
         // Where the "source" chip stands (`editor.css`): inside the box of source shown as source;
-        // after the last line when a note floats at the right, which a chip floating there would push down.
+        // above the block's top-left when a note floats at the right (a chip floating there would push it
+        // down) or the rendering starts with a box of its own (a table, an admonition: it would be
+        // narrowed or pushed below the chip); floated top-right, the first line around it, otherwise.
+        const first = Array.from(this.content.children).find(el => el.getAttribute('aria-hidden') !== 'true');
         this.dom.classList.toggle('mep-raw-boxed', !html);
-        this.dom.classList.toggle('mep-raw-noted', html !== '' && this.content.querySelector(RIGHT_FLOATS) !== null);
+        this.dom.classList.toggle('mep-raw-above', html !== '' && (this.content.querySelector(RIGHT_FLOATS) !== null || first === undefined || !TEXT_LIKE.has(first.tagName)));
     }
 
     /**
@@ -284,15 +287,37 @@ export class RawBlockView extends AtomView implements SourceEditor {
  */
 const RIGHT_FLOATS = '.sidenote, .mnote, .right-sidebar, img';
 
+/** A rendering's first element whose lines a floated chip can wrap: no box of its own beside a float. */
+const TEXT_LIKE: ReadonlySet<string> = new Set(['P', 'UL', 'OL', 'DL', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+
+/**
+ * The "source" chip: editor chrome, made once with the view (no decoration, nothing per
+ * keystroke), never in the document — the clipboard and the file take the node, not its view.
+ * Hidden from a screen reader: the block names itself (`nameSourceBlock`). The word is the
+ * stylesheet's (`editor.css`, `.mep-raw-chip::before`), so it is no text of the page either.
+ * A rail holds it: the block's height, so the chip can stay in sight (sticky) while a tall
+ * block's top is scrolled away.
+ */
+function sourceChip(): HTMLElement {
+    const rail = element('span', 'mep-raw-rail');
+    rail.setAttribute('aria-hidden', 'true');
+    rail.append(element('span', 'mep-raw-chip'));
+    return rail;
+}
+
 /**
  * A source block's name for a screen reader: a group that says what it is on entry
- * (`aria-roledescription`) and why it is source (`construct`, the classifier's reason in words).
- * The "source" chip is CSS with empty alt text, so it is not read twice.
+ * (`aria-roledescription`, "source block") and, as its label, only why (`construct`, the
+ * classifier's reason in words: "Has a footnote") — no label when no word says why.
  */
 export function nameSourceBlock(dom: HTMLElement, reason: string | null): void {
     dom.setAttribute('role', 'group');
     dom.setAttribute('aria-roledescription', 'source block');
-    dom.setAttribute('aria-label', reason ? `Source block: ${reason}` : 'Source block');
+    if (reason) {
+        dom.setAttribute('aria-label', reason[0].toUpperCase() + reason.slice(1));
+    } else {
+        dom.removeAttribute('aria-label');
+    }
 }
 
 /**

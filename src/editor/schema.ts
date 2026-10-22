@@ -603,7 +603,7 @@ export const editorSchema = new Schema({
                  * What the block is when its bar can say more than "source": `multimd table` for
                  * a table using markdown-it-multimd-table's extensions, `table` for a pipe table
                  * holding what a cell cannot hold here; else the classifier's reason in words
-                 * (`footnote`, `definition list`, `footnote text`, … `sourceReason.ts`), set at
+                 * (`has a footnote`, `definition list`, `footnote text`, … `sourceReason.ts`), set at
                  * parse; `null` when no word says more (a block the page inserted, before its parse).
                  */
                 construct: { default: null as string | null },

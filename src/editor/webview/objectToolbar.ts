@@ -58,6 +58,7 @@ import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, la
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
 import { HintTone, applyKey, showChangeHint, showHint, undoHint, undoKey } from './hint';
+import { SOURCE_VERB_META } from './sourceBlock';
 import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
 import { FieldRow } from './fieldRow';
@@ -333,9 +334,10 @@ function sameDecor(a: BarDecor, b: BarDecor): boolean {
 
 /**
  * What a source block's bar calls it: "Source · <why>" (`construct`, the
- * classifier's reason in words: `footnote`, `definition list` …), or a source
- * block when no word says more. A table the editor leaves as source says the
- * kind of table, so the bar says why this table has no Row and Column menus
+ * classifier's reason in words: `has a footnote`, `definition list` …), or a
+ * source block when no word says more. A pipe table the editor leaves as source
+ * (only a top-level one: a table inside a quote or a list is `has a table`) says
+ * the kind of table, so the bar says why this table has no Row and Column menus
  * when the one above it has them.
  */
 export function rawBlockLabel(construct: string | null): { label: string; title: string } {
@@ -353,7 +355,7 @@ export function rawBlockLabel(construct: string | null): { label: string; title:
         case null:
             return { label: 'Source block', title: 'Shown as the preview renders it, edited as Markdown.' };
         default:
-            return { label: `Source · ${construct}`, title: `Source because of its ${construct}, which the editor does not edit as text — shown as the preview renders it, edited as Markdown.` };
+            return { label: `Source · ${construct}`, title: `${construct[0].toUpperCase()}${construct.slice(1)}, which the editor does not edit as text — shown as the preview renders it, edited as Markdown.` };
     }
 }
 
@@ -2749,7 +2751,8 @@ class ObjectToolbarView implements PluginView {
 
     private remove(object: EditorObject, hint: string): void {
         this.act(object, current => {
-            this.view.dispatch(deleteObjectTransaction(this.view.state, current));
+            // Delete block of a source block is the way to remove one: not refused (`sourceBlock.ts`).
+            this.view.dispatch(deleteObjectTransaction(this.view.state, current).setMeta(SOURCE_VERB_META, true));
             return true;
         }, hint, true);
     }

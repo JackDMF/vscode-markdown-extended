@@ -3,11 +3,13 @@
 ## Unreleased
 
 - Every source block shows a muted "source" chip at its top-right, in the editor only, never copied or exported.
-- Raw source keeps the chip inside its box; beside a right-floating note it stands top-left, in the gap above the first line, touching no note.
-- The chip takes the page's own text colour, so it stays legible on a page a stylesheet paints itself.
-- A source block's bar names why: "Source · footnote", "· definition list", "· footnote text" and more.
-- Screen readers hear "Source block: <reason>", and on selection the reason with Alt+Enter for its actions.
-- Typing, pasting, Backspace or Delete on a selected source block is refused with a hint, not deleting it.
+- Raw source keeps the chip inside its box, in sight while scrolling; beside right notes or tables it stands above.
+- The chip takes the page's own text colour and leaves a stylesheet's own ::after labels alone.
+- A source block's bar names why: "Source · has a footnote", "· definition list", "· footnote text" and more.
+- Screen readers hear the reason as the block's name, and on selection the reason with Alt+Enter.
+- Typing, pasting, dictation, IME, Ctrl+D/H or Delete over a selected source block is refused, naming why.
+- Backspace or Delete beside a source block selects it first; cut still takes it.
+- Replacing a selection that spans a source block says "Source block removed" with the undo key.
 
 ## v4.9.0 — Layers That Keep Their Place
 

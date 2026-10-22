@@ -132,60 +132,24 @@ img.mep-pending-range {
 
 /*
  * Wave 3 #5a: the "source" chip on every source block, always shown — editor chrome, never in the
- * file, the preview or an export (only this sheet draws it). A pseudo-element: no node, not copied,
- * no target for the pointer, and empty alt text (the block names itself, `nameSourceBlock`). No hover
- * tint: it is no control (#11). Paragraph-like blocks: floated top-right, the first line wraps around it.
- * Its colour is the page's own text colour, thinned — a person's stylesheet may paint a dark page in the
- * light theme, so no theme token is safe — and so is its dashed edge.
+ * file, the preview or an export (only this sheet draws it). An element of the block's node view
+ * (`sourceChip`, nodeViews.ts), hidden from a screen reader (the block names itself) and from the
+ * pointer; its word is its own `::before`, so it is no text of the page. It sits on no element of the
+ * rendering, so a person's stylesheet keeps its own `::before`/`::after` labels there. No hover tint:
+ * it is no control (#11). Its colour is the page's own text colour, thinned — a person's stylesheet
+ * may paint a dark page in the light theme, so no theme token is safe — and so is its dashed edge.
+ *
+ * Paragraph-like blocks: the rail floats top-right, and the first line wraps around the chip.
  */
-.ProseMirror .mep-raw-block::before {
-    content: "source" / "";
+.ProseMirror .mep-raw-block > .mep-raw-rail {
     float: right;
     margin: 3px 0 0 12px;
-    padding: 0 5px;
-    font: 11px/14px var(--vscode-font-family, sans-serif);
-    font-style: normal;
-    font-weight: normal;
-    color: color-mix(in srgb, currentColor 80%, transparent);
-    border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
-    border-radius: 3px;
     pointer-events: none;
     user-select: none;
 }
-.vscode-high-contrast .ProseMirror .mep-raw-block::before { border-color: var(--vscode-contrastBorder, GrayText); }
-/* Source shown as source (`pre.mep-raw-source`): inside its box, top-right, in room the box keeps free. */
-.ProseMirror .mep-raw-block.mep-raw-boxed::before {
-    float: none;
-    position: absolute;
-    top: 3px;
-    right: 14px;
-    margin: 0;
-    /* Over the box, whose opacity paints it after the chip in tree order. */
-    z-index: 1;
-}
-.ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-source { padding-right: 72px; }
-/*
- * A note or sidebar floating at the right (`clear: right`) would be pushed below a floated chip: the chip
- * stands top-left instead, in the gap above the block's first line — absolutely placed, so it takes no
- * room, moves no note and touches none (they float right). It hangs from the first element of the
- * rendering (a `span[aria-hidden]` the preview's Mermaid support puts before it does not count), and the
- * gap above that is wherever the page's margins put it: below the block before, or inside this one.
- * The block keeps 6px of its own above, so the chip clears the text before it even at a 16px margin.
- */
-.ProseMirror .mep-raw-block.mep-raw-noted { margin-top: 6px; }
-.ProseMirror .mep-raw-block.mep-raw-noted::before { content: none; }
-.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :first-child:not([aria-hidden="true"]),
-.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > [aria-hidden="true"]:first-child + * { position: relative; }
-.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :first-child:not([aria-hidden="true"])::after,
-.ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > [aria-hidden="true"]:first-child + *::after {
-    content: "source" / "";
-    position: absolute;
-    left: 0;
-    bottom: calc(100% + 2px);
-    float: none;
-    clear: none;
-    width: auto;
-    margin: 0;
+.ProseMirror .mep-raw-chip {
+    display: block;
+    position: relative;
     padding: 0 5px;
     font: 11px/14px var(--vscode-font-family, sans-serif);
     font-style: normal;
@@ -195,16 +159,58 @@ img.mep-pending-range {
     text-transform: none;
     white-space: nowrap;
     color: color-mix(in srgb, currentColor 80%, transparent);
-    background: none;
     border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
     border-radius: 3px;
-    pointer-events: none;
-    user-select: none;
 }
-.vscode-high-contrast .ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > :first-child:not([aria-hidden="true"])::after,
-.vscode-high-contrast .ProseMirror .mep-raw-block.mep-raw-noted > .mep-atom-content > [aria-hidden="true"]:first-child + *::after { border-color: var(--vscode-contrastBorder, GrayText); }
+.ProseMirror .mep-raw-chip::before { content: "source" / ""; }
+.vscode-high-contrast .ProseMirror .mep-raw-chip { border-color: var(--vscode-contrastBorder, GrayText); }
+/*
+ * Source shown as source (`pre.mep-raw-source`): inside its box, top-right, in room the box keeps
+ * free. The rail runs the box's height and the chip sticks under the toolbar row while a tall box's
+ * top is scrolled away — over the room kept free, so it never covers a line.
+ */
+.ProseMirror .mep-raw-block.mep-raw-boxed > .mep-raw-rail {
+    float: none;
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    right: 14px;
+    margin: 0;
+    /* Over the box, whose opacity paints it after the chip in tree order. */
+    z-index: 1;
+}
+.ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-chip {
+    position: sticky;
+    top: calc(var(--mep-row-height, 27px) + 4px);
+}
+.ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-source { padding-right: 72px; }
+/*
+ * Above the block, at its top-left: where a note or sidebar floats at the right (`clear: right`: a
+ * floated chip would push it down), or where the rendering starts with a box of its own (a table, an
+ * admonition: a float would narrow it or push it below). Absolutely placed, so it takes no room and
+ * touches no note: 2px above the block's edge, its left edge on the block's, a dashed stub down that
+ * edge tying it to the block. The block keeps 28px above it (collapsing with the margin before), so the
+ * chip stands at least 8px clear of the element before.
+ */
+.ProseMirror .mep-raw-block.mep-raw-above { margin-top: 28px; }
+.ProseMirror .mep-raw-block.mep-raw-above > .mep-raw-rail {
+    float: none;
+    position: absolute;
+    left: -1px;
+    bottom: calc(100% + 3px);
+    margin: 0;
+}
+.ProseMirror .mep-raw-block.mep-raw-above .mep-raw-chip::after {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 100%;
+    height: 7px;
+    border-left: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+}
+.vscode-high-contrast .ProseMirror .mep-raw-block.mep-raw-above .mep-raw-chip::after { border-left-color: var(--vscode-contrastBorder, GrayText); }
 /* The open source box is the edit: no chip over it. */
-.ProseMirror .mep-raw-block.mep-editing::before { content: none; }
+.ProseMirror .mep-raw-block.mep-editing > .mep-raw-rail { display: none; }
 
 .mep-raw-editor {
     box-sizing: border-box;

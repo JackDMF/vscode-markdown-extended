@@ -24,7 +24,7 @@ import { NOTE_SYNTAX } from '../syntax/markers';
 import { tokenText } from '../syntax/tokenText';
 import { measureLineWidth, measureWrapWidth } from './wrap';
 import { unreadEmoji } from './serialize';
-import { sourceReasonWords } from './sourceReason';
+import { HAS_AN_EMOJI, sourceReasonWords } from './sourceReason';
 
 /**
  * A document as the editor holds it: the ProseMirror tree plus the two facts
@@ -585,7 +585,7 @@ function withUnplacedAsSource(doc: Node, blocks: readonly SourceBlock[], render:
             });
             if (block.kind === 'editable' && holds && unreadEmoji(node) === null) {
                 changed = true;
-                children.push(editorSchema.nodes.raw_block.create({ src: block.src ?? '', gap: block.gap, html: render(block), construct: 'emoji' }));
+                children.push(editorSchema.nodes.raw_block.create({ src: block.src ?? '', gap: block.gap, html: render(block), construct: HAS_AN_EMOJI }));
             } else {
                 children.push(node);
             }
