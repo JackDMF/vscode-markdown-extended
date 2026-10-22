@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as puppeteer from 'puppeteer';
-import { EditorPage, closeEditorPage, delay, openEditorPage } from './pageHarness';
+import { EditorPage, UNDO, closeEditorPage, delay, openEditorPage, settle } from './pageHarness';
 import { BAR, CRUMBS, ROW_FIELD, blockRect, breadcrumbPage, rectOf } from './breadcrumbPage';
 
 /** The constructs the breadcrumb is drawn for (#8), and one it is not. */
@@ -321,5 +321,158 @@ suite('Editor breadcrumb: the parts\' fields (e2e)', () => {
         const menu = { heading: await page.$eval(`${ROW_FIELD} .mep-object-label`, el => el.textContent), rect: await rectOf(page, ROW_FIELD) };
         assert.strictEqual(menu.heading, bar.heading);
         assert.ok(Math.abs(menu.rect.top - bar.rect.top) <= 1 && Math.abs(menu.rect.left - bar.rect.left) <= 1, `${JSON.stringify(menu.rect)} vs ${JSON.stringify(bar.rect)}`);
+    });
+});
+
+/** Two parts with a literal each, a list carrying one alone, Quote › Bold, Admonition › Heading. */
+export const REMOVE_DOC = [
+    '- Queue the edit locally {.lead}',
+    '- Send the batch',
+    '',
+    '{.steps}',
+    '',
+    'Between the lists.',
+    '',
+    '- only the list carries one',
+    '- second',
+    '',
+    '{.plain}',
+    '',
+    '> A quoted line with **term**{.term} in it, and more after.',
+    '> {.warning}',
+    '',
+    '!!! warning',
+    '    ## Sync rules {#sync-rules}',
+    '',
+    '    Body text.',
+    '',
+    'The last paragraph.',
+    '',
+].join('\n');
+
+/**
+ * Remove on a two-part bar and the first focus (#8 step 7): Remove
+ * attributes ▾ naming each part, current first, an inline part's saying
+ * what stays; Remove attributes of List with one literal; an admonition's
+ * one Remove ▾; the hint names the part; Alt+Enter lands on the verb acting
+ * on the current part.
+ */
+suite('Editor breadcrumb: Remove and the first focus (e2e)', () => {
+    let editor: EditorPage | undefined;
+    let page: puppeteer.Page;
+    const b = breadcrumbPage(() => editor as EditorPage);
+    const REMOVE = `${BAR} [data-verb="remove-attributes"]`;
+    const MENU = `${BAR} .mep-object-menu`;
+
+    suiteSetup(async function () {
+        this.timeout(60000);
+        editor = await openEditorPage({ width: 1280, height: 900, styles: ['markdown-extended.css'] });
+        if (!editor) {
+            this.skip();
+        }
+        page = editor.page;
+    });
+
+    suiteTeardown(async function () {
+        await closeEditorPage(this, editor);
+    });
+
+    teardown(async () => {
+        await page.keyboard.press('Escape');
+        await page.mouse.click(1270, 890);
+    });
+
+    const entries = () => page.$$eval(`${MENU} .mep-menu-item`, els => els.map(el => [
+        el.querySelector('.mep-entry-label')?.textContent ?? '',
+        el.querySelector('.mep-entry-code')?.textContent ?? null,
+        el.querySelector('.mep-entry-syntax')?.textContent ?? null,
+    ]));
+    const openRemove = async (selector = REMOVE) => {
+        await page.waitForSelector(selector, { visible: true, timeout: 2000 });
+        await page.click(selector);
+        await page.waitForSelector(MENU, { visible: true, timeout: 2000 });
+    };
+
+    test('both parts carry one: Remove attributes ▾ — List item, then List; the item\'s goes, the hint names it, the bar stays with the item bare', async function () {
+        this.timeout(20000);
+        await b.show(REMOVE_DOC);
+        await b.restAt('Queue the edit', 2);
+        const button = await page.$eval(REMOVE, el => ({ text: el.textContent, popup: el.getAttribute('aria-haspopup') }));
+        assert.deepStrictEqual(button, { text: 'Remove attributes', popup: 'menu' });
+        await openRemove();
+        assert.deepStrictEqual(await entries(), [['List item', '{.lead}', null], ['List', '{.steps}', null]]);
+        await page.click(`${MENU} [data-entry="remove-current"]`);
+        await settle();
+        assert.ok(!(await b.lastEdit())?.text.includes('{.lead}') && (await b.lastEdit())?.text.includes('{.steps}'), (await b.lastEdit())?.text);
+        assert.strictEqual(await b.hint(), `List item attributes removed — ${UNDO}`);
+        await page.waitForSelector(CRUMBS, { visible: true, timeout: 2000 });
+        assert.strictEqual(await page.$eval(`${CRUMBS} [data-part="current"]`, el => el.classList.contains('mep-crumb-bare')), true, 'the item shows bare');
+        assert.strictEqual(await page.$eval(REMOVE, el => el.textContent), 'Remove attributes of List');
+    });
+
+    test('one part carries one: Remove attributes of List', async function () {
+        this.timeout(15000);
+        await b.show(REMOVE_DOC);
+        await b.restAt('only the list', 2);
+        assert.strictEqual(await page.$eval(REMOVE, el => el.textContent), 'Remove attributes of List');
+        await page.click(REMOVE);
+        await settle();
+        assert.ok(!(await b.lastEdit())?.text.includes('{.plain}'), (await b.lastEdit())?.text);
+        assert.strictEqual(await b.hint(), `List attributes removed — ${UNDO}`);
+    });
+
+    test('Quote › Bold: "Bold {.term}" with "formatting stays", then "Quote {.warning}"', async function () {
+        this.timeout(15000);
+        await b.show(REMOVE_DOC);
+        await b.restAt('term', 2);
+        await openRemove();
+        assert.deepStrictEqual(await entries(), [['Bold', '{.term}', 'formatting stays'], ['Quote', '{.warning}', null]]);
+        await page.click(`${MENU} [data-entry="remove-current"]`);
+        await settle();
+        assert.ok((await b.lastEdit())?.text.includes('**term** in it'), (await b.lastEdit())?.text);
+        assert.strictEqual(await b.hint(), `Bold attributes removed — ${UNDO}`);
+    });
+
+    test('Admonition › Heading: one Remove ▾ — the heading\'s attributes, a divider, the admonition with its content kept', async function () {
+        this.timeout(15000);
+        await b.show(REMOVE_DOC);
+        await b.restAt('Sync rules', 2);
+        await openRemove(`${BAR} [data-verb="remove-menu"]`);
+        assert.deepStrictEqual(await entries(), [['Attributes of Heading', '{#sync-rules}', null], ['Admonition, keep content', null, null]]);
+        assert.strictEqual(await page.$eval(`${MENU} [data-entry="remove-wrapper"]`, el => el.previousElementSibling?.classList.contains('mep-menu-separator')), true, 'a divider before it');
+        await page.click(`${MENU} [data-entry="remove-wrapper"]`);
+        await settle();
+        const text = (await b.lastEdit())?.text ?? '';
+        assert.ok(!text.includes('!!! warning') && text.includes('## Sync rules {#sync-rules}'), text);
+    });
+
+    test('Alt+Enter: the focus on Attributes… at a list item, on Attributes of Heading… in an admonition — never Type▾', async function () {
+        this.timeout(15000);
+        await b.show(REMOVE_DOC);
+        await b.clickAt('Queue the edit', 2);
+        await b.pressAlt('Enter');
+        assert.strictEqual(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.verb), 'block-attributes');
+        assert.strictEqual(await page.evaluate(() => document.activeElement?.textContent), 'Attributes…');
+        await page.keyboard.press('Escape');
+        await b.clickAt('Sync rules', 2);
+        await b.pressAlt('Enter');
+        assert.strictEqual(await page.evaluate(() => document.activeElement?.textContent), 'Attributes of Heading…');
+    });
+
+    test('the entries name the parts as they are: after the list\'s literal changed from the text side, Remove ▾ names the new one and removes exactly it', async function () {
+        this.timeout(20000);
+        await b.show(REMOVE_DOC);
+        await b.restAt('Queue the edit', 2);
+        await openRemove();
+        assert.deepStrictEqual((await entries())[1], ['List', '{.steps}', null]);
+        await page.keyboard.press('Escape');
+        await b.show(REMOVE_DOC.replace('{.steps}', '{.other}'));
+        await b.restAt('Queue the edit', 2);
+        await openRemove();
+        assert.deepStrictEqual((await entries())[1], ['List', '{.other}', null], 'never the stale {.steps}');
+        await page.click(`${MENU} [data-entry="remove-outer"]`);
+        await settle();
+        const text = (await b.lastEdit())?.text ?? '';
+        assert.ok(!text.includes('{.other}') && !text.includes('{.steps}') && text.includes('{.lead}'), text);
     });
 });

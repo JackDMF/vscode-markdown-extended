@@ -42,6 +42,12 @@ export interface Slotted {
     separated?: boolean;
     /** It opens something in place — a field, a choice, a menu, a source box — rather than acting at once or elsewhere. */
     opensInPlace: boolean;
+    /**
+     * On a two-part bar (#8), it acts on the outer part, not the current one
+     * the caret is in: an admonition's Type▾ and Edit title… on a bar whose
+     * current part is the heading inside it. Never the first focus.
+     */
+    outer?: true;
 }
 
 /**
@@ -65,10 +71,12 @@ export function arrange<V extends Pick<Slotted, 'slot' | 'separated'>>(verbs: re
 /**
  * Where `Alt+Enter` puts the focus: the index of the first verb that opens in
  * place and is not refused — never Open, never another extension's, never one
- * that acts at once — or `-1`, the bar itself.
+ * that acts at once, and on a two-part bar never one acting on the outer part
+ * (#8: the first in-place verb acting on the current part) — or `-1`, the bar
+ * itself.
  */
 export function firstFocus(verbs: readonly Slotted[]): number {
-    return verbs.findIndex(v => v.opensInPlace && !v.refusal && v.slot !== 'open' && v.slot !== 'actions' && v.slot !== 'destroy');
+    return verbs.findIndex(v => v.opensInPlace && !v.refusal && !v.outer && v.slot !== 'open' && v.slot !== 'actions' && v.slot !== 'destroy');
 }
 
 /**

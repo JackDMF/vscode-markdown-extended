@@ -208,6 +208,8 @@ export interface Verb {
      * breadcrumb part's List under the list, an admonition's heading under the heading (`blockAnchor`).
      */
     anchorBlock?: AttributesTarget;
+    /** On a two-part bar, it acts on the outer part (an admonition's Type▾): never the first focus (`firstFocus`, #8). */
+    outer?: true;
     /** What a table's set-verb acts on, tinted while it is active (`ObjectBar.activeAxis`): Row the caret's row, Column and Align its column. */
     axis?: 'row' | 'column';
 }
@@ -222,7 +224,7 @@ function drawVerbLabel(el: HTMLElement, verb: Verb, text: string): void {
 
 /** A verb as the bars' model reads it (`verbs.ts`): whether it opens in place is read from which of its ways it has. */
 function slotted(verb: Verb): Slotted {
-    return { slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box) };
+    return { slot: verb.slot, refusal: verb.refusal, separated: verb.separated, opensInPlace: Boolean(verb.field || verb.choice || verb.menu || verb.box), ...(verb.outer ? { outer: true as const } : {}) };
 }
 
 /** One entry of a set-verb's menu. */
@@ -231,8 +233,10 @@ interface MenuEntry {
     id: string;
     label: string;
     title: string;
-    /** The keyboard route to the same thing, shown at the entry's right (`Tab at end`). */
+    /** The keyboard route to the same thing, shown at the entry's right (`Tab at end`); or what stays (`formatting stays`, #8). */
     keys?: string;
+    /** A literal after the label, in the code font, muted (`Bold {.term}`, #8). */
+    code?: string;
     /** For a choice of one value out of several: whether this is the current one, marked. */
     checked?: boolean;
     /** Why it cannot be chosen here, in its tooltip and, pressed, beside it (#10); the entry is drawn disabled. */
@@ -302,6 +306,15 @@ function barless(object: EditorObject, presentation: Presentation): boolean {
     // the bar once the block has others (lenses, code actions) or a literal.
     return 'node' in object && literalOf(object.node) === null && verbs.every(v => v.id === 'block-attributes');
 }
+
+/** What stays when an inline part's literal is removed (#8 Remove▾'s right column): the element, or a span's text. */
+const STAYS: Readonly<Record<string, string>> = {
+    styled: 'formatting stays',
+    holder: 'formatting stays',
+    span: 'text stays',
+    link: 'link stays',
+    image: 'image stays',
+};
 
 /**
  * Whether `crumbs` are `object`'s bar's (#8): its current part is `object` —
@@ -632,7 +645,7 @@ class ObjectBar {
             presentation.crumbs === undefined ? null : [part(presentation.crumbs.outer), part(presentation.crumbs.current)],
             presentation.verbs.map(v => [
                 v.id, v.label, v.title, v.refusal ?? null, v.field?.value ?? v.choice?.value ?? null, v.separated ?? false,
-                v.menu?.map(m => [m.id, m.label, m.title, m.keys ?? null, m.checked ?? null, m.refusal ?? null]) ?? null,
+                v.menu?.map(m => [m.id, m.label, m.title, m.keys ?? null, m.code ?? null, m.checked ?? null, m.refusal ?? null]) ?? null,
             ]),
         ]);
         if (!this.field && signature !== this.signature) {
@@ -1167,6 +1180,13 @@ class ObjectBar {
             label.className = 'mep-entry-label';
             label.textContent = entry.label;
             el.append(label);
+            if (entry.code !== undefined) {
+                // The part's literal (#8 Remove▾): in the code font, muted, after the name.
+                const code = document.createElement('span');
+                code.className = 'mep-entry-code';
+                code.textContent = entry.code;
+                el.append(code);
+            }
             if (entry.opens) {
                 el.append(chevronNode('right'));
             }
@@ -2224,12 +2244,125 @@ class ObjectToolbarView implements PluginView {
             : this.crumbView(crumbs.outer);
         const current = this.crumbView(crumbs.current);
         const blockBar = object.kind === 'list_item' || object.kind === 'heading' || object.kind === 'block_attrs';
+        // An admonition's Type▾ and Edit title…, a container's Edit classes…, act on the outer part: never the first focus (#14 on two-part bars).
+        const ownVerbs = title ? own.verbs.map(v => (v.slot === 'type' || v.slot === 'edit' ? { ...v, outer: true as const } : v)) : own.verbs;
         return {
             ...own,
             crumbs: { outer, current },
             name: crumbName(current, outer),
             restless: blockBar && current.literal === null && outer.literal === null,
+            verbs: this.withCrumbRemove(object, ownVerbs, crumbs, title),
         };
+    }
+
+    /**
+     * Remove on a two-part bar (#8, section 4.4), in place of the object's own
+     * Remove attributes: **Remove attributes of List** where one part carries
+     * a literal; **Remove attributes ▾** naming each part, the current one
+     * first, where both do — an inline part's entry saying what stays
+     * (`formatting stays`); on an admonition or a container whose heading
+     * carries one, one **Remove ▾**: the heading's attributes, then — after a
+     * divider — the wrapper, its content kept. Each entry reads its part again
+     * when chosen (`removePart`), never a position held from before.
+     */
+    private withCrumbRemove(object: EditorObject, verbs: Verb[], crumbs: Crumbs, title: boolean): Verb[] {
+        const outer = crumbs.outer as CrumbPart;
+        const current = crumbs.current;
+        const entryOf = (part: CrumbPart): MenuEntry => ({
+            id: `remove-${part.role}`,
+            label: part.name,
+            code: part.literal ?? undefined,
+            keys: part.target !== null && 'object' in part.target ? STAYS[part.target.object.kind] ?? 'text stays' : undefined,
+            title: `The ${part.name.toLowerCase()}'s {…} goes; the ${part.name.toLowerCase()} stays.`,
+            run: () => this.removePart(object, part),
+        });
+        if (title) {
+            const wrapper = verbs.find(v => v.slot === 'destroy');
+            if (current.literal === null || wrapper === undefined || wrapper.run === undefined) {
+                return verbs;
+            }
+            const unwrap = wrapper.run;
+            const keep = object.kind === 'container' ? 'Container, keep content' : 'Admonition, keep content';
+            const remove: Verb = {
+                id: 'remove-menu',
+                label: wording({ verb: 'Remove', noun: '' }).label,
+                title: 'Choose what to remove',
+                slot: 'destroy',
+                menu: [
+                    { ...entryOf(current), label: `Attributes of ${current.name}` },
+                    { id: 'remove-wrapper', label: keep, title: wrapper.title, separated: true, run: unwrap },
+                ],
+            };
+            return [...verbs.filter(v => v !== wrapper), remove];
+        }
+        // The object's own Remove of its literal gives way: a styled run's, a span's, a block's one-part Remove attributes.
+        const rest = verbs.filter(v => v.id !== 'remove-attributes');
+        const carrying = [current, outer].filter(p => p.literal !== null && (p.target !== null));
+        if (carrying.length === 0) {
+            return rest;
+        }
+        if (carrying.length === 1) {
+            const part = carrying[0];
+            return [...rest, {
+                id: 'remove-attributes',
+                label: `Remove attributes of ${part.name}`,
+                title: `The ${part.name.toLowerCase()}'s {…} goes; the ${part.name.toLowerCase()} stays.`,
+                slot: 'destroy',
+                run: () => this.removePart(object, part),
+            }];
+        }
+        return [...rest, {
+            id: 'remove-attributes',
+            label: wording({ verb: 'Remove', noun: 'attributes', titled: false }).label,
+            title: 'Choose whose attributes to remove',
+            slot: 'destroy',
+            menu: carrying.map(entryOf),
+        }];
+    }
+
+    /**
+     * Remove the literal of the breadcrumb's part `part` was (#8): its part
+     * read again by its role from the state as it is once the focus is back —
+     * never a position held from when the bar was drawn — and refused at the
+     * Remove control, nothing removed, where that part is gone or its literal
+     * changed meanwhile (a resync). The hint names the part.
+     */
+    private removePart(object: EditorObject, part: CrumbPart): void {
+        const done = attributesRemovedHint(part.name);
+        this.act(object, () => {
+            const crumbs = crumbsAt(this.view.state);
+            const now = crumbs === null ? null : part.role === 'current' ? crumbs.current : crumbs.outer;
+            if (now === null || now.name !== part.name || now.literal !== part.literal || now.target === null) {
+                const el = this.selectionBar.el.querySelector<HTMLElement>('[data-verb="remove-attributes"], [data-verb="remove-menu"]');
+                const message = `Not removed: the ${part.name.toLowerCase()}'s attributes changed meanwhile — choose Remove again.`;
+                if (el !== null && !el.hidden) {
+                    showRefusal(this.view, message, { at: 'control', el });
+                } else {
+                    showRefusal(this.view, message);
+                }
+                return false;
+            }
+            const target = now.target;
+            if ('pos' in target) {
+                const made = commitAttributes(this.view.state, target, '');
+                if (made === null) {
+                    return false;
+                }
+                if ('refusal' in made) {
+                    showRefusal(this.view, made.refusal);
+                    return false;
+                }
+                this.view.dispatch(made.tr);
+                return true;
+            }
+            const run = literalObjectOf(currentObject(this.view.state, target.object));
+            const tr = run === null ? null : run.kind === 'span' ? removeSpanTransaction(this.view.state, run as Extract<EditorObject, { kind: 'span' }>) : changeInlineLiteralTransaction(this.view.state, run, '');
+            if (tr === null) {
+                return false;
+            }
+            this.view.dispatch(tr);
+            return true;
+        }, done);
     }
 
     /** A block or inline part of the breadcrumb as its button: its field — the one every route opens — or why it has none. */

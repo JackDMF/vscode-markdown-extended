@@ -606,6 +606,15 @@ img.mep-pending-range {
     color: var(--vscode-descriptionForeground, GrayText);
 }
 .mep-menu-item:is(:hover, :focus):not(.mep-disabled) :is(.mep-entry-syntax, .mep-menu-caret, .mep-entry-detail, .mep-entry-key) { color: inherit; opacity: 0.8; }
+/* A part's literal after its name in a bar's Remove▾ (#8, `Bold {.term}`): the code font, muted, never cut before the name. */
+.mep-entry-code {
+    flex: none;
+    margin-left: 6px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, GrayText);
+}
+.mep-menu-item:is(:hover, :focus):not(.mep-disabled) .mep-entry-code { color: inherit; opacity: 0.8; }
 
 /*
  * "…" (`toolbar.ts`, `layoutRow`): as wide as its longest entry, within the
