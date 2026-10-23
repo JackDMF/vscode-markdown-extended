@@ -166,6 +166,20 @@ suite('Editor breadcrumb: the bar (e2e)', () => {
         assert.deepStrictEqual(look, { background: 'rgba(0, 0, 0, 0)', tab: -1 });
     });
 
+    test('fail-first: Admonition › Heading — the bar stands at the heading\'s line, not under the whole admonition; current verbs first', async function () {
+        // Before, the bar was anchored at the admonition and stood under its last line.
+        this.timeout(15000);
+        await b.show(CRUMBS_DOC);
+        await b.restAt('Sync rules', 2);
+        await page.waitForSelector(CRUMBS, { visible: true, timeout: 2000 });
+        const bar = await rectOf(page, BAR);
+        const heading = await blockRect(page, 'Sync rules', 'h2');
+        const box = await blockRect(page, 'Body text', 'div.admonition');
+        assert.ok(bar.top >= heading.bottom - 1 && bar.top < box.bottom - 4, `bar ${bar.top}, heading ${heading.bottom}, admonition ${box.bottom}`);
+        const state = await barState(page);
+        assert.deepStrictEqual(state.verbs.slice(0, 1), ['Attributes of Heading…'], JSON.stringify(state.verbs));
+    });
+
     for (const [what, text, place] of [
         ['an item starting with a heading', '- ## Head\n- b\n\n{.l}\n\nThe last paragraph.\n', 'Head'],
         ['a new empty item', '- alpha\n- b\n\n{.l}\n\nThe last paragraph.\n', 'new item'],
@@ -565,14 +579,35 @@ async function ladder(page: puppeteer.Page) {
         const verbs = Array.from(bar.querySelectorAll(':scope > button[data-verb]')) as HTMLElement[];
         const more = bar.querySelector(':scope > .mep-object-more') as HTMLElement | null;
         const names = Array.from(bar.querySelectorAll('.mep-crumb-name')) as HTMLElement[];
+        const title = outer?.classList.contains('mep-crumb-title') ?? false;
+        const code = current?.querySelector('.mep-crumb-code') as HTMLElement | null;
         return {
+            // (1) outer literal cut, (2) hidden / title short, (3) current literal cut, (4) outer part into "…",
+            // (5) verbs into "…", (6) current literal hidden, (7) a title part hidden (#8 review 1).
             steps: [
                 outer?.classList.contains('mep-crumb-cut') ?? false,
-                outer?.classList.contains('mep-crumb-title') ? outer.querySelector('.mep-crumb-name')?.textContent === 'Warning' : outer?.classList.contains('mep-crumb-bare') ?? false,
-                outer?.hidden ?? false,
+                title ? (outer?.hidden || outer?.querySelector('.mep-crumb-name')?.textContent === 'Warning') : outer?.classList.contains('mep-crumb-bare') ?? false,
                 current?.classList.contains('mep-crumb-cut') ?? false,
+                !title && (outer?.hidden ?? false),
                 verbs.some(v => v.hidden),
+                current?.classList.contains('mep-crumb-bare') ?? false,
+                title && (outer?.hidden ?? false),
             ],
+            /** The current literal's width in characters of its font while shown (cut: six and the ellipsis), else null. */
+            currentChars: (() => {
+                if (code === null || code.offsetWidth === 0) {
+                    return null;
+                }
+                const probe = document.createElement('span');
+                probe.style.font = getComputedStyle(code).font;
+                probe.style.position = 'absolute';
+                probe.textContent = '0000000000';
+                document.body.append(probe);
+                const ch = probe.offsetWidth / 10;
+                probe.remove();
+                return Math.round((code.clientWidth / ch) * 10) / 10;
+            })(),
+            inside: bar.scrollWidth <= bar.clientWidth + 1 && (more === null || more.getBoundingClientRect().right <= bar.getBoundingClientRect().right + 0.5),
             more: more !== null,
             hiddenVerbs: verbs.filter(v => v.hidden).map(v => v.dataset.verb),
             shownLabels: verbs.filter(v => !v.hidden).map(v => v.textContent),
@@ -627,16 +662,18 @@ suite('Editor breadcrumb: the fit at narrow widths (e2e)', () => {
                 await page.setViewport({ width, height: 900 });
                 await delay(250);
                 const state = await ladder(page);
-                // A title part has no step 3: it never moves.
-                const order = what === 'List › List item' ? state.steps : state.steps.filter((_, k) => k !== 2);
+                // A title part never moves into "…" (step 4) — it is hidden last (step 7); a control part is never hidden (no step 7).
+                const order = what === 'List › List item' ? state.steps.filter((_, k) => k !== 6) : state.steps.filter((_, k) => k !== 3);
                 const reached = order.lastIndexOf(true) + 1;
                 assert.ok(order.slice(0, reached).every(Boolean), `${width}: the steps in order: ${JSON.stringify(state.steps)}`);
                 assert.ok(!state.namesCut, `${width}: no part's name is cut`);
                 assert.ok(!state.hiddenVerbs.includes(first), `${width}: Alt+Enter's verb never leaves`);
                 assert.ok(state.shownLabels.every(l => l !== 'Remove' || what === 'Admonition › Heading') && !state.shownLabels.includes('Edit…'), `${width}: verbs keep their nouns: ${JSON.stringify(state.shownLabels)}`);
                 assert.ok(state.right <= state.width, `${width}: inside the window: ${state.right}`);
+                assert.ok(state.inside, `${width}: nothing past the bar's edge, its "…" inside it`);
+                assert.ok(state.currentChars === null || state.currentChars >= 6.9, `${width}: a cut current literal shows six characters: ${state.currentChars}`);
                 if (what === 'Admonition › Heading') {
-                    assert.strictEqual(state.steps[2], false, `${width}: a title part never moves`);
+                    assert.strictEqual(state.steps[3], false, `${width}: a title part never moves`);
                 }
                 seen.push(reached);
             }

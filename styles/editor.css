@@ -974,7 +974,8 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 11px;
 }
-.mep-crumb.mep-crumb-cut .mep-crumb-code { max-width: 6ch; }
+/* Cut, six characters still show before the ellipsis (#8 review 1). */
+.mep-crumb.mep-crumb-cut .mep-crumb-code { max-width: 7ch; }
 .mep-crumb.mep-crumb-bare .mep-crumb-code { display: none; }
 /* The chevron between parts: drawn, not read (aria-hidden). */
 .mep-crumb-sep {

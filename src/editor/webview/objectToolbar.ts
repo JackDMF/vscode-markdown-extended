@@ -166,6 +166,9 @@ const HOVER_GRACE_MS = 300;
 /** Narrower than this, a cut title says nothing: `fit` hides it (the bar's `aria-label` still names the object). */
 const TITLE_STUB = 42;
 
+/** What a two-part bar leaves of the window's width, at most (#8 review 1): 16 px each side, as the overlay's hints. */
+const BAR_WINDOW_GUTTER = 32;
+
 /** What `reopenVia` holds for "…"'s own list, which no verb id is. */
 const MORE_LIST = '…';
 
@@ -282,6 +285,11 @@ interface Presentation {
      * without literals — `Alt+Enter` draws it. Decided before other extensions' actions join the verbs.
      */
     restless?: boolean;
+    /**
+     * Where the bar stands when not at its object (#8 review 1): the current part's block — the heading of an
+     * admonition or a container whose bar it is — so the bar is at the heading's line, not under the whole box.
+     */
+    anchorFrom?: number;
 }
 
 /**
@@ -585,6 +593,8 @@ interface BarEvents {
 class ObjectBar {
     readonly el: HTMLElement;
     object: EditorObject | null = null;
+    /** Where the bar stands when not at its object (`Presentation.anchorFrom`): the current part's block. */
+    anchorFrom: number | null = null;
     private field: InlineField | InlineChoice | null = null;
     /** What draws the field's row while it is open (`fieldRow.ts`). */
     private row: FieldRow | null = null;
@@ -654,6 +664,7 @@ class ObjectBar {
     /** Show `object`; redrawn only when what it shows changed, so a focused verb keeps its focus, and never under an open field. */
     show(object: EditorObject, presentation: Presentation): void {
         this.object = object;
+        this.anchorFrom = presentation.anchorFrom ?? null;
         this.el.dataset.object = object.kind;
         // Everything the bar draws or will prefill: an image's `src` is in no
         // label, only in the title and the field's value, and a bar kept after
@@ -817,15 +828,18 @@ class ObjectBar {
     }
 
     /**
-     * A two-part bar fitted to `room` (#8, section 4.6), one step at a time
-     * while it is past the room: (1) the outer part's literal is cut, (2) then
-     * hidden — a title part takes its short form ("Warning"); (3) the outer
-     * part moves into the bar's "…" as "Attributes of List… {.steps}", the
-     * chevron with it, "…" drawn even where every verb fits (a title part
-     * never moves: it is no control); (4) the current part's literal is cut —
-     * never hidden, and no part's name is ever cut; (5) the verbs move into
-     * "…" in `overflowOrder`. Its verbs keep their nouns throughout: no short
-     * forms on a two-part bar. Measured, from the whole bar each time.
+     * A two-part bar fitted to `room` (#8, section 4.6; review 1), never wider
+     * than the window less `BAR_WINDOW_GUTTER`, one step at a time while it is
+     * past the room: (1) the outer part's literal is cut, (2) then hidden — a
+     * title part takes its short form ("Warning"); (3) the current part's
+     * literal is cut, six characters still showing; (4) the outer part moves
+     * into the bar's "…" as "Attributes of List… {.steps}", the chevron with
+     * it, "…" drawn even where every verb fits (a title part never moves: it is
+     * no control); (5) the verbs move into "…" in `overflowOrder`; (6) the
+     * current literal is hidden, (7) then a title part — so "…" stays inside
+     * the bar. No part's name is ever cut, and the bar's name keeps every part.
+     * Its verbs keep their nouns throughout: no short forms on a two-part bar.
+     * Measured, from the whole bar each time.
      */
     private fitCrumbs(room: number): void {
         const movedBefore = this.moved.map(b => b.verb.id).join(',');
@@ -850,7 +864,8 @@ class ObjectBar {
         if (sep !== null) {
             sep.hidden = false;
         }
-        this.el.style.maxWidth = `${Math.floor(room)}px`;
+        // Never past the window, whatever the room (#8 review 1: at 380 px the bar ran off it): its "…" stays inside.
+        this.el.style.maxWidth = `${Math.floor(Math.min(room, window.innerWidth - BAR_WINDOW_GUTTER))}px`;
         const left = this.el.style.left;
         this.el.style.left = '0px';
         const more = this.more;
@@ -865,7 +880,11 @@ class ObjectBar {
                     name.textContent = outer.view.short;
                 }
             }
-            // (3) The outer part, a control, moves into "…" — first there — the chevron with it.
+            // (3) The current literal is cut, six characters still showing — before the outer part leaves (#8 review 1).
+            if (past()) {
+                current.el.classList.add('mep-crumb-cut');
+            }
+            // (4) The outer part, a control, moves into "…" — first there — the chevron with it.
             if (past() && outer.view.verb !== null && more) {
                 outer.el.hidden = true;
                 if (sep !== null) {
@@ -873,10 +892,6 @@ class ObjectBar {
                 }
                 this.outerMoved = true;
                 this.el.append(more);
-            }
-            // (4) The current literal is cut, never hidden.
-            if (past()) {
-                current.el.classList.add('mep-crumb-cut');
             }
         }
         if (more && past()) {
@@ -889,6 +904,19 @@ class ObjectBar {
                     more.remove();
                 }
             });
+        }
+        if (outer !== undefined && current !== undefined) {
+            // (6) Still past — the verb Alt+Enter focuses never leaves — the current literal goes, (7) then a title part:
+            // "…" is pinned inside the bar. The bar's name keeps both parts and their literals.
+            if (past()) {
+                current.el.classList.add('mep-crumb-bare');
+            }
+            if (past() && outer.view.verb === null) {
+                outer.el.hidden = true;
+                if (sep !== null) {
+                    sep.hidden = true;
+                }
+            }
         }
         if (this.more) {
             this.more.setAttribute('aria-label', moreName('bar', this.moreEntries().map(e => e.label)));
@@ -2044,7 +2072,7 @@ class ObjectToolbarView implements PluginView {
             kind,
             key: barKey(kind, object),
             el: bar.el,
-            anchor: () => (bar.object === null ? null : anchorOf(this.view, bar.object)),
+            anchor: () => (bar.object === null ? null : anchorOf(this.view, this.partAnchor(bar) ?? bar.object)),
             valid: () => bar.object !== null,
             // An inline object's bar goes above where text is on both sides (Daniel, 2026-10-20); a block's stays below.
             bothCovered: isBlockPlaced(object) ? undefined : 'above',
@@ -2056,6 +2084,13 @@ class ObjectToolbarView implements PluginView {
                 bar.fit(room);
             },
         };
+    }
+
+    /** The block `bar` stands at instead of its object (`ObjectBar.anchorFrom`, #8 review 1): a heading in its admonition; `null` for its object. */
+    private partAnchor(bar: ObjectBar): EditorObject | null {
+        const at = bar.anchorFrom;
+        const node = at === null || at >= this.view.state.doc.content.size ? null : this.view.state.doc.nodeAt(at);
+        return node === null ? null : objectOfNode(node, at as number);
     }
 
     /**
@@ -2383,6 +2418,7 @@ class ObjectToolbarView implements PluginView {
             crumbs: { outer, current },
             name: crumbName(current, outer),
             restless: blockBar && current.literal === null && outer.literal === null,
+            ...(title ? { anchorFrom: crumbs.current.from } : {}),
             verbs: this.withCrumbRemove(object, ownVerbs, crumbs, title),
         };
     }
