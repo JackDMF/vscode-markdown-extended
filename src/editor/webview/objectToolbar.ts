@@ -330,7 +330,8 @@ function crumbsFor(object: EditorObject, crumbs: Crumbs): boolean {
         const outer = crumbs.outer;
         return outer !== null && outer.target === null && outer.refusal === null && outer.from === object.from;
     }
-    return target !== null && 'pos' in target && target.pos === object.from;
+    // By place, not by target: a refused current part (an item starting with a heading, a new empty one) has none, and keeps its crumbs (#8 review 1).
+    return crumbs.current.anchor !== 'run' && crumbs.current.from === object.from;
 }
 
 const CONVERT_LABELS: Readonly<Record<NoteNodeName, string>> = {

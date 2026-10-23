@@ -163,6 +163,30 @@ suite('Editor breadcrumb: the bar (e2e)', () => {
         const look = await page.$eval(`${CRUMBS} .mep-crumb-title`, el => ({ background: getComputedStyle(el).backgroundColor, tab: (el as HTMLElement).tabIndex }));
         assert.deepStrictEqual(look, { background: 'rgba(0, 0, 0, 0)', tab: -1 });
     });
+
+    for (const [what, text, place] of [
+        ['an item starting with a heading', '- ## Head\n- b\n\n{.l}\n\nThe last paragraph.\n', 'Head'],
+        ['a new empty item', '- alpha\n- b\n\n{.l}\n\nThe last paragraph.\n', 'new item'],
+    ] as const) {
+        test(`fail-first: ${what} — its part refused, the bar keeps List {.l} › List item`, async function () {
+            // Before the fix a refused current part (no target) dropped the breadcrumb: a one-part bar, the List's literal unreachable.
+            this.timeout(15000);
+            await b.show(text);
+            if (place === 'new item') {
+                await b.clickAt('alpha', 2);
+                await page.keyboard.press('End');
+                await page.keyboard.press('Enter');
+                await delay(150);
+            } else {
+                await b.clickAt(place, 2);
+            }
+            await b.pressAlt('Enter');
+            await page.waitForSelector(CRUMBS, { visible: true, timeout: 2000 });
+            const state = await barState(page);
+            assert.deepStrictEqual(state.parts.map(p => [p.role, p.text, p.code]), [['outer', 'List', '{.l}'], ['current', 'List item', null]]);
+            assert.ok(state.verbs.includes('Remove attributes of List'), JSON.stringify(state.verbs));
+        });
+    }
 });
 
 /** A list item with a list nested in it, the list carrying a literal; a quote with bold in the middle of a line. */
