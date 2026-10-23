@@ -305,27 +305,18 @@ export const LIGHT_PLUS: Theme = {
 /**
  * The theme as a stylesheet: its variables and the host's on `:root`, as VS
  * Code sets them on the webview's `<html>`. The `<html>` itself is left
- * unpainted, as VS Code leaves it: a user stylesheet's body background then
+ * unpainted, as VS Code leaves it, so a user stylesheet's body background
  * fills the whole page (the canvas takes it), not only the body's box. The
- * editor's background behind the frame is `applyTheme`'s (the page's default
- * background). The body's colour and font are the defaults' and the page's own.
+ * editor's background VS Code paints behind the frame is drawn as the body's,
+ * in a cascade layer of its own after the webview's defaults: the same canvas
+ * where no stylesheet paints the body, and any stylesheet's body background
+ * wins over it. The body's colour and font are the defaults' and the page's own.
  */
 export function themeCss(theme: Theme, settings: HostSettings = {}): string {
     const vars = Object.entries(theme.variables).map(([name, value]) => `    --vscode-${name}: ${value};`);
     vars.push(`    --text-link-decoration: ${settings.underlineLinks ? 'underline' : 'none'};`);
-    return `:root {\n${vars.join('\n')}\n}`;
+    return `:root {\n${vars.join('\n')}\n}\n@layer mep-test-ground {\n    body {\n        background-color: var(--vscode-editor-background);\n    }\n}`;
 }
-
-/** `#rgb`, `#rrggbb` or `#rrggbbaa` as the DevTools protocol's RGBA. */
-function rgbaOf(hex: string): { r: number; g: number; b: number; a: number } {
-    const h = hex.replace('#', '');
-    const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
-    const at = (i: number) => parseInt(full.slice(i, i + 2), 16);
-    return { r: at(0), g: at(2), b: at(4), a: full.length === 8 ? at(6) / 255 : 1 };
-}
-
-/** The DevTools sessions the default background is set through, one per page. */
-const sessions = new WeakMap<puppeteer.Page, puppeteer.CDPSession>();
 
 /** Put `theme` on the page, replacing the one it had: the variables and the body's theme class. */
 export async function applyTheme(page: puppeteer.Page, theme: Theme, settings: HostSettings = {}): Promise<void> {
@@ -341,14 +332,7 @@ export async function applyTheme(page: puppeteer.Page, theme: Theme, settings: H
         document.body.classList.add(bodyClass);
         document.body.dataset.vscodeThemeId = id;
     }, themeCss(theme, settings), theme.bodyClass, theme.id);
-    // The editor's background behind the frame, as VS Code paints it: under the canvas, never on `<html>`.
-    const ground = theme.variables['editor-background'];
-    if (ground !== undefined) {
-        let session = sessions.get(page);
-        if (session === undefined) {
-            session = await page.createCDPSession();
-            sessions.set(page, session);
-        }
-        await session.send('Emulation.setDefaultBackgroundColorOverride', { color: rgbaOf(ground) });
-    }
+    // VS Code's webviews answer `prefers-color-scheme` by the theme's kind, not by the machine's
+    // setting: a stylesheet that follows it (Daniel's petrol one) shows its light face in Light Modern.
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme.bodyClass === 'vscode-light' ? 'light' : 'dark' }]);
 }

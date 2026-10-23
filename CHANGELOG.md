@@ -54,6 +54,7 @@
 - Convert to sidenote or marginal note, and a sidebar's Move left or right, keep the attributes.
 - A caret or selection in a note's text targets the note, also on marked words; a mark with its own {…} still wins.
 - Bars may reach into the margin where no note sits beside them, before they shorten their words.
+- A note or sidebar copied in the editor pastes with its attributes, as a note, not as a span.
 - Source blocks name a holder's attributes they cannot keep, e.g. "has a marginal note with attributes".
 
 ## v4.9.0 — Layers That Keep Their Place
