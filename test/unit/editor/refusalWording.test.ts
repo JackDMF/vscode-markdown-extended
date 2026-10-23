@@ -68,6 +68,8 @@ function reworded(): [string, Said][] {
         ['X13', PROPERTIES_PRESENT_REFUSAL], ['X15', objects.NESTED_CODE_ATTRS_REFUSAL], ['X16', objects.ITEM_ATTRS_REFUSAL],
         ['F9', objects.LITERAL_READ_WITH_BLOCK_REFUSAL], ['F10', objects.literalAlreadyLostRefusal({ ...loss, literal: null } as never)],
         ['F10 literal', objects.literalAlreadyLostRefusal({ ...loss, literal: lit } as never)], ['F11', fences.LANGUAGE_WORD_REFUSAL],
+        // #15: a note's literal holding a marker it would pair with (R2); a sidebar's removal that glues it (R4).
+        ['R2', objects.noteLiteralMarkerRefusal('right sidebar', '@')], ['R4', objects.noteLiteralRemoveGlued('left sidebar')],
     ];
     for (const typed of ['{.}', '{width = 300}', '{a="x}', '{title="a}b"}', '{k="a\\"b"}', '{href=x}', '{src=x}', '{title=x}']) {
         const place = typed.startsWith('{href') || typed.startsWith('{title=x') ? 'link' : typed.startsWith('{src') ? 'image' : typed.includes('a}b') ? 'span' : 'paragraph';

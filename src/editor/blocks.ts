@@ -1092,8 +1092,8 @@ function classify(tokens: readonly Token[], group: TokenGroup, lines: readonly S
     if (first.type === 'table_open' && inlineLiterals.some(l => /[|`]/.test(l))) {
         // A literal is written as it is, and in a row a `|` is a cell boundary and
         // a backtick opens code: the page could not write the table back
-        // (`unwritableInTable`), so it is not drawn as one it can edit.
-        return raw('attribute span holding | or a backtick in a table cell');
+        // (`unwritableInTable`), so it is not drawn as one it can edit — a sidebar's literal as much as a span's.
+        return raw('attribute literal holding | or a backtick in a table cell');
     }
     return { kind: 'editable', reason: first.type, injectedKind: null, mark: null, attrs: recovered.attrs, inlineLiterals, itemLiterals, endLine };
 }
