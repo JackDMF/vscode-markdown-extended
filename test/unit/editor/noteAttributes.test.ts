@@ -14,9 +14,8 @@ import { saidText } from '../../../src/editor/tips';
 import { unwrapNote } from '../../../src/editor/webview/notes';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import { hostEngine, replaceChild, topChildren, touched } from './helpers';
+import { TEMPO } from './noteSample';
 
-/** Daniel's line (Theokratie-Archiv, Vorsitz 06-30): a marginal note carrying `{.tipp}`. */
-export const TEMPO = '!!Tempo|nicht zu abrupt ändern, nicht zu schnell!!{.tipp}';
 
 const NOTE_NAMES = ['sidenote', 'marginal_note', 'left_sidebar', 'right_sidebar'];
 
