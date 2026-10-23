@@ -216,7 +216,10 @@ function runObject(holder: InlineLiteralHolder, mark: Mark, from: number, to: nu
  * counts only while it carries a literal: formatting has no bar of its own.
  * Then the note or sidebar both ends of the selection are in — its reference,
  * its body, or across the two — so a mark inside a note wins over the note,
- * as one inside a link wins over the link; a selected note is one too.
+ * as one inside a link wins over the link; a selected note is one too. Inside
+ * a note a styled mark counts only while it carries a literal, whatever
+ * `withLiteral` says (Daniel, #15 review 1): the bar, the menu and the
+ * bubble all name the note at `*abrupt*` in `!!Tempo|nicht zu *abrupt*!!`.
  */
 function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[], withLiteral: boolean, accept: (object: LiteralObject) => boolean = () => true): InlineHolderAt | null {
     const sel = state.selection;
@@ -230,13 +233,15 @@ function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[]
     if (!$from.parent.inlineContent) {
         return null;
     }
+    const note = noteHolderAt($from, $to);
+    const literalOnly = withLiteral || note !== null;
     for (const holder of $from.sameParent($to) ? holders : []) {
         if (!('mark' in holder.carrier)) {
             continue;
         }
         const type = editorSchema.marks[holder.carrier.mark];
         for (const neighbour of [$from.nodeAfter, $from.nodeBefore]) {
-            const mark = neighbour?.marks.find(m => m.type === type && (!withLiteral || !holder.styled || m.attrs.literal !== null));
+            const mark = neighbour?.marks.find(m => m.type === type && (!literalOnly || !holder.styled || m.attrs.literal !== null));
             const run = mark === undefined ? null : markRunAt($from, mark);
             const object = mark === undefined || run === null || $to.pos > run.to ? null : runObject(holder, mark, run.from, run.to);
             if (object !== null && accept(object)) {
@@ -244,7 +249,6 @@ function holderRunAt(state: EditorState, holders: readonly InlineLiteralHolder[]
             }
         }
     }
-    const note = noteHolderAt($from, $to);
     if (note !== null && holders.includes(note.holder) && accept(note.object)) {
         return note;
     }

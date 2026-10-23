@@ -290,7 +290,8 @@ function sidebarNode(className: string): NodeSpec {
     return notePart(className, {
         group: 'inline',
         attrs: noteLiteral,
-        parseDOM: [{ tag: `span.${className}`, getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }) }],
+        // Before the attribute span's `span[data-mep-attrs]` (a mark's rule, read first at equal priority): a copy of a sidebar with a literal pastes as the sidebar.
+        parseDOM: [{ tag: `span.${className}`, priority: 60, getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }) }],
     });
 }
 
@@ -301,7 +302,8 @@ function noteNode(refClass: string, bodyType: string, bodyClass: string, anchorC
         content: `note_ref ${bodyType}`,
         isolating: true,
         attrs: noteLiteral,
-        parseDOM: [{ tag: `span.${refClass}`, getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }), getContent: noteContent(bodyType, bodyClass, anchorClass) }],
+        // Before the attribute span's rule, as a sidebar's (`sidebarNode`): `span.mn-ref.tipp[data-mep-attrs]` is the note.
+        parseDOM: [{ tag: `span.${refClass}`, priority: 60, getAttrs: (dom: HTMLElement) => ({ literal: literalOfDOM(dom) }), getContent: noteContent(bodyType, bodyClass, anchorClass) }],
         toDOM(node): DOMOutputSpec { return ['span', withClass(refClass, node.attrs.literal as string | null), 0]; },
     };
 }

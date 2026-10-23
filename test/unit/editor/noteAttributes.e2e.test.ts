@@ -353,6 +353,69 @@ suite('Editor note attributes: menu, bubble and refusals (e2e)', () => {
         assert.ok(text.includes('schnell!!{.tipp .y}') && !text.includes('[abrupt]'), text);
     });
 
+    test('fail-first: on italic words of a note without a {…} of their own the bar, Formatting and the bubble all name the note; with one, Italic wins', async function () {
+        // Daniel (review 1): a mark without its own literal inside a note does not count. Before the fix
+        // Formatting read "Attributes of Italic…" and the bubble "Attributes of Italic…" here.
+        this.timeout(40000);
+        // With its own literal the italic run is the holder, named by its delimiter's name.
+        for (const [src, bar, name] of [
+            ['Tempo !!Tempo|nicht zu *abrupt* ändern!!{.tipp} hier.\n\nThe last paragraph.\n', 'Marginal note {.tipp}', 'Marginal note'],
+            ['Tempo !!Tempo|nicht zu *abrupt*{.k} ändern!!{.tipp} hier.\n\nThe last paragraph.\n', 'Italic {.k}', 'Italic'],
+        ]) {
+            await b.show(src);
+            await selectText('abrupt');
+            await page.waitForSelector(BUBBLE_TOOL, { timeout: 3000 });
+            const tip = await describedTip(page, BUBBLE_TOOL);
+            assert.ok(tip.startsWith(`Attributes of ${name}…`), `${src}: ${tip}`);
+            await page.keyboard.press('Escape');
+            await caretIn('abrupt', 2);
+            await page.waitForSelector(BAR, { visible: true, timeout: 2000 });
+            assert.strictEqual((await barOf(page)).title, bar, src);
+            await b.openMenu('formatting');
+            assert.strictEqual(await page.$eval(ENTRY, el => el.querySelector('.mep-entry-label')?.textContent), `Attributes of ${name}…`, src);
+            await page.keyboard.press('Escape');
+            await page.keyboard.press('Escape');
+            await leaveObjects(page);
+        }
+    });
+
+    test('the editor\'s own copy of a note and a sidebar pasted back keeps their literals (data-mep-attrs)', async function () {
+        this.timeout(20000);
+        await b.show('Alpha !!r|n!!{.tipp} and $s${#i .l} beta.\n\nGamma.\n\nThe last paragraph.\n');
+        await page.focus('.ProseMirror');
+        await page.evaluate(() => {
+            const p = document.querySelector('.ProseMirror p') as HTMLElement;
+            const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+            const texts: globalThis.Node[] = [];
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                texts.push(node);
+            }
+            const last = texts[texts.length - 1];
+            (document.getSelection() as Selection).setBaseAndExtent(texts[0], 0, last, (last.textContent ?? '').length);
+        });
+        await delay(200);
+        const html = await page.evaluate(() => {
+            const data = new DataTransfer();
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+            return data.getData('text/html');
+        });
+        assert.ok(html.includes('data-mep-attrs="{.tipp}"') && html.includes('data-mep-attrs="{#i .l}"'), html);
+        await page.evaluate(() => {
+            const gamma = Array.from(document.querySelectorAll('.ProseMirror p')).find(p => p.textContent === 'Gamma.') as HTMLElement;
+            (document.getSelection() as Selection).collapse(gamma.firstChild as globalThis.Node, 'Gamma.'.length);
+        });
+        await delay(200);
+        await page.evaluate(h => {
+            const data = new DataTransfer();
+            data.setData('text/html', h);
+            data.setData('text/plain', 'Alpha');
+            (document.querySelector('.ProseMirror') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+        }, html);
+        await settle();
+        const text = (await b.lastEdit())?.text ?? '';
+        assert.ok(text.includes('Gamma.Alpha !!r|n!!{.tipp} and $s${#i .l} beta.\n'), text);
+    });
+
     test('R2 in the field: a literal whose "@" would pair with a later sidebar is refused there, aria-invalid, nothing written', async function () {
         this.timeout(20000);
         await b.show('Times @Owner Mia@ and @b@ here.\n\nThe last paragraph.\n');

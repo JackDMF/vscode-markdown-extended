@@ -7,7 +7,7 @@ import { parseDocument } from '../../../src/editor/parse';
 import { editorSchema } from '../../../src/editor/schema';
 import { serializeDocument } from '../../../src/editor/serialize';
 import {
-    LiteralObject, attributeHolderAt, changeInlineLiteralRefusal, changeInlineLiteralTransaction, convertNoteRefusal, convertNoteTransaction, crumbsAt,
+    LiteralObject, attributeHolderAt, changeInlineLiteralRefusal, holderNames, changeInlineLiteralTransaction, convertNoteRefusal, convertNoteTransaction, crumbsAt,
     literalCellRefusal, noteFieldRange, noteLiteralConvertRefusal, noteLiteralMarkerRefusal, noteLiteralRemoveGlued, noteSource, objectAtSelection,
 } from '../../../src/editor/webview/objects';
 import { saidText } from '../../../src/editor/tips';
@@ -225,6 +225,20 @@ suite('Editor note attributes: the note is the holder at a caret or a selection 
         }
         assert.strictEqual(attributeHolderAt(select(state, posOf(state.doc, 'Punkt', 1))).inline, null, 'outside the note');
         assert.strictEqual(attributeHolderAt(select(state, posOf(state.doc, 'Punkt', 1), posOf(state.doc, 'abrupt'))).inline, null, 'from outside into it');
+    });
+
+    test('a mark without its own literal in a note does not count; with one it wins, named by its delimiter', () => {
+        // Daniel (review 1): the bar, the menu and the bubble all name the note on bare formatting in it.
+        for (const [md, name] of [['*', 'Italic'], ['_', 'Emphasis'], ['**', 'Bold'], ['__', 'Strong']]) {
+            const bare = stateOf(`a !!r|nicht zu ${md}abrupt${md}!!{.tipp}\n`);
+            const at = select(bare, posOf(bare.doc, 'abrupt', 2));
+            assert.strictEqual(attributeHolderAt(at).inline?.object.kind, 'note', md);
+            assert.strictEqual(attributeHolderAt(select(bare, posOf(bare.doc, 'abrupt'), posOf(bare.doc, 'abrupt', 6))).inline?.object.kind, 'note', `${md} selected`);
+            assert.strictEqual(objectAtSelection(at)?.kind, 'note', `${md}: the bar`);
+            const own = stateOf(`a !!r|nicht zu ${md}abrupt${md}{.k}!!{.tipp}\n`);
+            const inline = attributeHolderAt(select(own, posOf(own.doc, 'abrupt', 2))).inline;
+            assert.strictEqual(inline === null ? null : holderNames(inline).label, name, md);
+        }
     });
 
     test('code with a literal inside a note wins over the note, as inside a link', () => {
