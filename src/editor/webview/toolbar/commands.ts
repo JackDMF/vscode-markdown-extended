@@ -211,11 +211,11 @@ function isRequirementHeading(node: Node): boolean {
 export const REQUIREMENT_HEADING_LOCK = 'A requirement heading keeps its type: changing it would lose its id and its anchor. Edit the title only.';
 export const ATOM_LOCK = 'This block has no block type — Edit source changes a source block.';
 export const NODE_LOCK = 'A whole element is selected, not text in a block; put the caret in a paragraph or heading to change its type.';
-export const GAP_LOCK = 'No block here to change — Insert adds one at this spot.';
+export const GAP_LOCK = 'No block here — Insert adds one at this spot.';
 export const ALL_LOCK = 'Several blocks are selected — put the caret in one block to change its type.';
 export const WHOLE_LOCK = 'The whole document is selected — put the caret in the block to change its type.';
 export const NO_TEXT_LOCK = 'Put the caret in a paragraph or heading to change its type.';
-export const TABLE_LOCK = 'A table cell has no block type — the table\'s bar adds rows and columns.';
+export const TABLE_LOCK = 'A table cell keeps its block type — text formatting still works here.';
 
 /**
  * Why the block type cannot be changed here, or `null` when it can — decided

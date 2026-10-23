@@ -53,7 +53,7 @@ function reworded(): [string, Said][] {
         ['C3', serialize.CELL_PIPE_REFUSAL], ['C4', serialize.CELL_BREAK_REFUSAL], ['C5', serialize.emojiRawRefusal('inline code')],
         ['C12', serialize.mergedReason('bold text')],
         ...(['lost', 'made', 'text', 'address', 'title', 'block', 'unread'] as const).map((kind): [string, Said] => [`cause ${kind}`, serialize.causeReason({ kind, noun: kind === 'title' ? 'link' : 'emphasis' })]),
-        ['C14a', serialize.SIDEBAR_NOT_READ], ['C14b', serialize.SIDEBAR_MADE], ['C14c', serialize.MATH_MADE],
+        ['C14 glued', serialize.SIDEBAR_GLUED_BEFORE], ['C14a', serialize.SIDEBAR_NOT_READ], ['C14b', serialize.SIDEBAR_MADE], ['C14c', serialize.MATH_MADE],
         ['C17a', objects.IMAGE_LOCK], ['C17b', objects.DROP_LOCK], ['C17c', objects.IMAGE_PLACE_REFUSAL], ['C19', SYSTEM_FILE_LOCK],
         ['C22', INLINE_ATTRS_LOCK], ['C23', objects.NO_ATTRS_REFUSAL], ['C24', CONTAINER_TITLE_REFUSAL],
         ['X4', serialize.SIDEBAR_REWRITTEN_REFERENCE], ['X5', serialize.SIDEBAR_REWRITTEN], ['X6', serialize.SIDEBAR_LEFT_MATH],
@@ -82,7 +82,7 @@ function reworded(): [string, Said][] {
 const KEPT: [string, Said][] = [
     ['NODE_LOCK', commands.NODE_LOCK], ['NO_TEXT_LOCK', commands.NO_TEXT_LOCK], ['WRAP_LOCK', commands.WRAP_LOCK], ['REQUIREMENT_HEADING_LOCK', commands.REQUIREMENT_HEADING_LOCK],
     ['LINK_LOCK', objects.LINK_LOCK], ['NOTE_LOCK', NOTE_LOCK], ['NESTED_NOTE_LOCK', NESTED_NOTE_LOCK], ['NO_BLOCK_ATTRS_REFUSAL', objects.NO_BLOCK_ATTRS_REFUSAL],
-    ['NO_INCLUDES_REFUSAL', NO_INCLUDES_REFUSAL], ['SIDEBAR_GLUED_BEFORE', serialize.SIDEBAR_GLUED_BEFORE], ['SIDEBAR_GLUED_AFTER', serialize.SIDEBAR_GLUED_AFTER],
+    ['NO_INCLUDES_REFUSAL', NO_INCLUDES_REFUSAL], ['SIDEBAR_GLUED_AFTER', serialize.SIDEBAR_GLUED_AFTER],
     ['SIDEBAR_GLUED_URL', serialize.SIDEBAR_GLUED_URL], ['NO_FENCE', fences.NO_FENCE_REFUSAL], ['BACKTICK_INFO', fences.BACKTICK_INFO_REFUSAL],
     ['LANGUAGE_FOLLOWED', fences.LANGUAGE_FOLLOWED_REFUSAL], ['LANGUAGE_LITERAL', fences.LANGUAGE_LITERAL_REFUSAL],
 ];
@@ -121,8 +121,12 @@ suite('Editor refusal wording: one rule for every refusal (#10)', () => {
             });
             const text = saidText(said).replace(applyKey(), '').replace(undoKey(), '');
             assert.doesNotMatch(text, /\b(Ctrl|Cmd)\b/, `${id}: ${text}`);
-            for (const m of saidText(said).matchAll(/show in text editor/gi)) {
+            const full = saidText(said);
+            for (const m of full.matchAll(/show in text editor/gi)) {
                 assert.strictEqual(m[0], VERB.showInTextEditor, id);
+                // Named as the button it is: in quotes (#10 build critique).
+                const at = m.index ?? 0;
+                assert.ok(full[at - 1] === '"' && full[at + m[0].length] === '"', `${id}: the verb in quotes: ${full}`);
             }
         }
     });
@@ -154,7 +158,7 @@ suite('Editor refusal wording: the marks and parts it names', () => {
             const said = serialize.unwritableInNote(state.tr.insertText('|', at).doc);
             const noun = markNoun(editorSchema.marks[name].create());
             assert.ok(said !== null, name);
-            assert.strictEqual(saidText(said), `A "|" can't go in ${noun} inside a sidenote — it would end the note there. Type it outside the ${noun}.`, name);
+            assert.strictEqual(saidText(said), `"|" can't go in ${noun} in a sidenote — it would end the note there. Type it outside the ${noun}.`, name);
         }
     });
 
@@ -193,7 +197,7 @@ suite('Editor refusal wording: the marks and parts it names', () => {
         const table = topChildren(parseDocument(hostEngine(), '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n').doc)[0];
         const cell = table.lastChild?.firstChild as Node;
         const lost = { at: null, literal: null, cause: { kind: 'lost', noun: 'emphasis' } } as never;
-        assert.strictEqual(saidText(serialize.literalRewrittenBeside(table, cell, lost)), `This table can't be changed here: row 3 wouldn't be saved as shown. Use ${VERB.showInTextEditor} to fix row 3 once.`);
+        assert.strictEqual(saidText(serialize.literalRewrittenBeside(table, cell, lost)), `This table can't be changed here: row 3 wouldn't be saved as shown. Fix row 3 once with "${VERB.showInTextEditor}".`);
         const list = topChildren(parseDocument(hostEngine(), '- one\n- two\n').doc)[0];
         assert.ok(saidText(serialize.literalRewrittenBeside(list, list.child(1), lost)).includes('item 2 wouldn\'t be saved as shown'));
     });

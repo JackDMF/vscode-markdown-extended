@@ -138,6 +138,108 @@ img.mep-pending-range {
 
 .mep-raw-source { margin: 0; opacity: 0.8; }
 
+/*
+ * Wave 3 #5a: the "source" chip on every source block, always shown — editor chrome, never in the
+ * file, the preview or an export (only this sheet draws it). An element of the block's node view
+ * (`sourceChip`, nodeViews.ts), hidden from a screen reader (the block names itself) and from the
+ * pointer; its word is its own `::before`, so it is no text of the page. It sits on no element of the
+ * rendering, so a person's stylesheet keeps its own `::before`/`::after` labels there. No hover tint:
+ * it is no control (#11). Its colour is the page's own text colour, thinned — a person's stylesheet
+ * may paint a dark page in the light theme, so no theme token is safe — and so is its dashed edge.
+ *
+ * Paragraph-like blocks: the rail floats top-right, and the first line wraps around the chip.
+ */
+.ProseMirror .mep-raw-block > .mep-raw-rail {
+    float: right;
+    margin: 3px 0 0 12px;
+    pointer-events: none;
+    user-select: none;
+}
+.ProseMirror .mep-raw-chip {
+    display: block;
+    position: relative;
+    padding: 0 5px;
+    font: 11px/14px var(--vscode-font-family, sans-serif);
+    font-style: normal;
+    font-weight: normal;
+    letter-spacing: normal;
+    text-indent: 0;
+    text-transform: none;
+    white-space: nowrap;
+    color: color-mix(in srgb, currentColor 80%, transparent);
+    border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+    border-radius: 3px;
+}
+.ProseMirror .mep-raw-chip::before { content: "source" / ""; }
+.vscode-high-contrast .ProseMirror .mep-raw-chip { border-color: var(--vscode-contrastBorder, GrayText); }
+/*
+ * Source shown as source (`pre.mep-raw-source`): inside its box, top-right, in room the box keeps
+ * free. The rail runs the box's height and the chip sticks under the toolbar row while a tall box's
+ * top is scrolled away — over the room kept free, so it never covers a line.
+ */
+.ProseMirror .mep-raw-block.mep-raw-boxed > .mep-raw-rail {
+    float: none;
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    right: 14px;
+    margin: 0;
+    /* Over the box, whose opacity paints it after the chip in tree order. */
+    z-index: 1;
+}
+.ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-chip {
+    position: sticky;
+    top: calc(var(--mep-row-height, 27px) + 4px);
+}
+.ProseMirror .mep-raw-block.mep-raw-boxed .mep-raw-source { padding-right: 72px; }
+/*
+ * A tall rendering (`mep-raw-tall`, set from 400px up by the node view): its chip gets a gutter of
+ * its own at the right edge, where no line runs, and sticks under the toolbar row there while the
+ * block's top is scrolled away. Only where the chip floats top-right: a block with a note at its
+ * right, or one that starts with a box of its own (`mep-raw-above`), keeps its chip above the top-left
+ * corner and is not sticky, as nothing in its margins is free of the notes.
+ */
+.ProseMirror .mep-raw-block.mep-raw-tall { padding-right: 60px; }
+.ProseMirror .mep-raw-block.mep-raw-tall > .mep-raw-rail {
+    float: none;
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    right: 6px;
+    margin: 0;
+}
+.ProseMirror .mep-raw-block.mep-raw-tall .mep-raw-chip {
+    position: sticky;
+    top: calc(var(--mep-row-height, 27px) + 4px);
+}
+/*
+ * Above the block, at its top-left: where a note or sidebar floats at the right (`clear: right`: a
+ * floated chip would push it down), or where the rendering starts with a box of its own (a table, an
+ * admonition: a float would narrow it or push it below). Absolutely placed, so it takes no room and
+ * touches no note: 2px above the block's edge, its left edge on the block's, a dashed stub down that
+ * edge tying it to the block. The block keeps 28px above it (collapsing with the margin before), so the
+ * chip stands at least 8px clear of the element before.
+ */
+.ProseMirror .mep-raw-block.mep-raw-above { margin-top: 28px; }
+.ProseMirror .mep-raw-block.mep-raw-above > .mep-raw-rail {
+    float: none;
+    position: absolute;
+    left: -1px;
+    bottom: calc(100% + 3px);
+    margin: 0;
+}
+.ProseMirror .mep-raw-block.mep-raw-above .mep-raw-chip::after {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 100%;
+    height: 7px;
+    border-left: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+}
+.vscode-high-contrast .ProseMirror .mep-raw-block.mep-raw-above .mep-raw-chip::after { border-left-color: var(--vscode-contrastBorder, GrayText); }
+/* The open source box is the edit: no chip over it. */
+.ProseMirror .mep-raw-block.mep-editing > .mep-raw-rail { display: none; }
+
 .mep-raw-editor {
     box-sizing: border-box;
     width: 100%;
@@ -758,6 +860,9 @@ img.mep-pending-range {
     align-items: center;
     gap: 2px;
     box-sizing: border-box;
+    /* As wide as what it holds up to the room `fit` gives it — not the mount's width, which a user stylesheet may
+       narrow (Styles.petrol.css at 520 px left a field's bar 85 px wide). */
+    width: max-content;
     max-width: 100%;
     padding: 2px;
     font-family: var(--vscode-font-family, sans-serif);
@@ -1175,7 +1280,20 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
  * entry. Above every layer (#9: the menus stand at 30): it never takes the
  * pointer, so what it covers can still be pressed. The chrome's font, not
  * the document's (a user stylesheet setting the body's font `!important`).
+ * It stands in the editor's overlay (`editorOverlay`), beside the body, not
+ * in it: a user stylesheet that narrows the body (Styles.petrol.css at 520
+ * px) gives it neither its width nor its type. The window's width at the
+ * page's origin; it scrolls with the text.
  */
+.mep-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 0;
+    z-index: 35;
+    pointer-events: none;
+}
 .mep-hint {
     position: absolute;
     z-index: 35;
@@ -1194,15 +1312,26 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
 /* At a pressed control or menu entry: in the row's coordinates, so it stays with the row (and the menus) on scroll. */
 .mep-hint[data-fixed] { position: fixed; }
 /* A neutral hint is one short line (what was done, or that Alt+Enter has nothing to act on): it keeps to one where the window has the room. */
-.mep-hint[data-tone="neutral"] { max-width: 48em; }
-/* One refusal component: the bar's amber drawn a third towards the text colour (Light Modern's own #bf8803 is 2.5:1 on the surface; this ≥3:1). */
+.mep-hint[data-tone="neutral"] { max-width: min(48em, calc(100vw - 32px)); }
+/*
+ * One refusal component: the bar's amber drawn a third towards the text colour (Light Modern's own #bf8803 is 2.5:1
+ * on the surface; this ≥3:1). As wide as its text, at most 44 characters or the window less a 16 px gutter each side
+ * (#10 build critique), its lines balanced.
+ */
 .mep-hint[data-tone="refusal"] {
-    max-width: 80ch;
+    width: max-content;
+    max-width: min(44ch, calc(100vw - 32px));
     padding: 4px 10px 4px 8px;
     border-left: 3px solid var(--mep-refusal-bar);
+    text-wrap: balance;
 }
-/* Beside a menu the room is a menu's width, not the column's. */
-.mep-hint[data-at="menu-entry"] { max-width: 44ch; }
+/* No room beside the menu (520 px and less): a row in the menu, right under the refused entry, the menu's width. */
+.mep-hint[data-at="menu-row"] {
+    position: static;
+    width: auto;
+    max-width: none;
+    margin: 2px 0 4px;
+}
 /* A value the message names: plain muted mono, as in the field (#13 build critique) — no chip. */
 .mep-hint code {
     padding: 0;
@@ -1213,7 +1342,8 @@ body:is([data-vscode-theme-id="Light Modern"], [data-vscode-theme-id="Default Li
     border: none;
 }
 /* High Contrast: the bar changes form as well as colour, as the refused field's frame does. */
-.vscode-high-contrast .mep-hint[data-tone="refusal"] { border-left-width: 4px; border-left-style: double; }
+/* The body's theme class, read from the root: the hint stands beside the body (`.mep-overlay`). */
+:root:has(> body.vscode-high-contrast) .mep-hint[data-tone="refusal"] { border-left-width: 4px; border-left-style: double; }
 /*
  * The source box's buttons (#10): under the box, at its right end, the workbench's button colours; each
  * names its key. A press never blurs the textarea first (blur applies): pointerdown is prevented on them.

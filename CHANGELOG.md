@@ -3,14 +3,26 @@
 ## Unreleased
 
 - Refusals share one look — an amber bar, what happened, what to do — at the caret, field or control.
-- A refusal goes at the next caret move, click, focus or mode change, or a reloaded document.
+- A refusal goes at the next caret move, edit, click, focus or mode change, or changed reloaded text.
 - The same refusal again restarts its time and is announced again; longer messages stay longer, up to ten seconds.
+- A held key's repeated refusal is announced once, however long it is held.
+- Refusals stand outside the page body, so user stylesheets no longer narrow them; at most 44 characters wide.
+- In a narrow window a refused menu entry says why in a row right under it.
+- Below 600 px, focus outside the text only dims the formatting tools; pressing one says why.
 - Pressing a locked tool says why under it, e.g. "Formatting is off while editing source — Ctrl+Enter applies".
 - A refused bar verb or menu entry says why where it was pressed, instead of doing nothing.
 - While an export runs, Export says "One export at a time"; pressing a waiting format says when to retry.
 - The source box has Apply and Cancel buttons; Cancel never applies on the way out.
-- Refusal messages reworded in plain language; values you typed appear in code font.
+- Refusal messages reworded in plain language; values you typed appear in code font, buttons in quotes.
 - Screen readers hear each hint through one status region, once.
+- Every source block shows a muted "source" chip at its top-right, in the editor only, never copied or exported.
+- Raw source and tall blocks keep the chip in sight while scrolling; beside right notes or tables it stands above.
+- The chip takes the page's own text colour and leaves a stylesheet's own ::after labels alone.
+- A source block's bar names why: "Source · has a footnote", "· definition list", "· footnote text" and more.
+- Screen readers hear the reason as the block's name, and on selection the reason with Alt+Enter.
+- Typing, pasting, dictation, IME, Ctrl+D/H or Delete over a selected source block is refused, naming why.
+- Backspace or Delete beside a source block selects it first; cut still takes it.
+- Replacing a selection that spans a source block says "Source block removed" with the undo key.
 - PNG and JPEG export no longer hangs on macOS while the display sleeps.
 - Nested blocks show a breadcrumb bar, e.g. "List › List item"; each part opens its own attributes field.
 - Bar and Block type menu now name the same block: in a list, the list item.

@@ -124,6 +124,6 @@ suite('Editor focus place', () => {
         assert.strictEqual(lockForms('source').press, `Formatting is off while editing source — ${applyKey()} applies`);
         assert.match(applyKey(), /^(Ctrl|Cmd)\+Enter$/);
         assert.strictEqual(lockForms('property').press, 'Formatting is off while editing a property — Enter applies');
-        assert.strictEqual(lockForms('button').press, 'Formatting is off while the focus is outside the text — press Esc or click into the text');
+        assert.strictEqual(lockForms('button').press, 'Formatting is off outside the text — click into the text or press Esc.');
     });
 });

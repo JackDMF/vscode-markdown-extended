@@ -195,7 +195,7 @@ export function lockForms(role: ControlRole): LockForms {
             return {
                 full: 'Focus is outside the text · Esc or click into the text',
                 short: 'Outside the text',
-                press: 'Formatting is off while the focus is outside the text — press Esc or click into the text',
+                press: 'Formatting is off outside the text — click into the text or press Esc.',
             };
     }
 }

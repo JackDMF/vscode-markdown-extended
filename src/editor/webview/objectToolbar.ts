@@ -58,7 +58,7 @@ import { DEFAULT_FENCE, FENCED_DONE, INDENTED_PLACEHOLDER, languageCompleter, la
 import { editRawSourceAt } from './nodeViews';
 import { typesText } from '../keys';
 import { HintTone, RefusalPlace, applyKey, dismissRefusal, showChangeHint, showHint, showRefusal, undoHint, undoKey } from './hint';
-import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, crumbName, crumbPartName, emojiWayBack, firstFocus, overflowOrder, wording } from '../verbs';
+import { EMBED_WAY_BACK, FILE_STAYS, NO_TARGET_HINT, Slot, Slotted, VERB, arrange, barDescription, barName, crumbName, crumbPartName, emojiWayBack, firstFocus, overflowOrder, quotedVerb, wording } from '../verbs';
 import { FieldStep, InlineChoice, InlineField, fieldHeading, refusedStep } from './inlineField';
 import { FieldRow } from './fieldRow';
 import { NOTE_LABELS, NoteNodeName, noteRefusal, unwrapNote, unwrapNoteRefusal } from './notes';
@@ -398,11 +398,14 @@ function sameDecor(a: BarDecor, b: BarDecor): boolean {
 }
 
 /**
- * What a source block's bar calls it: a source block, or — for a table the
- * editor leaves as source — the kind of table, so the bar says why this table
- * has no Row and Column menus when the one above it has them.
+ * What a source block's bar calls it: "Source · <why>" (`construct`, the
+ * classifier's reason in words: `has a footnote`, `definition list` …), or a
+ * source block when no word says more. A pipe table the editor leaves as source
+ * (only a top-level one: a table inside a quote or a list is `has a table`) says
+ * the kind of table, so the bar says why this table has no Row and Column menus
+ * when the one above it has them.
  */
-function rawBlockLabel(construct: string | null): { label: string; title: string } {
+export function rawBlockLabel(construct: string | null): { label: string; title: string } {
     switch (construct) {
         case 'multimd table':
             return {
@@ -414,8 +417,10 @@ function rawBlockLabel(construct: string | null): { label: string; title: string
                 label: 'Source · table',
                 title: 'A pipe table holding what a cell cannot hold here — a note, code with a |, HTML, a row of another width — shown as the preview renders it, edited as Markdown.',
             };
-        default:
+        case null:
             return { label: 'Source block', title: 'Shown as the preview renders it, edited as Markdown.' };
+        default:
+            return { label: `Source · ${construct}`, title: `${construct[0].toUpperCase()}${construct.slice(1)}, which the editor does not edit as text — shown as the preview renders it, edited as Markdown.` };
     }
 }
 
@@ -2635,7 +2640,7 @@ class ObjectToolbarView implements PluginView {
                             label: VERB.editSource,
                             title: `Edit ${source} as Markdown (Enter to apply, Esc to cancel).`,
                             slot: 'source',
-                            refusal: source.includes('\n') ? `It holds a line break, which a one-line field can't show — use ${VERB.showInTextEditor}.` : null,
+                            refusal: source.includes('\n') ? `It holds a line break, which a one-line field can't show — use ${quotedVerb(VERB.showInTextEditor)}.` : null,
                             field: { value: source, label: 'Markdown', commit: value => this.commitNoteSource(object, source, value) },
                         },
                     ],
@@ -3408,7 +3413,7 @@ class ObjectToolbarView implements PluginView {
         }
         const tr = inlineSourceTransaction(this.view.state, current.from, current.to, value, current.node.marks, this.host.sourceContext());
         if (tr === null) {
-            this.say(`Not applied: this note can't be saved as typed here. Use ${VERB.showInTextEditor} to change it.`, 'refusal');
+            this.say(`Not applied: this note can't be saved as typed here. Change it with ${quotedVerb(VERB.showInTextEditor)}.`, 'refusal');
             return;
         }
         this.view.dispatch(tr);

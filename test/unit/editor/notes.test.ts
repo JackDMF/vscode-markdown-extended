@@ -1008,7 +1008,7 @@ suite('Editor notes: what the save writes again is what is read back', () => {
     test('the refusal beside an edit names the block and the textblock, and the reference only where that textblock spells one', () => {
         const state = read('| a | b |\n| - | - |\n| edit me | See h&#116;tp://e.com/$x$ here. |\n');
         const reason = saidText(noteRefusal(state.tr.insertText('Z', posOf(state.doc, 'edit'))) ?? 'none');
-        assert.strictEqual(reason, `This table can't be changed here yet: row 1 of it wouldn't keep its sidebar — it spells a character as &#…;. Use Show in text editor and change row 1 once; then this works.`);
+        assert.strictEqual(reason, `This table can't be changed here: row 1 of it wouldn't keep its sidebar — it spells a character as &#…;. Fix row 1 once with "Show in text editor".`);
         // `&amp;` stands in the first item; the second reads otherwise for another cause (`\/` written out as `/`).
         const source = '- Tom &amp; Jerry\n- See http:\\/\\/e.com/$x$ here.\n';
         assert.deepStrictEqual(sidebarsIn(source), ['left_sidebar']);
