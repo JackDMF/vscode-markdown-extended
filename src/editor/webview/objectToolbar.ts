@@ -72,7 +72,7 @@ import {
     deleteObjectRefusal, deleteObjectTransaction, isBlockObject, isBlockPlaced, isTopLevelBlock, noteSource, objectAtSelection, objectOfNode, removeLinkRefusal,
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine, CodeBlockObject,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, literalOfObject, attributeHolderAt, holderInside,
-    AttributesTarget, CrumbPart, Crumbs, Followed, attributesTargetAt, blockAttrsRefusal, commitAttributes, crumbsAt, followAll,
+    AttributesTarget, CrumbPart, Crumbs, Followed, attributesTargetAt, blockAttrsRefusal, commitAttributes, constructExplanation, crumbsAt, followAll,
 } from './objects';
 import { attributesField, attributesRemovedHint, attributesStep, goneFieldHint, holderAttributesStep } from './attributes';
 import { attributesTyped } from '../attributeLiteral';
@@ -88,7 +88,7 @@ import {
 import { TableAlign } from '../schema';
 import type { CodeActionItem, LensItem, LinkChoice } from '../protocol';
 import { chevronNode, lensLabelNodes, lensName } from './lenses';
-import { Said, Tip, plainTip, said, tipText, value } from '../tips';
+import { Said, Tip, plainTip, said, saidText, tipText, value } from '../tips';
 import { Tooltips } from './tooltip';
 import { HideReason, LayerClaim, LayerSlot, REST_MS, anchorOf, blockAnchor, caretRect, placeMenu, rangeAnchor, revealField } from './placement';
 
@@ -406,7 +406,12 @@ function sameDecor(a: BarDecor, b: BarDecor): boolean {
  * the kind of table, so the bar says why this table has no Row and Column menus
  * when the one above it has them.
  */
-export function rawBlockLabel(construct: string | null): { label: string; title: string } {
+export function rawBlockLabel(construct: string | null, src = ''): { label: string; title: string } {
+    // An attribute literal the editor cannot keep where it stands: what it does, and where it would (#8 F12, `sourceExplanation`).
+    const explained = constructExplanation(construct, src);
+    if (explained !== null && construct !== null) {
+        return { label: `Source · ${construct}`, title: saidText(explained) };
+    }
     switch (construct) {
         case 'multimd table':
             return {
@@ -3016,7 +3021,7 @@ class ObjectToolbarView implements PluginView {
                 };
                 const remove = wording({ verb: 'Delete', noun: 'block' });
                 return {
-                    ...rawBlockLabel(object.node.attrs.construct as string | null),
+                    ...rawBlockLabel(object.node.attrs.construct as string | null, object.node.attrs.src as string),
                     verbs: [
                         this.showInTextEditor(object),
                         ...(editing ? [] : [editSource]),

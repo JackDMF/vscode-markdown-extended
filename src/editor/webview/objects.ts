@@ -44,6 +44,7 @@ import { CellSelection } from 'prosemirror-tables';
 import { attrsReadAt, endLiteralOf, fenceHolder, hasInnerBrace, parseAttrsLiteral, readsAsRuleLiteral } from '../attrs';
 import { innerOf, isRemoval } from '../attributeLiteral';
 import { Said, TipPart, said, value } from '../tips';
+import { QUOTE_PARAGRAPH_ATTRIBUTES, TITLE_ATTRIBUTES } from '../sourceReason';
 import { isTextBrace, readBrace, tightenedBrace } from '../../syntax/attrsLiteral';
 import { currentInlineDefinition, currentReadsAttrs } from '../inlineEngine';
 import { HolderNames, INLINE_LITERAL_HOLDERS, InlineLiteralHolder, holderNamed, holderOfCarrier, namesOf } from '../inlineLiterals';
@@ -1297,6 +1298,22 @@ export function sourceExplanation(reason: string, src: string): Said | null {
         return QUOTE_PARAGRAPH_LITERAL;
     }
     return null;
+}
+
+/**
+ * `sourceExplanation` for a source block as the page holds it: by its
+ * `construct` (#5a, the reason in words, `sourceReason.ts`) — the source
+ * block bar's tooltip says it (`rawBlockLabel`). `null` for any other.
+ */
+export function constructExplanation(construct: string | null, src: string): Said | null {
+    switch (construct) {
+        case TITLE_ATTRIBUTES:
+            return sourceExplanation('attributes on admonition_title_open', src);
+        case QUOTE_PARAGRAPH_ATTRIBUTES:
+            return sourceExplanation('attributes on paragraph_open', src);
+        default:
+            return null;
+    }
 }
 
 /**
