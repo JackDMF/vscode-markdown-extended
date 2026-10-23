@@ -64,6 +64,8 @@ export interface Frame {
     floor: number;
     /** The text column's right edge: a layer that fits the column keeps to it (wave 1, 2026-10-16); only a wider one stands past it, up to `layerEdge`. Absent: `layerEdge` for every layer. */
     columnRight?: number;
+    /** The window's right edge less the gutter: a layer wider than the room (a field's floor) is kept left of it. Absent: no such clamp. */
+    windowRight?: number;
 }
 
 /** The right edge a layer of `width` may reach in `frame`: the column's when it fits the column, else the layer edge. */
@@ -127,7 +129,9 @@ export function probeBand(x: number, y: number, size: Size): Rect {
  */
 export function placeStacked(size: Size, anchor: Rect, frame: Frame, ctx: Context = {}): Placement {
     // A layer wider than the room was fitted to it before (`ObjectBar.fit`): this clamps, never shrinks.
-    const x = Math.max(frame.columnLeft, Math.min(anchor.left, rightEdge(size.width, frame) - size.width));
+    const clamped = Math.max(frame.columnLeft, Math.min(anchor.left, rightEdge(size.width, frame) - size.width));
+    // Wider than the column allows (a field's floor, `fieldFloor`): kept inside the window, left of the column if it must.
+    const x = frame.windowRight !== undefined && clamped + size.width > frame.windowRight ? Math.max(LAYER_GUTTER, frame.windowRight - size.width) : clamped;
     const below = anchor.bottom + GAP;
     const above = anchor.top - GAP - size.height;
     const belowOk = qualifies(x, below, size, frame, ctx);
@@ -320,7 +324,17 @@ export function layerEdge(mount: HTMLElement): number {
 /** The mount frame: everything about the text — the column, the layer edge, under the row (and its lock line), inside the window. */
 export function readFrame(mount: HTMLElement): Frame {
     const column = mount.getBoundingClientRect();
-    return { columnLeft: column.left, columnRight: column.right, layerEdge: layerEdge(mount), ceiling: rowCeiling(mount), floor: window.innerHeight };
+    return {
+        columnLeft: column.left, columnRight: column.right, layerEdge: layerEdge(mount), ceiling: rowCeiling(mount), floor: window.innerHeight,
+        windowRight: document.documentElement.clientWidth - LAYER_GUTTER,
+    };
+}
+
+/** The width no field is narrower than (#8 review 1), as `.mep-hint`'s: min(44ch of `el`'s font, the window less 2 × `LAYER_GUTTER`). */
+export function fieldFloor(el: HTMLElement): number {
+    const em = parseFloat(getComputedStyle(el).fontSize) || 12;
+    // A `ch` of the UI font, about half an em: measured once per size would buy nothing the floor needs.
+    return Math.min(44 * em * 0.55, document.documentElement.clientWidth - 2 * LAYER_GUTTER);
 }
 
 /** The viewport frame: the chrome's — menus, the preview card, tooltips. */
@@ -983,7 +997,10 @@ export class LayerSlot {
         const frame = readFrame(this.mount);
         const fresh = this.refitNext;
         this.refitNext = false;
-        claim.fit?.(frame.layerEdge - frame.columnLeft, fresh);
+        // A field's room is never narrower than a hint's (#8 review 1): a user stylesheet's narrow column or margin lane
+        // (petrol at 520 px wrapped a keys line at 150 px) gives it min(44ch, window − 32 px), placed inside the window.
+        const room = frame.layerEdge - frame.columnLeft;
+        claim.fit?.(claim.kind === 'field' ? Math.max(room, fieldFloor(claim.el)) : room, fresh);
         const width = claim.el.offsetWidth;
         const height = claim.el.offsetHeight;
         const avoid = openLayers(this.mount, claim.el);

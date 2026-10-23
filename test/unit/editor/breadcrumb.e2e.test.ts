@@ -682,6 +682,31 @@ suite('Editor breadcrumb: the fit at narrow widths (e2e)', () => {
         });
     }
 
+    test('fail-first: a user stylesheet\'s margin lane narrows the column — the field keeps a hint\'s width, min(44ch, window − 32 px), inside the window', async function () {
+        // Before, the field took the room up to the lane (petrol at 520 px: 150 px, its keys line wrapped in three).
+        this.timeout(20000);
+        await b.show(NARROW_DOC);
+        const style = await page.addStyleTag({ content: ':root { padding-right: 300px !important; --md-page-gutter: 0px; }' });
+        try {
+            await delay(200);
+            await b.restAt('Queue the edit', 2);
+            await page.waitForSelector(`${CRUMBS} [data-part="current"]`, { visible: true, timeout: 2000 });
+            await page.click(`${CRUMBS} [data-part="current"]`);
+            await page.waitForSelector(`${BAR} .mep-inline-field`, { visible: true, timeout: 2000 });
+            await delay(200);
+            const r = await page.$eval('.mep-object-toolbar:has(.mep-inline-field)', el => {
+                const box = el.getBoundingClientRect();
+                const ch = parseFloat(getComputedStyle(el).fontSize) * 0.55;
+                return { width: box.width, right: box.right, left: box.left, floor: Math.min(44 * ch, document.documentElement.clientWidth - 32), window: document.documentElement.clientWidth };
+            });
+            assert.ok(r.width >= r.floor - 1, JSON.stringify(r));
+            assert.ok(r.right <= r.window - 16 + 0.5 && r.left >= 16 - 0.5, JSON.stringify(r));
+        } finally {
+            await page.keyboard.press('Escape');
+            await style.evaluate(el => el.remove());
+        }
+    });
+
     test('narrow, the outer part moved into "…" is its first entry: "Attributes of List… {.steps …}", opening the List\'s field', async function () {
         this.timeout(20000);
         await page.setViewport({ width: 420, height: 900 });
