@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A menu card's syntax line and reason keep the editor's font, whatever font a stylesheet gives the document.
 - Refusals share one look — an amber bar, what happened, what to do — at the caret, field or control.
 - A refusal goes at the next caret move, edit, click, focus or mode change, or changed reloaded text.
 - The same refusal again restarts its time and is announced again; longer messages stay longer, up to ten seconds.
