@@ -273,7 +273,9 @@ suite('Editor breadcrumb: screenshots (e2e)', () => {
             if (set === 'petrol' && (USER_STYLESHEET === undefined || !fs.existsSync(USER_STYLESHEET))) {
                 this.skip();
             }
-            const editor = await openEditorPage({ width: 1280, height: 800, styles: ['markdown-extended.css'], stylesheets: set === 'petrol' ? [USER_STYLESHEET as string] : [] });
+            // Every stylesheet of `markdown.previewStyles`, as the editor loads them (`html.ts`): without the admonition's,
+            // an admonition draws no box (#8 review 1 — the shots' fixture, not the editor).
+            const editor = await openEditorPage({ width: 1280, height: 800, styles: ['markdown-extended.css', 'markdown-it-admonition.css', 'markdown-it-kbd.css'], stylesheets:set === 'petrol' ? [USER_STYLESHEET as string] : [] });
             if (!editor) {
                 this.skip();
             }
