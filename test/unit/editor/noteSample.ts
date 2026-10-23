@@ -28,3 +28,6 @@ export const NOTE_SAMPLE_TWO_SIDED = [
 
 /** The same without its left sidebar: every note on the right, one side of the page. */
 export const NOTE_SAMPLE_ONE_SIDED = NOTE_SAMPLE_TWO_SIDED.replace('$Status$ ', '');
+
+/** Daniel's line (Theokratie-Archiv, Vorsitz 06-30): a marginal note carrying `{.tipp}` (#15). */
+export const TEMPO = '!!Tempo|nicht zu abrupt ändern, nicht zu schnell!!{.tipp}';

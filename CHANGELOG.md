@@ -45,8 +45,21 @@
 - A change elsewhere beside the field's item or heading keeps the field and caret; Enter sets it as asked.
 - Remove ▾ says what stays for each part ("item stays"); tooltips name the part and say "Enter to set".
 - Fields keep a readable width beside a user stylesheet's narrow column or margin.
-- Inline fields opened from a bar open above when text is on both sides, like the bar.
+- Inline fields opened from a bar stand where the bar does.
 - A source block made by an admonition title's or a quote paragraph's {…} names it and says what it does.
+- Sidenotes, marginal notes and sidebars keep a {…} after their closing marker, e.g. !!Tempo|…!!{.tipp}, and open as rich text.
+- Note and sidebar bars show the literal, e.g. "Marginal note {.tipp}", with Attributes… and "Remove attributes, keep note".
+- A note's attributes field opens at its reference, never at the text in the margin.
+- Formatting's attributes entry rests as "Inline attributes…" and names a note at the caret, e.g. "Attributes of Marginal note…".
+- Convert to sidenote or marginal note, and a sidebar's Move left or right, keep the attributes.
+- A caret or selection in a note's text targets the note, also on marked words; a mark with its own {…} still wins.
+- Bars may reach into the margin where no note sits beside them, before they shorten their words.
+- Bars and fields stand below their line unless only below holds text; text on both sides keeps them below.
+- A caret in a margin note keeps layers off its margin line only, not the column beside it.
+- Selecting words of a note in the margin shows the bubble above that line, never over the note.
+- A note or sidebar copied in the editor pastes with its attributes, as a note, not as a span.
+- A copied span such as [x]{.left-sidebar} pastes back as a span, not as a sidebar or note.
+- Source blocks name a holder's attributes they cannot keep, e.g. "has a marginal note with attributes".
 
 ## v4.9.0 — Layers That Keep Their Place
 

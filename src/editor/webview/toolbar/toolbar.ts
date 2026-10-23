@@ -36,7 +36,7 @@ import { EditorView } from 'prosemirror-view';
 import type { ExportFormatName, LinkChoice, LinkedFile } from '../../protocol';
 import { EXPORT_FORMATS } from '../../../services/exporter/formats';
 import { editorSchema } from '../../schema';
-import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, placeCard, placeMenu, rangeAnchor, revealField } from '../placement';
+import { LayerSlot, Rect, REST_MS, blockAnchor, caretRect, floatedAround, placeCard, placeMenu, rangeAnchor, revealField, selectionAnchor } from '../placement';
 import { dismissRefusal, showHint, showRefusal } from '../hint';
 import { FieldStep, InlineField, fieldHeading } from '../inlineField';
 import { FieldRow } from '../fieldRow';
@@ -45,10 +45,11 @@ import { clearPendingRange, showPendingRange } from '../pendingRange';
 import { ControlRole, FocusPlace, RowScope, focusPlace, lockForms, placeOfElement, rowLock } from '../focusPlace';
 import { editRawSourceAt } from '../nodeViews';
 import { addPropertyAt } from '../properties';
-import { inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
+import { NoteNodeName, inNoteOf, toggleNote, unwrapNoteRefusal, wrapNodeLockReason } from '../notes';
 import {
     applySpanRefusal, applySpanTransaction, attributeHolderAt, holderMarkup, holderNames, InlineHolderAt, attributesTargetAt, changeLinkTransaction, currentObject, editImageTransaction, IMAGE_LOCK, IMAGE_PLACE_REFUSAL, insertFilesTransaction, insertLinkTransaction,
     insertLockReason, LINK_LOCK, NO_ATTRS_REFUSAL, NO_BLOCK_ATTRS_REFUSAL, objectAtSelection, spanLockReason, blockPartsAt, AttributesTarget, Followed, followAll,
+    noteFieldRange,
 } from '../objects';
 import { currentReadsAttrs } from '../../inlineEngine';
 import { attributesField, attributesStep, goneFieldHint, holderAttributesStep } from '../attributes';
@@ -56,6 +57,7 @@ import { insertTableTransaction } from '../tables';
 import {
     ActionPreview, BLOCK_CARDS, BUBBLE_OVERFLOW, CLASS_LITERAL, FEWER_TYPES, SOURCE_NOTE, isSourceAction, INLINE_ATTRS_LOCK, MENU_LABELS, MORE_TYPES, NO_INCLUDES_REFUSAL, PREVIEW_CARD_CLASS, PROPERTIES_PRESENT_REFUSAL, ROW_LAYOUT, ROW_OVERFLOW, RowControl, SAMPLE_CLASS, SUBMENU_GLYPH, SUBMENU_SYNTAX, SampleSpec,
     TOOLBAR_ACTIONS, ToolbarAction, ToolbarMenu, ToolbarSubmenu, aliasNote, ariaLabelOf, elideDataUris, inBubble, inRow, isRowMark, menuOf, moreOrder, submenuOf, tipOf,
+    notePreviewWithClass,
 } from './actions';
 import { buildMoreEntry, fitWithMore, holdFocus, moreControl, moreName, overflows, setMoreEntryState } from '../overflow';
 import { ariaKeyshortcuts, keyLabel } from '../../keys';
@@ -253,6 +255,15 @@ function inlineEntry(inline: InlineHolderAt): { label: string; syntax: string; p
     const label = `Attributes of ${holderNames(inline).label}…`;
     const markup = holderMarkup(inline);
     const holder = inline.holder;
+    if (inline.object.kind === 'note') {
+        // A note's or a sidebar's card is the note itself, its body and its class on the outer span (#15 critique).
+        const note = inline.object.node;
+        const name = note.type.name as NoteNodeName;
+        const sidebar = name === 'left_sidebar' || name === 'right_sidebar';
+        const text = sidebar ? { body: note.textContent } : { ref: note.child(0).textContent, body: note.child(1).textContent };
+        const literal = typeof note.attrs.literal === 'string' ? note.attrs.literal : null;
+        return { label, syntax: holder.example('text', CLASS_LITERAL), preview: notePreviewWithClass(name, literal, text) };
+    }
     const tag = holder.tag?.(markup);
     const text = holder.holder === 'code' ? 'code' : holder.holder === 'image' ? 'alt' : 'text';
     return {
@@ -2157,7 +2168,9 @@ class ToolbarView implements PluginView {
         }
         // A copy, followed while the field is open (#8 F7): the run it edits and stands at.
         const at = { holder: found.holder, object: { ...found.object } };
-        this.openFieldBar(at.holder.holder, holderNames(at).label, 'inline-attributes', holderAttributesStep(this.view, at), at.object);
+        // A note's field stands at its reference, never at the body in the margin (#15 F4), as from its bar.
+        const range = at.object.kind === 'note' ? noteFieldRange(at.object) : at.object;
+        this.openFieldBar(at.holder.holder, holderNames(at).label, 'inline-attributes', holderAttributesStep(this.view, at), range);
     }
 
     // -- links and images ------------------------------------------------------
@@ -2483,8 +2496,11 @@ class ToolbarView implements PluginView {
             el: this.bubble,
             anchor: () => {
                 const sel = view.state.selection;
-                return rangeAnchor(view, sel.from, sel.to);
+                return selectionAnchor(view, sel.from, sel.to);
             },
+            // In a note's body (sidenote, marginal note) set into the margin: above the selected line, never over the
+            // note's text below it (#15 review 2). A sidebar keeps the normal rule — beside, off the text (review 3).
+            prefer: () => (floatedAround(view, view.state.selection.from)?.closest('.sidenote, .mnote') ? 'above' : undefined),
             valid: () => this.bubbleWanted() && this.selectionKey() === key,
             hidden: () => this.hideBubble(),
             fit: (room, fresh) => this.fitBubble(room, fresh),

@@ -148,18 +148,27 @@ suite('Editor placement: the policy', () => {
         assert.strictEqual(placeStacked(size, rect(60, -200, 300, 120), frame, { avoid: [rect(0, 0, 700, 400)] }).side, 'edge');
     });
 
-    test('r1-13: text under both sides: below, but above for an inline object\'s bar; a side free of text always wins', () => {
+    test('r1-13 (#15 review 2, Daniel: below wherever free, above only where below is text and above is not): text under both sides keeps below, for every layer', () => {
         const anchor = rect(60, 100, 300, 118);
         const below = (band: Rect) => band.top >= 118;
         const above = (band: Rect) => band.bottom <= 100;
         const both = () => true;
         const none = () => false;
-        assert.strictEqual(placeStacked(size, anchor, frame, { covered: both }).side, 'below');
-        assert.strictEqual(placeStacked(size, anchor, frame, { covered: both, bothCovered: 'above' }).side, 'above');
-        assert.strictEqual(placeStacked(size, anchor, frame, { covered: both, bothCovered: 'below' }).side, 'below');
-        assert.strictEqual(placeStacked(size, anchor, frame, { covered: none, bothCovered: 'above' }).side, 'below', 'free on both sides: below');
-        assert.strictEqual(placeStacked(size, anchor, frame, { covered: below, bothCovered: 'above' }).side, 'above', 'text only below');
-        assert.strictEqual(placeStacked(size, anchor, frame, { covered: above, bothCovered: 'above' }).side, 'below', 'text only above: the free side, below');
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: both }).side, 'below', 'text under both: below');
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: none }).side, 'below', 'free on both sides: below');
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: below }).side, 'above', 'text only below');
+        assert.strictEqual(placeStacked(size, anchor, frame, { covered: above }).side, 'below', 'text only above: the free side, below');
+    });
+
+    test('#15 review 2: prefer "above" (the bubble in a note\'s body in the margin) takes above wherever it qualifies, else below the anchor', () => {
+        // The anchor runs from the selected line's top to the note body's last line.
+        const anchor = rect(60, 100, 300, 160);
+        const none = () => false;
+        const above = placeStacked(size, anchor, frame, { covered: none, prefer: 'above' });
+        assert.deepStrictEqual([above.side, above.y + size.height <= 100], ['above', true], 'above the selected line, the free side below notwithstanding');
+        const top = rect(60, frame.ceiling + 4, 300, frame.ceiling + 60);
+        const low = placeStacked(size, top, frame, { covered: none, prefer: 'above' });
+        assert.deepStrictEqual([low.side, low.y >= frame.ceiling + 60], ['below', true], 'no room above: below the body\'s last line');
     });
 
     test('r2-5: dismissal keys follow a change in one go: two that shift onto each other do not collide, a deleted one ends', () => {

@@ -44,6 +44,7 @@
  */
 import { ADMONITION_FAMILIES, ADMONITION_MARKER, INLINE_MARKERS, KBD_MARKERS, MARKER_NAMES, NOTE_SEPARATOR, NOTE_SYNTAX } from '../../../syntax/markers';
 import { holderNamed, namesOf } from '../../inlineLiterals';
+import { domAttrsOf } from '../../attrs';
 import { keyLabel } from '../../keys';
 import { Said, Tip, TipPart } from '../../tips';
 import { NOTE_LABELS, NoteNodeName } from '../notes';
@@ -432,7 +433,7 @@ const BLOCK_ATTRIBUTES = {
 
 
 /** Why Attributes of Code… is disabled: nothing inline at the caret carries a {…}. */
-export const INLINE_ATTRS_LOCK = 'Plain text takes no attributes — put the caret in formatted text, a link or a span, or select an image.';
+export const INLINE_ATTRS_LOCK = 'Plain text takes no attributes — put the caret in formatted text, a link, a span or a note, or select an image.';
 
 const formatting: ToolbarAction[] = [
     formatAction('mark', 'mark', M.mark, M.mark, el('mark', 'mark'), el('mark', 'ab'),
@@ -454,8 +455,8 @@ const formatting: ToolbarAction[] = [
     },
     {
         // markdown-it-attrs on the inline element at the caret: written right after it. Named
-        // by the element (`Attributes of Link…`); the label here is its resting form.
-        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Attributes of Element…', syntax: `…${CLASS_LITERAL}`, glyph: { text: '{…}' },
+        // by the element (`Attributes of Link…`); the label here is its resting form (#15 F8, Daniel: "Inline attributes…").
+        id: 'inline-attributes', place: { menu: 'formatting' }, named: true, label: 'Inline attributes…', syntax: `…${CLASS_LITERAL}`, glyph: { text: '{…}' },
         sample: el('code.x', 'Attributes…'), apply: { kind: 'inline-attrs' }, example: `\`Attributes…\`${BLOCK_LITERAL_EXAMPLE}`,
         preview: {
             markdown: 'Run `--flag`{.k} to skip the cache.',
@@ -588,6 +589,41 @@ function sidebarPreview(marker: string, cssClass: string): ActionPreview {
     return {
         markdown: `${marker}Context that runs alongside.${marker} The main text carries on.`,
         nodes: [el('p', el(`span.${cssClass}`, 'Context that runs alongside.'), ' The main text carries on.')],
+    };
+}
+
+/** The words a note's card shows of it: at most `NOTE_CARD_CHARS`, then "…". */
+const NOTE_CARD_CHARS = 48;
+
+function cardWords(text: string): string {
+    const plain = text.replace(/\s+/g, ' ').trim();
+    return plain.length <= NOTE_CARD_CHARS ? plain : `${plain.slice(0, NOTE_CARD_CHARS - 1).trimEnd()}…`;
+}
+
+/**
+ * The card of Attributes of Marginal note… (#15 critique): the note at the
+ * caret as it is — its reference and its body, a sidebar's text — with its
+ * own literal glued to the closing marker and its classes drawn on the outer
+ * span after the plugin's class (`mn-ref tipp`); without a literal yet,
+ * `{.class}` shows where it goes. Long texts are cut (`cardWords`).
+ */
+export function notePreviewWithClass(node: NoteNodeName, literal: string | null, text: { ref?: string; body: string }): ActionPreview {
+    const written = literal ?? CLASS_LITERAL;
+    const classes = literal === null ? ['class'] : (domAttrsOf(literal).class ?? '').split(/\s+/).filter(c => c !== '');
+    const cls = classes.map(c => `.${c}`).join('');
+    const body = cardWords(text.body);
+    if (node === 'left_sidebar' || node === 'right_sidebar') {
+        const { marker, cssClass } = node === 'left_sidebar' ? LS : RS;
+        return {
+            markdown: `${marker}${body}${marker}${written} The main text carries on.`,
+            nodes: [el('p', el(`span.${cssClass}${cls}`, body), ' The main text carries on.')],
+        };
+    }
+    const { marker, refClass, anchorClass, noteClass } = node === 'sidenote' ? SN : MN;
+    const ref = cardWords(text.ref ?? '');
+    return {
+        markdown: `Text ${marker}${ref}${NOTE_SEPARATOR}${body}${marker}${written} carries on.`,
+        nodes: [el('p', 'Text ', el(`span.${refClass}${cls}`, el(`span.${anchorClass}`, ref), el(`span.${noteClass}`, body)), ' carries on.')],
     };
 }
 

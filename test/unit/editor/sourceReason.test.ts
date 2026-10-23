@@ -103,6 +103,30 @@ suite('Editor source block reason', () => {
         const linking = grepSources(path.join(repoRoot, 'src'), /editor\.css['"]/);
         assert.deepStrictEqual(linking, [path.join('editor', 'host', 'html.ts')]);
     });
+
+    test('#15: a note in a note, in a table, with a marker in a literal inside, and every holder whose literal the editor cannot keep', () => {
+        const rows: [string, string][] = [
+            ['sidenote_open inside another note', 'has a note in a note'],
+            ['right_sidebar_open inside another note', 'has a note in a note'],
+            ['sidenote_open in a table cell: its | is a cell boundary', 'has a note in a table'],
+            ['attribute span in a note whose literal holds a note marker', 'has a note with attributes inside'],
+            ['marginal note whose attributes no literal writes', 'has a marginal note with attributes'],
+            ['left sidebar whose literal holds a quoted }', 'has a left sidebar with attributes'],
+            ['inline code whose attributes no literal writes', 'has inline code with attributes'],
+            ['bold text whose literal holds a quoted }', 'has bold text with attributes'],
+            ['link whose attributes no literal writes', 'has a link with attributes'],
+            ['image whose literal holds a quoted }', 'has an image with attributes'],
+            ['attributes on right_sidebar_open', 'has a right sidebar with attributes'],
+        ];
+        for (const [reason, words] of rows) {
+            assert.strictEqual(sourceReasonWords(reason, ''), words, reason);
+        }
+        // Each "has …" reads in the refusal's clause: "This paragraph holds a marginal note with attributes".
+        const nested = topChildren(parseDocument(hostEngine(), 'a ++r|b !!c|d!!++\n').doc)[0];
+        assert.deepStrictEqual([nested.type.name, nested.attrs.construct], ['raw_block', 'has a note in a note']);
+        const quoted = topChildren(parseDocument(hostEngine(), 'a !!r|b!!{title="a}b"}\n').doc)[0];
+        assert.deepStrictEqual([quoted.type.name, quoted.attrs.construct], ['raw_block', 'has a marginal note with attributes']);
+    });
 });
 
 /** The files under `dir` (relative to `src/`) whose text matches `re`. */

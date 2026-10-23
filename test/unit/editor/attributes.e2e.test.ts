@@ -289,7 +289,7 @@ suite('Editor Attributes… (e2e)', () => {
         await openFormatting();
         const plain = await page.$eval(INLINE, el => ({ disabled: el.getAttribute('aria-disabled'), title: (el.getAttribute('aria-description') ?? ''), label: el.querySelector('.mep-entry-label')?.textContent }));
         assert.strictEqual(plain.disabled, 'true');
-        assert.strictEqual(plain.label, 'Attributes of Element…', 'its resting name');
+        assert.strictEqual(plain.label, 'Inline attributes…', 'its resting name (#15 F8)');
         assert.ok(plain.title.includes(INLINE_ATTRS_LOCK), plain.title);
         await shot('07-formatting-inline-disabled.png');
         await page.keyboard.press('Escape');

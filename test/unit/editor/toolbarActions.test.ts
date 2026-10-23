@@ -9,6 +9,7 @@ import { serializeDocument } from '../../../src/editor/serialize';
 import { editorPlugins } from '../../../src/editor/webview/plugins';
 import {
     BLOCK_CARDS, BUBBLE_OVERFLOW, INCLUDE_SYNTAX, PREVIEW_CARD_CLASS, ROW_LAYOUT, ROW_OVERFLOW, SAMPLE_CLASS, SOURCE_FOOTNOTE, SampleSpec, TOOLBAR_ACTIONS, ToolbarAction, ariaLabelOf, elideDataUris, inBubble, inRow, isSourceAction, menuOf, moreOrder, submenuOf, tipOf,
+    notePreviewWithClass,
 } from '../../../src/editor/webview/toolbar/actions';
 import { holderNamed, namesOf } from '../../../src/editor/inlineLiterals';
 import { tipText } from '../../../src/editor/tips';
@@ -227,6 +228,31 @@ suite('Editor toolbar: every action makes the element it shows', () => {
             }
         });
     }
+
+    for (const node of ['sidenote', 'marginal_note', 'left_sidebar', 'right_sidebar'] as const) {
+        test(`Attributes of ${node}…: its card shows the note itself, its body and its class on the outer span, as the engine renders it (#15)`, () => {
+            const body = 'nicht zu abrupt ändern, nicht zu schnell, und ganz ruhig bleiben bitte';
+            const card = notePreviewWithClass(node, '{.tipp .x}', { ref: 'Tempo', body });
+            assert.ok(card.markdown.includes('{.tipp .x}'), card.markdown);
+            assert.ok(card.markdown.includes('nicht zu abrupt ändern'), card.markdown);
+            assert.ok(card.markdown.includes('…') && !card.markdown.includes('bitte'), `long bodies are cut: ${card.markdown}`);
+            const html = md.render(card.markdown);
+            for (const sample of card.nodes) {
+                assertRendersSample(html, sample, `${node} card`);
+            }
+            assert.ok(/<span class="(sn-ref|mn-ref|left-sidebar|right-sidebar) tipp x"/.test(html), html);
+            // Without a literal yet: `{.class}` where it goes.
+            const bare = notePreviewWithClass(node, null, { ref: 'Tempo', body: 'kurz' });
+            assert.ok(bare.markdown.includes('kurz') && bare.markdown.includes('{.class}'), bare.markdown);
+            for (const sample of bare.nodes) {
+                assertRendersSample(md.render(bare.markdown), sample, `${node} bare card`);
+            }
+        });
+    }
+
+    test('Formatting\'s inline entry rests as "Inline attributes…" (#15 F8)', () => {
+        assert.strictEqual(TOOLBAR_ACTIONS.find(a => a.id === 'inline-attributes')?.label, 'Inline attributes…');
+    });
 
     test('the row holds the five native marks; every other action is a menu entry with a preview, but the bubble\'s own {…}', () => {
         assert.deepStrictEqual(TOOLBAR_ACTIONS.filter(inRow).map(a => a.id), ['italic', 'emphasis', 'bold', 'strong', 'code']);

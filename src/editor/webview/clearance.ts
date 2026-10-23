@@ -63,6 +63,63 @@ export function contentIn(view: EditorView, band: Band): boolean {
     return false;
 }
 
+/**
+ * The left edge of what stands in `band` — a part of the margin beside the
+ * text column — or `null` where nothing does: a note's body, a sidebar or
+ * other floated or positioned content of the document (a user stylesheet's
+ * margin), else content as `contentIn` knows it. What overlaps `anchor` is
+ * the layer's own subject (the floated sidebar a bar is about, the note body
+ * a selection is in) and is passed over. Probed as `contentIn` is, at half
+ * its step: a bar may stand there only where nothing does (Daniel, #15).
+ */
+export function marginContentLeft(view: EditorView, band: Band, anchor: Band): number | null {
+    if (band.right <= band.left || band.bottom <= band.top) {
+        return null;
+    }
+    let left: number | null = null;
+    const rows = [band.top + 2, (band.top + band.bottom) / 2, band.bottom - 2];
+    for (const y of rows) {
+        for (let x = band.left + 2; x <= band.right - 2 && (left === null || x < left); x += PROBE_STEP / 2) {
+            const item = marginItemAt(view, x, y);
+            if (item === null) {
+                continue;
+            }
+            const r = item.getBoundingClientRect();
+            if (r.left < anchor.right && r.right > anchor.left && r.top < anchor.bottom && r.bottom > anchor.top) {
+                continue;
+            }
+            const at = Math.max(band.left, Math.min(r.left, x));
+            left = left === null ? at : Math.min(left, at);
+        }
+    }
+    return left;
+}
+
+/** What of the document stands at `x`, `y` as margin content (`marginContentLeft`): its floated or positioned box, else the element holding content there; `null` for none. */
+function marginItemAt(view: EditorView, x: number, y: number): Element | null {
+    const element = document.elementFromPoint(x, y);
+    if (element === null || element === view.dom || !view.dom.contains(element)) {
+        return null;
+    }
+    for (let at: Element | null = element; at !== null && at !== view.dom; at = at.parentElement) {
+        const style = getComputedStyle(at);
+        if (style.float !== 'none' || style.position === 'absolute' || style.position === 'fixed') {
+            return at;
+        }
+    }
+    return contentAt(view, x, y) ? element : null;
+}
+
+/**
+ * The top of `dom`'s first line of text and the bottom of its last, a
+ * floated note body left out (`textRects`); `null` for an element that shows
+ * no text. A floated sidebar's bar keeps off these lines (#15).
+ */
+export function textLines(dom: Element): { top: number; bottom: number } | null {
+    const rects = textRects(dom);
+    return rects.length === 0 ? null : { top: Math.min(...rects.map(r => r.top)), bottom: Math.max(...rects.map(r => r.bottom)) };
+}
+
 function contentAt(view: EditorView, x: number, y: number): boolean {
     const element = document.elementFromPoint(x, y);
     if (element !== null && view.dom.contains(element) && element.closest(OCCUPIED) !== null) {

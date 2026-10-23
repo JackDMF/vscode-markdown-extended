@@ -632,7 +632,7 @@ const MARK_LITERAL_TOKENS: Readonly<Record<string, string>> = Object.fromEntries
     INLINE_LITERAL_HOLDERS.flatMap(h => ('mark' in h.carrier ? [[h.carrier.mark, h.token]] : [])),
 );
 
-/** The token markdown-it-attrs gives each node's literal to, by the node's name: an image's (`inlineLiterals.ts`). One per node. */
+/** The token markdown-it-attrs gives each node's literal to, by the node's name: an image's, a note's, a sidebar's (`inlineLiterals.ts`). One per node. */
 const NODE_LITERAL_TOKENS: Readonly<Record<string, string>> = Object.fromEntries(
     INLINE_LITERAL_HOLDERS.flatMap(h => ('node' in h.carrier ? [[h.carrier.node, h.token]] : [])),
 );
@@ -1615,7 +1615,10 @@ function writeNote(state: MarkdownSerializerState, node: Node, marker: string): 
     } finally {
         st.noteMarker = outerMarker;
     }
-    state.text(marker + MARKER_GUARD, false);
+    // The literal glued to the marker is the note's; held, so no line break falls between them — on the next line it
+    // would be the paragraph's. The guard stays last: after the literal, as after the bare marker.
+    const literal = markLiteralOf(node);
+    state.text((literal === null ? marker : HOLD_OPEN + marker + literal + HOLD_CLOSE) + MARKER_GUARD, false);
 }
 
 /**
@@ -1629,8 +1632,14 @@ function writeSidebar(state: MarkdownSerializerState, node: Node, marker: string
     const open = st.out.length;
     state.text(marker, false);
     renderPart(state, node, part);
-    state.text(marker, false);
+    const literal = markLiteralOf(node);
+    // The closing marker and the literal glued to it are held together (`writeNote`); the seam
+    // stays at the marker, which the read-back pairs, and the literal follows it.
+    state.text(literal === null ? marker : HOLD_OPEN + marker, false);
     seamCollector?.push({ node, open, close: st.out.length });
+    if (literal !== null) {
+        state.text(literal + HOLD_CLOSE, false);
+    }
 }
 
 /** Where a sidebar's markers stand in the output being written: before the opening one, after the closing one. */
@@ -2769,10 +2778,13 @@ function ownedLiterals(tokens: readonly Token[], expected: ReadonlyMap<string, r
     for (const token of tokens) {
         let noteDepth = 0;
         for (const child of token.type === 'inline' ? token.children ?? [] : []) {
-            noteDepth += NOTE_OPEN_TOKENS.has(child.type) ? 1 : NOTE_CLOSE_TOKENS.has(child.type) ? -1 : 0;
+            // A note's own opener counts at the depth before it opens: its literal is the textblock's
+            // (`markLiteralsOf`); a closer's depth is taken off before its test, as nothing is given to it.
+            noteDepth -= NOTE_CLOSE_TOKENS.has(child.type) ? 1 : 0;
             if (noteDepth === 0 && expected.has(child.type)) {
                 given.set(child.type, [...(given.get(child.type) ?? []), attrsKey(attrsGivenTo(child).map(([n, v]) => [n, v] as AttrPair))]);
             }
+            noteDepth += NOTE_OPEN_TOKENS.has(child.type) ? 1 : 0;
         }
     }
     let owned = 0;

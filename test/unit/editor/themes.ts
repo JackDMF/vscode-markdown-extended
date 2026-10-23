@@ -304,14 +304,18 @@ export const LIGHT_PLUS: Theme = {
 
 /**
  * The theme as a stylesheet: its variables and the host's on `:root`, as VS
- * Code sets them on the webview's `<html>`, and the editor's background behind
- * the page — VS Code paints it behind the frame, whose body the defaults leave
- * transparent. The body's colour and font are the defaults' and the page's own.
+ * Code sets them on the webview's `<html>`. The `<html>` itself is left
+ * unpainted, as VS Code leaves it, so a user stylesheet's body background
+ * fills the whole page (the canvas takes it), not only the body's box. The
+ * editor's background VS Code paints behind the frame is drawn as the body's,
+ * in a cascade layer of its own after the webview's defaults: the same canvas
+ * where no stylesheet paints the body, and any stylesheet's body background
+ * wins over it. The body's colour and font are the defaults' and the page's own.
  */
 export function themeCss(theme: Theme, settings: HostSettings = {}): string {
     const vars = Object.entries(theme.variables).map(([name, value]) => `    --vscode-${name}: ${value};`);
     vars.push(`    --text-link-decoration: ${settings.underlineLinks ? 'underline' : 'none'};`);
-    return `:root {\n${vars.join('\n')}\n}\nhtml {\n    background-color: var(--vscode-editor-background);\n}`;
+    return `:root {\n${vars.join('\n')}\n}\n@layer mep-test-ground {\n    body {\n        background-color: var(--vscode-editor-background);\n    }\n}`;
 }
 
 /** Put `theme` on the page, replacing the one it had: the variables and the body's theme class. */
@@ -328,4 +332,7 @@ export async function applyTheme(page: puppeteer.Page, theme: Theme, settings: H
         document.body.classList.add(bodyClass);
         document.body.dataset.vscodeThemeId = id;
     }, themeCss(theme, settings), theme.bodyClass, theme.id);
+    // VS Code's webviews answer `prefers-color-scheme` by the theme's kind, not by the machine's
+    // setting: a stylesheet that follows it (Daniel's petrol one) shows its light face in Light Modern.
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme.bodyClass === 'vscode-light' ? 'light' : 'dark' }]);
 }

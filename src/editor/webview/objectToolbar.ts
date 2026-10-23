@@ -73,6 +73,7 @@ import {
     removeLinkTransaction, removeSpanRefusal, removeSpanTransaction, sameObject, unwrapTransaction, changeLanguageTransaction, commitOpeningLine, CodeBlockObject,
     changeInlineLiteralRefusal, changeInlineLiteralTransaction, holderNames, inlineHolderOf, isMarkObject, LiteralObject, literalObjectOf, literalOfObject, attributeHolderAt, holderInside,
     AttributesTarget, CrumbPart, Crumbs, Followed, attributesTargetAt, blockAttrsRefusal, commitAttributes, constructExplanation, crumbsAt, followAll,
+    noteFieldRange,
 } from './objects';
 import { attributesField, attributesRemovedHint, attributesStep, goneFieldHint, holderAttributesStep } from './attributes';
 import { attributesTip, attributesTyped } from '../attributeLiteral';
@@ -324,6 +325,14 @@ const STAYS: Readonly<Record<string, string>> = {
     image: 'image stays',
 };
 
+/** What stays when a note's or a sidebar's literal is removed: the element, named (`marginal note stays`). */
+function staysOf(target: CrumbPart['target']): string | undefined {
+    if (target === null || !('object' in target)) {
+        return undefined;
+    }
+    return target.object.kind === 'note' ? `${holderNames(target).noun} stays` : STAYS[target.object.kind];
+}
+
 /**
  * Whether `crumbs` are `object`'s bar's (#8): its current part is `object` —
  * the inline element, the list item, the heading at its place — or `object` is
@@ -331,7 +340,7 @@ const STAYS: Readonly<Record<string, string>> = {
  */
 function crumbsFor(object: EditorObject, crumbs: Crumbs): boolean {
     const target = crumbs.current.target;
-    if (isMarkObject(object) || object.kind === 'image') {
+    if (isMarkObject(object) || object.kind === 'image' || object.kind === 'note') {
         return target !== null && 'object' in target && sameObject(target.object, object);
     }
     if (object.kind === 'admonition' || object.kind === 'container') {
@@ -1720,8 +1729,6 @@ class ObjectToolbarView implements PluginView {
                 return atCaret ? caretRect(view, Math.min(head, size)) : bar.object ? anchorOf(view, bar.object) : null;
             },
             valid: () => bar.editing,
-            // A run's field stands where an inline object's bar does (#8: Bold at the run): above, where text is on both sides.
-            bothCovered: target !== undefined && block === undefined ? 'above' : undefined,
             hidden: () => this.barHidden(bar, 'displaced'),
             fit: (room, fresh) => bar.fitField(room, fresh),
         }, { force: true });
@@ -2075,8 +2082,6 @@ class ObjectToolbarView implements PluginView {
             el: bar.el,
             anchor: () => (bar.object === null ? null : anchorOf(this.view, this.partAnchor(bar) ?? bar.object)),
             valid: () => bar.object !== null,
-            // An inline object's bar goes above where text is on both sides (Daniel, 2026-10-20); a block's stays below.
-            bothCovered: isBlockPlaced(object) ? undefined : 'above',
             hidden: reason => this.barHidden(bar, reason),
             fit: (room, fresh) => {
                 if (fresh) {
@@ -2444,7 +2449,7 @@ class ObjectToolbarView implements PluginView {
             id: `remove-${part.role}`,
             label: part.name,
             code: part.literal ?? undefined,
-            keys: part.target !== null && 'object' in part.target ? STAYS[part.target.object.kind] ?? 'text stays' : `${stays(part)} stays`,
+            keys: part.target !== null && 'object' in part.target ? staysOf(part.target) ?? 'text stays' : `${stays(part)} stays`,
             title: removes(part),
             run: () => this.removePart(object, part),
         });
@@ -2473,23 +2478,26 @@ class ObjectToolbarView implements PluginView {
         if (carrying.length === 0) {
             return rest;
         }
+        // In the Remove slot, before the verb that destroys ("Delete note"): the destroying verb stays last (#15 critique).
+        const destroys = rest.findIndex(v => v.slot === 'destroy');
+        const placed = (remove: Verb): Verb[] => (destroys < 0 ? [...rest, remove] : [...rest.slice(0, destroys), remove, ...rest.slice(destroys)]);
         if (carrying.length === 1) {
             const part = carrying[0];
-            return [...rest, {
+            return placed({
                 id: 'remove-attributes',
                 label: `Remove attributes of ${part.name}`,
                 title: removes(part),
                 slot: 'destroy',
                 run: () => this.removePart(object, part),
-            }];
+            });
         }
-        return [...rest, {
+        return placed({
             id: 'remove-attributes',
             label: wording({ verb: 'Remove', noun: 'attributes', titled: false }).label,
             title: 'Choose whose attributes to remove',
             slot: 'destroy',
             menu: carrying.map(entryOf),
-        }];
+        });
     }
 
     /**
@@ -2563,7 +2571,8 @@ class ObjectToolbarView implements PluginView {
             verb = { ...base, field: attributesStep(this.view, target), anchorBlock: target };
         } else {
             const at = { holder: part.target.holder, object: { ...part.target.object } };
-            verb = { ...base, field: holderAttributesStep(this.view, at), target: at.object };
+            // A note's field stands at its reference (#15 F4), a copy followed with it.
+            verb = { ...base, field: holderAttributesStep(this.view, at), target: at.object.kind === 'note' ? noteFieldRange(at.object) : at.object };
         }
         return { role: part.role, name, literal: part.literal, verb, opens };
     }
@@ -2656,13 +2665,37 @@ class ObjectToolbarView implements PluginView {
                 const name = object.node.type.name as NoteNodeName;
                 const sidebar = isSidebar(name);
                 const source = noteSource(object.node);
+                const note = literalObjectOf(object) as LiteralObject;
+                const literal = literalOfObject(note);
+                const noun = NOTE_LABELS[name].toLowerCase();
                 // A sidebar's text stays in the sentence (Remove); a note's own text goes, its reference staying (Delete).
                 const remove = sidebar ? wording({ verb: 'Remove', noun: 'sidebar', keeps: ', keep text' }) : wording({ verb: 'Delete', noun: 'note' });
                 const removeId = sidebar ? 'remove-note' : 'delete-note';
+                // F5: "Remove attributes, keep note" before the verb that destroys, only while there is a literal;
+                // at 520 px ", keep note" goes first ("Remove attributes").
+                const keeps = wording({ verb: 'Remove', noun: 'attributes', keeps: sidebar ? ', keep sidebar' : ', keep note', titled: false });
+                const removeAttributes: Verb[] = literal === null ? [] : [{
+                    id: 'remove-attributes',
+                    label: keeps.label,
+                    short: wording({ verb: 'Remove', noun: 'attributes', titled: false }).label,
+                    title: `The {…} goes; the ${noun} stays.`,
+                    slot: 'destroy',
+                    refusal: refusalOnce(view.state, `remove-attributes@${object.from}:${object.to}`, () => changeInlineLiteralRefusal(view.state, note, '')),
+                    run: () => this.apply(object, current => {
+                        const now = literalObjectOf(current);
+                        return now === null ? null : changeInlineLiteralTransaction(view.state, now, '');
+                    }, attributesRemovedHint(NOTE_LABELS[name])),
+                }];
+                const closing = sidebar ? (name === 'left_sidebar' ? '$' : '@') : name === 'sidenote' ? '++' : '!!';
                 return {
                     label: NOTE_LABELS[name],
-                    title: sidebar ? 'A sidebar: its text is set beside the main text.' : 'A note: its reference is in the sentence, its text beside it.',
+                    // The literal is read with the label, as an image's is (`Marginal note {.tipp}`).
+                    ...(literal === null ? {} : { code: literal }),
+                    title: `${sidebar ? 'A sidebar: its text is set beside the main text.' : 'A note: its reference is in the sentence, its text beside it.'}${literal === null ? '' : ` · ${literal}`}`,
                     verbs: [
+                        this.markAttributesVerb(note, 'note-attributes', VERB.attributes,
+                            typed => `The ${noun}'s {…}, written right after its closing ${closing}: ${typed} (Enter to set, Esc to cancel).`),
+                        ...removeAttributes,
                         {
                             id: removeId,
                             label: remove.label,
@@ -2677,7 +2710,7 @@ class ObjectToolbarView implements PluginView {
                         {
                             id: 'convert-note',
                             label: CONVERT_LABELS[name],
-                            title: `Make it a ${NOTE_LABELS[NOTE_CONVERSION[name]].toLowerCase()}, its text kept.`,
+                            title: `Make it a ${NOTE_LABELS[NOTE_CONVERSION[name]].toLowerCase()}; its text and attributes stay.`,
                             slot: 'type',
                             refusal: refusalOnce(view.state, `convert-note@${object.from}:${object.to}`, () => convertNoteRefusal(view.state, object.from)),
                             run: () => this.act(object, current => {
@@ -3405,11 +3438,12 @@ class ObjectToolbarView implements PluginView {
      * (`_x_{…}`, `` `x`{…} ``), an image or a bare holder: the one step every
      * route shares (`holderAttributesStep`). A run's field opens at the run it
      * edits (`target`), not where the caret or the bar was; an image's stands
-     * at the image, its object, already.
+     * at the image, its object, already; a note's at its reference, never at
+     * the body floated into the margin (#15 F4, `noteFieldRange`).
      */
     private markAttributesVerb(object: LiteralObject, id: string, label: string, title: (typed: string) => string): Verb {
         // The run itself, followed with its field while it is open (F7).
-        const target = 'mark' in object ? object : undefined;
+        const target = 'mark' in object ? object : object.kind === 'note' ? noteFieldRange(object) : undefined;
         // What the tooltip says an empty value does is what the field's keys line says: it removes only a literal there is.
         return { id, label, title: title(attributesTyped(literalOfObject(object))), slot: 'attributes', field: holderAttributesStep(this.view, inlineHolderOf(object)), target };
     }

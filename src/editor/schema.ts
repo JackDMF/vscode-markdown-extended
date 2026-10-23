@@ -171,6 +171,13 @@ export function literalDOM(carrier: Mark | Node): Record<string, string> {
     return { ...domAttrsOf(literal), 'data-mep-attrs': literal };
 }
 
+/**
+ * On an attribute span's element (`attr_span`): the editor's own copy of
+ * `[x]{.left-sidebar}` or `[x]{.sn-ref}` pastes as the span, not as the note
+ * or sidebar its class names, whose rules read before it (#15 review 2).
+ */
+const SPAN_ATTR = 'data-mep-span';
+
 /** The literal an element of the page was drawn with (`literalDOM`), or `null`: HTML from elsewhere carries none. */
 function literalOfDOM(dom: HTMLElement): string | null {
     return dom.getAttribute('data-mep-attrs') || null;
@@ -196,6 +203,9 @@ function literalOfDOM(dom: HTMLElement): string | null {
  *   their class is part of what they are; the reference is one type in both,
  *   its anchor class an attribute (`noteRef` sets it).
  * - `left_sidebar` and `right_sidebar` are one span each with the content in it.
+ * - The four carry a `literal`: the `{…}` glued to the closing marker, which
+ *   the plugin gives the outer span (`span.mn-ref.tipp`), drawn on it after
+ *   the plugin's class (`withClass`). A reference and a body carry none.
  *
  * What a note may hold is the plugin's answer. It parses a reference and a
  * body with the full inline parser, so every mark may be inside. It cannot
@@ -251,6 +261,23 @@ function noteContent(bodyType: string, bodyClass: string, anchorClass: string) {
     };
 }
 
+/**
+ * The attributes of a note's or a sidebar's outer span: the plugin's class
+ * first, as the engine renders it (`mn-ref tipp`), then what its `{…}`
+ * literal gives (`literalDOM`) — a literal's `class` adds to the plugin's,
+ * never replaces it.
+ */
+function withClass(cls: string, literal: string | null): Record<string, string> {
+    if (literal === null) {
+        return { class: cls };
+    }
+    const given = domAttrsOf(literal);
+    return { ...given, class: [cls, given.class].filter(Boolean).join(' '), 'data-mep-attrs': literal };
+}
+
+/** A note's or a sidebar's `{…}` literal (`inlineLiterals.ts`), written right after its closing marker. */
+const noteLiteral = { literal: { default: null as string | null } };
+
 /** Inline nodes that hold inline content and must not be crossed by joining or lifting. */
 function notePart(className: string | null, extra: Partial<NodeSpec> = {}): NodeSpec {
     return {
@@ -259,9 +286,21 @@ function notePart(className: string | null, extra: Partial<NodeSpec> = {}): Node
         isolating: true,
         ...extra,
         toDOM(node): DOMOutputSpec {
-            return ['span', className === null ? { class: node.attrs.anchor, [NOTE_REF_ATTR]: '' } : { class: className }, 0];
+            // A sidebar is its own part and carries a literal; a reference and a body carry none.
+            return ['span', className === null ? { class: node.attrs.anchor, [NOTE_REF_ATTR]: '' } : withClass(className, (node.attrs.literal as string | null | undefined) ?? null), 0];
         },
     };
+}
+
+/** A sidebar: one part carrying its literal. */
+function sidebarNode(className: string): NodeSpec {
+    return notePart(className, {
+        group: 'inline',
+        attrs: noteLiteral,
+        // Before the attribute span's `span[data-mep-attrs]` (a mark's rule, read first at equal priority): a copy of a sidebar with a literal pastes as the sidebar.
+        // The editor's own copy of a span carrying the class (`[x]{.left-sidebar}`) is the span (`SPAN_ATTR`, #15 review 2).
+        parseDOM: [{ tag: `span.${className}`, priority: 60, getAttrs: (dom: HTMLElement) => (dom.hasAttribute(SPAN_ATTR) ? false : { literal: literalOfDOM(dom) }) }],
+    });
 }
 
 function noteNode(refClass: string, bodyType: string, bodyClass: string, anchorClass: string): NodeSpec {
@@ -270,8 +309,10 @@ function noteNode(refClass: string, bodyType: string, bodyClass: string, anchorC
         group: 'inline',
         content: `note_ref ${bodyType}`,
         isolating: true,
-        parseDOM: [{ tag: `span.${refClass}`, getContent: noteContent(bodyType, bodyClass, anchorClass) }],
-        toDOM(): DOMOutputSpec { return ['span', { class: refClass }, 0]; },
+        attrs: noteLiteral,
+        // Before the attribute span's rule, as a sidebar's (`sidebarNode`): `span.mn-ref.tipp[data-mep-attrs]` is the note.
+        parseDOM: [{ tag: `span.${refClass}`, priority: 60, getAttrs: (dom: HTMLElement) => (dom.hasAttribute(SPAN_ATTR) ? false : { literal: literalOfDOM(dom) }), getContent: noteContent(bodyType, bodyClass, anchorClass) }],
+        toDOM(node): DOMOutputSpec { return ['span', withClass(refClass, node.attrs.literal as string | null), 0]; },
     };
 }
 
@@ -760,8 +801,8 @@ export const editorSchema = new Schema({
         note_ref: notePart(null, { attrs: { anchor: { default: null } } }),
         sidenote_body: notePart(SN.noteClass),
         marginal_note_body: notePart(MN.noteClass),
-        left_sidebar: notePart(LS.cssClass, { group: 'inline', parseDOM: [{ tag: `span.${LS.cssClass}` }] }),
-        right_sidebar: notePart(RS.cssClass, { group: 'inline', parseDOM: [{ tag: `span.${RS.cssClass}` }] }),
+        left_sidebar: sidebarNode(LS.cssClass),
+        right_sidebar: sidebarNode(RS.cssClass),
     },
     marks: {
         // Req Explorer's decoration, written as nothing. It opens by its run as
@@ -797,7 +838,7 @@ export const editorSchema = new Schema({
             parseDOM: [{ tag: 'span[data-mep-attrs]', getAttrs: (dom: HTMLElement) => ({ literal: dom.getAttribute('data-mep-attrs') }) }],
             toDOM(mark: Mark): DOMOutputSpec {
                 const literal = mark.attrs.literal as string;
-                return ['span', { ...domAttrsOf(literal), 'data-mep-attrs': literal }, 0];
+                return ['span', { ...domAttrsOf(literal), 'data-mep-attrs': literal, [SPAN_ATTR]: '' }, 0];
             },
         },
         // A literal after the closing delimiter (`_x_{.a}`) is the mark's

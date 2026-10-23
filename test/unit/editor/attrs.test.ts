@@ -505,6 +505,11 @@ suite('Editor inline literal holders: each one\'s example renders as its tag, by
         for (const markup of [undefined, ...Object.keys(h.markups ?? {})]) {
             test(`${h.holder}${markup === undefined ? '' : ` ${markup}`}: ${h.example('text', '{.c}', markup)}`, () => {
                 const html = md.renderInline(h.example('text', '{.c}', markup));
+                if (h.tag === undefined && h.holder !== 'image') {
+                    // A note's or a sidebar's outer span: the plugin's class first, then the literal's.
+                    assert.ok(/^<span class="[a-z-]+ c"/.test(html), html);
+                    return;
+                }
                 const tag = h.tag?.(markup) ?? 'img';
                 assert.ok(new RegExp(`<${tag}[^>]*class="c"`).test(html), html);
             });
